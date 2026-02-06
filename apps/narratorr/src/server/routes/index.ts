@@ -6,6 +6,7 @@ import {
   DownloadClientService,
   BookService,
   DownloadService,
+  MetadataService,
 } from '../services';
 
 import { booksRoutes } from './books.js';
@@ -15,6 +16,7 @@ import { indexersRoutes } from './indexers.js';
 import { downloadClientsRoutes } from './download-clients.js';
 import { settingsRoutes } from './settings.js';
 import { systemRoutes } from './system.js';
+import { metadataRoutes } from './metadata.js';
 
 export interface Services {
   settings: SettingsService;
@@ -22,6 +24,7 @@ export interface Services {
   downloadClient: DownloadClientService;
   book: BookService;
   download: DownloadService;
+  metadata: MetadataService;
 }
 
 export function createServices(db: Db): Services {
@@ -30,8 +33,9 @@ export function createServices(db: Db): Services {
   const downloadClient = new DownloadClientService(db);
   const book = new BookService(db);
   const download = new DownloadService(db, downloadClient);
+  const metadata = new MetadataService();
 
-  return { settings, indexer, downloadClient, book, download };
+  return { settings, indexer, downloadClient, book, download, metadata };
 }
 
 export async function registerRoutes(
@@ -44,5 +48,6 @@ export async function registerRoutes(
   await indexersRoutes(app, services.indexer);
   await downloadClientsRoutes(app, services.downloadClient);
   await settingsRoutes(app, services.settings);
+  await metadataRoutes(app, services.metadata);
   await systemRoutes(app);
 }

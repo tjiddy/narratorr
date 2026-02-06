@@ -178,6 +178,20 @@ export const updateSettingsFormSchema = z.object({
 export type UpdateSettingsFormData = z.infer<typeof updateSettingsFormSchema>;
 
 // ============================================================================
+// Metadata schemas
+// ============================================================================
+
+export const metadataSearchQuerySchema = z.object({
+  q: z.string().min(1, 'Query is required'),
+});
+
+export const asinParamSchema = z.object({
+  asin: z.string().min(1, 'ASIN is required'),
+});
+
+export type MetadataSearchQuery = z.infer<typeof metadataSearchQuerySchema>;
+
+// ============================================================================
 // Activity schemas
 // ============================================================================
 
