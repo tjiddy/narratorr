@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  narratorr:
+    build: .
+    container_name: narratorr
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./config:/config           # Database and config
+      - /path/to/audiobooks:/audiobooks  # Library path (change this)
+      - /path/to/downloads:/downloads    # Download client save path (change this)
+    environment:
+      - TZ=America/New_York
+      - NODE_ENV=production
+      - CONFIG_PATH=/config
+      - LIBRARY_PATH=/audiobooks
+      - DATABASE_URL=file:/config/narratorr.db
+    restart: unless-stopped

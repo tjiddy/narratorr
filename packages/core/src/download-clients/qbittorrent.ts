@@ -1,0 +1,279 @@
+import type { DownloadClientAdapter, TorrentInfo, AddTorrentOptions } from './types.js';
+
+export interface QBittorrentConfig {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  useSsl: boolean;
+}
+
+interface QBTorrent {
+  hash: string;
+  name: string;
+  state: string;
+  progress: number;
+  total_size: number;
+  downloaded: number;
+  uploaded: number;
+  ratio: number;
+  num_seeds: number;
+  num_leechs: number;
+  eta: number;
+  save_path: string;
+  added_on: number;
+  completion_on: number;
+}
+
+export class QBittorrentClient implements DownloadClientAdapter {
+  readonly type = 'qbittorrent';
+  readonly name = 'qBittorrent';
+
+  private baseUrl: string;
+  private cookie?: string;
+
+  constructor(private config: QBittorrentConfig) {
+    const protocol = config.useSsl ? 'https' : 'http';
+    this.baseUrl = `${protocol}://${config.host}:${config.port}`;
+  }
+
+  private async login(): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/api/v2/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Referer: this.baseUrl,
+      },
+      body: new URLSearchParams({
+        username: this.config.username,
+        password: this.config.password,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Login failed: HTTP ${response.status}`);
+    }
+
+    const text = await response.text();
+    if (text === 'Fails.') {
+      throw new Error('Login failed: Invalid credentials');
+    }
+
+    // Extract SID cookie from response headers
+    const setCookie = response.headers.get('set-cookie');
+    if (setCookie) {
+      const sidMatch = setCookie.match(/SID=([^;]+)/);
+      if (sidMatch) {
+        this.cookie = `SID=${sidMatch[1]}`;
+      }
+    }
+
+    if (!this.cookie) {
+      throw new Error('Login failed: No session cookie received');
+    }
+  }
+
+  private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+    if (!this.cookie) {
+      await this.login();
+    }
+
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      ...options,
+      headers: {
+        ...options.headers,
+        Cookie: this.cookie!,
+        Referer: this.baseUrl,
+      },
+    });
+
+    if (response.status === 403) {
+      // Session expired, re-login and retry
+      this.cookie = undefined;
+      await this.login();
+      return this.request(path, options);
+    }
+
+    if (!response.ok) {
+      throw new Error(`Request failed: HTTP ${response.status}`);
+    }
+
+    const text = await response.text();
+    if (!text) {
+      return undefined as T;
+    }
+
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return text as T;
+    }
+  }
+
+  async addTorrent(magnetUri: string, options?: AddTorrentOptions): Promise<string> {
+    const formData = new URLSearchParams();
+    formData.set('urls', magnetUri);
+
+    if (options?.savePath) {
+      formData.set('savepath', options.savePath);
+    }
+    if (options?.category) {
+      formData.set('category', options.category);
+    }
+    if (options?.paused) {
+      formData.set('paused', 'true');
+    }
+
+    await this.request('/api/v2/torrents/add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData,
+    });
+
+    // Extract hash from magnet URI
+    const hashMatch = magnetUri.match(/btih:([a-f0-9]{40}|[a-z2-7]{32})/i);
+    if (hashMatch) {
+      // If it's base32, convert to hex
+      const hash = hashMatch[1];
+      if (hash.length === 32) {
+        return base32ToHex(hash).toLowerCase();
+      }
+      return hash.toLowerCase();
+    }
+
+    throw new Error('Could not extract info hash from magnet URI');
+  }
+
+  async getTorrent(hash: string): Promise<TorrentInfo | null> {
+    const torrents = await this.request<QBTorrent[]>(
+      `/api/v2/torrents/info?hashes=${hash.toLowerCase()}`
+    );
+
+    if (!torrents || torrents.length === 0) {
+      return null;
+    }
+
+    return this.mapTorrent(torrents[0]);
+  }
+
+  async getAllTorrents(category?: string): Promise<TorrentInfo[]> {
+    const params = category ? `?category=${encodeURIComponent(category)}` : '';
+    const torrents = await this.request<QBTorrent[]>(`/api/v2/torrents/info${params}`);
+
+    if (!torrents) {
+      return [];
+    }
+
+    return torrents.map((t) => this.mapTorrent(t));
+  }
+
+  async pauseTorrent(hash: string): Promise<void> {
+    await this.request('/api/v2/torrents/pause', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ hashes: hash.toLowerCase() }),
+    });
+  }
+
+  async resumeTorrent(hash: string): Promise<void> {
+    await this.request('/api/v2/torrents/resume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ hashes: hash.toLowerCase() }),
+    });
+  }
+
+  async removeTorrent(hash: string, deleteFiles = false): Promise<void> {
+    await this.request('/api/v2/torrents/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        hashes: hash.toLowerCase(),
+        deleteFiles: deleteFiles.toString(),
+      }),
+    });
+  }
+
+  async test(): Promise<{ success: boolean; message?: string }> {
+    try {
+      await this.login();
+      const version = await this.request<string>('/api/v2/app/version');
+      return { success: true, message: `qBittorrent ${version}` };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  private mapTorrent(qbt: QBTorrent): TorrentInfo {
+    return {
+      id: qbt.hash,
+      name: qbt.name,
+      hash: qbt.hash,
+      progress: Math.round(qbt.progress * 100),
+      status: this.mapState(qbt.state),
+      savePath: qbt.save_path,
+      size: qbt.total_size,
+      downloaded: qbt.downloaded,
+      uploaded: qbt.uploaded,
+      ratio: qbt.ratio,
+      seeders: qbt.num_seeds,
+      leechers: qbt.num_leechs,
+      eta: qbt.eta > 0 && qbt.eta < 8640000 ? qbt.eta : undefined,
+      addedAt: new Date(qbt.added_on * 1000),
+      completedAt: qbt.completion_on > 0 ? new Date(qbt.completion_on * 1000) : undefined,
+    };
+  }
+
+  private mapState(state: string): TorrentInfo['status'] {
+    const stateMap: Record<string, TorrentInfo['status']> = {
+      downloading: 'downloading',
+      stalledDL: 'downloading',
+      metaDL: 'downloading',
+      forcedDL: 'downloading',
+      allocating: 'downloading',
+      uploading: 'seeding',
+      stalledUP: 'seeding',
+      forcedUP: 'seeding',
+      pausedDL: 'paused',
+      pausedUP: 'paused',
+      queuedDL: 'downloading',
+      queuedUP: 'seeding',
+      checkingDL: 'downloading',
+      checkingUP: 'seeding',
+      checkingResumeData: 'downloading',
+      moving: 'downloading',
+      error: 'error',
+      missingFiles: 'error',
+      unknown: 'error',
+    };
+
+    // Handle completed state based on progress
+    if (state === 'pausedUP' || state === 'stalledUP' || state === 'uploading') {
+      return 'seeding';
+    }
+
+    return stateMap[state] || 'downloading';
+  }
+}
+
+// Helper function to convert base32 to hex
+function base32ToHex(base32: string): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  let hex = '';
+
+  for (const char of base32.toUpperCase()) {
+    const index = alphabet.indexOf(char);
+    if (index === -1) continue;
+    bits += index.toString(2).padStart(5, '0');
+  }
+
+  for (let i = 0; i + 4 <= bits.length; i += 4) {
+    hex += parseInt(bits.substring(i, i + 4), 2).toString(16);
+  }
+
+  return hex;
+}

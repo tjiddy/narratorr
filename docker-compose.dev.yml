@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  narratorr:
+    build:
+      context: .
+      target: builder
+    container_name: narratorr-dev
+    ports:
+      - "3000:3000"
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - ./config:/config
+    environment:
+      - TZ=America/New_York
+      - NODE_ENV=development
+      - CONFIG_PATH=/config
+      - DATABASE_URL=file:/config/narratorr.db
+    command: pnpm dev

@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs (we rebuild in Docker)
+dist/
+build/
+
+# Development files
+.git/
+.gitignore
+.idea/
+.vscode/
+*.md
+!README.md
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Testing
+coverage/
+
+# Turbo cache
+.turbo/
+
+# Database files (we use mounted volumes)
+*.db
+*.db-journal
+config/
+
+# OS files
+.DS_Store
+Thumbs.db

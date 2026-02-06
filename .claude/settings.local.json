@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(tree:*)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "Bash(pnpm install:*)",
+      "Bash(npm install:*)",
+      "Bash(pnpm build:*)",
+      "Bash(pnpm --filter @narratorr/db generate:*)",
+      "Bash(pnpm dev:*)",
+      "Bash(curl:*)",
+      "Bash(tasklist:*)",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)",
+      "Bash(taskkill //F //PID 10004)",
+      "Bash(pnpm add:*)",
+      "Bash(pnpm typecheck:*)",
+      "Bash(pnpm lint:fix:*)",
+      "Bash(pnpm lint:*)",
+      "Bash(source:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(xxd:*)",
+      "Bash(chmod:*)",
+      "Bash(/c/Users/Todd/Code/narratorr/scripts/gitea.sh:*)",
+      "Bash(G=/c/Users/Todd/Code/narratorr/scripts/gitea.sh:*)",
+      "Bash($G milestone-create \"v0.1 - MVP Foundation\" \"Core scaffolding, search, grab, activity, settings \\(DONE\\)\")",
+      "Bash($G milestone-create \"v0.2 - Metadata & Library\" \"Audnexus integration, library management, author/book pages\")",
+      "Bash($G milestone-create \"v0.3 - Automation\" \"Scheduled search, auto-grab, blacklist, quality preferences\")",
+      "Bash($G milestone-create \"v0.4 - Polish\" \"File import, Audiobookshelf integration, notifications\")",
+      "Bash(/c/Users/Todd/Code/narratorr/scripts/seed-issues.sh)",
+      "Bash(./scripts/gitea.sh:*)"
+    ]
+  }
+}
