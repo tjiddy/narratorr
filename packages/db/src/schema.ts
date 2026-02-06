@@ -7,6 +7,11 @@ export const authors = sqliteTable('authors', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
+  asin: text('asin'),
+  imageUrl: text('image_url'),
+  bio: text('bio'),
+  monitored: integer('monitored', { mode: 'boolean' }).notNull().default(false),
+  lastCheckedAt: integer('last_checked_at', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),
@@ -24,6 +29,13 @@ export const books = sqliteTable('books', {
   coverUrl: text('cover_url'),
   goodreadsId: text('goodreads_id'),
   audibleId: text('audible_id'),
+  asin: text('asin'),
+  isbn: text('isbn'),
+  seriesName: text('series_name'),
+  seriesPosition: real('series_position'),
+  duration: integer('duration'),
+  publishedDate: text('published_date'),
+  genres: text('genres', { mode: 'json' }).$type<string[]>(),
   status: text('status', {
     enum: ['wanted', 'searching', 'downloading', 'imported', 'missing'],
   })
@@ -89,6 +101,30 @@ export const downloads = sqliteTable('downloads', {
     .notNull()
     .default(sql`(unixepoch())`),
   completedAt: integer('completed_at', { mode: 'timestamp' }),
+});
+
+// ============ SEARCH & BLACKLIST ============
+
+export const searchHistory = sqliteTable('search_history', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  query: text('query').notNull(),
+  type: text('type', { enum: ['metadata', 'indexer'] }).notNull(),
+  resultsCount: integer('results_count'),
+  searchedAt: integer('searched_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export const blacklist = sqliteTable('blacklist', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  bookId: integer('book_id').references(() => books.id),
+  infoHash: text('info_hash').notNull(),
+  title: text('title').notNull(),
+  reason: text('reason', { enum: ['wrong_content', 'bad_quality', 'wrong_narrator', 'spam', 'other'] }),
+  note: text('note'),
+  blacklistedAt: integer('blacklisted_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
 });
 
 // ============ SETTINGS ============
