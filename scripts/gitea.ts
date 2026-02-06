@@ -207,6 +207,12 @@ async function resolveLabels(input: string): Promise<number[]> {
   return ids;
 }
 
+// --- String helpers ---
+
+function unescapeBody(s: string): string {
+  return s.replace(/\\n/g, "\n");
+}
+
 // --- Commands ---
 
 const [cmd, ...args] = process.argv.slice(2);
@@ -237,7 +243,7 @@ switch (cmd) {
       process.exit(1);
     }
     const payload: any = { title };
-    if (body) payload.body = body;
+    if (body) payload.body = unescapeBody(body);
     if (labels) payload.labels = await resolveLabels(labels);
     if (milestone) payload.milestone = Number(milestone);
     const data = await api("/issues", {
@@ -302,7 +308,7 @@ switch (cmd) {
     }
     await api(`/issues/${id}/comments`, {
       method: "POST",
-      body: JSON.stringify({ body }),
+      body: JSON.stringify({ body: unescapeBody(body) }),
     });
     console.log(`Comment added to #${id}`);
     break;
@@ -378,7 +384,7 @@ switch (cmd) {
     }
     const payload: any = {
       title,
-      body,
+      body: unescapeBody(body),
       head,
       base: base || "main",
     };
