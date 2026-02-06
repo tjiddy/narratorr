@@ -21,6 +21,10 @@
     "./utils": {
       "import": "./dist/utils/index.js",
       "types": "./dist/utils/index.d.ts"
+    },
+    "./metadata": {
+      "import": "./dist/metadata/index.js",
+      "types": "./dist/metadata/index.d.ts"
     }
   },
   "scripts": {
@@ -31,7 +35,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "cheerio": "^1.0.0"
+    "cheerio": "^1.0.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
