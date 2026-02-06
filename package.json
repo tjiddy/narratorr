@@ -10,7 +10,7 @@
     "lint:fix": "eslint . --fix",
     "test": "turbo test",
     "typecheck": "turbo typecheck",
-    "db:generate": "pnpm --filter @narratorr/db drizzle-kit generate",
+    "db:generate": "pnpm --filter @narratorr/db generate",
     "db:migrate": "pnpm --filter @narratorr/db migrate",
     "docker:build": "docker build -t narratorr .",
     "docker:up": "docker-compose up -d",
