@@ -125,14 +125,15 @@ narratorr/
 │       │       └── lib/        # Utilities
 │       └── Dockerfile
 ├── packages/
-│   ├── core/                   # Indexers + download clients
+│   ├── core/                   # Indexers, download clients, metadata
 │   │   ├── indexers/           # AudioBookBay, etc.
 │   │   ├── download-clients/   # qBittorrent, etc.
+│   │   ├── metadata/           # Audnexus, etc.
 │   │   └── utils/              # Magnet links, parsing
 │   ├── db/                     # Database schema
 │   └── ui/                     # Shared UI utilities
 ├── scripts/
-│   └── gitea.sh                # Gitea API helper
+│   └── gitea.ts                # Gitea API client (TypeScript CLI)
 ├── docker-compose.yml
 └── turbo.json
 ```
@@ -191,7 +192,7 @@ narratorr/
 
 ### Gitea (Development Only)
 
-For contributors using the `scripts/gitea.sh` helper, create a `.env` file in the project root:
+For contributors using the `scripts/gitea.ts` client, create a `.env` file in the project root:
 
 ```bash
 GITEA_TOKEN=your_token_here    # Generate at https://git.tjiddy.com/user/settings/applications
@@ -200,12 +201,13 @@ GITEA_OWNER=todd
 GITEA_REPO=narratorr
 ```
 
-This file is gitignored. The helper script provides quick access to issues and project management:
+This file is gitignored. The client provides quick access to issues and project management:
 
 ```bash
-./scripts/gitea.sh issues          # List open issues
-./scripts/gitea.sh issue <id>      # Read issue details
-./scripts/gitea.sh milestones      # List milestones
+pnpm gitea issues          # List open issues
+pnpm gitea issue <id>      # Read issue details
+pnpm gitea milestones      # List milestones
+pnpm gitea prs             # List open pull requests
 ```
 
 ## Development

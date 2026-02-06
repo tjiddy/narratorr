@@ -16,7 +16,7 @@ Monorepo (Turborepo + pnpm) | Node.js 20+ | Fastify 5 | Drizzle ORM + libSQL | R
 - `packages/core/src/` — Indexer + download client adapters (indexers/, download-clients/, utils/)
 - `packages/db/src/` — Drizzle schema (schema.ts), client, migrations
 - `packages/ui/` — Shared UI utilities (cn())
-- `scripts/gitea.sh` — Gitea API helper
+- `scripts/gitea.ts` — Gitea API client (TypeScript CLI)
 
 ## Commands
 
@@ -45,16 +45,24 @@ TypeScript strict, ESM (`.js` extensions), functional React components, TanStack
 All work is tracked as Gitea issues at `https://git.tjiddy.com/todd/narratorr`. Specs live in issue bodies — each issue is self-contained.
 
 ```bash
-./scripts/gitea.sh issues           # List open issues
-./scripts/gitea.sh issue <id>       # Read full spec (do this before starting work)
-./scripts/gitea.sh issue-update <id> <field> <value>  # Update issue
-./scripts/gitea.sh issue-comment <id> "message"       # Add comment
+pnpm gitea issues                   # List open issues
+pnpm gitea issue <id>               # Read full spec
+pnpm gitea issue-update <id> <field> <value>  # Update issue
+pnpm gitea issue-comment <id> "message"       # Add comment
+pnpm gitea prs                      # List open PRs
+pnpm gitea pr-create <title> <body> <head> [base]  # Create PR
 ```
 
-### Workflow
+### Workflow Skills
+
+Claude Code skills automate the agent workflow — use these instead of manual steps:
+
+- `/claim <id>` — Read issue, verify ready, post claim comment, set in-progress, create branch
+- `/handoff <id>` — Build, push, create PR, post handoff comment
+- `/block <id>` — Post blocked comment, set blocked label, stop
 
 ## When implementing a Gitea issue
-Before starting work on any issue *YOU MUST* read: `docs/agent_workflow.md` and follow it exactly.
+Before starting work on any issue, use `/claim <id>` which reads `docs/agent_workflow.md` and follows the workflow automatically.
 
 ### Labels
 

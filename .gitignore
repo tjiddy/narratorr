@@ -43,3 +43,5 @@ config/
 # Temp files
 tmp/
 temp/
+
+.claude/settings.local.json

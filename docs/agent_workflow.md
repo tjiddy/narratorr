@@ -5,15 +5,17 @@ This document defines the **implementor workflow** for working Gitea issues in t
 - **Agent-friendly** (machine-readable conventions)
 - **Token-efficient** (bounded reading on resume)
 
-**Role:** Implementor (Claude Code)  
-**Goal:** Take a `status:ready` issue → implement on a branch → open a PR → update the issue for downstream agents (review/QA/merge).  
+**Role:** Implementor (Claude Code)
+**Goal:** Take a `status:ready` issue → implement on a branch → open a PR → update the issue for downstream agents (review/QA/merge).
 **Do NOT merge** unless explicitly instructed.
+
+> **Skills available:** `/claim <id>`, `/handoff <id>`, `/block <id>` automate the steps below. Use these for the standard workflow; refer to this doc for edge cases and templates.
 
 ---
 
 ## TL;DR (do this every time)
 
-1. Read issue: `./scripts/gitea.sh issue <id>`
+1. Read issue: `pnpm gitea issue <id>`
 2. Verify: label contains `status:ready`, and spec has Acceptance Criteria + Test Plan.
 3. If missing info: comment `BLOCKED — need input` (template below), set `status:blocked`, stop.
 4. Comment `Claiming #<id>` with a short plan; set `status:in-progress` (remove other `status:*` labels).
@@ -75,7 +77,7 @@ Must include the sections in the PR template below and **must include**: `Refs #
 ## 0) Pre-flight (before you change anything)
 
 1. Read issue:
-    - `./scripts/gitea.sh issue <id>`
+    - `pnpm gitea issue <id>`
 
 2. Verify ALL of the following:
     - Issue includes `status:ready`
@@ -103,9 +105,15 @@ Post a claim comment on the issue, then set `status:in-progress`.
 - Expected changes: `<files/modules>`
 - Verification: `<tests you will run>`
 
-Then:
-- Add label `status:in-progress`
-- Remove any other `status:*` labels
+Then replace labels (setting `status:in-progress`, removing other `status:*`):
+
+```bash
+pnpm gitea issue-update <id> labels "priority/high,scope/core,status/in-progress,type/feature"
+```
+
+The script accepts label names (or numeric IDs) and prints the resulting labels.
+
+**Verify the output shows `status/in-progress`. If the command fails, STOP — you have not claimed the issue.**
 
 ---
 
@@ -125,7 +133,8 @@ Then:
 Rules:
 - Stick to scope. If scope needs to change, comment and block.
 - Prefer small, reviewable diffs.
-- If you need to create additional issues (bugs), do it (see “Defects” section).
+- If you need to create additional issues (bugs), do it (see "Defects" section).
+- If your changes make `README.md` or `CLAUDE.md` inaccurate (new features, API routes, config options, project structure, commands, etc.), update them as part of the PR.
 
 ---
 
@@ -180,6 +189,9 @@ If you cannot make tests pass:
 - Risk: low/med/high — why
 - Rollback: revert PR / revert commit / toggle flag
 
+4. Switch back to main:
+    - `git checkout main`
+
 ---
 
 ## 6) Update the issue (handoff)
@@ -233,7 +245,7 @@ Once answered, I will: <1 sentence>
 
 When re-running on a blocked issue:
 
-1. Read issue: `./scripts/gitea.sh issue <id>`
+1. Read issue: `pnpm gitea issue <id>`
 2. Find the **most recent** comment containing `BLOCKED — need input`
 3. Read only:
     - That BLOCKED comment
@@ -268,6 +280,32 @@ If you discover a defect while implementing/testing:
 If the bug must be fixed to complete the story, either:
 - Fix it in the same branch/PR and mention it in the PR summary, OR
 - Explicitly note in the story handoff what is still required.
+
+---
+
+## 7) Retrospective (after every issue)
+
+After completing work on an issue (whether via handoff, block, or any other stopping point), append an entry to `.claude/workflow-log.md`. Create the file if it doesn't exist.
+
+### Template
+
+```
+## #<id> <issue title> — <date>
+**Skill path:** /claim → /handoff (or /claim → /block, etc.)
+**Outcome:** success | partial | blocked
+
+### Workflow experience
+- What went smoothly: ...
+- Friction / issues encountered: ...
+- Suggestions for workflow or skill improvements: ...
+
+### Token efficiency
+- Highest-token actions: (e.g. "read large file X twice", "build output was 500 lines", "re-read issue after context loss")
+- Avoidable waste: (e.g. "could have used --filter to reduce build output", "didn't need to re-read the spec")
+- Suggestions: ...
+```
+
+Keep it concise — aim for 5-10 bullet points total across both sections.
 
 ---
 
