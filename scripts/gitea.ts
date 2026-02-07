@@ -5,16 +5,16 @@
 // Commands:
 //   issues [all]                List open (or all) issues
 //   issue <id>                  Get issue details
-//   issue-create <title> <body> [labels] [milestone]
+//   issue-create <title> <body|--body-file path> [labels] [milestone]
 //   issue-update <id> <state|labels|milestone> <value>
-//   issue-comment <id> <body>
+//   issue-comment <id> <body|--body-file path>
 //   labels                      List all labels
 //   label-create <name> <color> [description]
 //   milestones                  List milestones
 //   milestone-create <title> [description]
 //   search <query>              Search issues
 //   prs                         List open pull requests
-//   pr-create <title> <body> <head> [base]
+//   pr-create <title> <body|--body-file path> <head> [base]
 
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -213,6 +213,33 @@ function unescapeBody(s: string): string {
   return s.replace(/\\+n/g, "\n");
 }
 
+/**
+ * Resolve body content from args. Supports --body-file <path> to read from file,
+ * which avoids all shell escaping issues with multiline content.
+ * Returns [resolvedBody, remainingArgs].
+ */
+function extractBody(args: string[]): [string, string[]] {
+  const idx = args.indexOf("--body-file");
+  if (idx !== -1) {
+    const filePath = args[idx + 1];
+    if (!filePath) {
+      console.error("ERROR: --body-file requires a file path argument");
+      process.exit(1);
+    }
+    if (!existsSync(filePath)) {
+      console.error(`ERROR: body file not found: ${filePath}`);
+      process.exit(1);
+    }
+    const body = readFileSync(filePath, "utf-8");
+    // Remove --body-file and its argument from args, return rest
+    const remaining = [...args.slice(0, idx), ...args.slice(idx + 2)];
+    return [body, remaining];
+  }
+  // No --body-file flag; first arg is the inline body (apply unescapeBody)
+  const [body, ...rest] = args;
+  return [body ? unescapeBody(body) : "", rest];
+}
+
 // --- Commands ---
 
 const [cmd, ...args] = process.argv.slice(2);
@@ -237,13 +264,15 @@ switch (cmd) {
   }
 
   case "issue-create": {
-    const [title, body, labels, milestone] = args;
+    const title = args[0];
+    const [body, restArgs] = extractBody(args.slice(1));
+    const [labels, milestone] = restArgs;
     if (!title) {
-      console.error("Usage: gitea issue-create <title> <body> [labels] [milestone]");
+      console.error("Usage: gitea issue-create <title> <body|--body-file path> [labels] [milestone]");
       process.exit(1);
     }
     const payload: any = { title };
-    if (body) payload.body = unescapeBody(body);
+    if (body) payload.body = body;
     if (labels) payload.labels = await resolveLabels(labels);
     if (milestone) payload.milestone = Number(milestone);
     const data = await api("/issues", {
@@ -301,14 +330,15 @@ switch (cmd) {
   }
 
   case "issue-comment": {
-    const [id, body] = args;
+    const id = args[0];
+    const [body] = extractBody(args.slice(1));
     if (!id || !body) {
-      console.error("Usage: gitea issue-comment <id> <body>");
+      console.error("Usage: gitea issue-comment <id> <body|--body-file path>");
       process.exit(1);
     }
     await api(`/issues/${id}/comments`, {
       method: "POST",
-      body: JSON.stringify({ body: unescapeBody(body) }),
+      body: JSON.stringify({ body }),
     });
     console.log(`Comment added to #${id}`);
     break;
@@ -377,14 +407,16 @@ switch (cmd) {
   }
 
   case "pr-create": {
-    const [title, body, head, base] = args;
+    const title = args[0];
+    const [body, restArgs] = extractBody(args.slice(1));
+    const [head, base] = restArgs;
     if (!title || !body || !head) {
-      console.error("Usage: gitea pr-create <title> <body> <head> [base]");
+      console.error("Usage: gitea pr-create <title> <body|--body-file path> <head> [base]");
       process.exit(1);
     }
     const payload: any = {
       title,
-      body: unescapeBody(body),
+      body,
       head,
       base: base || "main",
     };
@@ -412,6 +444,9 @@ Commands:
   milestone-create <t> [d]   Create milestone
   search <query>             Search issues
   prs [all]                  List pull requests
-  pr-create <t> <b> <h> [base]  Create pull request`);
+  pr-create <t> <b> <h> [base]  Create pull request
+
+Body args accept --body-file <path> to read content from a file
+instead of an inline argument (avoids shell escaping issues).`);
     break;
 }

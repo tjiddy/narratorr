@@ -16,10 +16,12 @@ Automates the "Push + Create PR + Update issue" workflow from `docs/agent_workfl
 4. **Read the issue** to get the title and details: `pnpm gitea issue $ARGUMENTS`
 
 5. **Create the PR** via the Gitea API:
+   - Write the PR body to a temp file (avoids shell escaping issues with multiline content):
    ```bash
-   pnpm gitea pr-create "#<id> <issue title>" "<pr body>" "<branch-name>" "main"
+   # Write PR body to temp file, then create PR
+   pnpm gitea pr-create "#<id> <issue title>" --body-file <temp-file-path> "<branch-name>" "main"
    ```
-   PR body template:
+   PR body template (write this to the temp file):
    ```
    Refs #<id>
 
