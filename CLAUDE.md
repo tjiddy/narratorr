@@ -40,6 +40,22 @@ pnpm typecheck     # TypeScript checking
 
 TypeScript strict, ESM (`.js` extensions), functional React components, TanStack Query for server state, Tailwind CSS (no CSS files), `@/` path alias for client imports.
 
+## Testing
+
+All new/changed code must include tests. Run `pnpm test` (Vitest via Turborepo) to execute all suites.
+
+**Conventions:**
+- Co-located test files: `foo.ts` → `foo.test.ts` (or `.test.tsx` for JSX)
+- Backend services: mock DB, test business logic (`services/*.test.ts`)
+- API routes: Fastify `inject()` integration tests (`routes/*.test.ts`)
+- Core adapters: MSW for HTTP mocking (`packages/core/**/*.test.ts`)
+- Frontend components: Testing Library render tests (`*.test.tsx`)
+- Frontend hooks: `renderHook` from Testing Library (`*.test.ts(x)`)
+- Global setup (client): `src/client/__tests__/setup.ts` (matchMedia mock, auto-cleanup)
+- Test helpers: `src/client/__tests__/helpers.tsx` (`renderWithProviders`)
+
+**Required before PR:** `pnpm test` (zero failures), `pnpm typecheck`, `pnpm build`.
+
 ## Project Management (Gitea)
 
 All work is tracked as Gitea issues at `https://git.tjiddy.com/todd/narratorr`. Specs live in issue bodies — each issue is self-contained.

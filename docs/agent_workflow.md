@@ -153,6 +153,13 @@ The script accepts label names (or numeric IDs) and prints the resulting labels.
 Rules:
 - Stick to scope. If scope needs to change, comment and block.
 - Prefer small, reviewable diffs.
+- **Write/update tests for all new/changed code.** Follow existing patterns:
+    - Backend services: unit tests with mocked DB (`services/*.test.ts`)
+    - API routes: integration tests with Fastify `inject()` (`routes/*.test.ts`)
+    - Core adapters: unit tests with MSW for HTTP mocking (`packages/core/**/*.test.ts`)
+    - Frontend components/pages: render tests with Testing Library (`*.test.tsx`)
+    - Frontend hooks: `renderHook` tests (`*.test.ts` or `*.test.tsx`)
+    - Utilities: pure function unit tests (`*.test.ts`)
 - If you need to create additional issues (bugs), do it (see "Defects" section).
 - If your changes make `README.md` or `CLAUDE.md` inaccurate (new features, API routes, config options, project structure, commands, etc.), update them as part of the PR.
 
@@ -160,11 +167,12 @@ Rules:
 
 ## 4) Verify locally (required)
 
-Run the minimal set of checks that prove Acceptance Criteria:
+Run **all** of the following:
+- `pnpm test` — all tests must pass (zero failures)
+- `pnpm typecheck` — no type errors
+- `pnpm build` — clean build
 - Lint/format (if applicable)
-- Unit tests (if applicable)
-- Manual steps from Test Plan
-- Any UI screenshot/recording requested
+- Manual steps from Test Plan (if any)
 
 If you cannot make tests pass:
 - Do not open a PR that is red without explanation.
