@@ -26,6 +26,38 @@ export async function createTestApp(services: Services) {
 }
 
 /**
+ * Creates a thenable chain that simulates Drizzle ORM query builder.
+ * Every chaining method (from, where, limit, etc.) returns the same chain.
+ * When awaited, resolves to `result`.
+ */
+export function mockDbChain(result: unknown = []) {
+  const chain: Record<string, unknown> = {};
+  const methods = [
+    'from', 'where', 'limit', 'orderBy', 'leftJoin',
+    'values', 'returning', 'set', 'onConflictDoUpdate',
+  ];
+  for (const method of methods) {
+    chain[method] = vi.fn().mockReturnValue(chain);
+  }
+  chain.then = (resolve: (v: unknown) => void) => Promise.resolve(result).then(resolve);
+  return chain;
+}
+
+/**
+ * Creates a mock Drizzle DB object with chainable select/insert/update/delete.
+ * Use `mockReturnValue(mockDbChain(data))` or `mockReturnValueOnce` on the
+ * returned stubs to control per-call results.
+ */
+export function createMockDb() {
+  return {
+    select: vi.fn().mockReturnValue(mockDbChain()),
+    insert: vi.fn().mockReturnValue(mockDbChain()),
+    update: vi.fn().mockReturnValue(mockDbChain()),
+    delete: vi.fn().mockReturnValue(mockDbChain()),
+  };
+}
+
+/**
  * Returns a Services object where every method on every service is a `vi.fn()`.
  * Accepts partial overrides to customize specific services.
  */
