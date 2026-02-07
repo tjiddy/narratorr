@@ -1,0 +1,11 @@
+{
+  "asin": "B001H6UJO8",
+  "name": "Brandon Sanderson",
+  "description": "Brandon Sanderson is an American author of epic fantasy and science fiction. He is best known for the Cosmere fictional universe.",
+  "image": "https://images-na.ssl-images-amazon.com/images/I/brandon-sanderson.jpg",
+  "genres": [
+    { "name": "Fantasy" },
+    { "name": "Science Fiction" },
+    { "name": "Epic Fantasy" }
+  ]
+}

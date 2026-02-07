@@ -1,0 +1,22 @@
+[
+  {
+    "asin": "B001H6UJO8",
+    "name": "Brandon Sanderson",
+    "description": "Brandon Sanderson is an American author of epic fantasy and science fiction.",
+    "image": "https://images-na.ssl-images-amazon.com/images/I/brandon-sanderson.jpg",
+    "genres": [
+      { "name": "Fantasy" },
+      { "name": "Science Fiction" }
+    ]
+  },
+  {
+    "asin": "B00DXKJ8YY",
+    "name": "Brandon Mull",
+    "description": "Brandon Mull is the author of the Fablehaven and Beyonders series.",
+    "image": "https://images-na.ssl-images-amazon.com/images/I/brandon-mull.jpg",
+    "genres": [
+      { "name": "Fantasy" },
+      { "name": "Children's" }
+    ]
+  }
+]

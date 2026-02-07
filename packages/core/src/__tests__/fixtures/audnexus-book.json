@@ -1,0 +1,28 @@
+{
+  "asin": "B0030DL4GK",
+  "isbn": "9780765365286",
+  "title": "The Way of Kings",
+  "subtitle": "Book One of the Stormlight Archive",
+  "authors": [
+    { "name": "Brandon Sanderson", "asin": "B001H6UJO8" }
+  ],
+  "narrators": [
+    { "name": "Kate Reading" },
+    { "name": "Michael Kramer" }
+  ],
+  "seriesPrimary": {
+    "name": "The Stormlight Archive",
+    "position": "1",
+    "asin": "B010XKCR92"
+  },
+  "summary": "Roshar is a world of stone and storms. Uncanny tempests of incredible power sweep across the rocky terrain so frequently that they have shaped ecology and civilization alike.",
+  "publisherName": "Macmillan Audio",
+  "releaseDate": "2010-08-31",
+  "language": "english",
+  "image": "https://m.media-amazon.com/images/I/way-of-kings.jpg",
+  "runtimeLengthMin": 2714,
+  "genres": [
+    { "name": "Fantasy", "type": "genre" },
+    { "name": "Epic Fantasy", "type": "subgenre" }
+  ]
+}
