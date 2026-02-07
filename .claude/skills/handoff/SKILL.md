@@ -38,7 +38,13 @@ Automates the "Push + Create PR + Update issue" workflow from `docs/agent_workfl
    - Rollback: revert PR
    ```
 
-6. **Post a handoff comment** on the issue:
+6. **Update labels to `stage/review`** (keeping all other existing labels):
+   - Read the current labels from the issue output (step 4).
+   - Replace any `stage/*` label with `stage/review` (keep `status/in-progress` and all other labels).
+   - Run: `pnpm gitea issue-update <id> labels "<comma-separated label names>"`
+   - Verify the output shows `stage/review`.
+
+7. **Post a handoff comment** on the issue:
    ```bash
    pnpm gitea issue-comment <id> "<comment>"
    ```
@@ -54,11 +60,11 @@ Automates the "Push + Create PR + Update issue" workflow from `docs/agent_workfl
        - None
    ```
 
-7. **Switch back to main:**
+8. **Switch back to main:**
    ```bash
    git checkout main
    ```
 
-8. **Append to workflow log** (`.claude/workflow-log.md`) using the template from `docs/agent_workflow.md` section 7. Include workflow experience, friction encountered, and token efficiency notes.
+9. **Append to workflow log** (`.claude/workflow-log.md`) using the template from `docs/agent_workflow.md` section 7. Include workflow experience, friction encountered, and token efficiency notes.
 
-9. Tell the user the PR is created and show the link.
+10. Tell the user the PR is created and show the link.

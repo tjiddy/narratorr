@@ -64,9 +64,14 @@ Claude Code skills automate the agent workflow — use these instead of manual s
 ## When implementing a Gitea issue
 Before starting work on any issue, use `/claim <id>` which reads `docs/agent_workflow.md` and follows the workflow automatically.
 
-### Labels
+### Labels (2-axis model)
 
-Type: `type:feature` / `type:bug` / `type:chore` | Priority: `priority:high` / `medium` / `low` | Status: `status:backlog` / `ready` / `in-progress` / `blocked` | Scope: `scope:backend` / `frontend` / `core` / `db`
+Labels use `/` separators. Two exclusive groups track workflow state:
+
+- **Status** (lifecycle — exactly one): `status/backlog` · `status/ready` · `status/in-progress` · `status/blocked` · `status/done`
+- **Stage** (pipeline — exactly one when in-progress): `stage/dev` · `stage/review` · `stage/qa`
+
+Other labels: Type: `type/feature` · `type/bug` · `type/chore` | Priority: `priority/high` · `priority/medium` · `priority/low` | Scope: `scope/backend` · `scope/frontend` · `scope/core` · `scope/db`
 
 ### Milestones
 

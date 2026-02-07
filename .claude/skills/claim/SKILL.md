@@ -27,11 +27,12 @@ Automates the "Claim & Plan" workflow from `docs/agent_workflow.md`.
    - Verification: `<tests to run>`
    ```
 
-5. **Set labels to `status/in-progress`** (keeping all other existing labels):
+5. **Set labels to `status/in-progress` + `stage/dev`** (keeping all other existing labels):
    - From the issue output, extract the current label names.
    - Replace any `status/*` label with `status/in-progress`.
+   - Replace any `stage/*` label with `stage/dev` (or add `stage/dev` if none exists).
    - Run: `pnpm gitea issue-update <id> labels "<comma-separated label names>"`
-   - Verify the output shows `status/in-progress`. If it doesn't, STOP and report the error.
+   - Verify the output shows `status/in-progress` and `stage/dev`. If it doesn't, STOP and report the error.
 
 6. **Create the feature branch:**
    ```bash
