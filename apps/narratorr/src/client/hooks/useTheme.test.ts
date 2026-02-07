@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useTheme } from '@/hooks/useTheme';
 
-// jsdom doesn't implement matchMedia — provide a default mock
+// Local mock so individual tests can override matchMedia behavior
 const mockMatchMedia = vi.fn().mockImplementation((query: string) => ({
   matches: false,
   media: query,
@@ -15,8 +15,6 @@ const mockMatchMedia = vi.fn().mockImplementation((query: string) => ({
 }));
 
 describe('useTheme', () => {
-  const originalMatchMedia = window.matchMedia;
-
   beforeEach(() => {
     localStorage.clear();
     document.documentElement.classList.remove('dark');
@@ -24,12 +22,7 @@ describe('useTheme', () => {
     mockMatchMedia.mockClear();
   });
 
-  afterEach(() => {
-    window.matchMedia = originalMatchMedia;
-  });
-
   it('defaults to light when no stored preference and system is light', () => {
-    // jsdom matchMedia defaults to not matching
     const { result } = renderHook(() => useTheme());
     expect(result.current.theme).toBe('light');
   });
@@ -77,7 +70,6 @@ describe('useTheme', () => {
     localStorage.setItem('theme', 'dark');
     const { result } = renderHook(() => useTheme());
 
-    // Initially dark
     expect(document.documentElement.classList.contains('dark')).toBe(true);
 
     act(() => result.current.toggleTheme());

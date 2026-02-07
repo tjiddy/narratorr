@@ -303,9 +303,14 @@ After completing work on an issue (whether via handoff, block, or any other stop
 - Highest-token actions: (e.g. "read large file X twice", "build output was 500 lines", "re-read issue after context loss")
 - Avoidable waste: (e.g. "could have used --filter to reduce build output", "didn't need to re-read the spec")
 - Suggestions: ...
+
+### Infrastructure gaps
+- Repeated code/setup/workarounds: (e.g. "copy-pasted matchMedia mock into 3 test files — should be in global setup")
+- Missing tooling or config: (e.g. "no global test cleanup — needed manual afterEach(cleanup) in every component test")
+- Unresolved items / debt: (things discovered but NOT fixed — create issues or note here so they don't get lost)
 ```
 
-Keep it concise — aim for 5-10 bullet points total across both sections.
+Keep it concise — aim for 5-15 bullet points total across all sections.
 
 ---
 
