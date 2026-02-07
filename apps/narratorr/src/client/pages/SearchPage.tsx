@@ -1,6 +1,14 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, formatBytes, type SearchResult } from '@/lib/api';
+import { api, formatBytes, type SearchResult, type BookMetadata, type AuthorMetadata } from '@/lib/api';
+import { useMetadataSearch } from '@/hooks/useMetadata';
+import { toast } from 'sonner';
+
+type SearchMode = 'discover' | 'indexer';
+
+// ============================================================================
+// Icons
+// ============================================================================
 
 function SearchIcon({ className = '' }: { className?: string }) {
   return (
@@ -139,20 +147,103 @@ function AlertCircleIcon({ className = '' }: { className?: string }) {
   );
 }
 
+function PlusIcon({ className = '' }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <line x1="12" x2="12" y1="5" y2="19" />
+      <line x1="5" x2="19" y1="12" y2="12" />
+    </svg>
+  );
+}
+
+function ArrowRightIcon({ className = '' }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <line x1="5" x2="19" y1="12" y2="12" />
+      <polyline points="12 5 19 12 12 19" />
+    </svg>
+  );
+}
+
+function ClockIcon({ className = '' }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  );
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+function formatDuration(minutes?: number): string {
+  if (!minutes) return '';
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+// ============================================================================
+// Main Component
+// ============================================================================
+
 export function SearchPage() {
   const [query, setQuery] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [mode, setMode] = useState<SearchMode>('discover');
   const queryClient = useQueryClient();
 
+  // Indexer search
   const {
-    data: results,
-    isLoading,
-    error,
+    data: indexerResults,
+    isLoading: indexerLoading,
+    error: indexerError,
   } = useQuery({
     queryKey: ['search', searchTerm],
     queryFn: () => api.search(searchTerm),
-    enabled: searchTerm.length >= 2,
+    enabled: mode === 'indexer' && searchTerm.length >= 2,
   });
+
+  // Metadata search
+  const {
+    data: metadataResults,
+    isLoading: metadataLoading,
+    error: metadataError,
+  } = useMetadataSearch(mode === 'discover' ? searchTerm : '');
+
+  const isLoading = mode === 'discover' ? metadataLoading : indexerLoading;
+  const error = mode === 'discover' ? metadataError : indexerError;
 
   const grabMutation = useMutation({
     mutationFn: api.grab,
@@ -179,6 +270,11 @@ export function SearchPage() {
     });
   };
 
+  const handleModeChange = (newMode: SearchMode) => {
+    setMode(newMode);
+    // Keep query and searchTerm so user doesn't have to retype
+  };
+
   return (
     <div className="space-y-8">
       {/* Hero Section */}
@@ -187,19 +283,49 @@ export function SearchPage() {
           Discover <span className="text-gradient">Audiobooks</span>
         </h1>
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-          Search across your configured indexers to find your next listen
+          {mode === 'discover'
+            ? 'Search metadata providers to find books and authors'
+            : 'Search across your configured indexers to find your next listen'}
         </p>
+      </div>
+
+      {/* Mode Toggle */}
+      <div className="flex justify-center animate-fade-in-up stagger-1">
+        <div className="inline-flex items-center glass-card rounded-xl p-1 gap-1">
+          <button
+            onClick={() => handleModeChange('discover')}
+            className={`
+              flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200
+              ${mode === 'discover'
+                ? 'bg-primary text-primary-foreground shadow-glow'
+                : 'text-muted-foreground hover:text-foreground'}
+            `}
+          >
+            <SearchIcon className="w-4 h-4" />
+            Discover Books
+          </button>
+          <button
+            onClick={() => handleModeChange('indexer')}
+            className={`
+              flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200
+              ${mode === 'indexer'
+                ? 'bg-primary text-primary-foreground shadow-glow'
+                : 'text-muted-foreground hover:text-foreground'}
+            `}
+          >
+            <DownloadIcon className="w-4 h-4" />
+            Search Indexers
+          </button>
+        </div>
       </div>
 
       {/* Search Form */}
       <form
         onSubmit={handleSearch}
-        className="max-w-3xl mx-auto animate-fade-in-up stagger-1"
+        className="max-w-3xl mx-auto animate-fade-in-up stagger-2"
       >
         <div className="relative group">
-          {/* Glow effect */}
           <div className="absolute -inset-0.5 bg-gradient-to-r from-primary to-amber-500 rounded-2xl opacity-20 blur-lg group-hover:opacity-30 transition-opacity" />
-
           <div className="relative flex items-center glass-card rounded-2xl overflow-hidden">
             <div className="flex items-center justify-center pl-3 sm:pl-5 pr-1 sm:pr-2 text-muted-foreground">
               {isLoading ? (
@@ -212,7 +338,11 @@ export function SearchPage() {
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search audiobooks..."
+              placeholder={
+                mode === 'discover'
+                  ? 'Search by title, author, or series...'
+                  : 'Search audiobooks...'
+              }
               className="flex-1 bg-transparent px-2 sm:px-4 py-4 text-base sm:text-lg placeholder:text-muted-foreground/60 focus:outline-none min-w-0"
             />
             <button
@@ -245,54 +375,329 @@ export function SearchPage() {
         {grabMutation.isError && (
           <div className="flex items-center gap-3 px-4 py-3 bg-destructive/10 text-destructive rounded-xl animate-fade-in">
             <AlertCircleIcon className="w-5 h-5 shrink-0" />
-            <p>
-              Failed to start download: {grabMutation.error.message}
-            </p>
+            <p>Failed to start download: {grabMutation.error.message}</p>
           </div>
         )}
       </div>
 
       {/* Results */}
-      {results && results.length > 0 && (
-        <div className="space-y-4">
-          <p className="text-sm text-muted-foreground animate-fade-in">
-            Found {results.length} result{results.length !== 1 ? 's' : ''} for "{searchTerm}"
-          </p>
-          <div className="grid gap-4">
-            {results.map((result, index) => (
-              <SearchResultCard
-                key={result.infoHash || index}
-                result={result}
-                onGrab={() => handleGrab(result)}
-                isGrabbing={grabMutation.isPending}
-                index={index}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Empty States */}
-      {searchTerm && !isLoading && results?.length === 0 && (
-        <EmptyState
-          icon={<SearchIcon className="w-12 h-12" />}
-          title={`No results for "${searchTerm}"`}
-          description="Try different keywords or check your indexer settings"
+      {mode === 'discover' ? (
+        <DiscoverResults
+          results={metadataResults}
+          searchTerm={searchTerm}
+          isLoading={metadataLoading}
         />
-      )}
-
-      {!searchTerm && (
-        <EmptyState
-          icon={<BookOpenIcon className="w-16 h-16" />}
-          title="Start your search"
-          description="Enter a title, author, or narrator to find audiobooks from your configured indexers"
+      ) : (
+        <IndexerResults
+          results={indexerResults}
+          searchTerm={searchTerm}
+          isLoading={indexerLoading}
+          onGrab={handleGrab}
+          isGrabbing={grabMutation.isPending}
         />
       )}
     </div>
   );
 }
 
-function SearchResultCard({
+// ============================================================================
+// Discover Results
+// ============================================================================
+
+function DiscoverResults({
+  results,
+  searchTerm,
+  isLoading,
+}: {
+  results: { books: BookMetadata[]; authors: AuthorMetadata[] } | undefined;
+  searchTerm: string;
+  isLoading: boolean;
+}) {
+  const hasResults = results && (results.authors.length > 0 || results.books.length > 0);
+
+  if (searchTerm && !isLoading && !hasResults) {
+    return (
+      <EmptyState
+        icon={<SearchIcon className="w-12 h-12" />}
+        title={`No results for "${searchTerm}"`}
+        description="Try different keywords or check the spelling"
+      />
+    );
+  }
+
+  if (!searchTerm) {
+    return (
+      <EmptyState
+        icon={<BookOpenIcon className="w-16 h-16" />}
+        title="Start your search"
+        description="Enter a title, author, or series to discover audiobooks"
+      />
+    );
+  }
+
+  if (!results) return null;
+
+  return (
+    <div className="space-y-8">
+      {/* Authors Section */}
+      {results.authors.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 animate-fade-in">
+            <UsersIcon className="w-5 h-5 text-primary" />
+            <h2 className="font-display text-xl font-semibold">Authors</h2>
+            <span className="text-sm text-muted-foreground">
+              ({results.authors.length})
+            </span>
+          </div>
+          <div className="grid gap-3">
+            {results.authors.map((author, index) => (
+              <AuthorCard key={author.asin || index} author={author} index={index} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Books Section */}
+      {results.books.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 animate-fade-in">
+            <BookOpenIcon className="w-5 h-5 text-primary" />
+            <h2 className="font-display text-xl font-semibold">Books</h2>
+            <span className="text-sm text-muted-foreground">
+              ({results.books.length})
+            </span>
+          </div>
+          <div className="grid gap-4">
+            {results.books.map((book, index) => (
+              <DiscoverBookCard key={book.asin || index} book={book} index={index} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Author Card
+// ============================================================================
+
+function AuthorCard({ author, index }: { author: AuthorMetadata; index: number }) {
+  const [imageError, setImageError] = useState(false);
+
+  return (
+    <div
+      className="group glass-card rounded-2xl p-4 sm:p-5 hover:shadow-card-hover hover:border-primary/30 transition-all duration-300 ease-out animate-fade-in-up"
+      style={{ animationDelay: `${index * 50}ms` }}
+    >
+      <div className="flex items-center gap-4">
+        {/* Author Image */}
+        <div className="shrink-0">
+          {author.imageUrl && !imageError ? (
+            <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-full overflow-hidden shadow-lg">
+              <img
+                src={author.imageUrl}
+                alt={author.name}
+                className="w-full h-full object-cover"
+                onError={() => setImageError(true)}
+              />
+              <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-full" />
+            </div>
+          ) : (
+            <div className="w-14 h-14 sm:w-16 sm:h-16 bg-muted rounded-full flex items-center justify-center">
+              <UsersIcon className="w-6 h-6 text-muted-foreground" />
+            </div>
+          )}
+        </div>
+
+        {/* Author Info */}
+        <div className="flex-1 min-w-0">
+          <h3 className="font-display text-lg font-semibold group-hover:text-primary transition-colors truncate">
+            {author.name}
+          </h3>
+          {author.genres && author.genres.length > 0 && (
+            <p className="text-sm text-muted-foreground truncate">
+              {author.genres.join(', ')}
+            </p>
+          )}
+        </div>
+
+        {/* View Button */}
+        {author.asin && (
+          <button
+            onClick={() => toast.info('Author pages coming soon!')}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10 rounded-lg transition-colors focus-ring"
+          >
+            View
+            <ArrowRightIcon className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Discover Book Card
+// ============================================================================
+
+function DiscoverBookCard({ book, index }: { book: BookMetadata; index: number }) {
+  const [imageError, setImageError] = useState(false);
+  const authorNames = book.authors.map((a) => a.name).join(', ');
+  const seriesInfo = book.series?.[0];
+
+  return (
+    <div
+      className="group glass-card rounded-2xl p-4 sm:p-5 hover:shadow-card-hover hover:border-primary/30 transition-all duration-300 ease-out animate-fade-in-up"
+      style={{ animationDelay: `${index * 50}ms` }}
+    >
+      <div className="flex gap-4 sm:gap-5">
+        {/* Cover Image */}
+        <div className="shrink-0">
+          {book.coverUrl && !imageError ? (
+            <div className="relative w-20 h-28 sm:w-24 sm:h-32 rounded-xl overflow-hidden shadow-lg">
+              <img
+                src={book.coverUrl}
+                alt={book.title}
+                className="w-full h-full object-cover"
+                onError={() => setImageError(true)}
+              />
+              <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-xl" />
+            </div>
+          ) : (
+            <div className="w-20 h-28 sm:w-24 sm:h-32 bg-muted rounded-xl flex items-center justify-center">
+              <BookOpenIcon className="w-8 h-8 text-muted-foreground" />
+            </div>
+          )}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          <h3 className="font-display text-lg sm:text-xl font-semibold line-clamp-2 group-hover:text-primary transition-colors">
+            {book.title}
+          </h3>
+
+          {authorNames && (
+            <p className="text-muted-foreground mt-1">
+              by <span className="text-foreground font-medium">{authorNames}</span>
+            </p>
+          )}
+
+          {book.narrators && book.narrators.length > 0 && (
+            <p className="text-sm text-muted-foreground flex items-center gap-1.5 mt-0.5">
+              <UsersIcon className="w-3.5 h-3.5" />
+              Narrated by {book.narrators.join(', ')}
+            </p>
+          )}
+
+          {/* Metadata */}
+          <div className="flex flex-wrap items-center gap-3 mt-auto pt-3">
+            {seriesInfo && (
+              <span className="text-sm text-muted-foreground">
+                {seriesInfo.name}
+                {seriesInfo.position != null && ` #${seriesInfo.position}`}
+              </span>
+            )}
+            {book.duration && (
+              <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                <ClockIcon className="w-3.5 h-3.5" />
+                {formatDuration(book.duration)}
+              </span>
+            )}
+            {book.genres && book.genres.length > 0 && (
+              <span className="text-xs px-2 py-1 bg-muted rounded-lg font-medium text-muted-foreground">
+                {book.genres[0]}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Add Button */}
+        <div className="shrink-0 flex items-center">
+          <button
+            onClick={() => toast.info('Add to library coming soon!')}
+            className="
+              flex items-center gap-2 px-4 py-2.5
+              bg-primary text-primary-foreground font-medium rounded-xl
+              hover:opacity-90 hover:shadow-glow
+              transition-all duration-200 focus-ring
+            "
+          >
+            <PlusIcon className="w-4 h-4" />
+            <span className="hidden sm:inline">Add</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Indexer Results (existing behavior)
+// ============================================================================
+
+function IndexerResults({
+  results,
+  searchTerm,
+  isLoading,
+  onGrab,
+  isGrabbing,
+}: {
+  results: SearchResult[] | undefined;
+  searchTerm: string;
+  isLoading: boolean;
+  onGrab: (result: SearchResult) => void;
+  isGrabbing: boolean;
+}) {
+  if (results && results.length > 0) {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground animate-fade-in">
+          Found {results.length} result{results.length !== 1 ? 's' : ''} for "{searchTerm}"
+        </p>
+        <div className="grid gap-4">
+          {results.map((result, index) => (
+            <IndexerResultCard
+              key={result.infoHash || index}
+              result={result}
+              onGrab={() => onGrab(result)}
+              isGrabbing={isGrabbing}
+              index={index}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (searchTerm && !isLoading && results?.length === 0) {
+    return (
+      <EmptyState
+        icon={<SearchIcon className="w-12 h-12" />}
+        title={`No results for "${searchTerm}"`}
+        description="Try different keywords or check your indexer settings"
+      />
+    );
+  }
+
+  if (!searchTerm) {
+    return (
+      <EmptyState
+        icon={<DownloadIcon className="w-16 h-16" />}
+        title="Search indexers"
+        description="Enter a title, author, or narrator to find audiobooks from your configured indexers"
+      />
+    );
+  }
+
+  return null;
+}
+
+// ============================================================================
+// Indexer Result Card (preserved from original)
+// ============================================================================
+
+function IndexerResultCard({
   result,
   onGrab,
   isGrabbing,
@@ -307,12 +712,7 @@ function SearchResultCard({
 
   return (
     <div
-      className={`
-        group glass-card rounded-2xl p-4 sm:p-5
-        hover:shadow-card-hover hover:border-primary/30
-        transition-all duration-300 ease-out
-        animate-fade-in-up
-      `}
+      className="group glass-card rounded-2xl p-4 sm:p-5 hover:shadow-card-hover hover:border-primary/30 transition-all duration-300 ease-out animate-fade-in-up"
       style={{ animationDelay: `${index * 50}ms` }}
     >
       <div className="flex gap-4 sm:gap-5">
@@ -403,6 +803,10 @@ function SearchResultCard({
     </div>
   );
 }
+
+// ============================================================================
+// Shared Components
+// ============================================================================
 
 function EmptyState({
   icon,

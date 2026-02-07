@@ -96,8 +96,46 @@ export interface TestResult {
   message?: string;
 }
 
+// Metadata types
+export interface BookMetadata {
+  asin?: string;
+  title: string;
+  subtitle?: string;
+  authors: { name: string; asin?: string }[];
+  narrators?: string[];
+  series?: { name: string; position?: number; asin?: string }[];
+  description?: string;
+  coverUrl?: string;
+  duration?: number;
+  genres?: string[];
+}
+
+export interface AuthorMetadata {
+  asin?: string;
+  name: string;
+  description?: string;
+  imageUrl?: string;
+  genres?: string[];
+}
+
+export interface MetadataSearchResults {
+  books: BookMetadata[];
+  authors: AuthorMetadata[];
+  series: unknown[];
+}
+
 // API methods
 export const api = {
+  // Metadata
+  searchMetadata: (query: string) =>
+    fetchApi<MetadataSearchResults>(`/metadata/search?q=${encodeURIComponent(query)}`),
+  getAuthor: (asin: string) =>
+    fetchApi<AuthorMetadata>(`/metadata/authors/${encodeURIComponent(asin)}`),
+  getAuthorBooks: (asin: string) =>
+    fetchApi<BookMetadata[]>(`/metadata/authors/${encodeURIComponent(asin)}/books`),
+  getBook: (asin: string) =>
+    fetchApi<BookMetadata>(`/metadata/books/${encodeURIComponent(asin)}`),
+
   // Search
   search: (query: string) =>
     fetchApi<SearchResult[]>(`/search?q=${encodeURIComponent(query)}`),
