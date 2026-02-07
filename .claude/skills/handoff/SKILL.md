@@ -59,4 +59,6 @@ Automates the "Push + Create PR + Update issue" workflow from `docs/agent_workfl
    git checkout main
    ```
 
-8. Tell the user the PR is created and show the link.
+8. **Append to workflow log** (`.claude/workflow-log.md`) using the template from `docs/agent_workflow.md` section 7. Include workflow experience, friction encountered, and token efficiency notes.
+
+9. Tell the user the PR is created and show the link.

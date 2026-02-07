@@ -210,7 +210,7 @@ async function resolveLabels(input: string): Promise<number[]> {
 // --- String helpers ---
 
 function unescapeBody(s: string): string {
-  return s.replace(/\\n/g, "\n");
+  return s.replace(/\\+n/g, "\n");
 }
 
 // --- Commands ---
