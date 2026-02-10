@@ -1,0 +1,34 @@
+{
+  "data": {
+    "search": {
+      "results": [
+        {
+          "document": {
+            "id": 15200,
+            "name": "Brandon Sanderson",
+            "name_personal": "Brandon",
+            "slug": "brandon-sanderson",
+            "books_count": 75,
+            "books": ["The Way of Kings", "Mistborn", "Elantris"],
+            "series_names": ["The Stormlight Archive", "Mistborn"],
+            "image": { "url": "https://assets.hardcover.app/authors/15200.jpg", "width": 400, "height": 600, "color": "#2a3b4c" }
+          },
+          "text_match": 890
+        },
+        {
+          "document": {
+            "id": 15300,
+            "name": "Brandon Mull",
+            "name_personal": "Brandon",
+            "slug": "brandon-mull",
+            "books_count": 30,
+            "books": ["Fablehaven", "Beyonders"],
+            "series_names": ["Fablehaven"],
+            "image": { "url": "https://assets.hardcover.app/authors/15300.jpg", "width": 400, "height": 600, "color": "#4c3b2a" }
+          },
+          "text_match": 650
+        }
+      ]
+    }
+  }
+}

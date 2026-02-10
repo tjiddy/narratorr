@@ -1,0 +1,21 @@
+{
+  "data": {
+    "search": {
+      "results": [
+        {
+          "document": {
+            "id": 4578,
+            "name": "The Stormlight Archive",
+            "slug": "the-stormlight-archive",
+            "author_name": "Brandon Sanderson",
+            "books_count": 6,
+            "primary_books_count": 4,
+            "books": ["The Way of Kings", "Words of Radiance", "Oathbringer", "Rhythm of War"],
+            "readers_count": 120000
+          },
+          "text_match": 780
+        }
+      ]
+    }
+  }
+}

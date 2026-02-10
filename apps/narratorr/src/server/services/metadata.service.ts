@@ -1,5 +1,5 @@
 import {
-  AudnexusProvider,
+  HardcoverProvider,
   type MetadataProvider,
   type MetadataSearchResults,
   type BookMetadata,
@@ -11,11 +11,15 @@ export class MetadataService {
   private providers: MetadataProvider[] = [];
 
   constructor() {
-    this.providers.push(new AudnexusProvider());
+    const apiKey = process.env.HARDCOVER_API_KEY;
+    if (apiKey) {
+      this.providers.push(new HardcoverProvider({ apiKey }));
+    }
   }
 
   async search(query: string): Promise<MetadataSearchResults> {
     const provider = this.providers[0];
+    if (!provider) return { books: [], authors: [], series: [] };
     try {
       return await provider.search(query);
     } catch {
@@ -25,6 +29,7 @@ export class MetadataService {
 
   async searchAuthors(query: string): Promise<AuthorMetadata[]> {
     const provider = this.providers[0];
+    if (!provider) return [];
     try {
       return await provider.searchAuthors(query);
     } catch {
@@ -34,6 +39,7 @@ export class MetadataService {
 
   async searchBooks(query: string): Promise<BookMetadata[]> {
     const provider = this.providers[0];
+    if (!provider) return [];
     try {
       return await provider.searchBooks(query);
     } catch {
@@ -43,6 +49,7 @@ export class MetadataService {
 
   async getAuthor(asin: string): Promise<AuthorMetadata | null> {
     const provider = this.providers[0];
+    if (!provider) return null;
     try {
       return await provider.getAuthor(asin);
     } catch {
@@ -52,6 +59,7 @@ export class MetadataService {
 
   async getAuthorBooks(asin: string): Promise<BookMetadata[]> {
     const provider = this.providers[0];
+    if (!provider) return [];
     try {
       return await provider.getAuthorBooks(asin);
     } catch {
@@ -61,6 +69,7 @@ export class MetadataService {
 
   async getBook(asin: string): Promise<BookMetadata | null> {
     const provider = this.providers[0];
+    if (!provider) return null;
     try {
       return await provider.getBook(asin);
     } catch {
@@ -70,6 +79,7 @@ export class MetadataService {
 
   async getSeries(asin: string): Promise<SeriesMetadata | null> {
     const provider = this.providers[0];
+    if (!provider) return null;
     try {
       return await provider.getSeries(asin);
     } catch {

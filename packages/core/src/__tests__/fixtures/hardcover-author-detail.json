@@ -1,0 +1,61 @@
+{
+  "data": {
+    "authors": [
+      {
+        "id": 15200,
+        "name": "Brandon Sanderson",
+        "slug": "brandon-sanderson",
+        "bio": "Brandon Sanderson is an American author of epic fantasy and science fiction.",
+        "books_count": 75,
+        "cached_image": { "url": "https://assets.hardcover.app/authors/15200.jpg", "width": 400, "height": 600, "color": "#2a3b4c" },
+        "contributions": [
+          {
+            "contribution": "Author",
+            "book": {
+              "id": 328491,
+              "title": "The Way of Kings",
+              "slug": "the-way-of-kings",
+              "release_year": 2010,
+              "audio_seconds": 162840,
+              "rating": 4.65,
+              "cached_image": { "url": "https://assets.hardcover.app/328491/cover.jpg" },
+              "featured_book_series": {
+                "position": 1,
+                "series": { "id": 4578, "name": "The Stormlight Archive", "slug": "the-stormlight-archive" }
+              }
+            }
+          },
+          {
+            "contribution": "Author",
+            "book": {
+              "id": 328500,
+              "title": "Words of Radiance",
+              "slug": "words-of-radiance",
+              "release_year": 2014,
+              "audio_seconds": 173400,
+              "rating": 4.76,
+              "cached_image": { "url": "https://assets.hardcover.app/328500/cover.jpg" },
+              "featured_book_series": {
+                "position": 2,
+                "series": { "id": 4578, "name": "The Stormlight Archive", "slug": "the-stormlight-archive" }
+              }
+            }
+          },
+          {
+            "contribution": "Narrator",
+            "book": {
+              "id": 999999,
+              "title": "Some Narrated Book",
+              "slug": "some-narrated-book",
+              "release_year": 2020,
+              "audio_seconds": 36000,
+              "rating": 3.5,
+              "cached_image": null,
+              "featured_book_series": null
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

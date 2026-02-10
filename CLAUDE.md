@@ -77,8 +77,17 @@ Claude Code skills automate the agent workflow — use these instead of manual s
 - `/handoff <id>` — Build, push, create PR, post handoff comment
 - `/block <id>` — Post blocked comment, set blocked label, stop
 
-## When implementing a Gitea issue
-Before starting work on any issue, use `/claim <id>` which reads `docs/agent_workflow.md` and follows the workflow automatically.
+## ⚠ Issue Workflow — MANDATORY
+
+**Every task referencing a Gitea issue (#N) MUST follow this lifecycle — no exceptions.**
+A detailed plan, pre-made spec, or explicit implementation instructions do NOT bypass these steps.
+
+1. **Before writing any code** → `/claim <id>` (reads issue, verifies ready, comments, sets labels, creates branch)
+2. **After tests/typecheck/build pass** → `/handoff <id>` (pushes, creates PR, comments, updates labels, appends workflow log)
+3. **If blocked or unable to complete** → `/block <id>` (comments, sets blocked label, stops)
+
+Skipping `/claim` means no branch, no tracking, no audit trail.
+Skipping `/handoff` means no PR, no label update, no workflow log entry.
 
 ### Labels (2-axis model)
 

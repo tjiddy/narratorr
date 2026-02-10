@@ -1,0 +1,62 @@
+{
+  "data": {
+    "search": {
+      "results": [
+        {
+          "document": {
+            "id": 328491,
+            "title": "The Way of Kings",
+            "subtitle": "Book One of the Stormlight Archive",
+            "slug": "the-way-of-kings",
+            "author_names": ["Brandon Sanderson"],
+            "series_names": ["The Stormlight Archive"],
+            "description": "Roshar is a world of stone and storms.",
+            "release_year": 2010,
+            "pages": 1007,
+            "audio_seconds": 162840,
+            "has_audiobook": true,
+            "has_ebook": true,
+            "rating": 4.65,
+            "ratings_count": 45000,
+            "users_count": 82000,
+            "genres": ["Fantasy", "Epic Fantasy", "High Fantasy"],
+            "isbns": ["9780765365286", "9780765376671"],
+            "image": "https://assets.hardcover.app/328491/cover.jpg",
+            "contributions": [
+              { "author": { "name": "Brandon Sanderson", "slug": "brandon-sanderson", "id": 15200 } }
+            ],
+            "featured_series": { "name": "The Stormlight Archive", "slug": "the-stormlight-archive", "id": 4578, "position": 1 }
+          },
+          "text_match": 578
+        },
+        {
+          "document": {
+            "id": 328500,
+            "title": "Words of Radiance",
+            "subtitle": null,
+            "slug": "words-of-radiance",
+            "author_names": ["Brandon Sanderson"],
+            "series_names": ["The Stormlight Archive"],
+            "description": "Expected by his enemies to die the miserable death of a military slave, Kaladin survived to be given command of the royal bodyguards.",
+            "release_year": 2014,
+            "pages": 1087,
+            "audio_seconds": 173400,
+            "has_audiobook": true,
+            "has_ebook": true,
+            "rating": 4.76,
+            "ratings_count": 35000,
+            "users_count": 60000,
+            "genres": ["Fantasy", "Epic Fantasy"],
+            "isbns": ["9780765326362"],
+            "image": { "url": "https://assets.hardcover.app/328500/cover.jpg" },
+            "contributions": [
+              { "author": { "name": "Brandon Sanderson", "slug": "brandon-sanderson", "id": 15200 } }
+            ],
+            "featured_series": { "name": "The Stormlight Archive", "slug": "the-stormlight-archive", "id": 4578, "position": 2 }
+          },
+          "text_match": 456
+        }
+      ]
+    }
+  }
+}

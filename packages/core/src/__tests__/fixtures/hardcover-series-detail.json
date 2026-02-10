@@ -1,0 +1,47 @@
+{
+  "data": {
+    "series": [
+      {
+        "id": 4578,
+        "name": "The Stormlight Archive",
+        "slug": "the-stormlight-archive",
+        "description": "An epic fantasy series set on the world of Roshar.",
+        "books_count": 6,
+        "primary_books_count": 4,
+        "author": { "id": 15200, "name": "Brandon Sanderson", "slug": "brandon-sanderson" },
+        "book_series": [
+          {
+            "position": 1,
+            "book": {
+              "id": 328491,
+              "title": "The Way of Kings",
+              "slug": "the-way-of-kings",
+              "release_year": 2010,
+              "audio_seconds": 162840,
+              "rating": 4.65,
+              "cached_image": { "url": "https://assets.hardcover.app/328491/cover.jpg" },
+              "cached_contributors": [
+                { "id": 15200, "name": "Brandon Sanderson", "contribution": "Author" }
+              ]
+            }
+          },
+          {
+            "position": 2,
+            "book": {
+              "id": 328500,
+              "title": "Words of Radiance",
+              "slug": "words-of-radiance",
+              "release_year": 2014,
+              "audio_seconds": 173400,
+              "rating": 4.76,
+              "cached_image": { "url": "https://assets.hardcover.app/328500/cover.jpg" },
+              "cached_contributors": [
+                { "id": 15200, "name": "Brandon Sanderson", "contribution": "Author" }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
