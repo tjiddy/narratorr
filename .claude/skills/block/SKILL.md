@@ -11,10 +11,11 @@ Automates the "BLOCKED" workflow from `docs/agent_workflow.md`.
    - Questions that need answering (with options and defaults)
 
 3. **Post a BLOCKED comment** on the issue:
+   - Write the comment to a temp file, then post it (avoids shell truncation of multiline strings):
    ```bash
-   pnpm gitea issue-comment <id> "<comment>"
+   pnpm gitea issue-comment <id> --body-file <temp-file-path>
    ```
-   Comment template:
+   Comment template (write this to the temp file):
    ```
    **BLOCKED — need input**
 
@@ -28,6 +29,7 @@ Automates the "BLOCKED" workflow from `docs/agent_workflow.md`.
 
    Once answered, I will: <1 sentence>
    ```
+   - Clean up the temp file after posting.
 
 4. **Set labels to `status/blocked`** (keeping other labels, including current `stage/*`):
    - From the issue output, extract the current label names.

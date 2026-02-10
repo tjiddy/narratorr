@@ -15,8 +15,12 @@ Automates the "Claim & Plan" workflow from `docs/agent_workflow.md`.
    - Run `pnpm gitea prs` and check if any open PR title contains `#<id>`.
    - If one exists, STOP: "PR already open for #<id>: <PR link>"
 
-4. **Post a claim comment** on the issue using `pnpm gitea issue-comment <id> "<comment>"`.
-   Use this template (fill in the plan based on the issue spec):
+4. **Post a claim comment** on the issue:
+   - Write the comment to a temp file, then post it (avoids shell truncation of multiline strings):
+   ```bash
+   pnpm gitea issue-comment <id> --body-file <temp-file-path>
+   ```
+   Comment template (write this to the temp file):
    ```
    **Claiming #<id>**
    - Plan:
@@ -26,6 +30,7 @@ Automates the "Claim & Plan" workflow from `docs/agent_workflow.md`.
    - Expected changes: `<files/modules>`
    - Verification: `<tests to run>`
    ```
+   - Clean up the temp file after posting.
 
 5. **Set labels to `status/in-progress` + `stage/dev`** (keeping all other existing labels):
    - From the issue output, extract the current label names.

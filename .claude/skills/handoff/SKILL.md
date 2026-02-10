@@ -47,10 +47,11 @@ Automates the "Push + Create PR + Update issue" workflow from `docs/agent_workfl
    - Verify the output shows `stage/review`.
 
 7. **Post a handoff comment** on the issue:
+   - Write the comment to a temp file, then post it (avoids shell truncation of multiline strings):
    ```bash
-   pnpm gitea issue-comment <id> "<comment>"
+   pnpm gitea issue-comment <id> --body-file <temp-file-path>
    ```
-   Comment template:
+   Comment template (write this to the temp file):
    ```
    **PR ready:** <PR link>
 
@@ -61,6 +62,7 @@ Automates the "Push + Create PR + Update issue" workflow from `docs/agent_workfl
    - Notes / follow-ups:
        - None
    ```
+   - Clean up the temp file after posting.
 
 8. **Switch back to main:**
    ```bash
