@@ -52,6 +52,7 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
       coverUrl,
     });
 
+    request.log.info({ title }, 'Book added');
     return reply.status(201).send(book);
   });
 
@@ -66,6 +67,7 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
         return reply.status(404).send({ error: 'Book not found' });
       }
 
+      request.log.debug({ id }, 'Book updated');
       return book;
     }
   );
@@ -79,6 +81,7 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
       return reply.status(404).send({ error: 'Book not found' });
     }
 
+    request.log.info({ id }, 'Book deleted');
     return { success: true };
   });
 }

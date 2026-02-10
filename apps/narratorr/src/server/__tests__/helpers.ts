@@ -58,6 +58,23 @@ export function createMockDb() {
 }
 
 /**
+ * Creates a mock Pino BaseLogger with all methods as vi.fn() stubs.
+ */
+export function createMockLogger() {
+  return {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    fatal: vi.fn(),
+    trace: vi.fn(),
+    child: vi.fn().mockReturnThis(),
+    level: 'info',
+    silent: vi.fn(),
+  };
+}
+
+/**
  * Returns a Services object where every method on every service is a `vi.fn()`.
  * Accepts partial overrides to customize specific services.
  */

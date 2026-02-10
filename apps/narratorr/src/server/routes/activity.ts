@@ -34,6 +34,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
       return reply.status(404).send({ error: 'Download not found' });
     }
 
+    request.log.info({ id }, 'Download cancelled');
     return { success: true };
   });
 
@@ -52,6 +53,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
 
     // Re-grab the download
     try {
+      request.log.info({ id }, 'Download retry');
       const newDownload = await downloadService.grab({
         magnetUri: download.magnetUri,
         title: download.title,
@@ -66,6 +68,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
 
       return newDownload;
     } catch (error) {
+      request.log.error(error, 'Retry failed');
       const message = error instanceof Error ? error.message : 'Unknown error';
       return reply.status(500).send({ error: message });
     }

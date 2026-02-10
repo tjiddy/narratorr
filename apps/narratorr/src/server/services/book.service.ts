@@ -1,5 +1,6 @@
 import { eq, like, desc } from 'drizzle-orm';
 import type { Db } from '@narratorr/db';
+import type { FastifyBaseLogger } from 'fastify';
 import { books, authors } from '@narratorr/db/schema';
 import { slugify } from '@narratorr/core';
 
@@ -12,7 +13,7 @@ export interface BookWithAuthor extends BookRow {
 }
 
 export class BookService {
-  constructor(private db: Db) {}
+  constructor(private db: Db, private log: FastifyBaseLogger) {}
 
   async getAll(status?: string): Promise<BookWithAuthor[]> {
     let query = this.db
@@ -97,6 +98,7 @@ export class BookService {
       })
       .returning();
 
+    this.log.info({ title: data.title }, 'Book added to library');
     return this.getById(result[0].id) as Promise<BookWithAuthor>;
   }
 
@@ -113,6 +115,7 @@ export class BookService {
   }
 
   async updateStatus(id: number, status: BookRow['status']): Promise<BookWithAuthor | null> {
+    this.log.info({ id, status }, 'Book status changed');
     return this.update(id, { status });
   }
 
@@ -121,6 +124,7 @@ export class BookService {
     if (!existing) return false;
 
     await this.db.delete(books).where(eq(books.id, id));
+    this.log.info({ id }, 'Book removed');
     return true;
   }
 

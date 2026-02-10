@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { createMockLogger } from '../__tests__/helpers.js';
 import { MetadataService } from './metadata.service.js';
 
 const mockProvider = {
@@ -37,7 +38,7 @@ describe('MetadataService', () => {
     mockProvider.getBook.mockResolvedValue(null);
     mockProvider.getSeries.mockResolvedValue(null);
     mockProvider.test.mockResolvedValue({ success: true });
-    service = new MetadataService();
+    service = new MetadataService(createMockLogger() as any);
   });
 
   describe('search', () => {
@@ -126,7 +127,7 @@ describe('MetadataService', () => {
   describe('no API key', () => {
     it('returns empty results when HARDCOVER_API_KEY is not set', async () => {
       vi.stubEnv('HARDCOVER_API_KEY', '');
-      const noKeyService = new MetadataService();
+      const noKeyService = new MetadataService(createMockLogger() as any);
 
       expect(noKeyService.getProviders()).toEqual([]);
       expect(await noKeyService.search('test')).toEqual({ books: [], authors: [], series: [] });

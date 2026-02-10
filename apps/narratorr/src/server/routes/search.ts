@@ -23,6 +23,7 @@ export async function searchRoutes(
     },
     async (request) => {
       const { q, limit } = request.query as SearchQuery;
+      request.log.info({ q }, 'Search request');
       return indexerService.searchAll(q, { limit });
     }
   );
@@ -39,9 +40,11 @@ export async function searchRoutes(
       const data = request.body as GrabInput;
 
       try {
+        request.log.info({ title: data.title }, 'Grab requested');
         const download = await downloadService.grab(data);
         return reply.status(201).send(download);
       } catch (error) {
+        request.log.error(error, 'Grab failed');
         const message = error instanceof Error ? error.message : 'Unknown error';
         return reply.status(500).send({ error: message });
       }

@@ -10,6 +10,7 @@ import {
   createIndexerFormSchema,
   createDownloadClientFormSchema,
   updateSettingsFormSchema,
+  logLevelSchema,
   type CreateIndexerFormData,
   type CreateDownloadClientFormData,
   type UpdateSettingsFormData,
@@ -116,6 +117,15 @@ function AlertCircleIcon({ className = '' }: { className?: string }) {
   );
 }
 
+function TerminalIcon({ className = '' }: { className?: string }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" x2="20" y1="19" y2="19" />
+    </svg>
+  );
+}
+
 const navItems = [
   { to: '/settings', label: 'General', icon: SettingsIcon, end: true },
   { to: '/settings/indexers', label: 'Indexers', icon: SearchIcon },
@@ -201,6 +211,9 @@ function GeneralSettings() {
         path: '',
         folderFormat: '{author}/{title}',
       },
+      general: {
+        logLevel: 'info' as const,
+      },
     },
   });
 
@@ -211,6 +224,9 @@ function GeneralSettings() {
         library: {
           path: settings.library.path,
           folderFormat: settings.library.folderFormat,
+        },
+        general: {
+          logLevel: settings.general?.logLevel || 'info',
         },
       });
     }
@@ -286,6 +302,37 @@ function GeneralSettings() {
             )}
             <p className="text-sm text-muted-foreground mt-2">
               Available tokens: <code className="px-1.5 py-0.5 bg-muted rounded text-xs">{'{author}'}</code>, <code className="px-1.5 py-0.5 bg-muted rounded text-xs">{'{title}'}</code>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="glass-card rounded-2xl p-6 sm:p-8">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="p-2 bg-primary/10 rounded-xl">
+            <TerminalIcon className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <h2 className="font-display text-xl font-semibold">Logging</h2>
+            <p className="text-sm text-muted-foreground">Control server log verbosity</p>
+          </div>
+        </div>
+
+        <div className="space-y-5">
+          <div>
+            <label className="block text-sm font-medium mb-2">Log Level</label>
+            <select
+              {...register('general.logLevel')}
+              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+            >
+              {logLevelSchema.options.map((level) => (
+                <option key={level} value={level}>
+                  {level.charAt(0).toUpperCase() + level.slice(1)}
+                </option>
+              ))}
+            </select>
+            <p className="text-sm text-muted-foreground mt-2">
+              Set to Debug for detailed diagnostic output, or Error to reduce noise
             </p>
           </div>
         </div>

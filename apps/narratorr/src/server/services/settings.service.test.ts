@@ -47,6 +47,7 @@ describe('SettingsService', () => {
       // Other sections fall back to defaults
       expect(result.search).toEqual({ intervalMinutes: 360, enabled: true });
       expect(result.import).toEqual({ deleteAfterImport: false, minSeedTime: 60 });
+      expect(result.general).toEqual({ logLevel: 'info' });
     });
 
     it('returns all defaults when nothing stored', async () => {
@@ -56,6 +57,7 @@ describe('SettingsService', () => {
       expect(result.library.path).toBe('/audiobooks');
       expect(result.search.enabled).toBe(true);
       expect(result.import.deleteAfterImport).toBe(false);
+      expect(result.general.logLevel).toBe('info');
     });
   });
 

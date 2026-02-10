@@ -6,6 +6,7 @@ const mockSettings = {
   library: { path: '/audiobooks', folderFormat: '{author}/{title}' },
   search: { intervalMinutes: 360, enabled: true },
   import: { deleteAfterImport: false, minSeedTime: 60 },
+  general: { logLevel: 'info' },
 };
 
 describe('settings routes', () => {

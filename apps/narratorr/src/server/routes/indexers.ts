@@ -45,6 +45,7 @@ export async function indexersRoutes(app: FastifyInstance, indexerService: Index
     async (request, reply) => {
       const data = request.body as CreateIndexerInput;
       const indexer = await indexerService.create(data);
+      request.log.info({ name: data.name }, 'Indexer created');
       return reply.status(201).send(indexer);
     }
   );
@@ -67,6 +68,7 @@ export async function indexersRoutes(app: FastifyInstance, indexerService: Index
         return reply.status(404).send({ error: 'Indexer not found' });
       }
 
+      request.log.debug({ id }, 'Indexer updated');
       return indexer;
     }
   );
@@ -109,7 +111,9 @@ export async function indexersRoutes(app: FastifyInstance, indexerService: Index
     },
     async (request) => {
       const { id } = request.params as { id: number };
-      return indexerService.test(id);
+      const result = await indexerService.test(id);
+      request.log.debug({ id, success: result.success }, 'Indexer test result');
+      return result;
     }
   );
 }

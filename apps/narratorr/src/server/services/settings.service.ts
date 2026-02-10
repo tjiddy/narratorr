@@ -15,6 +15,9 @@ export interface AppSettings {
     deleteAfterImport: boolean;
     minSeedTime: number;
   };
+  general: {
+    logLevel: 'error' | 'warn' | 'info' | 'debug';
+  };
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -29,6 +32,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   import: {
     deleteAfterImport: false,
     minSeedTime: 60,
+  },
+  general: {
+    logLevel: 'info',
   },
 };
 
@@ -54,6 +60,7 @@ export class SettingsService {
       library: (settingsMap.get('library') as AppSettings['library']) || DEFAULT_SETTINGS.library,
       search: (settingsMap.get('search') as AppSettings['search']) || DEFAULT_SETTINGS.search,
       import: (settingsMap.get('import') as AppSettings['import']) || DEFAULT_SETTINGS.import,
+      general: (settingsMap.get('general') as AppSettings['general']) || DEFAULT_SETTINGS.general,
     };
   }
 

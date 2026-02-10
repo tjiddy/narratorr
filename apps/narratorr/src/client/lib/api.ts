@@ -89,6 +89,9 @@ export interface Settings {
     deleteAfterImport: boolean;
     minSeedTime: number;
   };
+  general: {
+    logLevel: 'error' | 'warn' | 'info' | 'debug';
+  };
 }
 
 export interface TestResult {

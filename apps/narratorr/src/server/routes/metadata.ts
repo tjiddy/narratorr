@@ -13,6 +13,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
     },
     async (request) => {
       const { q } = request.query as { q: string };
+      request.log.debug({ q }, 'Metadata search');
       return metadataService.search(q);
     }
   );

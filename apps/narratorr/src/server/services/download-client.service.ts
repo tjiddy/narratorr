@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import type { Db } from '@narratorr/db';
+import type { FastifyBaseLogger } from 'fastify';
 import { downloadClients } from '@narratorr/db/schema';
 import {
   QBittorrentClient,
@@ -13,7 +14,7 @@ type NewDownloadClient = typeof downloadClients.$inferInsert;
 export class DownloadClientService {
   private adapters: Map<number, DownloadClientAdapter> = new Map();
 
-  constructor(private db: Db) {}
+  constructor(private db: Db, private log: FastifyBaseLogger) {}
 
   async getAll(): Promise<DownloadClientRow[]> {
     return this.db.select().from(downloadClients).orderBy(downloadClients.priority);
@@ -40,6 +41,7 @@ export class DownloadClientService {
 
   async create(data: Omit<NewDownloadClient, 'id' | 'createdAt'>): Promise<DownloadClientRow> {
     const result = await this.db.insert(downloadClients).values(data).returning();
+    this.log.info({ name: data.name, type: data.type }, 'Download client created');
     return result[0];
   }
 
@@ -56,6 +58,7 @@ export class DownloadClientService {
     // Clear cached adapter
     this.adapters.delete(id);
 
+    this.log.debug({ id }, 'Download client updated');
     return result[0] || null;
   }
 
@@ -65,6 +68,7 @@ export class DownloadClientService {
 
     await this.db.delete(downloadClients).where(eq(downloadClients.id, id));
     this.adapters.delete(id);
+    this.log.info({ id }, 'Download client deleted');
     return true;
   }
 
@@ -115,7 +119,9 @@ export class DownloadClientService {
 
     try {
       const adapter = this.createAdapter(client);
-      return adapter.test();
+      const result = await adapter.test();
+      this.log.debug({ id, success: result.success }, 'Download client test result');
+      return result;
     } catch (error) {
       return {
         success: false,

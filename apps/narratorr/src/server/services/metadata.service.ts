@@ -1,3 +1,4 @@
+import type { FastifyBaseLogger } from 'fastify';
 import {
   HardcoverProvider,
   type MetadataProvider,
@@ -10,10 +11,13 @@ import {
 export class MetadataService {
   private providers: MetadataProvider[] = [];
 
-  constructor() {
+  constructor(private log: FastifyBaseLogger) {
     const apiKey = process.env.HARDCOVER_API_KEY;
     if (apiKey) {
       this.providers.push(new HardcoverProvider({ apiKey }));
+      this.log.info('Metadata provider loaded: Hardcover');
+    } else {
+      this.log.warn('No HARDCOVER_API_KEY set — metadata lookups disabled');
     }
   }
 
@@ -22,7 +26,8 @@ export class MetadataService {
     if (!provider) return { books: [], authors: [], series: [] };
     try {
       return await provider.search(query);
-    } catch {
+    } catch (error) {
+      this.log.warn(error, 'Metadata search failed');
       return { books: [], authors: [], series: [] };
     }
   }
@@ -32,7 +37,8 @@ export class MetadataService {
     if (!provider) return [];
     try {
       return await provider.searchAuthors(query);
-    } catch {
+    } catch (error) {
+      this.log.warn(error, 'Metadata searchAuthors failed');
       return [];
     }
   }
@@ -42,7 +48,8 @@ export class MetadataService {
     if (!provider) return [];
     try {
       return await provider.searchBooks(query);
-    } catch {
+    } catch (error) {
+      this.log.warn(error, 'Metadata searchBooks failed');
       return [];
     }
   }
@@ -52,7 +59,8 @@ export class MetadataService {
     if (!provider) return null;
     try {
       return await provider.getAuthor(asin);
-    } catch {
+    } catch (error) {
+      this.log.warn(error, 'Metadata getAuthor failed');
       return null;
     }
   }
@@ -62,7 +70,8 @@ export class MetadataService {
     if (!provider) return [];
     try {
       return await provider.getAuthorBooks(asin);
-    } catch {
+    } catch (error) {
+      this.log.warn(error, 'Metadata getAuthorBooks failed');
       return [];
     }
   }
@@ -72,7 +81,8 @@ export class MetadataService {
     if (!provider) return null;
     try {
       return await provider.getBook(asin);
-    } catch {
+    } catch (error) {
+      this.log.warn(error, 'Metadata getBook failed');
       return null;
     }
   }
@@ -82,7 +92,8 @@ export class MetadataService {
     if (!provider) return null;
     try {
       return await provider.getSeries(asin);
-    } catch {
+    } catch (error) {
+      this.log.warn(error, 'Metadata getSeries failed');
       return null;
     }
   }

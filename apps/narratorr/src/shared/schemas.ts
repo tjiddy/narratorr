@@ -152,16 +152,25 @@ export const importSettingsSchema = z.object({
   minSeedTime: z.number().int().min(0).default(0),
 });
 
+export const logLevelSchema = z.enum(['error', 'warn', 'info', 'debug']);
+export type LogLevel = z.infer<typeof logLevelSchema>;
+
+export const generalSettingsSchema = z.object({
+  logLevel: logLevelSchema.default('info'),
+});
+
 export const appSettingsSchema = z.object({
   library: librarySettingsSchema,
   search: searchSettingsSchema,
   import: importSettingsSchema,
+  general: generalSettingsSchema,
 });
 
 export const updateSettingsSchema = z.object({
   library: librarySettingsSchema.partial().optional(),
   search: searchSettingsSchema.partial().optional(),
   import: importSettingsSchema.partial().optional(),
+  general: generalSettingsSchema.partial().optional(),
 });
 
 export type AppSettings = z.infer<typeof appSettingsSchema>;
@@ -172,6 +181,9 @@ export const updateSettingsFormSchema = z.object({
   library: z.object({
     path: z.string().min(1, 'Library path is required'),
     folderFormat: z.string().min(1, 'Folder format is required'),
+  }),
+  general: z.object({
+    logLevel: logLevelSchema,
   }),
 });
 

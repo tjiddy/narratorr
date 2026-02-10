@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createMockDb, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import { BookService } from './book.service.js';
 
 const now = new Date();
@@ -46,7 +46,7 @@ describe('BookService', () => {
 
   beforeEach(() => {
     db = createMockDb();
-    service = new BookService(db as any);
+    service = new BookService(db as any, createMockLogger() as any);
   });
 
   describe('getAll', () => {

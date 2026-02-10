@@ -48,6 +48,7 @@ export async function downloadClientsRoutes(
     async (request, reply) => {
       const data = request.body as CreateDownloadClientInput;
       const client = await downloadClientService.create(data);
+      request.log.info({ name: data.name }, 'Download client created');
       return reply.status(201).send(client);
     }
   );
@@ -70,6 +71,7 @@ export async function downloadClientsRoutes(
         return reply.status(404).send({ error: 'Download client not found' });
       }
 
+      request.log.debug({ id }, 'Download client updated');
       return client;
     }
   );
@@ -112,7 +114,9 @@ export async function downloadClientsRoutes(
     },
     async (request) => {
       const { id } = request.params as { id: number };
-      return downloadClientService.test(id);
+      const result = await downloadClientService.test(id);
+      request.log.debug({ id, success: result.success }, 'Download client test result');
+      return result;
     }
   );
 }

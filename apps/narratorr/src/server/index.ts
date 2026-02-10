@@ -37,12 +37,18 @@ async function main() {
   }
 
   // Initialize database with migrations
-  console.log(`Initializing database at ${config.dbPath}...`);
+  app.log.info({ dbPath: config.dbPath }, 'Initializing database');
   await runMigrations(config.dbPath);
   const db = createDb(config.dbPath);
 
   // Create services
-  const services = createServices(db);
+  const services = createServices(db, app.log);
+
+  // Apply persisted log level
+  const generalSettings = await services.settings.get('general');
+  if (generalSettings?.logLevel) {
+    app.log.level = generalSettings.logLevel;
+  }
 
   // Register API routes
   await registerRoutes(app, services);
@@ -67,7 +73,7 @@ async function main() {
   }
 
   // Start background jobs
-  startJobs(db, services.downloadClient);
+  startJobs(db, services.downloadClient, app.log);
 
   // Start server
   await app.listen({
@@ -75,7 +81,7 @@ async function main() {
     host: '0.0.0.0',
   });
 
-  console.log(`Server running on http://localhost:${config.port}`);
+  app.log.info({ port: config.port }, 'Server running');
 }
 
 main().catch((err) => {

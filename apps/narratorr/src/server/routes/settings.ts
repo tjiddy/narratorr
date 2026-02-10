@@ -17,9 +17,18 @@ export async function settingsRoutes(app: FastifyInstance, settingsService: Sett
       },
     },
     async (request) => {
-      // Type assertion is safe here as Zod validates the input
       const data = request.body as Partial<AppSettings>;
-      return settingsService.update(data);
+      const result = await settingsService.update(data);
+
+      // Apply log level change at runtime
+      if (data.general?.logLevel) {
+        app.log.level = data.general.logLevel;
+        app.log.info({ level: data.general.logLevel }, 'Log level changed');
+      }
+
+      request.log.info('Settings updated');
+
+      return result;
     }
   );
 }

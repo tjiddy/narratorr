@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createMockDb, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import { DownloadService } from './download.service.js';
 import type { DownloadClientService } from './download-client.service.js';
 
@@ -54,7 +54,7 @@ describe('DownloadService', () => {
   beforeEach(() => {
     db = createMockDb();
     clientService = createMockDownloadClientService();
-    service = new DownloadService(db as any, clientService);
+    service = new DownloadService(db as any, clientService, createMockLogger() as any);
   });
 
   describe('getAll', () => {

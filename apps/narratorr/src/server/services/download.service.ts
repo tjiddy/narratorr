@@ -1,5 +1,6 @@
 import { eq, desc, inArray } from 'drizzle-orm';
 import { type Db } from '@narratorr/db';
+import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '@narratorr/db/schema';
 import { parseInfoHash } from '@narratorr/core';
 import { type DownloadClientService } from './download-client.service.js';
@@ -14,7 +15,8 @@ export interface DownloadWithBook extends DownloadRow {
 export class DownloadService {
   constructor(
     private db: Db,
-    private downloadClientService: DownloadClientService
+    private downloadClientService: DownloadClientService,
+    private log: FastifyBaseLogger
   ) {}
 
   async getAll(status?: string): Promise<DownloadWithBook[]> {
@@ -133,6 +135,7 @@ export class DownloadService {
         .where(eq(books.id, params.bookId));
     }
 
+    this.log.info({ title: params.title, indexerId: params.indexerId }, 'Download initiated');
     return this.getById(result[0].id) as Promise<DownloadWithBook>;
   }
 
@@ -148,6 +151,7 @@ export class DownloadService {
 
   async updateStatus(id: number, status: DownloadRow['status']): Promise<void> {
     await this.db.update(downloads).set({ status }).where(eq(downloads.id, id));
+    this.log.info({ id, status }, 'Download status changed');
   }
 
   async setError(id: number, errorMessage: string): Promise<void> {
@@ -155,6 +159,7 @@ export class DownloadService {
       .update(downloads)
       .set({ status: 'failed', errorMessage })
       .where(eq(downloads.id, id));
+    this.log.warn({ id, error: errorMessage }, 'Download error recorded');
   }
 
   async cancel(id: number): Promise<boolean> {
@@ -169,7 +174,7 @@ export class DownloadService {
           await adapter.removeTorrent(download.infoHash, true);
         }
       } catch (error) {
-        console.error('Failed to remove torrent from client:', error);
+        this.log.error({ error, id }, 'Failed to remove torrent from client');
       }
     }
 
@@ -187,6 +192,7 @@ export class DownloadService {
         .where(eq(books.id, download.bookId));
     }
 
+    this.log.info({ id }, 'Download cancelled');
     return true;
   }
 

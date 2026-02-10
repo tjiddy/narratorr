@@ -40,6 +40,26 @@ pnpm typecheck     # TypeScript checking
 
 TypeScript strict, ESM (`.js` extensions), functional React components, TanStack Query for server state, Tailwind CSS (no CSS files), `@/` path alias for client imports.
 
+## Logging
+
+Uses Fastify's built-in Pino logger. Log level is configurable at Settings > General.
+
+**Level guidelines:**
+- `error` — Unexpected failures needing attention (uncaught exceptions, DB errors, broken external APIs)
+- `warn` — Recoverable issues (one indexer failed, missing optional config, silent fallbacks)
+- `info` — Significant operations (CRUD, downloads started/completed, job lifecycle, settings changed)
+- `debug` — Diagnostic detail (API payloads, query params, intermediate state)
+
+**Where to log:**
+- Routes: use `request.log.info(...)` / `request.log.error(error, '...')`
+- Services: use `this.log.info(...)` (injected `FastifyBaseLogger` via constructor)
+- Jobs: use the `log` instance passed at initialization
+- Core adapters (`packages/core/`): do NOT use a logger — throw errors or return failures; the calling service logs
+
+**Important:** Use `FastifyBaseLogger` from `fastify` for logger types — NOT `BaseLogger` from `pino`. Pino is a transitive dependency (not directly installed), so importing from it causes TypeScript errors.
+
+**When adding new code:** Always add appropriate log statements. Every catch block must log. Every create/update/delete should log at info. External API call failures should log at warn or error.
+
 ## Testing
 
 All new/changed code must include tests. Run `pnpm test` (Vitest via Turborepo) to execute all suites.

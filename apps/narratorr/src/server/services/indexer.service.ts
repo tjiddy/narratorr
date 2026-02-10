@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import type { Db } from '@narratorr/db';
+import type { FastifyBaseLogger } from 'fastify';
 import { indexers } from '@narratorr/db/schema';
 import {
   AudioBookBayIndexer,
@@ -15,7 +16,7 @@ type NewIndexer = typeof indexers.$inferInsert;
 export class IndexerService {
   private adapters: Map<number, IndexerAdapter> = new Map();
 
-  constructor(private db: Db) {}
+  constructor(private db: Db, private log: FastifyBaseLogger) {}
 
   async getAll(): Promise<IndexerRow[]> {
     return this.db.select().from(indexers).orderBy(indexers.priority);
@@ -28,6 +29,7 @@ export class IndexerService {
 
   async create(data: Omit<NewIndexer, 'id' | 'createdAt'>): Promise<IndexerRow> {
     const result = await this.db.insert(indexers).values(data).returning();
+    this.log.info({ name: data.name, type: data.type }, 'Indexer created');
     return result[0];
   }
 
@@ -41,6 +43,7 @@ export class IndexerService {
     // Clear cached adapter
     this.adapters.delete(id);
 
+    this.log.debug({ id }, 'Indexer updated');
     return result[0] || null;
   }
 
@@ -50,6 +53,7 @@ export class IndexerService {
 
     await this.db.delete(indexers).where(eq(indexers.id, id));
     this.adapters.delete(id);
+    this.log.info({ id }, 'Indexer deleted');
     return true;
   }
 
@@ -88,7 +92,9 @@ export class IndexerService {
 
     try {
       const adapter = await this.getAdapter(indexer);
-      return adapter.test();
+      const result = await adapter.test();
+      this.log.debug({ id, success: result.success }, 'Indexer test result');
+      return result;
     } catch (error) {
       return {
         success: false,
@@ -112,7 +118,7 @@ export class IndexerService {
         const indexerResults = await adapter.search(query, options);
         results.push(...indexerResults);
       } catch (error) {
-        console.error(`Error searching indexer ${indexer.name}:`, error);
+        this.log.warn({ indexer: indexer.name, error }, 'Error searching indexer');
       }
     }
 
