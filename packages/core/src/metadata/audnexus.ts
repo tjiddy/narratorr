@@ -148,7 +148,7 @@ interface AudnexusAuthorSearchResult {
   genres?: Array<{ name?: string }>;
 }
 
-interface AudnexusAuthorDetail extends AudnexusAuthorSearchResult {}
+type AudnexusAuthorDetail = AudnexusAuthorSearchResult;
 
 interface AudnexusSeriesRef {
   name?: string;

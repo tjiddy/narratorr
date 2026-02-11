@@ -64,7 +64,7 @@ const API = `${GITEA_URL}/api/v1/repos/${GITEA_OWNER}/${GITEA_REPO}`;
 
 // --- API helpers ---
 
-async function api(path: string, options?: RequestInit): Promise<any> {
+async function api<T = unknown>(path: string, options?: RequestInit): Promise<T> {
   const url = `${API}${path}`;
   const res = await fetch(url, {
     ...options,
@@ -80,7 +80,7 @@ async function api(path: string, options?: RequestInit): Promise<any> {
     process.exit(1);
   }
   const text = await res.text();
-  return text ? JSON.parse(text) : null;
+  return (text ? JSON.parse(text) : null) as T;
 }
 
 // --- Formatters ---
@@ -188,7 +188,7 @@ async function resolveLabels(input: string): Promise<number[]> {
     return input.split(",").map(Number);
   }
   // Fetch all labels and resolve names → IDs
-  const allLabels: GiteaLabel[] = await api("/labels");
+  const allLabels = await api<GiteaLabel[]>("/labels");
   const nameToId = new Map(allLabels.map((l) => [l.name, l.id]));
   const ids: number[] = [];
   for (const name of input.split(",")) {
@@ -247,7 +247,7 @@ const [cmd, ...args] = process.argv.slice(2);
 switch (cmd) {
   case "issues": {
     const state = args[0] === "all" ? "all" : "open";
-    const data = await api(`/issues?state=${state}&type=issues&limit=50`);
+    const data = await api<GiteaIssue[]>(`/issues?state=${state}&type=issues&limit=50`);
     fmtIssues(data);
     break;
   }
@@ -258,7 +258,7 @@ switch (cmd) {
       console.error("Usage: gitea issue <id>");
       process.exit(1);
     }
-    const data = await api(`/issues/${id}`);
+    const data = await api<GiteaIssue>(`/issues/${id}`);
     fmtIssue(data);
     break;
   }
@@ -271,11 +271,11 @@ switch (cmd) {
       console.error("Usage: gitea issue-create <title> <body|--body-file path> [labels] [milestone]");
       process.exit(1);
     }
-    const payload: any = { title };
+    const payload: Record<string, unknown> = { title };
     if (body) payload.body = body;
     if (labels) payload.labels = await resolveLabels(labels);
     if (milestone) payload.milestone = Number(milestone);
-    const data = await api("/issues", {
+    const data = await api<GiteaIssue>("/issues", {
       method: "POST",
       body: JSON.stringify(payload),
     });
@@ -294,7 +294,7 @@ switch (cmd) {
       case "state": {
         const value = args[2];
         if (!value) { console.error("Usage: gitea issue-update <id> state <open|closed>"); process.exit(1); }
-        const data = await api(`/issues/${id}`, {
+        const data = await api<GiteaIssue>(`/issues/${id}`, {
           method: "PATCH",
           body: JSON.stringify({ state: value }),
         });
@@ -305,7 +305,7 @@ switch (cmd) {
         const value = args[2];
         if (!value) { console.error("Usage: gitea issue-update <id> labels <name1,name2>"); process.exit(1); }
         const labelIds = await resolveLabels(value);
-        const data = await api(`/issues/${id}/labels`, {
+        const data = await api<GiteaLabel[]>(`/issues/${id}/labels`, {
           method: "PUT",
           body: JSON.stringify({ labels: labelIds }),
         });
@@ -322,7 +322,7 @@ switch (cmd) {
       case "milestone": {
         const value = args[2];
         if (!value) { console.error("Usage: gitea issue-update <id> milestone <name|id>"); process.exit(1); }
-        const data = await api(`/issues/${id}`, {
+        const data = await api<GiteaIssue>(`/issues/${id}`, {
           method: "PATCH",
           body: JSON.stringify({ milestone: Number(value) }),
         });
@@ -332,7 +332,7 @@ switch (cmd) {
       case "title": {
         const value = args[2];
         if (!value) { console.error("Usage: gitea issue-update <id> title <new-title>"); process.exit(1); }
-        const data = await api(`/issues/${id}`, {
+        const data = await api<GiteaIssue>(`/issues/${id}`, {
           method: "PATCH",
           body: JSON.stringify({ title: value }),
         });
@@ -342,7 +342,7 @@ switch (cmd) {
       case "body": {
         const [bodyContent] = extractBody(args.slice(2));
         if (!bodyContent) { console.error("Usage: gitea issue-update <id> body <text|--body-file path>"); process.exit(1); }
-        const data = await api(`/issues/${id}`, {
+        const data = await api<GiteaIssue>(`/issues/${id}`, {
           method: "PATCH",
           body: JSON.stringify({ body: bodyContent }),
         });
@@ -372,7 +372,7 @@ switch (cmd) {
   }
 
   case "labels": {
-    const data = await api("/labels");
+    const data = await api<GiteaLabel[]>("/labels");
     fmtLabels(data);
     break;
   }
@@ -383,7 +383,7 @@ switch (cmd) {
       console.error("Usage: gitea label-create <name> <color> [description]");
       process.exit(1);
     }
-    const payload: any = { name, color: `#${color}` };
+    const payload: Record<string, string> = { name, color: `#${color}` };
     if (desc) payload.description = desc;
     await api("/labels", {
       method: "POST",
@@ -394,7 +394,7 @@ switch (cmd) {
   }
 
   case "milestones": {
-    const data = await api("/milestones");
+    const data = await api<GiteaMilestone[]>("/milestones");
     fmtMilestones(data);
     break;
   }
@@ -405,7 +405,7 @@ switch (cmd) {
       console.error("Usage: gitea milestone-create <title> [description]");
       process.exit(1);
     }
-    const payload: any = { title };
+    const payload: Record<string, string> = { title };
     if (desc) payload.description = desc;
     await api("/milestones", {
       method: "POST",
@@ -421,14 +421,14 @@ switch (cmd) {
       console.error("Usage: gitea search <query>");
       process.exit(1);
     }
-    const data = await api(`/issues?state=all&type=issues&q=${encodeURIComponent(query)}&limit=20`);
+    const data = await api<GiteaIssue[]>(`/issues?state=all&type=issues&q=${encodeURIComponent(query)}&limit=20`);
     fmtIssues(data);
     break;
   }
 
   case "prs": {
     const state = args[0] === "all" ? "all" : "open";
-    const data = await api(`/pulls?state=${state}&limit=50`);
+    const data = await api<GiteaPR[]>(`/pulls?state=${state}&limit=50`);
     fmtPRs(data);
     break;
   }
@@ -441,13 +441,8 @@ switch (cmd) {
       console.error("Usage: gitea pr-create <title> <body|--body-file path> <head> [base]");
       process.exit(1);
     }
-    const payload: any = {
-      title,
-      body,
-      head,
-      base: base || "main",
-    };
-    const data = await api("/pulls", {
+    const payload = { title, body, head, base: base || "main" };
+    const data = await api<GiteaPR>("/pulls", {
       method: "POST",
       body: JSON.stringify(payload),
     });

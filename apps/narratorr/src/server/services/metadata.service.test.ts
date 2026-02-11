@@ -17,6 +17,7 @@ const mockProvider = {
 };
 
 vi.mock('@narratorr/core', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('@narratorr/core')>();
   return {
     ...actual,

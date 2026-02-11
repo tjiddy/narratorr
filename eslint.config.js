@@ -90,5 +90,14 @@ export default tseslint.config(
       'no-useless-escape': 'warn',
       eqeqeq: ['warn', 'always', { null: 'ignore' }],
     },
+  },
+
+  // Test files - relax no-explicit-any for mock patterns
+  // TODO: Properly type test mock helpers to remove this override (see Gitea issue)
+  {
+    files: ['**/*.test.ts', '**/*.test.tsx'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+    },
   }
 );
