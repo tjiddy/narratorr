@@ -27,6 +27,7 @@ export const BookMetadataSchema = z.object({
   coverUrl: z.string().url().optional(),
   duration: z.number().optional(),
   genres: z.array(z.string()).optional(),
+  relevance: z.number().optional(),
 });
 
 export const AuthorMetadataSchema = z.object({
@@ -35,6 +36,7 @@ export const AuthorMetadataSchema = z.object({
   description: z.string().optional(),
   imageUrl: z.string().url().optional(),
   genres: z.array(z.string()).optional(),
+  relevance: z.number().optional(),
 });
 
 export const SeriesMetadataSchema = z.object({

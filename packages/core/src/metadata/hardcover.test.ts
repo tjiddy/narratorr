@@ -39,6 +39,22 @@ describe('HardcoverProvider', () => {
       expect(books[1].coverUrl).toBe('https://assets.hardcover.app/405234/cover.jpg');
     });
 
+    it('maps text_match as relevance score', async () => {
+      const books = await provider.searchBooks('Way of Kings');
+
+      expect(books[0].relevance).toBe(578);
+      expect(books[1].relevance).toBe(456);
+    });
+
+    it('sorts books by relevance (highest first)', async () => {
+      const books = await provider.searchBooks('Way of Kings');
+
+      // First book (text_match=578) should rank above second (text_match=456)
+      expect(books[0].title).toBe('The Way of Kings');
+      expect(books[1].title).toBe('Words of Radiance');
+      expect((books[0].relevance ?? 0)).toBeGreaterThan((books[1].relevance ?? 0));
+    });
+
     it('returns empty array on API error', async () => {
       server.use(
         http.post(API_URL, () => new HttpResponse(null, { status: 500 })),
@@ -73,6 +89,13 @@ describe('HardcoverProvider', () => {
       const authors = await provider.searchAuthors('Brandon');
 
       expect(authors[0].imageUrl).toBe('https://assets.hardcover.app/author/204214/img.jpg');
+    });
+
+    it('maps text_match as relevance score', async () => {
+      const authors = await provider.searchAuthors('Brandon');
+
+      expect(authors[0].relevance).toBe(890);
+      expect(authors[1].relevance).toBe(650);
     });
 
     it('returns empty array on error', async () => {

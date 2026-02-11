@@ -404,6 +404,8 @@ export function SearchPage() {
 // Discover Results
 // ============================================================================
 
+type DiscoverTab = 'books' | 'authors';
+
 function DiscoverResults({
   results,
   searchTerm,
@@ -413,6 +415,7 @@ function DiscoverResults({
   searchTerm: string;
   isLoading: boolean;
 }) {
+  const [tab, setTab] = useState<DiscoverTab>('books');
   const hasResults = results && (results.authors.length > 0 || results.books.length > 0);
 
   if (searchTerm && !isLoading && !hasResults) {
@@ -438,41 +441,66 @@ function DiscoverResults({
   if (!results) return null;
 
   return (
-    <div className="space-y-8">
-      {/* Authors Section */}
-      {results.authors.length > 0 && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 animate-fade-in">
-            <UsersIcon className="w-5 h-5 text-primary" />
-            <h2 className="font-display text-xl font-semibold">Authors</h2>
-            <span className="text-sm text-muted-foreground">
-              ({results.authors.length})
-            </span>
-          </div>
-          <div className="grid gap-3">
-            {results.authors.map((author, index) => (
-              <AuthorCard key={author.asin || index} author={author} index={index} />
-            ))}
-          </div>
+    <div className="space-y-6">
+      {/* Tabs */}
+      <div className="flex justify-center animate-fade-in">
+        <div className="inline-flex items-center glass-card rounded-xl p-1 gap-1">
+          <button
+            onClick={() => setTab('books')}
+            className={`
+              flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200
+              ${tab === 'books'
+                ? 'bg-primary text-primary-foreground shadow-glow'
+                : 'text-muted-foreground hover:text-foreground'}
+            `}
+          >
+            <BookOpenIcon className="w-4 h-4" />
+            Books
+            {results.books.length > 0 && (
+              <span className="text-xs opacity-75">({results.books.length})</span>
+            )}
+          </button>
+          <button
+            onClick={() => setTab('authors')}
+            className={`
+              flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200
+              ${tab === 'authors'
+                ? 'bg-primary text-primary-foreground shadow-glow'
+                : 'text-muted-foreground hover:text-foreground'}
+            `}
+          >
+            <UsersIcon className="w-4 h-4" />
+            Authors
+            {results.authors.length > 0 && (
+              <span className="text-xs opacity-75">({results.authors.length})</span>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Tab Content */}
+      {tab === 'books' && results.books.length > 0 && (
+        <div className="grid gap-4">
+          {results.books.map((book, index) => (
+            <DiscoverBookCard key={book.asin || index} book={book} index={index} />
+          ))}
         </div>
       )}
 
-      {/* Books Section */}
-      {results.books.length > 0 && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 animate-fade-in">
-            <BookOpenIcon className="w-5 h-5 text-primary" />
-            <h2 className="font-display text-xl font-semibold">Books</h2>
-            <span className="text-sm text-muted-foreground">
-              ({results.books.length})
-            </span>
-          </div>
-          <div className="grid gap-4">
-            {results.books.map((book, index) => (
-              <DiscoverBookCard key={book.asin || index} book={book} index={index} />
-            ))}
-          </div>
+      {tab === 'books' && results.books.length === 0 && (
+        <p className="text-center text-muted-foreground py-8">No books found</p>
+      )}
+
+      {tab === 'authors' && results.authors.length > 0 && (
+        <div className="grid gap-3">
+          {results.authors.map((author, index) => (
+            <AuthorCard key={author.asin || index} author={author} index={index} />
+          ))}
         </div>
+      )}
+
+      {tab === 'authors' && results.authors.length === 0 && (
+        <p className="text-center text-muted-foreground py-8">No authors found</p>
       )}
     </div>
   );

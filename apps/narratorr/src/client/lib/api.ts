@@ -111,6 +111,7 @@ export interface BookMetadata {
   coverUrl?: string;
   duration?: number;
   genres?: string[];
+  relevance?: number;
 }
 
 export interface AuthorMetadata {
@@ -119,6 +120,7 @@ export interface AuthorMetadata {
   description?: string;
   imageUrl?: string;
   genres?: string[];
+  relevance?: number;
 }
 
 export interface MetadataSearchResults {

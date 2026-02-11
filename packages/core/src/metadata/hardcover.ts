@@ -184,11 +184,11 @@ export class HardcoverProvider implements MetadataProvider {
     for (const hit of hits) {
       const doc = hit.document;
       if (!doc) continue;
-      const mapped = mapSearchBook(doc);
+      const mapped = mapSearchBook(doc, hit.text_match);
       const result = BookMetadataSchema.safeParse(mapped);
       if (result.success) books.push(result.data);
     }
-    return books;
+    return sortBooksByRelevance(books);
   }
 
   async searchAuthors(query: string): Promise<AuthorMetadata[]> {
@@ -203,7 +203,7 @@ export class HardcoverProvider implements MetadataProvider {
     for (const hit of hits) {
       const doc = hit.document;
       if (!doc) continue;
-      const mapped = mapSearchAuthor(doc);
+      const mapped = mapSearchAuthor(doc, hit.text_match);
       const result = AuthorMetadataSchema.safeParse(mapped);
       if (result.success) authors.push(result.data);
     }
@@ -495,10 +495,33 @@ function extractGenres(cachedTags: Record<string, HardcoverTagEntry[]> | undefin
 }
 
 // ---------------------------------------------------------------------------
+// Sorting
+// ---------------------------------------------------------------------------
+
+function sortBooksByRelevance(books: BookMetadata[]): BookMetadata[] {
+  return books.sort((a, b) => {
+    const scoreA = bookRelevanceScore(a);
+    const scoreB = bookRelevanceScore(b);
+    return scoreB - scoreA;
+  });
+}
+
+function bookRelevanceScore(book: BookMetadata): number {
+  let score = book.relevance ?? 0;
+  // Boost books that have a series position (canonical editions, not compilations)
+  if (book.series?.some((s) => s.position != null)) score += 0.5;
+  // Boost books with audio duration (audiobook exists)
+  if (book.duration) score += 0.3;
+  // Boost books with cover art (better metadata quality)
+  if (book.coverUrl) score += 0.2;
+  return score;
+}
+
+// ---------------------------------------------------------------------------
 // Mapping helpers
 // ---------------------------------------------------------------------------
 
-function mapSearchBook(doc: Record<string, unknown>): Record<string, unknown> {
+function mapSearchBook(doc: Record<string, unknown>, textMatch?: number): Record<string, unknown> {
   const isbns = doc.isbns as string[] | undefined;
   const genres = doc.genres as string[] | undefined;
   const authorNames = doc.author_names as string[] | undefined;
@@ -525,13 +548,15 @@ function mapSearchBook(doc: Record<string, unknown>): Record<string, unknown> {
     duration: audioSeconds ? Math.round(audioSeconds / 60) : undefined,
     genres,
     isbn: isbns?.[0],
+    relevance: textMatch,
   };
 }
 
-function mapSearchAuthor(doc: Record<string, unknown>): Record<string, unknown> {
+function mapSearchAuthor(doc: Record<string, unknown>, textMatch?: number): Record<string, unknown> {
   return {
     name: (doc.name as string) ?? '',
     imageUrl: extractImageUrl(doc.image),
+    relevance: textMatch,
   };
 }
 
