@@ -25,7 +25,12 @@ export class MetadataService {
     const provider = this.providers[0];
     if (!provider) return { books: [], authors: [], series: [] };
     try {
-      return await provider.search(query);
+      const results = await provider.search(query);
+      this.log.debug(
+        { books: results.books.length, authors: results.authors.length, series: results.series.length },
+        'Metadata search results'
+      );
+      return results;
     } catch (error) {
       this.log.warn(error, 'Metadata search failed');
       return { books: [], authors: [], series: [] };

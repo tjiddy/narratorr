@@ -2,57 +2,67 @@
   "data": {
     "books": [
       {
-        "id": 328491,
+        "id": 386446,
         "title": "The Way of Kings",
-        "subtitle": "Book One of the Stormlight Archive",
+        "subtitle": "The Stormlight Archive Book One",
         "slug": "the-way-of-kings",
         "description": "Roshar is a world of stone and storms.",
-        "release_date": "2010-08-31",
+        "release_date": "2010-01-01",
         "release_year": 2010,
         "pages": 1007,
-        "audio_seconds": 162840,
-        "rating": 4.65,
-        "cached_image": { "url": "https://assets.hardcover.app/328491/cover.jpg", "width": 400, "height": 600, "color": "#1a2b3c" },
-        "cached_tags": { "Genre": ["Fantasy", "Epic Fantasy", "High Fantasy"], "Mood": ["Adventurous"] },
+        "audio_seconds": null,
+        "rating": 4.63,
+        "cached_image": { "id": 730275, "url": "https://assets.hardcover.app/386446/cover.jpg", "color": "#868d9d", "width": 335, "height": 500, "color_name": "Purple" },
+        "cached_tags": {
+          "Genre": [
+            { "tag": "Fantasy", "tagSlug": "fantasy", "category": "Genre", "categorySlug": "genre", "spoilerRatio": 0, "count": 13 },
+            { "tag": "Epic Fantasy", "tagSlug": "epic-fantasy", "category": "Genre", "categorySlug": "genre", "spoilerRatio": null, "count": 3 },
+            { "tag": "High Fantasy", "tagSlug": "high-fantasy", "category": "Genre", "categorySlug": "genre", "spoilerRatio": 0, "count": 3 }
+          ],
+          "Mood": [
+            { "tag": "Adventurous", "tagSlug": "adventurous", "category": "Mood", "categorySlug": "mood", "spoilerRatio": 0, "count": 103 }
+          ]
+        },
         "cached_contributors": [
-          { "id": 15200, "name": "Brandon Sanderson", "contribution": "Author", "image": null },
-          { "id": 92100, "name": "Kate Reading", "contribution": "Narrator", "image": null },
-          { "id": 92101, "name": "Michael Kramer", "contribution": "Narrator", "image": null }
+          {
+            "author": { "id": 204214, "slug": "brandon-sanderson", "name": "Brandon Sanderson", "image": { "id": 1725806, "url": "https://assets.hardcover.app/author/204214/img.jpg", "color": "#a07e6e", "width": 700, "height": 915, "color_name": "Gray" } },
+            "contribution": null
+          }
         ],
         "contributions": [
           {
-            "contribution": "Author",
-            "author": { "id": 15200, "name": "Brandon Sanderson", "slug": "brandon-sanderson", "cached_image": null }
-          },
-          {
-            "contribution": "Narrator",
-            "author": { "id": 92100, "name": "Kate Reading", "slug": "kate-reading", "cached_image": null }
-          },
-          {
-            "contribution": "Narrator",
-            "author": { "id": 92101, "name": "Michael Kramer", "slug": "michael-kramer", "cached_image": null }
+            "contribution": null,
+            "author": { "id": 204214, "name": "Brandon Sanderson", "slug": "brandon-sanderson", "cached_image": { "id": 1725806, "url": "https://assets.hardcover.app/author/204214/img.jpg", "color": "#a07e6e", "width": 700, "height": 915, "color_name": "Gray" } }
           }
         ],
         "featured_book_series": {
           "position": 1,
-          "series": { "id": 4578, "name": "The Stormlight Archive", "slug": "the-stormlight-archive" }
+          "series": { "id": 997, "name": "The Stormlight Archive", "slug": "the-stormlight-archive" }
         },
         "default_audio_edition": {
-          "id": 890123,
-          "asin": "B003ZWFO7E",
-          "isbn_13": "9780765365286",
-          "audio_seconds": 162840,
+          "id": 23037154,
+          "asin": null,
+          "isbn_13": "9781427209757",
+          "audio_seconds": null,
           "publisher": { "name": "Macmillan Audio" },
           "release_date": "2010-08-31"
         },
         "editions": [
           {
-            "id": 890123,
+            "id": 30797848,
             "asin": "B003ZWFO7E",
-            "isbn_13": "9780765365286",
-            "audio_seconds": 162840,
+            "isbn_13": "9781427209764",
+            "audio_seconds": 163800,
             "publisher": { "name": "Macmillan Audio" },
             "release_date": "2010-08-31"
+          },
+          {
+            "id": 30552304,
+            "asin": "1648813542",
+            "isbn_13": "9781648813542",
+            "audio_seconds": 26880,
+            "publisher": { "name": "GraphicAudio" },
+            "release_date": "2016-03-21"
           }
         ]
       }

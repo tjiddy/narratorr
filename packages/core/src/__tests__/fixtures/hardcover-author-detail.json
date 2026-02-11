@@ -2,56 +2,43 @@
   "data": {
     "authors": [
       {
-        "id": 15200,
+        "id": 204214,
         "name": "Brandon Sanderson",
         "slug": "brandon-sanderson",
         "bio": "Brandon Sanderson is an American author of epic fantasy and science fiction.",
-        "books_count": 75,
-        "cached_image": { "url": "https://assets.hardcover.app/authors/15200.jpg", "width": 400, "height": 600, "color": "#2a3b4c" },
+        "books_count": 192,
+        "cached_image": { "id": 1725806, "url": "https://assets.hardcover.app/author/204214/img.jpg", "color": "#a07e6e", "width": 700, "height": 915, "color_name": "Gray" },
         "contributions": [
           {
-            "contribution": "Author",
+            "contribution": null,
             "book": {
-              "id": 328491,
+              "id": 386446,
               "title": "The Way of Kings",
               "slug": "the-way-of-kings",
               "release_year": 2010,
-              "audio_seconds": 162840,
-              "rating": 4.65,
-              "cached_image": { "url": "https://assets.hardcover.app/328491/cover.jpg" },
+              "audio_seconds": null,
+              "rating": 4.63,
+              "cached_image": { "id": 730275, "url": "https://assets.hardcover.app/386446/cover.jpg", "color": "#868d9d", "width": 335, "height": 500, "color_name": "Purple" },
               "featured_book_series": {
                 "position": 1,
-                "series": { "id": 4578, "name": "The Stormlight Archive", "slug": "the-stormlight-archive" }
+                "series": { "id": 997, "name": "The Stormlight Archive", "slug": "the-stormlight-archive" }
               }
             }
           },
           {
-            "contribution": "Author",
+            "contribution": null,
             "book": {
-              "id": 328500,
+              "id": 405234,
               "title": "Words of Radiance",
               "slug": "words-of-radiance",
               "release_year": 2014,
-              "audio_seconds": 173400,
+              "audio_seconds": null,
               "rating": 4.76,
-              "cached_image": { "url": "https://assets.hardcover.app/328500/cover.jpg" },
+              "cached_image": { "id": 730280, "url": "https://assets.hardcover.app/405234/cover.jpg", "color": "#4a5d8e", "width": 335, "height": 500, "color_name": "Blue" },
               "featured_book_series": {
                 "position": 2,
-                "series": { "id": 4578, "name": "The Stormlight Archive", "slug": "the-stormlight-archive" }
+                "series": { "id": 997, "name": "The Stormlight Archive", "slug": "the-stormlight-archive" }
               }
-            }
-          },
-          {
-            "contribution": "Narrator",
-            "book": {
-              "id": 999999,
-              "title": "Some Narrated Book",
-              "slug": "some-narrated-book",
-              "release_year": 2020,
-              "audio_seconds": 36000,
-              "rating": 3.5,
-              "cached_image": null,
-              "featured_book_series": null
             }
           }
         ]

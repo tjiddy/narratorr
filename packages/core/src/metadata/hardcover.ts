@@ -178,10 +178,10 @@ export class HardcoverProvider implements MetadataProvider {
       type: 'Book',
       perPage: 15,
     });
-    if (!data?.search?.results) return [];
+    const hits = extractHits(data?.search?.results);
 
     const books: BookMetadata[] = [];
-    for (const hit of data.search.results) {
+    for (const hit of hits) {
       const doc = hit.document;
       if (!doc) continue;
       const mapped = mapSearchBook(doc);
@@ -197,10 +197,10 @@ export class HardcoverProvider implements MetadataProvider {
       type: 'Author',
       perPage: 15,
     });
-    if (!data?.search?.results) return [];
+    const hits = extractHits(data?.search?.results);
 
     const authors: AuthorMetadata[] = [];
-    for (const hit of data.search.results) {
+    for (const hit of hits) {
       const doc = hit.document;
       if (!doc) continue;
       const mapped = mapSearchAuthor(doc);
@@ -216,10 +216,10 @@ export class HardcoverProvider implements MetadataProvider {
       type: 'Series',
       perPage: 15,
     });
-    if (!data?.search?.results) return [];
+    const hits = extractHits(data?.search?.results);
 
     const seriesList: SeriesMetadata[] = [];
-    for (const hit of data.search.results) {
+    for (const hit of hits) {
       const doc = hit.document;
       if (!doc) continue;
       const mapped = mapSearchSeries(doc);
@@ -262,7 +262,7 @@ export class HardcoverProvider implements MetadataProvider {
 
     const books: BookMetadata[] = [];
     for (const c of author.contributions) {
-      if (c.contribution !== 'Author' || !c.book) continue;
+      if (!c.book) continue;
       const mapped = mapContributionBook(c.book);
       const result = BookMetadataSchema.safeParse(mapped);
       if (result.success) books.push(result.data);
@@ -288,7 +288,7 @@ export class HardcoverProvider implements MetadataProvider {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          authorization: this.apiKey,
+          authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify({
           query: SEARCH_QUERY,
@@ -320,7 +320,7 @@ export class HardcoverProvider implements MetadataProvider {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          authorization: this.apiKey,
+          authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify({ query, variables }),
       });
@@ -338,10 +338,43 @@ export class HardcoverProvider implements MetadataProvider {
 // Internal response shapes
 // ---------------------------------------------------------------------------
 
+interface SearchHit {
+  document: Record<string, unknown>;
+  text_match?: number;
+}
+
+interface SearchResults {
+  hits: SearchHit[];
+  found: number;
+}
+
 interface SearchResponse {
   search: {
-    results: Array<{ document: Record<string, unknown>; text_match?: number }>;
+    results: SearchResults;
   };
+}
+
+interface HardcoverImage {
+  url: string;
+  id?: number;
+  color?: string;
+  width?: number;
+  height?: number;
+  color_name?: string;
+}
+
+interface HardcoverTagEntry {
+  tag: string;
+  tagSlug?: string;
+  category?: string;
+  categorySlug?: string;
+  spoilerRatio?: number | null;
+  count?: number;
+}
+
+interface HardcoverContributorEntry {
+  author: { id: number; name: string; slug?: string; image?: HardcoverImage | null };
+  contribution: string | null;
 }
 
 interface HardcoverBookDetail {
@@ -353,14 +386,14 @@ interface HardcoverBookDetail {
   release_date?: string;
   release_year?: number;
   pages?: number;
-  audio_seconds?: number;
+  audio_seconds?: number | null;
   rating?: number;
-  cached_image?: { url: string } | string | null;
-  cached_tags?: Record<string, string[]>;
-  cached_contributors?: Array<{ id: number; name: string; contribution: string }>;
+  cached_image?: HardcoverImage | null;
+  cached_tags?: Record<string, HardcoverTagEntry[]>;
+  cached_contributors?: HardcoverContributorEntry[];
   contributions?: Array<{
-    contribution: string;
-    author: { id: number; name: string; slug: string; cached_image?: { url: string } | null };
+    contribution: string | null;
+    author: { id: number; name: string; slug: string; cached_image?: HardcoverImage | null };
   }>;
   featured_book_series?: {
     position: number;
@@ -368,18 +401,18 @@ interface HardcoverBookDetail {
   } | null;
   default_audio_edition?: {
     id: number;
-    asin?: string;
-    isbn_13?: string;
-    audio_seconds?: number;
+    asin?: string | null;
+    isbn_13?: string | null;
+    audio_seconds?: number | null;
     publisher?: { name: string };
     release_date?: string;
   } | null;
   editions?: Array<{
     id: number;
-    asin?: string;
-    isbn_13?: string;
-    audio_seconds?: number;
-    publisher?: { name: string };
+    asin?: string | null;
+    isbn_13?: string | null;
+    audio_seconds?: number | null;
+    publisher?: { name: string } | null;
     release_date?: string;
   }>;
 }
@@ -390,17 +423,17 @@ interface HardcoverAuthorDetail {
   slug?: string;
   bio?: string;
   books_count?: number;
-  cached_image?: { url: string } | string | null;
+  cached_image?: HardcoverImage | null;
   contributions?: Array<{
-    contribution: string;
+    contribution: string | null;
     book?: {
       id: number;
       title: string;
       slug?: string;
       release_year?: number;
-      audio_seconds?: number;
+      audio_seconds?: number | null;
       rating?: number;
-      cached_image?: { url: string } | string | null;
+      cached_image?: HardcoverImage | null;
       featured_book_series?: {
         position: number;
         series: { id: number; name: string; slug: string };
@@ -413,7 +446,7 @@ interface HardcoverSeriesDetail {
   id: number;
   name: string;
   slug?: string;
-  description?: string;
+  description?: string | null;
   books_count?: number;
   primary_books_count?: number;
   author?: { id: number; name: string; slug: string };
@@ -423,18 +456,27 @@ interface HardcoverSeriesDetail {
       id: number;
       title: string;
       slug?: string;
-      release_year?: number;
-      audio_seconds?: number;
+      release_year?: number | null;
+      audio_seconds?: number | null;
       rating?: number;
-      cached_image?: { url: string } | string | null;
-      cached_contributors?: Array<{ id: number; name: string; contribution: string }>;
+      cached_image?: HardcoverImage | null;
+      cached_contributors?: HardcoverContributorEntry[];
     };
   }>;
 }
 
 // ---------------------------------------------------------------------------
-// Mapping helpers
+// Helpers
 // ---------------------------------------------------------------------------
+
+/** Extract hits array from search results (object with `hits` key). */
+function extractHits(results: unknown): SearchHit[] {
+  if (!results || typeof results !== 'object') return [];
+  if ('hits' in results && Array.isArray((results as SearchResults).hits)) {
+    return (results as SearchResults).hits;
+  }
+  return [];
+}
 
 function extractImageUrl(image: unknown): string | undefined {
   if (!image) return undefined;
@@ -445,20 +487,31 @@ function extractImageUrl(image: unknown): string | undefined {
   return undefined;
 }
 
+/** Extract genre names from cached_tags (tags are objects with a `tag` field). */
+function extractGenres(cachedTags: Record<string, HardcoverTagEntry[]> | undefined): string[] | undefined {
+  const genreEntries = cachedTags?.['Genre'];
+  if (!genreEntries?.length) return undefined;
+  return genreEntries.map((entry) => entry.tag).filter(Boolean);
+}
+
+// ---------------------------------------------------------------------------
+// Mapping helpers
+// ---------------------------------------------------------------------------
+
 function mapSearchBook(doc: Record<string, unknown>): Record<string, unknown> {
   const isbns = doc.isbns as string[] | undefined;
   const genres = doc.genres as string[] | undefined;
   const authorNames = doc.author_names as string[] | undefined;
   const contributions = doc.contributions as Array<{ author: { name: string; id: number } }> | undefined;
-  const featuredSeries = doc.featured_series as { name: string; id: number; position: number } | null | undefined;
-  const audioSeconds = doc.audio_seconds as number | undefined;
+  const featuredSeries = doc.featured_series as { position: number; series: { name: string; id: number } } | null | undefined;
+  const audioSeconds = doc.audio_seconds as number | null | undefined;
 
   const authors = contributions?.map((c) => ({ name: c.author.name }))
     ?? authorNames?.map((name) => ({ name }))
     ?? [];
 
-  const series = featuredSeries
-    ? [{ name: featuredSeries.name, position: featuredSeries.position }]
+  const series = featuredSeries?.series
+    ? [{ name: featuredSeries.series.name, position: featuredSeries.position }]
     : undefined;
 
   return {
@@ -490,22 +543,28 @@ function mapSearchSeries(doc: Record<string, unknown>): Record<string, unknown> 
 }
 
 function mapBookDetail(book: HardcoverBookDetail): Record<string, unknown> {
+  // Use contributions for author names; treat null contribution as author
   const authors = (book.contributions ?? [])
-    .filter((c) => c.contribution === 'Author')
     .map((c) => ({ name: c.author.name }));
 
-  const narrators = (book.contributions ?? [])
-    .filter((c) => c.contribution === 'Narrator')
-    .map((c) => c.author.name);
+  // Narrators: Hardcover currently returns contribution as null,
+  // so we can't reliably distinguish narrators from authors via this field.
+  // Audio edition narrators would need a separate query.
+  const narrators: string[] = [];
 
   const series = book.featured_book_series
     ? [{ name: book.featured_book_series.series.name, position: book.featured_book_series.position }]
     : undefined;
 
+  // Prefer audio_seconds from editions, then default_audio_edition, then book itself
   const audioEdition = book.default_audio_edition;
-  const audioSeconds = audioEdition?.audio_seconds ?? book.audio_seconds;
+  const bestEdition = book.editions?.find((e) => e.audio_seconds);
+  const audioSeconds = bestEdition?.audio_seconds ?? audioEdition?.audio_seconds ?? book.audio_seconds;
 
-  const genres = book.cached_tags?.['Genre'];
+  const genres = extractGenres(book.cached_tags);
+
+  // Prefer ASIN from editions (more likely to have it)
+  const bestAsinEdition = book.editions?.find((e) => e.asin);
 
   return {
     title: book.title ?? '',
@@ -519,8 +578,8 @@ function mapBookDetail(book: HardcoverBookDetail): Record<string, unknown> {
     coverUrl: extractImageUrl(book.cached_image),
     duration: audioSeconds ? Math.round(audioSeconds / 60) : undefined,
     genres,
-    asin: audioEdition?.asin,
-    isbn: audioEdition?.isbn_13,
+    asin: bestAsinEdition?.asin ?? audioEdition?.asin ?? undefined,
+    isbn: audioEdition?.isbn_13 ?? undefined,
   };
 }
 
@@ -555,9 +614,7 @@ function mapSeriesDetail(series: HardcoverSeriesDetail): Record<string, unknown>
   for (const entry of series.book_series ?? []) {
     const b = entry.book;
     const contributors = b.cached_contributors ?? [];
-    const authors = contributors
-      .filter((c) => c.contribution === 'Author')
-      .map((c) => ({ name: c.name }));
+    const authors = contributors.map((c) => ({ name: c.author.name }));
 
     books.push({
       title: b.title,
@@ -571,7 +628,7 @@ function mapSeriesDetail(series: HardcoverSeriesDetail): Record<string, unknown>
 
   return {
     name: series.name,
-    description: series.description,
+    description: series.description ?? undefined,
     books,
   };
 }

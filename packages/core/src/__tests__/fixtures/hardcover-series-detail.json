@@ -2,41 +2,47 @@
   "data": {
     "series": [
       {
-        "id": 4578,
+        "id": 997,
         "name": "The Stormlight Archive",
         "slug": "the-stormlight-archive",
-        "description": "An epic fantasy series set on the world of Roshar.",
-        "books_count": 6,
-        "primary_books_count": 4,
-        "author": { "id": 15200, "name": "Brandon Sanderson", "slug": "brandon-sanderson" },
+        "description": null,
+        "books_count": 22,
+        "primary_books_count": 10,
+        "author": { "id": 204214, "name": "Brandon Sanderson", "slug": "brandon-sanderson" },
         "book_series": [
           {
             "position": 1,
             "book": {
-              "id": 328491,
+              "id": 386446,
               "title": "The Way of Kings",
               "slug": "the-way-of-kings",
               "release_year": 2010,
-              "audio_seconds": 162840,
-              "rating": 4.65,
-              "cached_image": { "url": "https://assets.hardcover.app/328491/cover.jpg" },
+              "audio_seconds": null,
+              "rating": 4.63,
+              "cached_image": { "id": 730275, "url": "https://assets.hardcover.app/386446/cover.jpg", "color": "#868d9d", "width": 335, "height": 500, "color_name": "Purple" },
               "cached_contributors": [
-                { "id": 15200, "name": "Brandon Sanderson", "contribution": "Author" }
+                {
+                  "author": { "id": 204214, "slug": "brandon-sanderson", "name": "Brandon Sanderson", "image": { "id": 1725806, "url": "https://assets.hardcover.app/author/204214/img.jpg", "color": "#a07e6e", "width": 700, "height": 915, "color_name": "Gray" } },
+                  "contribution": null
+                }
               ]
             }
           },
           {
             "position": 2,
             "book": {
-              "id": 328500,
+              "id": 405234,
               "title": "Words of Radiance",
               "slug": "words-of-radiance",
               "release_year": 2014,
-              "audio_seconds": 173400,
+              "audio_seconds": null,
               "rating": 4.76,
-              "cached_image": { "url": "https://assets.hardcover.app/328500/cover.jpg" },
+              "cached_image": { "id": 730280, "url": "https://assets.hardcover.app/405234/cover.jpg", "color": "#4a5d8e", "width": 335, "height": 500, "color_name": "Blue" },
               "cached_contributors": [
-                { "id": 15200, "name": "Brandon Sanderson", "contribution": "Author" }
+                {
+                  "author": { "id": 204214, "slug": "brandon-sanderson", "name": "Brandon Sanderson", "image": { "id": 1725806, "url": "https://assets.hardcover.app/author/204214/img.jpg", "color": "#a07e6e", "width": 700, "height": 915, "color_name": "Gray" } },
+                  "contribution": null
+                }
               ]
             }
           }

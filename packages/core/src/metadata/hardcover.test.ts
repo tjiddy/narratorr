@@ -19,7 +19,7 @@ describe('HardcoverProvider', () => {
 
       expect(books).toHaveLength(2);
       expect(books[0].title).toBe('The Way of Kings');
-      expect(books[0].subtitle).toBe('Book One of the Stormlight Archive');
+      expect(books[0].subtitle).toBe('The Stormlight Archive Book One');
       expect(books[0].authors).toEqual([{ name: 'Brandon Sanderson' }]);
       expect(books[0].genres).toEqual(['Fantasy', 'Epic Fantasy', 'High Fantasy']);
     });
@@ -32,20 +32,11 @@ describe('HardcoverProvider', () => {
       ]);
     });
 
-    it('converts audio_seconds to duration in minutes', async () => {
+    it('maps cover URL from image object', async () => {
       const books = await provider.searchBooks('Way of Kings');
 
-      // 162840 seconds / 60 = 2714 minutes
-      expect(books[0].duration).toBe(2714);
-    });
-
-    it('handles image as string or object', async () => {
-      const books = await provider.searchBooks('Way of Kings');
-
-      // First book has image as string
-      expect(books[0].coverUrl).toBe('https://assets.hardcover.app/328491/cover.jpg');
-      // Second book has image as { url }
-      expect(books[1].coverUrl).toBe('https://assets.hardcover.app/328500/cover.jpg');
+      expect(books[0].coverUrl).toBe('https://assets.hardcover.app/386446/cover.jpg');
+      expect(books[1].coverUrl).toBe('https://assets.hardcover.app/405234/cover.jpg');
     });
 
     it('returns empty array on API error', async () => {
@@ -81,7 +72,7 @@ describe('HardcoverProvider', () => {
     it('maps image URL from author search', async () => {
       const authors = await provider.searchAuthors('Brandon');
 
-      expect(authors[0].imageUrl).toBe('https://assets.hardcover.app/authors/15200.jpg');
+      expect(authors[0].imageUrl).toBe('https://assets.hardcover.app/author/204214/img.jpg');
     });
 
     it('returns empty array on error', async () => {
@@ -123,17 +114,13 @@ describe('HardcoverProvider', () => {
     });
 
     it('handles partial failures gracefully', async () => {
-      // Make book search fail but let author/series succeed
-      let callCount = 0;
       server.use(
         http.post(API_URL, async ({ request }) => {
           const body = (await request.json()) as { variables?: Record<string, unknown> };
           const type = body.variables?.type as string;
-          callCount++;
           if (type === 'Book') {
             return new HttpResponse(null, { status: 500 });
           }
-          // Re-import fixtures for non-book types
           if (type === 'Author') {
             const fixture = await import('../__tests__/fixtures/hardcover-author-search.json');
             return HttpResponse.json(fixture.default ?? fixture);
@@ -156,23 +143,29 @@ describe('HardcoverProvider', () => {
 
   describe('getBook', () => {
     it('returns full mapped book metadata', async () => {
-      const book = await provider.getBook('328491');
+      const book = await provider.getBook('386446');
 
       expect(book).not.toBeNull();
       expect(book!.title).toBe('The Way of Kings');
-      expect(book!.subtitle).toBe('Book One of the Stormlight Archive');
+      expect(book!.subtitle).toBe('The Stormlight Archive Book One');
       expect(book!.description).toBe('Roshar is a world of stone and storms.');
     });
 
-    it('maps authors and narrators from contributions', async () => {
-      const book = await provider.getBook('328491');
+    it('maps authors from contributions', async () => {
+      const book = await provider.getBook('386446');
 
       expect(book!.authors).toEqual([{ name: 'Brandon Sanderson' }]);
-      expect(book!.narrators).toEqual(['Kate Reading', 'Michael Kramer']);
+    });
+
+    it('omits narrators when contribution type is null', async () => {
+      const book = await provider.getBook('386446');
+
+      // Hardcover returns contribution as null, so narrators can't be extracted
+      expect(book!.narrators).toBeUndefined();
     });
 
     it('maps series from featured_book_series', async () => {
-      const book = await provider.getBook('328491');
+      const book = await provider.getBook('386446');
 
       expect(book!.series).toEqual([
         { name: 'The Stormlight Archive', position: 1 },
@@ -180,37 +173,39 @@ describe('HardcoverProvider', () => {
     });
 
     it('maps cover URL from cached_image', async () => {
-      const book = await provider.getBook('328491');
+      const book = await provider.getBook('386446');
 
-      expect(book!.coverUrl).toBe('https://assets.hardcover.app/328491/cover.jpg');
+      expect(book!.coverUrl).toBe('https://assets.hardcover.app/386446/cover.jpg');
     });
 
-    it('maps ASIN from default_audio_edition', async () => {
-      const book = await provider.getBook('328491');
+    it('maps ASIN from editions when default_audio_edition has none', async () => {
+      const book = await provider.getBook('386446');
 
+      // default_audio_edition.asin is null, editions[0].asin is "B003ZWFO7E"
       expect(book!.asin).toBe('B003ZWFO7E');
     });
 
     it('maps ISBN from default_audio_edition', async () => {
-      const book = await provider.getBook('328491');
+      const book = await provider.getBook('386446');
 
-      expect(book!.isbn).toBe('9780765365286');
+      expect(book!.isbn).toBe('9781427209757');
     });
 
-    it('converts audio_seconds to duration in minutes', async () => {
-      const book = await provider.getBook('328491');
+    it('picks audio_seconds from editions over default_audio_edition', async () => {
+      const book = await provider.getBook('386446');
 
-      expect(book!.duration).toBe(2714);
+      // editions[0].audio_seconds = 163800 → 163800 / 60 = 2730
+      expect(book!.duration).toBe(2730);
     });
 
-    it('maps genres from cached_tags', async () => {
-      const book = await provider.getBook('328491');
+    it('maps genres from cached_tags tag objects', async () => {
+      const book = await provider.getBook('386446');
 
       expect(book!.genres).toEqual(['Fantasy', 'Epic Fantasy', 'High Fantasy']);
     });
 
     it('maps publisher from audio edition', async () => {
-      const book = await provider.getBook('328491');
+      const book = await provider.getBook('386446');
 
       expect(book!.publisher).toBe('Macmillan Audio');
     });
@@ -220,21 +215,21 @@ describe('HardcoverProvider', () => {
         http.post(API_URL, () => new HttpResponse(null, { status: 500 })),
       );
 
-      const book = await provider.getBook('328491');
+      const book = await provider.getBook('386446');
       expect(book).toBeNull();
     });
   });
 
   describe('getAuthor', () => {
     it('returns mapped author with bio and image', async () => {
-      const author = await provider.getAuthor('15200');
+      const author = await provider.getAuthor('204214');
 
       expect(author).not.toBeNull();
       expect(author!.name).toBe('Brandon Sanderson');
       expect(author!.description).toBe(
         'Brandon Sanderson is an American author of epic fantasy and science fiction.',
       );
-      expect(author!.imageUrl).toBe('https://assets.hardcover.app/authors/15200.jpg');
+      expect(author!.imageUrl).toBe('https://assets.hardcover.app/author/204214/img.jpg');
     });
 
     it('returns null on API error', async () => {
@@ -242,26 +237,19 @@ describe('HardcoverProvider', () => {
         http.post(API_URL, () => new HttpResponse(null, { status: 500 })),
       );
 
-      const author = await provider.getAuthor('15200');
+      const author = await provider.getAuthor('204214');
       expect(author).toBeNull();
     });
   });
 
   describe('getAuthorBooks', () => {
-    it('returns books where contribution is Author', async () => {
-      const books = await provider.getAuthorBooks('15200');
+    it('returns all books from author contributions', async () => {
+      const books = await provider.getAuthorBooks('204214');
 
-      // Fixture has 2 Author contributions and 1 Narrator
+      // Fixture has 2 contributions (both with contribution: null)
       expect(books).toHaveLength(2);
       expect(books[0].title).toBe('The Way of Kings');
       expect(books[1].title).toBe('Words of Radiance');
-    });
-
-    it('excludes narrated books', async () => {
-      const books = await provider.getAuthorBooks('15200');
-
-      const titles = books.map((b) => b.title);
-      expect(titles).not.toContain('Some Narrated Book');
     });
 
     it('returns empty array on error', async () => {
@@ -269,23 +257,26 @@ describe('HardcoverProvider', () => {
         http.post(API_URL, () => new HttpResponse(null, { status: 500 })),
       );
 
-      const books = await provider.getAuthorBooks('15200');
+      const books = await provider.getAuthorBooks('204214');
       expect(books).toEqual([]);
     });
   });
 
   describe('getSeries', () => {
     it('returns series with ordered books', async () => {
-      const series = await provider.getSeries('4578');
+      const series = await provider.getSeries('997');
 
       expect(series).not.toBeNull();
       expect(series!.name).toBe('The Stormlight Archive');
-      expect(series!.description).toBe(
-        'An epic fantasy series set on the world of Roshar.',
-      );
       expect(series!.books).toHaveLength(2);
       expect(series!.books[0].title).toBe('The Way of Kings');
       expect(series!.books[1].title).toBe('Words of Radiance');
+    });
+
+    it('handles null description', async () => {
+      const series = await provider.getSeries('997');
+
+      expect(series!.description).toBeUndefined();
     });
 
     it('returns null on API error', async () => {
@@ -293,7 +284,7 @@ describe('HardcoverProvider', () => {
         http.post(API_URL, () => new HttpResponse(null, { status: 500 })),
       );
 
-      const series = await provider.getSeries('4578');
+      const series = await provider.getSeries('997');
       expect(series).toBeNull();
     });
   });
@@ -327,20 +318,19 @@ describe('HardcoverProvider', () => {
   });
 
   describe('authentication', () => {
-    it('sends bare token (not Bearer) in authorization header', async () => {
+    it('sends Bearer token in authorization header', async () => {
       let capturedAuth = '';
       server.use(
         http.post(API_URL, ({ request }) => {
           capturedAuth = request.headers.get('authorization') ?? '';
           return HttpResponse.json({
-            data: { search: { results: [] } },
+            data: { search: { results: { hits: [], found: 0 } } },
           });
         }),
       );
 
       await provider.searchBooks('test');
-      expect(capturedAuth).toBe('test-api-key');
-      expect(capturedAuth).not.toMatch(/^Bearer /);
+      expect(capturedAuth).toBe('Bearer test-api-key');
     });
   });
 });
