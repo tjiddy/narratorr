@@ -168,10 +168,10 @@ Rules:
 ## 4) Verify locally (required)
 
 Run **all** of the following:
+- `pnpm lint` — no lint errors
 - `pnpm test` — all tests must pass (zero failures)
 - `pnpm typecheck` — no type errors
 - `pnpm build` — clean build
-- Lint/format (if applicable)
 - Manual steps from Test Plan (if any)
 
 If you cannot make tests pass:

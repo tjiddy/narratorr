@@ -74,7 +74,7 @@ All new/changed code must include tests. Run `pnpm test` (Vitest via Turborepo) 
 - Global setup (client): `src/client/__tests__/setup.ts` (matchMedia mock, auto-cleanup)
 - Test helpers: `src/client/__tests__/helpers.tsx` (`renderWithProviders`)
 
-**Required before PR:** `pnpm test` (zero failures), `pnpm typecheck`, `pnpm build`.
+**Required before PR:** `pnpm lint`, `pnpm test` (zero failures), `pnpm typecheck`, `pnpm build`.
 
 ## Project Management (Gitea)
 
@@ -83,7 +83,7 @@ All work is tracked as Gitea issues at `https://git.tjiddy.com/todd/narratorr`. 
 ```bash
 pnpm gitea issues                   # List open issues
 pnpm gitea issue <id>               # Read full spec
-pnpm gitea issue-update <id> <field> <value>  # Update issue
+pnpm gitea issue-update <id> <field> <value>  # Update issue (state/labels/milestone/title/body)
 pnpm gitea issue-comment <id> "message"       # Add comment
 pnpm gitea prs                      # List open PRs
 pnpm gitea pr-create <title> <body> <head> [base]  # Create PR

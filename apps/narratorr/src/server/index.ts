@@ -76,11 +76,32 @@ async function main() {
   // Start background jobs
   startJobs(db, services.downloadClient, app.log);
 
-  // Start server
-  await app.listen({
-    port: config.port,
-    host: '0.0.0.0',
-  });
+  // Graceful shutdown — ensures port is released on tsx watch restarts
+  const shutdown = async () => {
+    app.log.info('Shutting down server…');
+    await app.close();
+    process.exit(0);
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
+
+  // Start server (retry on EADDRINUSE — handles tsx watch race on Windows
+  // where the previous process hasn't released the port yet)
+  const maxRetries = 5;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await app.listen({ port: config.port, host: '0.0.0.0' });
+      break;
+    } catch (err: unknown) {
+      const isAddrInUse = err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EADDRINUSE';
+      if (isAddrInUse && attempt < maxRetries) {
+        app.log.warn({ port: config.port, attempt }, 'Port in use, retrying…');
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      }
+      throw err;
+    }
+  }
 
   app.log.info({ port: config.port }, 'Server running');
 }

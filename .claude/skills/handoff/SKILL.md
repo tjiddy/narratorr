@@ -6,7 +6,7 @@ Automates the "Push + Create PR + Update issue" workflow from `docs/agent_workfl
 
 1. **Verify branch:** Run `git branch --show-current`. It must match `feature/issue-<id>-*`. If not, STOP: "Not on the expected feature branch for #<id>."
 
-2. **Verify build:** Run `pnpm build && pnpm typecheck`. If either fails, STOP: "Build/typecheck failed — fix before handoff."
+2. **Verify quality gates:** Run `pnpm lint && pnpm test && pnpm typecheck && pnpm build`. If any fail, STOP and fix before handoff.
 
 3. **Push the branch:**
    ```bash

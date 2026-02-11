@@ -6,7 +6,7 @@
 //   issues [all]                List open (or all) issues
 //   issue <id>                  Get issue details
 //   issue-create <title> <body|--body-file path> [labels] [milestone]
-//   issue-update <id> <state|labels|milestone> <value>
+//   issue-update <id> <state|labels|milestone|title|body> <value|--body-file path>
 //   issue-comment <id> <body|--body-file path>
 //   labels                      List all labels
 //   label-create <name> <color> [description]
@@ -284,13 +284,16 @@ switch (cmd) {
   }
 
   case "issue-update": {
-    const [id, field, value] = args;
-    if (!id || !field || !value) {
-      console.error("Usage: gitea issue-update <id> <state|labels|milestone> <value>");
+    const id = args[0];
+    const field = args[1];
+    if (!id || !field) {
+      console.error("Usage: gitea issue-update <id> <state|labels|milestone|title|body> <value|--body-file path>");
       process.exit(1);
     }
     switch (field) {
       case "state": {
+        const value = args[2];
+        if (!value) { console.error("Usage: gitea issue-update <id> state <open|closed>"); process.exit(1); }
         const data = await api(`/issues/${id}`, {
           method: "PATCH",
           body: JSON.stringify({ state: value }),
@@ -299,6 +302,8 @@ switch (cmd) {
         break;
       }
       case "labels": {
+        const value = args[2];
+        if (!value) { console.error("Usage: gitea issue-update <id> labels <name1,name2>"); process.exit(1); }
         const labelIds = await resolveLabels(value);
         const data = await api(`/issues/${id}/labels`, {
           method: "PUT",
@@ -315,6 +320,8 @@ switch (cmd) {
         break;
       }
       case "milestone": {
+        const value = args[2];
+        if (!value) { console.error("Usage: gitea issue-update <id> milestone <name|id>"); process.exit(1); }
         const data = await api(`/issues/${id}`, {
           method: "PATCH",
           body: JSON.stringify({ milestone: Number(value) }),
@@ -322,8 +329,28 @@ switch (cmd) {
         fmtIssue(data);
         break;
       }
+      case "title": {
+        const value = args[2];
+        if (!value) { console.error("Usage: gitea issue-update <id> title <new-title>"); process.exit(1); }
+        const data = await api(`/issues/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ title: value }),
+        });
+        fmtIssue(data);
+        break;
+      }
+      case "body": {
+        const [bodyContent] = extractBody(args.slice(2));
+        if (!bodyContent) { console.error("Usage: gitea issue-update <id> body <text|--body-file path>"); process.exit(1); }
+        const data = await api(`/issues/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ body: bodyContent }),
+        });
+        fmtIssue(data);
+        break;
+      }
       default:
-        console.error(`Unknown field: ${field}. Use: state, labels, milestone`);
+        console.error(`Unknown field: ${field}. Use: state, labels, milestone, title, body`);
         process.exit(1);
     }
     break;
@@ -436,7 +463,7 @@ Commands:
   issues [all]                List open (or all) issues
   issue <id>                  Get issue details
   issue-create <t> <b> [l] [m]  Create issue
-  issue-update <id> <f> <v>  Update issue field
+  issue-update <id> <f> <v>  Update field (state/labels/milestone/title/body)
   issue-comment <id> <body>  Add comment
   labels                     List labels
   label-create <n> <c> [d]   Create label
