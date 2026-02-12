@@ -141,6 +141,7 @@ export function createMockServices(overrides?: Partial<Services>): Services {
       getAuthorBooks: vi.fn(),
       getBook: vi.fn(),
       getSeries: vi.fn(),
+      enrichBook: vi.fn(),
       testProviders: vi.fn(),
       getProviders: vi.fn(),
       ...overrides?.metadata,

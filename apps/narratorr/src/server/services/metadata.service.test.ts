@@ -16,12 +16,19 @@ const mockProvider = {
   test: vi.fn().mockResolvedValue({ success: true }),
 };
 
+const mockAudnexus = {
+  name: 'Audnexus',
+  type: 'audnexus',
+  getBook: vi.fn().mockResolvedValue(null),
+};
+
 vi.mock('@narratorr/core', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('@narratorr/core')>();
   return {
     ...actual,
     HardcoverProvider: vi.fn().mockImplementation(() => mockProvider),
+    AudnexusProvider: vi.fn().mockImplementation(() => mockAudnexus),
   };
 });
 
@@ -39,6 +46,7 @@ describe('MetadataService', () => {
     mockProvider.getBook.mockResolvedValue(null);
     mockProvider.getSeries.mockResolvedValue(null);
     mockProvider.test.mockResolvedValue({ success: true });
+    mockAudnexus.getBook.mockResolvedValue(null);
     service = new MetadataService(createMockLogger() as any);
   });
 
@@ -104,6 +112,34 @@ describe('MetadataService', () => {
 
       const result = await service.getBook('328491');
       expect(result).toEqual(mockBook);
+    });
+  });
+
+  describe('enrichBook', () => {
+    it('returns book metadata from Audnexus on success', async () => {
+      const mockBookData = {
+        title: 'The Way of Kings',
+        authors: [{ name: 'Brandon Sanderson' }],
+        narrators: ['Michael Kramer', 'Kate Reading'],
+        duration: 2700,
+      };
+      mockAudnexus.getBook.mockResolvedValueOnce(mockBookData);
+
+      const result = await service.enrichBook('B003P2WO5E');
+      expect(result).toEqual(mockBookData);
+      expect(mockAudnexus.getBook).toHaveBeenCalledWith('B003P2WO5E');
+    });
+
+    it('returns null when Audnexus has no data', async () => {
+      const result = await service.enrichBook('B000UNKNOWN');
+      expect(result).toBeNull();
+    });
+
+    it('returns null on Audnexus error', async () => {
+      mockAudnexus.getBook.mockRejectedValueOnce(new Error('500 Internal Server Error'));
+
+      const result = await service.enrichBook('B000BROKEN');
+      expect(result).toBeNull();
     });
   });
 

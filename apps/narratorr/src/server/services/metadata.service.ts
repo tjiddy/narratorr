@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger } from 'fastify';
 import {
   HardcoverProvider,
+  AudnexusProvider,
   type MetadataProvider,
   type MetadataSearchResults,
   type BookMetadata,
@@ -10,6 +11,7 @@ import {
 
 export class MetadataService {
   private providers: MetadataProvider[] = [];
+  private audnexus: AudnexusProvider;
 
   constructor(private log: FastifyBaseLogger) {
     const apiKey = process.env.HARDCOVER_API_KEY;
@@ -19,6 +21,9 @@ export class MetadataService {
     } else {
       this.log.warn('No HARDCOVER_API_KEY set — metadata lookups disabled');
     }
+
+    this.audnexus = new AudnexusProvider();
+    this.log.info('Audnexus enrichment provider loaded');
   }
 
   async search(query: string): Promise<MetadataSearchResults> {
@@ -99,6 +104,19 @@ export class MetadataService {
       return await provider.getSeries(asin);
     } catch (error) {
       this.log.warn(error, 'Metadata getSeries failed');
+      return null;
+    }
+  }
+
+  async enrichBook(asin: string): Promise<BookMetadata | null> {
+    try {
+      const result = await this.audnexus.getBook(asin);
+      if (result) {
+        this.log.debug({ asin }, 'Audnexus enrichment data found');
+      }
+      return result;
+    } catch (error) {
+      this.log.warn({ error, asin }, 'Audnexus enrichment lookup failed');
       return null;
     }
   }

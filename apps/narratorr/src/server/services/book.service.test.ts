@@ -34,6 +34,7 @@ const mockBook = {
   publishedDate: null,
   genres: null,
   status: 'wanted' as const,
+  enrichmentStatus: 'pending' as const,
   path: null,
   size: null,
   createdAt: now,

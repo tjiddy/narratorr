@@ -1,0 +1,1 @@
+ALTER TABLE `books` ADD `enrichment_status` text DEFAULT 'pending' NOT NULL;

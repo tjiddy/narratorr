@@ -41,6 +41,11 @@ export const books = sqliteTable('books', {
   })
     .notNull()
     .default('wanted'),
+  enrichmentStatus: text('enrichment_status', {
+    enum: ['pending', 'enriched', 'failed', 'skipped'],
+  })
+    .notNull()
+    .default('pending'),
   path: text('path'),
   size: integer('size'),
   createdAt: integer('created_at', { mode: 'timestamp' })
