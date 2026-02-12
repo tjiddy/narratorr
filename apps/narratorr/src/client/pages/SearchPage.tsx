@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, formatBytes, type SearchResult, type BookMetadata, type AuthorMetadata } from '@/lib/api';
+import { api, ApiError, formatBytes, type SearchResult, type BookMetadata, type AuthorMetadata, type BookWithAuthor, type CreateBookPayload } from '@/lib/api';
 import { useMetadataSearch } from '@/hooks/useMetadata';
 import { toast } from 'sonner';
 
@@ -386,6 +386,7 @@ export function SearchPage() {
           results={metadataResults}
           searchTerm={searchTerm}
           isLoading={metadataLoading}
+          queryClient={queryClient}
         />
       ) : (
         <IndexerResults
@@ -410,13 +411,21 @@ function DiscoverResults({
   results,
   searchTerm,
   isLoading,
+  queryClient,
 }: {
   results: { books: BookMetadata[]; authors: AuthorMetadata[] } | undefined;
   searchTerm: string;
   isLoading: boolean;
+  queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const [tab, setTab] = useState<DiscoverTab>('books');
   const hasResults = results && (results.authors.length > 0 || results.books.length > 0);
+
+  // Fetch library books to check "already in library"
+  const { data: libraryBooks } = useQuery({
+    queryKey: ['books'],
+    queryFn: () => api.getBooks(),
+  });
 
   if (searchTerm && !isLoading && !hasResults) {
     return (
@@ -482,7 +491,13 @@ function DiscoverResults({
       {tab === 'books' && results.books.length > 0 && (
         <div className="grid gap-4">
           {results.books.map((book, index) => (
-            <DiscoverBookCard key={book.asin || index} book={book} index={index} />
+            <DiscoverBookCard
+              key={book.asin || index}
+              book={book}
+              index={index}
+              libraryBooks={libraryBooks}
+              queryClient={queryClient}
+            />
           ))}
         </div>
       )}
@@ -569,10 +584,68 @@ function AuthorCard({ author, index }: { author: AuthorMetadata; index: number }
 // Discover Book Card
 // ============================================================================
 
-function DiscoverBookCard({ book, index }: { book: BookMetadata; index: number }) {
+function mapBookMetadataToPayload(book: BookMetadata): CreateBookPayload {
+  const author = book.authors[0];
+  return {
+    title: book.title,
+    authorName: author?.name,
+    authorAsin: author?.asin,
+    narrator: book.narrators?.join(', '),
+    description: book.description,
+    coverUrl: book.coverUrl,
+    asin: book.asin,
+    seriesName: book.series?.[0]?.name,
+    seriesPosition: book.series?.[0]?.position,
+    duration: book.duration,
+    genres: book.genres,
+  };
+}
+
+function isBookInLibrary(book: BookMetadata, libraryBooks?: BookWithAuthor[]): boolean {
+  if (!libraryBooks?.length) return false;
+  return libraryBooks.some((lb) => {
+    if (book.asin && lb.asin && book.asin === lb.asin) return true;
+    const titleMatch = lb.title.toLowerCase() === book.title.toLowerCase();
+    const authorMatch = book.authors[0]?.name
+      && lb.author?.name?.toLowerCase() === book.authors[0].name.toLowerCase();
+    return titleMatch && authorMatch;
+  });
+}
+
+function DiscoverBookCard({
+  book,
+  index,
+  libraryBooks,
+  queryClient,
+}: {
+  book: BookMetadata;
+  index: number;
+  libraryBooks?: BookWithAuthor[];
+  queryClient: ReturnType<typeof useQueryClient>;
+}) {
   const [imageError, setImageError] = useState(false);
+  const [justAdded, setJustAdded] = useState(false);
   const authorNames = book.authors.map((a) => a.name).join(', ');
   const seriesInfo = book.series?.[0];
+  const inLibrary = justAdded || isBookInLibrary(book, libraryBooks);
+
+  const addMutation = useMutation({
+    mutationFn: () => api.addBook(mapBookMetadataToPayload(book)),
+    onSuccess: () => {
+      setJustAdded(true);
+      toast.success(`Added '${book.title}' to library`);
+      queryClient.invalidateQueries({ queryKey: ['books'] });
+    },
+    onError: (error: Error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        setJustAdded(true);
+        toast.info('Already in library');
+        queryClient.invalidateQueries({ queryKey: ['books'] });
+      } else {
+        toast.error(`Failed to add book: ${error.message}`);
+      }
+    },
+  });
 
   return (
     <div
@@ -642,18 +715,36 @@ function DiscoverBookCard({ book, index }: { book: BookMetadata; index: number }
 
         {/* Add Button */}
         <div className="shrink-0 flex items-center">
-          <button
-            onClick={() => toast.info('Add to library coming soon!')}
-            className="
-              flex items-center gap-2 px-4 py-2.5
-              bg-primary text-primary-foreground font-medium rounded-xl
-              hover:opacity-90 hover:shadow-glow
-              transition-all duration-200 focus-ring
-            "
-          >
-            <PlusIcon className="w-4 h-4" />
-            <span className="hidden sm:inline">Add</span>
-          </button>
+          {inLibrary ? (
+            <span className="flex items-center gap-2 px-4 py-2.5 text-success font-medium">
+              <CheckCircleIcon className="w-4 h-4" />
+              <span className="hidden sm:inline">In Library</span>
+            </span>
+          ) : (
+            <button
+              onClick={() => addMutation.mutate()}
+              disabled={addMutation.isPending}
+              className="
+                flex items-center gap-2 px-4 py-2.5
+                bg-primary text-primary-foreground font-medium rounded-xl
+                hover:opacity-90 hover:shadow-glow
+                disabled:opacity-50 disabled:cursor-not-allowed
+                transition-all duration-200 focus-ring
+              "
+            >
+              {addMutation.isPending ? (
+                <>
+                  <LoadingSpinner className="w-4 h-4" />
+                  <span className="hidden sm:inline">Adding...</span>
+                </>
+              ) : (
+                <>
+                  <PlusIcon className="w-4 h-4" />
+                  <span className="hidden sm:inline">Add</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
     </div>

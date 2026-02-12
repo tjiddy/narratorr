@@ -1,5 +1,18 @@
 const API_BASE = '/api';
 
+class ApiError extends Error {
+  status: number;
+  body: unknown;
+  constructor(status: number, body: unknown) {
+    const message = (body as { error?: string })?.error
+      || (body as { message?: string })?.message
+      || `HTTP ${status}`;
+    super(message);
+    this.status = status;
+    this.body = body;
+  }
+}
+
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     ...(options?.headers as Record<string, string>),
@@ -17,11 +30,13 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-    throw new Error(error.error || error.message || `HTTP ${response.status}`);
+    throw new ApiError(response.status, error);
   }
 
   return response.json();
 }
+
+export { ApiError };
 
 // Types
 export interface SearchResult {
@@ -99,6 +114,54 @@ export interface TestResult {
   message?: string;
 }
 
+// Library types
+export interface Author {
+  id: number;
+  name: string;
+  slug: string;
+  asin?: string | null;
+  imageUrl?: string | null;
+  bio?: string | null;
+}
+
+export interface BookWithAuthor {
+  id: number;
+  title: string;
+  authorId?: number | null;
+  narrator?: string | null;
+  description?: string | null;
+  coverUrl?: string | null;
+  asin?: string | null;
+  isbn?: string | null;
+  seriesName?: string | null;
+  seriesPosition?: number | null;
+  duration?: number | null;
+  publishedDate?: string | null;
+  genres?: string[] | null;
+  status: string;
+  path?: string | null;
+  size?: number | null;
+  createdAt: string;
+  updatedAt: string;
+  author?: Author;
+}
+
+export interface CreateBookPayload {
+  title: string;
+  authorName?: string;
+  authorAsin?: string;
+  narrator?: string;
+  description?: string;
+  coverUrl?: string;
+  asin?: string;
+  isbn?: string;
+  seriesName?: string;
+  seriesPosition?: number;
+  duration?: number;
+  publishedDate?: string;
+  genres?: string[];
+}
+
 // Metadata types
 export interface BookMetadata {
   asin?: string;
@@ -131,6 +194,15 @@ export interface MetadataSearchResults {
 
 // API methods
 export const api = {
+  // Library
+  getBooks: (status?: string) =>
+    fetchApi<BookWithAuthor[]>(status ? `/books?status=${encodeURIComponent(status)}` : '/books'),
+  addBook: (data: CreateBookPayload) =>
+    fetchApi<BookWithAuthor>('/books', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   // Metadata
   searchMetadata: (query: string) =>
     fetchApi<MetadataSearchResults>(`/metadata/search?q=${encodeURIComponent(query)}`),

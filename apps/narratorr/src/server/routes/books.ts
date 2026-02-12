@@ -4,9 +4,17 @@ import type { BookService } from '../services';
 interface CreateBookBody {
   title: string;
   authorName?: string;
+  authorAsin?: string;
   narrator?: string;
   description?: string;
   coverUrl?: string;
+  asin?: string;
+  isbn?: string;
+  seriesName?: string;
+  seriesPosition?: number;
+  duration?: number;
+  publishedDate?: string;
+  genres?: string[];
 }
 
 interface UpdateBookBody {
@@ -38,18 +46,34 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
 
   // POST /api/books
   app.post<{ Body: CreateBookBody }>('/api/books', async (request, reply) => {
-    const { title, authorName, narrator, description, coverUrl } = request.body;
+    const { title, authorName, authorAsin, narrator, description, coverUrl,
+            asin, isbn, seriesName, seriesPosition, duration, publishedDate, genres } = request.body;
 
     if (!title) {
       return reply.status(400).send({ error: 'Title is required' });
     }
 
+    // Check for duplicates
+    const existing = await bookService.findDuplicate(title, authorName, asin);
+    if (existing) {
+      request.log.info({ title, existingId: existing.id }, 'Duplicate book detected');
+      return reply.status(409).send(existing);
+    }
+
     const book = await bookService.create({
       title,
       authorName,
+      authorAsin,
       narrator,
       description,
       coverUrl,
+      asin,
+      isbn,
+      seriesName,
+      seriesPosition,
+      duration,
+      publishedDate,
+      genres,
     });
 
     request.log.info({ title }, 'Book added');

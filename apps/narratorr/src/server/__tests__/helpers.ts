@@ -113,6 +113,7 @@ export function createMockServices(overrides?: Partial<Services>): Services {
     book: {
       getAll: vi.fn(),
       getById: vi.fn(),
+      findDuplicate: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
       updateStatus: vi.fn(),

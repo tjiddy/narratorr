@@ -91,6 +91,7 @@ describe('books routes', () => {
 
   describe('POST /api/books', () => {
     it('creates book and returns 201', async () => {
+      (services.book.findDuplicate as any).mockResolvedValue(null);
       (services.book.create as any).mockResolvedValue(mockBook);
 
       const res = await app.inject({
@@ -101,6 +102,57 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(201);
       expect(JSON.parse(res.payload).title).toBe('The Way of Kings');
+    });
+
+    it('creates book with full metadata and returns 201', async () => {
+      (services.book.findDuplicate as any).mockResolvedValue(null);
+      (services.book.create as any).mockResolvedValue({
+        ...mockBook,
+        asin: 'B003P2WO5E',
+        seriesName: 'The Stormlight Archive',
+        seriesPosition: 1,
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: {
+          title: 'The Way of Kings',
+          authorName: 'Brandon Sanderson',
+          authorAsin: 'B001IGFHW6',
+          asin: 'B003P2WO5E',
+          isbn: '978-0-7653-2635-5',
+          narrator: 'Michael Kramer, Kate Reading',
+          seriesName: 'The Stormlight Archive',
+          seriesPosition: 1,
+          duration: 2700,
+          publishedDate: '2010-08-31',
+          genres: ['Fantasy'],
+          description: 'An epic fantasy',
+          coverUrl: 'https://example.com/cover.jpg',
+        },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'The Way of Kings',
+        asin: 'B003P2WO5E',
+        seriesName: 'The Stormlight Archive',
+      }));
+    });
+
+    it('returns 409 when duplicate found', async () => {
+      (services.book.findDuplicate as any).mockResolvedValue(mockBook);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson' },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).title).toBe('The Way of Kings');
+      expect(services.book.create).not.toHaveBeenCalled();
     });
 
     it('returns 400 when title is missing', async () => {

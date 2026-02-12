@@ -98,6 +98,46 @@ describe('BookService', () => {
     });
   });
 
+  describe('findDuplicate', () => {
+    it('finds duplicate by ASIN', async () => {
+      db.select.mockReturnValueOnce(
+        mockDbChain([{ book: { ...mockBook, asin: 'B003P2WO5E' }, author: mockAuthor }]),
+      );
+
+      const result = await service.findDuplicate('The Way of Kings', 'Brandon Sanderson', 'B003P2WO5E');
+      expect(result).not.toBeNull();
+      expect(result!.title).toBe('The Way of Kings');
+    });
+
+    it('finds duplicate by title + author slug when ASIN misses', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // ASIN lookup: not found
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));  // title+author: found
+
+      const result = await service.findDuplicate('The Way of Kings', 'Brandon Sanderson', 'B000UNKNOWN');
+      expect(result).not.toBeNull();
+      expect(result!.title).toBe('The Way of Kings');
+    });
+
+    it('returns null when no duplicate', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // ASIN lookup
+        .mockReturnValueOnce(mockDbChain([]));  // title+author lookup
+
+      const result = await service.findDuplicate('New Book', 'New Author', 'B000NEW');
+      expect(result).toBeNull();
+    });
+
+    it('skips ASIN check when not provided', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+
+      const result = await service.findDuplicate('The Way of Kings', 'Brandon Sanderson');
+      expect(result).not.toBeNull();
+      // Only one select call (title+author), no ASIN check
+      expect(db.select).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('create', () => {
     it('creates book with new author', async () => {
       // First select: author lookup (not found)
@@ -146,6 +186,44 @@ describe('BookService', () => {
 
       expect(result.title).toBe('The Way of Kings'); // from mock
       expect(db.insert).toHaveBeenCalledTimes(1);
+    });
+
+    it('creates book with full metadata fields', async () => {
+      const fullBook = {
+        ...mockBook,
+        asin: 'B003P2WO5E',
+        isbn: '978-0-7653-2635-5',
+        seriesName: 'The Stormlight Archive',
+        seriesPosition: 1,
+        duration: 2700,
+        publishedDate: '2010-08-31',
+        genres: ['Fantasy', 'Epic Fantasy'],
+      };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // author lookup
+        .mockReturnValueOnce(mockDbChain([{ book: fullBook, author: mockAuthor }]));  // getById
+
+      db.insert
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // author insert
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]));  // book insert
+
+      const result = await service.create({
+        title: 'The Way of Kings',
+        authorName: 'Brandon Sanderson',
+        authorAsin: 'B001IGFHW6',
+        asin: 'B003P2WO5E',
+        isbn: '978-0-7653-2635-5',
+        seriesName: 'The Stormlight Archive',
+        seriesPosition: 1,
+        duration: 2700,
+        publishedDate: '2010-08-31',
+        genres: ['Fantasy', 'Epic Fantasy'],
+        narrator: 'Michael Kramer, Kate Reading',
+      });
+
+      expect(result.title).toBe('The Way of Kings');
+      expect(db.insert).toHaveBeenCalledTimes(2);
     });
   });
 

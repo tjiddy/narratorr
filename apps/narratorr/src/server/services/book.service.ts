@@ -1,4 +1,4 @@
-import { eq, like, desc } from 'drizzle-orm';
+import { eq, and, like, desc } from 'drizzle-orm';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors } from '@narratorr/db/schema';
@@ -56,12 +56,53 @@ export class BookService {
     };
   }
 
+  async findDuplicate(title: string, authorName?: string, asin?: string): Promise<BookWithAuthor | null> {
+    // Check by ASIN first if available (opportunistic)
+    if (asin) {
+      const byAsin = await this.db
+        .select({ book: books, author: authors })
+        .from(books)
+        .leftJoin(authors, eq(books.authorId, authors.id))
+        .where(eq(books.asin, asin))
+        .limit(1);
+
+      if (byAsin.length > 0) {
+        return { ...byAsin[0].book, author: byAsin[0].author || undefined };
+      }
+    }
+
+    // Check by title + author slug
+    if (authorName) {
+      const authorSlug = slugify(authorName);
+      const byTitleAuthor = await this.db
+        .select({ book: books, author: authors })
+        .from(books)
+        .leftJoin(authors, eq(books.authorId, authors.id))
+        .where(and(eq(books.title, title), eq(authors.slug, authorSlug)))
+        .limit(1);
+
+      if (byTitleAuthor.length > 0) {
+        return { ...byTitleAuthor[0].book, author: byTitleAuthor[0].author || undefined };
+      }
+    }
+
+    return null;
+  }
+
   async create(data: {
     title: string;
     authorName?: string;
+    authorAsin?: string;
     narrator?: string;
     description?: string;
     coverUrl?: string;
+    asin?: string;
+    isbn?: string;
+    seriesName?: string;
+    seriesPosition?: number;
+    duration?: number;
+    publishedDate?: string;
+    genres?: string[];
     status?: BookRow['status'];
   }): Promise<BookWithAuthor> {
     let authorId: number | undefined;
@@ -80,7 +121,7 @@ export class BookService {
       } else {
         const newAuthor = await this.db
           .insert(authors)
-          .values({ name: data.authorName, slug })
+          .values({ name: data.authorName, slug, asin: data.authorAsin })
           .returning();
         authorId = newAuthor[0].id;
       }
@@ -94,6 +135,13 @@ export class BookService {
         narrator: data.narrator,
         description: data.description,
         coverUrl: data.coverUrl,
+        asin: data.asin,
+        isbn: data.isbn,
+        seriesName: data.seriesName,
+        seriesPosition: data.seriesPosition,
+        duration: data.duration,
+        publishedDate: data.publishedDate,
+        genres: data.genres,
         status: data.status || 'wanted',
       })
       .returning();
