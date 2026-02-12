@@ -13,6 +13,7 @@ describe('Layout', () => {
   it('renders navigation links', () => {
     renderWithProviders(<Layout />);
 
+    expect(screen.getByText('Library')).toBeInTheDocument();
     expect(screen.getByText('Search')).toBeInTheDocument();
     expect(screen.getByText('Activity')).toBeInTheDocument();
     expect(screen.getByText('Settings')).toBeInTheDocument();

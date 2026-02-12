@@ -202,6 +202,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  deleteBook: (id: number) =>
+    fetchApi<{ success: boolean }>(`/books/${id}`, { method: 'DELETE' }),
 
   // Metadata
   searchMetadata: (query: string) =>

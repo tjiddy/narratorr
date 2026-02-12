@@ -114,7 +114,28 @@ function MoonIcon({ className = '' }: { className?: string }) {
   );
 }
 
+function LibraryIcon({ className = '' }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M4 19V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14" />
+      <path d="M2 19h20" />
+      <path d="M8 3v16" />
+      <path d="M12 3v8l2.5-2 2.5 2V3" />
+    </svg>
+  );
+}
+
 const navItems = [
+  { to: '/library', label: 'Library', icon: LibraryIcon },
   { to: '/search', label: 'Search', icon: SearchIcon },
   { to: '/activity', label: 'Activity', icon: ActivityIcon },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },

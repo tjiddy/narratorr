@@ -5,6 +5,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { App } from '@/App';
 
 // Mock page components to avoid pulling in their dependencies
+vi.mock('@/pages/LibraryPage', () => ({
+  LibraryPage: () => <div data-testid="library-page">Library Page</div>,
+}));
+
 vi.mock('@/pages/SearchPage', () => ({
   SearchPage: () => <div data-testid="search-page">Search Page</div>,
 }));
@@ -33,15 +37,21 @@ function renderApp(route = '/') {
 
 describe('App', () => {
   it('renders without crashing', () => {
-    renderApp('/search');
+    renderApp('/library');
 
     expect(screen.getByText('narratorr')).toBeInTheDocument();
   });
 
-  it('redirects / to /search', () => {
+  it('redirects / to /library', () => {
     renderApp('/');
 
-    expect(screen.getByTestId('search-page')).toBeInTheDocument();
+    expect(screen.getByTestId('library-page')).toBeInTheDocument();
+  });
+
+  it('renders library page at /library', () => {
+    renderApp('/library');
+
+    expect(screen.getByTestId('library-page')).toBeInTheDocument();
   });
 
   it('renders search page at /search', () => {
