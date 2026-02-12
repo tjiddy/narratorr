@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { BookService } from '../services';
+import type { BookService, DownloadService } from '../services';
 
 interface CreateBookBody {
   title: string;
@@ -25,7 +25,7 @@ interface UpdateBookBody {
   status?: 'wanted' | 'searching' | 'downloading' | 'imported' | 'missing';
 }
 
-export async function booksRoutes(app: FastifyInstance, bookService: BookService) {
+export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService) {
   // GET /api/books
   app.get('/api/books', async (request) => {
     const { status } = request.query as { status?: string };
@@ -99,6 +99,16 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
   // DELETE /api/books/:id
   app.delete<{ Params: { id: string } }>('/api/books/:id', async (request, reply) => {
     const id = parseInt(request.params.id, 10);
+
+    // Cancel any active downloads for this book
+    const activeDownloads = await downloadService.getActiveByBookId(id);
+    for (const download of activeDownloads) {
+      await downloadService.cancel(download.id);
+    }
+    if (activeDownloads.length > 0) {
+      request.log.info({ bookId: id, count: activeDownloads.length }, 'Cancelled active downloads for book');
+    }
+
     const deleted = await bookService.delete(id);
 
     if (!deleted) {

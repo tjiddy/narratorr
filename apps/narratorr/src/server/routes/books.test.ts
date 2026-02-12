@@ -196,20 +196,41 @@ describe('books routes', () => {
 
   describe('DELETE /api/books/:id', () => {
     it('deletes book and returns success', async () => {
+      (services.download.getActiveByBookId as any).mockResolvedValue([]);
       (services.book.delete as any).mockResolvedValue(true);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload).success).toBe(true);
+      expect(services.download.getActiveByBookId).toHaveBeenCalledWith(1);
     });
 
     it('returns 404 when not found', async () => {
+      (services.download.getActiveByBookId as any).mockResolvedValue([]);
       (services.book.delete as any).mockResolvedValue(false);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/999' });
 
       expect(res.statusCode).toBe(404);
+    });
+
+    it('cancels active downloads before deleting', async () => {
+      const activeDownloads = [
+        { id: 10, bookId: 1, status: 'downloading' },
+        { id: 11, bookId: 1, status: 'queued' },
+      ];
+      (services.download.getActiveByBookId as any).mockResolvedValue(activeDownloads);
+      (services.download.cancel as any).mockResolvedValue(true);
+      (services.book.delete as any).mockResolvedValue(true);
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.download.cancel).toHaveBeenCalledWith(10);
+      expect(services.download.cancel).toHaveBeenCalledWith(11);
+      expect(services.download.cancel).toHaveBeenCalledTimes(2);
+      expect(services.book.delete).toHaveBeenCalledWith(1);
     });
   });
 });

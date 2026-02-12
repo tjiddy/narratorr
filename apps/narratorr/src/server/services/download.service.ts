@@ -1,4 +1,4 @@
-import { eq, desc, inArray } from 'drizzle-orm';
+import { eq, desc, inArray, and } from 'drizzle-orm';
 import { type Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '@narratorr/db/schema';
@@ -78,6 +78,33 @@ export class DownloadService {
       .from(downloads)
       .leftJoin(books, eq(downloads.bookId, books.id))
       .where(inArray(downloads.status, activeStatuses))
+      .orderBy(desc(downloads.addedAt));
+
+    return results.map((r) => ({
+      ...r.download,
+      book: r.book || undefined,
+    }));
+  }
+
+  async getActiveByBookId(bookId: number): Promise<DownloadWithBook[]> {
+    const activeStatuses: DownloadRow['status'][] = [
+      'queued',
+      'downloading',
+      'paused',
+      'importing',
+    ];
+
+    const results = await this.db
+      .select({
+        download: downloads,
+        book: books,
+      })
+      .from(downloads)
+      .leftJoin(books, eq(downloads.bookId, books.id))
+      .where(and(
+        inArray(downloads.status, activeStatuses),
+        eq(downloads.bookId, bookId),
+      ))
       .orderBy(desc(downloads.addedAt));
 
     return results.map((r) => ({

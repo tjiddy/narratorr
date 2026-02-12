@@ -107,6 +107,25 @@ describe('DownloadService', () => {
     });
   });
 
+  describe('getActiveByBookId', () => {
+    it('returns active downloads for a specific book', async () => {
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, bookId: 1 }, book: mockBook }]),
+      );
+
+      const result = await service.getActiveByBookId(1);
+      expect(result).toHaveLength(1);
+      expect(result[0].bookId).toBe(1);
+    });
+
+    it('returns empty array when no active downloads for book', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.getActiveByBookId(999);
+      expect(result).toEqual([]);
+    });
+  });
+
   describe('grab', () => {
     it('adds torrent and creates download record', async () => {
       const mockAdapter = {

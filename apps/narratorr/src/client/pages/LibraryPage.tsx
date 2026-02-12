@@ -336,7 +336,7 @@ export function LibraryPage() {
       <ConfirmModal
         isOpen={deleteTarget !== null}
         title="Remove from Library"
-        message={`Are you sure you want to remove "${deleteTarget?.title}" from your library? This action cannot be undone.`}
+        message={`Are you sure you want to remove "${deleteTarget?.title}" from your library? This will cancel any active downloads.`}
         confirmLabel="Remove"
         cancelLabel="Cancel"
         onConfirm={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); }}

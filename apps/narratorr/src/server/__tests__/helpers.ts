@@ -125,6 +125,7 @@ export function createMockServices(overrides?: Partial<Services>): Services {
       getAll: vi.fn(),
       getById: vi.fn(),
       getActive: vi.fn(),
+      getActiveByBookId: vi.fn(),
       grab: vi.fn(),
       updateProgress: vi.fn(),
       updateStatus: vi.fn(),
