@@ -1,10 +1,10 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useLibrary } from '@/hooks/useLibrary';
 import { api, type BookWithAuthor } from '@/lib/api';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 
 // ============================================================================
 // Types
@@ -185,7 +185,6 @@ function sortBooks(books: BookWithAuthor[], field: SortField, direction: SortDir
 // ============================================================================
 
 export function LibraryPage() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: books = [], isLoading } = useLibrary();
 
@@ -196,6 +195,7 @@ export function LibraryPage() {
   const [sortField, setSortField] = useState<SortField>('createdAt');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [deleteTarget, setDeleteTarget] = useState<BookWithAuthor | null>(null);
+  const [searchBook, setSearchBook] = useState<BookWithAuthor | null>(null);
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
 
   // Delete mutation
@@ -325,7 +325,7 @@ export function LibraryPage() {
               isMenuOpen={openMenuId === book.id}
               onMenuToggle={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === book.id ? null : book.id); }}
               onViewDetails={() => { toast.info('Book details page coming soon!'); setOpenMenuId(null); }}
-              onSearchReleases={() => { navigate('/search'); setOpenMenuId(null); }}
+              onSearchReleases={() => { setSearchBook(book); setOpenMenuId(null); }}
               onRemove={() => { setDeleteTarget(book); setOpenMenuId(null); }}
             />
           ))}
@@ -342,6 +342,15 @@ export function LibraryPage() {
         onConfirm={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); }}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {/* Search Releases Modal */}
+      {searchBook && (
+        <SearchReleasesModal
+          isOpen={searchBook !== null}
+          book={searchBook}
+          onClose={() => setSearchBook(null)}
+        />
+      )}
     </div>
   );
 }

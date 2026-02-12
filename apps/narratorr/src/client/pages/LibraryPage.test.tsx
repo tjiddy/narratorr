@@ -4,18 +4,17 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { LibraryPage } from '@/pages/LibraryPage';
 
-// Mock react-router-dom navigate
-const mockNavigate = vi.fn();
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual('react-router-dom');
-  return { ...actual, useNavigate: () => mockNavigate };
-});
-
 // Mock api
 vi.mock('@/lib/api', () => ({
   api: {
     getBooks: vi.fn(),
     deleteBook: vi.fn(),
+    search: vi.fn(),
+    grab: vi.fn(),
+  },
+  formatBytes: (bytes?: number) => {
+    if (!bytes) return '0 B';
+    return `${bytes} bytes`;
   },
 }));
 
@@ -29,7 +28,6 @@ vi.mock('sonner', () => ({
 }));
 
 import { api } from '@/lib/api';
-import { toast } from 'sonner';
 
 const mockBooks = [
   {
@@ -286,8 +284,9 @@ describe('LibraryPage', () => {
     expect(screen.getByText('No books match your filters')).toBeInTheDocument();
   });
 
-  it('navigates to /search when Search Releases is clicked', async () => {
+  it('opens search releases modal when Search Releases is clicked', async () => {
     vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+    vi.mocked(api.search).mockResolvedValue([]);
     const user = userEvent.setup();
 
     renderWithProviders(<LibraryPage />);
@@ -300,6 +299,9 @@ describe('LibraryPage', () => {
     await user.click(menuButtons[0]);
     await user.click(screen.getByText('Search Releases'));
 
-    expect(mockNavigate).toHaveBeenCalledWith('/search');
+    // Modal should open — default sort is createdAt desc, so first card is "Words of Radiance"
+    await waitFor(() => {
+      expect(screen.getByText(/Releases for:/)).toBeInTheDocument();
+    });
   });
 });
