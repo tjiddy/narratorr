@@ -20,8 +20,9 @@ const mockDownload = {
   indexerId: 1,
   downloadClientId: 1,
   title: 'The Way of Kings',
+  protocol: 'torrent' as const,
   infoHash: 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
-  magnetUri: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+  downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
   size: 1073741824,
   seeders: 42,
   status: 'downloading' as const,
@@ -37,6 +38,7 @@ function createMockDownloadClientService(): DownloadClientService {
     getAll: vi.fn(),
     getById: vi.fn(),
     getFirstEnabled: vi.fn(),
+    getFirstEnabledForProtocol: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
@@ -127,14 +129,14 @@ describe('DownloadService', () => {
   });
 
   describe('grab', () => {
-    it('adds torrent and creates download record', async () => {
+    it('adds download and creates download record', async () => {
       const mockAdapter = {
-        addTorrent: vi.fn().mockResolvedValue('ext-123'),
-        removeTorrent: vi.fn(),
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+        removeDownload: vi.fn(),
       };
 
       const enabledClient = { id: 1, name: 'qBit', enabled: true };
-      (clientService.getFirstEnabled as any).mockResolvedValue(enabledClient);
+      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue(enabledClient);
       (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
@@ -144,34 +146,34 @@ describe('DownloadService', () => {
       );
 
       const result = await service.grab({
-        magnetUri: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
         title: 'The Way of Kings',
         bookId: 1,
       });
 
-      expect(mockAdapter.addTorrent).toHaveBeenCalled();
+      expect(mockAdapter.addDownload).toHaveBeenCalled();
       expect(db.insert).toHaveBeenCalled();
       expect(result.title).toBe('The Way of Kings');
     });
 
     it('throws when no download client configured', async () => {
-      (clientService.getFirstEnabled as any).mockResolvedValue(null);
+      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue(null);
 
       await expect(
         service.grab({
-          magnetUri: 'magnet:?xt=urn:btih:abc',
+          downloadUrl: 'magnet:?xt=urn:btih:abc',
           title: 'Test',
         }),
       ).rejects.toThrow('No download client configured');
     });
 
     it('throws when adapter cannot be initialized', async () => {
-      (clientService.getFirstEnabled as any).mockResolvedValue({ id: 1 });
+      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue({ id: 1 });
       (clientService.getAdapter as any).mockResolvedValue(null);
 
       await expect(
         service.grab({
-          magnetUri: 'magnet:?xt=urn:btih:abc',
+          downloadUrl: 'magnet:?xt=urn:btih:abc',
           title: 'Test',
         }),
       ).rejects.toThrow('Could not initialize download client');
@@ -179,10 +181,10 @@ describe('DownloadService', () => {
 
     it('updates book status when bookId provided', async () => {
       const mockAdapter = {
-        addTorrent: vi.fn().mockResolvedValue('ext-123'),
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
       };
 
-      (clientService.getFirstEnabled as any).mockResolvedValue({ id: 1 });
+      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue({ id: 1 });
       (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
@@ -192,7 +194,7 @@ describe('DownloadService', () => {
       );
 
       await service.grab({
-        magnetUri: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
         title: 'The Way of Kings',
         bookId: 1,
       });
@@ -220,7 +222,7 @@ describe('DownloadService', () => {
   describe('cancel', () => {
     it('removes torrent from client and updates status', async () => {
       const mockAdapter = {
-        removeTorrent: vi.fn().mockResolvedValue(undefined),
+        removeDownload: vi.fn().mockResolvedValue(undefined),
       };
 
       db.select.mockReturnValue(
@@ -232,7 +234,7 @@ describe('DownloadService', () => {
       const result = await service.cancel(1);
 
       expect(result).toBe(true);
-      expect(mockAdapter.removeTorrent).toHaveBeenCalledWith(mockDownload.infoHash, true);
+      expect(mockAdapter.removeDownload).toHaveBeenCalledWith(mockDownload.externalId, true);
       expect(db.update).toHaveBeenCalled();
     });
 
@@ -245,7 +247,7 @@ describe('DownloadService', () => {
 
     it('still cancels when adapter removal fails', async () => {
       const mockAdapter = {
-        removeTorrent: vi.fn().mockRejectedValue(new Error('Connection failed')),
+        removeDownload: vi.fn().mockRejectedValue(new Error('Connection failed')),
       };
 
       db.select.mockReturnValue(

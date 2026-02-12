@@ -153,7 +153,8 @@ describe('IndexerService', () => {
       const mockResult = {
         title: 'The Way of Kings',
         indexer: 'AudioBookBay',
-        magnetUri: 'magnet:?xt=urn:btih:abc123',
+        protocol: 'torrent' as const,
+        downloadUrl: 'magnet:?xt=urn:btih:abc123',
       };
 
       // Mock the DB query for enabled indexers

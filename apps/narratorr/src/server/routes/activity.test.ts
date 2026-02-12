@@ -9,7 +9,8 @@ const mockDownload = {
   downloadClientId: 1,
   title: 'The Way of Kings',
   infoHash: 'abc123',
-  magnetUri: 'magnet:?xt=urn:btih:abc123',
+  protocol: 'torrent' as const,
+  downloadUrl: 'magnet:?xt=urn:btih:abc123',
   size: 1073741824,
   seeders: 42,
   status: 'downloading',
@@ -133,13 +134,13 @@ describe('activity routes', () => {
       expect(res.statusCode).toBe(404);
     });
 
-    it('returns 400 when no magnet URI', async () => {
-      (services.download.getById as any).mockResolvedValue({ ...mockDownload, magnetUri: null });
+    it('returns 400 when no download URL', async () => {
+      (services.download.getById as any).mockResolvedValue({ ...mockDownload, downloadUrl: null });
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
       expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res.payload).error).toContain('no magnet URI');
+      expect(JSON.parse(res.payload).error).toContain('no download URL');
     });
 
     it('returns 500 when grab fails', async () => {

@@ -59,8 +59,8 @@ export class AudioBookBayIndexer implements IndexerAdapter {
             }
           }
 
-          // Only include results with magnet URIs
-          if (result.magnetUri) {
+          // Only include results with download URLs
+          if (result.downloadUrl) {
             results.push(result);
           }
 
@@ -158,6 +158,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         title,
         author,
         narrator,
+        protocol: 'torrent',
         detailsUrl,
         coverUrl,
         indexer: this.name,
@@ -218,10 +219,10 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       }
     }
 
-    // Build magnet URI if we have an info hash
+    // Build magnet URI (download URL) if we have an info hash
     if (result.infoHash) {
       const title = $('h1, .postTitle h2, article h2').first().text().trim();
-      result.magnetUri = buildMagnetUri(result.infoHash, title || undefined);
+      result.downloadUrl = buildMagnetUri(result.infoHash, title || undefined);
     }
 
     // Extract additional metadata from the detail page

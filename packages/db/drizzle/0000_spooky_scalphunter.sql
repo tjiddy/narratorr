@@ -2,11 +2,27 @@ CREATE TABLE `authors` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`name` text NOT NULL,
 	`slug` text NOT NULL,
+	`asin` text,
+	`image_url` text,
+	`bio` text,
+	`monitored` integer DEFAULT false NOT NULL,
+	`last_checked_at` integer,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`updated_at` integer DEFAULT (unixepoch()) NOT NULL
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `authors_slug_unique` ON `authors` (`slug`);--> statement-breakpoint
+CREATE TABLE `blacklist` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`book_id` integer,
+	`info_hash` text NOT NULL,
+	`title` text NOT NULL,
+	`reason` text,
+	`note` text,
+	`blacklisted_at` integer DEFAULT (unixepoch()) NOT NULL,
+	FOREIGN KEY (`book_id`) REFERENCES `books`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
 CREATE TABLE `books` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`title` text NOT NULL,
@@ -16,7 +32,15 @@ CREATE TABLE `books` (
 	`cover_url` text,
 	`goodreads_id` text,
 	`audible_id` text,
+	`asin` text,
+	`isbn` text,
+	`series_name` text,
+	`series_position` real,
+	`duration` integer,
+	`published_date` text,
+	`genres` text,
 	`status` text DEFAULT 'wanted' NOT NULL,
+	`enrichment_status` text DEFAULT 'pending' NOT NULL,
 	`path` text,
 	`size` integer,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
@@ -40,8 +64,9 @@ CREATE TABLE `downloads` (
 	`indexer_id` integer,
 	`download_client_id` integer,
 	`title` text NOT NULL,
+	`protocol` text DEFAULT 'torrent' NOT NULL,
 	`info_hash` text,
-	`magnet_uri` text,
+	`download_url` text,
 	`size` integer,
 	`seeders` integer,
 	`status` text DEFAULT 'queued' NOT NULL,
@@ -63,6 +88,14 @@ CREATE TABLE `indexers` (
 	`priority` integer DEFAULT 50 NOT NULL,
 	`settings` text NOT NULL,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `search_history` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`query` text NOT NULL,
+	`type` text NOT NULL,
+	`results_count` integer,
+	`searched_at` integer DEFAULT (unixepoch()) NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE `settings` (

@@ -31,7 +31,7 @@ async function monitorDownloads(db: Db, downloadClientService: DownloadClientSer
   }
 
   for (const download of activeDownloads) {
-    if (!download.infoHash || !download.downloadClientId) {
+    if (!download.externalId || !download.downloadClientId) {
       continue;
     }
 
@@ -41,24 +41,24 @@ async function monitorDownloads(db: Db, downloadClientService: DownloadClientSer
         continue;
       }
 
-      const torrent = await adapter.getTorrent(download.infoHash);
-      if (!torrent) {
-        // Torrent not found in client - might have been removed manually
-        log.warn({ id: download.id }, 'Torrent not found in client');
+      const item = await adapter.getDownload(download.externalId);
+      if (!item) {
+        // Download not found in client - might have been removed manually
+        log.warn({ id: download.id }, 'Download not found in client');
         await db
           .update(downloads)
           .set({
             status: 'failed',
-            errorMessage: 'Torrent not found in download client',
+            errorMessage: 'Download not found in download client',
           })
           .where(eq(downloads.id, download.id));
         continue;
       }
 
       // Calculate progress (0-1)
-      const progress = torrent.progress / 100;
+      const progress = item.progress / 100;
       const isCompleted = progress >= 1;
-      const newStatus = isCompleted ? 'completed' : mapTorrentStatus(torrent.status);
+      const newStatus = isCompleted ? 'completed' : mapDownloadStatus(item.status);
 
       // Log state transitions
       if (download.status !== newStatus) {
@@ -98,7 +98,7 @@ async function monitorDownloads(db: Db, downloadClientService: DownloadClientSer
   }
 }
 
-function mapTorrentStatus(
+function mapDownloadStatus(
   status: 'downloading' | 'seeding' | 'paused' | 'completed' | 'error'
 ): 'queued' | 'downloading' | 'paused' | 'completed' | 'importing' | 'imported' | 'failed' {
   switch (status) {

@@ -1,13 +1,16 @@
+export type DownloadProtocol = 'torrent' | 'usenet';
+
 export interface SearchResult {
   title: string;
   author?: string;
   narrator?: string;
+  protocol: DownloadProtocol;
+  downloadUrl?: string;
   infoHash?: string;
-  magnetUri?: string;
-  torrentUrl?: string;
   size?: number;
   seeders?: number;
   leechers?: number;
+  grabs?: number;
   indexer: string;
   detailsUrl?: string;
   coverUrl?: string;

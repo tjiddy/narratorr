@@ -22,7 +22,7 @@ export const idParamSchema = z.object({
 // Indexer schemas
 // ============================================================================
 
-export const indexerTypeSchema = z.enum(['abb', 'torznab']);
+export const indexerTypeSchema = z.enum(['abb', 'torznab', 'newznab']);
 
 export const indexerSettingsSchema = z.object({
   hostname: z.string().min(1, 'Hostname is required'),
@@ -66,7 +66,7 @@ export type CreateIndexerFormData = z.infer<typeof createIndexerFormSchema>;
 // Download Client schemas
 // ============================================================================
 
-export const downloadClientTypeSchema = z.enum(['qbittorrent', 'transmission', 'sabnzbd']);
+export const downloadClientTypeSchema = z.enum(['qbittorrent', 'transmission', 'sabnzbd', 'nzbget']);
 
 export const qbittorrentSettingsSchema = z.object({
   host: z.string().min(1, 'Host is required'),
@@ -122,8 +122,9 @@ export const searchQuerySchema = z.object({
 });
 
 export const grabSchema = z.object({
-  magnetUri: z.string().min(1, 'Magnet URI is required').startsWith('magnet:', 'Invalid magnet URI'),
+  downloadUrl: z.string().min(1, 'Download URL is required'),
   title: z.string().min(1, 'Title is required'),
+  protocol: z.enum(['torrent', 'usenet']).default('torrent'),
   bookId: z.number().int().positive().optional(),
   indexerId: z.number().int().positive().optional(),
   size: z.number().int().nonnegative().optional(),

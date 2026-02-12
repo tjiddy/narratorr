@@ -6,7 +6,7 @@ const mockSearchResult = {
   title: 'The Way of Kings',
   author: 'Brandon Sanderson',
   indexer: 'AudioBookBay',
-  magnetUri: 'magnet:?xt=urn:btih:abc123',
+  downloadUrl: 'magnet:?xt=urn:btih:abc123',
   size: 1073741824,
   seeders: 42,
 };
@@ -68,7 +68,7 @@ describe('search routes', () => {
         method: 'POST',
         url: '/api/search/grab',
         payload: {
-          magnetUri: 'magnet:?xt=urn:btih:abc123',
+          downloadUrl: 'magnet:?xt=urn:btih:abc123',
           title: 'The Way of Kings',
         },
       });
@@ -76,12 +76,12 @@ describe('search routes', () => {
       expect(res.statusCode).toBe(201);
     });
 
-    it('returns 400 for invalid magnet URI', async () => {
+    it('returns 400 for empty download URL', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/search/grab',
         payload: {
-          magnetUri: 'not-a-magnet',
+          downloadUrl: '',
           title: 'Test',
         },
       });
@@ -94,7 +94,7 @@ describe('search routes', () => {
         method: 'POST',
         url: '/api/search/grab',
         payload: {
-          magnetUri: 'magnet:?xt=urn:btih:abc123',
+          downloadUrl: 'magnet:?xt=urn:btih:abc123',
         },
       });
 
@@ -108,7 +108,7 @@ describe('search routes', () => {
         method: 'POST',
         url: '/api/search/grab',
         payload: {
-          magnetUri: 'magnet:?xt=urn:btih:abc123',
+          downloadUrl: 'magnet:?xt=urn:btih:abc123',
           title: 'Test',
         },
       });

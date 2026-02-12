@@ -68,7 +68,7 @@ describe('AudioBookBayIndexer', () => {
       const results = await indexer.search('Brandon Sanderson');
 
       expect(results[0].infoHash).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
-      expect(results[0].magnetUri).toContain('magnet:?');
+      expect(results[0].downloadUrl).toContain('magnet:?');
     });
 
     it('extracts size, seeders, leechers from detail page', async () => {
@@ -106,7 +106,7 @@ describe('AudioBookBayIndexer', () => {
       expect(results).toEqual([]);
     });
 
-    it('only includes results with magnet URIs', async () => {
+    it('only includes results with download URLs', async () => {
       // Detail page without info hash
       const noHashHtml = `
         <html><body>

@@ -43,11 +43,13 @@ export interface SearchResult {
   title: string;
   author?: string;
   narrator?: string;
+  protocol: 'torrent' | 'usenet';
+  downloadUrl?: string;
   infoHash?: string;
-  magnetUri?: string;
   size?: number;
   seeders?: number;
   leechers?: number;
+  grabs?: number;
   indexer: string;
   detailsUrl?: string;
   coverUrl?: string;
@@ -59,8 +61,9 @@ export interface Download {
   indexerId?: number;
   downloadClientId?: number;
   title: string;
+  protocol: 'torrent' | 'usenet';
   infoHash?: string;
-  magnetUri?: string;
+  downloadUrl?: string;
   size?: number;
   seeders?: number;
   status: 'queued' | 'downloading' | 'paused' | 'completed' | 'importing' | 'imported' | 'failed';
@@ -74,7 +77,7 @@ export interface Download {
 export interface Indexer {
   id: number;
   name: string;
-  type: 'abb' | 'torznab';
+  type: 'abb' | 'torznab' | 'newznab';
   enabled: boolean;
   priority: number;
   settings: Record<string, unknown>;
@@ -84,7 +87,7 @@ export interface Indexer {
 export interface DownloadClient {
   id: number;
   name: string;
-  type: 'qbittorrent' | 'transmission' | 'sabnzbd';
+  type: 'qbittorrent' | 'transmission' | 'sabnzbd' | 'nzbget';
   enabled: boolean;
   priority: number;
   settings: Record<string, unknown>;
@@ -220,8 +223,9 @@ export const api = {
     fetchApi<SearchResult[]>(`/search?q=${encodeURIComponent(query)}`),
 
   grab: (params: {
-    magnetUri: string;
+    downloadUrl: string;
     title: string;
+    protocol?: 'torrent' | 'usenet';
     bookId?: number;
     indexerId?: number;
     size?: number;

@@ -47,16 +47,17 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
       return reply.status(404).send({ error: 'Download not found' });
     }
 
-    if (!download.magnetUri) {
-      return reply.status(400).send({ error: 'Cannot retry: no magnet URI' });
+    if (!download.downloadUrl) {
+      return reply.status(400).send({ error: 'Cannot retry: no download URL' });
     }
 
     // Re-grab the download
     try {
       request.log.info({ id }, 'Download retry');
       const newDownload = await downloadService.grab({
-        magnetUri: download.magnetUri,
+        downloadUrl: download.downloadUrl,
         title: download.title,
+        protocol: download.protocol,
         bookId: download.bookId ?? undefined,
         indexerId: download.indexerId ?? undefined,
         size: download.size ?? undefined,

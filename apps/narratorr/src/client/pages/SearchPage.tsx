@@ -258,13 +258,14 @@ export function SearchPage() {
   };
 
   const handleGrab = (result: SearchResult) => {
-    if (!result.magnetUri) {
-      alert('No magnet link available for this result');
+    if (!result.downloadUrl) {
+      alert('No download link available for this result');
       return;
     }
     grabMutation.mutate({
-      magnetUri: result.magnetUri,
+      downloadUrl: result.downloadUrl,
       title: result.title,
+      protocol: result.protocol,
       size: result.size,
       seeders: result.seeders,
     });
@@ -896,7 +897,7 @@ function IndexerResultCard({
         <div className="shrink-0 flex items-center">
           <button
             onClick={onGrab}
-            disabled={!result.magnetUri || isGrabbing}
+            disabled={!result.downloadUrl || isGrabbing}
             className="
               flex items-center gap-2 px-4 py-2.5
               bg-primary text-primary-foreground font-medium rounded-xl

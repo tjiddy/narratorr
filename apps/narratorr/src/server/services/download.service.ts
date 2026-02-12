@@ -2,7 +2,7 @@ import { eq, desc, inArray, and } from 'drizzle-orm';
 import { type Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '@narratorr/db/schema';
-import { parseInfoHash } from '@narratorr/core';
+import { parseInfoHash, type DownloadProtocol } from '@narratorr/core';
 import { type DownloadClientService } from './download-client.service.js';
 
 type DownloadRow = typeof downloads.$inferSelect;
@@ -114,17 +114,19 @@ export class DownloadService {
   }
 
   async grab(params: {
-    magnetUri: string;
+    downloadUrl: string;
     title: string;
+    protocol?: DownloadProtocol;
     bookId?: number;
     indexerId?: number;
     size?: number;
     seeders?: number;
   }): Promise<DownloadWithBook> {
-    const infoHash = parseInfoHash(params.magnetUri);
+    const protocol = params.protocol ?? 'torrent';
+    const infoHash = protocol === 'torrent' ? parseInfoHash(params.downloadUrl) : null;
 
-    // Get the first enabled download client
-    const client = await this.downloadClientService.getFirstEnabled();
+    // Get the first enabled download client for this protocol
+    const client = await this.downloadClientService.getFirstEnabledForProtocol(protocol);
     if (!client) {
       throw new Error('No download client configured');
     }
@@ -135,7 +137,7 @@ export class DownloadService {
     }
 
     // Add to download client
-    const externalId = await adapter.addTorrent(params.magnetUri);
+    const externalId = await adapter.addDownload(params.downloadUrl);
 
     // Create download record
     const result = await this.db
@@ -145,8 +147,9 @@ export class DownloadService {
         indexerId: params.indexerId,
         downloadClientId: client.id,
         title: params.title,
+        protocol,
         infoHash,
-        magnetUri: params.magnetUri,
+        downloadUrl: params.downloadUrl,
         size: params.size,
         seeders: params.seeders,
         status: 'downloading',
@@ -194,14 +197,14 @@ export class DownloadService {
     if (!download) return false;
 
     // Remove from download client if possible
-    if (download.downloadClientId && download.infoHash) {
+    if (download.downloadClientId && download.externalId) {
       try {
         const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
         if (adapter) {
-          await adapter.removeTorrent(download.infoHash, true);
+          await adapter.removeDownload(download.externalId, true);
         }
       } catch (error) {
-        this.log.error({ error, id }, 'Failed to remove torrent from client');
+        this.log.error({ error, id }, 'Failed to remove download from client');
       }
     }
 

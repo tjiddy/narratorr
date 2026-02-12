@@ -5,11 +5,19 @@ import { downloadClients } from '@narratorr/db/schema';
 import {
   QBittorrentClient,
   type DownloadClientAdapter,
+  type DownloadProtocol,
   type QBittorrentConfig,
 } from '@narratorr/core';
 
 type DownloadClientRow = typeof downloadClients.$inferSelect;
 type NewDownloadClient = typeof downloadClients.$inferInsert;
+
+const CLIENT_PROTOCOL: Record<string, DownloadProtocol> = {
+  qbittorrent: 'torrent',
+  transmission: 'torrent',
+  sabnzbd: 'usenet',
+  nzbget: 'usenet',
+};
 
 export class DownloadClientService {
   private adapters: Map<number, DownloadClientAdapter> = new Map();
@@ -37,6 +45,15 @@ export class DownloadClientService {
       .orderBy(downloadClients.priority)
       .limit(1);
     return results[0] || null;
+  }
+
+  async getFirstEnabledForProtocol(protocol: DownloadProtocol): Promise<DownloadClientRow | null> {
+    const results = await this.db
+      .select()
+      .from(downloadClients)
+      .where(eq(downloadClients.enabled, true))
+      .orderBy(downloadClients.priority);
+    return results.find((c) => CLIENT_PROTOCOL[c.type] === protocol) || null;
   }
 
   async create(data: Omit<NewDownloadClient, 'id' | 'createdAt'>): Promise<DownloadClientRow> {

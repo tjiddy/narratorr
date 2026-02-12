@@ -1,4 +1,4 @@
-import type { DownloadClientAdapter, TorrentInfo, AddTorrentOptions } from './types.js';
+import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadProtocol } from './types.js';
 
 export interface QBittorrentConfig {
   host: string;
@@ -28,6 +28,7 @@ interface QBTorrent {
 export class QBittorrentClient implements DownloadClientAdapter {
   readonly type = 'qbittorrent';
   readonly name = 'qBittorrent';
+  readonly protocol: DownloadProtocol = 'torrent';
 
   private baseUrl: string;
   private cookie?: string;
@@ -110,9 +111,9 @@ export class QBittorrentClient implements DownloadClientAdapter {
     }
   }
 
-  async addTorrent(magnetUri: string, options?: AddTorrentOptions): Promise<string> {
+  async addDownload(url: string, options?: AddDownloadOptions): Promise<string> {
     const formData = new URLSearchParams();
-    formData.set('urls', magnetUri);
+    formData.set('urls', url);
 
     if (options?.savePath) {
       formData.set('savepath', options.savePath);
@@ -131,7 +132,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
     });
 
     // Extract hash from magnet URI
-    const hashMatch = magnetUri.match(/btih:([a-f0-9]{40}|[a-z2-7]{32})/i);
+    const hashMatch = url.match(/btih:([a-f0-9]{40}|[a-z2-7]{32})/i);
     if (hashMatch) {
       // If it's base32, convert to hex
       const hash = hashMatch[1];
@@ -144,7 +145,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
     throw new Error('Could not extract info hash from magnet URI');
   }
 
-  async getTorrent(hash: string): Promise<TorrentInfo | null> {
+  async getDownload(hash: string): Promise<DownloadItemInfo | null> {
     const torrents = await this.request<QBTorrent[]>(
       `/api/v2/torrents/info?hashes=${hash.toLowerCase()}`
     );
@@ -153,10 +154,10 @@ export class QBittorrentClient implements DownloadClientAdapter {
       return null;
     }
 
-    return this.mapTorrent(torrents[0]);
+    return this.mapItem(torrents[0]);
   }
 
-  async getAllTorrents(category?: string): Promise<TorrentInfo[]> {
+  async getAllDownloads(category?: string): Promise<DownloadItemInfo[]> {
     const params = category ? `?category=${encodeURIComponent(category)}` : '';
     const torrents = await this.request<QBTorrent[]>(`/api/v2/torrents/info${params}`);
 
@@ -164,10 +165,10 @@ export class QBittorrentClient implements DownloadClientAdapter {
       return [];
     }
 
-    return torrents.map((t) => this.mapTorrent(t));
+    return torrents.map((t) => this.mapItem(t));
   }
 
-  async pauseTorrent(hash: string): Promise<void> {
+  async pauseDownload(hash: string): Promise<void> {
     await this.request('/api/v2/torrents/pause', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -175,7 +176,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
     });
   }
 
-  async resumeTorrent(hash: string): Promise<void> {
+  async resumeDownload(hash: string): Promise<void> {
     await this.request('/api/v2/torrents/resume', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -183,7 +184,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
     });
   }
 
-  async removeTorrent(hash: string, deleteFiles = false): Promise<void> {
+  async removeDownload(hash: string, deleteFiles = false): Promise<void> {
     await this.request('/api/v2/torrents/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -207,11 +208,10 @@ export class QBittorrentClient implements DownloadClientAdapter {
     }
   }
 
-  private mapTorrent(qbt: QBTorrent): TorrentInfo {
+  private mapItem(qbt: QBTorrent): DownloadItemInfo {
     return {
       id: qbt.hash,
       name: qbt.name,
-      hash: qbt.hash,
       progress: Math.round(qbt.progress * 100),
       status: this.mapState(qbt.state),
       savePath: qbt.save_path,
@@ -227,8 +227,8 @@ export class QBittorrentClient implements DownloadClientAdapter {
     };
   }
 
-  private mapState(state: string): TorrentInfo['status'] {
-    const stateMap: Record<string, TorrentInfo['status']> = {
+  private mapState(state: string): DownloadItemInfo['status'] {
+    const stateMap: Record<string, DownloadItemInfo['status']> = {
       downloading: 'downloading',
       stalledDL: 'downloading',
       metaDL: 'downloading',

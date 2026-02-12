@@ -61,7 +61,7 @@ export const books = sqliteTable('books', {
 export const indexers = sqliteTable('indexers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: ['abb', 'torznab'] }).notNull(),
+  type: text('type', { enum: ['abb', 'torznab', 'newznab'] }).notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   priority: integer('priority').notNull().default(50),
   settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
@@ -73,7 +73,7 @@ export const indexers = sqliteTable('indexers', {
 export const downloadClients = sqliteTable('download_clients', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: ['qbittorrent', 'transmission', 'sabnzbd'] }).notNull(),
+  type: text('type', { enum: ['qbittorrent', 'transmission', 'sabnzbd', 'nzbget'] }).notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   priority: integer('priority').notNull().default(50),
   settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
@@ -90,8 +90,9 @@ export const downloads = sqliteTable('downloads', {
   indexerId: integer('indexer_id').references(() => indexers.id),
   downloadClientId: integer('download_client_id').references(() => downloadClients.id),
   title: text('title').notNull(),
+  protocol: text('protocol', { enum: ['torrent', 'usenet'] }).notNull().default('torrent'),
   infoHash: text('info_hash'),
-  magnetUri: text('magnet_uri'),
+  downloadUrl: text('download_url'),
   size: integer('size'),
   seeders: integer('seeders'),
   status: text('status', {
