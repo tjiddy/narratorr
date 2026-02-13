@@ -108,7 +108,7 @@ export class BookService {
     let authorId: number | undefined;
 
     if (data.authorName) {
-      // Find or create author
+      // Find or create author (upsert to avoid TOCTOU race on unique slug)
       const slug = slugify(data.authorName);
       const existingAuthor = await this.db
         .select()
@@ -119,11 +119,25 @@ export class BookService {
       if (existingAuthor.length > 0) {
         authorId = existingAuthor[0].id;
       } else {
-        const newAuthor = await this.db
-          .insert(authors)
-          .values({ name: data.authorName, slug, asin: data.authorAsin })
-          .returning();
-        authorId = newAuthor[0].id;
+        try {
+          const newAuthor = await this.db
+            .insert(authors)
+            .values({ name: data.authorName, slug, asin: data.authorAsin })
+            .returning();
+          authorId = newAuthor[0].id;
+        } catch {
+          // Unique constraint violation — another request created the author concurrently
+          const retryAuthor = await this.db
+            .select()
+            .from(authors)
+            .where(eq(authors.slug, slug))
+            .limit(1);
+          if (retryAuthor.length > 0) {
+            authorId = retryAuthor[0].id;
+          } else {
+            throw new Error(`Failed to find or create author: ${data.authorName}`);
+          }
+        }
       }
     }
 

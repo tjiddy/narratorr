@@ -34,6 +34,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
 
   private baseUrl: string;
   private cookie?: string;
+  private loginPromise?: Promise<void>;
 
   constructor(private config: QBittorrentConfig) {
     const protocol = config.useSsl ? 'https' : 'http';
@@ -41,6 +42,19 @@ export class QBittorrentClient implements DownloadClientAdapter {
   }
 
   private async login(): Promise<void> {
+    // Deduplicate concurrent login calls
+    if (this.loginPromise) {
+      return this.loginPromise;
+    }
+    this.loginPromise = this.doLogin();
+    try {
+      await this.loginPromise;
+    } finally {
+      this.loginPromise = undefined;
+    }
+  }
+
+  private async doLogin(): Promise<void> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 

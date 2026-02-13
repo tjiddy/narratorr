@@ -461,7 +461,10 @@ function LibraryBookCard({
         {/* Series badge */}
         {book.seriesName && (
           <div className="absolute bottom-3 left-3 right-3">
-            <span className="inline-block max-w-full truncate px-2.5 py-1 rounded-lg text-xs font-medium backdrop-blur-md bg-black/40 text-white/90">
+            <span
+              className="inline-block max-w-full truncate px-2.5 py-1 rounded-lg text-xs font-medium backdrop-blur-md bg-black/40 text-white/90"
+              title={`${book.seriesName}${book.seriesPosition != null ? ` #${book.seriesPosition}` : ''}`}
+            >
               {book.seriesName}
               {book.seriesPosition != null && ` #${book.seriesPosition}`}
             </span>

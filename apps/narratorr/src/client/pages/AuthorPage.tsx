@@ -147,10 +147,7 @@ function BookRow({
   return (
     <div className="flex items-center gap-3 sm:gap-4 py-3 group">
       {/* Cover thumbnail */}
-      <Link
-        to="#"
-        className="shrink-0 focus-ring rounded-lg"
-      >
+      <div className="shrink-0">
         <div className="relative w-10 sm:w-12 aspect-[2/3] rounded-lg overflow-hidden ring-1 ring-black/10 transition-transform duration-200 group-hover:scale-105">
           {book.coverUrl ? (
             <img
@@ -165,19 +162,16 @@ function BookRow({
             </div>
           )}
         </div>
-      </Link>
+      </div>
 
       {/* Book info */}
       <div className="flex-1 min-w-0">
-        <Link
-          to="#"
-          className="text-sm font-medium hover:text-primary transition-colors line-clamp-1 focus-ring rounded"
-        >
+        <span className="text-sm font-medium line-clamp-1">
           {seriesPos != null && (
             <span className="text-muted-foreground font-normal">#{seriesPos} </span>
           )}
           {book.title}
-        </Link>
+        </span>
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5 line-clamp-1">
           {narratorNames && <span>{narratorNames}</span>}
           {narratorNames && duration && <span>&middot;</span>}
