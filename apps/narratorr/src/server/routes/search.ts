@@ -41,7 +41,9 @@ export async function searchRoutes(
 
       try {
         request.log.info({ title: data.title }, 'Grab requested');
+        request.log.debug({ title: data.title, protocol: data.protocol, downloadUrl: data.downloadUrl, bookId: data.bookId }, 'Grab details');
         const download = await downloadService.grab(data);
+        request.log.debug({ downloadId: download.id, status: download.status, externalId: download.externalId }, 'Grab completed');
         return reply.status(201).send(download);
       } catch (error) {
         request.log.error(error, 'Grab failed');

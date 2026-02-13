@@ -27,17 +27,22 @@ async function monitorDownloads(db: Db, downloadClientService: DownloadClientSer
     .where(inArray(downloads.status, [...activeStatuses]));
 
   if (activeDownloads.length === 0) {
+    log.debug('No active downloads to monitor');
     return;
   }
 
+  log.debug({ count: activeDownloads.length }, 'Monitoring active downloads');
+
   for (const download of activeDownloads) {
     if (!download.externalId || !download.downloadClientId) {
+      log.debug({ id: download.id, hasExternalId: !!download.externalId, hasClientId: !!download.downloadClientId }, 'Skipping download: missing externalId or clientId');
       continue;
     }
 
     try {
       const adapter = await downloadClientService.getAdapter(download.downloadClientId);
       if (!adapter) {
+        log.debug({ id: download.id, downloadClientId: download.downloadClientId }, 'Skipping download: adapter not found');
         continue;
       }
 

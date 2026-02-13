@@ -53,7 +53,9 @@ export class DownloadClientService {
       .from(downloadClients)
       .where(eq(downloadClients.enabled, true))
       .orderBy(downloadClients.priority);
-    return results.find((c) => CLIENT_PROTOCOL[c.type] === protocol) || null;
+    const match = results.find((c) => CLIENT_PROTOCOL[c.type] === protocol) || null;
+    this.log.debug({ protocol, found: match?.name ?? null, candidates: results.length }, 'Download client lookup for protocol');
+    return match;
   }
 
   async create(data: Omit<NewDownloadClient, 'id' | 'createdAt'>): Promise<DownloadClientRow> {
@@ -121,6 +123,7 @@ export class DownloadClientService {
           password: (settings.password as string) || '',
           useSsl: (settings.useSsl as boolean) || false,
         };
+        this.log.debug({ client: client.name, type: client.type, host: config.host, port: config.port, useSsl: config.useSsl }, 'Creating download client adapter');
         return new QBittorrentClient(config);
       }
       default:
@@ -130,10 +133,11 @@ export class DownloadClientService {
 
   async testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string }> {
     try {
+      this.log.debug({ type: data.type, host: data.settings.host, port: data.settings.port, useSsl: data.settings.useSsl }, 'Testing download client config');
       const fakeRow = { id: 0, name: '', type: data.type, enabled: true, priority: 0, settings: data.settings, createdAt: new Date() } as DownloadClientRow;
       const adapter = this.createAdapter(fakeRow);
       const result = await adapter.test();
-      this.log.debug({ type: data.type, success: result.success }, 'Download client config test result');
+      this.log.debug({ type: data.type, success: result.success, message: result.message }, 'Download client config test result');
       return result;
     } catch (error) {
       return {

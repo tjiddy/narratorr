@@ -28,8 +28,12 @@ export class MetadataService {
 
   async search(query: string): Promise<MetadataSearchResults> {
     const provider = this.providers[0];
-    if (!provider) return { books: [], authors: [], series: [] };
+    if (!provider) {
+      this.log.debug('No metadata provider configured, skipping search');
+      return { books: [], authors: [], series: [] };
+    }
     try {
+      this.log.debug({ query, provider: provider.name }, 'Metadata search requested');
       const results = await provider.search(query);
       this.log.debug(
         { books: results.books.length, authors: results.authors.length, series: results.series.length },
@@ -110,9 +114,12 @@ export class MetadataService {
 
   async enrichBook(asin: string): Promise<BookMetadata | null> {
     try {
+      this.log.debug({ asin }, 'Audnexus enrichment lookup');
       const result = await this.audnexus.getBook(asin);
       if (result) {
-        this.log.debug({ asin }, 'Audnexus enrichment data found');
+        this.log.debug({ asin, hasNarrators: !!result.narrators?.length, hasDuration: !!result.duration }, 'Audnexus enrichment data found');
+      } else {
+        this.log.debug({ asin }, 'Audnexus returned no data for ASIN');
       }
       return result;
     } catch (error) {

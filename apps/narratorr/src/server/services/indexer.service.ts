@@ -77,6 +77,7 @@ export class IndexerService {
           hostname: (settings.hostname as string) || 'audiobookbay.lu',
           pageLimit: (settings.pageLimit as number) || 2,
         };
+        this.log.debug({ indexer: indexer.name, type: indexer.type, hostname: config.hostname, pageLimit: config.pageLimit }, 'Creating indexer adapter');
         return new AudioBookBayIndexer(config);
       }
       default:
@@ -86,10 +87,11 @@ export class IndexerService {
 
   async testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string }> {
     try {
+      this.log.debug({ type: data.type, hostname: data.settings.hostname, pageLimit: data.settings.pageLimit }, 'Testing indexer config');
       const fakeRow = { id: 0, name: '', type: data.type, enabled: true, priority: 0, settings: data.settings, createdAt: new Date() } as IndexerRow;
       const adapter = this.createAdapter(fakeRow);
       const result = await adapter.test();
-      this.log.debug({ type: data.type, success: result.success }, 'Indexer config test result');
+      this.log.debug({ type: data.type, success: result.success, message: result.message }, 'Indexer config test result');
       return result;
     } catch (error) {
       return {
@@ -125,18 +127,22 @@ export class IndexerService {
       .where(eq(indexers.enabled, true))
       .orderBy(indexers.priority);
 
+    this.log.debug({ query, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Searching enabled indexers');
+
     const results: SearchResult[] = [];
 
     for (const indexer of enabledIndexers) {
       try {
         const adapter = await this.getAdapter(indexer);
         const indexerResults = await adapter.search(query, options);
+        this.log.debug({ indexer: indexer.name, results: indexerResults.length }, 'Indexer search completed');
         results.push(...indexerResults);
       } catch (error) {
-        this.log.warn({ indexer: indexer.name, error }, 'Error searching indexer');
+        this.log.warn({ indexer: indexer.name, query, error }, 'Error searching indexer');
       }
     }
 
+    this.log.debug({ totalResults: results.length }, 'Search complete');
     return results;
   }
 }

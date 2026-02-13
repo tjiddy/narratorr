@@ -59,6 +59,7 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, lo
     .limit(BATCH_LIMIT);
 
   if (candidates.length === 0) {
+    log.debug('No books pending enrichment');
     return;
   }
 
@@ -66,6 +67,7 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, lo
 
   for (const candidate of candidates) {
     const asin = candidate.asin!;
+    log.debug({ bookId: candidate.id, asin }, 'Enriching book');
     const result = await metadataService.enrichBook(asin);
 
     if (result) {

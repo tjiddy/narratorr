@@ -137,7 +137,12 @@ export class DownloadService {
     }
 
     // Add to download client
+    this.log.debug({ protocol, downloadUrl: params.downloadUrl, infoHash, clientId: client.id, clientName: client.name }, 'Sending download to client');
     const externalId = await adapter.addDownload(params.downloadUrl);
+
+    if (!externalId) {
+      this.log.warn({ title: params.title, downloadUrl: params.downloadUrl }, 'Download client returned no external ID');
+    }
 
     // Create download record
     const result = await this.db
