@@ -74,7 +74,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
     }
   }
 
-  private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  private async request<T>(path: string, options: RequestInit = {}, retried = false): Promise<T> {
     if (!this.cookie) {
       await this.login();
     }
@@ -88,15 +88,15 @@ export class QBittorrentClient implements DownloadClientAdapter {
       },
     });
 
-    if (response.status === 403) {
-      // Session expired, re-login and retry
+    if (response.status === 403 && !retried) {
+      // Session expired, re-login and retry once
       this.cookie = undefined;
       await this.login();
-      return this.request(path, options);
+      return this.request(path, options, true);
     }
 
     if (!response.ok) {
-      throw new Error(`Request failed: HTTP ${response.status}`);
+      throw new Error(`Request failed: HTTP ${response.status} ${path}`);
     }
 
     const text = await response.text();
@@ -104,11 +104,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
       return undefined as T;
     }
 
-    try {
-      return JSON.parse(text) as T;
-    } catch {
-      return text as T;
-    }
+    return JSON.parse(text) as T;
   }
 
   async addDownload(url: string, options?: AddDownloadOptions): Promise<string> {

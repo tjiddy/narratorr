@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
 // ============ LIBRARY ============
@@ -54,7 +54,10 @@ export const books = sqliteTable('books', {
   updatedAt: integer('updated_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),
-});
+}, (table) => [
+  index('idx_books_author_id').on(table.authorId),
+  index('idx_books_status').on(table.status),
+]);
 
 // ============ INTEGRATIONS ============
 
@@ -68,7 +71,9 @@ export const indexers = sqliteTable('indexers', {
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),
-});
+}, (table) => [
+  index('idx_indexers_enabled').on(table.enabled),
+]);
 
 export const downloadClients = sqliteTable('download_clients', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -80,7 +85,9 @@ export const downloadClients = sqliteTable('download_clients', {
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),
-});
+}, (table) => [
+  index('idx_download_clients_enabled').on(table.enabled),
+]);
 
 // ============ ACTIVITY ============
 
@@ -107,7 +114,10 @@ export const downloads = sqliteTable('downloads', {
     .notNull()
     .default(sql`(unixepoch())`),
   completedAt: integer('completed_at', { mode: 'timestamp' }),
-});
+}, (table) => [
+  index('idx_downloads_status').on(table.status),
+  index('idx_downloads_book_id').on(table.bookId),
+]);
 
 // ============ SEARCH & BLACKLIST ============
 
@@ -119,7 +129,9 @@ export const searchHistory = sqliteTable('search_history', {
   searchedAt: integer('searched_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),
-});
+}, (table) => [
+  index('idx_search_history_searched_at').on(table.searchedAt),
+]);
 
 export const blacklist = sqliteTable('blacklist', {
   id: integer('id').primaryKey({ autoIncrement: true }),

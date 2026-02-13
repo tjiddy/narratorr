@@ -48,6 +48,9 @@ export function ConfirmModal({
 
       {/* Modal */}
       <div
+        role="dialog"
+        aria-labelledby="confirm-modal-title"
+        aria-describedby="confirm-modal-description"
         className="relative w-full max-w-md glass-card rounded-2xl p-6 shadow-2xl animate-fade-in-up"
         onClick={(e) => e.stopPropagation()}
       >
@@ -58,8 +61,8 @@ export function ConfirmModal({
 
         {/* Content */}
         <div className="text-center mb-6">
-          <h3 className="font-display text-xl font-semibold mb-2">{title}</h3>
-          <p className="text-muted-foreground">{message}</p>
+          <h3 id="confirm-modal-title" className="font-display text-xl font-semibold mb-2">{title}</h3>
+          <p id="confirm-modal-description" className="text-muted-foreground">{message}</p>
         </div>
 
         {/* Actions */}

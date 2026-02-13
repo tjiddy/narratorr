@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createMockDb, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import { SettingsService } from './settings.service.js';
 
 describe('SettingsService', () => {
@@ -8,7 +8,7 @@ describe('SettingsService', () => {
 
   beforeEach(() => {
     db = createMockDb();
-    service = new SettingsService(db as any);
+    service = new SettingsService(db as any, createMockLogger() as any);
   });
 
   describe('get', () => {

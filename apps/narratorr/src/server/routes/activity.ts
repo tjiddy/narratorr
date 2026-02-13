@@ -3,44 +3,77 @@ import type { DownloadService } from '../services';
 
 export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService) {
   // GET /api/activity
-  app.get('/api/activity', async (request) => {
-    const { status } = request.query as { status?: string };
-    return downloadService.getAll(status);
+  app.get('/api/activity', async (request, reply) => {
+    try {
+      const { status } = request.query as { status?: string };
+      request.log.debug({ status }, 'Fetching activity');
+      return downloadService.getAll(status);
+    } catch (error) {
+      request.log.error(error, 'Failed to fetch activity');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
   });
 
   // GET /api/activity/active
-  app.get('/api/activity/active', async () => {
-    return downloadService.getActive();
+  app.get('/api/activity/active', async (request, reply) => {
+    try {
+      return downloadService.getActive();
+    } catch (error) {
+      request.log.error(error, 'Failed to fetch active downloads');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
   });
 
   // GET /api/activity/:id
   app.get<{ Params: { id: string } }>('/api/activity/:id', async (request, reply) => {
-    const id = parseInt(request.params.id, 10);
-    const download = await downloadService.getById(id);
+    try {
+      const id = parseInt(request.params.id, 10);
+      if (isNaN(id)) {
+        return reply.status(400).send({ error: 'Invalid ID' });
+      }
 
-    if (!download) {
-      return reply.status(404).send({ error: 'Download not found' });
+      const download = await downloadService.getById(id);
+
+      if (!download) {
+        return reply.status(404).send({ error: 'Download not found' });
+      }
+
+      return download;
+    } catch (error) {
+      request.log.error(error, 'Failed to fetch download');
+      return reply.status(500).send({ error: 'Internal server error' });
     }
-
-    return download;
   });
 
   // DELETE /api/activity/:id (cancel)
   app.delete<{ Params: { id: string } }>('/api/activity/:id', async (request, reply) => {
-    const id = parseInt(request.params.id, 10);
-    const cancelled = await downloadService.cancel(id);
+    try {
+      const id = parseInt(request.params.id, 10);
+      if (isNaN(id)) {
+        return reply.status(400).send({ error: 'Invalid ID' });
+      }
 
-    if (!cancelled) {
-      return reply.status(404).send({ error: 'Download not found' });
+      const cancelled = await downloadService.cancel(id);
+
+      if (!cancelled) {
+        return reply.status(404).send({ error: 'Download not found' });
+      }
+
+      request.log.info({ id }, 'Download cancelled');
+      return { success: true };
+    } catch (error) {
+      request.log.error({ error }, 'Failed to cancel download');
+      return reply.status(500).send({ error: 'Internal server error' });
     }
-
-    request.log.info({ id }, 'Download cancelled');
-    return { success: true };
   });
 
   // POST /api/activity/:id/retry
   app.post<{ Params: { id: string } }>('/api/activity/:id/retry', async (request, reply) => {
     const id = parseInt(request.params.id, 10);
+    if (isNaN(id)) {
+      return reply.status(400).send({ error: 'Invalid ID' });
+    }
+
     const download = await downloadService.getById(id);
 
     if (!download) {
@@ -69,7 +102,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
 
       return newDownload;
     } catch (error) {
-      request.log.error(error, 'Retry failed');
+      request.log.error({ id, error }, 'Retry failed');
       const message = error instanceof Error ? error.message : 'Unknown error';
       return reply.status(500).send({ error: message });
     }

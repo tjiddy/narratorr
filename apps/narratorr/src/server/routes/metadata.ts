@@ -11,10 +11,15 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
         querystring: metadataSearchQuerySchema,
       },
     },
-    async (request) => {
-      const { q } = request.query as { q: string };
-      request.log.debug({ q }, 'Metadata search');
-      return metadataService.search(q);
+    async (request, reply) => {
+      try {
+        const { q } = request.query as { q: string };
+        request.log.debug({ q }, 'Metadata search');
+        return metadataService.search(q);
+      } catch (error) {
+        request.log.error(error, 'Metadata search failed');
+        return reply.status(500).send({ error: 'Internal server error' });
+      }
     }
   );
 
@@ -27,14 +32,20 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
       },
     },
     async (request, reply) => {
-      const { asin } = request.params as { asin: string };
-      const author = await metadataService.getAuthor(asin);
+      try {
+        const { asin } = request.params as { asin: string };
+        request.log.debug({ asin }, 'Fetching author metadata');
+        const author = await metadataService.getAuthor(asin);
 
-      if (!author) {
-        return reply.status(404).send({ error: 'Author not found' });
+        if (!author) {
+          return reply.status(404).send({ error: 'Author not found' });
+        }
+
+        return author;
+      } catch (error) {
+        request.log.error(error, 'Failed to fetch author metadata');
+        return reply.status(500).send({ error: 'Internal server error' });
       }
-
-      return author;
     }
   );
 
@@ -46,9 +57,15 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
         params: asinParamSchema,
       },
     },
-    async (request) => {
-      const { asin } = request.params as { asin: string };
-      return metadataService.getAuthorBooks(asin);
+    async (request, reply) => {
+      try {
+        const { asin } = request.params as { asin: string };
+        request.log.debug({ asin }, 'Fetching author books');
+        return metadataService.getAuthorBooks(asin);
+      } catch (error) {
+        request.log.error(error, 'Failed to fetch author books');
+        return reply.status(500).send({ error: 'Internal server error' });
+      }
     }
   );
 
@@ -61,24 +78,40 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
       },
     },
     async (request, reply) => {
-      const { asin } = request.params as { asin: string };
-      const book = await metadataService.getBook(asin);
+      try {
+        const { asin } = request.params as { asin: string };
+        request.log.debug({ asin }, 'Fetching book metadata');
+        const book = await metadataService.getBook(asin);
 
-      if (!book) {
-        return reply.status(404).send({ error: 'Book not found' });
+        if (!book) {
+          return reply.status(404).send({ error: 'Book not found' });
+        }
+
+        return book;
+      } catch (error) {
+        request.log.error(error, 'Failed to fetch book metadata');
+        return reply.status(500).send({ error: 'Internal server error' });
       }
-
-      return book;
     }
   );
 
   // GET /api/metadata/test
-  app.get('/api/metadata/test', async () => {
-    return metadataService.testProviders();
+  app.get('/api/metadata/test', async (request, reply) => {
+    try {
+      return metadataService.testProviders();
+    } catch (error) {
+      request.log.error(error, 'Metadata provider test failed');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
   });
 
   // GET /api/metadata/providers
-  app.get('/api/metadata/providers', async () => {
-    return metadataService.getProviders();
+  app.get('/api/metadata/providers', async (request, reply) => {
+    try {
+      return metadataService.getProviders();
+    } catch (error) {
+      request.log.error(error, 'Failed to fetch metadata providers');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
   });
 }

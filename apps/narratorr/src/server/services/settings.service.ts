@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import type { Db } from '@narratorr/db';
+import type { FastifyBaseLogger } from 'fastify';
 import { settings } from '@narratorr/db/schema';
 
 export interface AppSettings {
@@ -39,7 +40,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 export class SettingsService {
-  constructor(private db: Db) {}
+  constructor(private db: Db, private log: FastifyBaseLogger) {}
 
   async get<K extends keyof AppSettings>(key: K): Promise<AppSettings[K]> {
     const result = await this.db.select().from(settings).where(eq(settings.key, key)).limit(1);
@@ -72,6 +73,7 @@ export class SettingsService {
         target: settings.key,
         set: { value: value as unknown },
       });
+    this.log.info({ category: key }, 'Settings updated');
   }
 
   async update(partial: Partial<AppSettings>): Promise<AppSettings> {

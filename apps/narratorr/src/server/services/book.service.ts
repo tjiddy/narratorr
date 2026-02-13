@@ -159,6 +159,7 @@ export class BookService {
 
     if (result.length === 0) return null;
 
+    this.log.info({ id }, 'Book updated');
     return this.getById(id);
   }
 

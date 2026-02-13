@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { api, type Indexer, type DownloadClient } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { IndexerCard } from '@/components/settings/IndexerCard';
 import { DownloadClientCard } from '@/components/settings/DownloadClientCard';
@@ -97,7 +98,7 @@ export function SettingsPage() {
 function GeneralSettings() {
   const queryClient = useQueryClient();
   const { data: settings, isLoading } = useQuery({
-    queryKey: ['settings'],
+    queryKey: queryKeys.settings(),
     queryFn: api.getSettings,
   });
 
@@ -278,14 +279,14 @@ function IndexersSettings() {
   });
 
   const { data: indexers = [], isLoading } = useQuery({
-    queryKey: ['indexers'],
+    queryKey: queryKeys.indexers(),
     queryFn: api.getIndexers,
   });
 
   const createMutation = useMutation({
     mutationFn: api.createIndexer,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['indexers'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.indexers() });
       setShowForm(false);
       toast.success('Indexer added successfully');
     },
@@ -310,7 +311,7 @@ function IndexersSettings() {
   const deleteMutation = useMutation({
     mutationFn: api.deleteIndexer,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['indexers'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.indexers() });
       toast.success('Indexer removed successfully');
       setDeleteTarget(null);
     },
@@ -437,14 +438,14 @@ function DownloadClientsSettings() {
   });
 
   const { data: clients = [], isLoading } = useQuery({
-    queryKey: ['download-clients'],
+    queryKey: queryKeys.downloadClients(),
     queryFn: api.getClients,
   });
 
   const createMutation = useMutation({
     mutationFn: api.createClient,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['download-clients'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.downloadClients() });
       setShowForm(false);
       toast.success('Download client added successfully');
     },
@@ -469,7 +470,7 @@ function DownloadClientsSettings() {
   const deleteMutation = useMutation({
     mutationFn: api.deleteClient,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['download-clients'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.downloadClients() });
       toast.success('Download client removed successfully');
       setDeleteTarget(null);
     },

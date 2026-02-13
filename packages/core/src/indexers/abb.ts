@@ -54,8 +54,8 @@ export class AudioBookBayIndexer implements IndexerAdapter {
               const detailHtml = await this.fetchPage(result.detailsUrl);
               const details = this.parseDetailPage(detailHtml);
               Object.assign(result, details);
-            } catch (err) {
-              console.warn(`Failed to fetch details for ${result.title}:`, err);
+            } catch {
+              // Skip detail page failures — result won't have download URL and will be filtered out
             }
           }
 
@@ -68,9 +68,8 @@ export class AudioBookBayIndexer implements IndexerAdapter {
             return results;
           }
         }
-      } catch (err) {
-        console.error(`Failed to fetch search page ${page}:`, err);
-        break;
+      } catch {
+        break; // Stop pagination on fetch failure
       }
     }
 
@@ -247,7 +246,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
     // Size
     const sizeMatch = pageText.match(/Size[:\s]*([\d.]+)\s*(MB|GB|TB)/i);
-    if (sizeMatch) {
+    if (sizeMatch?.[1] && sizeMatch[2]) {
       result.size = this.parseSize(sizeMatch[1], sizeMatch[2]);
     }
 

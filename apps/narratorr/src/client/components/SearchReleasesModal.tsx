@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, formatBytes, type BookWithAuthor, type SearchResult } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import {
   SearchIcon,
   LoadingSpinner,
@@ -45,8 +46,8 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
     mutationFn: api.grab,
     onSuccess: () => {
       toast.success('Download started! Check the Activity page.');
-      queryClient.invalidateQueries({ queryKey: ['books'] });
-      queryClient.invalidateQueries({ queryKey: ['activity'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
       onClose();
     },
     onError: (err: Error) => {
@@ -188,6 +189,7 @@ function ReleaseCard({
                 src={result.coverUrl}
                 alt={result.title}
                 className="w-full h-full object-cover"
+                loading="lazy"
                 onError={() => setImageError(true)}
               />
               <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-lg" />

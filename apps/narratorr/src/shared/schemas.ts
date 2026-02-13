@@ -117,7 +117,7 @@ export type CreateDownloadClientFormData = z.infer<typeof createDownloadClientFo
 // ============================================================================
 
 export const searchQuerySchema = z.object({
-  q: z.string().min(2, 'Query must be at least 2 characters'),
+  q: z.string().min(2, 'Query must be at least 2 characters').max(500),
   limit: z.string().optional().transform((val) => (val ? parseInt(val, 10) : 50)),
 });
 
@@ -195,7 +195,7 @@ export type UpdateSettingsFormData = z.infer<typeof updateSettingsFormSchema>;
 // ============================================================================
 
 export const metadataSearchQuerySchema = z.object({
-  q: z.string().min(1, 'Query is required'),
+  q: z.string().min(1, 'Query is required').max(500),
 });
 
 export const asinParamSchema = z.object({

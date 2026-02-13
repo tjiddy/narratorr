@@ -29,7 +29,10 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+    const error = await response.json().catch((parseError) => {
+      console.warn('Failed to parse error response body:', parseError);
+      return { error: `HTTP ${response.status}` };
+    });
     throw new ApiError(response.status, error);
   }
 

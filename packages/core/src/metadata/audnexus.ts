@@ -50,9 +50,9 @@ export class AudnexusProvider implements MetadataProvider {
     const seen = new Set<string>();
     const authors: AuthorMetadata[] = [];
     for (const item of data) {
-      // Audnexus returns duplicates; deduplicate by ASIN
-      const key = item.asin ?? item.name ?? '';
-      if (seen.has(key)) continue;
+      // Audnexus returns duplicates; deduplicate by ASIN or name
+      const key = item.asin ?? item.name;
+      if (!key || seen.has(key)) continue;
       seen.add(key);
 
       const mapped = mapAuthor(item);

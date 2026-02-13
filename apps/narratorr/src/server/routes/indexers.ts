@@ -10,8 +10,13 @@ import {
 
 export async function indexersRoutes(app: FastifyInstance, indexerService: IndexerService) {
   // GET /api/indexers
-  app.get('/api/indexers', async () => {
-    return indexerService.getAll();
+  app.get('/api/indexers', async (request, reply) => {
+    try {
+      return indexerService.getAll();
+    } catch (error) {
+      request.log.error(error, 'Failed to fetch indexers');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
   });
 
   // GET /api/indexers/:id
@@ -23,14 +28,19 @@ export async function indexersRoutes(app: FastifyInstance, indexerService: Index
       },
     },
     async (request, reply) => {
-      const { id } = request.params as { id: number };
-      const indexer = await indexerService.getById(id);
+      try {
+        const { id } = request.params as { id: number };
+        const indexer = await indexerService.getById(id);
 
-      if (!indexer) {
-        return reply.status(404).send({ error: 'Indexer not found' });
+        if (!indexer) {
+          return reply.status(404).send({ error: 'Indexer not found' });
+        }
+
+        return indexer;
+      } catch (error) {
+        request.log.error(error, 'Failed to fetch indexer');
+        return reply.status(500).send({ error: 'Internal server error' });
       }
-
-      return indexer;
     }
   );
 
@@ -43,10 +53,15 @@ export async function indexersRoutes(app: FastifyInstance, indexerService: Index
       },
     },
     async (request, reply) => {
-      const data = request.body as CreateIndexerInput;
-      const indexer = await indexerService.create(data);
-      request.log.info({ name: data.name }, 'Indexer created');
-      return reply.status(201).send(indexer);
+      try {
+        const data = request.body as CreateIndexerInput;
+        const indexer = await indexerService.create(data);
+        request.log.info({ name: data.name }, 'Indexer created');
+        return reply.status(201).send(indexer);
+      } catch (error) {
+        request.log.error(error, 'Failed to create indexer');
+        return reply.status(500).send({ error: 'Internal server error' });
+      }
     }
   );
 
@@ -60,16 +75,21 @@ export async function indexersRoutes(app: FastifyInstance, indexerService: Index
       },
     },
     async (request, reply) => {
-      const { id } = request.params as { id: number };
-      const data = request.body as UpdateIndexerInput;
-      const indexer = await indexerService.update(id, data);
+      try {
+        const { id } = request.params as { id: number };
+        const data = request.body as UpdateIndexerInput;
+        const indexer = await indexerService.update(id, data);
 
-      if (!indexer) {
-        return reply.status(404).send({ error: 'Indexer not found' });
+        if (!indexer) {
+          return reply.status(404).send({ error: 'Indexer not found' });
+        }
+
+        request.log.info({ id }, 'Indexer updated');
+        return indexer;
+      } catch (error) {
+        request.log.error(error, 'Failed to update indexer');
+        return reply.status(500).send({ error: 'Internal server error' });
       }
-
-      request.log.debug({ id }, 'Indexer updated');
-      return indexer;
     }
   );
 
@@ -93,7 +113,7 @@ export async function indexersRoutes(app: FastifyInstance, indexerService: Index
 
         return { success: true };
       } catch (error) {
-        request.log.error(error, 'Failed to delete indexer');
+        request.log.error({ id, error }, 'Failed to delete indexer');
         return reply.status(500).send({
           error: error instanceof Error ? error.message : 'Failed to delete',
         });

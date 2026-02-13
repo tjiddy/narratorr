@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, formatBytes, formatProgress, type Download } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 
 function LoadingSpinner({ className = '' }: { className?: string }) {
   return (
@@ -279,22 +280,26 @@ export function ActivityPage() {
   const queryClient = useQueryClient();
 
   const { data: downloads = [], isLoading } = useQuery({
-    queryKey: ['activity'],
+    queryKey: queryKeys.activity(),
     queryFn: api.getActivity,
-    refetchInterval: 5000,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return 5000;
+      return data.some((d: Download) => ['queued', 'downloading', 'importing'].includes(d.status)) ? 5000 : false;
+    },
   });
 
   const cancelMutation = useMutation({
     mutationFn: api.cancelDownload,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['activity'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
     },
   });
 
   const retryMutation = useMutation({
     mutationFn: api.retryDownload,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['activity'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
     },
   });
 

@@ -4,49 +4,13 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useAuthor, useAuthorBooks } from '@/hooks/useMetadata';
 import { useLibrary } from '@/hooks/useLibrary';
-import { api, type BookMetadata, type CreateBookPayload, type BookWithAuthor } from '@/lib/api';
+import { api, type BookMetadata, type BookWithAuthor } from '@/lib/api';
+import { formatDuration, mapBookMetadataToPayload, isBookInLibrary } from '@/lib/helpers';
+import { queryKeys } from '@/lib/queryKeys';
 
 // ============================================================================
 // Helpers
 // ============================================================================
-
-function formatDuration(minutes?: number): string | null {
-  if (!minutes) return null;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
-}
-
-function mapBookMetadataToPayload(book: BookMetadata): CreateBookPayload {
-  const author = book.authors[0];
-  return {
-    title: book.title,
-    authorName: author?.name,
-    authorAsin: author?.asin,
-    narrator: book.narrators?.join(', '),
-    description: book.description,
-    coverUrl: book.coverUrl,
-    asin: book.asin,
-    seriesName: book.series?.[0]?.name,
-    seriesPosition: book.series?.[0]?.position,
-    duration: book.duration,
-    genres: book.genres,
-    providerId: book.providerId,
-  };
-}
-
-function isBookInLibrary(book: BookMetadata, libraryBooks?: BookWithAuthor[]): boolean {
-  if (!libraryBooks?.length) return false;
-  return libraryBooks.some((lb) => {
-    if (book.asin && lb.asin && book.asin === lb.asin) return true;
-    const titleMatch = lb.title.toLowerCase() === book.title.toLowerCase();
-    const authorMatch = book.authors[0]?.name
-      && lb.author?.name?.toLowerCase() === book.authors[0].name.toLowerCase();
-    return titleMatch && authorMatch;
-  });
-}
 
 function getInitials(name: string): string {
   return name
@@ -247,6 +211,7 @@ function BookRow({
               src={book.coverUrl}
               alt={`Cover of ${book.title}`}
               className="w-full h-full object-cover"
+              loading="lazy"
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center bg-muted">
@@ -398,7 +363,7 @@ export function AuthorPage() {
       });
       setAddedAsins((prev) => new Set(prev).add(key));
       toast.success(`Added '${book.title}' to library`);
-      queryClient.invalidateQueries({ queryKey: ['books'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error: Error, book) => {
       const key = book.asin ?? book.title;
@@ -473,6 +438,7 @@ export function AuthorPage() {
                   src={author.imageUrl}
                   alt={author.name}
                   className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                  loading="lazy"
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/20 to-amber-500/20">

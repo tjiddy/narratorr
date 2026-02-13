@@ -50,9 +50,13 @@ async function main() {
   const services = createServices(db, app.log);
 
   // Apply persisted log level
-  const generalSettings = await services.settings.get('general');
-  if (generalSettings?.logLevel) {
-    app.log.level = generalSettings.logLevel;
+  try {
+    const generalSettings = await services.settings.get('general');
+    if (generalSettings?.logLevel) {
+      app.log.level = generalSettings.logLevel;
+    }
+  } catch (err) {
+    app.log.warn(err, 'Failed to load log level setting, using default');
   }
 
   // Register API routes

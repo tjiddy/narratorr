@@ -2,19 +2,8 @@ import { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useBook } from '@/hooks/useMetadata';
 import { useLibraryBook } from '@/hooks/useLibrary';
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-function formatDuration(minutes?: number | null): string | null {
-  if (!minutes) return null;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
-}
+import { formatDuration } from '@/lib/helpers';
+import { bookStatusConfig } from '@/lib/status';
 
 const DESCRIPTION_COLLAPSE_LENGTH = 300;
 
@@ -102,18 +91,6 @@ function BookNotFound() {
 }
 
 // ============================================================================
-// Status Badge
-// ============================================================================
-
-const statusConfig: Record<string, { label: string; dotClass: string }> = {
-  wanted: { label: 'Wanted', dotClass: 'bg-amber-500' },
-  searching: { label: 'Searching', dotClass: 'bg-blue-500 animate-pulse' },
-  downloading: { label: 'Downloading', dotClass: 'bg-blue-500 animate-pulse' },
-  imported: { label: 'Imported', dotClass: 'bg-success' },
-  missing: { label: 'Missing', dotClass: 'bg-destructive' },
-};
-
-// ============================================================================
 // Main Component
 // ============================================================================
 
@@ -144,7 +121,7 @@ export function BookPage() {
   const seriesName = libraryBook.seriesName || metadataBook?.series?.[0]?.name;
   const seriesPosition = libraryBook.seriesPosition ?? metadataBook?.series?.[0]?.position;
   const publisher = metadataBook?.publisher;
-  const status = statusConfig[libraryBook.status] ?? statusConfig.wanted;
+  const status = bookStatusConfig[libraryBook.status] ?? bookStatusConfig.wanted;
 
   const descriptionLong = (description?.length ?? 0) > DESCRIPTION_COLLAPSE_LENGTH;
   const metaDots: string[] = [];
@@ -190,6 +167,7 @@ export function BookPage() {
                   src={coverUrl}
                   alt={`Cover of ${title}`}
                   className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                  loading="lazy"
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center bg-muted">

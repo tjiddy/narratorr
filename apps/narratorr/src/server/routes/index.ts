@@ -29,7 +29,7 @@ export interface Services {
 }
 
 export function createServices(db: Db, log: FastifyBaseLogger): Services {
-  const settings = new SettingsService(db);
+  const settings = new SettingsService(db, log);
   const indexer = new IndexerService(db, log);
   const downloadClient = new DownloadClientService(db, log);
   const book = new BookService(db, log);

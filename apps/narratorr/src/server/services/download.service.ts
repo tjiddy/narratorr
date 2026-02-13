@@ -177,6 +177,10 @@ export class DownloadService {
       .update(downloads)
       .set({ progress, status, completedAt })
       .where(eq(downloads.id, id));
+
+    if (progress >= 1) {
+      this.log.info({ id }, 'Download completed');
+    }
   }
 
   async updateStatus(id: number, status: DownloadRow['status']): Promise<void> {

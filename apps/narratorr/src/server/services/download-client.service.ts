@@ -75,7 +75,7 @@ export class DownloadClientService {
     // Clear cached adapter
     this.adapters.delete(id);
 
-    this.log.debug({ id }, 'Download client updated');
+    this.log.info({ id }, 'Download client updated');
     return result[0] || null;
   }
 

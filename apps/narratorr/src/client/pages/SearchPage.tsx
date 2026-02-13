@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, formatBytes, type SearchResult, type BookMetadata, type AuthorMetadata, type BookWithAuthor, type CreateBookPayload } from '@/lib/api';
+import { api, ApiError, formatBytes, type SearchResult, type BookMetadata, type AuthorMetadata, type BookWithAuthor } from '@/lib/api';
 import { useMetadataSearch } from '@/hooks/useMetadata';
 import { toast } from 'sonner';
+import { formatDuration, mapBookMetadataToPayload, isBookInLibrary } from '@/lib/helpers';
+import { queryKeys } from '@/lib/queryKeys';
 
 type SearchMode = 'discover' | 'indexer';
 
@@ -202,19 +204,6 @@ function ClockIcon({ className = '' }: { className?: string }) {
 }
 
 // ============================================================================
-// Helpers
-// ============================================================================
-
-function formatDuration(minutes?: number): string {
-  if (!minutes) return '';
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
-}
-
-// ============================================================================
 // Main Component
 // ============================================================================
 
@@ -230,7 +219,7 @@ export function SearchPage() {
     isLoading: indexerLoading,
     error: indexerError,
   } = useQuery({
-    queryKey: ['search', searchTerm],
+    queryKey: queryKeys.search(searchTerm),
     queryFn: () => api.search(searchTerm),
     enabled: mode === 'indexer' && searchTerm.length >= 2,
   });
@@ -248,7 +237,7 @@ export function SearchPage() {
   const grabMutation = useMutation({
     mutationFn: api.grab,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['activity'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
     },
   });
 
@@ -259,7 +248,7 @@ export function SearchPage() {
 
   const handleGrab = (result: SearchResult) => {
     if (!result.downloadUrl) {
-      alert('No download link available for this result');
+      toast.error('No download link available for this result');
       return;
     }
     grabMutation.mutate({
@@ -424,7 +413,7 @@ function DiscoverResults({
 
   // Fetch library books to check "already in library"
   const { data: libraryBooks } = useQuery({
-    queryKey: ['books'],
+    queryKey: queryKeys.books(),
     queryFn: () => api.getBooks(),
   });
 
@@ -543,6 +532,7 @@ function AuthorCard({ author, index }: { author: AuthorMetadata; index: number }
                 src={author.imageUrl}
                 alt={author.name}
                 className="w-full h-full object-cover"
+                loading="lazy"
                 onError={() => setImageError(true)}
               />
               <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-full" />
@@ -585,35 +575,6 @@ function AuthorCard({ author, index }: { author: AuthorMetadata; index: number }
 // Discover Book Card
 // ============================================================================
 
-function mapBookMetadataToPayload(book: BookMetadata): CreateBookPayload {
-  const author = book.authors[0];
-  return {
-    title: book.title,
-    authorName: author?.name,
-    authorAsin: author?.asin,
-    narrator: book.narrators?.join(', '),
-    description: book.description,
-    coverUrl: book.coverUrl,
-    asin: book.asin,
-    seriesName: book.series?.[0]?.name,
-    seriesPosition: book.series?.[0]?.position,
-    duration: book.duration,
-    genres: book.genres,
-    providerId: book.providerId,
-  };
-}
-
-function isBookInLibrary(book: BookMetadata, libraryBooks?: BookWithAuthor[]): boolean {
-  if (!libraryBooks?.length) return false;
-  return libraryBooks.some((lb) => {
-    if (book.asin && lb.asin && book.asin === lb.asin) return true;
-    const titleMatch = lb.title.toLowerCase() === book.title.toLowerCase();
-    const authorMatch = book.authors[0]?.name
-      && lb.author?.name?.toLowerCase() === book.authors[0].name.toLowerCase();
-    return titleMatch && authorMatch;
-  });
-}
-
 function DiscoverBookCard({
   book,
   index,
@@ -636,13 +597,13 @@ function DiscoverBookCard({
     onSuccess: () => {
       setJustAdded(true);
       toast.success(`Added '${book.title}' to library`);
-      queryClient.invalidateQueries({ queryKey: ['books'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error: Error) => {
       if (error instanceof ApiError && error.status === 409) {
         setJustAdded(true);
         toast.info('Already in library');
-        queryClient.invalidateQueries({ queryKey: ['books'] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       } else {
         toast.error(`Failed to add book: ${error.message}`);
       }
@@ -663,6 +624,7 @@ function DiscoverBookCard({
                 src={book.coverUrl}
                 alt={book.title}
                 className="w-full h-full object-cover"
+                loading="lazy"
                 onError={() => setImageError(true)}
               />
               <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-xl" />
@@ -845,6 +807,7 @@ function IndexerResultCard({
                 src={result.coverUrl}
                 alt={result.title}
                 className="w-full h-full object-cover"
+                loading="lazy"
                 onError={() => setImageError(true)}
               />
               <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-xl" />

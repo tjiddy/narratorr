@@ -43,7 +43,7 @@ export class IndexerService {
     // Clear cached adapter
     this.adapters.delete(id);
 
-    this.log.debug({ id }, 'Indexer updated');
+    this.log.info({ id }, 'Indexer updated');
     return result[0] || null;
   }
 

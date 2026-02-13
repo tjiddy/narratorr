@@ -284,25 +284,8 @@ export class HardcoverProvider implements MetadataProvider {
 
   async test(): Promise<{ success: boolean; message?: string }> {
     try {
-      const res = await fetch(API_URL, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({
-          query: SEARCH_QUERY,
-          variables: { q: 'test', type: 'Book', perPage: 1 },
-        }),
-      });
-      if (!res.ok) {
-        return { success: false, message: `Hardcover ${res.status}: ${res.statusText}` };
-      }
-      const json = (await res.json()) as { data?: SearchResponse; errors?: Array<{ message: string }> };
-      if (json.errors?.length) {
-        return { success: false, message: json.errors[0].message };
-      }
-      if (json.data?.search?.results) {
+      const data = await this.gql<SearchResponse>(SEARCH_QUERY, { q: 'test', type: 'Book', perPage: 1 });
+      if (data?.search?.results) {
         return { success: true, message: 'Connected to Hardcover API' };
       }
       return { success: false, message: 'Unexpected response from Hardcover API' };

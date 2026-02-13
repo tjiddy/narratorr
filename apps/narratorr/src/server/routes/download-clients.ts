@@ -13,8 +13,13 @@ export async function downloadClientsRoutes(
   downloadClientService: DownloadClientService
 ) {
   // GET /api/download-clients
-  app.get('/api/download-clients', async () => {
-    return downloadClientService.getAll();
+  app.get('/api/download-clients', async (request, reply) => {
+    try {
+      return downloadClientService.getAll();
+    } catch (error) {
+      request.log.error(error, 'Failed to fetch download clients');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
   });
 
   // GET /api/download-clients/:id
@@ -26,14 +31,19 @@ export async function downloadClientsRoutes(
       },
     },
     async (request, reply) => {
-      const { id } = request.params as { id: number };
-      const client = await downloadClientService.getById(id);
+      try {
+        const { id } = request.params as { id: number };
+        const client = await downloadClientService.getById(id);
 
-      if (!client) {
-        return reply.status(404).send({ error: 'Download client not found' });
+        if (!client) {
+          return reply.status(404).send({ error: 'Download client not found' });
+        }
+
+        return client;
+      } catch (error) {
+        request.log.error(error, 'Failed to fetch download client');
+        return reply.status(500).send({ error: 'Internal server error' });
       }
-
-      return client;
     }
   );
 
@@ -46,10 +56,15 @@ export async function downloadClientsRoutes(
       },
     },
     async (request, reply) => {
-      const data = request.body as CreateDownloadClientInput;
-      const client = await downloadClientService.create(data);
-      request.log.info({ name: data.name }, 'Download client created');
-      return reply.status(201).send(client);
+      try {
+        const data = request.body as CreateDownloadClientInput;
+        const client = await downloadClientService.create(data);
+        request.log.info({ name: data.name }, 'Download client created');
+        return reply.status(201).send(client);
+      } catch (error) {
+        request.log.error(error, 'Failed to create download client');
+        return reply.status(500).send({ error: 'Internal server error' });
+      }
     }
   );
 
@@ -63,16 +78,21 @@ export async function downloadClientsRoutes(
       },
     },
     async (request, reply) => {
-      const { id } = request.params as { id: number };
-      const data = request.body as UpdateDownloadClientInput;
-      const client = await downloadClientService.update(id, data);
+      try {
+        const { id } = request.params as { id: number };
+        const data = request.body as UpdateDownloadClientInput;
+        const client = await downloadClientService.update(id, data);
 
-      if (!client) {
-        return reply.status(404).send({ error: 'Download client not found' });
+        if (!client) {
+          return reply.status(404).send({ error: 'Download client not found' });
+        }
+
+        request.log.info({ id }, 'Download client updated');
+        return client;
+      } catch (error) {
+        request.log.error(error, 'Failed to update download client');
+        return reply.status(500).send({ error: 'Internal server error' });
       }
-
-      request.log.debug({ id }, 'Download client updated');
-      return client;
     }
   );
 
@@ -96,7 +116,7 @@ export async function downloadClientsRoutes(
 
         return { success: true };
       } catch (error) {
-        request.log.error(error, 'Failed to delete download client');
+        request.log.error({ id, error }, 'Failed to delete download client');
         return reply.status(500).send({
           error: error instanceof Error ? error.message : 'Failed to delete',
         });

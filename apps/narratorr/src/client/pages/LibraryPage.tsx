@@ -6,6 +6,8 @@ import { useLibrary } from '@/hooks/useLibrary';
 import { api, type BookWithAuthor } from '@/lib/api';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
+import { bookStatusConfig } from '@/lib/status';
+import { queryKeys } from '@/lib/queryKeys';
 
 // ============================================================================
 // Types
@@ -112,38 +114,6 @@ function LoadingSpinner({ className = '' }: { className?: string }) {
   );
 }
 
-// ============================================================================
-// Status Config
-// ============================================================================
-
-const statusConfig: Record<string, { label: string; dotClass: string; textClass: string }> = {
-  wanted: {
-    label: 'Wanted',
-    dotClass: 'bg-amber-500',
-    textClass: 'text-amber-600 dark:text-amber-400',
-  },
-  searching: {
-    label: 'Searching',
-    dotClass: 'bg-blue-500 animate-pulse',
-    textClass: 'text-blue-600 dark:text-blue-400',
-  },
-  downloading: {
-    label: 'Downloading',
-    dotClass: 'bg-blue-500 animate-pulse',
-    textClass: 'text-blue-600 dark:text-blue-400',
-  },
-  imported: {
-    label: 'Imported',
-    dotClass: 'bg-success',
-    textClass: 'text-success',
-  },
-  missing: {
-    label: 'Missing',
-    dotClass: 'bg-destructive',
-    textClass: 'text-destructive',
-  },
-};
-
 const filterTabs: { key: StatusFilter; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'wanted', label: 'Wanted' },
@@ -206,7 +176,7 @@ export function LibraryPage() {
     onSuccess: () => {
       toast.success(`Removed '${deleteTarget?.title}' from library`);
       setDeleteTarget(null);
-      queryClient.invalidateQueries({ queryKey: ['books'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error: Error) => {
       toast.error(`Failed to remove book: ${error.message}`);
@@ -513,7 +483,7 @@ function LibraryBookCard({
   onRemove: () => void;
 }) {
   const [imageError, setImageError] = useState(false);
-  const config = statusConfig[book.status] ?? statusConfig.wanted;
+  const config = bookStatusConfig[book.status] ?? bookStatusConfig.wanted;
 
   return (
     <div
@@ -527,6 +497,7 @@ function LibraryBookCard({
             src={book.coverUrl}
             alt={book.title}
             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+            loading="lazy"
             onError={() => setImageError(true)}
           />
         ) : (

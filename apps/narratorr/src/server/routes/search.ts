@@ -23,7 +23,7 @@ export async function searchRoutes(
     },
     async (request) => {
       const { q, limit } = request.query as SearchQuery;
-      request.log.info({ q }, 'Search request');
+      request.log.debug({ q }, 'Search request');
       return indexerService.searchAll(q, { limit });
     }
   );
