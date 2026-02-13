@@ -548,6 +548,7 @@ function mapSearchBook(doc: Record<string, unknown>, textMatch?: number): Record
     duration: audioSeconds ? Math.round(audioSeconds / 60) : undefined,
     genres,
     isbn: isbns?.[0],
+    providerId: doc.id ? String(doc.id) : undefined,
     relevance: textMatch,
   };
 }

@@ -43,7 +43,7 @@ export async function registerRoutes(
   app: FastifyInstance,
   services: Services
 ): Promise<void> {
-  await booksRoutes(app, services.book, services.download);
+  await booksRoutes(app, services.book, services.download, services.metadata);
   await searchRoutes(app, services.indexer, services.download);
   await activityRoutes(app, services.download);
   await indexersRoutes(app, services.indexer);

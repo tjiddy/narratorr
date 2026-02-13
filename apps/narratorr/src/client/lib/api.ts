@@ -163,6 +163,7 @@ export interface CreateBookPayload {
   duration?: number;
   publishedDate?: string;
   genres?: string[];
+  providerId?: string;
 }
 
 // Metadata types
@@ -174,9 +175,11 @@ export interface BookMetadata {
   narrators?: string[];
   series?: { name: string; position?: number; asin?: string }[];
   description?: string;
+  publisher?: string;
   coverUrl?: string;
   duration?: number;
   genres?: string[];
+  providerId?: string;
   relevance?: number;
 }
 
@@ -200,6 +203,8 @@ export const api = {
   // Library
   getBooks: (status?: string) =>
     fetchApi<BookWithAuthor[]>(status ? `/books?status=${encodeURIComponent(status)}` : '/books'),
+  getBookById: (id: number) =>
+    fetchApi<BookWithAuthor>(`/books/${id}`),
   addBook: (data: CreateBookPayload) =>
     fetchApi<BookWithAuthor>('/books', {
       method: 'POST',

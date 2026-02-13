@@ -599,6 +599,7 @@ function mapBookMetadataToPayload(book: BookMetadata): CreateBookPayload {
     seriesPosition: book.series?.[0]?.position,
     duration: book.duration,
     genres: book.genres,
+    providerId: book.providerId,
   };
 }
 

@@ -33,6 +33,7 @@ function mapBookMetadataToPayload(book: BookMetadata): CreateBookPayload {
     seriesPosition: book.series?.[0]?.position,
     duration: book.duration,
     genres: book.genres,
+    providerId: book.providerId,
   };
 }
 
@@ -237,7 +238,7 @@ function BookRow({
     <div className="flex items-center gap-3 sm:gap-4 py-3 group">
       {/* Cover thumbnail */}
       <Link
-        to={book.asin ? `/books/${book.asin}` : '#'}
+        to="#"
         className="shrink-0 focus-ring rounded-lg"
       >
         <div className="relative w-10 sm:w-12 aspect-[2/3] rounded-lg overflow-hidden ring-1 ring-black/10 transition-transform duration-200 group-hover:scale-105">
@@ -258,7 +259,7 @@ function BookRow({
       {/* Book info */}
       <div className="flex-1 min-w-0">
         <Link
-          to={book.asin ? `/books/${book.asin}` : '#'}
+          to="#"
           className="text-sm font-medium hover:text-primary transition-colors line-clamp-1 focus-ring rounded"
         >
           {seriesPos != null && (

@@ -15,6 +15,7 @@ export const BookMetadataSchema = z.object({
   asin: z.string().optional(),
   isbn: z.string().optional(),
   goodreadsId: z.string().optional(),
+  providerId: z.string().optional(),
   title: z.string(),
   subtitle: z.string().optional(),
   authors: z.array(AuthorRefSchema),

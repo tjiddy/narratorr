@@ -46,6 +46,13 @@ describe('HardcoverProvider', () => {
       expect(books[1].relevance).toBe(456);
     });
 
+    it('emits providerId from search document id', async () => {
+      const books = await provider.searchBooks('Way of Kings');
+
+      expect(books[0].providerId).toBe('386446');
+      expect(books[1].providerId).toBe('405234');
+    });
+
     it('sorts books by relevance (highest first)', async () => {
       const books = await provider.searchBooks('Way of Kings');
 

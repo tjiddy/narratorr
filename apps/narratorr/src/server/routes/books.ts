@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { BookService, DownloadService } from '../services';
+import type { BookService, DownloadService, MetadataService } from '../services';
 
 interface CreateBookBody {
   title: string;
@@ -15,6 +15,7 @@ interface CreateBookBody {
   duration?: number;
   publishedDate?: string;
   genres?: string[];
+  providerId?: string;
 }
 
 interface UpdateBookBody {
@@ -25,7 +26,7 @@ interface UpdateBookBody {
   status?: 'wanted' | 'searching' | 'downloading' | 'imported' | 'missing';
 }
 
-export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService) {
+export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, metadataService: MetadataService) {
   // GET /api/books
   app.get('/api/books', async (request) => {
     const { status } = request.query as { status?: string };
@@ -47,7 +48,7 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
   // POST /api/books
   app.post<{ Body: CreateBookBody }>('/api/books', async (request, reply) => {
     const { title, authorName, authorAsin, narrator, description, coverUrl,
-            asin, isbn, seriesName, seriesPosition, duration, publishedDate, genres } = request.body;
+            asin, isbn, seriesName, seriesPosition, duration, publishedDate, genres, providerId } = request.body;
 
     if (!title) {
       return reply.status(400).send({ error: 'Title is required' });
@@ -60,6 +61,20 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
       return reply.status(409).send(existing);
     }
 
+    // Enrich with ASIN from metadata provider if missing
+    let enrichedAsin = asin;
+    if (!enrichedAsin && providerId) {
+      try {
+        const detail = await metadataService.getBook(providerId);
+        if (detail?.asin) {
+          enrichedAsin = detail.asin;
+          request.log.info({ title, providerId, asin: enrichedAsin }, 'Enriched book with ASIN from provider');
+        }
+      } catch (error) {
+        request.log.warn({ error, providerId }, 'ASIN enrichment failed');
+      }
+    }
+
     const book = await bookService.create({
       title,
       authorName,
@@ -67,7 +82,7 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
       narrator,
       description,
       coverUrl,
-      asin,
+      asin: enrichedAsin,
       isbn,
       seriesName,
       seriesPosition,

@@ -10,9 +10,8 @@ import { BookPage } from '@/pages/BookPage';
 // Mock api
 vi.mock('@/lib/api', () => ({
   api: {
+    getBookById: vi.fn(),
     getBook: vi.fn(),
-    getBooks: vi.fn(),
-    addBook: vi.fn(),
   },
 }));
 
@@ -26,45 +25,53 @@ vi.mock('sonner', () => ({
 }));
 
 import { api } from '@/lib/api';
-import { toast } from 'sonner';
 
-const mockBook = {
+const mockLibraryBook = {
+  id: 1,
+  title: 'The Way of Kings',
+  authorId: 1,
+  narrator: 'Michael Kramer, Kate Reading',
+  description: '<p>An epic fantasy novel.</p>',
+  coverUrl: 'https://example.com/cover.jpg',
   asin: 'B00ABC1234',
+  isbn: null,
+  seriesName: 'The Stormlight Archive',
+  seriesPosition: 1,
+  duration: 872,
+  publishedDate: '2010-08-31',
+  genres: ['Fantasy', 'Epic'],
+  status: 'wanted',
+  path: null,
+  size: null,
+  createdAt: '2024-01-01',
+  updatedAt: '2024-01-01',
+  author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson', asin: 'A00SAND1234' },
+};
+
+const mockMetadataBook = {
   title: 'The Way of Kings',
   subtitle: 'Book One of the Stormlight Archive',
-  authors: [
-    { name: 'Brandon Sanderson', asin: 'A00SAND1234' },
-  ],
+  authors: [{ name: 'Brandon Sanderson', asin: 'A00SAND1234' }],
   narrators: ['Michael Kramer', 'Kate Reading'],
-  series: [{ name: 'The Stormlight Archive', position: 1, asin: 'S001' }],
-  description: '<p>A wonderful epic fantasy novel about honor and betrayal.</p>',
+  series: [{ name: 'The Stormlight Archive', position: 1 }],
+  description: '<p>Full metadata description.</p>',
   coverUrl: 'https://example.com/cover.jpg',
   duration: 872,
   genres: ['Fantasy', 'Epic', 'Adventure'],
+  publisher: 'Macmillan Audio',
+  asin: 'B00ABC1234',
 };
 
-const mockLibraryBooks = [
-  {
-    id: 1,
-    title: 'Project Hail Mary',
-    asin: 'B00OTHER',
-    status: 'wanted',
-    createdAt: '2024-01-01',
-    updatedAt: '2024-01-01',
-    author: { id: 1, name: 'Andy Weir', slug: 'andy-weir' },
-  },
-];
-
-function renderBookPage(asin = 'B00ABC1234') {
+function renderBookPage(id = '1') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[`/books/${asin}`]}>
+      <MemoryRouter initialEntries={[`/books/${id}`]}>
         <Routes>
-          <Route path="books/:asin" element={<BookPage />} />
+          <Route path="books/:id" element={<BookPage />} />
           <Route path="library" element={<div>Library Page</div>} />
           <Route path="search" element={<div>Search Page</div>} />
           <Route path="authors/:asin" element={<div>Author Page</div>} />
@@ -77,30 +84,45 @@ function renderBookPage(asin = 'B00ABC1234') {
 describe('BookPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(api.getBook).mockResolvedValue(mockBook);
-    vi.mocked(api.getBooks).mockResolvedValue(mockLibraryBooks);
+    vi.mocked(api.getBookById).mockResolvedValue(mockLibraryBook);
+    vi.mocked(api.getBook).mockResolvedValue(mockMetadataBook);
   });
 
   it('renders loading skeleton initially', () => {
-    // Delay resolution to see skeleton
-    vi.mocked(api.getBook).mockReturnValue(new Promise(() => {}));
+    vi.mocked(api.getBookById).mockReturnValue(new Promise(() => {}));
     renderBookPage();
-    // Skeleton should show placeholder elements
     expect(document.querySelector('.skeleton')).toBeTruthy();
   });
 
-  it('renders all metadata fields', async () => {
+  it('renders library book data', async () => {
     renderBookPage();
 
     await waitFor(() => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Book One of the Stormlight Archive')).toBeInTheDocument();
     expect(screen.getByText('Brandon Sanderson')).toBeInTheDocument();
     expect(screen.getByText(/Michael Kramer, Kate Reading/)).toBeInTheDocument();
     expect(screen.getByText(/The Stormlight Archive #1/)).toBeInTheDocument();
     expect(screen.getByText(/14h 32m/)).toBeInTheDocument();
+  });
+
+  it('renders book without ASIN (no metadata enrichment)', async () => {
+    vi.mocked(api.getBookById).mockResolvedValue({
+      ...mockLibraryBook,
+      asin: null,
+      description: '<p>Library description only.</p>',
+    });
+    vi.mocked(api.getBook).mockResolvedValue(null as any);
+
+    renderBookPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    // Should not call metadata API when ASIN is null
+    expect(api.getBook).not.toHaveBeenCalled();
   });
 
   it('renders genre chips', async () => {
@@ -111,79 +133,22 @@ describe('BookPage', () => {
     });
 
     expect(screen.getByText('Epic')).toBeInTheDocument();
-    expect(screen.getByText('Adventure')).toBeInTheDocument();
+  });
+
+  it('shows status badge', async () => {
+    renderBookPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Wanted')).toBeInTheDocument();
+    });
   });
 
   it('shows "Book not found" when book fails to load', async () => {
-    vi.mocked(api.getBook).mockRejectedValue(new Error('Not found'));
+    vi.mocked(api.getBookById).mockRejectedValue(new Error('Not found'));
     renderBookPage();
 
     await waitFor(() => {
       expect(screen.getByText('Book not found')).toBeInTheDocument();
-    });
-  });
-
-  it('shows "Add to Library" when not in library', async () => {
-    renderBookPage();
-
-    await waitFor(() => {
-      expect(screen.getByText('Add to Library')).toBeInTheDocument();
-    });
-  });
-
-  it('shows "In Library" when book is already in library', async () => {
-    vi.mocked(api.getBooks).mockResolvedValue([
-      {
-        id: 1,
-        title: 'The Way of Kings',
-        asin: 'B00ABC1234',
-        status: 'wanted',
-        createdAt: '2024-01-01',
-        updatedAt: '2024-01-01',
-        author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' },
-      },
-    ]);
-
-    renderBookPage();
-
-    await waitFor(() => {
-      expect(screen.getByText('In Library')).toBeInTheDocument();
-    });
-  });
-
-  it('adds book to library on button click', async () => {
-    const user = userEvent.setup();
-    vi.mocked(api.addBook).mockResolvedValue({
-      id: 2,
-      title: 'The Way of Kings',
-      asin: 'B00ABC1234',
-      status: 'wanted',
-      createdAt: '2024-01-01',
-      updatedAt: '2024-01-01',
-    });
-
-    renderBookPage();
-
-    await waitFor(() => {
-      expect(screen.getByText('Add to Library')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByText('Add to Library'));
-
-    await waitFor(() => {
-      expect(api.addBook).toHaveBeenCalled();
-      expect(toast.success).toHaveBeenCalledWith("Added 'The Way of Kings' to library");
-    });
-  });
-
-  it('renders description with show more toggle', async () => {
-    const longDescription = '<p>' + 'A'.repeat(400) + '</p>';
-    vi.mocked(api.getBook).mockResolvedValue({ ...mockBook, description: longDescription });
-
-    renderBookPage();
-
-    await waitFor(() => {
-      expect(screen.getByText('Show more')).toBeInTheDocument();
     });
   });
 
@@ -202,7 +167,7 @@ describe('BookPage', () => {
     });
   });
 
-  it('links author names to author page', async () => {
+  it('links author name to author page when author has ASIN', async () => {
     renderBookPage();
 
     await waitFor(() => {
@@ -211,5 +176,24 @@ describe('BookPage', () => {
 
     const authorLink = screen.getByText('Brandon Sanderson');
     expect(authorLink.closest('a')).toHaveAttribute('href', '/authors/A00SAND1234');
+  });
+
+  it('renders description with show more toggle', async () => {
+    const longDescription = '<p>' + 'A'.repeat(400) + '</p>';
+    vi.mocked(api.getBookById).mockResolvedValue({ ...mockLibraryBook, description: longDescription });
+
+    renderBookPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Show more')).toBeInTheDocument();
+    });
+  });
+
+  it('enriches with metadata subtitle when ASIN present', async () => {
+    renderBookPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('Book One of the Stormlight Archive')).toBeInTheDocument();
+    });
   });
 });

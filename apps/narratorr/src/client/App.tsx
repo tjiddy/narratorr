@@ -18,7 +18,7 @@ export function App() {
           <Route path="library" element={<LibraryPage />} />
           <Route path="search" element={<SearchPage />} />
           <Route path="activity" element={<ActivityPage />} />
-          <Route path="books/:asin" element={<BookPage />} />
+          <Route path="books/:id" element={<BookPage />} />
           <Route path="authors/:asin" element={<AuthorPage />} />
           <Route path="settings/*" element={<SettingsPage />} />
         </Route>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Routes, Route } from 'react-router-dom';
 import { render } from '@testing-library/react';
@@ -103,7 +103,7 @@ function renderAuthorPage(asin = 'A00SAND1234') {
         <Routes>
           <Route path="authors/:asin" element={<AuthorPage />} />
           <Route path="library" element={<div>Library Page</div>} />
-          <Route path="books/:asin" element={<div>Book Page</div>} />
+          <Route path="books/:id" element={<div>Book Page</div>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -283,15 +283,12 @@ describe('AuthorPage', () => {
     });
   });
 
-  it('links book titles to book detail pages', async () => {
+  it('renders book titles in catalog', async () => {
     renderAuthorPage();
 
     await waitFor(() => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
-
-    const bookLink = screen.getByText('The Way of Kings').closest('a');
-    expect(bookLink).toHaveAttribute('href', '/books/B001');
   });
 
   it('renders initials avatar when no image', async () => {

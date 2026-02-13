@@ -326,7 +326,7 @@ export function LibraryPage() {
               index={index}
               isMenuOpen={openMenuId === book.id}
               onMenuToggle={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === book.id ? null : book.id); }}
-              onViewDetails={() => { if (book.asin) { navigate(`/books/${book.asin}`); } else { toast.info('No details available for this book'); } setOpenMenuId(null); }}
+              onViewDetails={() => { navigate(`/books/${book.id}`); setOpenMenuId(null); }}
               onSearchReleases={() => { setSearchBook(book); setOpenMenuId(null); }}
               onRemove={() => { setDeleteTarget(book); setOpenMenuId(null); }}
             />

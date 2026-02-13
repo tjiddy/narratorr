@@ -8,3 +8,12 @@ export function useLibrary() {
     staleTime: 30_000,
   });
 }
+
+export function useLibraryBook(id: number | undefined) {
+  return useQuery({
+    queryKey: ['books', id],
+    queryFn: () => api.getBookById(id!),
+    enabled: id != null && !isNaN(id),
+    staleTime: 30_000,
+  });
+}
