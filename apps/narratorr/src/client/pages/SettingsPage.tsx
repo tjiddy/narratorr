@@ -313,7 +313,6 @@ function IndexersSettings() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.indexers() });
       toast.success('Indexer removed successfully');
-      setDeleteTarget(null);
     },
   });
 
@@ -416,7 +415,7 @@ function IndexersSettings() {
         isOpen={deleteTarget !== null}
         title="Delete Indexer"
         message={`Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone.`}
-        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+        onConfirm={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null); } }}
         onCancel={() => setDeleteTarget(null)}
       />
     </div>
@@ -472,7 +471,6 @@ function DownloadClientsSettings() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.downloadClients() });
       toast.success('Download client removed successfully');
-      setDeleteTarget(null);
     },
   });
 
@@ -575,7 +573,7 @@ function DownloadClientsSettings() {
         isOpen={deleteTarget !== null}
         title="Delete Download Client"
         message={`Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone.`}
-        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+        onConfirm={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null); } }}
         onCancel={() => setDeleteTarget(null)}
       />
     </div>

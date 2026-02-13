@@ -6,8 +6,21 @@ import { useLibrary } from '@/hooks/useLibrary';
 import { api, type BookWithAuthor } from '@/lib/api';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
+import { useDeleteConfirmation } from '@/hooks/useDeleteConfirmation';
 import { bookStatusConfig } from '@/lib/status';
 import { queryKeys } from '@/lib/queryKeys';
+import {
+  LibraryIcon as BookShelfIcon,
+  BookOpenIcon,
+  SearchIcon,
+  MoreVerticalIcon,
+  ChevronDownIcon,
+  ArrowUpDownIcon,
+  ArrowRightIcon,
+  EyeIcon,
+  TrashIcon,
+  LoadingSpinner,
+} from '@/components/icons';
 
 // ============================================================================
 // Types
@@ -16,103 +29,6 @@ import { queryKeys } from '@/lib/queryKeys';
 type StatusFilter = 'all' | 'wanted' | 'downloading' | 'imported';
 type SortField = 'createdAt' | 'title' | 'author';
 type SortDirection = 'asc' | 'desc';
-
-// ============================================================================
-// Icons
-// ============================================================================
-
-function BookShelfIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M4 19V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14" />
-      <path d="M2 19h20" />
-      <path d="M8 3v16" />
-      <path d="M12 3v8l2.5-2 2.5 2V3" />
-    </svg>
-  );
-}
-
-function BookOpenIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-      <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
-    </svg>
-  );
-}
-
-function SearchIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <circle cx="11" cy="11" r="8" />
-      <path d="m21 21-4.3-4.3" />
-    </svg>
-  );
-}
-
-function MoreVerticalIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <circle cx="12" cy="5" r="1" />
-      <circle cx="12" cy="12" r="1" />
-      <circle cx="12" cy="19" r="1" />
-    </svg>
-  );
-}
-
-function ChevronDownIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="m6 9 6 6 6-6" />
-    </svg>
-  );
-}
-
-function ArrowUpDownIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="m7 15 5 5 5-5" />
-      <path d="m7 9 5-5 5 5" />
-    </svg>
-  );
-}
-
-function ArrowRightIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M5 12h14" />
-      <path d="m12 5 7 7-7 7" />
-    </svg>
-  );
-}
-
-function EyeIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
-
-function TrashIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M3 6h18" />
-      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-    </svg>
-  );
-}
-
-function LoadingSpinner({ className = '' }: { className?: string }) {
-  return (
-    <svg className={`animate-spin ${className}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-    </svg>
-  );
-}
 
 const filterTabs: { key: StatusFilter; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -166,7 +82,7 @@ export function LibraryPage() {
   const [seriesFilter, setSeriesFilter] = useState('');
   const [sortField, setSortField] = useState<SortField>('createdAt');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
-  const [deleteTarget, setDeleteTarget] = useState<BookWithAuthor | null>(null);
+  const deleteConfirm = useDeleteConfirmation<BookWithAuthor>();
   const [searchBook, setSearchBook] = useState<BookWithAuthor | null>(null);
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
 
@@ -174,8 +90,7 @@ export function LibraryPage() {
   const deleteMutation = useMutation({
     mutationFn: api.deleteBook,
     onSuccess: () => {
-      toast.success(`Removed '${deleteTarget?.title}' from library`);
-      setDeleteTarget(null);
+      toast.success('Removed book from library');
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error: Error) => {
@@ -298,7 +213,7 @@ export function LibraryPage() {
               onMenuToggle={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === book.id ? null : book.id); }}
               onViewDetails={() => { navigate(`/books/${book.id}`); setOpenMenuId(null); }}
               onSearchReleases={() => { setSearchBook(book); setOpenMenuId(null); }}
-              onRemove={() => { setDeleteTarget(book); setOpenMenuId(null); }}
+              onRemove={() => { deleteConfirm.requestDelete(book); setOpenMenuId(null); }}
             />
           ))}
         </div>
@@ -306,13 +221,13 @@ export function LibraryPage() {
 
       {/* Delete Confirmation */}
       <ConfirmModal
-        isOpen={deleteTarget !== null}
+        isOpen={deleteConfirm.isOpen}
         title="Remove from Library"
-        message={`Are you sure you want to remove "${deleteTarget?.title}" from your library? This will cancel any active downloads.`}
+        message={`Are you sure you want to remove "${deleteConfirm.target?.title}" from your library? This will cancel any active downloads.`}
         confirmLabel="Remove"
         cancelLabel="Cancel"
-        onConfirm={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); }}
-        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => { const item = deleteConfirm.confirm(); if (item) deleteMutation.mutate(item.id); }}
+        onCancel={deleteConfirm.cancel}
       />
 
       {/* Search Releases Modal */}
