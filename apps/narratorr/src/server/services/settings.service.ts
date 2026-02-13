@@ -2,24 +2,9 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { settings } from '@narratorr/db/schema';
+import type { AppSettings } from '../../shared/schemas.js';
 
-export interface AppSettings {
-  library: {
-    path: string;
-    folderFormat: string;
-  };
-  search: {
-    intervalMinutes: number;
-    enabled: boolean;
-  };
-  import: {
-    deleteAfterImport: boolean;
-    minSeedTime: number;
-  };
-  general: {
-    logLevel: 'error' | 'warn' | 'info' | 'debug';
-  };
-}
+export type { AppSettings };
 
 const DEFAULT_SETTINGS: AppSettings = {
   library: {

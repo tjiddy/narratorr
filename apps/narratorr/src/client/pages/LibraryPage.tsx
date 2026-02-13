@@ -211,6 +211,7 @@ export function LibraryPage() {
               index={index}
               isMenuOpen={openMenuId === book.id}
               onMenuToggle={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === book.id ? null : book.id); }}
+              onMenuClose={() => setOpenMenuId(null)}
               onViewDetails={() => { navigate(`/books/${book.id}`); setOpenMenuId(null); }}
               onSearchReleases={() => { setSearchBook(book); setOpenMenuId(null); }}
               onRemove={() => { deleteConfirm.requestDelete(book); setOpenMenuId(null); }}
@@ -385,6 +386,7 @@ function LibraryBookCard({
   index,
   isMenuOpen,
   onMenuToggle,
+  onMenuClose,
   onViewDetails,
   onSearchReleases,
   onRemove,
@@ -393,6 +395,7 @@ function LibraryBookCard({
   index: number;
   isMenuOpen: boolean;
   onMenuToggle: (e: React.MouseEvent) => void;
+  onMenuClose: () => void;
   onViewDetails: () => void;
   onSearchReleases: () => void;
   onRemove: () => void;
@@ -448,6 +451,7 @@ function LibraryBookCard({
               onViewDetails={onViewDetails}
               onSearchReleases={onSearchReleases}
               onRemove={onRemove}
+              onClose={onMenuClose}
             />
           )}
         </div>
@@ -486,37 +490,68 @@ function BookContextMenu({
   onViewDetails,
   onSearchReleases,
   onRemove,
+  onClose,
 }: {
   onViewDetails: () => void;
   onSearchReleases: () => void;
   onRemove: () => void;
+  onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const [focusIndex, setFocusIndex] = useState(0);
+  const actions = [onViewDetails, onSearchReleases, onRemove];
+
+  useEffect(() => {
+    const buttons = menuRef.current?.querySelectorAll<HTMLButtonElement>('button');
+    buttons?.[focusIndex]?.focus();
+  }, [focusIndex]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    switch (e.key) {
+      case 'Escape':
+        e.preventDefault();
+        onClose();
+        break;
+      case 'ArrowDown':
+        e.preventDefault();
+        setFocusIndex((i) => (i + 1) % actions.length);
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setFocusIndex((i) => (i - 1 + actions.length) % actions.length);
+        break;
+    }
+  }, [onClose, actions.length]);
 
   return (
     <div
       ref={menuRef}
+      role="menu"
       className="absolute right-0 top-full mt-1 w-48 glass-card rounded-xl overflow-hidden shadow-lg z-10 animate-fade-in"
       onClick={(e) => e.stopPropagation()}
+      onKeyDown={handleKeyDown}
     >
       <button
+        role="menuitem"
         onClick={onViewDetails}
-        className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-left hover:bg-muted/80 transition-colors"
+        className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-left hover:bg-muted/80 transition-colors focus:bg-muted/80 focus:outline-none"
       >
         <EyeIcon className="w-4 h-4 text-muted-foreground" />
         View Details
       </button>
       <button
+        role="menuitem"
         onClick={onSearchReleases}
-        className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-left hover:bg-muted/80 transition-colors"
+        className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-left hover:bg-muted/80 transition-colors focus:bg-muted/80 focus:outline-none"
       >
         <SearchIcon className="w-4 h-4 text-muted-foreground" />
         Search Releases
       </button>
       <div className="border-t border-border/50" />
       <button
+        role="menuitem"
         onClick={onRemove}
-        className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-left text-destructive hover:bg-destructive/10 transition-colors"
+        className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-left text-destructive hover:bg-destructive/10 transition-colors focus:bg-destructive/10 focus:outline-none"
       >
         <TrashIcon className="w-4 h-4" />
         Remove from Library

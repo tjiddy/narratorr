@@ -23,7 +23,7 @@ export const authors = sqliteTable('authors', {
 export const books = sqliteTable('books', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   title: text('title').notNull(),
-  authorId: integer('author_id').references(() => authors.id),
+  authorId: integer('author_id').references(() => authors.id, { onDelete: 'set null' }),
   narrator: text('narrator'),
   description: text('description'),
   coverUrl: text('cover_url'),
@@ -93,9 +93,9 @@ export const downloadClients = sqliteTable('download_clients', {
 
 export const downloads = sqliteTable('downloads', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  bookId: integer('book_id').references(() => books.id),
-  indexerId: integer('indexer_id').references(() => indexers.id),
-  downloadClientId: integer('download_client_id').references(() => downloadClients.id),
+  bookId: integer('book_id').references(() => books.id, { onDelete: 'set null' }),
+  indexerId: integer('indexer_id').references(() => indexers.id, { onDelete: 'set null' }),
+  downloadClientId: integer('download_client_id').references(() => downloadClients.id, { onDelete: 'set null' }),
   title: text('title').notNull(),
   protocol: text('protocol', { enum: ['torrent', 'usenet'] }).notNull().default('torrent'),
   infoHash: text('info_hash'),
@@ -135,7 +135,7 @@ export const searchHistory = sqliteTable('search_history', {
 
 export const blacklist = sqliteTable('blacklist', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  bookId: integer('book_id').references(() => books.id),
+  bookId: integer('book_id').references(() => books.id, { onDelete: 'set null' }),
   infoHash: text('info_hash').notNull(),
   title: text('title').notNull(),
   reason: text('reason', { enum: ['wrong_content', 'bad_quality', 'wrong_narrator', 'spam', 'other'] }),

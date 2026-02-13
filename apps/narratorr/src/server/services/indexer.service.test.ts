@@ -150,15 +150,15 @@ describe('IndexerService', () => {
 
   describe('testConfig', () => {
     it('creates adapter from config and returns test result', async () => {
-      // testConfig creates a real ABB adapter, so we just verify it doesn't throw for valid type
-      // The actual adapter.test() would make a network call, but we can test the error path
+      const mockAdapter = { test: vi.fn().mockResolvedValue({ success: true, message: 'OK' }), search: vi.fn() };
+      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+
       const result = await service.testConfig({
         type: 'abb',
         settings: { hostname: 'audiobookbay.lu', pageLimit: 2 },
       });
-      // Will fail since no real network, but should return a result (not throw)
-      expect(result).toHaveProperty('success');
-      expect(result).toHaveProperty('message');
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('OK');
     });
 
     it('returns failure for unknown type', async () => {
