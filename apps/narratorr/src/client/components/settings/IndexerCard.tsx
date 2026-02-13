@@ -199,6 +199,7 @@ export function IndexerCard({
                 {...register('priority', { valueAsNumber: true })}
                 className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
               />
+              <p className="text-sm text-muted-foreground mt-1">Lower values are checked first (1–100)</p>
             </div>
           </>
         )}
@@ -213,8 +214,10 @@ export function IndexerCard({
             }`}
             placeholder="audiobookbay.lu"
           />
-          {errors.settings?.hostname && (
+          {errors.settings?.hostname ? (
             <p className="text-sm text-destructive mt-1">{errors.settings.hostname.message}</p>
+          ) : (
+            <p className="text-sm text-muted-foreground mt-1">Domain only, without http:// or https://</p>
           )}
         </div>
         <div>

@@ -209,6 +209,7 @@ export function DownloadClientCard({
                 {...register('priority', { valueAsNumber: true })}
                 className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
               />
+              <p className="text-sm text-muted-foreground mt-1">Lower values are preferred first (1–100)</p>
             </div>
           </>
         )}
@@ -223,8 +224,10 @@ export function DownloadClientCard({
             }`}
             placeholder="localhost"
           />
-          {errors.settings?.host && (
+          {errors.settings?.host ? (
             <p className="text-sm text-destructive mt-1">{errors.settings.host.message}</p>
+          ) : (
+            <p className="text-sm text-muted-foreground mt-1">Hostname or IP without protocol</p>
           )}
         </div>
         <div>

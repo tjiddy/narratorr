@@ -44,14 +44,8 @@ export function useConnectionTest<TFormData>({
     try {
       const result = await testByConfig(data);
       setFormTestResult(result);
-      if (result.success) {
-        toast.success('Connection successful');
-      } else {
-        toast.error(result.message || 'Connection failed');
-      }
     } catch {
       setFormTestResult({ success: false, message: 'Test failed' });
-      toast.error('Connection test failed');
     }
     setTestingForm(false);
   }, [testByConfig]);
