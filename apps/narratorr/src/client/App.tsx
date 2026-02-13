@@ -6,6 +6,7 @@ import { SearchPage } from './pages/SearchPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { BookPage } from './pages/BookPage';
+import { AuthorPage } from './pages/AuthorPage';
 
 export function App() {
   return (
@@ -18,6 +19,7 @@ export function App() {
           <Route path="search" element={<SearchPage />} />
           <Route path="activity" element={<ActivityPage />} />
           <Route path="books/:asin" element={<BookPage />} />
+          <Route path="authors/:asin" element={<AuthorPage />} />
           <Route path="settings/*" element={<SettingsPage />} />
         </Route>
       </Routes>
