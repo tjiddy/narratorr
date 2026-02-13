@@ -114,6 +114,7 @@ export async function downloadClientsRoutes(
           return reply.status(404).send({ error: 'Download client not found' });
         }
 
+        request.log.info({ id }, 'Download client deleted');
         return { success: true };
       } catch (error) {
         request.log.error({ id, error }, 'Failed to delete download client');

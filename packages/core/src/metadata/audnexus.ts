@@ -12,6 +12,7 @@ export interface AudnexusConfig {
 }
 
 const BASE_URL = 'https://api.audnex.us';
+const REQUEST_TIMEOUT_MS = 15000;
 
 export class AudnexusProvider implements MetadataProvider {
   readonly name = 'Audnexus';
@@ -104,9 +105,13 @@ export class AudnexusProvider implements MetadataProvider {
   }
 
   async test(): Promise<{ success: boolean; message?: string }> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
     try {
       const response = await fetch(
         `${BASE_URL}/authors?name=test&region=${this.region}`,
+        { signal: controller.signal },
       );
 
       if (response.ok) {
@@ -122,16 +127,23 @@ export class AudnexusProvider implements MetadataProvider {
         success: false,
         message: error instanceof Error ? error.message : 'Connection failed',
       };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
   private async fetchJson<T>(path: string): Promise<T | null> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
     try {
-      const response = await fetch(`${BASE_URL}${path}`);
+      const response = await fetch(`${BASE_URL}${path}`, { signal: controller.signal });
       if (!response.ok) return null;
       return (await response.json()) as T;
     } catch {
       return null;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 }

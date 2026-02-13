@@ -8,6 +8,8 @@ export interface QBittorrentConfig {
   useSsl: boolean;
 }
 
+const REQUEST_TIMEOUT_MS = 15000;
+
 interface QBTorrent {
   hash: string;
   name: string;
@@ -39,38 +41,46 @@ export class QBittorrentClient implements DownloadClientAdapter {
   }
 
   private async login(): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/api/v2/auth/login`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Referer: this.baseUrl,
-      },
-      body: new URLSearchParams({
-        username: this.config.username,
-        password: this.config.password,
-      }),
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-    if (!response.ok) {
-      throw new Error(`Login failed: HTTP ${response.status}`);
-    }
+    try {
+      const response = await fetch(`${this.baseUrl}/api/v2/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Referer: this.baseUrl,
+        },
+        body: new URLSearchParams({
+          username: this.config.username,
+          password: this.config.password,
+        }),
+        signal: controller.signal,
+      });
 
-    const text = await response.text();
-    if (text === 'Fails.') {
-      throw new Error('Login failed: Invalid credentials');
-    }
-
-    // Extract SID cookie from response headers
-    const setCookie = response.headers.get('set-cookie');
-    if (setCookie) {
-      const sidMatch = setCookie.match(/SID=([^;]+)/);
-      if (sidMatch) {
-        this.cookie = `SID=${sidMatch[1]}`;
+      if (!response.ok) {
+        throw new Error(`Login failed: HTTP ${response.status}`);
       }
-    }
 
-    if (!this.cookie) {
-      throw new Error('Login failed: No session cookie received');
+      const text = await response.text();
+      if (text === 'Fails.') {
+        throw new Error('Login failed: Invalid credentials');
+      }
+
+      // Extract SID cookie from response headers
+      const setCookie = response.headers.get('set-cookie');
+      if (setCookie) {
+        const sidMatch = setCookie.match(/SID=([^;]+)/);
+        if (sidMatch) {
+          this.cookie = `SID=${sidMatch[1]}`;
+        }
+      }
+
+      if (!this.cookie) {
+        throw new Error('Login failed: No session cookie received');
+      }
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -79,32 +89,40 @@ export class QBittorrentClient implements DownloadClientAdapter {
       await this.login();
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      ...options,
-      headers: {
-        ...options.headers,
-        Cookie: this.cookie!,
-        Referer: this.baseUrl,
-      },
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-    if (response.status === 403 && !retried) {
-      // Session expired, re-login and retry once
-      this.cookie = undefined;
-      await this.login();
-      return this.request(path, options, true);
+    try {
+      const response = await fetch(`${this.baseUrl}${path}`, {
+        ...options,
+        headers: {
+          ...options.headers,
+          Cookie: this.cookie!,
+          Referer: this.baseUrl,
+        },
+        signal: controller.signal,
+      });
+
+      if (response.status === 403 && !retried) {
+        // Session expired, re-login and retry once
+        this.cookie = undefined;
+        await this.login();
+        return this.request(path, options, true);
+      }
+
+      if (!response.ok) {
+        throw new Error(`Request failed: HTTP ${response.status} ${path}`);
+      }
+
+      const text = await response.text();
+      if (!text) {
+        return undefined as T;
+      }
+
+      return JSON.parse(text) as T;
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    if (!response.ok) {
-      throw new Error(`Request failed: HTTP ${response.status} ${path}`);
-    }
-
-    const text = await response.text();
-    if (!text) {
-      return undefined as T;
-    }
-
-    return JSON.parse(text) as T;
   }
 
   async addDownload(url: string, options?: AddDownloadOptions): Promise<string> {

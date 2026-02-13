@@ -440,8 +440,10 @@ function LibraryBookCard({
         <div className="absolute top-3 right-3">
           <button
             onClick={onMenuToggle}
-            className="p-1.5 rounded-lg backdrop-blur-md bg-black/40 text-white/80 hover:text-white hover:bg-black/60 transition-all focus-ring"
+            className={`p-2 rounded-lg backdrop-blur-md text-white/80 hover:text-white transition-all focus-ring ${isMenuOpen ? 'bg-black/70 text-white' : 'bg-black/40 hover:bg-black/60'}`}
             aria-label="Book options"
+            aria-expanded={isMenuOpen}
+            aria-haspopup="true"
           >
             <MoreVerticalIcon className="w-4 h-4" />
           </button>
@@ -519,6 +521,11 @@ function BookContextMenu({
       case 'ArrowUp':
         e.preventDefault();
         setFocusIndex((i) => (i - 1 + actions.length) % actions.length);
+        break;
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        actions[focusIndex]();
         break;
     }
   }, [onClose, actions.length]);

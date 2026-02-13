@@ -7,6 +7,8 @@ export interface ABBConfig {
   pageLimit: number; // Max pages to scrape per search
 }
 
+const REQUEST_TIMEOUT_MS = 30000;
+
 const DEFAULT_USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -78,23 +80,30 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
   private async fetchPage(url: string): Promise<string> {
     const userAgent = this.getNextUserAgent();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': userAgent,
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        Connection: 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-      },
-    });
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': userAgent,
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          Connection: 'keep-alive',
+          'Upgrade-Insecure-Requests': '1',
+        },
+        signal: controller.signal,
+      });
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      return response.text();
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    return response.text();
   }
 
   private parseSearchPage(html: string): SearchResult[] {
@@ -297,12 +306,16 @@ export class AudioBookBayIndexer implements IndexerAdapter {
   }
 
   async test(): Promise<{ success: boolean; message?: string }> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
     try {
       const response = await fetch(this.baseUrl, {
         method: 'HEAD',
         headers: {
           'User-Agent': this.getNextUserAgent(),
         },
+        signal: controller.signal,
       });
 
       if (response.ok || response.status === 405) {
@@ -319,6 +332,8 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         success: false,
         message: error instanceof Error ? error.message : 'Connection failed',
       };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 }

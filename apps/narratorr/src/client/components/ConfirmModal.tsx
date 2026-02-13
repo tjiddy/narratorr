@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react';
+
 interface ConfirmModalProps {
   isOpen: boolean;
   title: string;
@@ -36,6 +38,18 @@ export function ConfirmModal({
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    modalRef.current?.focus();
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onCancel]);
+
   if (!isOpen) return null;
 
   return (
@@ -48,11 +62,14 @@ export function ConfirmModal({
 
       {/* Modal */}
       <div
+        ref={modalRef}
         role="dialog"
+        aria-modal="true"
         aria-labelledby="confirm-modal-title"
         aria-describedby="confirm-modal-description"
         className="relative w-full max-w-md glass-card rounded-2xl p-6 shadow-2xl animate-fade-in-up"
         onClick={(e) => e.stopPropagation()}
+        tabIndex={-1}
       >
         {/* Icon */}
         <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 bg-destructive/10 rounded-full">

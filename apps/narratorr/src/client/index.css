@@ -17,7 +17,7 @@
     --secondary: 30 10% 92%;
     --secondary-foreground: 30 5% 25%;
     --muted: 30 10% 94%;
-    --muted-foreground: 30 5% 45%;
+    --muted-foreground: 30 5% 38%;
     --accent: 35 85% 55%;
     --accent-foreground: 30 5% 10%;
     --destructive: 0 72% 51%;
@@ -70,6 +70,11 @@
   }
 
   /* Custom scrollbar */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.2) transparent;
+  }
+
   ::-webkit-scrollbar {
     width: 8px;
     height: 8px;
@@ -118,26 +123,6 @@
 
   .dark .glass-card {
     @apply bg-card/60 shadow-black/20;
-  }
-
-  /* Glow effect for primary elements */
-  .glow-primary {
-    box-shadow: 0 0 20px -5px hsl(var(--primary) / 0.4);
-  }
-
-  /* Animated underline for nav */
-  .nav-link {
-    @apply relative;
-  }
-
-  .nav-link::after {
-    content: "";
-    @apply absolute bottom-0 left-0 w-0 h-0.5 bg-primary transition-all duration-300 ease-out;
-  }
-
-  .nav-link:hover::after,
-  .nav-link.active::after {
-    @apply w-full;
   }
 
   /* Staggered animation delays */
@@ -240,11 +225,21 @@
 
   /* Focus visible ring */
   .focus-ring {
-    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background;
   }
 
   /* Text gradient */
   .text-gradient {
     @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-amber-400;
+  }
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

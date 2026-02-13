@@ -111,6 +111,7 @@ export async function indexersRoutes(app: FastifyInstance, indexerService: Index
           return reply.status(404).send({ error: 'Indexer not found' });
         }
 
+        request.log.info({ id }, 'Indexer deleted');
         return { success: true };
       } catch (error) {
         request.log.error({ id, error }, 'Failed to delete indexer');

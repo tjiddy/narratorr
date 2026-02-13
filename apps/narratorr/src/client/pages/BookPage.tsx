@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import DOMPurify from 'dompurify';
 import { useBook } from '@/hooks/useMetadata';
 import { useLibraryBook } from '@/hooks/useLibrary';
 import { formatDuration } from '@/lib/helpers';
 import { bookStatusConfig } from '@/lib/status';
 import { ArrowLeftIcon, SearchIcon, BookOpenIcon } from '@/components/icons';
+import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 
 const DESCRIPTION_COLLAPSE_LENGTH = 300;
 
@@ -75,6 +77,7 @@ export function BookPage() {
   const { data: metadataBook } = useBook(libraryBook?.asin ?? undefined);
 
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
 
   if (libraryLoading) return <BookPageSkeleton />;
   if (libraryError || !libraryBook) return <BookNotFound />;
@@ -198,7 +201,7 @@ export function BookPage() {
                 {status.label}
               </span>
               <button
-                onClick={() => navigate('/search')}
+                onClick={() => setSearchModalOpen(true)}
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium glass-card hover:border-primary/30 hover:text-primary transition-all duration-200 focus-ring"
               >
                 <SearchIcon className="w-4 h-4" />
@@ -218,7 +221,7 @@ export function BookPage() {
           <div className="glass-card rounded-2xl p-6">
             <div
               className={`prose prose-sm dark:prose-invert max-w-none ${!descriptionExpanded && descriptionLong ? 'line-clamp-4' : ''}`}
-              dangerouslySetInnerHTML={{ __html: description }}
+              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(description) }}
             />
             {descriptionLong && (
               <button
@@ -247,6 +250,13 @@ export function BookPage() {
           </div>
         </div>
       )}
+
+      {/* Search Releases Modal */}
+      <SearchReleasesModal
+        isOpen={searchModalOpen}
+        book={libraryBook}
+        onClose={() => setSearchModalOpen(false)}
+      />
     </div>
   );
 }

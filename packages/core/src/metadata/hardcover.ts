@@ -12,6 +12,7 @@ export interface HardcoverConfig {
 }
 
 const API_URL = 'https://api.hardcover.app/v1/graphql';
+const REQUEST_TIMEOUT_MS = 20000;
 
 // ---------------------------------------------------------------------------
 // GraphQL queries
@@ -298,6 +299,9 @@ export class HardcoverProvider implements MetadataProvider {
   }
 
   private async gql<T>(query: string, variables?: Record<string, unknown>): Promise<T | null> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
     try {
       const res = await fetch(API_URL, {
         method: 'POST',
@@ -306,6 +310,7 @@ export class HardcoverProvider implements MetadataProvider {
           authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify({ query, variables }),
+        signal: controller.signal,
       });
       if (!res.ok) return null;
       const json = (await res.json()) as { data?: T; errors?: Array<{ message: string }> };
@@ -313,6 +318,8 @@ export class HardcoverProvider implements MetadataProvider {
       return (json.data as T) ?? null;
     } catch {
       return null;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 }

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import DOMPurify from 'dompurify';
 import { useAuthor, useAuthorBooks } from '@/hooks/useMetadata';
 import { useLibrary } from '@/hooks/useLibrary';
 import { api, type BookMetadata, type BookWithAuthor } from '@/lib/api';
@@ -436,7 +437,7 @@ export function AuthorPage() {
           <div className="glass-card rounded-2xl p-6">
             <div
               className={`prose prose-sm dark:prose-invert max-w-none ${!bioExpanded && bioLong ? 'line-clamp-4' : ''}`}
-              dangerouslySetInnerHTML={{ __html: author.description }}
+              dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(author.description) }}
             />
             {bioLong && (
               <button
