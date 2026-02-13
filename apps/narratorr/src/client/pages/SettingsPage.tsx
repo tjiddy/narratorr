@@ -6,6 +6,21 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { api, type Indexer, type DownloadClient } from '@/lib/api';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { TestResultMessage } from '@/components/TestResultMessage';
+import { TestButton } from '@/components/TestButton';
+import {
+  LoadingSpinner,
+  SettingsIcon,
+  FolderIcon,
+  SearchIcon,
+  ServerIcon,
+  PlusIcon,
+  XIcon,
+  TrashIcon,
+  CheckIcon,
+  TerminalIcon,
+} from '@/components/icons';
+import { useConnectionTest } from '@/hooks/useConnectionTest';
 import {
   createIndexerFormSchema,
   createDownloadClientFormSchema,
@@ -15,116 +30,6 @@ import {
   type CreateDownloadClientFormData,
   type UpdateSettingsFormData,
 } from '../../shared/schemas.js';
-
-// Icons
-function LoadingSpinner({ className = '' }: { className?: string }) {
-  return (
-    <svg className={`animate-spin ${className}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-    </svg>
-  );
-}
-
-function SettingsIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
-
-function FolderIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-    </svg>
-  );
-}
-
-function SearchIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <circle cx="11" cy="11" r="8" />
-      <path d="m21 21-4.3-4.3" />
-    </svg>
-  );
-}
-
-function ServerIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
-      <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
-      <line x1="6" x2="6.01" y1="6" y2="6" />
-      <line x1="6" x2="6.01" y1="18" y2="18" />
-    </svg>
-  );
-}
-
-function PlusIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M5 12h14" />
-      <path d="M12 5v14" />
-    </svg>
-  );
-}
-
-function XIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M18 6 6 18" />
-      <path d="m6 6 12 12" />
-    </svg>
-  );
-}
-
-function TrashIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M3 6h18" />
-      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-    </svg>
-  );
-}
-
-function ZapIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-    </svg>
-  );
-}
-
-function CheckIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <polyline points="20 6 9 17 4 12" />
-    </svg>
-  );
-}
-
-function AlertCircleIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <circle cx="12" cy="12" r="10" />
-      <line x1="12" x2="12" y1="8" y2="12" />
-      <line x1="12" x2="12.01" y1="16" y2="16" />
-    </svg>
-  );
-}
-
-function TerminalIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <polyline points="4 17 10 11 4 5" />
-      <line x1="12" x2="20" y1="19" y2="19" />
-    </svg>
-  );
-}
 
 const navItems = [
   { to: '/settings', label: 'General', icon: SettingsIcon, end: true },
@@ -364,11 +269,15 @@ function GeneralSettings() {
 function IndexersSettings() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
-  const [testingId, setTestingId] = useState<number | null>(null);
-  const [testResult, setTestResult] = useState<{ id: number; success: boolean; message?: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Indexer | null>(null);
-  const [testingForm, setTestingForm] = useState(false);
-  const [formTestResult, setFormTestResult] = useState<{ success: boolean; message?: string } | null>(null);
+
+  const {
+    testingId, testResult, testingForm, formTestResult,
+    handleTest, handleFormTest, clearFormTestResult,
+  } = useConnectionTest<CreateIndexerFormData>({
+    testById: api.testIndexer,
+    testByConfig: api.testIndexerConfig,
+  });
 
   const {
     register,
@@ -416,50 +325,14 @@ function IndexersSettings() {
     },
   });
 
-  const handleTest = async (id: number) => {
-    setTestingId(id);
-    setTestResult(null);
-    try {
-      const result = await api.testIndexer(id);
-      setTestResult({ id, ...result });
-      if (result.success) {
-        toast.success('Connection successful');
-      } else {
-        toast.error(result.message || 'Connection failed');
-      }
-    } catch {
-      setTestResult({ id, success: false, message: 'Test failed' });
-      toast.error('Connection test failed');
-    }
-    setTestingId(null);
-  };
-
   const onSubmit = (data: CreateIndexerFormData) => {
     createMutation.mutate(data);
-  };
-
-  const handleFormTest = async (data: CreateIndexerFormData) => {
-    setTestingForm(true);
-    setFormTestResult(null);
-    try {
-      const result = await api.testIndexerConfig(data);
-      setFormTestResult(result);
-      if (result.success) {
-        toast.success('Connection successful');
-      } else {
-        toast.error(result.message || 'Connection failed');
-      }
-    } catch {
-      setFormTestResult({ success: false, message: 'Test failed' });
-      toast.error('Connection test failed');
-    }
-    setTestingForm(false);
   };
 
   const handleToggleForm = () => {
     if (showForm) {
       reset();
-      setFormTestResult(null);
+      clearFormTestResult();
     }
     setShowForm(!showForm);
   };
@@ -542,31 +415,11 @@ function IndexersSettings() {
           </div>
 
           {formTestResult && (
-            <p className={`text-sm flex items-center gap-1.5 ${formTestResult.success ? 'text-success' : 'text-destructive'}`}>
-              {formTestResult.success ? <CheckIcon className="w-3.5 h-3.5" /> : <AlertCircleIcon className="w-3.5 h-3.5" />}
-              {formTestResult.message || (formTestResult.success ? 'Connection successful!' : 'Connection failed')}
-            </p>
+            <TestResultMessage success={formTestResult.success} message={formTestResult.message} />
           )}
 
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleSubmit(handleFormTest)}
-              disabled={testingForm}
-              className="flex items-center gap-2 px-4 py-3 font-medium border border-border rounded-xl hover:bg-muted disabled:opacity-50 transition-all focus-ring"
-            >
-              {testingForm ? (
-                <>
-                  <LoadingSpinner className="w-4 h-4" />
-                  Testing...
-                </>
-              ) : (
-                <>
-                  <ZapIcon className="w-4 h-4" />
-                  Test
-                </>
-              )}
-            </button>
+            <TestButton testing={testingForm} onClick={handleSubmit(handleFormTest)} variant="form" />
             <button
               type="submit"
               disabled={createMutation.isPending}
@@ -618,26 +471,21 @@ function IndexersSettings() {
                       {(indexer.settings as { hostname?: string }).hostname || indexer.type}
                     </p>
                     {testResult?.id === indexer.id && (
-                      <p className={`text-sm mt-1 flex items-center gap-1.5 ${testResult.success ? 'text-success' : 'text-destructive'}`}>
-                        {testResult.success ? <CheckIcon className="w-3.5 h-3.5" /> : <AlertCircleIcon className="w-3.5 h-3.5" />}
-                        {testResult.message || (testResult.success ? 'Connected!' : 'Failed')}
-                      </p>
+                      <TestResultMessage
+                        success={testResult.success}
+                        message={testResult.message}
+                        successText="Connected!"
+                        failureText="Failed"
+                      />
                     )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <button
+                  <TestButton
+                    testing={testingId === indexer.id}
                     onClick={() => handleTest(indexer.id)}
-                    disabled={testingId === indexer.id}
-                    className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium border border-border rounded-xl hover:bg-muted disabled:opacity-50 transition-all focus-ring"
-                  >
-                    {testingId === indexer.id ? (
-                      <LoadingSpinner className="w-4 h-4" />
-                    ) : (
-                      <ZapIcon className="w-4 h-4" />
-                    )}
-                    <span className="hidden sm:inline">Test</span>
-                  </button>
+                    variant="inline"
+                  />
                   <button
                     onClick={() => setDeleteTarget(indexer)}
                     className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-destructive border border-destructive/30 rounded-xl hover:bg-destructive hover:text-destructive-foreground transition-all focus-ring"
@@ -666,11 +514,15 @@ function IndexersSettings() {
 function DownloadClientsSettings() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
-  const [testingId, setTestingId] = useState<number | null>(null);
-  const [testResult, setTestResult] = useState<{ id: number; success: boolean; message?: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DownloadClient | null>(null);
-  const [testingForm, setTestingForm] = useState(false);
-  const [formTestResult, setFormTestResult] = useState<{ success: boolean; message?: string } | null>(null);
+
+  const {
+    testingId, testResult, testingForm, formTestResult,
+    handleTest, handleFormTest, clearFormTestResult,
+  } = useConnectionTest<CreateDownloadClientFormData>({
+    testById: api.testClient,
+    testByConfig: api.testClientConfig,
+  });
 
   const {
     register,
@@ -721,50 +573,14 @@ function DownloadClientsSettings() {
     },
   });
 
-  const handleTest = async (id: number) => {
-    setTestingId(id);
-    setTestResult(null);
-    try {
-      const result = await api.testClient(id);
-      setTestResult({ id, ...result });
-      if (result.success) {
-        toast.success('Connection successful');
-      } else {
-        toast.error(result.message || 'Connection failed');
-      }
-    } catch {
-      setTestResult({ id, success: false, message: 'Test failed' });
-      toast.error('Connection test failed');
-    }
-    setTestingId(null);
-  };
-
   const onSubmit = (data: CreateDownloadClientFormData) => {
     createMutation.mutate(data);
-  };
-
-  const handleFormTest = async (data: CreateDownloadClientFormData) => {
-    setTestingForm(true);
-    setFormTestResult(null);
-    try {
-      const result = await api.testClientConfig(data);
-      setFormTestResult(result);
-      if (result.success) {
-        toast.success('Connection successful');
-      } else {
-        toast.error(result.message || 'Connection failed');
-      }
-    } catch {
-      setFormTestResult({ success: false, message: 'Test failed' });
-      toast.error('Connection test failed');
-    }
-    setTestingForm(false);
   };
 
   const handleToggleForm = () => {
     if (showForm) {
       reset();
-      setFormTestResult(null);
+      clearFormTestResult();
     }
     setShowForm(!showForm);
   };
@@ -882,31 +698,11 @@ function DownloadClientsSettings() {
           </div>
 
           {formTestResult && (
-            <p className={`text-sm flex items-center gap-1.5 ${formTestResult.success ? 'text-success' : 'text-destructive'}`}>
-              {formTestResult.success ? <CheckIcon className="w-3.5 h-3.5" /> : <AlertCircleIcon className="w-3.5 h-3.5" />}
-              {formTestResult.message || (formTestResult.success ? 'Connection successful!' : 'Connection failed')}
-            </p>
+            <TestResultMessage success={formTestResult.success} message={formTestResult.message} />
           )}
 
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleSubmit(handleFormTest)}
-              disabled={testingForm}
-              className="flex items-center gap-2 px-4 py-3 font-medium border border-border rounded-xl hover:bg-muted disabled:opacity-50 transition-all focus-ring"
-            >
-              {testingForm ? (
-                <>
-                  <LoadingSpinner className="w-4 h-4" />
-                  Testing...
-                </>
-              ) : (
-                <>
-                  <ZapIcon className="w-4 h-4" />
-                  Test
-                </>
-              )}
-            </button>
+            <TestButton testing={testingForm} onClick={handleSubmit(handleFormTest)} variant="form" />
             <button
               type="submit"
               disabled={createMutation.isPending}
@@ -959,26 +755,21 @@ function DownloadClientsSettings() {
                       {(client.settings as { host?: string; port?: number }).port}
                     </p>
                     {testResult?.id === client.id && (
-                      <p className={`text-sm mt-1 flex items-center gap-1.5 ${testResult.success ? 'text-success' : 'text-destructive'}`}>
-                        {testResult.success ? <CheckIcon className="w-3.5 h-3.5" /> : <AlertCircleIcon className="w-3.5 h-3.5" />}
-                        {testResult.message || (testResult.success ? 'Connected!' : 'Failed')}
-                      </p>
+                      <TestResultMessage
+                        success={testResult.success}
+                        message={testResult.message}
+                        successText="Connected!"
+                        failureText="Failed"
+                      />
                     )}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <button
+                  <TestButton
+                    testing={testingId === client.id}
                     onClick={() => handleTest(client.id)}
-                    disabled={testingId === client.id}
-                    className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium border border-border rounded-xl hover:bg-muted disabled:opacity-50 transition-all focus-ring"
-                  >
-                    {testingId === client.id ? (
-                      <LoadingSpinner className="w-4 h-4" />
-                    ) : (
-                      <ZapIcon className="w-4 h-4" />
-                    )}
-                    <span className="hidden sm:inline">Test</span>
-                  </button>
+                    variant="inline"
+                  />
                   <button
                     onClick={() => setDeleteTarget(client)}
                     className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-destructive border border-destructive/30 rounded-xl hover:bg-destructive hover:text-destructive-foreground transition-all focus-ring"
