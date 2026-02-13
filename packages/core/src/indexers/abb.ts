@@ -27,7 +27,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
   async search(query: string, options?: SearchOptions): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
-    const encodedQuery = encodeURIComponent(query);
+    const encodedQuery = encodeURIComponent(query.toLowerCase()).replace(/%20/g, '+');
     const limit = options?.limit || 50;
     const pageLimit = this.config.pageLimit || 2;
 
