@@ -141,6 +141,7 @@ export function DownloadClientCard({
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={onEdit}
+              aria-label={`Edit ${client.name}`}
               className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium border border-border rounded-xl hover:bg-muted transition-all focus-ring"
             >
               <PencilIcon className="w-4 h-4" />
@@ -153,6 +154,7 @@ export function DownloadClientCard({
             />
             <button
               onClick={onDelete}
+              aria-label={`Delete ${client.name}`}
               className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-destructive border border-destructive/30 rounded-xl hover:bg-destructive hover:text-destructive-foreground transition-all focus-ring"
             >
               <TrashIcon className="w-4 h-4" />

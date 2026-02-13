@@ -10,6 +10,7 @@ export function TestButton({ testing, onClick, variant }: TestButtonProps) {
   if (variant === 'inline') {
     return (
       <button
+        type="button"
         onClick={onClick}
         disabled={testing}
         className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium border border-border rounded-xl hover:bg-muted disabled:opacity-50 transition-all focus-ring"

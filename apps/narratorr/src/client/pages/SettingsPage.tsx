@@ -299,7 +299,7 @@ function IndexersSettings() {
     mutationFn: ({ id, data }: { id: number; data: CreateIndexerFormData }) =>
       api.updateIndexer(id, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['indexers'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.indexers() });
       setEditingId(null);
       toast.success('Indexer updated');
     },
@@ -313,6 +313,9 @@ function IndexersSettings() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.indexers() });
       toast.success('Indexer removed successfully');
+    },
+    onError: () => {
+      toast.error('Failed to delete indexer');
     },
   });
 
@@ -457,7 +460,7 @@ function DownloadClientsSettings() {
     mutationFn: ({ id, data }: { id: number; data: CreateDownloadClientFormData }) =>
       api.updateClient(id, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['download-clients'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.downloadClients() });
       setEditingId(null);
       toast.success('Download client updated');
     },
@@ -471,6 +474,9 @@ function DownloadClientsSettings() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.downloadClients() });
       toast.success('Download client removed successfully');
+    },
+    onError: () => {
+      toast.error('Failed to delete download client');
     },
   });
 
