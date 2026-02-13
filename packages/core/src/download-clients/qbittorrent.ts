@@ -132,7 +132,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
     });
 
     // Extract hash from magnet URI
-    const hashMatch = url.match(/btih:([a-f0-9]{40}|[a-z2-7]{32})/i);
+    const hashMatch = url.match(/btih(?::|%3A)([a-f0-9]{40}|[a-z2-7]{32})/i);
     if (hashMatch) {
       // If it's base32, convert to hex
       const hash = hashMatch[1];

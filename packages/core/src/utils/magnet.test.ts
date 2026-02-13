@@ -51,6 +51,20 @@ describe('parseInfoHash', () => {
     expect(parseInfoHash(uri)).toBe(hash.toLowerCase());
   });
 
+  it('extracts info hash from URL-encoded magnet URI', () => {
+    const hash = 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d';
+    const uri = `magnet:?xt=urn%3Abtih%3A${hash}&dn=test`;
+
+    expect(parseInfoHash(uri)).toBe(hash);
+  });
+
+  it('round-trips through buildMagnetUri', () => {
+    const hash = 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d';
+    const uri = buildMagnetUri(hash, 'Test Book');
+
+    expect(parseInfoHash(uri)).toBe(hash);
+  });
+
   it('returns null for invalid magnet URI', () => {
     expect(parseInfoHash('not-a-magnet-uri')).toBeNull();
   });
