@@ -6,8 +6,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { api, type Indexer, type DownloadClient } from '@/lib/api';
 import { ConfirmModal } from '@/components/ConfirmModal';
-import { TestResultMessage } from '@/components/TestResultMessage';
-import { TestButton } from '@/components/TestButton';
+import { IndexerCard } from '@/components/settings/IndexerCard';
+import { DownloadClientCard } from '@/components/settings/DownloadClientCard';
 import {
   LoadingSpinner,
   SettingsIcon,
@@ -16,14 +16,11 @@ import {
   ServerIcon,
   PlusIcon,
   XIcon,
-  TrashIcon,
   CheckIcon,
   TerminalIcon,
 } from '@/components/icons';
 import { useConnectionTest } from '@/hooks/useConnectionTest';
 import {
-  createIndexerFormSchema,
-  createDownloadClientFormSchema,
   updateSettingsFormSchema,
   logLevelSchema,
   type CreateIndexerFormData,
@@ -269,6 +266,7 @@ function GeneralSettings() {
 function IndexersSettings() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Indexer | null>(null);
 
   const {
@@ -277,25 +275,6 @@ function IndexersSettings() {
   } = useConnectionTest<CreateIndexerFormData>({
     testById: api.testIndexer,
     testByConfig: api.testIndexerConfig,
-  });
-
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: { errors },
-  } = useForm<CreateIndexerFormData>({
-    resolver: zodResolver(createIndexerFormSchema),
-    defaultValues: {
-      name: '',
-      type: 'abb',
-      enabled: true,
-      priority: 50,
-      settings: {
-        hostname: '',
-        pageLimit: 2,
-      },
-    },
   });
 
   const { data: indexers = [], isLoading } = useQuery({
@@ -308,11 +287,23 @@ function IndexersSettings() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['indexers'] });
       setShowForm(false);
-      reset();
       toast.success('Indexer added successfully');
     },
     onError: () => {
       toast.error('Failed to add indexer');
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: CreateIndexerFormData }) =>
+      api.updateIndexer(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['indexers'] });
+      setEditingId(null);
+      toast.success('Indexer updated');
+    },
+    onError: () => {
+      toast.error('Failed to update indexer');
     },
   });
 
@@ -325,16 +316,24 @@ function IndexersSettings() {
     },
   });
 
-  const onSubmit = (data: CreateIndexerFormData) => {
-    createMutation.mutate(data);
-  };
-
   const handleToggleForm = () => {
     if (showForm) {
-      reset();
       clearFormTestResult();
+    } else {
+      setEditingId(null);
     }
     setShowForm(!showForm);
+  };
+
+  const handleEdit = (id: number) => {
+    setShowForm(false);
+    clearFormTestResult();
+    setEditingId(id);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    clearFormTestResult();
   };
 
   return (
@@ -365,80 +364,14 @@ function IndexersSettings() {
 
       {/* Add Form */}
       {showForm && (
-        <form onSubmit={handleSubmit(onSubmit)} className="glass-card rounded-2xl p-6 animate-fade-in-up space-y-5">
-          <h3 className="font-display text-lg font-semibold">Add New Indexer</h3>
-
-          <div className="grid gap-5 sm:grid-cols-2">
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium mb-2">Name</label>
-              <input
-                type="text"
-                {...register('name')}
-                className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-                  errors.name ? 'border-destructive' : 'border-border'
-                }`}
-                placeholder="AudioBookBay"
-              />
-              {errors.name && (
-                <p className="text-sm text-destructive mt-1">{errors.name.message}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Hostname</label>
-              <input
-                type="text"
-                {...register('settings.hostname')}
-                className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-                  errors.settings?.hostname ? 'border-destructive' : 'border-border'
-                }`}
-                placeholder="audiobookbay.lu"
-              />
-              {errors.settings?.hostname && (
-                <p className="text-sm text-destructive mt-1">{errors.settings.hostname.message}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Page Limit</label>
-              <input
-                type="number"
-                {...register('settings.pageLimit', { valueAsNumber: true })}
-                min={1}
-                max={10}
-                className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-                  errors.settings?.pageLimit ? 'border-destructive' : 'border-border'
-                }`}
-              />
-              {errors.settings?.pageLimit && (
-                <p className="text-sm text-destructive mt-1">{errors.settings.pageLimit.message}</p>
-              )}
-            </div>
-          </div>
-
-          {formTestResult && (
-            <TestResultMessage success={formTestResult.success} message={formTestResult.message} />
-          )}
-
-          <div className="flex items-center gap-3">
-            <TestButton testing={testingForm} onClick={handleSubmit(handleFormTest)} variant="form" />
-            <button
-              type="submit"
-              disabled={createMutation.isPending}
-              className="flex items-center gap-2 px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring"
-            >
-              {createMutation.isPending ? (
-                <>
-                  <LoadingSpinner className="w-4 h-4" />
-                  Adding...
-                </>
-              ) : (
-                <>
-                  <PlusIcon className="w-4 h-4" />
-                  Add Indexer
-                </>
-              )}
-            </button>
-          </div>
-        </form>
+        <IndexerCard
+          mode="create"
+          onSubmit={(data) => createMutation.mutate(data)}
+          onFormTest={handleFormTest}
+          isPending={createMutation.isPending}
+          testingForm={testingForm}
+          formTestResult={formTestResult}
+        />
       )}
 
       {/* List */}
@@ -457,45 +390,23 @@ function IndexersSettings() {
       ) : (
         <div className="space-y-3">
           {indexers.map((indexer, index) => (
-            <div
+            <IndexerCard
               key={indexer.id}
-              className="glass-card rounded-2xl p-5 animate-fade-in-up"
-              style={{ animationDelay: `${index * 50}ms` }}
-            >
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-4 min-w-0">
-                  <div className={`w-3 h-3 rounded-full shrink-0 ${indexer.enabled ? 'bg-success animate-pulse' : 'bg-muted-foreground/40'}`} />
-                  <div className="min-w-0">
-                    <h3 className="font-display font-semibold truncate">{indexer.name}</h3>
-                    <p className="text-sm text-muted-foreground truncate">
-                      {(indexer.settings as { hostname?: string }).hostname || indexer.type}
-                    </p>
-                    {testResult?.id === indexer.id && (
-                      <TestResultMessage
-                        success={testResult.success}
-                        message={testResult.message}
-                        successText="Connected!"
-                        failureText="Failed"
-                      />
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <TestButton
-                    testing={testingId === indexer.id}
-                    onClick={() => handleTest(indexer.id)}
-                    variant="inline"
-                  />
-                  <button
-                    onClick={() => setDeleteTarget(indexer)}
-                    className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-destructive border border-destructive/30 rounded-xl hover:bg-destructive hover:text-destructive-foreground transition-all focus-ring"
-                  >
-                    <TrashIcon className="w-4 h-4" />
-                    <span className="hidden sm:inline">Delete</span>
-                  </button>
-                </div>
-              </div>
-            </div>
+              indexer={indexer}
+              mode={editingId === indexer.id ? 'edit' : 'view'}
+              onEdit={() => handleEdit(indexer.id)}
+              onCancel={handleCancelEdit}
+              onDelete={() => setDeleteTarget(indexer)}
+              onSubmit={(data) => updateMutation.mutate({ id: indexer.id, data })}
+              onFormTest={handleFormTest}
+              onTest={handleTest}
+              isPending={updateMutation.isPending}
+              testingId={testingId}
+              testResult={testResult}
+              testingForm={testingForm}
+              formTestResult={editingId === indexer.id ? formTestResult : null}
+              animationDelay={`${index * 50}ms`}
+            />
           ))}
         </div>
       )}
@@ -514,6 +425,7 @@ function IndexersSettings() {
 function DownloadClientsSettings() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DownloadClient | null>(null);
 
   const {
@@ -522,28 +434,6 @@ function DownloadClientsSettings() {
   } = useConnectionTest<CreateDownloadClientFormData>({
     testById: api.testClient,
     testByConfig: api.testClientConfig,
-  });
-
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: { errors },
-  } = useForm<CreateDownloadClientFormData>({
-    resolver: zodResolver(createDownloadClientFormSchema),
-    defaultValues: {
-      name: '',
-      type: 'qbittorrent',
-      enabled: true,
-      priority: 50,
-      settings: {
-        host: '',
-        port: 8080,
-        username: '',
-        password: '',
-        useSsl: false,
-      },
-    },
   });
 
   const { data: clients = [], isLoading } = useQuery({
@@ -556,11 +446,23 @@ function DownloadClientsSettings() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['download-clients'] });
       setShowForm(false);
-      reset();
       toast.success('Download client added successfully');
     },
     onError: () => {
       toast.error('Failed to add download client');
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: CreateDownloadClientFormData }) =>
+      api.updateClient(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['download-clients'] });
+      setEditingId(null);
+      toast.success('Download client updated');
+    },
+    onError: () => {
+      toast.error('Failed to update download client');
     },
   });
 
@@ -573,16 +475,24 @@ function DownloadClientsSettings() {
     },
   });
 
-  const onSubmit = (data: CreateDownloadClientFormData) => {
-    createMutation.mutate(data);
-  };
-
   const handleToggleForm = () => {
     if (showForm) {
-      reset();
       clearFormTestResult();
+    } else {
+      setEditingId(null);
     }
     setShowForm(!showForm);
+  };
+
+  const handleEdit = (id: number) => {
+    setShowForm(false);
+    clearFormTestResult();
+    setEditingId(id);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    clearFormTestResult();
   };
 
   return (
@@ -613,115 +523,14 @@ function DownloadClientsSettings() {
 
       {/* Add Form */}
       {showForm && (
-        <form onSubmit={handleSubmit(onSubmit)} className="glass-card rounded-2xl p-6 animate-fade-in-up space-y-5">
-          <h3 className="font-display text-lg font-semibold">Add Download Client</h3>
-
-          <div className="grid gap-5 sm:grid-cols-2">
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium mb-2">Name</label>
-              <input
-                type="text"
-                {...register('name')}
-                className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-                  errors.name ? 'border-destructive' : 'border-border'
-                }`}
-                placeholder="qBittorrent"
-              />
-              {errors.name && (
-                <p className="text-sm text-destructive mt-1">{errors.name.message}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Host</label>
-              <input
-                type="text"
-                {...register('settings.host')}
-                className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-                  errors.settings?.host ? 'border-destructive' : 'border-border'
-                }`}
-                placeholder="localhost"
-              />
-              {errors.settings?.host && (
-                <p className="text-sm text-destructive mt-1">{errors.settings.host.message}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Port</label>
-              <input
-                type="number"
-                {...register('settings.port', { valueAsNumber: true })}
-                className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-                  errors.settings?.port ? 'border-destructive' : 'border-border'
-                }`}
-              />
-              {errors.settings?.port && (
-                <p className="text-sm text-destructive mt-1">{errors.settings.port.message}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Username</label>
-              <input
-                type="text"
-                {...register('settings.username')}
-                className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-                  errors.settings?.username ? 'border-destructive' : 'border-border'
-                }`}
-                placeholder="admin"
-              />
-              {errors.settings?.username && (
-                <p className="text-sm text-destructive mt-1">{errors.settings.username.message}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Password</label>
-              <input
-                type="password"
-                {...register('settings.password')}
-                className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-                  errors.settings?.password ? 'border-destructive' : 'border-border'
-                }`}
-              />
-              {errors.settings?.password && (
-                <p className="text-sm text-destructive mt-1">{errors.settings.password.message}</p>
-              )}
-            </div>
-            <div className="sm:col-span-2">
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  {...register('settings.useSsl')}
-                  className="w-5 h-5 rounded border-border text-primary focus:ring-primary focus:ring-offset-0"
-                />
-                <span className="text-sm font-medium">Use SSL/HTTPS</span>
-              </label>
-            </div>
-          </div>
-
-          {formTestResult && (
-            <TestResultMessage success={formTestResult.success} message={formTestResult.message} />
-          )}
-
-          <div className="flex items-center gap-3">
-            <TestButton testing={testingForm} onClick={handleSubmit(handleFormTest)} variant="form" />
-            <button
-              type="submit"
-              disabled={createMutation.isPending}
-              className="flex items-center gap-2 px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring"
-            >
-              {createMutation.isPending ? (
-                <>
-                  <LoadingSpinner className="w-4 h-4" />
-                  Adding...
-                </>
-              ) : (
-                <>
-                  <PlusIcon className="w-4 h-4" />
-                  Add Client
-                </>
-              )}
-            </button>
-          </div>
-        </form>
+        <DownloadClientCard
+          mode="create"
+          onSubmit={(data) => createMutation.mutate(data)}
+          onFormTest={handleFormTest}
+          isPending={createMutation.isPending}
+          testingForm={testingForm}
+          formTestResult={formTestResult}
+        />
       )}
 
       {/* List */}
@@ -740,46 +549,23 @@ function DownloadClientsSettings() {
       ) : (
         <div className="space-y-3">
           {clients.map((client, index) => (
-            <div
+            <DownloadClientCard
               key={client.id}
-              className="glass-card rounded-2xl p-5 animate-fade-in-up"
-              style={{ animationDelay: `${index * 50}ms` }}
-            >
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-4 min-w-0">
-                  <div className={`w-3 h-3 rounded-full shrink-0 ${client.enabled ? 'bg-success animate-pulse' : 'bg-muted-foreground/40'}`} />
-                  <div className="min-w-0">
-                    <h3 className="font-display font-semibold truncate">{client.name}</h3>
-                    <p className="text-sm text-muted-foreground truncate">
-                      {(client.settings as { host?: string; port?: number }).host}:
-                      {(client.settings as { host?: string; port?: number }).port}
-                    </p>
-                    {testResult?.id === client.id && (
-                      <TestResultMessage
-                        success={testResult.success}
-                        message={testResult.message}
-                        successText="Connected!"
-                        failureText="Failed"
-                      />
-                    )}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <TestButton
-                    testing={testingId === client.id}
-                    onClick={() => handleTest(client.id)}
-                    variant="inline"
-                  />
-                  <button
-                    onClick={() => setDeleteTarget(client)}
-                    className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-destructive border border-destructive/30 rounded-xl hover:bg-destructive hover:text-destructive-foreground transition-all focus-ring"
-                  >
-                    <TrashIcon className="w-4 h-4" />
-                    <span className="hidden sm:inline">Delete</span>
-                  </button>
-                </div>
-              </div>
-            </div>
+              client={client}
+              mode={editingId === client.id ? 'edit' : 'view'}
+              onEdit={() => handleEdit(client.id)}
+              onCancel={handleCancelEdit}
+              onDelete={() => setDeleteTarget(client)}
+              onSubmit={(data) => updateMutation.mutate({ id: client.id, data })}
+              onFormTest={handleFormTest}
+              onTest={handleTest}
+              isPending={updateMutation.isPending}
+              testingId={testingId}
+              testResult={testResult}
+              testingForm={testingForm}
+              formTestResult={editingId === client.id ? formTestResult : null}
+              animationDelay={`${index * 50}ms`}
+            />
           ))}
         </div>
       )}

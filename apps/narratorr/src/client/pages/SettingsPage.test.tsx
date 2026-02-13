@@ -14,11 +14,13 @@ vi.mock('@/lib/api', () => ({
     getIndexers: vi.fn(),
     createIndexer: vi.fn(),
     deleteIndexer: vi.fn(),
+    updateIndexer: vi.fn(),
     testIndexer: vi.fn(),
     testIndexerConfig: vi.fn(),
     getClients: vi.fn(),
     createClient: vi.fn(),
     deleteClient: vi.fn(),
+    updateClient: vi.fn(),
     testClient: vi.fn(),
     testClientConfig: vi.fn(),
   },
@@ -41,6 +43,26 @@ const mockSettings = {
   search: { intervalMinutes: 30, enabled: true },
   import: { deleteAfterImport: false, minSeedTime: 0 },
   general: { logLevel: 'info' as const },
+};
+
+const mockIndexer = {
+  id: 1,
+  name: 'AudioBookBay',
+  type: 'abb' as const,
+  enabled: true,
+  priority: 50,
+  settings: { hostname: 'audiobookbay.lu', pageLimit: 2 },
+  createdAt: '2024-01-01T00:00:00Z',
+};
+
+const mockClient = {
+  id: 1,
+  name: 'qBittorrent',
+  type: 'qbittorrent' as const,
+  enabled: true,
+  priority: 50,
+  settings: { host: 'localhost', port: 8080, username: 'admin', password: 'secret', useSsl: false },
+  createdAt: '2024-01-01T00:00:00Z',
 };
 
 function renderSettingsPage(route = '/settings/indexers') {
@@ -223,5 +245,208 @@ describe('SettingsPage - Download client form test button', () => {
     });
 
     expect(screen.getByText('Connection successful!')).toBeInTheDocument();
+  });
+});
+
+describe('SettingsPage - Edit indexer', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getSettings).mockResolvedValue(mockSettings);
+    vi.mocked(api.getIndexers).mockResolvedValue([mockIndexer]);
+    vi.mocked(api.getClients).mockResolvedValue([]);
+  });
+
+  it('renders Edit button on each indexer card', async () => {
+    renderSettingsPage('/settings/indexers');
+
+    await waitFor(() => {
+      expect(screen.getByText('AudioBookBay')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Edit')).toBeInTheDocument();
+  });
+
+  it('opens pre-populated edit form when Edit is clicked', async () => {
+    const user = userEvent.setup();
+    renderSettingsPage('/settings/indexers');
+
+    await waitFor(() => {
+      expect(screen.getByText('AudioBookBay')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Edit'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Edit Indexer')).toBeInTheDocument();
+    });
+
+    // Check form is pre-populated
+    expect(screen.getByDisplayValue('AudioBookBay')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('audiobookbay.lu')).toBeInTheDocument();
+  });
+
+  it('calls updateIndexer on save', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.updateIndexer).mockResolvedValue({ ...mockIndexer, name: 'Updated' });
+
+    renderSettingsPage('/settings/indexers');
+
+    await waitFor(() => {
+      expect(screen.getByText('AudioBookBay')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Edit'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Edit Indexer')).toBeInTheDocument();
+    });
+
+    // Change name
+    const nameInput = screen.getByDisplayValue('AudioBookBay');
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Updated');
+
+    await user.click(screen.getByText('Save Changes'));
+
+    await waitFor(() => {
+      expect(api.updateIndexer).toHaveBeenCalledWith(1, expect.objectContaining({
+        name: 'Updated',
+      }));
+      expect(toast.success).toHaveBeenCalledWith('Indexer updated');
+    });
+  });
+
+  it('collapses form on Cancel', async () => {
+    const user = userEvent.setup();
+    renderSettingsPage('/settings/indexers');
+
+    await waitFor(() => {
+      expect(screen.getByText('AudioBookBay')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Edit'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Edit Indexer')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Cancel'));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Edit Indexer')).not.toBeInTheDocument();
+    });
+
+    // Card should still be visible
+    expect(screen.getByText('AudioBookBay')).toBeInTheDocument();
+  });
+});
+
+describe('SettingsPage - Edit download client', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getSettings).mockResolvedValue(mockSettings);
+    vi.mocked(api.getIndexers).mockResolvedValue([]);
+    vi.mocked(api.getClients).mockResolvedValue([mockClient]);
+  });
+
+  it('renders Edit button on each download client card', async () => {
+    renderSettingsPage('/settings/download-clients');
+
+    await waitFor(() => {
+      expect(screen.getByText('qBittorrent')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Edit')).toBeInTheDocument();
+  });
+
+  it('opens pre-populated edit form when Edit is clicked', async () => {
+    const user = userEvent.setup();
+    renderSettingsPage('/settings/download-clients');
+
+    await waitFor(() => {
+      expect(screen.getByText('qBittorrent')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Edit'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Edit Download Client')).toBeInTheDocument();
+    });
+
+    expect(screen.getByDisplayValue('qBittorrent')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('localhost')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('8080')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('admin')).toBeInTheDocument();
+  });
+
+  it('calls updateClient on save', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.updateClient).mockResolvedValue({ ...mockClient, name: 'Updated' });
+
+    renderSettingsPage('/settings/download-clients');
+
+    await waitFor(() => {
+      expect(screen.getByText('qBittorrent')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Edit'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Edit Download Client')).toBeInTheDocument();
+    });
+
+    const nameInput = screen.getByDisplayValue('qBittorrent');
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Updated');
+
+    await user.click(screen.getByText('Save Changes'));
+
+    await waitFor(() => {
+      expect(api.updateClient).toHaveBeenCalledWith(1, expect.objectContaining({
+        name: 'Updated',
+      }));
+      expect(toast.success).toHaveBeenCalledWith('Download client updated');
+    });
+  });
+
+  it('collapses form on Cancel', async () => {
+    const user = userEvent.setup();
+    renderSettingsPage('/settings/download-clients');
+
+    await waitFor(() => {
+      expect(screen.getByText('qBittorrent')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Edit'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Edit Download Client')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Cancel'));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Edit Download Client')).not.toBeInTheDocument();
+    });
+
+    expect(screen.getByText('qBittorrent')).toBeInTheDocument();
+  });
+
+  it('masks password field in edit form', async () => {
+    const user = userEvent.setup();
+    renderSettingsPage('/settings/download-clients');
+
+    await waitFor(() => {
+      expect(screen.getByText('qBittorrent')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Edit'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Edit Download Client')).toBeInTheDocument();
+    });
+
+    const passwordInput = screen.getByDisplayValue('secret');
+    expect(passwordInput).toHaveAttribute('type', 'password');
   });
 });
