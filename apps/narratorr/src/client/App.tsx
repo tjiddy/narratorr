@@ -5,6 +5,7 @@ import { LibraryPage } from './pages/LibraryPage';
 import { SearchPage } from './pages/SearchPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { BookPage } from './pages/BookPage';
 
 export function App() {
   return (
@@ -16,6 +17,7 @@ export function App() {
           <Route path="library" element={<LibraryPage />} />
           <Route path="search" element={<SearchPage />} />
           <Route path="activity" element={<ActivityPage />} />
+          <Route path="books/:asin" element={<BookPage />} />
           <Route path="settings/*" element={<SettingsPage />} />
         </Route>
       </Routes>

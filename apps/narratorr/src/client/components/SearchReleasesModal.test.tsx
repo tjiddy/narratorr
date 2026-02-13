@@ -3,7 +3,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
-import type { BookWithAuthor } from '@/lib/api';
+import type { BookWithAuthor, SearchResult } from '@/lib/api';
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -36,13 +36,14 @@ const mockBook: BookWithAuthor = {
   author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' },
 };
 
-const mockResults = [
+const mockResults: SearchResult[] = [
   {
     title: 'The Way of Kings [Unabridged]',
     author: 'Brandon Sanderson',
     narrator: 'Michael Kramer',
+    protocol: 'torrent',
     infoHash: 'abc123',
-    magnetUri: 'magnet:?xt=urn:btih:abc123',
+    downloadUrl: 'magnet:?xt=urn:btih:abc123',
     size: 5 * 1024 * 1024 * 1024,
     seeders: 24,
     indexer: 'AudioBookBay',
@@ -50,8 +51,9 @@ const mockResults = [
   {
     title: 'Way of Kings (Graphic Audio)',
     author: 'Brandon Sanderson',
+    protocol: 'torrent',
     infoHash: 'def456',
-    magnetUri: 'magnet:?xt=urn:btih:def456',
+    downloadUrl: 'magnet:?xt=urn:btih:def456',
     size: 8 * 1024 * 1024 * 1024,
     seeders: 8,
     indexer: 'AudioBookBay',
@@ -127,6 +129,7 @@ describe('SearchReleasesModal', () => {
     vi.mocked(api.grab).mockResolvedValue({
       id: 1,
       title: 'The Way of Kings [Unabridged]',
+      protocol: 'torrent',
       status: 'queued' as const,
       progress: 0,
       addedAt: '2024-01-01T00:00:00Z',
@@ -152,7 +155,7 @@ describe('SearchReleasesModal', () => {
 
     expect(vi.mocked(api.grab).mock.calls[0][0]).toEqual(
       expect.objectContaining({
-        magnetUri: 'magnet:?xt=urn:btih:abc123',
+        downloadUrl: 'magnet:?xt=urn:btih:abc123',
         title: 'The Way of Kings [Unabridged]',
         bookId: 1,
       }),

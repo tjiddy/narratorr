@@ -118,13 +118,14 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
   });
 
   const handleGrab = (result: SearchResult) => {
-    if (!result.magnetUri) {
-      toast.error('No magnet link available for this result');
+    if (!result.downloadUrl) {
+      toast.error('No download link available for this result');
       return;
     }
     grabMutation.mutate({
-      magnetUri: result.magnetUri,
+      downloadUrl: result.downloadUrl,
       title: result.title,
+      protocol: result.protocol,
       bookId: book.id,
       size: result.size,
       seeders: result.seeders,
@@ -292,7 +293,7 @@ function ReleaseCard({
         <div className="shrink-0 flex flex-col items-end gap-2">
           <button
             onClick={onGrab}
-            disabled={!result.magnetUri || isGrabbing}
+            disabled={!result.downloadUrl || isGrabbing}
             className="flex items-center gap-1.5 px-3 py-2 text-sm bg-primary text-primary-foreground font-medium rounded-lg hover:opacity-90 hover:shadow-glow disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 focus-ring"
           >
             {isGrabbing ? (
