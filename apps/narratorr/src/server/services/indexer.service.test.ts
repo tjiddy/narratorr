@@ -148,6 +148,29 @@ describe('IndexerService', () => {
     });
   });
 
+  describe('testConfig', () => {
+    it('creates adapter from config and returns test result', async () => {
+      // testConfig creates a real ABB adapter, so we just verify it doesn't throw for valid type
+      // The actual adapter.test() would make a network call, but we can test the error path
+      const result = await service.testConfig({
+        type: 'abb',
+        settings: { hostname: 'audiobookbay.lu', pageLimit: 2 },
+      });
+      // Will fail since no real network, but should return a result (not throw)
+      expect(result).toHaveProperty('success');
+      expect(result).toHaveProperty('message');
+    });
+
+    it('returns failure for unknown type', async () => {
+      const result = await service.testConfig({
+        type: 'unknown',
+        settings: {},
+      });
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('Unknown indexer type');
+    });
+  });
+
   describe('searchAll', () => {
     it('searches enabled indexers and aggregates results', async () => {
       const mockResult = {

@@ -104,6 +104,25 @@ export async function downloadClientsRoutes(
     }
   );
 
+  // POST /api/download-clients/test (test config without persisting)
+  app.post(
+    '/api/download-clients/test',
+    {
+      schema: {
+        body: createDownloadClientSchema,
+      },
+    },
+    async (request) => {
+      const data = request.body as CreateDownloadClientInput;
+      const result = await downloadClientService.testConfig({
+        type: data.type,
+        settings: data.settings as Record<string, unknown>,
+      });
+      request.log.debug({ type: data.type, success: result.success }, 'Download client config test result');
+      return result;
+    }
+  );
+
   // POST /api/download-clients/:id/test
   app.post(
     '/api/download-clients/:id/test',

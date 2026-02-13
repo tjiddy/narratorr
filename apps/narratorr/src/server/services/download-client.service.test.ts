@@ -150,4 +150,24 @@ describe('DownloadClientService', () => {
       expect(result.message).toBe('Download client not found');
     });
   });
+
+  describe('testConfig', () => {
+    it('creates adapter from config and returns test result', async () => {
+      const result = await service.testConfig({
+        type: 'qbittorrent',
+        settings: { host: 'localhost', port: 8080, username: 'admin', password: 'pass', useSsl: false },
+      });
+      // Will fail since no real network, but should return a result (not throw)
+      expect(result).toHaveProperty('success');
+    });
+
+    it('returns failure for unknown type', async () => {
+      const result = await service.testConfig({
+        type: 'unknown',
+        settings: {},
+      });
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('Unknown download client type');
+    });
+  });
 });

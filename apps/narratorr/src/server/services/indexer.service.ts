@@ -84,6 +84,21 @@ export class IndexerService {
     }
   }
 
+  async testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string }> {
+    try {
+      const fakeRow = { id: 0, name: '', type: data.type, enabled: true, priority: 0, settings: data.settings, createdAt: new Date() } as IndexerRow;
+      const adapter = this.createAdapter(fakeRow);
+      const result = await adapter.test();
+      this.log.debug({ type: data.type, success: result.success }, 'Indexer config test result');
+      return result;
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
   async test(id: number): Promise<{ success: boolean; message?: string }> {
     const indexer = await this.getById(id);
     if (!indexer) {

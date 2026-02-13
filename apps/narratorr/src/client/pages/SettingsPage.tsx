@@ -367,6 +367,8 @@ function IndexersSettings() {
   const [testingId, setTestingId] = useState<number | null>(null);
   const [testResult, setTestResult] = useState<{ id: number; success: boolean; message?: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Indexer | null>(null);
+  const [testingForm, setTestingForm] = useState(false);
+  const [formTestResult, setFormTestResult] = useState<{ success: boolean; message?: string } | null>(null);
 
   const {
     register,
@@ -436,9 +438,28 @@ function IndexersSettings() {
     createMutation.mutate(data);
   };
 
+  const handleFormTest = async (data: CreateIndexerFormData) => {
+    setTestingForm(true);
+    setFormTestResult(null);
+    try {
+      const result = await api.testIndexerConfig(data);
+      setFormTestResult(result);
+      if (result.success) {
+        toast.success('Connection successful');
+      } else {
+        toast.error(result.message || 'Connection failed');
+      }
+    } catch {
+      setFormTestResult({ success: false, message: 'Test failed' });
+      toast.error('Connection test failed');
+    }
+    setTestingForm(false);
+  };
+
   const handleToggleForm = () => {
     if (showForm) {
       reset();
+      setFormTestResult(null);
     }
     setShowForm(!showForm);
   };
@@ -520,23 +541,50 @@ function IndexersSettings() {
             </div>
           </div>
 
-          <button
-            type="submit"
-            disabled={createMutation.isPending}
-            className="flex items-center gap-2 px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring"
-          >
-            {createMutation.isPending ? (
-              <>
-                <LoadingSpinner className="w-4 h-4" />
-                Adding...
-              </>
-            ) : (
-              <>
-                <PlusIcon className="w-4 h-4" />
-                Add Indexer
-              </>
-            )}
-          </button>
+          {formTestResult && (
+            <p className={`text-sm flex items-center gap-1.5 ${formTestResult.success ? 'text-success' : 'text-destructive'}`}>
+              {formTestResult.success ? <CheckIcon className="w-3.5 h-3.5" /> : <AlertCircleIcon className="w-3.5 h-3.5" />}
+              {formTestResult.message || (formTestResult.success ? 'Connection successful!' : 'Connection failed')}
+            </p>
+          )}
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleSubmit(handleFormTest)}
+              disabled={testingForm}
+              className="flex items-center gap-2 px-4 py-3 font-medium border border-border rounded-xl hover:bg-muted disabled:opacity-50 transition-all focus-ring"
+            >
+              {testingForm ? (
+                <>
+                  <LoadingSpinner className="w-4 h-4" />
+                  Testing...
+                </>
+              ) : (
+                <>
+                  <ZapIcon className="w-4 h-4" />
+                  Test
+                </>
+              )}
+            </button>
+            <button
+              type="submit"
+              disabled={createMutation.isPending}
+              className="flex items-center gap-2 px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring"
+            >
+              {createMutation.isPending ? (
+                <>
+                  <LoadingSpinner className="w-4 h-4" />
+                  Adding...
+                </>
+              ) : (
+                <>
+                  <PlusIcon className="w-4 h-4" />
+                  Add Indexer
+                </>
+              )}
+            </button>
+          </div>
         </form>
       )}
 
@@ -621,6 +669,8 @@ function DownloadClientsSettings() {
   const [testingId, setTestingId] = useState<number | null>(null);
   const [testResult, setTestResult] = useState<{ id: number; success: boolean; message?: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DownloadClient | null>(null);
+  const [testingForm, setTestingForm] = useState(false);
+  const [formTestResult, setFormTestResult] = useState<{ success: boolean; message?: string } | null>(null);
 
   const {
     register,
@@ -693,9 +743,28 @@ function DownloadClientsSettings() {
     createMutation.mutate(data);
   };
 
+  const handleFormTest = async (data: CreateDownloadClientFormData) => {
+    setTestingForm(true);
+    setFormTestResult(null);
+    try {
+      const result = await api.testClientConfig(data);
+      setFormTestResult(result);
+      if (result.success) {
+        toast.success('Connection successful');
+      } else {
+        toast.error(result.message || 'Connection failed');
+      }
+    } catch {
+      setFormTestResult({ success: false, message: 'Test failed' });
+      toast.error('Connection test failed');
+    }
+    setTestingForm(false);
+  };
+
   const handleToggleForm = () => {
     if (showForm) {
       reset();
+      setFormTestResult(null);
     }
     setShowForm(!showForm);
   };
@@ -812,23 +881,50 @@ function DownloadClientsSettings() {
             </div>
           </div>
 
-          <button
-            type="submit"
-            disabled={createMutation.isPending}
-            className="flex items-center gap-2 px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring"
-          >
-            {createMutation.isPending ? (
-              <>
-                <LoadingSpinner className="w-4 h-4" />
-                Adding...
-              </>
-            ) : (
-              <>
-                <PlusIcon className="w-4 h-4" />
-                Add Client
-              </>
-            )}
-          </button>
+          {formTestResult && (
+            <p className={`text-sm flex items-center gap-1.5 ${formTestResult.success ? 'text-success' : 'text-destructive'}`}>
+              {formTestResult.success ? <CheckIcon className="w-3.5 h-3.5" /> : <AlertCircleIcon className="w-3.5 h-3.5" />}
+              {formTestResult.message || (formTestResult.success ? 'Connection successful!' : 'Connection failed')}
+            </p>
+          )}
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleSubmit(handleFormTest)}
+              disabled={testingForm}
+              className="flex items-center gap-2 px-4 py-3 font-medium border border-border rounded-xl hover:bg-muted disabled:opacity-50 transition-all focus-ring"
+            >
+              {testingForm ? (
+                <>
+                  <LoadingSpinner className="w-4 h-4" />
+                  Testing...
+                </>
+              ) : (
+                <>
+                  <ZapIcon className="w-4 h-4" />
+                  Test
+                </>
+              )}
+            </button>
+            <button
+              type="submit"
+              disabled={createMutation.isPending}
+              className="flex items-center gap-2 px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring"
+            >
+              {createMutation.isPending ? (
+                <>
+                  <LoadingSpinner className="w-4 h-4" />
+                  Adding...
+                </>
+              ) : (
+                <>
+                  <PlusIcon className="w-4 h-4" />
+                  Add Client
+                </>
+              )}
+            </button>
+          </div>
         </form>
       )}
 

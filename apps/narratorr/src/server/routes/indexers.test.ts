@@ -140,6 +140,41 @@ describe('indexers routes', () => {
     });
   });
 
+  describe('POST /api/indexers/test', () => {
+    it('returns test result for config payload', async () => {
+      (services.indexer.testConfig as any).mockResolvedValue({ success: true, message: 'Connected' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers/test',
+        payload: {
+          name: 'AudioBookBay',
+          type: 'abb',
+          enabled: true,
+          priority: 50,
+          settings: { hostname: 'audiobookbay.lu', pageLimit: 2 },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).success).toBe(true);
+      expect(services.indexer.testConfig).toHaveBeenCalledWith({
+        type: 'abb',
+        settings: { hostname: 'audiobookbay.lu', pageLimit: 2 },
+      });
+    });
+
+    it('returns 400 for invalid body', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers/test',
+        payload: { name: '' },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+  });
+
   describe('POST /api/indexers/:id/test', () => {
     it('returns test result', async () => {
       (services.indexer.test as any).mockResolvedValue({ success: true, message: 'Connected' });

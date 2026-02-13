@@ -265,6 +265,11 @@ export const api = {
     fetchApi<{ success: boolean }>(`/indexers/${id}`, { method: 'DELETE' }),
   testIndexer: (id: number) =>
     fetchApi<TestResult>(`/indexers/${id}/test`, { method: 'POST' }),
+  testIndexerConfig: (data: Omit<Indexer, 'id' | 'createdAt'>) =>
+    fetchApi<TestResult>('/indexers/test', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 
   // Download Clients
   getClients: () => fetchApi<DownloadClient[]>('/download-clients'),
@@ -282,6 +287,11 @@ export const api = {
     fetchApi<{ success: boolean }>(`/download-clients/${id}`, { method: 'DELETE' }),
   testClient: (id: number) =>
     fetchApi<TestResult>(`/download-clients/${id}/test`, { method: 'POST' }),
+  testClientConfig: (data: Omit<DownloadClient, 'id' | 'createdAt'>) =>
+    fetchApi<TestResult>('/download-clients/test', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 
   // Settings
   getSettings: () => fetchApi<Settings>('/settings'),

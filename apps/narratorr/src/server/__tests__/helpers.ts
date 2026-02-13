@@ -95,6 +95,7 @@ export function createMockServices(overrides?: Partial<Services>): Services {
       delete: vi.fn(),
       getAdapter: vi.fn(),
       test: vi.fn(),
+      testConfig: vi.fn(),
       searchAll: vi.fn(),
       ...overrides?.indexer,
     } as unknown as Services['indexer'],
@@ -108,6 +109,7 @@ export function createMockServices(overrides?: Partial<Services>): Services {
       getAdapter: vi.fn(),
       getFirstEnabledAdapter: vi.fn(),
       test: vi.fn(),
+      testConfig: vi.fn(),
       ...overrides?.downloadClient,
     } as unknown as Services['downloadClient'],
     book: {

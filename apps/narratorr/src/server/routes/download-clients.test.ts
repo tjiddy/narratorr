@@ -140,6 +140,43 @@ describe('download-clients routes', () => {
     });
   });
 
+  describe('POST /api/download-clients/test', () => {
+    it('returns test result for config payload', async () => {
+      (services.downloadClient.testConfig as any).mockResolvedValue({ success: true, message: 'Connected' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients/test',
+        payload: {
+          name: 'qBittorrent',
+          type: 'qbittorrent',
+          enabled: true,
+          priority: 50,
+          settings: { host: 'localhost', port: 8080 },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).success).toBe(true);
+      expect(services.downloadClient.testConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'qbittorrent',
+          settings: expect.objectContaining({ host: 'localhost', port: 8080 }),
+        }),
+      );
+    });
+
+    it('returns 400 for invalid body', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients/test',
+        payload: { name: '' },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+  });
+
   describe('POST /api/download-clients/:id/test', () => {
     it('returns test result', async () => {
       (services.downloadClient.test as any).mockResolvedValue({ success: true });

@@ -101,6 +101,25 @@ export async function indexersRoutes(app: FastifyInstance, indexerService: Index
     }
   );
 
+  // POST /api/indexers/test (test config without persisting)
+  app.post(
+    '/api/indexers/test',
+    {
+      schema: {
+        body: createIndexerSchema,
+      },
+    },
+    async (request) => {
+      const data = request.body as CreateIndexerInput;
+      const result = await indexerService.testConfig({
+        type: data.type,
+        settings: data.settings as Record<string, unknown>,
+      });
+      request.log.debug({ type: data.type, success: result.success }, 'Indexer config test result');
+      return result;
+    }
+  );
+
   // POST /api/indexers/:id/test
   app.post(
     '/api/indexers/:id/test',
