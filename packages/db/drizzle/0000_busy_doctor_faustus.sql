@@ -1,5 +1,18 @@
-PRAGMA foreign_keys=OFF;--> statement-breakpoint
-CREATE TABLE `__new_blacklist` (
+CREATE TABLE `authors` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`name` text NOT NULL,
+	`slug` text NOT NULL,
+	`asin` text,
+	`image_url` text,
+	`bio` text,
+	`monitored` integer DEFAULT false NOT NULL,
+	`last_checked_at` integer,
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
+	`updated_at` integer DEFAULT (unixepoch()) NOT NULL
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `authors_slug_unique` ON `authors` (`slug`);--> statement-breakpoint
+CREATE TABLE `blacklist` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`book_id` integer,
 	`info_hash` text NOT NULL,
@@ -10,11 +23,7 @@ CREATE TABLE `__new_blacklist` (
 	FOREIGN KEY (`book_id`) REFERENCES `books`(`id`) ON UPDATE no action ON DELETE set null
 );
 --> statement-breakpoint
-INSERT INTO `__new_blacklist`("id", "book_id", "info_hash", "title", "reason", "note", "blacklisted_at") SELECT "id", "book_id", "info_hash", "title", "reason", "note", "blacklisted_at" FROM `blacklist`;--> statement-breakpoint
-DROP TABLE `blacklist`;--> statement-breakpoint
-ALTER TABLE `__new_blacklist` RENAME TO `blacklist`;--> statement-breakpoint
-PRAGMA foreign_keys=ON;--> statement-breakpoint
-CREATE TABLE `__new_books` (
+CREATE TABLE `books` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`title` text NOT NULL,
 	`author_id` integer,
@@ -39,12 +48,20 @@ CREATE TABLE `__new_books` (
 	FOREIGN KEY (`author_id`) REFERENCES `authors`(`id`) ON UPDATE no action ON DELETE set null
 );
 --> statement-breakpoint
-INSERT INTO `__new_books`("id", "title", "author_id", "narrator", "description", "cover_url", "goodreads_id", "audible_id", "asin", "isbn", "series_name", "series_position", "duration", "published_date", "genres", "status", "enrichment_status", "path", "size", "created_at", "updated_at") SELECT "id", "title", "author_id", "narrator", "description", "cover_url", "goodreads_id", "audible_id", "asin", "isbn", "series_name", "series_position", "duration", "published_date", "genres", "status", "enrichment_status", "path", "size", "created_at", "updated_at" FROM `books`;--> statement-breakpoint
-DROP TABLE `books`;--> statement-breakpoint
-ALTER TABLE `__new_books` RENAME TO `books`;--> statement-breakpoint
 CREATE INDEX `idx_books_author_id` ON `books` (`author_id`);--> statement-breakpoint
 CREATE INDEX `idx_books_status` ON `books` (`status`);--> statement-breakpoint
-CREATE TABLE `__new_downloads` (
+CREATE TABLE `download_clients` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`name` text NOT NULL,
+	`type` text NOT NULL,
+	`enabled` integer DEFAULT true NOT NULL,
+	`priority` integer DEFAULT 50 NOT NULL,
+	`settings` text NOT NULL,
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `idx_download_clients_enabled` ON `download_clients` (`enabled`);--> statement-breakpoint
+CREATE TABLE `downloads` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`book_id` integer,
 	`indexer_id` integer,
@@ -66,8 +83,29 @@ CREATE TABLE `__new_downloads` (
 	FOREIGN KEY (`download_client_id`) REFERENCES `download_clients`(`id`) ON UPDATE no action ON DELETE set null
 );
 --> statement-breakpoint
-INSERT INTO `__new_downloads`("id", "book_id", "indexer_id", "download_client_id", "title", "protocol", "info_hash", "download_url", "size", "seeders", "status", "progress", "external_id", "error_message", "added_at", "completed_at") SELECT "id", "book_id", "indexer_id", "download_client_id", "title", "protocol", "info_hash", "download_url", "size", "seeders", "status", "progress", "external_id", "error_message", "added_at", "completed_at" FROM `downloads`;--> statement-breakpoint
-DROP TABLE `downloads`;--> statement-breakpoint
-ALTER TABLE `__new_downloads` RENAME TO `downloads`;--> statement-breakpoint
 CREATE INDEX `idx_downloads_status` ON `downloads` (`status`);--> statement-breakpoint
-CREATE INDEX `idx_downloads_book_id` ON `downloads` (`book_id`);
+CREATE INDEX `idx_downloads_book_id` ON `downloads` (`book_id`);--> statement-breakpoint
+CREATE TABLE `indexers` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`name` text NOT NULL,
+	`type` text NOT NULL,
+	`enabled` integer DEFAULT true NOT NULL,
+	`priority` integer DEFAULT 50 NOT NULL,
+	`settings` text NOT NULL,
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `idx_indexers_enabled` ON `indexers` (`enabled`);--> statement-breakpoint
+CREATE TABLE `search_history` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`query` text NOT NULL,
+	`type` text NOT NULL,
+	`results_count` integer,
+	`searched_at` integer DEFAULT (unixepoch()) NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `idx_search_history_searched_at` ON `search_history` (`searched_at`);--> statement-breakpoint
+CREATE TABLE `settings` (
+	`key` text PRIMARY KEY NOT NULL,
+	`value` text NOT NULL
+);

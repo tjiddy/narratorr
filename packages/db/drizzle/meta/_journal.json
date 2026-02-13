@@ -5,22 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1770918442227,
-      "tag": "0000_spooky_scalphunter",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1770978414614,
-      "tag": "0001_lame_carmella_unuscione",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1770999864902,
-      "tag": "0002_high_maggott",
+      "when": 1771008456449,
+      "tag": "0000_busy_doctor_faustus",
       "breakpoints": true
     }
   ]
