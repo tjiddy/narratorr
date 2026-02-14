@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import { DownloadService } from './download.service.js';
-import type { DownloadClientService } from './download-client.service.js';
+import { type DownloadClientService } from './download-client.service.js';
 
 const now = new Date();
 
@@ -216,6 +216,54 @@ describe('DownloadService', () => {
 
       await service.updateProgress(1, 1.0);
       expect(db.update).toHaveBeenCalled();
+    });
+  });
+
+  describe('updateStatus', () => {
+    it('passes correct status value to set()', async () => {
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await service.updateStatus(1, 'importing');
+
+      expect(chain.set).toHaveBeenCalledWith({ status: 'importing' });
+    });
+
+    it('logs at info level', async () => {
+      db.update.mockReturnValue(mockDbChain());
+      const log = createMockLogger();
+      const svc = new DownloadService(db as any, clientService, log as any);
+
+      await svc.updateStatus(1, 'completed');
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, status: 'completed' }),
+        expect.any(String),
+      );
+    });
+  });
+
+  describe('setError', () => {
+    it('passes status failed and errorMessage to set()', async () => {
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await service.setError(1, 'Connection refused');
+
+      expect(chain.set).toHaveBeenCalledWith({ status: 'failed', errorMessage: 'Connection refused' });
+    });
+
+    it('logs at warn level', async () => {
+      db.update.mockReturnValue(mockDbChain());
+      const log = createMockLogger();
+      const svc = new DownloadService(db as any, clientService, log as any);
+
+      await svc.setError(1, 'Disk full');
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, error: 'Disk full' }),
+        expect.any(String),
+      );
     });
   });
 

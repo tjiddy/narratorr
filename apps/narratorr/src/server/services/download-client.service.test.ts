@@ -151,6 +151,70 @@ describe('DownloadClientService', () => {
     });
   });
 
+  describe('getFirstEnabledForProtocol', () => {
+    const qbitClient = {
+      ...mockClient,
+      id: 1,
+      name: 'qBittorrent',
+      type: 'qbittorrent' as const,
+      priority: 50,
+    };
+    const transmissionClient = {
+      ...mockClient,
+      id: 2,
+      name: 'Transmission',
+      type: 'transmission' as const,
+      priority: 100,
+    };
+    const sabClient = {
+      ...mockClient,
+      id: 3,
+      name: 'SABnzbd',
+      type: 'sabnzbd' as const,
+      priority: 50,
+    };
+
+    it('returns qbittorrent for torrent protocol', async () => {
+      db.select.mockReturnValue(mockDbChain([qbitClient, sabClient]));
+
+      const result = await service.getFirstEnabledForProtocol('torrent');
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe('qbittorrent');
+    });
+
+    it('returns null when only usenet clients exist and requesting torrent', async () => {
+      db.select.mockReturnValue(mockDbChain([sabClient]));
+
+      const result = await service.getFirstEnabledForProtocol('torrent');
+      expect(result).toBeNull();
+    });
+
+    it('returns sabnzbd for usenet protocol', async () => {
+      db.select.mockReturnValue(mockDbChain([qbitClient, sabClient]));
+
+      const result = await service.getFirstEnabledForProtocol('usenet');
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe('sabnzbd');
+    });
+
+    it('returns null when no enabled clients', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.getFirstEnabledForProtocol('torrent');
+      expect(result).toBeNull();
+    });
+
+    it('respects priority ordering', async () => {
+      // transmission (priority 100) comes after qbit (priority 50) in the DB results
+      // since the DB query orders by priority, qbit should be found first
+      db.select.mockReturnValue(mockDbChain([qbitClient, transmissionClient]));
+
+      const result = await service.getFirstEnabledForProtocol('torrent');
+      expect(result).not.toBeNull();
+      expect(result!.name).toBe('qBittorrent');
+    });
+  });
+
   describe('testConfig', () => {
     it('creates adapter from config and returns test result', async () => {
       const result = await service.testConfig({
