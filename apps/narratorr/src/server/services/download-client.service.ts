@@ -4,9 +4,11 @@ import type { FastifyBaseLogger } from 'fastify';
 import { downloadClients } from '@narratorr/db/schema';
 import {
   QBittorrentClient,
+  SABnzbdClient,
   type DownloadClientAdapter,
   type DownloadProtocol,
   type QBittorrentConfig,
+  type SABnzbdConfig,
 } from '@narratorr/core';
 
 type DownloadClientRow = typeof downloadClients.$inferSelect;
@@ -125,6 +127,16 @@ export class DownloadClientService {
         };
         this.log.debug({ client: client.name, type: client.type, host: config.host, port: config.port, useSsl: config.useSsl }, 'Creating download client adapter');
         return new QBittorrentClient(config);
+      }
+      case 'sabnzbd': {
+        const config: SABnzbdConfig = {
+          host: (settings.host as string) || 'localhost',
+          port: (settings.port as number) || 8080,
+          apiKey: (settings.apiKey as string) || '',
+          useSsl: (settings.useSsl as boolean) || false,
+        };
+        this.log.debug({ client: client.name, type: client.type, host: config.host, port: config.port }, 'Creating download client adapter');
+        return new SABnzbdClient(config);
       }
       default:
         throw new Error(`Unknown download client type: ${client.type}`);
