@@ -86,7 +86,9 @@ pnpm gitea issue <id>               # Read full spec
 pnpm gitea issue-update <id> <field> <value>  # Update issue (state/labels/milestone/title/body)
 pnpm gitea issue-comment <id> "message"       # Add comment
 pnpm gitea prs                      # List open PRs
+pnpm gitea pr <number>              # Get PR details
 pnpm gitea pr-create <title> <body> <head> [base]  # Create PR
+pnpm gitea pr-comment <number> <body>  # Add comment to PR
 ```
 
 ### Workflow Skills
@@ -94,10 +96,15 @@ pnpm gitea pr-create <title> <body> <head> [base]  # Create PR
 Claude Code skills automate the agent workflow — use these instead of manual steps:
 
 - `/implement <id>` — Full lifecycle: elaborate → claim → implement → handoff (preferred for end-to-end work)
-- `/claim <id>` — Validate spec + explore codebase + claim issue (use when implementing manually)
-- `/handoff <id>` — Build, push, create PR, post handoff comment
+- `/claim <id>` — Validate spec (via subagent) + claim issue (use when implementing manually)
+- `/handoff <id>` — Verify, push, create PR, post handoff comment, update context cache
 - `/block <id>` — Post blocked comment, set blocked label, stop
-- `/elaborate <id>` — Groom/triage an issue without claiming (read-only, no label/branch changes)
+- `/elaborate <id>` — Groom/triage an issue without claiming (read-only, structured verdict)
+- `/verify` — Run quality gates (lint, test, typecheck, build) with structured summary
+- `/review <pr>` — Review a PR against its linked issue's acceptance criteria
+- `/triage` — Rank and categorize all open issues (read-only)
+- `/resume <id>` — Resume a blocked issue (restore branch, update labels)
+- `/changelog [since]` — Generate categorized changelog from git history
 
 ## ⚠ Issue Workflow — MANDATORY
 

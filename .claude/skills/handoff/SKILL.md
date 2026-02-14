@@ -6,7 +6,7 @@ Automates the "Push + Create PR + Update issue" workflow from `docs/agent_workfl
 
 1. **Verify branch:** Run `git branch --show-current`. It must match `feature/issue-<id>-*`. If not, STOP: "Not on the expected feature branch for #<id>."
 
-2. **Verify quality gates:** Run `pnpm lint && pnpm test && pnpm typecheck && pnpm build`. If any fail, STOP and fix before handoff.
+2. **Verify quality gates:** Invoke `/verify` via the Skill tool. If OVERALL: fail → STOP and report failures. If pass → proceed.
 
 3. **Push the branch:**
    ```bash
@@ -71,4 +71,10 @@ Automates the "Push + Create PR + Update issue" workflow from `docs/agent_workfl
 
 9. **Append to workflow log** (`.claude/workflow-log.md`) using the template from `docs/agent_workflow.md` section 7. Include workflow experience, friction encountered, and token efficiency notes.
 
-10. Tell the user the PR is created and show the link.
+10. **Update project context cache** (`.claude/project-context.md`):
+    - Read the file, find the `## Recent Changes` section
+    - Prepend a new entry at the top of the list: `- PR #<number> — #<id> <issue title>: <2-3 bullet summary of what changed>`
+    - If the section has more than 10 entries, remove the oldest ones (bottom of the list)
+    - Write the updated file
+
+11. Tell the user the PR is created and show the link.

@@ -14,7 +14,9 @@
 //   milestone-create <title> [description]
 //   search <query>              Search issues
 //   prs                         List open pull requests
+//   pr <number>                 Get PR details
 //   pr-create <title> <body|--body-file path> <head> [base]
+//   pr-comment <number> <body|--body-file path>
 
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -112,8 +114,10 @@ interface GiteaPR {
   number: number;
   state: string;
   title: string;
-  head: { label: string };
-  base: { label: string };
+  body?: string;
+  head: { label: string; ref: string };
+  base: { label: string; ref: string };
+  labels?: GiteaLabel[];
   html_url: string;
 }
 
@@ -166,6 +170,17 @@ function fmtMilestones(milestones: GiteaMilestone[]): void {
   for (const m of milestones) {
     const desc = m.description ? ` - ${m.description}` : "";
     console.log(`  ${m.title} [open:${m.open_issues}/closed:${m.closed_issues}]${desc}`);
+  }
+}
+
+function fmtPR(pr: GiteaPR): void {
+  console.log(`#${pr.number} [${pr.state}] ${pr.title}`);
+  console.log(`${pr.head.ref} → ${pr.base.ref} | ${pr.html_url}`);
+  const labels = (pr.labels || []).map((l) => l.name).join(", ");
+  if (labels) console.log(`labels: ${labels}`);
+  if (pr.body) {
+    console.log();
+    console.log(pr.body);
   }
 }
 
@@ -433,6 +448,32 @@ switch (cmd) {
     break;
   }
 
+  case "pr": {
+    const num = args[0];
+    if (!num) {
+      console.error("Usage: gitea pr <number>");
+      process.exit(1);
+    }
+    const prData = await api<GiteaPR>(`/pulls/${num}`);
+    fmtPR(prData);
+    break;
+  }
+
+  case "pr-comment": {
+    const num = args[0];
+    const [commentBody] = extractBody(args.slice(1));
+    if (!num || !commentBody) {
+      console.error("Usage: gitea pr-comment <number> <body|--body-file path>");
+      process.exit(1);
+    }
+    await api(`/issues/${num}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ body: commentBody }),
+    });
+    console.log(`Comment added to PR #${num}`);
+    break;
+  }
+
   case "pr-create": {
     const title = args[0];
     const [body, restArgs] = extractBody(args.slice(1));
@@ -466,7 +507,9 @@ Commands:
   milestone-create <t> [d]   Create milestone
   search <query>             Search issues
   prs [all]                  List pull requests
+  pr <number>                Get PR details
   pr-create <t> <b> <h> [base]  Create pull request
+  pr-comment <n> <body>      Add comment to PR
 
 Body args accept --body-file <path> to read content from a file
 instead of an inline argument (avoids shell escaping issues).`);
