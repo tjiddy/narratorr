@@ -14,6 +14,7 @@ import {
 } from '@/components/icons';
 import {
   createIndexerFormSchema,
+  indexerTypeSchema,
   type CreateIndexerFormData,
 } from '../../../shared/schemas.js';
 
@@ -38,15 +39,37 @@ interface IndexerCardProps {
   animationDelay?: string;
 }
 
+const IMPLEMENTED_TYPES = ['abb'];
+
+const defaultSettings: Record<string, CreateIndexerFormData['settings']> = {
+  abb: { hostname: '', pageLimit: 2 },
+  torznab: { apiUrl: '', apiKey: '' },
+  newznab: { apiUrl: '', apiKey: '' },
+};
+
+function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'] {
+  const s = indexer.settings as Record<string, unknown>;
+  return {
+    hostname: (s.hostname as string) || '',
+    pageLimit: (s.pageLimit as number) || 2,
+    apiUrl: (s.apiUrl as string) || '',
+    apiKey: (s.apiKey as string) || '',
+  };
+}
+
+function viewSubtitle(indexer: Indexer): string {
+  const s = indexer.settings as Record<string, unknown>;
+  if (indexer.type === 'abb') return (s.hostname as string) || indexer.type;
+  if (indexer.type === 'torznab' || indexer.type === 'newznab') return (s.apiUrl as string) || indexer.type;
+  return indexer.type;
+}
+
 const defaultValues: CreateIndexerFormData = {
   name: '',
   type: 'abb',
   enabled: true,
   priority: 50,
-  settings: {
-    hostname: '',
-    pageLimit: 2,
-  },
+  settings: { hostname: '', pageLimit: 2 },
 };
 
 export function IndexerCard({
@@ -69,6 +92,8 @@ export function IndexerCard({
     register,
     handleSubmit,
     reset,
+    watch,
+    setValue,
     formState: { errors },
   } = useForm<CreateIndexerFormData>({
     resolver: zodResolver(createIndexerFormSchema),
@@ -78,13 +103,12 @@ export function IndexerCard({
           type: indexer.type as CreateIndexerFormData['type'],
           enabled: indexer.enabled,
           priority: indexer.priority,
-          settings: {
-            hostname: (indexer.settings as { hostname?: string }).hostname || '',
-            pageLimit: (indexer.settings as { pageLimit?: number }).pageLimit || 2,
-          },
+          settings: settingsFromIndexer(indexer),
         }
       : defaultValues,
   });
+
+  const selectedType = watch('type');
 
   useEffect(() => {
     if (mode === 'edit' && indexer) {
@@ -93,15 +117,21 @@ export function IndexerCard({
         type: indexer.type as CreateIndexerFormData['type'],
         enabled: indexer.enabled,
         priority: indexer.priority,
-        settings: {
-          hostname: (indexer.settings as { hostname?: string }).hostname || '',
-          pageLimit: (indexer.settings as { pageLimit?: number }).pageLimit || 2,
-        },
+        settings: settingsFromIndexer(indexer),
       });
     } else if (mode === 'create') {
       reset(defaultValues);
     }
   }, [mode, indexer, reset]);
+
+  // Reset settings when type changes (only in create mode to avoid overwriting existing data)
+  useEffect(() => {
+    if (mode === 'create') {
+      setValue('settings', defaultSettings[selectedType] || defaultSettings.abb);
+    }
+  }, [selectedType, mode, setValue]);
+
+  const isImplemented = IMPLEMENTED_TYPES.includes(selectedType);
 
   // View mode
   if (mode === 'view' && indexer) {
@@ -116,7 +146,7 @@ export function IndexerCard({
             <div className="min-w-0">
               <h3 className="font-display font-semibold truncate">{indexer.name}</h3>
               <p className="text-sm text-muted-foreground truncate">
-                {(indexer.settings as { hostname?: string }).hostname || indexer.type}
+                {viewSubtitle(indexer)}
               </p>
               {testResult?.id === indexer.id && (
                 <TestResultMessage
@@ -141,6 +171,8 @@ export function IndexerCard({
               testing={testingId === indexer.id}
               onClick={() => onTest?.(indexer.id)}
               variant="inline"
+              disabled={!IMPLEMENTED_TYPES.includes(indexer.type)}
+              title={!IMPLEMENTED_TYPES.includes(indexer.type) ? 'Testing available for implemented adapter types' : undefined}
             />
             <button
               onClick={onDelete}
@@ -165,7 +197,7 @@ export function IndexerCard({
       </h3>
 
       <div className="grid gap-5 sm:grid-cols-2">
-        <div className="sm:col-span-2">
+        <div>
           <label className="block text-sm font-medium mb-2">Name</label>
           <input
             type="text"
@@ -178,6 +210,20 @@ export function IndexerCard({
           {errors.name && (
             <p className="text-sm text-destructive mt-1">{errors.name.message}</p>
           )}
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-2">Type</label>
+          <select
+            {...register('type')}
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+          >
+            {indexerTypeSchema.options.map((t) => (
+              <option key={t} value={t}>
+                {t === 'abb' ? 'AudioBookBay' : t.charAt(0).toUpperCase() + t.slice(1)}
+              </option>
+            ))}
+          </select>
         </div>
 
         {isEdit && (
@@ -199,50 +245,102 @@ export function IndexerCard({
                 {...register('priority', { valueAsNumber: true })}
                 className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
               />
-              <p className="text-sm text-muted-foreground mt-1">Lower values are checked first (1–100)</p>
+              <p className="text-sm text-muted-foreground mt-1">Lower values are checked first (1-100)</p>
             </div>
           </>
         )}
 
-        <div>
-          <label className="block text-sm font-medium mb-2">Hostname</label>
-          <input
-            type="text"
-            {...register('settings.hostname')}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-              errors.settings?.hostname ? 'border-destructive' : 'border-border'
-            }`}
-            placeholder="audiobookbay.lu"
-          />
-          {errors.settings?.hostname ? (
-            <p className="text-sm text-destructive mt-1">{errors.settings.hostname.message}</p>
-          ) : (
-            <p className="text-sm text-muted-foreground mt-1">Domain only, without http:// or https://</p>
-          )}
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-2">Page Limit</label>
-          <input
-            type="number"
-            {...register('settings.pageLimit', { valueAsNumber: true })}
-            min={1}
-            max={10}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-              errors.settings?.pageLimit ? 'border-destructive' : 'border-border'
-            }`}
-          />
-          {errors.settings?.pageLimit && (
-            <p className="text-sm text-destructive mt-1">{errors.settings.pageLimit.message}</p>
-          )}
-        </div>
+        {/* ABB fields */}
+        {selectedType === 'abb' && (
+          <>
+            <div>
+              <label className="block text-sm font-medium mb-2">Hostname</label>
+              <input
+                type="text"
+                {...register('settings.hostname')}
+                className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+                  errors.settings?.hostname ? 'border-destructive' : 'border-border'
+                }`}
+                placeholder="audiobookbay.lu"
+              />
+              {errors.settings?.hostname ? (
+                <p className="text-sm text-destructive mt-1">{errors.settings.hostname.message}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground mt-1">Domain only, without http:// or https://</p>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Page Limit</label>
+              <input
+                type="number"
+                {...register('settings.pageLimit', { valueAsNumber: true })}
+                min={1}
+                max={10}
+                className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+                  errors.settings?.pageLimit ? 'border-destructive' : 'border-border'
+                }`}
+              />
+              {errors.settings?.pageLimit && (
+                <p className="text-sm text-destructive mt-1">{errors.settings.pageLimit.message}</p>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Torznab / Newznab fields */}
+        {(selectedType === 'torznab' || selectedType === 'newznab') && (
+          <>
+            <div className="sm:col-span-2">
+              <label className="block text-sm font-medium mb-2">API URL</label>
+              <input
+                type="text"
+                {...register('settings.apiUrl')}
+                className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+                  errors.settings?.apiUrl ? 'border-destructive' : 'border-border'
+                }`}
+                placeholder="https://indexer.example.com/api"
+              />
+              {errors.settings?.apiUrl ? (
+                <p className="text-sm text-destructive mt-1">{errors.settings.apiUrl.message}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground mt-1">Full URL to the {selectedType} API endpoint</p>
+              )}
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-sm font-medium mb-2">API Key</label>
+              <input
+                type="password"
+                {...register('settings.apiKey')}
+                className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+                  errors.settings?.apiKey ? 'border-destructive' : 'border-border'
+                }`}
+              />
+              {errors.settings?.apiKey && (
+                <p className="text-sm text-destructive mt-1">{errors.settings.apiKey.message}</p>
+              )}
+            </div>
+          </>
+        )}
       </div>
+
+      {!isImplemented && (
+        <p className="text-sm text-amber-500">
+          Adapter not yet implemented. Config will be saved for when the adapter is available.
+        </p>
+      )}
 
       {formTestResult && (
         <TestResultMessage success={formTestResult.success} message={formTestResult.message} />
       )}
 
       <div className="flex items-center gap-3">
-        <TestButton testing={!!testingForm} onClick={handleSubmit(onFormTest)} variant="form" />
+        <TestButton
+          testing={!!testingForm}
+          onClick={handleSubmit(onFormTest)}
+          variant="form"
+          disabled={!isImplemented}
+          title={!isImplemented ? 'Testing available for implemented adapter types' : undefined}
+        />
         {isEdit && (
           <button
             type="button"

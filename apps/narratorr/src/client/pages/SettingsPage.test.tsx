@@ -280,8 +280,8 @@ describe('SettingsPage - Edit indexer', () => {
       expect(screen.getByText('Edit Indexer')).toBeInTheDocument();
     });
 
-    // Check form is pre-populated
-    expect(screen.getByDisplayValue('AudioBookBay')).toBeInTheDocument();
+    // Check form is pre-populated (name input + type select both show 'AudioBookBay')
+    expect(screen.getAllByDisplayValue('AudioBookBay').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByDisplayValue('audiobookbay.lu')).toBeInTheDocument();
   });
 
@@ -301,8 +301,8 @@ describe('SettingsPage - Edit indexer', () => {
       expect(screen.getByText('Edit Indexer')).toBeInTheDocument();
     });
 
-    // Change name
-    const nameInput = screen.getByDisplayValue('AudioBookBay');
+    // Change name (first match is the text input, second is the type select)
+    const nameInput = screen.getAllByDisplayValue('AudioBookBay')[0];
     await user.clear(nameInput);
     await user.type(nameInput, 'Updated');
 
@@ -373,7 +373,8 @@ describe('SettingsPage - Edit download client', () => {
       expect(screen.getByText('Edit Download Client')).toBeInTheDocument();
     });
 
-    expect(screen.getByDisplayValue('qBittorrent')).toBeInTheDocument();
+    // Name input + type select both show 'qBittorrent'
+    expect(screen.getAllByDisplayValue('qBittorrent').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByDisplayValue('localhost')).toBeInTheDocument();
     expect(screen.getByDisplayValue('8080')).toBeInTheDocument();
     expect(screen.getByDisplayValue('admin')).toBeInTheDocument();
@@ -395,7 +396,8 @@ describe('SettingsPage - Edit download client', () => {
       expect(screen.getByText('Edit Download Client')).toBeInTheDocument();
     });
 
-    const nameInput = screen.getByDisplayValue('qBittorrent');
+    // First match is the text input, second is the type select
+    const nameInput = screen.getAllByDisplayValue('qBittorrent')[0];
     await user.clear(nameInput);
     await user.type(nameInput, 'Updated');
 

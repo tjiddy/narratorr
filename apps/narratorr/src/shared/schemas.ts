@@ -24,40 +24,51 @@ export const idParamSchema = z.object({
 
 export const indexerTypeSchema = z.enum(['abb', 'torznab', 'newznab']);
 
-export const indexerSettingsSchema = z.object({
-  hostname: z.string().min(1, 'Hostname is required'),
-  pageLimit: z.number().int().min(1).max(10).default(2),
-});
-
+// Server-side: accepts any settings shape (type-specific validation is client-side only)
 export const createIndexerSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100),
   type: indexerTypeSchema,
   enabled: z.boolean().default(true),
   priority: z.number().int().min(0).max(100).default(50),
-  settings: indexerSettingsSchema,
+  settings: z.record(z.string(), z.unknown()),
 });
 
 export const updateIndexerSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   enabled: z.boolean().optional(),
   priority: z.number().int().min(0).max(100).optional(),
-  settings: indexerSettingsSchema.partial().optional(),
+  settings: z.record(z.string(), z.unknown()).optional(),
 });
 
 // Output types (after Zod applies defaults)
 export type CreateIndexerInput = z.infer<typeof createIndexerSchema>;
 export type UpdateIndexerInput = z.infer<typeof updateIndexerSchema>;
 
-// Form schemas for client-side validation (all fields required, no defaults)
+// Form schema: all possible settings fields optional, superRefine validates per-type
 export const createIndexerFormSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100),
   type: indexerTypeSchema,
   enabled: z.boolean(),
   priority: z.number().int().min(0).max(100),
   settings: z.object({
-    hostname: z.string().min(1, 'Hostname is required'),
-    pageLimit: z.number().int().min(1).max(10),
+    hostname: z.string().optional(),
+    pageLimit: z.number().int().min(1).max(10).optional(),
+    apiUrl: z.string().optional(),
+    apiKey: z.string().optional(),
   }),
+}).superRefine((data, ctx) => {
+  if (data.type === 'abb') {
+    if (!data.settings.hostname) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'hostname'], message: 'Hostname is required' });
+    }
+  } else {
+    if (!data.settings.apiUrl) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'apiUrl'], message: 'API URL is required' });
+    }
+    if (!data.settings.apiKey) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'apiKey'], message: 'API key is required' });
+    }
+  }
 });
 
 export type CreateIndexerFormData = z.infer<typeof createIndexerFormSchema>;
@@ -68,46 +79,52 @@ export type CreateIndexerFormData = z.infer<typeof createIndexerFormSchema>;
 
 export const downloadClientTypeSchema = z.enum(['qbittorrent', 'transmission', 'sabnzbd', 'nzbget']);
 
-export const qbittorrentSettingsSchema = z.object({
-  host: z.string().min(1, 'Host is required'),
-  port: z.number().int().min(1).max(65535).default(8080),
-  username: z.string().default(''),
-  password: z.string().default(''),
-  useSsl: z.boolean().default(false),
-});
-
+// Server-side: accepts any settings shape (type-specific validation is client-side only)
 export const createDownloadClientSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100),
   type: downloadClientTypeSchema,
   enabled: z.boolean().default(true),
   priority: z.number().int().min(0).max(100).default(50),
-  settings: qbittorrentSettingsSchema,
+  settings: z.record(z.string(), z.unknown()),
 });
 
 export const updateDownloadClientSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   enabled: z.boolean().optional(),
   priority: z.number().int().min(0).max(100).optional(),
-  settings: qbittorrentSettingsSchema.partial().optional(),
+  settings: z.record(z.string(), z.unknown()).optional(),
 });
 
 // Output types (after Zod applies defaults)
 export type CreateDownloadClientInput = z.infer<typeof createDownloadClientSchema>;
 export type UpdateDownloadClientInput = z.infer<typeof updateDownloadClientSchema>;
 
-// Form schemas for client-side validation (all fields required, no defaults)
+// Form schema: all possible settings fields optional, superRefine validates per-type
 export const createDownloadClientFormSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100),
   type: downloadClientTypeSchema,
   enabled: z.boolean(),
   priority: z.number().int().min(0).max(100),
   settings: z.object({
-    host: z.string().min(1, 'Host is required'),
-    port: z.number().int().min(1).max(65535),
-    username: z.string(),
-    password: z.string(),
-    useSsl: z.boolean(),
+    host: z.string().optional(),
+    port: z.number().int().min(1).max(65535).optional(),
+    username: z.string().optional(),
+    password: z.string().optional(),
+    useSsl: z.boolean().optional(),
+    apiKey: z.string().optional(),
   }),
+}).superRefine((data, ctx) => {
+  if (!data.settings.host) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'host'], message: 'Host is required' });
+  }
+  if (!data.settings.port) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'port'], message: 'Port is required' });
+  }
+  if (data.type === 'sabnzbd') {
+    if (!data.settings.apiKey) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'apiKey'], message: 'API key is required' });
+    }
+  }
 });
 
 export type CreateDownloadClientFormData = z.infer<typeof createDownloadClientFormSchema>;

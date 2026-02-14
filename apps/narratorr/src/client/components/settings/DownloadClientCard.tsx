@@ -14,6 +14,7 @@ import {
 } from '@/components/icons';
 import {
   createDownloadClientFormSchema,
+  downloadClientTypeSchema,
   type CreateDownloadClientFormData,
 } from '../../../shared/schemas.js';
 
@@ -38,18 +39,55 @@ interface DownloadClientCardProps {
   animationDelay?: string;
 }
 
+const IMPLEMENTED_TYPES = ['qbittorrent'];
+
+const TYPE_LABELS: Record<string, string> = {
+  qbittorrent: 'qBittorrent',
+  transmission: 'Transmission',
+  sabnzbd: 'SABnzbd',
+  nzbget: 'NZBGet',
+};
+
+const defaultSettings: Record<string, CreateDownloadClientFormData['settings']> = {
+  qbittorrent: { host: '', port: 8080, username: '', password: '', useSsl: false },
+  transmission: { host: '', port: 9091, username: '', password: '' },
+  sabnzbd: { host: '', port: 8080, apiKey: '' },
+  nzbget: { host: '', port: 6789, username: '', password: '' },
+};
+
+function settingsFromClient(client: DownloadClient): CreateDownloadClientFormData['settings'] {
+  const s = client.settings as Record<string, unknown>;
+  return {
+    host: (s.host as string) || '',
+    port: (s.port as number) || 8080,
+    username: (s.username as string) || '',
+    password: (s.password as string) || '',
+    useSsl: (s.useSsl as boolean) || false,
+    apiKey: (s.apiKey as string) || '',
+  };
+}
+
+function viewSubtitle(client: DownloadClient): string {
+  const s = client.settings as Record<string, unknown>;
+  const host = (s.host as string) || '';
+  const port = (s.port as number) || '';
+  return host && port ? `${host}:${port}` : client.type;
+}
+
+// Which fields to show per type
+const TYPE_FIELDS: Record<string, { username: boolean; password: boolean; useSsl: boolean; apiKey: boolean }> = {
+  qbittorrent: { username: true, password: true, useSsl: true, apiKey: false },
+  transmission: { username: true, password: true, useSsl: false, apiKey: false },
+  sabnzbd: { username: false, password: false, useSsl: false, apiKey: true },
+  nzbget: { username: true, password: true, useSsl: false, apiKey: false },
+};
+
 const defaultValues: CreateDownloadClientFormData = {
   name: '',
   type: 'qbittorrent',
   enabled: true,
   priority: 50,
-  settings: {
-    host: '',
-    port: 8080,
-    username: '',
-    password: '',
-    useSsl: false,
-  },
+  settings: { host: '', port: 8080, username: '', password: '', useSsl: false },
 };
 
 export function DownloadClientCard({
@@ -72,6 +110,8 @@ export function DownloadClientCard({
     register,
     handleSubmit,
     reset,
+    watch,
+    setValue,
     formState: { errors },
   } = useForm<CreateDownloadClientFormData>({
     resolver: zodResolver(createDownloadClientFormSchema),
@@ -81,16 +121,13 @@ export function DownloadClientCard({
           type: client.type as CreateDownloadClientFormData['type'],
           enabled: client.enabled,
           priority: client.priority,
-          settings: {
-            host: (client.settings as { host?: string }).host || '',
-            port: (client.settings as { port?: number }).port || 8080,
-            username: (client.settings as { username?: string }).username || '',
-            password: (client.settings as { password?: string }).password || '',
-            useSsl: (client.settings as { useSsl?: boolean }).useSsl || false,
-          },
+          settings: settingsFromClient(client),
         }
       : defaultValues,
   });
+
+  const selectedType = watch('type');
+  const fields = TYPE_FIELDS[selectedType] || TYPE_FIELDS.qbittorrent;
 
   useEffect(() => {
     if (mode === 'edit' && client) {
@@ -99,18 +136,21 @@ export function DownloadClientCard({
         type: client.type as CreateDownloadClientFormData['type'],
         enabled: client.enabled,
         priority: client.priority,
-        settings: {
-          host: (client.settings as { host?: string }).host || '',
-          port: (client.settings as { port?: number }).port || 8080,
-          username: (client.settings as { username?: string }).username || '',
-          password: (client.settings as { password?: string }).password || '',
-          useSsl: (client.settings as { useSsl?: boolean }).useSsl || false,
-        },
+        settings: settingsFromClient(client),
       });
     } else if (mode === 'create') {
       reset(defaultValues);
     }
   }, [mode, client, reset]);
+
+  // Reset settings when type changes (only in create mode)
+  useEffect(() => {
+    if (mode === 'create') {
+      setValue('settings', defaultSettings[selectedType] || defaultSettings.qbittorrent);
+    }
+  }, [selectedType, mode, setValue]);
+
+  const isImplemented = IMPLEMENTED_TYPES.includes(selectedType);
 
   // View mode
   if (mode === 'view' && client) {
@@ -125,8 +165,7 @@ export function DownloadClientCard({
             <div className="min-w-0">
               <h3 className="font-display font-semibold truncate">{client.name}</h3>
               <p className="text-sm text-muted-foreground truncate">
-                {(client.settings as { host?: string; port?: number }).host}:
-                {(client.settings as { host?: string; port?: number }).port}
+                {viewSubtitle(client)}
               </p>
               {testResult?.id === client.id && (
                 <TestResultMessage
@@ -151,6 +190,8 @@ export function DownloadClientCard({
               testing={testingId === client.id}
               onClick={() => onTest?.(client.id)}
               variant="inline"
+              disabled={!IMPLEMENTED_TYPES.includes(client.type)}
+              title={!IMPLEMENTED_TYPES.includes(client.type) ? 'Testing available for implemented adapter types' : undefined}
             />
             <button
               onClick={onDelete}
@@ -175,7 +216,7 @@ export function DownloadClientCard({
       </h3>
 
       <div className="grid gap-5 sm:grid-cols-2">
-        <div className="sm:col-span-2">
+        <div>
           <label className="block text-sm font-medium mb-2">Name</label>
           <input
             type="text"
@@ -188,6 +229,20 @@ export function DownloadClientCard({
           {errors.name && (
             <p className="text-sm text-destructive mt-1">{errors.name.message}</p>
           )}
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-2">Type</label>
+          <select
+            {...register('type')}
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+          >
+            {downloadClientTypeSchema.options.map((t) => (
+              <option key={t} value={t}>
+                {TYPE_LABELS[t] || t}
+              </option>
+            ))}
+          </select>
         </div>
 
         {isEdit && (
@@ -209,11 +264,12 @@ export function DownloadClientCard({
                 {...register('priority', { valueAsNumber: true })}
                 className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
               />
-              <p className="text-sm text-muted-foreground mt-1">Lower values are preferred first (1–100)</p>
+              <p className="text-sm text-muted-foreground mt-1">Lower values are preferred first (1-100)</p>
             </div>
           </>
         )}
 
+        {/* Host + Port — all types need these */}
         <div>
           <label className="block text-sm font-medium mb-2">Host</label>
           <input
@@ -243,51 +299,80 @@ export function DownloadClientCard({
             <p className="text-sm text-destructive mt-1">{errors.settings.port.message}</p>
           )}
         </div>
-        <div>
-          <label className="block text-sm font-medium mb-2">Username</label>
-          <input
-            type="text"
-            {...register('settings.username')}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-              errors.settings?.username ? 'border-destructive' : 'border-border'
-            }`}
-            placeholder="admin"
-          />
-          {errors.settings?.username && (
-            <p className="text-sm text-destructive mt-1">{errors.settings.username.message}</p>
-          )}
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-2">Password</label>
-          <input
-            type="password"
-            {...register('settings.password')}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-              errors.settings?.password ? 'border-destructive' : 'border-border'
-            }`}
-          />
-          {errors.settings?.password && (
-            <p className="text-sm text-destructive mt-1">{errors.settings.password.message}</p>
-          )}
-        </div>
-        <div className="sm:col-span-2">
-          <label className="flex items-center gap-3 cursor-pointer">
+
+        {/* Username + Password — qbittorrent, transmission, nzbget */}
+        {fields.username && (
+          <div>
+            <label className="block text-sm font-medium mb-2">Username</label>
             <input
-              type="checkbox"
-              {...register('settings.useSsl')}
-              className="w-5 h-5 rounded border-border text-primary focus:ring-primary focus:ring-offset-0"
+              type="text"
+              {...register('settings.username')}
+              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+              placeholder="admin"
             />
-            <span className="text-sm font-medium">Use SSL/HTTPS</span>
-          </label>
-        </div>
+          </div>
+        )}
+        {fields.password && (
+          <div>
+            <label className="block text-sm font-medium mb-2">Password</label>
+            <input
+              type="password"
+              {...register('settings.password')}
+              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+            />
+          </div>
+        )}
+
+        {/* API Key — sabnzbd */}
+        {fields.apiKey && (
+          <div className="sm:col-span-2">
+            <label className="block text-sm font-medium mb-2">API Key</label>
+            <input
+              type="password"
+              {...register('settings.apiKey')}
+              className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+                errors.settings?.apiKey ? 'border-destructive' : 'border-border'
+              }`}
+            />
+            {errors.settings?.apiKey && (
+              <p className="text-sm text-destructive mt-1">{errors.settings.apiKey.message}</p>
+            )}
+          </div>
+        )}
+
+        {/* SSL toggle — qbittorrent only */}
+        {fields.useSsl && (
+          <div className="sm:col-span-2">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                {...register('settings.useSsl')}
+                className="w-5 h-5 rounded border-border text-primary focus:ring-primary focus:ring-offset-0"
+              />
+              <span className="text-sm font-medium">Use SSL/HTTPS</span>
+            </label>
+          </div>
+        )}
       </div>
+
+      {!isImplemented && (
+        <p className="text-sm text-amber-500">
+          Adapter not yet implemented. Config will be saved for when the adapter is available.
+        </p>
+      )}
 
       {formTestResult && (
         <TestResultMessage success={formTestResult.success} message={formTestResult.message} />
       )}
 
       <div className="flex items-center gap-3">
-        <TestButton testing={!!testingForm} onClick={handleSubmit(onFormTest)} variant="form" />
+        <TestButton
+          testing={!!testingForm}
+          onClick={handleSubmit(onFormTest)}
+          variant="form"
+          disabled={!isImplemented}
+          title={!isImplemented ? 'Testing available for implemented adapter types' : undefined}
+        />
         {isEdit && (
           <button
             type="button"
