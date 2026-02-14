@@ -5,10 +5,12 @@ import { downloadClients } from '@narratorr/db/schema';
 import {
   QBittorrentClient,
   SABnzbdClient,
+  NZBGetClient,
   type DownloadClientAdapter,
   type DownloadProtocol,
   type QBittorrentConfig,
   type SABnzbdConfig,
+  type NZBGetConfig,
 } from '@narratorr/core';
 
 type DownloadClientRow = typeof downloadClients.$inferSelect;
@@ -137,6 +139,17 @@ export class DownloadClientService {
         };
         this.log.debug({ client: client.name, type: client.type, host: config.host, port: config.port }, 'Creating download client adapter');
         return new SABnzbdClient(config);
+      }
+      case 'nzbget': {
+        const config: NZBGetConfig = {
+          host: (settings.host as string) || 'localhost',
+          port: (settings.port as number) || 6789,
+          username: (settings.username as string) || 'nzbget',
+          password: (settings.password as string) || '',
+          useSsl: (settings.useSsl as boolean) || false,
+        };
+        this.log.debug({ client: client.name, type: client.type, host: config.host, port: config.port }, 'Creating download client adapter');
+        return new NZBGetClient(config);
       }
       default:
         throw new Error(`Unknown download client type: ${client.type}`);
