@@ -120,6 +120,11 @@ function GeneralSettings() {
         path: '',
         folderFormat: '{author}/{title}',
       },
+      search: {
+        enabled: false,
+        intervalMinutes: 360,
+        autoGrab: false,
+      },
       import: {
         deleteAfterImport: false,
         minSeedTime: 60,
@@ -137,6 +142,11 @@ function GeneralSettings() {
         library: {
           path: settings.library.path,
           folderFormat: settings.library.folderFormat,
+        },
+        search: {
+          enabled: settings.search?.enabled ?? false,
+          intervalMinutes: settings.search?.intervalMinutes ?? 360,
+          autoGrab: settings.search?.autoGrab ?? false,
         },
         import: {
           deleteAfterImport: settings.import?.deleteAfterImport ?? false,
@@ -299,6 +309,74 @@ function GeneralSettings() {
               Use conditional blocks like <code className="px-1 py-0.5 bg-muted rounded text-xs">{'{series? - }'}</code> to add separators only when a value exists.
               Use <code className="px-1 py-0.5 bg-muted rounded text-xs">{'{seriesPosition:00}'}</code> for zero-padding.
             </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="glass-card rounded-2xl p-6 sm:p-8">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="p-2 bg-primary/10 rounded-xl">
+            <SearchIcon className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <h2 className="font-display text-xl font-semibold">Search</h2>
+            <p className="text-sm text-muted-foreground">Automatic searching for wanted books</p>
+          </div>
+        </div>
+
+        <div className="space-y-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="block text-sm font-medium">Enable Scheduled Search</label>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Periodically search indexers for books in your wanted list
+              </p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                {...register('search.enabled')}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+            </label>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Search Interval (minutes)</label>
+            <input
+              type="number"
+              {...register('search.intervalMinutes', { valueAsNumber: true })}
+              className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+                errors.search?.intervalMinutes ? 'border-destructive' : 'border-border'
+              }`}
+              min={5}
+              max={1440}
+              placeholder="360"
+            />
+            {errors.search?.intervalMinutes && (
+              <p className="text-sm text-destructive mt-1">{errors.search.intervalMinutes.message}</p>
+            )}
+            <p className="text-sm text-muted-foreground mt-2">
+              How often to search for new releases (5–1440 minutes)
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="block text-sm font-medium">Auto-Grab Best Result</label>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Automatically grab the best result (most seeders) when a match is found
+              </p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                {...register('search.autoGrab')}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+            </label>
           </div>
         </div>
       </div>

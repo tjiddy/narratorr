@@ -105,6 +105,7 @@ export interface Settings {
   search: {
     intervalMinutes: number;
     enabled: boolean;
+    autoGrab: boolean;
   };
   import: {
     deleteAfterImport: boolean;
@@ -306,6 +307,8 @@ export const api = {
 
   // System
   getStatus: () => fetchApi<{ version: string; status: string }>('/system/status'),
+  triggerSearch: () =>
+    fetchApi<{ searched: number; grabbed: number }>('/system/tasks/search', { method: 'POST' }),
 };
 
 // Utility functions

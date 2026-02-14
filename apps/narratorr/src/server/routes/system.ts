@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
+import type { Services } from './index.js';
+import { runSearchJob } from '../jobs/search.js';
 
-export async function systemRoutes(app: FastifyInstance) {
+export async function systemRoutes(app: FastifyInstance, services: Services) {
   // GET /api/system/status
   app.get('/api/system/status', async () => {
     return {
@@ -16,5 +18,17 @@ export async function systemRoutes(app: FastifyInstance) {
       status: 'ok',
       timestamp: new Date().toISOString(),
     };
+  });
+
+  // POST /api/system/tasks/search — manually trigger a search cycle
+  app.post('/api/system/tasks/search', async (request) => {
+    const result = await runSearchJob(
+      services.settings,
+      services.book,
+      services.indexer,
+      services.download,
+      request.log,
+    );
+    return result;
   });
 }

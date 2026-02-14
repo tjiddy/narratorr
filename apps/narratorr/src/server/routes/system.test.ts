@@ -1,13 +1,23 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import Fastify from 'fastify';
+import { createMockServices } from '../__tests__/helpers.js';
 import { systemRoutes } from './system.js';
 
 describe('system routes', () => {
+  const services = createMockServices({
+    settings: {
+      get: async () => ({ enabled: false, intervalMinutes: 360, autoGrab: false }),
+    } as any,
+    book: {
+      getAll: async () => [],
+    } as any,
+  });
+
   let app: Awaited<ReturnType<typeof Fastify>>;
 
   beforeAll(async () => {
     app = Fastify({ logger: false });
-    await systemRoutes(app);
+    await systemRoutes(app, services);
     await app.ready();
   });
 
@@ -45,6 +55,20 @@ describe('system routes', () => {
       // Verify timestamp is a valid ISO string
       const timestamp = new Date(payload.timestamp);
       expect(timestamp.toISOString()).toBe(payload.timestamp);
+    });
+  });
+
+  describe('POST /api/system/tasks/search', () => {
+    it('returns 200 with search summary', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search' });
+
+      expect(res.statusCode).toBe(200);
+
+      const payload = JSON.parse(res.payload);
+      expect(payload).toHaveProperty('searched');
+      expect(payload).toHaveProperty('grabbed');
+      expect(payload.searched).toBe(0);
+      expect(payload.grabbed).toBe(0);
     });
   });
 });

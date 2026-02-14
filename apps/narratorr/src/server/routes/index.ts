@@ -53,5 +53,5 @@ export async function registerRoutes(
   await downloadClientsRoutes(app, services.downloadClient);
   await settingsRoutes(app, services.settings);
   await metadataRoutes(app, services.metadata);
-  await systemRoutes(app);
+  await systemRoutes(app, services);
 }

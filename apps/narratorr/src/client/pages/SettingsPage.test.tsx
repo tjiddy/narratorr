@@ -40,7 +40,7 @@ import { toast } from 'sonner';
 
 const mockSettings = {
   library: { path: '/audiobooks', folderFormat: '{author}/{title}' },
-  search: { intervalMinutes: 30, enabled: true },
+  search: { intervalMinutes: 30, enabled: true, autoGrab: false },
   import: { deleteAfterImport: false, minSeedTime: 0 },
   general: { logLevel: 'info' as const },
 };
