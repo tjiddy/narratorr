@@ -9,6 +9,7 @@ import {
   DownloadService,
   MetadataService,
 } from '../services';
+import { ImportService } from '../services/import.service.js';
 
 import { booksRoutes } from './books.js';
 import { searchRoutes } from './search.js';
@@ -26,6 +27,7 @@ export interface Services {
   book: BookService;
   download: DownloadService;
   metadata: MetadataService;
+  import: ImportService;
 }
 
 export function createServices(db: Db, log: FastifyBaseLogger): Services {
@@ -35,8 +37,9 @@ export function createServices(db: Db, log: FastifyBaseLogger): Services {
   const book = new BookService(db, log);
   const download = new DownloadService(db, downloadClient, log);
   const metadata = new MetadataService(log);
+  const importService = new ImportService(db, downloadClient, settings, log);
 
-  return { settings, indexer, downloadClient, book, download, metadata };
+  return { settings, indexer, downloadClient, book, download, metadata, import: importService };
 }
 
 export async function registerRoutes(

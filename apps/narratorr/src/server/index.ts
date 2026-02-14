@@ -82,7 +82,7 @@ async function main() {
   }
 
   // Start background jobs
-  startJobs(db, services.downloadClient, services.metadata, app.log);
+  startJobs(db, services.downloadClient, services.metadata, services.import, app.log);
 
   // Graceful shutdown — ensures port is released on tsx watch restarts
   const shutdown = async () => {

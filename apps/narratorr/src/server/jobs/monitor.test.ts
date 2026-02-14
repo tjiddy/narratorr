@@ -113,7 +113,7 @@ describe('monitor job', () => {
     expect(log.info).toHaveBeenCalledWith({ id: 1, status: 'completed' }, 'Download state changed');
   });
 
-  it('updates book status to imported when download completes with bookId', async () => {
+  it('logs completion and queues for import when download completes with bookId', async () => {
     db.select.mockReturnValueOnce(mockDbChain([
       { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42 },
     ]));
@@ -125,11 +125,11 @@ describe('monitor job', () => {
 
     await runMonitor();
 
-    // 3 update calls: download status, book status, download imported
-    expect(db.update).toHaveBeenCalledTimes(3);
+    // Only 1 update call: download status to completed (import job handles the rest)
+    expect(db.update).toHaveBeenCalledTimes(1);
     expect(log.info).toHaveBeenCalledWith(
       { bookId: 42, downloadId: 1 },
-      'Book status updated from monitor',
+      'Download completed, queued for import',
     );
   });
 

@@ -183,6 +183,10 @@ export const updateSettingsFormSchema = z.object({
     path: z.string().min(1, 'Library path is required'),
     folderFormat: z.string().min(1, 'Folder format is required'),
   }),
+  import: z.object({
+    deleteAfterImport: z.boolean(),
+    minSeedTime: z.number().int().min(0),
+  }),
   general: z.object({
     logLevel: logLevelSchema,
   }),

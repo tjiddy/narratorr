@@ -149,5 +149,10 @@ export function createMockServices(overrides?: Partial<Services>): Services {
       getProviders: vi.fn(),
       ...overrides?.metadata,
     } as unknown as Services['metadata'],
+    import: {
+      importDownload: vi.fn(),
+      processCompletedDownloads: vi.fn(),
+      ...overrides?.import,
+    } as unknown as Services['import'],
   };
 }

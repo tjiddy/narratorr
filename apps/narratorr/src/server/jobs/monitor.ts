@@ -82,20 +82,9 @@ async function monitorDownloads(db: Db, downloadClientService: DownloadClientSer
         })
         .where(eq(downloads.id, download.id));
 
-      // Update book status if linked and completed
-      if (isCompleted && download.bookId) {
-        await db
-          .update(books)
-          .set({ status: 'imported', updatedAt: new Date() })
-          .where(eq(books.id, download.bookId));
-
-        // Mark download as imported
-        await db
-          .update(downloads)
-          .set({ status: 'imported' })
-          .where(eq(downloads.id, download.id));
-
-        log.info({ bookId: download.bookId, downloadId: download.id }, 'Book status updated from monitor');
+      // Log completion — import job will handle copying files to library
+      if (isCompleted && download.status !== 'completed') {
+        log.info({ bookId: download.bookId, downloadId: download.id }, 'Download completed, queued for import');
       }
     } catch (error) {
       log.error({ error, id: download.id }, 'Error monitoring download');
