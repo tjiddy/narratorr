@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<caps>
+  <server title="Test Newznab Indexer" strapline="A test indexer" url="https://indexer.test"/>
+  <searching>
+    <search available="yes" supportedParams="q"/>
+    <audio-search available="yes" supportedParams="q,artist,album"/>
+  </searching>
+  <categories>
+    <category id="3000" name="Audio">
+      <subcat id="3010" name="MP3"/>
+      <subcat id="3030" name="Audiobook"/>
+    </category>
+  </categories>
+</caps>

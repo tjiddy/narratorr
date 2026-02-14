@@ -4,10 +4,12 @@ import type { FastifyBaseLogger } from 'fastify';
 import { indexers } from '@narratorr/db/schema';
 import {
   AudioBookBayIndexer,
+  NewznabIndexer,
   type IndexerAdapter,
   type SearchResult,
   type SearchOptions,
   type ABBConfig,
+  type NewznabConfig,
 } from '@narratorr/core';
 
 type IndexerRow = typeof indexers.$inferSelect;
@@ -79,6 +81,14 @@ export class IndexerService {
         };
         this.log.debug({ indexer: indexer.name, type: indexer.type, hostname: config.hostname, pageLimit: config.pageLimit }, 'Creating indexer adapter');
         return new AudioBookBayIndexer(config);
+      }
+      case 'newznab': {
+        const config: NewznabConfig = {
+          apiUrl: settings.apiUrl as string,
+          apiKey: settings.apiKey as string,
+        };
+        this.log.debug({ indexer: indexer.name, type: indexer.type, apiUrl: config.apiUrl }, 'Creating indexer adapter');
+        return new NewznabIndexer(config, indexer.name);
       }
       default:
         throw new Error(`Unknown indexer type: ${indexer.type}`);

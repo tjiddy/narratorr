@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+  <channel>
+    <title>Test Indexer</title>
+    <item>
+      <title>The Way of Kings - Brandon Sanderson (Unabridged)</title>
+      <guid isPermaLink="true">https://indexer.test/details/abc123</guid>
+      <link>https://indexer.test/getnzb/abc123.nzb&amp;i=1&amp;r=testapikey</link>
+      <pubDate>Sat, 01 Jan 2024 12:00:00 +0000</pubDate>
+      <category>Audio &gt; Audiobook</category>
+      <enclosure url="https://indexer.test/getnzb/abc123.nzb?i=1&amp;r=testapikey" length="1073741824" type="application/x-nzb"/>
+      <newznab:attr name="size" value="1073741824"/>
+      <newznab:attr name="grabs" value="42"/>
+      <newznab:attr name="guid" value="abc123"/>
+    </item>
+    <item>
+      <title>Words of Radiance - Brandon Sanderson (Unabridged)</title>
+      <guid isPermaLink="true">https://indexer.test/details/def456</guid>
+      <link>https://indexer.test/getnzb/def456.nzb&amp;i=1&amp;r=testapikey</link>
+      <pubDate>Sun, 02 Jan 2024 14:00:00 +0000</pubDate>
+      <category>Audio &gt; Audiobook</category>
+      <enclosure url="https://indexer.test/getnzb/def456.nzb?i=1&amp;r=testapikey" length="2147483648" type="application/x-nzb"/>
+      <newznab:attr name="size" value="2147483648"/>
+      <newznab:attr name="grabs" value="18"/>
+      <newznab:attr name="guid" value="def456"/>
+    </item>
+    <item>
+      <title>Oathbringer - Brandon Sanderson (Unabridged)</title>
+      <guid isPermaLink="true">https://indexer.test/details/ghi789</guid>
+      <link>https://indexer.test/getnzb/ghi789.nzb&amp;i=1&amp;r=testapikey</link>
+      <pubDate>Mon, 03 Jan 2024 16:00:00 +0000</pubDate>
+      <category>Audio &gt; Audiobook</category>
+      <enclosure url="https://indexer.test/getnzb/ghi789.nzb?i=1&amp;r=testapikey" length="3221225472" type="application/x-nzb"/>
+      <newznab:attr name="size" value="3221225472"/>
+      <newznab:attr name="grabs" value="7"/>
+      <newznab:attr name="guid" value="ghi789"/>
+    </item>
+  </channel>
+</rss>
