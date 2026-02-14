@@ -450,3 +450,58 @@ describe('SettingsPage - Edit download client', () => {
     expect(passwordInput).toHaveAttribute('type', 'password');
   });
 });
+
+describe('SettingsPage - Folder format token chips and preview', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getSettings).mockResolvedValue(mockSettings);
+    vi.mocked(api.getIndexers).mockResolvedValue([]);
+    vi.mocked(api.getClients).mockResolvedValue([]);
+  });
+
+  it('renders token chips for all allowed tokens', async () => {
+    renderSettingsPage('/settings');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Library' })).toBeInTheDocument();
+    });
+
+    // All 6 token chips should render
+    expect(screen.getByText('{author}')).toBeInTheDocument();
+    expect(screen.getByText('{title}')).toBeInTheDocument();
+    expect(screen.getByText('{series}')).toBeInTheDocument();
+    expect(screen.getByText('{seriesPosition}')).toBeInTheDocument();
+    expect(screen.getByText('{year}')).toBeInTheDocument();
+    expect(screen.getByText('{narrator}')).toBeInTheDocument();
+  });
+
+  it('shows live preview with sample data', async () => {
+    renderSettingsPage('/settings');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Library' })).toBeInTheDocument();
+    });
+
+    // Default template is {author}/{title}, preview should show sample data
+    await waitFor(() => {
+      expect(screen.getByText('Preview')).toBeInTheDocument();
+      expect(screen.getByText('Brandon Sanderson/The Way of Kings')).toBeInTheDocument();
+    });
+  });
+
+  it('clicking a token chip inserts it into the input', async () => {
+    const user = userEvent.setup();
+    renderSettingsPage('/settings');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Library' })).toBeInTheDocument();
+    });
+
+    // Click the {year} chip
+    await user.click(screen.getByText('{year}'));
+
+    // The folder format input should now contain {year}
+    const input = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
+    expect(input.value).toContain('{year}');
+  });
+});

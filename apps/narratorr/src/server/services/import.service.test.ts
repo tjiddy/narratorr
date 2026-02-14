@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
-import { ImportService, sanitizePath, buildTargetPath } from './import.service.js';
+import { ImportService, buildTargetPath } from './import.service.js';
+import { sanitizePath } from '@narratorr/core/utils';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 
@@ -152,6 +153,42 @@ describe('buildTargetPath', () => {
   it('sanitizes special characters in path segments', () => {
     const result = buildTargetPath('/audiobooks', '{author}/{title}', { title: 'Book: Subtitle?' }, 'Author');
     expect(result).not.toMatch(/[?:]/);
+  });
+
+  it('includes narrator token', () => {
+    const result = buildTargetPath('/audiobooks', '{author}/{title} [{narrator}]', { title: 'Book', narrator: 'John Smith' }, 'Author');
+    expect(result).toMatch(/John Smith/);
+  });
+
+  it('includes year token from publishedDate', () => {
+    const result = buildTargetPath('/audiobooks', '{author}/{title} ({year})', { title: 'Book', publishedDate: '2010-11-02' }, 'Author');
+    expect(result).toMatch(/2010/);
+  });
+
+  it('includes seriesPosition with zero-padding', () => {
+    const result = buildTargetPath('/audiobooks', '{author}/{series} {seriesPosition:00}/{title}', {
+      title: 'Book',
+      seriesName: 'Series',
+      seriesPosition: 3,
+    }, 'Author');
+    expect(result).toMatch(/Series 03/);
+  });
+
+  it('handles conditional blocks', () => {
+    const result = buildTargetPath('/audiobooks', '{author}/{series? - }{title}', {
+      title: 'Book',
+      seriesName: 'My Series',
+    }, 'Author');
+    expect(result).toMatch(/My Series - Book/);
+  });
+
+  it('omits conditional blocks when value is missing', () => {
+    const result = buildTargetPath('/audiobooks', '{author}/{series? - }{title}', {
+      title: 'Book',
+    }, 'Author');
+    expect(result).toMatch(/Author/);
+    expect(result).toMatch(/Book/);
+    expect(result).not.toMatch(/- /);
   });
 });
 

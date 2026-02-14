@@ -138,9 +138,26 @@ export type GrabInput = z.infer<typeof grabSchema>;
 // Settings schemas
 // ============================================================================
 
+const FOLDER_FORMAT_ALLOWED_TOKENS = ['author', 'title', 'series', 'seriesPosition', 'year', 'narrator'];
+
+export const folderFormatSchema = z.string().default('{author}/{title}').refine(
+  (val) => /\{title(?::\d+)?(?:\?[^}]*)?\}/.test(val),
+  { message: 'Template must include {title}' },
+).refine(
+  (val) => {
+    const tokenPattern = /\{(\w+)(?::\d+)?(?:\?[^}]*)?\}/g;
+    let match: RegExpExecArray | null;
+    while ((match = tokenPattern.exec(val)) !== null) {
+      if (!FOLDER_FORMAT_ALLOWED_TOKENS.includes(match[1])) return false;
+    }
+    return true;
+  },
+  { message: 'Unknown token in template. Allowed: {author}, {title}, {series}, {seriesPosition}, {year}, {narrator}' },
+);
+
 export const librarySettingsSchema = z.object({
   path: z.string().min(1, 'Library path is required'),
-  folderFormat: z.string().default('{author}/{title}'),
+  folderFormat: folderFormatSchema,
 });
 
 export const searchSettingsSchema = z.object({
@@ -181,7 +198,20 @@ export type UpdateSettingsInput = z.infer<typeof updateSettingsSchema>;
 export const updateSettingsFormSchema = z.object({
   library: z.object({
     path: z.string().min(1, 'Library path is required'),
-    folderFormat: z.string().min(1, 'Folder format is required'),
+    folderFormat: z.string().min(1, 'Folder format is required').refine(
+      (val) => /\{title(?::\d+)?(?:\?[^}]*)?\}/.test(val),
+      { message: 'Template must include {title}' },
+    ).refine(
+      (val) => {
+        const tokenPattern = /\{(\w+)(?::\d+)?(?:\?[^}]*)?\}/g;
+        let match: RegExpExecArray | null;
+        while ((match = tokenPattern.exec(val)) !== null) {
+          if (!FOLDER_FORMAT_ALLOWED_TOKENS.includes(match[1])) return false;
+        }
+        return true;
+      },
+      { message: 'Unknown token in template' },
+    ),
   }),
   import: z.object({
     deleteAfterImport: z.boolean(),

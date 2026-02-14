@@ -4,6 +4,7 @@ import { join, extname, basename } from 'node:path';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, authors } from '@narratorr/db/schema';
+import { sanitizePath, renderTemplate } from '@narratorr/core/utils';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 
@@ -13,37 +14,37 @@ type AuthorRow = typeof authors.$inferSelect;
 
 const AUDIO_EXTENSIONS = new Set(['.m4b', '.mp3', '.m4a', '.flac', '.ogg', '.opus', '.wma', '.aac']);
 
-/** Sanitize a string for use as a filesystem path segment. */
-export function sanitizePath(name: string): string {
-  // Replace characters illegal on Windows/Linux/macOS
-  return name
-    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
-    .replace(/\.+$/, '') // trailing dots (Windows)
-    .trim()
-    || 'Unknown';
+/** Extract a 4-digit year from a date string like "2010-11-02" or "2010". */
+function extractYear(publishedDate: string | null | undefined): string | undefined {
+  if (!publishedDate) return undefined;
+  const match = publishedDate.match(/(\d{4})/);
+  return match ? match[1] : undefined;
 }
 
 /** Build the target directory from a folder format string and book metadata. */
 export function buildTargetPath(
   libraryPath: string,
   folderFormat: string,
-  book: { title: string; seriesName?: string | null; seriesPosition?: number | null },
+  book: {
+    title: string;
+    seriesName?: string | null;
+    seriesPosition?: number | null;
+    narrator?: string | null;
+    publishedDate?: string | null;
+  },
   authorName: string | null,
 ): string {
-  const tokens: Record<string, string> = {
-    author: sanitizePath(authorName || 'Unknown Author'),
-    title: sanitizePath(book.title),
-    series: sanitizePath(book.seriesName || ''),
+  const tokens: Record<string, string | number | undefined> = {
+    author: authorName || 'Unknown Author',
+    title: book.title,
+    series: book.seriesName || undefined,
+    seriesPosition: book.seriesPosition ?? undefined,
+    narrator: book.narrator || undefined,
+    year: extractYear(book.publishedDate),
   };
 
-  let path = folderFormat;
-  for (const [key, value] of Object.entries(tokens)) {
-    path = path.replaceAll(`{${key}}`, value);
-  }
-
-  // Remove empty path segments (e.g. if {series} was empty)
-  const segments = path.split('/').filter((s) => s.length > 0);
-  return join(libraryPath, ...segments);
+  const rendered = renderTemplate(folderFormat, tokens);
+  return join(libraryPath, ...rendered.split('/'));
 }
 
 /** Recursively get total size of a path (file or directory). */
