@@ -9,12 +9,16 @@ This document defines the **implementor workflow** for working Gitea issues in t
 **Goal:** Take a `status/ready` issue → implement on a branch → open a PR → update the issue for downstream agents (review/QA/merge).
 **Do NOT merge** unless explicitly instructed.
 
-> **Skills available:** `/claim <id>`, `/handoff <id>`, `/block <id>` automate the steps below. Use these for the standard workflow; refer to this doc for edge cases and templates.
+> **Skills available:** `/implement <id>`, `/claim <id>`, `/handoff <id>`, `/block <id>`, `/elaborate <id>` automate the steps below. Use these for the standard workflow; refer to this doc for edge cases and templates.
 
 ---
 
 ## TL;DR (do this every time)
 
+**Full auto (preferred):**
+1. `/implement <id>` — validates spec, explores codebase, claims, implements, and hands off
+
+**Manual control:**
 1. Read issue: `pnpm gitea issue <id>`
 2. Verify: label contains `status/ready`, and spec has Acceptance Criteria + Test Plan.
 3. If missing info: comment `BLOCKED — need input` (template below), set `status/blocked`, stop.
@@ -23,6 +27,10 @@ This document defines the **implementor workflow** for working Gitea issues in t
 6. Implement; run tests per Test Plan.
 7. Push; create PR titled `#<id> <issue title>` with `Refs #<id>` and structured body.
 8. Update labels: replace `stage/dev` with `stage/review`. Comment on issue with PR link + what changed + how verified.
+
+**Standalone tools:**
+- `/elaborate <id>` — groom/triage without claiming (no side effects on labels/branches)
+- `/block <id>` — mark blocked and stop
 
 ---
 
@@ -94,21 +102,43 @@ Must include the sections in the PR template below and **must include**: `Refs #
 
 ## Step-by-step workflow (detailed)
 
-## 0) Pre-flight (before you change anything)
+## 0) Pre-flight: Validation (before you change anything)
+
+> This phase is automated by `/claim` (inline) and available standalone via `/elaborate`.
 
 1. Read issue:
     - `pnpm gitea issue <id>`
 
-2. Verify ALL of the following:
-    - Issue includes `status/ready`
-    - Acceptance Criteria exist (checkboxes preferred)
-    - Test Plan exists (commands + manual steps)
-    - No existing open PR already references `#<id>` (search PR list or repo for `#<id>` / `issue-<id>`)
+2. **Parse spec completeness.** Verify the issue body contains:
+    - **Acceptance Criteria** — clear, testable statements (REQUIRED)
+    - **Test Plan** — specific test cases or commands (REQUIRED)
+    - **Implementation detail** — file paths, service/route names (recommended)
+    - **Dependencies** — references to other issues, with their status checked (recommended)
+    - **Scope boundaries** — what's explicitly out of scope (recommended)
 
-3. If anything is missing/ambiguous:
-    - Post a BLOCKED comment (template below)
-    - Set label to `status/blocked`
-    - STOP (do not create a branch or commit anything)
+3. **Explore codebase for relevant patterns:**
+    - Find similar existing features (adapters, services, routes)
+    - Check interfaces/types in `packages/core/src/*/types.ts`, `shared/schemas.ts`, `packages/db/src/schema.ts`
+    - Identify wiring/touch points (`routes/index.ts`, `services/`, `App.tsx`, `Layout.tsx`)
+
+4. **Check for overlapping work:**
+    - `pnpm gitea prs` — any open PR touching the same area?
+    - Any `status/in-progress` issues that overlap?
+
+5. **Check dependencies:**
+    - Referenced issues → verify they are `status/done`
+
+6. **Fill gaps** from codebase knowledge:
+    - If implementation detail can be inferred, append to issue body (preserve existing content)
+    - `pnpm gitea issue-update <id> body --body-file <temp-file>`
+
+7. **Gate on readiness:**
+    - **Ready** — AC testable, test plan specific, implementation path clear, no blockers → proceed to Phase 1
+    - **Needs detail (filled)** — had gaps, filled from codebase, now ready → proceed to Phase 1
+    - **Not ready** — ambiguous requirements, missing AC/test plan, unresolved deps →
+        - Post a BLOCKED comment (template below)
+        - Set label to `status/blocked`
+        - STOP (do not create a branch or commit anything)
 
 ---
 

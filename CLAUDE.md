@@ -93,20 +93,30 @@ pnpm gitea pr-create <title> <body> <head> [base]  # Create PR
 
 Claude Code skills automate the agent workflow — use these instead of manual steps:
 
-- `/claim <id>` — Read issue, verify ready, post claim comment, set in-progress, create branch
+- `/implement <id>` — Full lifecycle: elaborate → claim → implement → handoff (preferred for end-to-end work)
+- `/claim <id>` — Validate spec + explore codebase + claim issue (use when implementing manually)
 - `/handoff <id>` — Build, push, create PR, post handoff comment
 - `/block <id>` — Post blocked comment, set blocked label, stop
+- `/elaborate <id>` — Groom/triage an issue without claiming (read-only, no label/branch changes)
 
 ## ⚠ Issue Workflow — MANDATORY
 
 **Every task referencing a Gitea issue (#N) MUST follow this lifecycle — no exceptions.**
 A detailed plan, pre-made spec, or explicit implementation instructions do NOT bypass these steps.
 
-1. **Before writing any code** → `/claim <id>` (reads issue, verifies ready, comments, sets labels, creates branch)
-2. **After tests/typecheck/build pass** → `/handoff <id>` (pushes, creates PR, comments, updates labels, appends workflow log)
-3. **If blocked or unable to complete** → `/block <id>` (comments, sets blocked label, stops)
+**Full auto (preferred):**
+1. `/implement <id>` — validates, claims, implements, and hands off in one pass
 
-Skipping `/claim` means no branch, no tracking, no audit trail.
+**Manual control:**
+1. **Before writing any code** → `/claim <id>` (validates spec, explores codebase, claims if ready)
+2. **Implement** — follow the plan from the claim phase
+3. **After tests/typecheck/build pass** → `/handoff <id>` (pushes, creates PR, comments, updates labels, appends workflow log)
+
+**Standalone tools:**
+- `/elaborate <id>` — groom/triage without claiming (no side effects)
+- `/block <id>` — mark blocked and stop (at any point)
+
+Skipping `/claim` means no validation, no branch, no tracking, no audit trail.
 Skipping `/handoff` means no PR, no label update, no workflow log entry.
 
 ### Labels (2-axis model)
