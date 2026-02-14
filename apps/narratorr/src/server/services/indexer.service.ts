@@ -5,11 +5,13 @@ import { indexers } from '@narratorr/db/schema';
 import {
   AudioBookBayIndexer,
   NewznabIndexer,
+  TorznabIndexer,
   type IndexerAdapter,
   type SearchResult,
   type SearchOptions,
   type ABBConfig,
   type NewznabConfig,
+  type TorznabConfig,
 } from '@narratorr/core';
 
 type IndexerRow = typeof indexers.$inferSelect;
@@ -89,6 +91,14 @@ export class IndexerService {
         };
         this.log.debug({ indexer: indexer.name, type: indexer.type, apiUrl: config.apiUrl }, 'Creating indexer adapter');
         return new NewznabIndexer(config, indexer.name);
+      }
+      case 'torznab': {
+        const config: TorznabConfig = {
+          apiUrl: settings.apiUrl as string,
+          apiKey: settings.apiKey as string,
+        };
+        this.log.debug({ indexer: indexer.name, type: indexer.type, apiUrl: config.apiUrl }, 'Creating indexer adapter');
+        return new TorznabIndexer(config, indexer.name);
       }
       default:
         throw new Error(`Unknown indexer type: ${indexer.type}`);

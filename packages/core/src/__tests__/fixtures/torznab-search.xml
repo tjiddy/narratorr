@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>
+    <title>Test Torznab Indexer</title>
+    <item>
+      <title>The Way of Kings - Brandon Sanderson (Unabridged)</title>
+      <guid isPermaLink="true">https://tracker.test/details/abc123</guid>
+      <link>https://tracker.test/download/abc123.torrent</link>
+      <pubDate>Sat, 01 Jan 2024 12:00:00 +0000</pubDate>
+      <category>Audio &gt; Audiobook</category>
+      <enclosure url="https://tracker.test/download/abc123.torrent" length="1073741824" type="application/x-bittorrent"/>
+      <torznab:attr name="size" value="1073741824"/>
+      <torznab:attr name="seeders" value="15"/>
+      <torznab:attr name="leechers" value="3"/>
+      <torznab:attr name="grabs" value="42"/>
+      <torznab:attr name="infohash" value="aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"/>
+    </item>
+    <item>
+      <title>Words of Radiance - Brandon Sanderson (Unabridged)</title>
+      <guid isPermaLink="true">https://tracker.test/details/def456</guid>
+      <link>https://tracker.test/download/def456.torrent</link>
+      <pubDate>Sun, 02 Jan 2024 14:00:00 +0000</pubDate>
+      <category>Audio &gt; Audiobook</category>
+      <enclosure url="https://tracker.test/download/def456.torrent" length="2147483648" type="application/x-bittorrent"/>
+      <torznab:attr name="size" value="2147483648"/>
+      <torznab:attr name="seeders" value="8"/>
+      <torznab:attr name="leechers" value="1"/>
+      <torznab:attr name="grabs" value="18"/>
+      <torznab:attr name="infohash" value="b1d5781111d84f7b3fe45a0852e59758cd7a87e5"/>
+    </item>
+    <item>
+      <title>Oathbringer - Brandon Sanderson (Unabridged)</title>
+      <guid isPermaLink="true">https://tracker.test/details/ghi789</guid>
+      <pubDate>Mon, 03 Jan 2024 16:00:00 +0000</pubDate>
+      <category>Audio &gt; Audiobook</category>
+      <torznab:attr name="size" value="3221225472"/>
+      <torznab:attr name="seeders" value="2"/>
+      <torznab:attr name="leechers" value="0"/>
+      <torznab:attr name="grabs" value="7"/>
+      <torznab:attr name="infohash" value="da4b9237bacccdf19c0760cab7aec4a8359010b0"/>
+    </item>
+  </channel>
+</rss>
