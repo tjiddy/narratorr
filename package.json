@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "gitea": "node scripts/gitea.mjs",
     "dev": "turbo dev",
     "build": "turbo build",
     "lint": "eslint .",
