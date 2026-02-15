@@ -74,6 +74,30 @@ describe('activity routes', () => {
     });
   });
 
+  describe('GET /api/activity/counts', () => {
+    it('returns active and completed counts', async () => {
+      (services.download.getCounts as any).mockResolvedValue({ active: 3, completed: 7 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity/counts' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.active).toBe(3);
+      expect(body.completed).toBe(7);
+    });
+
+    it('returns zeros when no downloads', async () => {
+      (services.download.getCounts as any).mockResolvedValue({ active: 0, completed: 0 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity/counts' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.active).toBe(0);
+      expect(body.completed).toBe(0);
+    });
+  });
+
   describe('GET /api/activity/:id', () => {
     it('returns download when found', async () => {
       (services.download.getById as any).mockResolvedValue(mockDownload);

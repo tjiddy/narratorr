@@ -1,5 +1,6 @@
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useTheme } from '@/hooks/useTheme';
+import { useActivityCounts } from '@/hooks/useActivityCounts';
 import {
   HeadphonesIcon,
   SearchIcon,
@@ -20,6 +21,7 @@ const navItems = [
 export function Layout() {
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
+  const { active: activeDownloadCount } = useActivityCounts();
 
   return (
     <div className="min-h-screen gradient-bg noise-overlay">
@@ -64,6 +66,22 @@ export function Layout() {
                   >
                     <Icon className="w-4 h-4" />
                     <span className="hidden sm:inline">{item.label}</span>
+                    {item.to === '/activity' && activeDownloadCount > 0 && (
+                      <span
+                        className={`
+                          absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1
+                          rounded-full text-[10px] font-bold
+                          flex items-center justify-center leading-none
+                          ${isActive
+                            ? 'bg-primary-foreground text-primary'
+                            : 'bg-primary text-primary-foreground'
+                          }
+                        `}
+                        aria-label={`${activeDownloadCount} active download${activeDownloadCount === 1 ? '' : 's'}`}
+                      >
+                        {activeDownloadCount}
+                      </span>
+                    )}
                   </NavLink>
                 );
               })}

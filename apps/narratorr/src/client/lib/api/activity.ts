@@ -19,9 +19,15 @@ export interface Download {
   completedAt?: string;
 }
 
+export interface ActivityCounts {
+  active: number;
+  completed: number;
+}
+
 export const activityApi = {
   getActivity: () => fetchApi<Download[]>('/activity'),
   getActiveDownloads: () => fetchApi<Download[]>('/activity/active'),
+  getActivityCounts: () => fetchApi<ActivityCounts>('/activity/counts'),
   cancelDownload: (id: number) =>
     fetchApi<{ success: boolean }>(`/activity/${id}`, { method: 'DELETE' }),
   retryDownload: (id: number) =>

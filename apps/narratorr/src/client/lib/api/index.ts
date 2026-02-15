@@ -2,7 +2,7 @@ export { ApiError } from './client.js';
 
 export type { Author, BookWithAuthor, CreateBookPayload, BookMetadata, AuthorMetadata, MetadataSearchResults } from './books.js';
 export type { SearchResult } from './search.js';
-export type { Download } from './activity.js';
+export type { Download, ActivityCounts } from './activity.js';
 export type { Indexer } from './indexers.js';
 export type { DownloadClient } from './download-clients.js';
 export type { Notifier } from './notifiers.js';

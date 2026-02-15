@@ -1,4 +1,4 @@
-import { eq, desc, inArray, and } from 'drizzle-orm';
+import { eq, desc, inArray, and, count, sql } from 'drizzle-orm';
 import { type Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '@narratorr/db/schema';
@@ -86,6 +86,33 @@ export class DownloadService {
       ...r.download,
       book: r.book || undefined,
     }));
+  }
+
+  async getCounts(): Promise<{ active: number; completed: number }> {
+    const activeStatuses: DownloadRow['status'][] = [
+      'queued', 'downloading', 'paused', 'importing',
+    ];
+    const completedStatuses: DownloadRow['status'][] = [
+      'completed', 'imported',
+    ];
+
+    const rows = await this.db
+      .select({
+        isActive: sql<number>`CASE WHEN ${downloads.status} IN (${sql.join(activeStatuses.map(s => sql`${s}`), sql`, `)}) THEN 1 ELSE 0 END`,
+        cnt: count(),
+      })
+      .from(downloads)
+      .where(inArray(downloads.status, [...activeStatuses, ...completedStatuses]))
+      .groupBy(sql`1`);
+
+    let active = 0;
+    let completed = 0;
+    for (const row of rows) {
+      if (Number(row.isActive) === 1) active = Number(row.cnt);
+      else completed = Number(row.cnt);
+    }
+
+    return { active, completed };
   }
 
   async getActiveByBookId(bookId: number): Promise<DownloadWithBook[]> {

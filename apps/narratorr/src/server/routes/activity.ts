@@ -24,6 +24,17 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     }
   });
 
+  // GET /api/activity/counts
+  app.get('/api/activity/counts', async (request, reply) => {
+    try {
+      request.log.debug('Fetching activity counts');
+      return downloadService.getCounts();
+    } catch (error) {
+      request.log.error(error, 'Failed to fetch activity counts');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+
   // GET /api/activity/:id
   app.get<{ Params: { id: string } }>('/api/activity/:id', async (request, reply) => {
     try {

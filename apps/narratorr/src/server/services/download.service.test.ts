@@ -109,6 +109,36 @@ describe('DownloadService', () => {
     });
   });
 
+  describe('getCounts', () => {
+    it('returns active and completed counts', async () => {
+      db.select.mockReturnValue(
+        mockDbChain([
+          { isActive: 1, cnt: 3 },
+          { isActive: 0, cnt: 5 },
+        ]),
+      );
+
+      const result = await service.getCounts();
+      expect(result).toEqual({ active: 3, completed: 5 });
+    });
+
+    it('returns zeros when no downloads', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.getCounts();
+      expect(result).toEqual({ active: 0, completed: 0 });
+    });
+
+    it('returns only active when no completed', async () => {
+      db.select.mockReturnValue(
+        mockDbChain([{ isActive: 1, cnt: 2 }]),
+      );
+
+      const result = await service.getCounts();
+      expect(result).toEqual({ active: 2, completed: 0 });
+    });
+  });
+
   describe('getActiveByBookId', () => {
     it('returns active downloads for a specific book', async () => {
       db.select.mockReturnValue(
