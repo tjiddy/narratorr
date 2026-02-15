@@ -154,5 +154,10 @@ export function createMockServices(overrides?: Partial<Services>): Services {
       processCompletedDownloads: vi.fn(),
       ...overrides?.import,
     } as unknown as Services['import'],
+    libraryScan: {
+      scanDirectory: vi.fn(),
+      confirmImport: vi.fn(),
+      ...overrides?.libraryScan,
+    } as unknown as Services['libraryScan'],
   };
 }

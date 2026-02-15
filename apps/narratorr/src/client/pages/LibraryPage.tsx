@@ -19,8 +19,10 @@ import {
   ArrowRightIcon,
   EyeIcon,
   TrashIcon,
+  FolderIcon,
   LoadingSpinner,
 } from '@/components/icons';
+import { ImportLibraryModal } from '@/components/ImportLibraryModal';
 
 // ============================================================================
 // Types
@@ -85,6 +87,7 @@ export function LibraryPage() {
   const deleteConfirm = useDeleteConfirmation<BookWithAuthor>();
   const [searchBook, setSearchBook] = useState<BookWithAuthor | null>(null);
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   // Delete mutation
   const deleteMutation = useMutation({
@@ -167,7 +170,8 @@ export function LibraryPage() {
           <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Library</h1>
           <p className="text-muted-foreground mt-2">Your audiobook collection</p>
         </div>
-        <EmptyLibraryState />
+        <EmptyLibraryState onImport={() => setImportOpen(true)} />
+        <ImportLibraryModal isOpen={importOpen} onClose={() => setImportOpen(false)} />
       </div>
     );
   }
@@ -175,11 +179,20 @@ export function LibraryPage() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div className="animate-fade-in-up">
-        <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Library</h1>
-        <p className="text-muted-foreground mt-2">
-          {books.length} book{books.length !== 1 ? 's' : ''} in your collection
-        </p>
+      <div className="animate-fade-in-up flex items-start justify-between">
+        <div>
+          <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Library</h1>
+          <p className="text-muted-foreground mt-2">
+            {books.length} book{books.length !== 1 ? 's' : ''} in your collection
+          </p>
+        </div>
+        <button
+          onClick={() => setImportOpen(true)}
+          className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium glass-card rounded-xl hover:border-primary/30 hover:text-primary transition-all focus-ring"
+        >
+          <FolderIcon className="w-4 h-4" />
+          Import Existing
+        </button>
       </div>
 
       {/* Toolbar */}
@@ -239,6 +252,9 @@ export function LibraryPage() {
           onClose={() => setSearchBook(null)}
         />
       )}
+
+      {/* Import Library Modal */}
+      <ImportLibraryModal isOpen={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );
 }
@@ -574,7 +590,7 @@ function BookContextMenu({
 // Empty States
 // ============================================================================
 
-function EmptyLibraryState() {
+function EmptyLibraryState({ onImport }: { onImport: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 sm:py-24 animate-fade-in-up stagger-2">
       <div className="relative mb-8">
@@ -589,14 +605,23 @@ function EmptyLibraryState() {
       <p className="text-muted-foreground text-center max-w-md mb-8">
         Start building your audiobook collection by discovering and adding books
       </p>
-      <a
-        href="/search"
-        className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 hover:shadow-glow transition-all duration-200 focus-ring"
-      >
-        <SearchIcon className="w-4 h-4" />
-        Discover Books
-        <ArrowRightIcon className="w-4 h-4" />
-      </a>
+      <div className="flex flex-wrap items-center gap-3">
+        <a
+          href="/search"
+          className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 hover:shadow-glow transition-all duration-200 focus-ring"
+        >
+          <SearchIcon className="w-4 h-4" />
+          Discover Books
+          <ArrowRightIcon className="w-4 h-4" />
+        </a>
+        <button
+          onClick={onImport}
+          className="inline-flex items-center gap-2 px-6 py-3 glass-card font-medium rounded-xl hover:border-primary/30 hover:text-primary transition-all duration-200 focus-ring"
+        >
+          <FolderIcon className="w-4 h-4" />
+          Import Existing
+        </button>
+      </div>
     </div>
   );
 }

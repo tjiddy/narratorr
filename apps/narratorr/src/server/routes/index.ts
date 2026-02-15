@@ -10,6 +10,7 @@ import {
   MetadataService,
 } from '../services';
 import { ImportService } from '../services/import.service.js';
+import { LibraryScanService } from '../services/library-scan.service.js';
 
 import { booksRoutes } from './books.js';
 import { searchRoutes } from './search.js';
@@ -19,6 +20,7 @@ import { downloadClientsRoutes } from './download-clients.js';
 import { settingsRoutes } from './settings.js';
 import { systemRoutes } from './system.js';
 import { metadataRoutes } from './metadata.js';
+import { libraryScanRoutes } from './library-scan.js';
 
 export interface Services {
   settings: SettingsService;
@@ -28,6 +30,7 @@ export interface Services {
   download: DownloadService;
   metadata: MetadataService;
   import: ImportService;
+  libraryScan: LibraryScanService;
 }
 
 export function createServices(db: Db, log: FastifyBaseLogger): Services {
@@ -38,8 +41,9 @@ export function createServices(db: Db, log: FastifyBaseLogger): Services {
   const download = new DownloadService(db, downloadClient, log);
   const metadata = new MetadataService(log);
   const importService = new ImportService(db, downloadClient, settings, log);
+  const libraryScan = new LibraryScanService(db, book, log);
 
-  return { settings, indexer, downloadClient, book, download, metadata, import: importService };
+  return { settings, indexer, downloadClient, book, download, metadata, import: importService, libraryScan };
 }
 
 export async function registerRoutes(
@@ -53,5 +57,6 @@ export async function registerRoutes(
   await downloadClientsRoutes(app, services.downloadClient);
   await settingsRoutes(app, services.settings);
   await metadataRoutes(app, services.metadata);
+  await libraryScanRoutes(app, services.libraryScan);
   await systemRoutes(app, services);
 }

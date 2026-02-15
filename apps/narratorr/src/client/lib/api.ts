@@ -202,6 +202,34 @@ export interface MetadataSearchResults {
   series: unknown[];
 }
 
+// Library import types
+export interface DiscoveredBook {
+  path: string;
+  parsedTitle: string;
+  parsedAuthor: string | null;
+  parsedSeries: string | null;
+  fileCount: number;
+  totalSize: number;
+}
+
+export interface ScanResult {
+  discoveries: DiscoveredBook[];
+  totalFolders: number;
+  skippedDuplicates: number;
+}
+
+export interface ImportConfirmItem {
+  path: string;
+  title: string;
+  authorName?: string;
+  seriesName?: string;
+}
+
+export interface ImportResult {
+  imported: number;
+  failed: number;
+}
+
 // API methods
 export const api = {
   // Library
@@ -303,6 +331,18 @@ export const api = {
     fetchApi<Settings>('/settings', {
       method: 'PUT',
       body: JSON.stringify(data),
+    }),
+
+  // Library Import
+  scanDirectory: (path: string) =>
+    fetchApi<ScanResult>('/library/import/scan', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+  confirmImport: (books: ImportConfirmItem[]) =>
+    fetchApi<ImportResult>('/library/import/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ books }),
     }),
 
   // System
