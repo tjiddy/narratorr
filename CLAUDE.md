@@ -16,7 +16,6 @@ Monorepo (Turborepo + pnpm) | Node.js 20+ | Fastify 5 | Drizzle ORM + libSQL | R
 - `packages/core/src/` — Indexer + download client adapters (indexers/, download-clients/, utils/)
 - `packages/db/src/` — Drizzle schema (schema.ts), client, migrations
 - `packages/ui/` — Shared UI utilities (cn())
-- `scripts/gitea.ts` — Gitea API client (TypeScript CLI)
 
 ## Commands
 
@@ -86,18 +85,7 @@ All new/changed code must include tests. Run `pnpm test` (Vitest via Turborepo) 
 
 ## Project Management (Gitea)
 
-All work is tracked as Gitea issues at `https://git.tjiddy.com/todd/narratorr`. Specs live in issue bodies — each issue is self-contained.
-
-```bash
-pnpm gitea issues                   # List open issues
-pnpm gitea issue <id>               # Read full spec
-pnpm gitea issue-update <id> <field> <value>  # Update issue (state/labels/milestone/title/body)
-pnpm gitea issue-comment <id> "message"       # Add comment
-pnpm gitea prs                      # List open PRs
-pnpm gitea pr <number>              # Get PR details
-pnpm gitea pr-create <title> <body> <head> [base]  # Create PR
-pnpm gitea pr-comment <number> <body>  # Add comment to PR
-```
+All work is tracked as Gitea issues at `https://git.tjiddy.com/todd/narratorr`. Specs live in issue bodies — each issue is self-contained. The Gitea CLI is provided by the `gitea-workflow` plugin — use `/gitea-workflow:issue <id>`, `/gitea-workflow:issues`, etc.
 
 ### Workflow Skills
 

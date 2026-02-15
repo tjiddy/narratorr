@@ -45,5 +45,6 @@ tmp/
 temp/
 
 .claude/settings.local.json
+.claude/project-context.md
 workflow-log.md
 nul
