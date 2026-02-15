@@ -5,3 +5,4 @@ export { BookService, type BookWithAuthor } from './book.service.js';
 export { DownloadService, type DownloadWithBook } from './download.service.js';
 export { MetadataService } from './metadata.service.js';
 export { ImportService } from './import.service.js';
+export { NotifierService } from './notifier.service.js';

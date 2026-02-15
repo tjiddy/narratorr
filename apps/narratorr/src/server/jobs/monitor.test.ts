@@ -17,6 +17,7 @@ const { startMonitorJob } = await import('./monitor.js');
 describe('monitor job', () => {
   let db: ReturnType<typeof createMockDb>;
   let downloadClientService: { getAdapter: ReturnType<typeof vi.fn> };
+  let notifierService: { notify: ReturnType<typeof vi.fn> };
   let log: ReturnType<typeof createMockLogger>;
   let adapter: { getDownload: ReturnType<typeof vi.fn> };
 
@@ -25,10 +26,11 @@ describe('monitor job', () => {
     log = createMockLogger();
     adapter = { getDownload: vi.fn() };
     downloadClientService = { getAdapter: vi.fn().mockResolvedValue(adapter) };
+    notifierService = { notify: vi.fn().mockResolvedValue(undefined) };
     cronCallback = null;
 
     // Register the cron callback
-    startMonitorJob(db as any, downloadClientService as any, log as any);
+    startMonitorJob(db as any, downloadClientService as any, notifierService as any, log as any);
   });
 
   async function runMonitor() {

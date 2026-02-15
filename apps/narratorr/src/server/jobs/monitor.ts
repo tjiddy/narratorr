@@ -4,12 +4,13 @@ import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '@narratorr/db/schema';
 import type { DownloadClientService } from '../services';
+import type { NotifierService } from '../services';
 
-export function startMonitorJob(db: Db, downloadClientService: DownloadClientService, log: FastifyBaseLogger) {
+export function startMonitorJob(db: Db, downloadClientService: DownloadClientService, notifierService: NotifierService, log: FastifyBaseLogger) {
   // Run every 30 seconds
   cron.schedule('*/30 * * * * *', async () => {
     try {
-      await monitorDownloads(db, downloadClientService, log);
+      await monitorDownloads(db, downloadClientService, notifierService, log);
     } catch (error) {
       log.error(error, 'Monitor job error');
     }
@@ -18,7 +19,7 @@ export function startMonitorJob(db: Db, downloadClientService: DownloadClientSer
   log.info('Download monitor job started (every 30 seconds)');
 }
 
-async function monitorDownloads(db: Db, downloadClientService: DownloadClientService, log: FastifyBaseLogger) {
+async function monitorDownloads(db: Db, downloadClientService: DownloadClientService, notifierService: NotifierService, log: FastifyBaseLogger) {
   // Get all active downloads
   const activeStatuses = ['downloading', 'queued', 'paused'] as const;
   const activeDownloads = await db
@@ -57,6 +58,14 @@ async function monitorDownloads(db: Db, downloadClientService: DownloadClientSer
             errorMessage: 'Download not found in download client',
           })
           .where(eq(downloads.id, download.id));
+
+        // Notify on failure
+        Promise.resolve(notifierService.notify('on_failure', {
+          event: 'on_failure',
+          book: { title: download.title },
+          error: { message: 'Download not found in download client', stage: 'download' },
+        })).catch((err) => log.warn(err, 'Failed to send failure notification'));
+
         continue;
       }
 
@@ -85,6 +94,16 @@ async function monitorDownloads(db: Db, downloadClientService: DownloadClientSer
       // Log completion — import job will handle copying files to library
       if (isCompleted && download.status !== 'completed') {
         log.info({ bookId: download.bookId, downloadId: download.id }, 'Download completed, queued for import');
+
+        // Notify on download complete
+        Promise.resolve(notifierService.notify('on_download_complete', {
+          event: 'on_download_complete',
+          book: { title: download.title },
+          download: {
+            path: item.savePath,
+            size: item.size,
+          },
+        })).catch((err) => log.warn(err, 'Failed to send download complete notification'));
       }
     } catch (error) {
       log.error({ error, id: download.id }, 'Error monitoring download');

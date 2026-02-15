@@ -159,5 +159,16 @@ export function createMockServices(overrides?: Partial<Services>): Services {
       confirmImport: vi.fn(),
       ...overrides?.libraryScan,
     } as unknown as Services['libraryScan'],
+    notifier: {
+      getAll: vi.fn(),
+      getById: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+      notify: vi.fn().mockResolvedValue(undefined),
+      test: vi.fn(),
+      testConfig: vi.fn(),
+      ...overrides?.notifier,
+    } as unknown as Services['notifier'],
   };
 }

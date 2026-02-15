@@ -89,6 +89,20 @@ export const downloadClients = sqliteTable('download_clients', {
   index('idx_download_clients_enabled').on(table.enabled),
 ]);
 
+export const notifiers = sqliteTable('notifiers', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  type: text('type', { enum: ['webhook', 'discord', 'script'] }).notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  events: text('events', { mode: 'json' }).notNull().$type<string[]>(),
+  settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+}, (table) => [
+  index('idx_notifiers_enabled').on(table.enabled),
+]);
+
 // ============ ACTIVITY ============
 
 export const downloads = sqliteTable('downloads', {

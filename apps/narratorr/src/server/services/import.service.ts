@@ -7,6 +7,7 @@ import { downloads, books, authors } from '@narratorr/db/schema';
 import { sanitizePath, renderTemplate } from '@narratorr/core/utils';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { NotifierService } from './notifier.service.js';
 
 type DownloadRow = typeof downloads.$inferSelect;
 type BookRow = typeof books.$inferSelect;
@@ -94,6 +95,7 @@ export class ImportService {
     private downloadClientService: DownloadClientService,
     private settingsService: SettingsService,
     private log: FastifyBaseLogger,
+    private notifierService?: NotifierService,
   ) {}
 
   /**
@@ -185,6 +187,13 @@ export class ImportService {
         'Import completed successfully',
       );
 
+      // 9b. Notify on import
+      this.notifierService?.notify('on_import', {
+        event: 'on_import',
+        book: { title: book.title, author: author?.name },
+        import: { libraryPath: targetPath, fileCount },
+      }).catch((err) => this.log.warn(err, 'Failed to send import notification'));
+
       // 10. Handle torrent removal
       if (importSettings.deleteAfterImport) {
         await this.handleTorrentRemoval(download, importSettings.minSeedTime);
@@ -199,6 +208,14 @@ export class ImportService {
       }).where(eq(downloads.id, downloadId));
 
       this.log.error({ error, downloadId }, 'Import failed');
+
+      // Notify on failure
+      this.notifierService?.notify('on_failure', {
+        event: 'on_failure',
+        book: { title: download.title },
+        error: { message: error instanceof Error ? error.message : 'Import failed', stage: 'import' },
+      }).catch((err) => this.log.warn(err, 'Failed to send failure notification'));
+
       throw error;
     }
   }

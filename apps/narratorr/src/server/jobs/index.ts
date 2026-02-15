@@ -7,7 +7,7 @@ import { startImportJob } from './import.js';
 import { startSearchJob } from './search.js';
 
 export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
-  startMonitorJob(db, services.downloadClient, log);
+  startMonitorJob(db, services.downloadClient, services.notifier, log);
   startEnrichmentJob(db, services.metadata, log);
   startImportJob(services.import, log);
   startSearchJob(services.settings, services.book, services.indexer, services.download, log);

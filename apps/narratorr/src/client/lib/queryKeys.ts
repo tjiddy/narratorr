@@ -12,4 +12,5 @@ export const queryKeys = {
   settings: () => ['settings'] as const,
   indexers: () => ['indexers'] as const,
   downloadClients: () => ['downloadClients'] as const,
+  notifiers: () => ['notifiers'] as const,
 } as const;

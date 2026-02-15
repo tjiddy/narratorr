@@ -4,11 +4,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
-import { api, type Indexer, type DownloadClient } from '@/lib/api';
+import { api, type Indexer, type DownloadClient, type Notifier } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { IndexerCard } from '@/components/settings/IndexerCard';
 import { DownloadClientCard } from '@/components/settings/DownloadClientCard';
+import { NotifierCard } from '@/components/settings/NotifierCard';
 import {
   LoadingSpinner,
   SettingsIcon,
@@ -20,6 +21,7 @@ import {
   CheckIcon,
   TerminalIcon,
   PackageIcon,
+  BellIcon,
 } from '@/components/icons';
 import { useConnectionTest } from '@/hooks/useConnectionTest';
 import { renderTemplate, ALLOWED_TOKENS } from '@narratorr/core/utils';
@@ -28,6 +30,7 @@ import {
   logLevelSchema,
   type CreateIndexerFormData,
   type CreateDownloadClientFormData,
+  type CreateNotifierFormData,
   type UpdateSettingsFormData,
 } from '../../shared/schemas.js';
 
@@ -35,6 +38,7 @@ const navItems = [
   { to: '/settings', label: 'General', icon: SettingsIcon, end: true },
   { to: '/settings/indexers', label: 'Indexers', icon: SearchIcon },
   { to: '/settings/download-clients', label: 'Download Clients', icon: ServerIcon },
+  { to: '/settings/notifications', label: 'Notifications', icon: BellIcon },
 ];
 
 export function SettingsPage() {
@@ -90,6 +94,7 @@ export function SettingsPage() {
             <Route index element={<GeneralSettings />} />
             <Route path="indexers" element={<IndexersSettings />} />
             <Route path="download-clients" element={<DownloadClientsSettings />} />
+            <Route path="notifications" element={<NotificationsSettings />} />
           </Routes>
         </div>
       </div>
@@ -799,6 +804,167 @@ function DownloadClientsSettings() {
       <ConfirmModal
         isOpen={deleteTarget !== null}
         title="Delete Download Client"
+        message={`Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone.`}
+        onConfirm={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null); } }}
+        onCancel={() => setDeleteTarget(null)}
+      />
+    </div>
+  );
+}
+
+function NotificationsSettings() {
+  const queryClient = useQueryClient();
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Notifier | null>(null);
+
+  const {
+    testingId, testResult, testingForm, formTestResult,
+    handleTest, handleFormTest, clearFormTestResult,
+  } = useConnectionTest<CreateNotifierFormData>({
+    testById: api.testNotifier,
+    testByConfig: api.testNotifierConfig,
+  });
+
+  const { data: notifiers = [], isLoading } = useQuery({
+    queryKey: queryKeys.notifiers(),
+    queryFn: api.getNotifiers,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: api.createNotifier,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.notifiers() });
+      setShowForm(false);
+      toast.success('Notifier added successfully');
+    },
+    onError: () => {
+      toast.error('Failed to add notifier');
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: CreateNotifierFormData }) =>
+      api.updateNotifier(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.notifiers() });
+      setEditingId(null);
+      toast.success('Notifier updated');
+    },
+    onError: () => {
+      toast.error('Failed to update notifier');
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: api.deleteNotifier,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.notifiers() });
+      toast.success('Notifier removed successfully');
+    },
+    onError: () => {
+      toast.error('Failed to delete notifier');
+    },
+  });
+
+  const handleToggleForm = () => {
+    if (showForm) {
+      clearFormTestResult();
+    } else {
+      setEditingId(null);
+    }
+    setShowForm(!showForm);
+  };
+
+  const handleEdit = (id: number) => {
+    setShowForm(false);
+    clearFormTestResult();
+    setEditingId(id);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    clearFormTestResult();
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-primary/10 rounded-xl">
+            <BellIcon className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <h2 className="font-display text-xl font-semibold">Notifications</h2>
+            <p className="text-sm text-muted-foreground">Get notified on grabs, downloads, imports, and failures</p>
+          </div>
+        </div>
+        <button
+          onClick={handleToggleForm}
+          className={`flex items-center gap-2 px-4 py-2.5 font-medium rounded-xl transition-all focus-ring ${
+            showForm
+              ? 'bg-muted text-muted-foreground hover:bg-muted/80'
+              : 'bg-primary text-primary-foreground hover:opacity-90'
+          }`}
+        >
+          {showForm ? <XIcon className="w-4 h-4" /> : <PlusIcon className="w-4 h-4" />}
+          <span className="hidden sm:inline">{showForm ? 'Cancel' : 'Add Notifier'}</span>
+        </button>
+      </div>
+
+      {/* Add Form */}
+      {showForm && (
+        <NotifierCard
+          mode="create"
+          onSubmit={(data) => createMutation.mutate(data)}
+          onFormTest={handleFormTest}
+          isPending={createMutation.isPending}
+          testingForm={testingForm}
+          formTestResult={formTestResult}
+        />
+      )}
+
+      {/* List */}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <LoadingSpinner className="w-8 h-8 text-primary" />
+        </div>
+      ) : notifiers.length === 0 ? (
+        <div className="glass-card rounded-2xl p-8 sm:p-12 text-center">
+          <BellIcon className="w-12 h-12 text-muted-foreground/40 mx-auto mb-4" />
+          <p className="text-lg font-medium">No notifications configured</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Add a notifier to get alerts on grabs, downloads, and imports
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {notifiers.map((notifier, index) => (
+            <NotifierCard
+              key={notifier.id}
+              notifier={notifier}
+              mode={editingId === notifier.id ? 'edit' : 'view'}
+              onEdit={() => handleEdit(notifier.id)}
+              onCancel={handleCancelEdit}
+              onDelete={() => setDeleteTarget(notifier)}
+              onSubmit={(data) => updateMutation.mutate({ id: notifier.id, data })}
+              onFormTest={handleFormTest}
+              onTest={handleTest}
+              isPending={updateMutation.isPending}
+              testingId={testingId}
+              testResult={testResult}
+              testingForm={testingForm}
+              formTestResult={editingId === notifier.id ? formTestResult : null}
+              animationDelay={`${index * 50}ms`}
+            />
+          ))}
+        </div>
+      )}
+
+      <ConfirmModal
+        isOpen={deleteTarget !== null}
+        title="Delete Notifier"
         message={`Are you sure you want to delete "${deleteTarget?.name}"? This action cannot be undone.`}
         onConfirm={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null); } }}
         onCancel={() => setDeleteTarget(null)}

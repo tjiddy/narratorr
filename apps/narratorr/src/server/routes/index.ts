@@ -8,6 +8,7 @@ import {
   BookService,
   DownloadService,
   MetadataService,
+  NotifierService,
 } from '../services';
 import { ImportService } from '../services/import.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
@@ -21,6 +22,7 @@ import { settingsRoutes } from './settings.js';
 import { systemRoutes } from './system.js';
 import { metadataRoutes } from './metadata.js';
 import { libraryScanRoutes } from './library-scan.js';
+import { notifiersRoutes } from './notifiers.js';
 
 export interface Services {
   settings: SettingsService;
@@ -31,6 +33,7 @@ export interface Services {
   metadata: MetadataService;
   import: ImportService;
   libraryScan: LibraryScanService;
+  notifier: NotifierService;
 }
 
 export function createServices(db: Db, log: FastifyBaseLogger): Services {
@@ -40,10 +43,11 @@ export function createServices(db: Db, log: FastifyBaseLogger): Services {
   const book = new BookService(db, log);
   const download = new DownloadService(db, downloadClient, log);
   const metadata = new MetadataService(log);
-  const importService = new ImportService(db, downloadClient, settings, log);
+  const notifier = new NotifierService(db, log);
+  const importService = new ImportService(db, downloadClient, settings, log, notifier);
   const libraryScan = new LibraryScanService(db, book, log);
 
-  return { settings, indexer, downloadClient, book, download, metadata, import: importService, libraryScan };
+  return { settings, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, notifier };
 }
 
 export async function registerRoutes(
@@ -51,7 +55,7 @@ export async function registerRoutes(
   services: Services
 ): Promise<void> {
   await booksRoutes(app, services.book, services.download, services.metadata);
-  await searchRoutes(app, services.indexer, services.download);
+  await searchRoutes(app, services.indexer, services.download, services.notifier);
   await activityRoutes(app, services.download);
   await indexersRoutes(app, services.indexer);
   await downloadClientsRoutes(app, services.downloadClient);
@@ -59,4 +63,5 @@ export async function registerRoutes(
   await metadataRoutes(app, services.metadata);
   await libraryScanRoutes(app, services.libraryScan);
   await systemRoutes(app, services);
+  await notifiersRoutes(app, services.notifier);
 }
