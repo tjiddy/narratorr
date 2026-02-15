@@ -11,6 +11,7 @@ import {
   UsersIcon,
   XIcon,
   RefreshIcon,
+  ShieldBanIcon,
 } from '@/components/icons';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { CoverImage } from '@/components/CoverImage';
@@ -43,6 +44,30 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
     queryFn: () => api.search(searchQuery),
     enabled: isOpen && searchQuery.length >= 2,
   });
+
+  const blacklistMutation = useMutation({
+    mutationFn: api.addToBlacklist,
+    onSuccess: (_data, variables) => {
+      toast.success('Release blacklisted');
+      queryClient.invalidateQueries({ queryKey: queryKeys.blacklist() });
+      queryClient.invalidateQueries({ queryKey: ['search-releases'] });
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to blacklist: ${err.message}`);
+    },
+  });
+
+  const handleBlacklist = (result: SearchResult) => {
+    if (!result.infoHash) {
+      toast.error('Cannot blacklist: no info hash available');
+      return;
+    }
+    blacklistMutation.mutate({
+      infoHash: result.infoHash,
+      title: result.title,
+      bookId: book.id,
+    });
+  };
 
   const grabMutation = useMutation({
     mutationFn: api.grab,
@@ -160,7 +185,9 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
                     key={result.infoHash || index}
                     result={result}
                     onGrab={() => handleGrab(result)}
+                    onBlacklist={() => handleBlacklist(result)}
                     isGrabbing={grabMutation.isPending}
+                    isBlacklisting={blacklistMutation.isPending}
                   />
                 ))}
               </div>
@@ -179,11 +206,15 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
 function ReleaseCard({
   result,
   onGrab,
+  onBlacklist,
   isGrabbing,
+  isBlacklisting,
 }: {
   result: SearchResult;
   onGrab: () => void;
+  onBlacklist: () => void;
   isGrabbing: boolean;
+  isBlacklisting: boolean;
 }) {
   return (
     <div className="glass-card rounded-xl p-4 hover:border-primary/30 transition-all duration-200">
@@ -240,10 +271,16 @@ function ReleaseCard({
             Grab
           </button>
           <button
-            disabled
-            className="text-xs text-muted-foreground/50 cursor-not-allowed"
-            title="Blacklisting coming soon (Issue #12)"
+            onClick={onBlacklist}
+            disabled={!result.infoHash || isBlacklisting}
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-ring rounded px-1.5 py-1"
+            title={result.infoHash ? 'Blacklist this release' : 'No info hash available'}
           >
+            {isBlacklisting ? (
+              <LoadingSpinner className="w-3 h-3" />
+            ) : (
+              <ShieldBanIcon className="w-3 h-3" />
+            )}
             Blacklist
           </button>
         </div>

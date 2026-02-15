@@ -12,6 +12,7 @@ import {
   IndexersSettings,
   DownloadClientsSettings,
   NotificationsSettings,
+  BlacklistSettings,
 } from './pages/settings';
 
 export function App() {
@@ -31,6 +32,7 @@ export function App() {
             <Route path="indexers" element={<IndexersSettings />} />
             <Route path="download-clients" element={<DownloadClientsSettings />} />
             <Route path="notifications" element={<NotificationsSettings />} />
+            <Route path="blacklist" element={<BlacklistSettings />} />
           </Route>
         </Route>
       </Routes>

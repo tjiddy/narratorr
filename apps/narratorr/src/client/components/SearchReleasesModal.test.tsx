@@ -9,6 +9,7 @@ vi.mock('@/lib/api', () => ({
   api: {
     search: vi.fn(),
     grab: vi.fn(),
+    addToBlacklist: vi.fn(),
   },
   formatBytes: (bytes?: number) => {
     if (!bytes) return '0 B';

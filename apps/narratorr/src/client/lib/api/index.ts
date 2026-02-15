@@ -6,6 +6,7 @@ export type { Download, ActivityCounts } from './activity.js';
 export type { Indexer } from './indexers.js';
 export type { DownloadClient } from './download-clients.js';
 export type { Notifier } from './notifiers.js';
+export type { BlacklistEntry } from './blacklist.js';
 export type { Settings, TestResult } from './settings.js';
 export type { DiscoveredBook, ScanResult, ImportConfirmItem, ImportResult } from './library-scan.js';
 
@@ -17,6 +18,7 @@ import { activityApi } from './activity.js';
 import { indexersApi } from './indexers.js';
 import { downloadClientsApi } from './download-clients.js';
 import { notifiersApi } from './notifiers.js';
+import { blacklistApi } from './blacklist.js';
 import { settingsApi } from './settings.js';
 import { libraryScanApi } from './library-scan.js';
 import { systemApi } from './system.js';
@@ -28,6 +30,7 @@ export const api = {
   ...indexersApi,
   ...downloadClientsApi,
   ...notifiersApi,
+  ...blacklistApi,
   ...settingsApi,
   ...libraryScanApi,
   ...systemApi,

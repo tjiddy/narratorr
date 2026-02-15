@@ -4,6 +4,7 @@ import {
   SearchIcon,
   ServerIcon,
   BellIcon,
+  ShieldBanIcon,
 } from '@/components/icons';
 
 const navItems = [
@@ -11,6 +12,7 @@ const navItems = [
   { to: '/settings/indexers', label: 'Indexers', icon: SearchIcon },
   { to: '/settings/download-clients', label: 'Download Clients', icon: ServerIcon },
   { to: '/settings/notifications', label: 'Notifications', icon: BellIcon },
+  { to: '/settings/blacklist', label: 'Blacklist', icon: ShieldBanIcon },
 ];
 
 export function SettingsLayout() {

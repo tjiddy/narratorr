@@ -9,6 +9,7 @@ import {
   DownloadService,
   MetadataService,
   NotifierService,
+  BlacklistService,
 } from '../services';
 import { ImportService } from '../services/import.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
@@ -23,6 +24,7 @@ import { systemRoutes } from './system.js';
 import { metadataRoutes } from './metadata.js';
 import { libraryScanRoutes } from './library-scan.js';
 import { notifiersRoutes } from './notifiers.js';
+import { blacklistRoutes } from './blacklist.js';
 
 export interface Services {
   settings: SettingsService;
@@ -34,6 +36,7 @@ export interface Services {
   import: ImportService;
   libraryScan: LibraryScanService;
   notifier: NotifierService;
+  blacklist: BlacklistService;
 }
 
 export function createServices(db: Db, log: FastifyBaseLogger): Services {
@@ -46,8 +49,9 @@ export function createServices(db: Db, log: FastifyBaseLogger): Services {
   const download = new DownloadService(db, downloadClient, log, notifier);
   const importService = new ImportService(db, downloadClient, settings, log, notifier);
   const libraryScan = new LibraryScanService(db, book, log);
+  const blacklistService = new BlacklistService(db, log);
 
-  return { settings, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, notifier };
+  return { settings, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, notifier, blacklist: blacklistService };
 }
 
 export async function registerRoutes(
@@ -55,7 +59,7 @@ export async function registerRoutes(
   services: Services
 ): Promise<void> {
   await booksRoutes(app, services.book, services.download);
-  await searchRoutes(app, services.indexer, services.download);
+  await searchRoutes(app, services.indexer, services.download, services.blacklist);
   await activityRoutes(app, services.download);
   await indexersRoutes(app, services.indexer);
   await downloadClientsRoutes(app, services.downloadClient);
@@ -64,4 +68,5 @@ export async function registerRoutes(
   await libraryScanRoutes(app, services.libraryScan);
   await systemRoutes(app, services);
   await notifiersRoutes(app, services.notifier);
+  await blacklistRoutes(app, services.blacklist);
 }

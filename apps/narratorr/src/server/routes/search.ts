@@ -1,6 +1,7 @@
 import { type FastifyInstance } from 'fastify';
 import { type IndexerService } from '../services';
 import { type DownloadService } from '../services';
+import { type BlacklistService } from '../services';
 import {
   searchQuerySchema,
   grabSchema,
@@ -12,6 +13,7 @@ export async function searchRoutes(
   app: FastifyInstance,
   indexerService: IndexerService,
   downloadService: DownloadService,
+  blacklistService: BlacklistService,
 ) {
   // GET /api/search
   app.get(
@@ -24,7 +26,13 @@ export async function searchRoutes(
     async (request) => {
       const { q, limit } = request.query as SearchQuery;
       request.log.debug({ q }, 'Search request');
-      return indexerService.searchAll(q, { limit });
+      const results = await indexerService.searchAll(q, { limit });
+      const hashes = results
+        .map((r: { infoHash?: string }) => r.infoHash)
+        .filter((h): h is string => !!h);
+      if (hashes.length === 0) return results;
+      const blacklisted = await blacklistService.getBlacklistedHashes(hashes);
+      return results.filter((r: { infoHash?: string }) => !r.infoHash || !blacklisted.has(r.infoHash));
     }
   );
 

@@ -14,4 +14,5 @@ export const queryKeys = {
   indexers: () => ['indexers'] as const,
   downloadClients: () => ['downloadClients'] as const,
   notifiers: () => ['notifiers'] as const,
+  blacklist: () => ['blacklist'] as const,
 } as const;

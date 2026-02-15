@@ -23,6 +23,7 @@ vi.mock('@/pages/settings', () => ({
   IndexersSettings: () => <div>Indexers</div>,
   DownloadClientsSettings: () => <div>Download Clients</div>,
   NotificationsSettings: () => <div>Notifications</div>,
+  BlacklistSettings: () => <div>Blacklist</div>,
 }));
 
 function renderApp(route = '/') {
