@@ -4,6 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '@narratorr/db/schema';
 import { parseInfoHash, type DownloadProtocol } from '@narratorr/core';
 import { type DownloadClientService } from './download-client.service.js';
+import { type NotifierService } from './notifier.service.js';
 
 type DownloadRow = typeof downloads.$inferSelect;
 type BookRow = typeof books.$inferSelect;
@@ -16,7 +17,8 @@ export class DownloadService {
   constructor(
     private db: Db,
     private downloadClientService: DownloadClientService,
-    private log: FastifyBaseLogger
+    private log: FastifyBaseLogger,
+    private notifierService?: NotifierService,
   ) {}
 
   async getAll(status?: string): Promise<DownloadWithBook[]> {
@@ -171,6 +173,16 @@ export class DownloadService {
     }
 
     this.log.info({ title: params.title, indexerId: params.indexerId }, 'Download initiated');
+
+    // Fire grab notification (fire-and-forget)
+    if (this.notifierService) {
+      Promise.resolve(this.notifierService.notify('on_grab', {
+        event: 'on_grab',
+        book: { title: params.title },
+        release: { title: params.title, size: params.size },
+      })).catch((err) => this.log.warn(err, 'Failed to send grab notification'));
+    }
+
     return this.getById(result[0].id) as Promise<DownloadWithBook>;
   }
 

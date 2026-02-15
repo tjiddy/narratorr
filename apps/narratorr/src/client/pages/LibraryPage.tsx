@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { useImageError } from '@/hooks/useImageError';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -416,7 +417,7 @@ function LibraryBookCard({
   onSearchReleases: () => void;
   onRemove: () => void;
 }) {
-  const [imageError, setImageError] = useState(false);
+  const { hasError: imageError, onError: onImageError } = useImageError();
   const config = bookStatusConfig[book.status] ?? bookStatusConfig.wanted;
 
   return (
@@ -432,7 +433,7 @@ function LibraryBookCard({
             alt={book.title}
             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
             loading="lazy"
-            onError={() => setImageError(true)}
+            onError={onImageError}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">

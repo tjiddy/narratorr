@@ -1,7 +1,6 @@
 import { type FastifyInstance } from 'fastify';
 import { type IndexerService } from '../services';
 import { type DownloadService } from '../services';
-import { type NotifierService } from '../services';
 import {
   searchQuerySchema,
   grabSchema,
@@ -13,7 +12,6 @@ export async function searchRoutes(
   app: FastifyInstance,
   indexerService: IndexerService,
   downloadService: DownloadService,
-  notifierService: NotifierService
 ) {
   // GET /api/search
   app.get(
@@ -46,17 +44,6 @@ export async function searchRoutes(
         request.log.debug({ title: data.title, protocol: data.protocol, downloadUrl: data.downloadUrl, bookId: data.bookId }, 'Grab details');
         const download = await downloadService.grab(data);
         request.log.debug({ downloadId: download.id, status: download.status, externalId: download.externalId }, 'Grab completed');
-
-        // Fire notification (fire-and-forget)
-        Promise.resolve(notifierService.notify('on_grab', {
-          event: 'on_grab',
-          book: { title: data.title },
-          release: {
-            title: data.title,
-            size: data.size,
-          },
-        })).catch((err) => request.log.warn(err, 'Failed to send grab notification'));
-
         return reply.status(201).send(download);
       } catch (error) {
         request.log.error(error, 'Grab failed');

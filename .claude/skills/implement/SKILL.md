@@ -18,6 +18,7 @@ End-to-end orchestrator skill. Validates the issue, claims it, implements the so
 3. **Implement the feature/fix:**
    - Follow Acceptance Criteria as a checklist — each AC maps to something you must build and verify
    - Follow existing patterns found during the elaborate phase (adapters, services, routes, tests)
+   - **Follow design principles** (CLAUDE.md § Design Principles) — single responsibility per file, DRY (extract shared patterns), extend don't modify (new files over growing lists). If the claim comment flagged design warnings, address them during implementation.
    - Write/update tests per the Test Plan
    - Commit incrementally with `#<id>` prefix (e.g., `#58 Add Newznab search adapter`)
    - **Stay in scope** — if requirements expand beyond the issue spec, invoke `/block <id>` via the Skill tool and STOP

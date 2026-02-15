@@ -76,99 +76,25 @@ export function createMockLogger() {
 
 /**
  * Returns a Services object where every method on every service is a `vi.fn()`.
+ * Uses Proxy to auto-create stubs on access — adding new service methods requires no changes here.
  * Accepts partial overrides to customize specific services.
  */
-export function createMockServices(overrides?: Partial<Services>): Services {
-  return {
-    settings: {
-      get: vi.fn(),
-      getAll: vi.fn(),
-      set: vi.fn(),
-      update: vi.fn(),
-      ...overrides?.settings,
-    } as unknown as Services['settings'],
-    indexer: {
-      getAll: vi.fn(),
-      getById: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-      delete: vi.fn(),
-      getAdapter: vi.fn(),
-      test: vi.fn(),
-      testConfig: vi.fn(),
-      searchAll: vi.fn(),
-      ...overrides?.indexer,
-    } as unknown as Services['indexer'],
-    downloadClient: {
-      getAll: vi.fn(),
-      getById: vi.fn(),
-      getFirstEnabled: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-      delete: vi.fn(),
-      getAdapter: vi.fn(),
-      getFirstEnabledAdapter: vi.fn(),
-      test: vi.fn(),
-      testConfig: vi.fn(),
-      ...overrides?.downloadClient,
-    } as unknown as Services['downloadClient'],
-    book: {
-      getAll: vi.fn(),
-      getById: vi.fn(),
-      findDuplicate: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-      updateStatus: vi.fn(),
-      delete: vi.fn(),
-      search: vi.fn(),
-      ...overrides?.book,
-    } as unknown as Services['book'],
-    download: {
-      getAll: vi.fn(),
-      getById: vi.fn(),
-      getActive: vi.fn(),
-      getActiveByBookId: vi.fn(),
-      grab: vi.fn(),
-      updateProgress: vi.fn(),
-      updateStatus: vi.fn(),
-      setError: vi.fn(),
-      cancel: vi.fn(),
-      delete: vi.fn(),
-      ...overrides?.download,
-    } as unknown as Services['download'],
-    metadata: {
-      search: vi.fn(),
-      searchAuthors: vi.fn(),
-      searchBooks: vi.fn(),
-      getAuthor: vi.fn(),
-      getAuthorBooks: vi.fn(),
-      getBook: vi.fn(),
-      getSeries: vi.fn(),
-      enrichBook: vi.fn(),
-      testProviders: vi.fn(),
-      getProviders: vi.fn(),
-      ...overrides?.metadata,
-    } as unknown as Services['metadata'],
-    import: {
-      importDownload: vi.fn(),
-      processCompletedDownloads: vi.fn(),
-      ...overrides?.import,
-    } as unknown as Services['import'],
-    libraryScan: {
-      scanDirectory: vi.fn(),
-      confirmImport: vi.fn(),
-      ...overrides?.libraryScan,
-    } as unknown as Services['libraryScan'],
-    notifier: {
-      getAll: vi.fn(),
-      getById: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-      delete: vi.fn(),
-      notify: vi.fn().mockResolvedValue(undefined),
-      test: vi.fn(),
-      testConfig: vi.fn(),
-      ...overrides?.notifier,
-    } as unknown as Services['notifier'],
-  };
+export function createMockServices(overrides?: Partial<Record<keyof Services, Record<string, unknown>>>): Services {
+  const serviceNames: (keyof Services)[] = [
+    'settings', 'indexer', 'downloadClient', 'book',
+    'download', 'metadata', 'import', 'libraryScan', 'notifier',
+  ];
+  const services: Record<string, unknown> = {};
+  for (const name of serviceNames) {
+    services[name] = new Proxy({ ...overrides?.[name] } as Record<string | symbol, unknown>, {
+      get(target, prop) {
+        if (prop in target) return target[prop];
+        if (typeof prop === 'symbol') return undefined;
+        const fn = vi.fn();
+        target[prop] = fn;
+        return fn;
+      },
+    });
+  }
+  return services as unknown as Services;
 }

@@ -11,7 +11,7 @@ Monorepo (Turborepo + pnpm) | Node.js 20+ | Fastify 5 | Drizzle ORM + libSQL | R
 ## Project Structure
 
 - `apps/narratorr/src/server/` — Fastify backend (routes/, services/, jobs/, config.ts, index.ts)
-- `apps/narratorr/src/client/` — React frontend (pages/, components/, lib/api.ts, App.tsx)
+- `apps/narratorr/src/client/` — React frontend (pages/, components/, lib/api/, App.tsx)
 - `apps/narratorr/src/shared/schemas.ts` — Shared Zod schemas
 - `packages/core/src/` — Indexer + download client adapters (indexers/, download-clients/, utils/)
 - `packages/db/src/` — Drizzle schema (schema.ts), client, migrations
@@ -35,6 +35,14 @@ pnpm typecheck     # TypeScript checking
 - **Routes**: Fastify route files export async functions taking app + services. Registered in `routes/index.ts`.
 - **Frontend pages**: Components in `pages/`, routes in `App.tsx`, nav in `components/layout/Layout.tsx`.
 - **Database**: Edit `packages/db/src/schema.ts` → run `pnpm db:generate` → migrations auto-run on start.
+
+## Design Principles
+
+- **Single responsibility.** Each file, component, and service should have one reason to change. If modifying indexer settings requires editing the same file as download client settings, that's an SRP violation — split them. A long file that does one thing well is fine; a short file that mixes concerns is not.
+- **Don't repeat yourself.** If three CRUD sections share identical mutation/query/toast patterns, extract a shared hook or component. Duplication is a stronger signal than file length.
+- **Open for extension, closed for modification.** Adding a new feature (adapter, settings section, notifier type) should mean creating new files, not modifying a growing list in existing ones. If wiring a feature requires touching 4+ existing files, the architecture needs a registry/plugin pattern.
+- **Co-locate what changes together.** Types live alongside their API methods. Components live with their hooks. Tests live next to their source. Barrel `index.ts` at module boundaries, direct imports within.
+- **Extract components and hooks, not just functions.** When a component grows a second concern, extract it to its own file — don't just extract a helper function within the same file. React components and hooks are the unit of reuse.
 
 ## Code Style
 

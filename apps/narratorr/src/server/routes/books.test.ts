@@ -165,10 +165,9 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('enriches ASIN from provider when providerId present and asin missing', async () => {
+    it('passes providerId to service for ASIN enrichment', async () => {
       (services.book.findDuplicate as any).mockResolvedValue(null);
       (services.book.create as any).mockResolvedValue({ ...mockBook, asin: 'B003ZWFO7E' });
-      (services.metadata.getBook as any).mockResolvedValue({ title: 'The Way of Kings', asin: 'B003ZWFO7E', authors: [] });
 
       const res = await app.inject({
         method: 'POST',
@@ -177,37 +176,7 @@ describe('books routes', () => {
       });
 
       expect(res.statusCode).toBe(201);
-      expect(services.metadata.getBook).toHaveBeenCalledWith('386446');
-      expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({ asin: 'B003ZWFO7E' }));
-    });
-
-    it('skips enrichment when asin already present', async () => {
-      (services.book.findDuplicate as any).mockResolvedValue(null);
-      (services.book.create as any).mockResolvedValue({ ...mockBook, asin: 'B00EXISTING' });
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/books',
-        payload: { title: 'The Way of Kings', asin: 'B00EXISTING', providerId: '386446' },
-      });
-
-      expect(res.statusCode).toBe(201);
-      expect(services.metadata.getBook).not.toHaveBeenCalled();
-    });
-
-    it('creates book even when enrichment fails', async () => {
-      (services.book.findDuplicate as any).mockResolvedValue(null);
-      (services.book.create as any).mockResolvedValue(mockBook);
-      (services.metadata.getBook as any).mockRejectedValue(new Error('API down'));
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/books',
-        payload: { title: 'The Way of Kings', providerId: '386446' },
-      });
-
-      expect(res.statusCode).toBe(201);
-      expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({ asin: undefined }));
+      expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({ providerId: '386446' }));
     });
   });
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, formatBytes, type BookWithAuthor, type SearchResult } from '@/lib/api';
@@ -12,6 +12,8 @@ import {
   XIcon,
   RefreshIcon,
 } from '@/components/icons';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { CoverImage } from '@/components/CoverImage';
 
 // ============================================================================
 // Props
@@ -71,16 +73,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
   };
 
   const modalRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    modalRef.current?.focus();
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  useEscapeKey(isOpen, onClose, modalRef);
 
   if (!isOpen) return null;
 
@@ -192,29 +185,17 @@ function ReleaseCard({
   onGrab: () => void;
   isGrabbing: boolean;
 }) {
-  const [imageError, setImageError] = useState(false);
-
   return (
     <div className="glass-card rounded-xl p-4 hover:border-primary/30 transition-all duration-200">
       <div className="flex gap-4">
         {/* Cover */}
         <div className="shrink-0">
-          {result.coverUrl && !imageError ? (
-            <div className="relative w-14 h-20 rounded-lg overflow-hidden shadow-md">
-              <img
-                src={result.coverUrl}
-                alt={result.title}
-                className="w-full h-full object-cover"
-                loading="lazy"
-                onError={() => setImageError(true)}
-              />
-              <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-lg" />
-            </div>
-          ) : (
-            <div className="w-14 h-20 bg-muted rounded-lg flex items-center justify-center">
-              <BookOpenIcon className="w-6 h-6 text-muted-foreground/40" />
-            </div>
-          )}
+          <CoverImage
+            src={result.coverUrl}
+            alt={result.title}
+            className="w-14 h-20 rounded-lg"
+            fallback={<BookOpenIcon className="w-6 h-6 text-muted-foreground/40" />}
+          />
         </div>
 
         {/* Content */}

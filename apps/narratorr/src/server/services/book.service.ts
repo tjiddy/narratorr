@@ -3,6 +3,7 @@ import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors } from '@narratorr/db/schema';
 import { slugify } from '@narratorr/core';
+import { type MetadataService } from './metadata.service.js';
 
 type BookRow = typeof books.$inferSelect;
 type NewBook = typeof books.$inferInsert;
@@ -13,7 +14,11 @@ export interface BookWithAuthor extends BookRow {
 }
 
 export class BookService {
-  constructor(private db: Db, private log: FastifyBaseLogger) {}
+  constructor(
+    private db: Db,
+    private log: FastifyBaseLogger,
+    private metadataService?: MetadataService,
+  ) {}
 
   async getAll(status?: string): Promise<BookWithAuthor[]> {
     let query = this.db
@@ -104,7 +109,22 @@ export class BookService {
     publishedDate?: string;
     genres?: string[];
     status?: BookRow['status'];
+    providerId?: string;
   }): Promise<BookWithAuthor> {
+    // Enrich with ASIN from metadata provider if missing
+    let enrichedAsin = data.asin;
+    if (!enrichedAsin && data.providerId && this.metadataService) {
+      try {
+        const detail = await this.metadataService.getBook(data.providerId);
+        if (detail?.asin) {
+          enrichedAsin = detail.asin;
+          this.log.info({ title: data.title, providerId: data.providerId, asin: enrichedAsin }, 'Enriched book with ASIN from provider');
+        }
+      } catch (error) {
+        this.log.warn({ error, providerId: data.providerId }, 'ASIN enrichment failed');
+      }
+    }
+
     let authorId: number | undefined;
 
     if (data.authorName) {
@@ -149,7 +169,7 @@ export class BookService {
         narrator: data.narrator,
         description: data.description,
         coverUrl: data.coverUrl,
-        asin: data.asin,
+        asin: enrichedAsin,
         isbn: data.isbn,
         seriesName: data.seriesName,
         seriesPosition: data.seriesPosition,

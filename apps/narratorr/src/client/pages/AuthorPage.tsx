@@ -1,13 +1,11 @@
 import { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
 import DOMPurify from 'dompurify';
 import { useAuthor, useAuthorBooks } from '@/hooks/useMetadata';
 import { useLibrary } from '@/hooks/useLibrary';
-import { api, type BookMetadata, type BookWithAuthor } from '@/lib/api';
-import { formatDuration, mapBookMetadataToPayload, isBookInLibrary } from '@/lib/helpers';
-import { queryKeys } from '@/lib/queryKeys';
+import { useAddBooksToLibrary } from '@/hooks/useAddBooksToLibrary';
+import { type BookMetadata, type BookWithAuthor } from '@/lib/api';
+import { formatDuration, isBookInLibrary } from '@/lib/helpers';
 import { ArrowLeftIcon, PlusIcon, CheckIcon, BookOpenIcon, LoadingSpinner, LibraryIcon } from '@/components/icons';
 
 // ============================================================================
@@ -278,43 +276,13 @@ function SeriesSection({
 export function AuthorPage() {
   const { asin } = useParams<{ asin: string }>();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
 
   const { data: author, isLoading: authorLoading, isError: authorError } = useAuthor(asin);
   const { data: books, isLoading: booksLoading } = useAuthorBooks(asin);
   const { data: libraryBooks } = useLibrary();
+  const { addingAsins, isBookAdded, addBook, addAllInSeries } = useAddBooksToLibrary(libraryBooks);
 
   const [bioExpanded, setBioExpanded] = useState(false);
-  const [addingAsins, setAddingAsins] = useState<Set<string>>(new Set());
-  const [addedAsins, setAddedAsins] = useState<Set<string>>(new Set());
-
-  const addBookMutation = useMutation({
-    mutationFn: (book: BookMetadata) => {
-      const key = book.asin ?? book.title;
-      setAddingAsins((prev) => new Set(prev).add(key));
-      return api.addBook(mapBookMetadataToPayload(book));
-    },
-    onSuccess: (_data, book) => {
-      const key = book.asin ?? book.title;
-      setAddingAsins((prev) => {
-        const next = new Set(prev);
-        next.delete(key);
-        return next;
-      });
-      setAddedAsins((prev) => new Set(prev).add(key));
-      toast.success(`Added '${book.title}' to library`);
-      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
-    },
-    onError: (error: Error, book) => {
-      const key = book.asin ?? book.title;
-      setAddingAsins((prev) => {
-        const next = new Set(prev);
-        next.delete(key);
-        return next;
-      });
-      toast.error(`Failed to add '${book.title}': ${error.message}`);
-    },
-  });
 
   const isLoading = authorLoading || booksLoading;
   if (isLoading) return <AuthorPageSkeleton />;
@@ -323,24 +291,6 @@ export function AuthorPage() {
   const totalBooks = books?.length ?? 0;
   const { series, standalone } = groupBooksBySeries(books ?? []);
   const bioLong = (author.description?.length ?? 0) > BIO_COLLAPSE_LENGTH;
-
-  function isBookAdded(book: BookMetadata): boolean {
-    const key = book.asin ?? book.title;
-    return addedAsins.has(key) || isBookInLibrary(book, libraryBooks);
-  }
-
-  function handleAddBook(book: BookMetadata) {
-    if (!isBookAdded(book)) {
-      addBookMutation.mutate(book);
-    }
-  }
-
-  function handleAddAllInSeries(seriesBooks: BookMetadata[]) {
-    const toAdd = seriesBooks.filter((b) => !isBookAdded(b));
-    for (const book of toAdd) {
-      addBookMutation.mutate(book);
-    }
-  }
 
   return (
     <div className="space-y-8">
@@ -459,8 +409,8 @@ export function AuthorPage() {
               name={s.name}
               books={s.books}
               libraryBooks={libraryBooks}
-              onAddBook={handleAddBook}
-              onAddAll={() => handleAddAllInSeries(s.books)}
+              onAddBook={addBook}
+              onAddAll={() => addAllInSeries(s.books)}
               addingAsins={addingAsins}
               isAddingAll={s.books.some((b) => addingAsins.has(b.asin ?? b.title))}
             />
@@ -472,8 +422,8 @@ export function AuthorPage() {
               name="Standalone"
               books={standalone}
               libraryBooks={libraryBooks}
-              onAddBook={handleAddBook}
-              onAddAll={() => handleAddAllInSeries(standalone)}
+              onAddBook={addBook}
+              onAddAll={() => addAllInSeries(standalone)}
               addingAsins={addingAsins}
               isAddingAll={standalone.some((b) => addingAsins.has(b.asin ?? b.title))}
             />

@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 interface ConfirmModalProps {
   isOpen: boolean;
@@ -39,16 +40,7 @@ export function ConfirmModal({
   onCancel,
 }: ConfirmModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    modalRef.current?.focus();
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onCancel]);
+  useEscapeKey(isOpen, onCancel, modalRef);
 
   if (!isOpen) return null;
 

@@ -84,6 +84,10 @@ export default tseslint.config(
         { prefer: 'type-imports', fixStyle: 'inline-type-imports' },
       ],
 
+      // File hygiene
+      'max-lines': ['warn', { max: 400, skipBlankLines: true, skipComments: true }],
+      'max-lines-per-function': ['warn', { max: 150, skipBlankLines: true, skipComments: true }],
+      'complexity': ['warn', { max: 15 }],
       // General
       'prefer-const': 'warn',
       'no-var': 'error',

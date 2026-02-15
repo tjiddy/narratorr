@@ -4,9 +4,15 @@ import { Layout } from './components/layout/Layout';
 import { LibraryPage } from './pages/LibraryPage';
 import { SearchPage } from './pages/SearchPage';
 import { ActivityPage } from './pages/ActivityPage';
-import { SettingsPage } from './pages/SettingsPage';
 import { BookPage } from './pages/BookPage';
 import { AuthorPage } from './pages/AuthorPage';
+import {
+  SettingsLayout,
+  GeneralSettings,
+  IndexersSettings,
+  DownloadClientsSettings,
+  NotificationsSettings,
+} from './pages/settings';
 
 export function App() {
   return (
@@ -20,7 +26,12 @@ export function App() {
           <Route path="activity" element={<ActivityPage />} />
           <Route path="books/:id" element={<BookPage />} />
           <Route path="authors/:asin" element={<AuthorPage />} />
-          <Route path="settings/*" element={<SettingsPage />} />
+          <Route path="settings" element={<SettingsLayout />}>
+            <Route index element={<GeneralSettings />} />
+            <Route path="indexers" element={<IndexersSettings />} />
+            <Route path="download-clients" element={<DownloadClientsSettings />} />
+            <Route path="notifications" element={<NotificationsSettings />} />
+          </Route>
         </Route>
       </Routes>
     </>

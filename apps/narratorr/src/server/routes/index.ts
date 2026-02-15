@@ -40,10 +40,10 @@ export function createServices(db: Db, log: FastifyBaseLogger): Services {
   const settings = new SettingsService(db, log);
   const indexer = new IndexerService(db, log);
   const downloadClient = new DownloadClientService(db, log);
-  const book = new BookService(db, log);
-  const download = new DownloadService(db, downloadClient, log);
   const metadata = new MetadataService(log);
+  const book = new BookService(db, log, metadata);
   const notifier = new NotifierService(db, log);
+  const download = new DownloadService(db, downloadClient, log, notifier);
   const importService = new ImportService(db, downloadClient, settings, log, notifier);
   const libraryScan = new LibraryScanService(db, book, log);
 
@@ -54,8 +54,8 @@ export async function registerRoutes(
   app: FastifyInstance,
   services: Services
 ): Promise<void> {
-  await booksRoutes(app, services.book, services.download, services.metadata);
-  await searchRoutes(app, services.indexer, services.download, services.notifier);
+  await booksRoutes(app, services.book, services.download);
+  await searchRoutes(app, services.indexer, services.download);
   await activityRoutes(app, services.download);
   await indexersRoutes(app, services.indexer);
   await downloadClientsRoutes(app, services.downloadClient);

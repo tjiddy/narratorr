@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { CoverImage } from '@/components/CoverImage';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, formatBytes, type SearchResult, type BookMetadata, type AuthorMetadata, type BookWithAuthor } from '@/lib/api';
 import { useMetadataSearch } from '@/hooks/useMetadata';
@@ -334,8 +335,6 @@ function DiscoverResults({
 // ============================================================================
 
 function AuthorCard({ author, index }: { author: AuthorMetadata; index: number }) {
-  const [imageError, setImageError] = useState(false);
-
   return (
     <div
       className="group glass-card rounded-2xl p-4 sm:p-5 hover:shadow-card-hover hover:border-primary/30 transition-all duration-300 ease-out animate-fade-in-up"
@@ -344,22 +343,12 @@ function AuthorCard({ author, index }: { author: AuthorMetadata; index: number }
       <div className="flex items-center gap-4">
         {/* Author Image */}
         <div className="shrink-0">
-          {author.imageUrl && !imageError ? (
-            <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-full overflow-hidden shadow-lg">
-              <img
-                src={author.imageUrl}
-                alt={author.name}
-                className="w-full h-full object-cover"
-                loading="lazy"
-                onError={() => setImageError(true)}
-              />
-              <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-full" />
-            </div>
-          ) : (
-            <div className="w-14 h-14 sm:w-16 sm:h-16 bg-muted rounded-full flex items-center justify-center">
-              <UsersIcon className="w-6 h-6 text-muted-foreground" />
-            </div>
-          )}
+          <CoverImage
+            src={author.imageUrl}
+            alt={author.name}
+            className="w-14 h-14 sm:w-16 sm:h-16 rounded-full"
+            fallback={<UsersIcon className="w-6 h-6 text-muted-foreground" />}
+          />
         </div>
 
         {/* Author Info */}
@@ -404,7 +393,6 @@ function DiscoverBookCard({
   libraryBooks?: BookWithAuthor[];
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
-  const [imageError, setImageError] = useState(false);
   const [justAdded, setJustAdded] = useState(false);
   const authorNames = book.authors.map((a) => a.name).join(', ');
   const seriesInfo = book.series?.[0];
@@ -436,22 +424,12 @@ function DiscoverBookCard({
       <div className="flex gap-4 sm:gap-5">
         {/* Cover Image */}
         <div className="shrink-0">
-          {book.coverUrl && !imageError ? (
-            <div className="relative w-20 h-28 sm:w-24 sm:h-32 rounded-xl overflow-hidden shadow-lg">
-              <img
-                src={book.coverUrl}
-                alt={book.title}
-                className="w-full h-full object-cover"
-                loading="lazy"
-                onError={() => setImageError(true)}
-              />
-              <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-xl" />
-            </div>
-          ) : (
-            <div className="w-20 h-28 sm:w-24 sm:h-32 bg-muted rounded-xl flex items-center justify-center">
-              <BookOpenIcon className="w-8 h-8 text-muted-foreground" />
-            </div>
-          )}
+          <CoverImage
+            src={book.coverUrl}
+            alt={book.title}
+            className="w-20 h-28 sm:w-24 sm:h-32 rounded-xl"
+            fallback={<BookOpenIcon className="w-8 h-8 text-muted-foreground" />}
+          />
         </div>
 
         {/* Content */}
@@ -609,8 +587,6 @@ function IndexerResultCard({
   isGrabbing: boolean;
   index: number;
 }) {
-  const [imageError, setImageError] = useState(false);
-
   return (
     <div
       className="group glass-card rounded-2xl p-4 sm:p-5 hover:shadow-card-hover hover:border-primary/30 transition-all duration-300 ease-out animate-fade-in-up"
@@ -619,22 +595,12 @@ function IndexerResultCard({
       <div className="flex gap-4 sm:gap-5">
         {/* Cover Image */}
         <div className="shrink-0">
-          {result.coverUrl && !imageError ? (
-            <div className="relative w-20 h-28 sm:w-24 sm:h-32 rounded-xl overflow-hidden shadow-lg">
-              <img
-                src={result.coverUrl}
-                alt={result.title}
-                className="w-full h-full object-cover"
-                loading="lazy"
-                onError={() => setImageError(true)}
-              />
-              <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-xl" />
-            </div>
-          ) : (
-            <div className="w-20 h-28 sm:w-24 sm:h-32 bg-muted rounded-xl flex items-center justify-center">
-              <BookOpenIcon className="w-8 h-8 text-muted-foreground" />
-            </div>
-          )}
+          <CoverImage
+            src={result.coverUrl}
+            alt={result.title}
+            className="w-20 h-28 sm:w-24 sm:h-32 rounded-xl"
+            fallback={<BookOpenIcon className="w-8 h-8 text-muted-foreground" />}
+          />
         </div>
 
         {/* Content */}

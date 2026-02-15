@@ -14,6 +14,11 @@ Enhanced claim skill. Delegates validation to a subagent (elaborate logic), then
    > - Check dependencies: `pnpm gitea issue <dep-id>` for any referenced issues
    > - Fill gaps in issue body (durable content only — missing AC, test plan items, scope boundaries). Write ephemeral findings (file paths, interfaces, wiring points) to your output only.
    > - If filling gaps, update issue body: preserve all existing content, append `## Implementation Notes (auto-generated)`, use `pnpm gitea issue-update <id> body --body-file <temp-file-path>`
+   > - **Design principle checks** (read CLAUDE.md § Design Principles). For the planned implementation, evaluate:
+   >   - SRP: does the plan add a second concern to an existing file? (e.g., adding notifier settings to a general settings file)
+   >   - DRY: does the plan duplicate a pattern that already exists elsewhere? (e.g., copy-pasting CRUD mutation boilerplate instead of extracting a shared hook)
+   >   - Open/Closed: does the plan require modifying 4+ existing files just to wire in a new feature? If so, propose a registry/plugin pattern.
+   >   - Co-location: are new types/components landing next to the code that uses them, or in a central dumping-ground file?
    >
    > Return a structured verdict:
    > ```
@@ -24,6 +29,7 @@ Enhanced claim skill. Delegates validation to a subagent (elaborate logic), then
    > Dependencies: none | met | unmet (<list>)
    > Overlap: none | <PR links>
    > Gaps Filled: <list or "none">
+   > Design: ok | <warnings>
    > Codebase Findings: <compact implementation hints — ephemeral>
    > ```
    > Followed by 2-3 sentences max of prose explanation.
@@ -83,7 +89,13 @@ Enhanced claim skill. Delegates validation to a subagent (elaborate logic), then
    - Expected changes: `<files/modules>`
    - Verification: `<tests to run>`
    - Codebase findings: <relevant patterns, interfaces, wiring points from subagent verdict>
+   - Design checklist:
+       - [ ] Each new file has a single responsibility
+       - [ ] No duplicated patterns — reuses existing hooks/components or extracts shared ones
+       - [ ] Wiring touches ≤3 existing files (new features extend, not modify)
+       - [ ] Types and components co-located with their domain
    ```
+   If any design check fails, note the mitigation (e.g., "extracting shared useCrudSection hook").
    - Clean up the temp file after posting.
 
 7. **Set labels to `status/in-progress` + `stage/dev`** (keeping all other existing labels):

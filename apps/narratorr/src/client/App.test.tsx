@@ -17,8 +17,12 @@ vi.mock('@/pages/ActivityPage', () => ({
   ActivityPage: () => <div data-testid="activity-page">Activity Page</div>,
 }));
 
-vi.mock('@/pages/SettingsPage', () => ({
-  SettingsPage: () => <div data-testid="settings-page">Settings Page</div>,
+vi.mock('@/pages/settings', () => ({
+  SettingsLayout: () => <div data-testid="settings-page">Settings Page</div>,
+  GeneralSettings: () => <div>General</div>,
+  IndexersSettings: () => <div>Indexers</div>,
+  DownloadClientsSettings: () => <div>Download Clients</div>,
+  NotificationsSettings: () => <div>Notifications</div>,
 }));
 
 function renderApp(route = '/') {

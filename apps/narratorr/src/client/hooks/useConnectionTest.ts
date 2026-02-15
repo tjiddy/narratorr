@@ -7,7 +7,7 @@ interface UseConnectionTestOptions<TFormData> {
   testByConfig: (data: TFormData) => Promise<TestResult>;
 }
 
-interface IdTestResult extends TestResult {
+export interface IdTestResult extends TestResult {
   id: number;
 }
 
@@ -44,8 +44,14 @@ export function useConnectionTest<TFormData>({
     try {
       const result = await testByConfig(data);
       setFormTestResult(result);
+      if (result.success) {
+        toast.success('Connection successful');
+      } else {
+        toast.error(result.message || 'Connection failed');
+      }
     } catch {
       setFormTestResult({ success: false, message: 'Test failed' });
+      toast.error('Connection test failed');
     }
     setTestingForm(false);
   }, [testByConfig]);
