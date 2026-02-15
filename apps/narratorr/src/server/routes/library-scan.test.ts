@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createTestApp, createMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
@@ -19,7 +19,7 @@ describe('library-scan routes', () => {
     Object.values(services).forEach((svc) => {
       Object.values(svc).forEach((fn) => {
         if (typeof fn === 'function' && 'mockReset' in fn) {
-          (fn as ReturnType<typeof import('vitest').vi.fn>).mockReset();
+          (fn as ReturnType<typeof vi.fn>).mockReset();
         }
       });
     });
@@ -42,7 +42,7 @@ describe('library-scan routes', () => {
         skippedDuplicates: 1,
       };
 
-      (services.libraryScan.scanDirectory as ReturnType<typeof import('vitest').vi.fn>)
+      (services.libraryScan.scanDirectory as ReturnType<typeof vi.fn>)
         .mockResolvedValue(mockResult);
 
       const res = await app.inject({
@@ -70,7 +70,7 @@ describe('library-scan routes', () => {
     });
 
     it('returns 500 on scan error', async () => {
-      (services.libraryScan.scanDirectory as ReturnType<typeof import('vitest').vi.fn>)
+      (services.libraryScan.scanDirectory as ReturnType<typeof vi.fn>)
         .mockRejectedValue(new Error('ENOENT'));
 
       const res = await app.inject({
@@ -87,7 +87,7 @@ describe('library-scan routes', () => {
 
   describe('POST /api/library/import/confirm', () => {
     it('returns import results', async () => {
-      (services.libraryScan.confirmImport as ReturnType<typeof import('vitest').vi.fn>)
+      (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
         .mockResolvedValue({ imported: 3, failed: 0 });
 
       const res = await app.inject({

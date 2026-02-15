@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, formatBytes, type BookWithAuthor, type SearchResult } from '@/lib/api';
@@ -47,7 +47,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
 
   const blacklistMutation = useMutation({
     mutationFn: api.addToBlacklist,
-    onSuccess: (_data, variables) => {
+    onSuccess: () => {
       toast.success('Release blacklisted');
       queryClient.invalidateQueries({ queryKey: queryKeys.blacklist() });
       queryClient.invalidateQueries({ queryKey: ['search-releases'] });

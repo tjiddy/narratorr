@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { eq, inArray } from 'drizzle-orm';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books } from '@narratorr/db/schema';
+import { downloads } from '@narratorr/db/schema';
 import type { DownloadClientService } from '../services';
 import type { NotifierService } from '../services';
 

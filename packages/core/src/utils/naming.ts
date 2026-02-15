@@ -4,6 +4,7 @@ export const ALLOWED_TOKENS = ['author', 'title', 'series', 'seriesPosition', 'y
 export type TokenName = (typeof ALLOWED_TOKENS)[number];
 
 /** Characters illegal on Windows/Linux/macOS filesystems. */
+// eslint-disable-next-line no-control-regex
 const ILLEGAL_CHARS = /[<>:"/\\|?*\x00-\x1f]/g;
 
 /** Max length for a single path segment (filesystem limit). */

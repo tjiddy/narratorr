@@ -168,7 +168,7 @@ describe('ActivityPage', () => {
     });
     vi.mocked(api.getActivity).mockResolvedValue([queued, downloading]);
 
-    const { container } = renderWithProviders(<ActivityPage />);
+    renderWithProviders(<ActivityPage />);
 
     await waitFor(() => {
       expect(screen.getByText('Queued Audiobook')).toBeInTheDocument();

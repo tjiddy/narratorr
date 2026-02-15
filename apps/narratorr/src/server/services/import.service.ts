@@ -4,7 +4,7 @@ import { join, extname, basename } from 'node:path';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, authors } from '@narratorr/db/schema';
-import { sanitizePath, renderTemplate } from '@narratorr/core/utils';
+import { renderTemplate } from '@narratorr/core/utils';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
@@ -246,7 +246,7 @@ export class ImportService {
       try {
         const result = await this.importDownload(download.id);
         results.push(result);
-      } catch (error) {
+      } catch (_error) {
         // Error already logged in importDownload; continue with next
         this.log.warn({ downloadId: download.id }, 'Skipping failed import, continuing with next');
       }

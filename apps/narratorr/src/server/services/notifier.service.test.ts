@@ -55,16 +55,6 @@ const mockDiscordNotifier = {
   createdAt: new Date(),
 };
 
-const mockDisabledNotifier = {
-  id: 3,
-  name: 'Disabled',
-  type: 'webhook',
-  enabled: false,
-  events: ['on_grab'],
-  settings: { url: 'https://example.com/disabled' },
-  createdAt: new Date(),
-};
-
 describe('NotifierService', () => {
   let db: ReturnType<typeof createMockDb>;
   let log: ReturnType<typeof createMockLogger>;

@@ -548,7 +548,7 @@ function BookContextMenu({
         actions[focusIndex]();
         break;
     }
-  }, [onClose, actions.length]);
+  }, [onClose, actions, focusIndex]);
 
   return (
     <div

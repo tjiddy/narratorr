@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { FastifyBaseLogger } from 'fastify';
+import type { Db } from '@narratorr/db';
+import type { BookService } from './book.service.js';
 import { parseFolderStructure, LibraryScanService } from './library-scan.service.js';
 
 // ============================================================================
@@ -112,7 +115,7 @@ function createMockLogger() {
     child: vi.fn().mockReturnThis(),
     silent: vi.fn(),
     level: 'info',
-  } as unknown as import('fastify').FastifyBaseLogger;
+  } as unknown as FastifyBaseLogger;
 }
 
 describe('LibraryScanService', () => {
@@ -143,8 +146,8 @@ describe('LibraryScanService', () => {
     };
     log = createMockLogger();
     service = new LibraryScanService(
-      mockDb as import('@narratorr/db').Db,
-      mockBookService as unknown as import('./book.service.js').BookService,
+      mockDb as Db,
+      mockBookService as unknown as BookService,
       log,
     );
   });

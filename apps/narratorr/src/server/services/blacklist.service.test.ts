@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { BlacklistService } from './blacklist.service.js';
 import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 

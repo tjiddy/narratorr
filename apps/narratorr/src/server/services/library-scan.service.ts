@@ -1,5 +1,5 @@
 import { readdir, stat } from 'node:fs/promises';
-import { join, extname, basename, relative } from 'node:path';
+import { join, extname, relative } from 'node:path';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { books } from '@narratorr/db/schema';
@@ -266,7 +266,7 @@ function parseSingleFolder(folder: string): {
   }
 
   // Pattern: "Title (Author)" or "Title [Author]"
-  const parenMatch = folder.match(/^(.+?)\s*[(\[](.+?)[)\]]$/);
+  const parenMatch = folder.match(/^(.+?)\s*[([](.+?)[)\]]$/);
   if (parenMatch) {
     return {
       title: cleanName(parenMatch[1]),

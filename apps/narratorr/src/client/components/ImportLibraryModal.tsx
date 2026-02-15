@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, formatBytes, type DiscoveredBook, type ImportConfirmItem } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';

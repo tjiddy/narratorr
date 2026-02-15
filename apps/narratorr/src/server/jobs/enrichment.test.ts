@@ -2,8 +2,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import { runEnrichment } from './enrichment.js';
 
-const now = new Date();
-
 describe('enrichment job', () => {
   let db: ReturnType<typeof createMockDb>;
   let metadataService: { enrichBook: ReturnType<typeof vi.fn> };

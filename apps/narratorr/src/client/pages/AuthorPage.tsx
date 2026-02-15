@@ -280,7 +280,7 @@ export function AuthorPage() {
   const { data: author, isLoading: authorLoading, isError: authorError } = useAuthor(asin);
   const { data: books, isLoading: booksLoading } = useAuthorBooks(asin);
   const { data: libraryBooks } = useLibrary();
-  const { addingAsins, isBookAdded, addBook, addAllInSeries } = useAddBooksToLibrary(libraryBooks);
+  const { addingAsins, addBook, addAllInSeries } = useAddBooksToLibrary(libraryBooks);
 
   const [bioExpanded, setBioExpanded] = useState(false);
 
