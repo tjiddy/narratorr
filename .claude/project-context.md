@@ -52,6 +52,18 @@ interface MetadataProvider {
 }
 ```
 
+### NotifierAdapter (`packages/core/src/notifiers/types.ts`)
+```ts
+interface NotifierAdapter {
+  readonly type: string;
+  send(event: NotificationEvent, payload: EventPayload): Promise<{ success: boolean; message?: string }>;
+  test(): Promise<{ success: boolean; message?: string }>;
+}
+// NotificationEvent = 'on_grab' | 'on_download_complete' | 'on_import' | 'on_failure'
+// EventPayload: event, book?, release?, download?, import?, error?
+// Adapters: WebhookNotifier, DiscordNotifier, ScriptNotifier
+```
+
 ## Service Pattern
 <!-- last-updated: 2026-02-14 -->
 
@@ -59,14 +71,14 @@ Constructor injection with `(db: Db, log: FastifyBaseLogger)`. Some services tak
 
 All services instantiated in `routes/index.ts:createServices()` and passed to route handlers. Logger type: `FastifyBaseLogger` from `fastify` (NOT `BaseLogger` from `pino`).
 
-Services: `SettingsService`, `IndexerService`, `DownloadClientService`, `BookService`, `DownloadService`, `MetadataService`, `ImportService`
+Services: `SettingsService`, `IndexerService`, `DownloadClientService`, `BookService`, `DownloadService`, `MetadataService`, `ImportService`, `LibraryScanService`, `NotifierService`, `BlacklistService`
 
 ## Route Wiring
 <!-- last-updated: 2026-02-14 -->
 
 `apps/narratorr/src/server/routes/index.ts`:
 - `createServices(db, log)` → instantiates all services
-- `registerRoutes(app, services)` → registers: books, search, activity, indexers, downloadClients, settings, metadata, system
+- `registerRoutes(app, services)` → registers: books, search, activity, indexers, downloadClients, settings, metadata, system, libraryScan, notifiers
 - Route files export `async function xxxRoutes(app, ...services)`
 
 ## Test Patterns
@@ -95,6 +107,7 @@ Global setup: `src/client/__tests__/setup.ts` (matchMedia mock, cleanup)
 | `downloads` | id, bookId (FK), indexerId (FK), downloadClientId (FK), title, protocol, infoHash, externalId, status, progress | status: queued/downloading/paused/completed/importing/imported/failed; protocol: torrent/usenet |
 | `searchHistory` | id, query, type, resultsCount, searchedAt | type: metadata/indexer |
 | `blacklist` | id, bookId (FK), infoHash, title, reason, note | reason: wrong_content/bad_quality/wrong_narrator/spam/other |
+| `notifiers` | id, name, type, enabled, events (JSON), settings (JSON) | type: webhook/discord/script |
 | `settings` | key (PK), value (JSON) | — |
 
 ## Shared Schemas (`shared/schemas.ts`)
@@ -108,6 +121,7 @@ Global setup: `src/client/__tests__/setup.ts` (matchMedia mock, cleanup)
 - `metadataSearchQuerySchema` / `asinParamSchema`
 - `downloadStatusSchema`
 - `folderFormatSchema` — template validation with tokens: author, title, series, seriesPosition, year, narrator
+- `notifierTypeSchema` / `createNotifierSchema` / `updateNotifierSchema` / `createNotifierFormSchema`
 
 ## Frontend Wiring
 <!-- last-updated: 2026-02-14 -->
@@ -118,16 +132,18 @@ Global setup: `src/client/__tests__/setup.ts` (matchMedia mock, cleanup)
 
 **Pages**: `LibraryPage`, `SearchPage`, `ActivityPage`, `SettingsPage`, `BookPage`, `AuthorPage`
 
+**Settings sub-routes** (`SettingsPage.tsx`): `/settings/indexers`, `/settings/download-clients`, `/settings/notifications`, `/settings/general`
+
 ## Recent Changes
 <!-- last-updated: 2026-02-14 -->
 
+- PR #102 — #12 Implement blacklist functionality: BlacklistService CRUD, search result filtering, blacklist button in SearchReleasesModal, Settings > Blacklist management page, 16 new tests
+- PR #101 — #41 Fix turbo test warnings and gitignore nul file: removed coverage/** from test outputs, added nul to .gitignore
+- PR #100 — #79 Notification/Connect system: WebhookNotifier, DiscordNotifier, ScriptNotifier adapters; NotifierService with fan-out notify; fire-and-forget integration at 4 event points; Settings > Notifications UI; 44 new tests
+- PR #99 — #77 Directory-based library import: LibraryScanService with folder name parsing, scan/confirm routes, ImportLibraryModal with multi-step flow
+- PR #98 — #59 Transmission download client adapter: JSON-RPC, session-id CSRF rotation, Basic Auth, status mapping
+- PR #97 — #57 Torznab indexer adapter: TorznabIndexer with torrent-specific fields (seeders, leechers, infoHash), magnet URI fallback, service wiring
 - PR #96 — #61 NZBGet download client adapter (open)
 - PR #95 — #60 SABnzbd download client adapter (open)
 - PR #94 — #58 Newznab indexer adapter (open)
 - PR #93 — #62 Type-specific settings forms for indexers and download clients
-- PR #92 — #11 Scheduled search job
-- PR #91 — #71 Grab flow integration test and service edge cases
-- PR #90 — #78 Configurable folder/file naming templates
-- PR #89 — #14 File import (move files to library)
-- PR #88 — Codebase audit: error handling, security, tests, debug logging
-- PR #85 — #66 Edit UI for indexers and download clients

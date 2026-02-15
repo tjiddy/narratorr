@@ -95,8 +95,19 @@ Enhanced claim skill. Delegates validation to a subagent (elaborate logic), then
 
 8. **Create the feature branch:**
    ```bash
-   git checkout main && git pull && git checkout -b feature/issue-<id>-<slug>
+   git stash --include-untracked
+   git checkout main
+   git pull
+   ```
+   Then check if main is ahead of origin: `git rev-list --count origin/main..main`
+   - If count > 0: push first (`git push origin main`). If push fails (diverged), run `git pull --rebase origin main` then push. These unpushed commits will pollute every feature branch if not resolved.
+   - If count = 0: proceed.
+   ```bash
+   git checkout -b feature/issue-<id>-<slug>
+   git stash pop
    ```
    where `<slug>` is a short kebab-case summary of the issue title.
+
+   Note: `git stash pop` may silently succeed with no stash if working directory was clean — that's fine.
 
 9. Tell the user the issue is claimed and show the plan, including codebase findings from the validation phase.
