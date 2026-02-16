@@ -105,10 +105,10 @@ export const booksApi = {
 
   searchMetadata: (query: string) =>
     fetchApi<MetadataSearchResults>(`/metadata/search?q=${encodeURIComponent(query)}`),
-  getAuthor: (asin: string) =>
-    fetchApi<AuthorMetadata>(`/metadata/authors/${encodeURIComponent(asin)}`),
-  getAuthorBooks: (asin: string) =>
-    fetchApi<BookMetadata[]>(`/metadata/authors/${encodeURIComponent(asin)}/books`),
-  getBook: (asin: string) =>
-    fetchApi<BookMetadata>(`/metadata/books/${encodeURIComponent(asin)}`),
+  getAuthor: (id: string) =>
+    fetchApi<AuthorMetadata>(`/metadata/authors/${encodeURIComponent(id)}`),
+  getAuthorBooks: (id: string) =>
+    fetchApi<BookMetadata[]>(`/metadata/authors/${encodeURIComponent(id)}/books`),
+  getBook: (id: string) =>
+    fetchApi<BookMetadata>(`/metadata/books/${encodeURIComponent(id)}`),
 };

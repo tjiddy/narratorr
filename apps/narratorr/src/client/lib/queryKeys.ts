@@ -6,9 +6,9 @@ export const queryKeys = {
   search: (q: string) => ['search', q] as const,
   metadata: {
     search: (q: string) => ['metadata', 'search', q] as const,
-    author: (asin: string) => ['metadata', 'author', asin] as const,
-    authorBooks: (asin: string) => ['metadata', 'author', asin, 'books'] as const,
-    book: (asin: string) => ['metadata', 'book', asin] as const,
+    author: (id: string) => ['metadata', 'author', id] as const,
+    authorBooks: (id: string) => ['metadata', 'author', id, 'books'] as const,
+    book: (id: string) => ['metadata', 'book', id] as const,
   },
   settings: () => ['settings'] as const,
   indexers: () => ['indexers'] as const,

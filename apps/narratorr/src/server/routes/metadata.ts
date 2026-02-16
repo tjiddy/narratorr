@@ -1,6 +1,6 @@
 import { type FastifyInstance } from 'fastify';
 import { type MetadataService } from '../services/metadata.service.js';
-import { metadataSearchQuerySchema, asinParamSchema } from '../../shared/schemas.js';
+import { metadataSearchQuerySchema, providerIdParamSchema } from '../../shared/schemas.js';
 
 export async function metadataRoutes(app: FastifyInstance, metadataService: MetadataService) {
   // GET /api/metadata/search?q=
@@ -23,19 +23,19 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
     }
   );
 
-  // GET /api/metadata/authors/:asin
+  // GET /api/metadata/authors/:id
   app.get(
-    '/api/metadata/authors/:asin',
+    '/api/metadata/authors/:id',
     {
       schema: {
-        params: asinParamSchema,
+        params: providerIdParamSchema,
       },
     },
     async (request, reply) => {
       try {
-        const { asin } = request.params as { asin: string };
-        request.log.debug({ asin }, 'Fetching author metadata');
-        const author = await metadataService.getAuthor(asin);
+        const { id } = request.params as { id: string };
+        request.log.debug({ id }, 'Fetching author metadata');
+        const author = await metadataService.getAuthor(id);
 
         if (!author) {
           return reply.status(404).send({ error: 'Author not found' });
@@ -49,19 +49,19 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
     }
   );
 
-  // GET /api/metadata/authors/:asin/books
+  // GET /api/metadata/authors/:id/books
   app.get(
-    '/api/metadata/authors/:asin/books',
+    '/api/metadata/authors/:id/books',
     {
       schema: {
-        params: asinParamSchema,
+        params: providerIdParamSchema,
       },
     },
     async (request, reply) => {
       try {
-        const { asin } = request.params as { asin: string };
-        request.log.debug({ asin }, 'Fetching author books');
-        return metadataService.getAuthorBooks(asin);
+        const { id } = request.params as { id: string };
+        request.log.debug({ id }, 'Fetching author books');
+        return metadataService.getAuthorBooks(id);
       } catch (error) {
         request.log.error(error, 'Failed to fetch author books');
         return reply.status(500).send({ error: 'Internal server error' });
@@ -69,19 +69,19 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
     }
   );
 
-  // GET /api/metadata/books/:asin
+  // GET /api/metadata/books/:id
   app.get(
-    '/api/metadata/books/:asin',
+    '/api/metadata/books/:id',
     {
       schema: {
-        params: asinParamSchema,
+        params: providerIdParamSchema,
       },
     },
     async (request, reply) => {
       try {
-        const { asin } = request.params as { asin: string };
-        request.log.debug({ asin }, 'Fetching book metadata');
-        const book = await metadataService.getBook(asin);
+        const { id } = request.params as { id: string };
+        request.log.debug({ id }, 'Fetching book metadata');
+        const book = await metadataService.getBook(id);
 
         if (!book) {
           return reply.status(404).send({ error: 'Book not found' });

@@ -50,7 +50,7 @@ describe('metadata routes', () => {
     });
   });
 
-  describe('GET /api/metadata/authors/:asin', () => {
+  describe('GET /api/metadata/authors/:id', () => {
     it('returns author when found', async () => {
       (services.metadata.getAuthor as any).mockResolvedValue(mockAuthor);
 
@@ -69,7 +69,7 @@ describe('metadata routes', () => {
     });
   });
 
-  describe('GET /api/metadata/authors/:asin/books', () => {
+  describe('GET /api/metadata/authors/:id/books', () => {
     it('returns author books', async () => {
       (services.metadata.getAuthorBooks as any).mockResolvedValue([mockBook]);
 
@@ -80,7 +80,7 @@ describe('metadata routes', () => {
     });
   });
 
-  describe('GET /api/metadata/books/:asin', () => {
+  describe('GET /api/metadata/books/:id', () => {
     it('returns book when found', async () => {
       (services.metadata.getBook as any).mockResolvedValue(mockBook);
 

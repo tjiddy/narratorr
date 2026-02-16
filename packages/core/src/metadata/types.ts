@@ -22,9 +22,9 @@ export interface MetadataProvider {
   searchBooks(query: string): Promise<BookMetadata[]>;
   searchAuthors(query: string): Promise<AuthorMetadata[]>;
   searchSeries(query: string): Promise<SeriesMetadata[]>;
-  getBook(asin: string): Promise<BookMetadata | null>;
-  getAuthor(asin: string): Promise<AuthorMetadata | null>;
-  getAuthorBooks(asin: string): Promise<BookMetadata[]>;
-  getSeries(asin: string): Promise<SeriesMetadata | null>;
+  getBook(id: string): Promise<BookMetadata | null>;
+  getAuthor(id: string): Promise<AuthorMetadata | null>;
+  getAuthorBooks(id: string): Promise<BookMetadata[]>;
+  getSeries(id: string): Promise<SeriesMetadata | null>;
   test(): Promise<{ success: boolean; message?: string }>;
 }

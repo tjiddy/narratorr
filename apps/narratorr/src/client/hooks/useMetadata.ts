@@ -11,29 +11,29 @@ export function useMetadataSearch(query: string) {
   });
 }
 
-export function useAuthor(asin: string | undefined) {
+export function useAuthor(id: string | undefined) {
   return useQuery({
-    queryKey: queryKeys.metadata.author(asin!),
-    queryFn: () => api.getAuthor(asin!),
-    enabled: !!asin,
+    queryKey: queryKeys.metadata.author(id!),
+    queryFn: () => api.getAuthor(id!),
+    enabled: !!id,
     staleTime: 1000 * 60 * 5,
   });
 }
 
-export function useAuthorBooks(asin: string | undefined) {
+export function useAuthorBooks(id: string | undefined) {
   return useQuery({
-    queryKey: queryKeys.metadata.authorBooks(asin!),
-    queryFn: () => api.getAuthorBooks(asin!),
-    enabled: !!asin,
+    queryKey: queryKeys.metadata.authorBooks(id!),
+    queryFn: () => api.getAuthorBooks(id!),
+    enabled: !!id,
     staleTime: 1000 * 60 * 5,
   });
 }
 
-export function useBook(asin: string | undefined) {
+export function useBook(id: string | undefined) {
   return useQuery({
-    queryKey: queryKeys.metadata.book(asin!),
-    queryFn: () => api.getBook(asin!),
-    enabled: !!asin,
+    queryKey: queryKeys.metadata.book(id!),
+    queryFn: () => api.getBook(id!),
+    enabled: !!id,
     staleTime: 1000 * 60 * 5,
   });
 }

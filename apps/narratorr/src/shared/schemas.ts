@@ -313,8 +313,8 @@ export const metadataSearchQuerySchema = z.object({
   q: z.string().min(1, 'Query is required').max(500),
 });
 
-export const asinParamSchema = z.object({
-  asin: z.string().min(1, 'ASIN is required'),
+export const providerIdParamSchema = z.object({
+  id: z.string().min(1, 'Provider ID is required'),
 });
 
 export type MetadataSearchQuery = z.infer<typeof metadataSearchQuerySchema>;

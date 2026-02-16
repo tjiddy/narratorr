@@ -8,6 +8,8 @@ import hardcoverSeriesSearch from '../fixtures/hardcover-series-search.json';
 import hardcoverBookDetail from '../fixtures/hardcover-book-detail.json';
 import hardcoverAuthorDetail from '../fixtures/hardcover-author-detail.json';
 import hardcoverSeriesDetail from '../fixtures/hardcover-series-detail.json';
+import googleBooksSearch from '../fixtures/google-books-search.json';
+import googleBooksVolume from '../fixtures/google-books-volume.json';
 
 export const audnexusHandlers = [
   http.get('https://api.audnex.us/authors', ({ request }) => {
@@ -61,4 +63,24 @@ export const hardcoverHandlers = [
   }),
 ];
 
-export const handlers = [...audnexusHandlers, ...hardcoverHandlers];
+export const googleBooksHandlers = [
+  http.get('https://www.googleapis.com/books/v1/volumes', ({ request }) => {
+    const url = new URL(request.url);
+    const key = url.searchParams.get('key');
+    if (!key || key === 'invalid-key') {
+      return HttpResponse.json({ error: { code: 403, message: 'API key invalid' } }, { status: 403 });
+    }
+    return HttpResponse.json(googleBooksSearch);
+  }),
+
+  http.get('https://www.googleapis.com/books/v1/volumes/:id', ({ request }) => {
+    const url = new URL(request.url);
+    const key = url.searchParams.get('key');
+    if (!key || key === 'invalid-key') {
+      return HttpResponse.json({ error: { code: 403, message: 'API key invalid' } }, { status: 403 });
+    }
+    return HttpResponse.json(googleBooksVolume);
+  }),
+];
+
+export const handlers = [...audnexusHandlers, ...hardcoverHandlers, ...googleBooksHandlers];

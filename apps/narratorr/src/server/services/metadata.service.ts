@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import {
   HardcoverProvider,
   AudnexusProvider,
+  GoogleBooksProvider,
   type MetadataProvider,
   type MetadataSearchResults,
   type BookMetadata,
@@ -20,6 +21,12 @@ export class MetadataService {
       this.log.info('Metadata provider loaded: Hardcover');
     } else {
       this.log.warn('No HARDCOVER_API_KEY set — metadata lookups disabled');
+    }
+
+    const googleKey = process.env.GOOGLE_BOOKS_API_KEY;
+    if (googleKey) {
+      this.providers.push(new GoogleBooksProvider({ apiKey: googleKey }));
+      this.log.info('Metadata provider loaded: Google Books');
     }
 
     this.audnexus = new AudnexusProvider();
@@ -68,44 +75,44 @@ export class MetadataService {
     }
   }
 
-  async getAuthor(asin: string): Promise<AuthorMetadata | null> {
+  async getAuthor(id: string): Promise<AuthorMetadata | null> {
     const provider = this.providers[0];
     if (!provider) return null;
     try {
-      return await provider.getAuthor(asin);
+      return await provider.getAuthor(id);
     } catch (error) {
       this.log.warn(error, 'Metadata getAuthor failed');
       return null;
     }
   }
 
-  async getAuthorBooks(asin: string): Promise<BookMetadata[]> {
+  async getAuthorBooks(id: string): Promise<BookMetadata[]> {
     const provider = this.providers[0];
     if (!provider) return [];
     try {
-      return await provider.getAuthorBooks(asin);
+      return await provider.getAuthorBooks(id);
     } catch (error) {
       this.log.warn(error, 'Metadata getAuthorBooks failed');
       return [];
     }
   }
 
-  async getBook(asin: string): Promise<BookMetadata | null> {
+  async getBook(id: string): Promise<BookMetadata | null> {
     const provider = this.providers[0];
     if (!provider) return null;
     try {
-      return await provider.getBook(asin);
+      return await provider.getBook(id);
     } catch (error) {
       this.log.warn(error, 'Metadata getBook failed');
       return null;
     }
   }
 
-  async getSeries(asin: string): Promise<SeriesMetadata | null> {
+  async getSeries(id: string): Promise<SeriesMetadata | null> {
     const provider = this.providers[0];
     if (!provider) return null;
     try {
-      return await provider.getSeries(asin);
+      return await provider.getSeries(id);
     } catch (error) {
       this.log.warn(error, 'Metadata getSeries failed');
       return null;

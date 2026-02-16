@@ -37,7 +37,7 @@ export class AudnexusProvider implements MetadataProvider {
   }
 
   async searchBooks(_query: string): Promise<BookMetadata[]> {
-    // Audnexus does not support book search — use getBook(asin) for direct lookup
+    // Audnexus does not support book search — use getBook(id) for direct lookup
     return [];
   }
 
@@ -70,9 +70,9 @@ export class AudnexusProvider implements MetadataProvider {
     return [];
   }
 
-  async getBook(asin: string): Promise<BookMetadata | null> {
+  async getBook(id: string): Promise<BookMetadata | null> {
     const data = await this.fetchJson<AudnexusBookDetail>(
-      `/books/${encodeURIComponent(asin)}?region=${this.region}`,
+      `/books/${encodeURIComponent(id)}?region=${this.region}`,
     );
 
     if (!data) return null;
@@ -82,9 +82,9 @@ export class AudnexusProvider implements MetadataProvider {
     return result.success ? result.data : null;
   }
 
-  async getAuthor(asin: string): Promise<AuthorMetadata | null> {
+  async getAuthor(id: string): Promise<AuthorMetadata | null> {
     const data = await this.fetchJson<AudnexusAuthorDetail>(
-      `/authors/${encodeURIComponent(asin)}?region=${this.region}`,
+      `/authors/${encodeURIComponent(id)}?region=${this.region}`,
     );
 
     if (!data) return null;
@@ -94,12 +94,12 @@ export class AudnexusProvider implements MetadataProvider {
     return result.success ? result.data : null;
   }
 
-  async getAuthorBooks(_asin: string): Promise<BookMetadata[]> {
+  async getAuthorBooks(_id: string): Promise<BookMetadata[]> {
     // Audnexus does not have an author-books endpoint
     return [];
   }
 
-  async getSeries(_asin: string): Promise<SeriesMetadata | null> {
+  async getSeries(_id: string): Promise<SeriesMetadata | null> {
     // Audnexus does not support series lookup directly
     return null;
   }
