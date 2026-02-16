@@ -39,7 +39,7 @@ interface IndexerCardProps {
   animationDelay?: string;
 }
 
-const IMPLEMENTED_TYPES = ['abb'];
+const IMPLEMENTED_TYPES = ['abb', 'newznab', 'torznab'];
 
 const defaultSettings: Record<string, CreateIndexerFormData['settings']> = {
   abb: { hostname: '', pageLimit: 2 },

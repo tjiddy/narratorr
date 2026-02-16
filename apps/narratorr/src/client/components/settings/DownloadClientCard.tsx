@@ -39,7 +39,7 @@ interface DownloadClientCardProps {
   animationDelay?: string;
 }
 
-const IMPLEMENTED_TYPES = ['qbittorrent'];
+const IMPLEMENTED_TYPES = ['qbittorrent', 'transmission', 'sabnzbd', 'nzbget'];
 
 const TYPE_LABELS: Record<string, string> = {
   qbittorrent: 'qBittorrent',
