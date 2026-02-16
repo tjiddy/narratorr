@@ -8,12 +8,14 @@ import { api, type BookWithAuthor } from '@/lib/api';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { useDeleteConfirmation } from '@/hooks/useDeleteConfirmation';
+import { useLibrarySearch } from '@/hooks/useLibrarySearch';
 import { bookStatusConfig } from '@/lib/status';
 import { queryKeys } from '@/lib/queryKeys';
 import {
   LibraryIcon as BookShelfIcon,
   BookOpenIcon,
   SearchIcon,
+  XIcon,
   MoreVerticalIcon,
   ChevronDownIcon,
   ArrowUpDownIcon,
@@ -89,6 +91,7 @@ export function LibraryPage() {
   const [searchBook, setSearchBook] = useState<BookWithAuthor | null>(null);
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const { query: searchQuery, setQuery: setSearchQuery, clearQuery: clearSearch, results: searchResults, isSearching } = useLibrarySearch(books);
 
   // Delete mutation
   const deleteMutation = useMutation({
@@ -120,7 +123,7 @@ export function LibraryPage() {
   }, [books]);
 
   const filteredBooks = useMemo(() => {
-    let result = books.filter((b) => matchesStatusFilter(b.status, statusFilter));
+    let result = searchResults.filter((b) => matchesStatusFilter(b.status, statusFilter));
     if (authorFilter) {
       result = result.filter((b) => b.author?.name === authorFilter);
     }
@@ -128,7 +131,7 @@ export function LibraryPage() {
       result = result.filter((b) => b.seriesName === seriesFilter);
     }
     return sortBooks(result, sortField, sortDirection);
-  }, [books, statusFilter, authorFilter, seriesFilter, sortField, sortDirection]);
+  }, [searchResults, statusFilter, authorFilter, seriesFilter, sortField, sortDirection]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<StatusFilter, number> = { all: books.length, wanted: 0, downloading: 0, imported: 0 };
@@ -184,7 +187,9 @@ export function LibraryPage() {
         <div>
           <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Library</h1>
           <p className="text-muted-foreground mt-2">
-            {books.length} book{books.length !== 1 ? 's' : ''} in your collection
+            {isSearching
+              ? `${filteredBooks.length} of ${books.length} book${books.length !== 1 ? 's' : ''}`
+              : `${books.length} book${books.length !== 1 ? 's' : ''} in your collection`}
           </p>
         </div>
         <button
@@ -198,6 +203,9 @@ export function LibraryPage() {
 
       {/* Toolbar */}
       <LibraryToolbar
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        onSearchClear={clearSearch}
         statusFilter={statusFilter}
         onStatusFilterChange={setStatusFilter}
         statusCounts={statusCounts}
@@ -215,7 +223,7 @@ export function LibraryPage() {
 
       {/* Book Grid */}
       {filteredBooks.length === 0 ? (
-        <NoMatchState onClearFilters={() => { setStatusFilter('all'); setAuthorFilter(''); setSeriesFilter(''); }} />
+        <NoMatchState onClearFilters={() => { setStatusFilter('all'); setAuthorFilter(''); setSeriesFilter(''); clearSearch(); }} />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
           {filteredBooks.map((book, index) => (
@@ -265,6 +273,9 @@ export function LibraryPage() {
 // ============================================================================
 
 function LibraryToolbar({
+  searchQuery,
+  onSearchChange,
+  onSearchClear,
   statusFilter,
   onStatusFilterChange,
   statusCounts,
@@ -279,6 +290,9 @@ function LibraryToolbar({
   sortDirection,
   onSortDirectionChange,
 }: {
+  searchQuery: string;
+  onSearchChange: (q: string) => void;
+  onSearchClear: () => void;
   statusFilter: StatusFilter;
   onStatusFilterChange: (f: StatusFilter) => void;
   statusCounts: Record<StatusFilter, number>;
@@ -301,6 +315,27 @@ function LibraryToolbar({
 
   return (
     <div className="space-y-4 animate-fade-in-up stagger-1">
+      {/* Search input */}
+      <div className="relative">
+        <SearchIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder="Search library..."
+          className="w-full glass-card rounded-xl pl-10 pr-10 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus-ring"
+        />
+        {searchQuery && (
+          <button
+            onClick={onSearchClear}
+            className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Clear search"
+          >
+            <XIcon className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+
       {/* Status tabs */}
       <div className="flex flex-wrap gap-2">
         {filterTabs.map((tab) => {

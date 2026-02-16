@@ -284,6 +284,114 @@ describe('LibraryPage', () => {
     expect(screen.getByText('No books match your filters')).toBeInTheDocument();
   });
 
+  it('renders search input', async () => {
+    vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Search library...')).toBeInTheDocument();
+    });
+  });
+
+  it('filters books by search query', async () => {
+    vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    const searchInput = screen.getByPlaceholderText('Search library...');
+    await user.type(searchInput, 'Hail Mary');
+
+    // After debounce, only matching book should show
+    await waitFor(() => {
+      expect(screen.getByText('Project Hail Mary')).toBeInTheDocument();
+      expect(screen.queryByText('The Way of Kings')).not.toBeInTheDocument();
+      expect(screen.queryByText('Recursion')).not.toBeInTheDocument();
+    });
+  });
+
+  it('shows result count when searching', async () => {
+    vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    const searchInput = screen.getByPlaceholderText('Search library...');
+    await user.type(searchInput, 'Sanderson');
+
+    // Should show "X of Y books" format
+    await waitFor(() => {
+      expect(screen.getByText(/of 4 books/)).toBeInTheDocument();
+    });
+  });
+
+  it('clears search with clear button', async () => {
+    vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    const searchInput = screen.getByPlaceholderText('Search library...');
+    await user.type(searchInput, 'Hail Mary');
+
+    // Wait for search to filter
+    await waitFor(() => {
+      expect(screen.queryByText('The Way of Kings')).not.toBeInTheDocument();
+    });
+
+    // Clear the search — look for the × button next to search input
+    const clearButton = searchInput.parentElement?.querySelector('button');
+    expect(clearButton).toBeTruthy();
+    await user.click(clearButton!);
+
+    // All books should reappear
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      expect(screen.getByText('Project Hail Mary')).toBeInTheDocument();
+      expect(screen.getByText('Recursion')).toBeInTheDocument();
+    });
+  });
+
+  it('combines search with status filter', async () => {
+    vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    // Search for Sanderson (matches Way of Kings and Words of Radiance, both "wanted")
+    const searchInput = screen.getByPlaceholderText('Search library...');
+    await user.type(searchInput, 'Sanderson');
+
+    await waitFor(() => {
+      expect(screen.queryByText('Project Hail Mary')).not.toBeInTheDocument();
+    });
+
+    // Click Wanted tab — should still show Sanderson's wanted books
+    await user.click(screen.getByRole('button', { name: /Wanted/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      expect(screen.getByText('Words of Radiance')).toBeInTheDocument();
+    });
+  });
+
   it('opens search releases modal when Search Releases is clicked', async () => {
     vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
     vi.mocked(api.search).mockResolvedValue([]);
