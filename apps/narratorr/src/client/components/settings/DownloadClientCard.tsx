@@ -77,9 +77,9 @@ function viewSubtitle(client: DownloadClient): string {
 // Which fields to show per type
 const TYPE_FIELDS: Record<string, { username: boolean; password: boolean; useSsl: boolean; apiKey: boolean }> = {
   qbittorrent: { username: true, password: true, useSsl: true, apiKey: false },
-  transmission: { username: true, password: true, useSsl: false, apiKey: false },
-  sabnzbd: { username: false, password: false, useSsl: false, apiKey: true },
-  nzbget: { username: true, password: true, useSsl: false, apiKey: false },
+  transmission: { username: true, password: true, useSsl: true, apiKey: false },
+  sabnzbd: { username: false, password: false, useSsl: true, apiKey: true },
+  nzbget: { username: true, password: true, useSsl: true, apiKey: false },
 };
 
 const defaultValues: CreateDownloadClientFormData = {
