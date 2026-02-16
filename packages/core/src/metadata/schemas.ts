@@ -51,4 +51,5 @@ export const MetadataSearchResultsSchema = z.object({
   books: z.array(BookMetadataSchema),
   authors: z.array(AuthorMetadataSchema),
   series: z.array(SeriesMetadataSchema),
+  warnings: z.array(z.string()).optional(),
 });

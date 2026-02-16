@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { RateLimitError } from '@narratorr/core';
 import { createMockLogger } from '../__tests__/helpers.js';
 import { MetadataService } from './metadata.service.js';
 
@@ -51,6 +52,7 @@ describe('MetadataService', () => {
   let service: MetadataService;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.stubEnv('HARDCOVER_API_KEY', 'test-key');
     // Reset mock return values
     mockProvider.search.mockResolvedValue({ books: [], authors: [], series: [] });
@@ -66,16 +68,37 @@ describe('MetadataService', () => {
   });
 
   describe('search', () => {
-    it('delegates to the provider', async () => {
+    it('delegates to the provider sub-methods', async () => {
       const result = await service.search('Brandon Sanderson');
       expect(result).toEqual({ books: [], authors: [], series: [] });
+      expect(mockProvider.searchBooks).toHaveBeenCalledWith('Brandon Sanderson');
+      expect(mockProvider.searchAuthors).toHaveBeenCalledWith('Brandon Sanderson');
+      expect(mockProvider.searchSeries).toHaveBeenCalledWith('Brandon Sanderson');
     });
 
     it('returns empty results on error', async () => {
-      mockProvider.search.mockRejectedValueOnce(new Error('Network error'));
+      mockProvider.searchBooks.mockRejectedValueOnce(new Error('Network error'));
 
       const result = await service.search('test');
-      expect(result).toEqual({ books: [], authors: [], series: [] });
+      // Books fail, but authors/series still return
+      expect(result.books).toEqual([]);
+      expect(mockProvider.searchAuthors).toHaveBeenCalled();
+      expect(mockProvider.searchSeries).toHaveBeenCalled();
+    });
+
+    it('throttles each sub-search individually to prevent bursting', async () => {
+      const callOrder: string[] = [];
+      mockProvider.searchBooks.mockImplementation(() => { callOrder.push('books'); return Promise.resolve([]); });
+      mockProvider.searchAuthors.mockImplementation(() => { callOrder.push('authors'); return Promise.resolve([]); });
+      mockProvider.searchSeries.mockImplementation(() => { callOrder.push('series'); return Promise.resolve([]); });
+
+      await service.search('test');
+
+      // All three should be called sequentially (not via Promise.all)
+      expect(callOrder).toEqual(['books', 'authors', 'series']);
+      expect(mockProvider.searchBooks).toHaveBeenCalledTimes(1);
+      expect(mockProvider.searchAuthors).toHaveBeenCalledTimes(1);
+      expect(mockProvider.searchSeries).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -204,6 +227,71 @@ describe('MetadataService', () => {
       expect(results[1].name).toBe('Google Books');
       expect(results[1].type).toBe('google-books');
       expect(results[1].success).toBe(true);
+    });
+  });
+
+  describe('rate limiting', () => {
+    it('returns warnings when provider throws RateLimitError on search', async () => {
+      mockProvider.searchBooks.mockRejectedValueOnce(new RateLimitError(30000, 'Hardcover'));
+
+      const result = await service.search('test');
+      expect(result.books).toEqual([]);
+      expect(result.warnings).toBeDefined();
+      expect(result.warnings![0]).toContain('rate limit');
+      expect(result.warnings![0]).toContain('30s');
+    });
+
+    it('skips provider during backoff window after RateLimitError', async () => {
+      // First call triggers rate limit on searchBooks
+      mockProvider.searchBooks.mockRejectedValueOnce(new RateLimitError(60000, 'Hardcover'));
+      await service.search('first');
+
+      // Second call should be skipped (within backoff window)
+      const result = await service.search('second');
+      expect(result.books).toEqual([]);
+      expect(result.warnings).toBeDefined();
+      expect(result.warnings![0]).toContain('rate limit');
+      // searchBooks should only have been called once (not for the second search)
+      expect(mockProvider.searchBooks).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns fallback on RateLimitError for non-search methods', async () => {
+      mockProvider.getBook.mockRejectedValueOnce(new RateLimitError(30000, 'Hardcover'));
+
+      const result = await service.getBook('123');
+      expect(result).toBeNull();
+    });
+
+    it('skips non-search methods during backoff window', async () => {
+      // Trigger rate limit via searchBooks within search()
+      mockProvider.searchBooks.mockRejectedValueOnce(new RateLimitError(60000, 'Hardcover'));
+      await service.search('test');
+
+      // All methods should be skipped during backoff
+      expect(await service.getBook('123')).toBeNull();
+      expect(await service.getAuthor('123')).toBeNull();
+
+      // Provider methods should not have been called after backoff set
+      expect(mockProvider.getBook).not.toHaveBeenCalled();
+      expect(mockProvider.getAuthor).not.toHaveBeenCalled();
+    });
+
+    it('skips enrichBook during Audnexus backoff window', async () => {
+      // First call triggers rate limit
+      mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(60000, 'Audnexus'));
+      await expect(service.enrichBook('B000FIRST')).rejects.toThrow(RateLimitError);
+
+      // Second call should be skipped (returns null, no Audnexus call)
+      const result = await service.enrichBook('B000SECOND');
+      expect(result).toBeNull();
+      // Audnexus should only have been called once
+      expect(mockAudnexus.getBook).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-throws RateLimitError from enrichBook for job handling', async () => {
+      mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(30000, 'Audnexus'));
+
+      await expect(service.enrichBook('B000TEST')).rejects.toThrow(RateLimitError);
     });
   });
 

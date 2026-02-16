@@ -3,6 +3,7 @@ import { eq, and, isNotNull, or, sql } from 'drizzle-orm';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { books } from '@narratorr/db/schema';
+import { RateLimitError } from '@narratorr/core';
 import type { MetadataService } from '../services/metadata.service.js';
 
 const BATCH_LIMIT = 5;
@@ -68,7 +69,17 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, lo
   for (const candidate of candidates) {
     const asin = candidate.asin!;
     log.debug({ bookId: candidate.id, asin }, 'Enriching book');
-    const result = await metadataService.enrichBook(asin);
+
+    let result;
+    try {
+      result = await metadataService.enrichBook(asin);
+    } catch (error) {
+      if (error instanceof RateLimitError) {
+        log.warn({ provider: error.provider, retryAfterMs: error.retryAfterMs }, 'Rate limited during enrichment — remaining candidates stay pending');
+        break; // Remaining candidates stay pending for next cycle
+      }
+      throw error;
+    }
 
     if (result) {
       const updates: Record<string, unknown> = {

@@ -1,4 +1,5 @@
 import { BookMetadataSchema, AuthorMetadataSchema, SeriesMetadataSchema } from './schemas.js';
+import { RateLimitError } from './errors.js';
 import type {
   MetadataProvider,
   BookMetadata,
@@ -312,11 +313,17 @@ export class HardcoverProvider implements MetadataProvider {
         body: JSON.stringify({ query, variables }),
         signal: controller.signal,
       });
+      if (res.status === 429) {
+        const retryAfter = res.headers.get('Retry-After');
+        const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 60_000;
+        throw new RateLimitError(waitMs, 'Hardcover');
+      }
       if (!res.ok) return null;
       const json = (await res.json()) as { data?: T; errors?: Array<{ message: string }> };
       if (json.errors?.length) return null;
       return (json.data as T) ?? null;
-    } catch {
+    } catch (error) {
+      if (error instanceof RateLimitError) throw error;
       return null;
     } finally {
       clearTimeout(timeoutId);

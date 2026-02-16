@@ -1,4 +1,5 @@
 import { BookMetadataSchema, AuthorMetadataSchema } from './schemas.js';
+import { RateLimitError } from './errors.js';
 import type {
   MetadataProvider,
   BookMetadata,
@@ -163,9 +164,15 @@ export class GoogleBooksProvider implements MetadataProvider {
 
     try {
       const response = await fetch(`${BASE_URL}${path}`, { signal: controller.signal });
+      if (response.status === 429 || (response.status === 403 && response.statusText.toLowerCase().includes('rate'))) {
+        const retryAfter = response.headers.get('Retry-After');
+        const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 60_000;
+        throw new RateLimitError(waitMs, 'Google Books');
+      }
       if (!response.ok) return null;
       return (await response.json()) as T;
-    } catch {
+    } catch (error) {
+      if (error instanceof RateLimitError) throw error;
       return null;
     } finally {
       clearTimeout(timeoutId);

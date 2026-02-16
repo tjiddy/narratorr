@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { GoogleBooksProvider } from './google-books.js';
+import { RateLimitError } from './errors.js';
 
 describe('GoogleBooksProvider', () => {
   const server = useMswServer();
@@ -174,6 +175,55 @@ describe('GoogleBooksProvider', () => {
       expect(books[0].asin).toBeUndefined();
       expect(books[0].narrators).toBeUndefined();
       expect(books[0].duration).toBeUndefined();
+    });
+  });
+
+  describe('rate limiting', () => {
+    it('throws RateLimitError on 429 response', async () => {
+      server.use(
+        http.get('https://www.googleapis.com/books/v1/volumes', () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': '30' },
+          });
+        }),
+      );
+
+      await expect(provider.searchBooks('test')).rejects.toThrow(RateLimitError);
+    });
+
+    it('parses Retry-After header into milliseconds', async () => {
+      server.use(
+        http.get('https://www.googleapis.com/books/v1/volumes', () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': '90' },
+          });
+        }),
+      );
+
+      try {
+        await provider.searchBooks('test');
+      } catch (error) {
+        expect(error).toBeInstanceOf(RateLimitError);
+        expect((error as RateLimitError).retryAfterMs).toBe(90000);
+        expect((error as RateLimitError).provider).toBe('Google Books');
+      }
+    });
+
+    it('defaults to 60s when Retry-After header is missing', async () => {
+      server.use(
+        http.get('https://www.googleapis.com/books/v1/volumes', () => {
+          return new HttpResponse(null, { status: 429 });
+        }),
+      );
+
+      try {
+        await provider.searchBooks('test');
+      } catch (error) {
+        expect(error).toBeInstanceOf(RateLimitError);
+        expect((error as RateLimitError).retryAfterMs).toBe(60000);
+      }
     });
   });
 

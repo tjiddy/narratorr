@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { RateLimitError } from '@narratorr/core';
 import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import { runEnrichment } from './enrichment.js';
 
@@ -106,5 +107,37 @@ describe('enrichment job', () => {
 
     expect(metadataService.enrichBook).not.toHaveBeenCalled();
     expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it('breaks batch on RateLimitError and leaves remaining candidates pending', async () => {
+    db.select
+      .mockReturnValueOnce(mockDbChain([]))  // no-asin
+      .mockReturnValueOnce(mockDbChain([
+        { id: 1, asin: 'B001' },
+        { id: 2, asin: 'B002' },
+        { id: 3, asin: 'B003' },
+      ]));  // candidates
+
+    // First enrichment succeeds, second throws rate limit
+    metadataService.enrichBook
+      .mockResolvedValueOnce({ title: 'Book 1', authors: [], narrators: ['Narrator'], duration: 100 })
+      .mockRejectedValueOnce(new RateLimitError(30000, 'Audnexus'));
+
+    db.select.mockReturnValueOnce(mockDbChain([{ narrator: null, duration: null }]));  // existing book fields for book 1
+    db.update.mockReturnValue(mockDbChain());
+
+    await runEnrichment(db as any, metadataService as any, log as any);
+
+    // Only first book's enrichment should have been processed, second throws, third skipped
+    expect(metadataService.enrichBook).toHaveBeenCalledTimes(2);
+    expect(metadataService.enrichBook).toHaveBeenCalledWith('B001');
+    expect(metadataService.enrichBook).toHaveBeenCalledWith('B002');
+    // Third book should NOT have been called
+    expect(metadataService.enrichBook).not.toHaveBeenCalledWith('B003');
+
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'Audnexus', retryAfterMs: 30000 }),
+      'Rate limited during enrichment — remaining candidates stay pending',
+    );
   });
 });

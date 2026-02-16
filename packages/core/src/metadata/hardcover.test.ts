@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { HardcoverProvider } from './hardcover.js';
+import { RateLimitError } from './errors.js';
 
 const API_URL = 'https://api.hardcover.app/v1/graphql';
 
@@ -344,6 +345,55 @@ describe('HardcoverProvider', () => {
 
       const result = await provider.test();
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe('rate limiting', () => {
+    it('throws RateLimitError on 429 response', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': '30' },
+          });
+        }),
+      );
+
+      await expect(provider.searchBooks('test')).rejects.toThrow(RateLimitError);
+    });
+
+    it('parses Retry-After header into milliseconds', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': '45' },
+          });
+        }),
+      );
+
+      try {
+        await provider.searchBooks('test');
+      } catch (error) {
+        expect(error).toBeInstanceOf(RateLimitError);
+        expect((error as RateLimitError).retryAfterMs).toBe(45000);
+        expect((error as RateLimitError).provider).toBe('Hardcover');
+      }
+    });
+
+    it('defaults to 60s when Retry-After header is missing', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return new HttpResponse(null, { status: 429 });
+        }),
+      );
+
+      try {
+        await provider.searchBooks('test');
+      } catch (error) {
+        expect(error).toBeInstanceOf(RateLimitError);
+        expect((error as RateLimitError).retryAfterMs).toBe(60000);
+      }
     });
   });
 
