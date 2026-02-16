@@ -13,9 +13,9 @@ const mockIndexers: ProwlarrIndexer[] = [
     protocol: 'usenet',
     enable: true,
     fields: [],
-    categories: [
+    capabilities: { categories: [
       { id: 3000, name: 'Audio', subCategories: [{ id: 3030, name: 'Audiobook' }] },
-    ],
+    ] },
   },
   {
     id: 2,
@@ -23,9 +23,9 @@ const mockIndexers: ProwlarrIndexer[] = [
     protocol: 'torrent',
     enable: true,
     fields: [],
-    categories: [
+    capabilities: { categories: [
       { id: 3000, name: 'Audio', subCategories: [{ id: 3010, name: 'Music' }] },
-    ],
+    ] },
   },
   {
     id: 3,
@@ -33,9 +33,9 @@ const mockIndexers: ProwlarrIndexer[] = [
     protocol: 'torrent',
     enable: false,
     fields: [],
-    categories: [
+    capabilities: { categories: [
       { id: 3000, name: 'Audio', subCategories: [{ id: 3030, name: 'Audiobook' }] },
-    ],
+    ] },
   },
   {
     id: 4,
@@ -43,9 +43,9 @@ const mockIndexers: ProwlarrIndexer[] = [
     protocol: 'torrent',
     enable: true,
     fields: [],
-    categories: [
+    capabilities: { categories: [
       { id: 3030, name: 'Audiobook' },
-    ],
+    ] },
   },
 ];
 
@@ -170,6 +170,20 @@ describe('ProwlarrClient', () => {
       const result = client.filterByCategories(mockIndexers, [3010]);
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe('TorrentLeech');
+    });
+
+    it('handles indexers with null or missing capabilities', () => {
+      const indexersWithNullCaps: ProwlarrIndexer[] = [
+        { id: 10, name: 'NullCaps', protocol: 'torrent', enable: true, fields: [], capabilities: null },
+        { id: 11, name: 'NoCaps', protocol: 'usenet', enable: true, fields: [] } as ProwlarrIndexer,
+        { id: 12, name: 'NullCats', protocol: 'torrent', enable: true, fields: [], capabilities: { categories: null } },
+        ...mockIndexers,
+      ];
+
+      const result = client.filterByCategories(indexersWithNullCaps, [3030]);
+      // NullCaps, NoCaps, NullCats should be excluded (no matching categories), others same as before
+      expect(result).toHaveLength(3);
+      expect(result.map(i => i.name)).toEqual(['NZBGeek', 'DisabledIndexer', 'AudioBooks.org']);
     });
   });
 });

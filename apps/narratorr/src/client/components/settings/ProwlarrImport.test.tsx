@@ -37,8 +37,15 @@ beforeEach(() => {
 });
 
 describe('ProwlarrImport', () => {
-  it('renders form fields and header', () => {
-    renderWithProviders(<ProwlarrImport onClose={vi.fn()} />);
+  it('does not render when closed', () => {
+    const { container } = renderWithProviders(
+      <ProwlarrImport isOpen={false} onClose={vi.fn()} />,
+    );
+    expect(container.innerHTML).toBe('');
+  });
+
+  it('renders form fields and header when open', () => {
+    renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
 
     expect(screen.getByText('Import from Prowlarr')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('http://localhost:9696')).toBeInTheDocument();
@@ -51,7 +58,7 @@ describe('ProwlarrImport', () => {
     vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
     const user = userEvent.setup();
 
-    renderWithProviders(<ProwlarrImport onClose={vi.fn()} />);
+    renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
 
     await user.type(screen.getByPlaceholderText('http://localhost:9696'), 'http://prowlarr:9696');
     await user.type(screen.getByPlaceholderText('Your Prowlarr API key'), 'test-key');
@@ -67,7 +74,7 @@ describe('ProwlarrImport', () => {
     vi.mocked(api.testConnection).mockResolvedValue({ success: false, message: 'Refused' });
     const user = userEvent.setup();
 
-    renderWithProviders(<ProwlarrImport onClose={vi.fn()} />);
+    renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
 
     await user.type(screen.getByPlaceholderText('http://localhost:9696'), 'http://bad:9696');
     await user.type(screen.getByPlaceholderText('Your Prowlarr API key'), 'key');
@@ -78,54 +85,52 @@ describe('ProwlarrImport', () => {
     });
   });
 
-  it('save & preview is disabled until test passes', async () => {
+  it('next button is disabled until test passes', async () => {
     const user = userEvent.setup();
 
-    renderWithProviders(<ProwlarrImport onClose={vi.fn()} />);
+    renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
 
     await user.type(screen.getByPlaceholderText('http://localhost:9696'), 'http://prowlarr:9696');
     await user.type(screen.getByPlaceholderText('Your Prowlarr API key'), 'key');
 
-    const saveBtn = screen.getByText('Save & Preview');
-    expect(saveBtn).toBeDisabled();
+    expect(screen.getByText('Next')).toBeDisabled();
   });
 
-  it('save & preview is enabled after successful test', async () => {
+  it('next button is enabled after successful test', async () => {
     vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
     const user = userEvent.setup();
 
-    renderWithProviders(<ProwlarrImport onClose={vi.fn()} />);
+    renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
 
     await user.type(screen.getByPlaceholderText('http://localhost:9696'), 'http://prowlarr:9696');
     await user.type(screen.getByPlaceholderText('Your Prowlarr API key'), 'key');
     await user.click(screen.getByText('Test'));
 
     await waitFor(() => {
-      expect(screen.getByText('Save & Preview')).not.toBeDisabled();
+      expect(screen.getByText('Next')).not.toBeDisabled();
     });
   });
 
-  it('changing URL resets test state and disables preview', async () => {
+  it('changing URL resets test state and disables next', async () => {
     vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
     const user = userEvent.setup();
 
-    renderWithProviders(<ProwlarrImport onClose={vi.fn()} />);
+    renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
 
     await user.type(screen.getByPlaceholderText('http://localhost:9696'), 'http://prowlarr:9696');
     await user.type(screen.getByPlaceholderText('Your Prowlarr API key'), 'key');
     await user.click(screen.getByText('Test'));
 
     await waitFor(() => {
-      expect(screen.getByText('Save & Preview')).not.toBeDisabled();
+      expect(screen.getByText('Next')).not.toBeDisabled();
     });
 
-    // Change URL — should reset testPassed
     await user.type(screen.getByPlaceholderText('http://localhost:9696'), '/v2');
 
-    expect(screen.getByText('Save & Preview')).toBeDisabled();
+    expect(screen.getByText('Next')).toBeDisabled();
   });
 
-  it('save & preview calls save then preview', async () => {
+  it('clicking next saves config and shows preview table', async () => {
     vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
     vi.mocked(api.saveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
@@ -133,51 +138,24 @@ describe('ProwlarrImport', () => {
     vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
     const user = userEvent.setup();
 
-    renderWithProviders(<ProwlarrImport onClose={vi.fn()} />);
+    renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
 
     await user.type(screen.getByPlaceholderText('http://localhost:9696'), 'http://prowlarr:9696');
     await user.type(screen.getByPlaceholderText('Your Prowlarr API key'), 'key');
     await user.click(screen.getByText('Test'));
-
-    await waitFor(() => {
-      expect(screen.getByText('Save & Preview')).not.toBeDisabled();
-    });
-
-    await user.click(screen.getByText('Save & Preview'));
+    await waitFor(() => expect(screen.getByText('Next')).not.toBeDisabled());
+    await user.click(screen.getByText('Next'));
 
     await waitFor(() => {
       expect(api.saveConfig).toHaveBeenCalled();
       expect(api.preview).toHaveBeenCalled();
-    });
-  });
-
-  it('renders preview table with action badges', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
-      url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
-    });
-    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
-    const user = userEvent.setup();
-
-    renderWithProviders(<ProwlarrImport onClose={vi.fn()} />);
-
-    await user.type(screen.getByPlaceholderText('http://localhost:9696'), 'http://prowlarr:9696');
-    await user.type(screen.getByPlaceholderText('Your Prowlarr API key'), 'key');
-    await user.click(screen.getByText('Test'));
-    await waitFor(() => expect(screen.getByText('Save & Preview')).not.toBeDisabled());
-    await user.click(screen.getByText('Save & Preview'));
-
-    await waitFor(() => {
       expect(screen.getByText('MyAnonaMouse')).toBeInTheDocument();
       expect(screen.getByText('NZBgeek')).toBeInTheDocument();
-      expect(screen.getByText('Existing')).toBeInTheDocument();
     });
 
+    expect(screen.getByText('Select indexers to import')).toBeInTheDocument();
     expect(screen.getByText('New')).toBeInTheDocument();
     expect(screen.getByText('Updated')).toBeInTheDocument();
-    expect(screen.getByText('Unchanged')).toBeInTheDocument();
-    // Header shows change count
-    expect(screen.getByText('(2 changes)')).toBeInTheDocument();
   });
 
   it('checkboxes default to selected for non-unchanged items', async () => {
@@ -188,52 +166,50 @@ describe('ProwlarrImport', () => {
     vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
     const user = userEvent.setup();
 
-    renderWithProviders(<ProwlarrImport onClose={vi.fn()} />);
+    renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
 
     await user.type(screen.getByPlaceholderText('http://localhost:9696'), 'http://prowlarr:9696');
     await user.type(screen.getByPlaceholderText('Your Prowlarr API key'), 'key');
     await user.click(screen.getByText('Test'));
-    await waitFor(() => expect(screen.getByText('Save & Preview')).not.toBeDisabled());
-    await user.click(screen.getByText('Save & Preview'));
-
-    await waitFor(() => {
-      expect(screen.getByText('MyAnonaMouse')).toBeInTheDocument();
-    });
+    await waitFor(() => expect(screen.getByText('Next')).not.toBeDisabled());
+    await user.click(screen.getByText('Next'));
+    await waitFor(() => expect(screen.getByText('MyAnonaMouse')).toBeInTheDocument());
 
     const checkboxes = screen.getAllByRole('checkbox');
-    // 2 checkboxes: new and updated (unchanged has none)
     expect(checkboxes).toHaveLength(2);
     expect(checkboxes[0]).toBeChecked();
     expect(checkboxes[1]).toBeChecked();
   });
 
-  it('apply sends selected items and shows success toast', async () => {
+  it('import selected sends items and closes on success', async () => {
     vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
     vi.mocked(api.saveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
     vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
     vi.mocked(api.sync).mockResolvedValue({ added: 1, updated: 1, removed: 0 });
+    const onClose = vi.fn();
     const user = userEvent.setup();
 
-    renderWithProviders(<ProwlarrImport onClose={vi.fn()} />);
+    renderWithProviders(<ProwlarrImport isOpen={true} onClose={onClose} />);
 
     await user.type(screen.getByPlaceholderText('http://localhost:9696'), 'http://prowlarr:9696');
     await user.type(screen.getByPlaceholderText('Your Prowlarr API key'), 'key');
     await user.click(screen.getByText('Test'));
-    await waitFor(() => expect(screen.getByText('Save & Preview')).not.toBeDisabled());
-    await user.click(screen.getByText('Save & Preview'));
+    await waitFor(() => expect(screen.getByText('Next')).not.toBeDisabled());
+    await user.click(screen.getByText('Next'));
     await waitFor(() => expect(screen.getByText('MyAnonaMouse')).toBeInTheDocument());
 
-    await user.click(screen.getByText('Apply Changes'));
+    await user.click(screen.getByText('Import Selected'));
 
     await waitFor(() => {
       expect(api.sync).toHaveBeenCalled();
       expect(toast.success).toHaveBeenCalledWith('Sync complete: 1 added, 1 updated');
+      expect(onClose).toHaveBeenCalled();
     });
   });
 
-  it('cancel clears preview table', async () => {
+  it('back button returns to connect step', async () => {
     vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
     vi.mocked(api.saveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
@@ -241,17 +217,18 @@ describe('ProwlarrImport', () => {
     vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
     const user = userEvent.setup();
 
-    renderWithProviders(<ProwlarrImport onClose={vi.fn()} />);
+    renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
 
     await user.type(screen.getByPlaceholderText('http://localhost:9696'), 'http://prowlarr:9696');
     await user.type(screen.getByPlaceholderText('Your Prowlarr API key'), 'key');
     await user.click(screen.getByText('Test'));
-    await waitFor(() => expect(screen.getByText('Save & Preview')).not.toBeDisabled());
-    await user.click(screen.getByText('Save & Preview'));
+    await waitFor(() => expect(screen.getByText('Next')).not.toBeDisabled());
+    await user.click(screen.getByText('Next'));
     await waitFor(() => expect(screen.getByText('MyAnonaMouse')).toBeInTheDocument());
 
-    await user.click(screen.getByText('Cancel'));
+    await user.click(screen.getByText('Back'));
 
+    expect(screen.getByPlaceholderText('http://localhost:9696')).toBeInTheDocument();
     expect(screen.queryByText('MyAnonaMouse')).not.toBeInTheDocument();
   });
 
@@ -259,13 +236,9 @@ describe('ProwlarrImport', () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
 
-    renderWithProviders(<ProwlarrImport onClose={onClose} />);
+    renderWithProviders(<ProwlarrImport isOpen={true} onClose={onClose} />);
 
-    // The X button is the only button with XIcon
-    const closeBtn = screen.getByText('Import from Prowlarr')
-      .closest('.flex')!
-      .querySelector('button:last-child') as HTMLElement;
-    await user.click(closeBtn);
+    await user.click(screen.getByLabelText('Close modal'));
 
     expect(onClose).toHaveBeenCalled();
   });
@@ -273,16 +246,28 @@ describe('ProwlarrImport', () => {
   it('sync mode toggles between addOnly and fullSync', async () => {
     const user = userEvent.setup();
 
-    renderWithProviders(<ProwlarrImport onClose={vi.fn()} />);
+    renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
 
     const fullSyncBtn = screen.getByText('Full Sync');
     await user.click(fullSyncBtn);
 
-    expect(screen.getByText('Add, update, and remove to match Prowlarr state')).toBeInTheDocument();
+    expect(screen.getByText('Add, update, and remove to match Prowlarr')).toBeInTheDocument();
 
     const addOnlyBtn = screen.getByText('Add Only');
     await user.click(addOnlyBtn);
 
-    expect(screen.getByText('Import new indexers, never update or remove existing')).toBeInTheDocument();
+    expect(screen.getByText('Only import new indexers')).toBeInTheDocument();
+  });
+
+  it('clicking backdrop calls onClose', async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+
+    renderWithProviders(<ProwlarrImport isOpen={true} onClose={onClose} />);
+
+    const backdrop = screen.getByText('Import from Prowlarr').closest('.fixed') as HTMLElement;
+    await user.click(backdrop);
+
+    expect(onClose).toHaveBeenCalled();
   });
 });

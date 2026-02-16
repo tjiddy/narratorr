@@ -68,7 +68,9 @@ export class ProwlarrSyncService {
     const client = new ProwlarrClient(config.url, config.apiKey);
 
     const remoteIndexers = await client.getIndexers();
+    this.log.debug({ count: remoteIndexers.length, names: remoteIndexers.map(i => i.name) }, 'Prowlarr indexers fetched');
     const filtered = client.filterByCategories(remoteIndexers, config.categories);
+    this.log.debug({ count: filtered.length, categories: config.categories }, 'Prowlarr indexers after category filter');
     const proxyIndexers = client.buildProxyIndexers(filtered);
 
     const localProwlarr = await this.db

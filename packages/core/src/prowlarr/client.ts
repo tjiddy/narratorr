@@ -55,9 +55,9 @@ export class ProwlarrClient {
     if (categories.length === 0) return indexers;
 
     return indexers.filter((idx) =>
-      idx.categories.some((cat) =>
+      (idx.capabilities?.categories ?? []).some((cat) =>
         categories.includes(cat.id) ||
-        cat.subCategories?.some((sub) => categories.includes(sub.id))
+        (cat.subCategories ?? []).some((sub) => categories.includes(sub.id))
       )
     );
   }

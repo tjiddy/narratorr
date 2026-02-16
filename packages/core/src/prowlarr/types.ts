@@ -10,7 +10,9 @@ export interface ProwlarrIndexer {
   name: string;
   protocol: 'torrent' | 'usenet';
   fields: ProwlarrField[];
-  categories: ProwlarrCategory[];
+  capabilities?: {
+    categories?: ProwlarrCategory[] | null;
+  } | null;
   enable: boolean;
 }
 
