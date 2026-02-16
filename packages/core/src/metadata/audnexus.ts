@@ -1,4 +1,5 @@
 import { BookMetadataSchema, AuthorMetadataSchema } from './schemas.js';
+import { normalizeGenres } from './genres.js';
 import type {
   MetadataProvider,
   BookMetadata,
@@ -197,7 +198,7 @@ function mapAuthor(d: AudnexusAuthorSearchResult): Record<string, unknown> {
     name: d.name ?? '',
     description: d.description,
     imageUrl: d.image || undefined,
-    genres: d.genres?.map((g) => g.name).filter(Boolean),
+    genres: normalizeGenres(d.genres?.map((g) => g.name).filter((n): n is string => Boolean(n))),
   };
 }
 
@@ -230,6 +231,6 @@ function mapBook(d: AudnexusBookDetail): Record<string, unknown> {
     language: d.language,
     coverUrl: d.image || undefined,
     duration: d.runtimeLengthMin,
-    genres: d.genres?.map((g) => g.name).filter(Boolean),
+    genres: normalizeGenres(d.genres?.map((g) => g.name).filter((n): n is string => Boolean(n))),
   };
 }

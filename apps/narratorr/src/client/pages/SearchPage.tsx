@@ -465,11 +465,11 @@ function DiscoverBookCard({
                 {formatDuration(book.duration)}
               </span>
             )}
-            {book.genres && book.genres.length > 0 && (
-              <span className="text-xs px-2 py-1 bg-muted rounded-lg font-medium text-muted-foreground">
-                {book.genres[0]}
+            {book.genres && book.genres.length > 0 && book.genres.slice(0, 3).map((genre) => (
+              <span key={genre} className="text-xs px-2 py-1 bg-muted rounded-lg font-medium text-muted-foreground">
+                {genre}
               </span>
-            )}
+            ))}
           </div>
         </div>
 

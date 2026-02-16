@@ -169,6 +169,19 @@ export const blacklist = sqliteTable('blacklist', {
     .default(sql`(unixepoch())`),
 });
 
+// ============ TELEMETRY ============
+
+export const unmatchedGenres = sqliteTable('unmatched_genres', {
+  genre: text('genre').primaryKey(),
+  count: integer('count').notNull().default(1),
+  firstSeen: integer('first_seen', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  lastSeen: integer('last_seen', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 // ============ SETTINGS ============
 
 export const settings = sqliteTable('settings', {

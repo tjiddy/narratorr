@@ -1,4 +1,5 @@
 import { BookMetadataSchema, AuthorMetadataSchema } from './schemas.js';
+import { normalizeGenres } from './genres.js';
 import { RateLimitError } from './errors.js';
 import type {
   MetadataProvider,
@@ -236,7 +237,7 @@ function mapVolume(item: GoogleBooksVolume): Record<string, unknown> {
     language: info.language,
     coverUrl,
     isbn,
-    genres: info.categories,
+    genres: normalizeGenres(info.categories),
     // Fields not available from Google Books
     asin: undefined,
     narrators: undefined,

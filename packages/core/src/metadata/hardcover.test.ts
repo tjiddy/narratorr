@@ -235,6 +235,34 @@ describe('HardcoverProvider', () => {
       expect(book!.genres).toEqual(['Fantasy', 'Epic Fantasy', 'High Fantasy']);
     });
 
+    it('sorts genres by tag count before normalization', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({
+            data: {
+              books: [{
+                id: 999,
+                title: 'Test Book',
+                cached_tags: {
+                  Genre: [
+                    { tag: 'Thriller', count: 2 },
+                    { tag: 'Mystery', count: 10 },
+                    { tag: 'Suspense', count: 5 },
+                  ],
+                },
+                contributions: [{ contribution: null, author: { id: 1, name: 'Author', slug: 'author' } }],
+              }],
+            },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('999');
+
+      // Should be sorted by count descending: Mystery(10), Suspense(5), Thriller(2)
+      expect(book!.genres).toEqual(['Mystery', 'Suspense', 'Thriller']);
+    });
+
     it('maps publisher from audio edition', async () => {
       const book = await provider.getBook('386446');
 

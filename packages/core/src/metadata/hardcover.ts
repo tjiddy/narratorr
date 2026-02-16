@@ -1,4 +1,5 @@
 import { BookMetadataSchema, AuthorMetadataSchema, SeriesMetadataSchema } from './schemas.js';
+import { normalizeGenres } from './genres.js';
 import { RateLimitError } from './errors.js';
 import type {
   MetadataProvider,
@@ -484,11 +485,13 @@ function extractImageUrl(image: unknown): string | undefined {
   return undefined;
 }
 
-/** Extract genre names from cached_tags (tags are objects with a `tag` field). */
+/** Extract genre names from cached_tags, sorted by popularity count, then normalized. */
 function extractGenres(cachedTags: Record<string, HardcoverTagEntry[]> | undefined): string[] | undefined {
   const genreEntries = cachedTags?.['Genre'];
   if (!genreEntries?.length) return undefined;
-  return genreEntries.map((entry) => entry.tag).filter(Boolean);
+  const sorted = [...genreEntries].sort((a, b) => (b.count ?? 0) - (a.count ?? 0));
+  const raw = sorted.map((entry) => entry.tag).filter(Boolean);
+  return normalizeGenres(raw);
 }
 
 // ---------------------------------------------------------------------------
@@ -520,7 +523,7 @@ function bookRelevanceScore(book: BookMetadata): number {
 
 function mapSearchBook(doc: Record<string, unknown>, textMatch?: number): Record<string, unknown> {
   const isbns = doc.isbns as string[] | undefined;
-  const genres = doc.genres as string[] | undefined;
+  const genres = normalizeGenres(doc.genres as string[] | undefined);
   const authorNames = doc.author_names as string[] | undefined;
   const contributions = doc.contributions as Array<{ author: { name: string; id: number } }> | undefined;
   const featuredSeries = doc.featured_series as { position: number; series: { name: string; id: number } } | null | undefined;

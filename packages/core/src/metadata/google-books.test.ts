@@ -46,7 +46,7 @@ describe('GoogleBooksProvider', () => {
     it('maps genres from categories', async () => {
       const books = await provider.searchBooks('Way of Kings');
 
-      expect(books[0].genres).toEqual(['Fiction', 'Fantasy']);
+      expect(books[0].genres).toEqual(['Fantasy']);
     });
 
     it('returns empty array on API error', async () => {

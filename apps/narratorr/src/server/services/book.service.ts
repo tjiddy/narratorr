@@ -1,8 +1,8 @@
-import { eq, and, like, desc } from 'drizzle-orm';
+import { eq, and, like, desc, sql } from 'drizzle-orm';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, authors } from '@narratorr/db/schema';
-import { slugify } from '@narratorr/core';
+import { books, authors, unmatchedGenres } from '@narratorr/db/schema';
+import { slugify, findUnmatchedGenres } from '@narratorr/core';
 import { type MetadataService } from './metadata.service.js';
 
 type BookRow = typeof books.$inferSelect;
@@ -181,6 +181,9 @@ export class BookService {
       .returning();
 
     this.log.info({ title: data.title }, 'Book added to library');
+    this.trackUnmatchedGenres(data.genres).catch((error) => {
+      this.log.debug({ error }, 'Failed to track unmatched genres');
+    });
     return this.getById(result[0].id) as Promise<BookWithAuthor>;
   }
 
@@ -227,5 +230,25 @@ export class BookService {
       ...r.book,
       author: r.author || undefined,
     }));
+  }
+
+  /** Fire-and-forget: track genres not in the synonym/known lists for future analysis */
+  private async trackUnmatchedGenres(genres: string[] | undefined): Promise<void> {
+    const unmatched = findUnmatchedGenres(genres, genres);
+    if (unmatched.length === 0) return;
+
+    for (const genre of unmatched) {
+      await this.db
+        .insert(unmatchedGenres)
+        .values({ genre, count: 1 })
+        .onConflictDoUpdate({
+          target: unmatchedGenres.genre,
+          set: {
+            count: sql`${unmatchedGenres.count} + 1`,
+            lastSeen: sql`(unixepoch())`,
+          },
+        });
+    }
+    this.log.debug({ genres: unmatched }, 'Tracked unmatched genres');
   }
 }

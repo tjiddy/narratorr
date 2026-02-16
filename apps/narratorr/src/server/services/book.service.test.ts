@@ -228,6 +228,87 @@ describe('BookService', () => {
     });
   });
 
+  describe('trackUnmatchedGenres', () => {
+    it('inserts unmatched genres into telemetry table', async () => {
+      // Setup: create a book with genres that include unmatched ones
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // author lookup
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, genres: ['Fantasy', 'Weird Western'] }, author: mockAuthor }]));  // getById
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await service.create({
+        title: 'Test Book',
+        authorName: 'Author',
+        genres: ['Fantasy', 'Weird Western'],
+      });
+
+      // Wait for fire-and-forget to complete
+      await new Promise((r) => setTimeout(r, 50));
+
+      // "Weird Western" is not in the synonym map or known genres, so it should be tracked
+      // db.insert should have been called for: author, book, and unmatched genre(s)
+      expect(db.insert).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not track known genres', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // author lookup
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, genres: ['Fantasy', 'Science Fiction'] }, author: mockAuthor }]));  // getById
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await service.create({
+        title: 'Test Book',
+        authorName: 'Author',
+        genres: ['Fantasy', 'Science Fiction'],
+      });
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Only author + book inserts, no unmatched genres
+      expect(db.insert).toHaveBeenCalledTimes(2);
+    });
+
+    it('uses upsert with count increment for repeat genres', async () => {
+      const insertChain = mockDbChain([{ id: 1 }]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // author lookup
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, genres: ['Weird Western'] }, author: mockAuthor }]));  // getById
+
+      db.insert.mockReturnValue(insertChain);
+
+      await service.create({
+        title: 'Test Book',
+        authorName: 'Author',
+        genres: ['Weird Western'],
+      });
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      // The unmatched genre insert should use onConflictDoUpdate for upsert behavior
+      expect(insertChain.onConflictDoUpdate).toHaveBeenCalled();
+    });
+
+    it('handles empty genres without error', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // author lookup
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));  // getById
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await service.create({
+        title: 'Test Book',
+        authorName: 'Author',
+      });
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Only author + book inserts
+      expect(db.insert).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('update', () => {
     it('returns updated book', async () => {
       const updatedBook = { ...mockBook, title: 'Updated Title' };
