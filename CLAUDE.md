@@ -43,6 +43,12 @@ pnpm typecheck     # TypeScript checking
 - **Co-locate what changes together.** Types live alongside their API methods. Components live with their hooks. Tests live next to their source. Barrel `index.ts` at module boundaries, direct imports within.
 - **Extract components and hooks, not just functions.** When a component grows a second concern, extract it to its own file — don't just extract a helper function within the same file. React components and hooks are the unit of reuse.
 
+## Frontend Design Quality
+
+All issues with `scope/frontend` must include a UI/UX design pass during implementation. New or significantly changed UI components should be refined using the `frontend-design` skill before handoff. The goal is production-grade polish — not just functional markup. This is enforced at two points:
+- `/implement` runs the design pass proactively after quality gates pass
+- `/review` checks that frontend components meet the app's design standard and flags unpolished UI as a blocking finding
+
 ## Code Style
 
 TypeScript strict, ESM (`.js` extensions), functional React components, TanStack Query for server state, Tailwind CSS (no CSS files), `@/` path alias for client imports.
