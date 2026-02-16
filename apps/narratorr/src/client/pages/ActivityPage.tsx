@@ -14,6 +14,7 @@ import {
   AlertCircleIcon,
   PauseIcon,
 } from '@/components/icons';
+import { ProtocolBadge } from '@/components/ProtocolBadge';
 
 const statusConfig: Record<
   string,
@@ -271,6 +272,7 @@ function DownloadCard({
                 {download.seeders !== undefined && (
                   <span>{download.seeders} seeders</span>
                 )}
+                <ProtocolBadge protocol={download.protocol} />
                 <span
                   className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-xs font-medium ${config.bgColor} ${config.textColor}`}
                 >

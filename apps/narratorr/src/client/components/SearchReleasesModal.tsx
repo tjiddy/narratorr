@@ -16,6 +16,7 @@ import {
 } from '@/components/icons';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { CoverImage } from '@/components/CoverImage';
+import { ProtocolBadge } from '@/components/ProtocolBadge';
 
 // ============================================================================
 // Props
@@ -257,6 +258,7 @@ function ReleaseCard({
                 {result.seeders} seeders
               </span>
             )}
+            <ProtocolBadge protocol={result.protocol} />
             <span className="text-xs px-1.5 py-0.5 bg-muted rounded-md font-medium text-muted-foreground">
               {result.indexer}
             </span>

@@ -181,6 +181,23 @@ describe('ActivityPage', () => {
     expect(cancelSpans).toHaveLength(2);
   });
 
+  it('shows protocol badges on download cards', async () => {
+    const torrentDl = makeDownload({ id: 10, title: 'Torrent Book', status: 'downloading', protocol: 'torrent', progress: 0.5 });
+    const usenetDl = makeDownload({ id: 11, title: 'Usenet Book', status: 'completed', protocol: 'usenet', progress: 1 });
+    vi.mocked(api.getActivity).mockResolvedValue([torrentDl, usenetDl]);
+
+    renderWithProviders(<ActivityPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Torrent Book')).toBeInTheDocument();
+    });
+
+    const badges = screen.getAllByTestId('protocol-badge');
+    expect(badges).toHaveLength(2);
+    expect(badges[0]).toHaveTextContent('Torrent');
+    expect(badges[1]).toHaveTextContent('Usenet');
+  });
+
   it('calls cancelDownload when cancel button clicked', async () => {
     vi.mocked(api.cancelDownload).mockResolvedValue({ success: true });
     const downloading = makeDownload({

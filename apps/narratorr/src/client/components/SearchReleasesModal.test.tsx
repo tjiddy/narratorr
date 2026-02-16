@@ -184,6 +184,27 @@ describe('SearchReleasesModal', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it('shows protocol badges on results', async () => {
+    const mixedResults: SearchResult[] = [
+      { ...mockResults[0], protocol: 'torrent' },
+      { ...mockResults[1], protocol: 'usenet' },
+    ];
+    vi.mocked(api.search).mockResolvedValue(mixedResults);
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings [Unabridged]')).toBeInTheDocument();
+    });
+
+    const badges = screen.getAllByTestId('protocol-badge');
+    expect(badges).toHaveLength(2);
+    expect(badges[0]).toHaveTextContent('Torrent');
+    expect(badges[1]).toHaveTextContent('Usenet');
+  });
+
   it('calls onClose when X button is clicked', async () => {
     vi.mocked(api.search).mockResolvedValue([]);
     const onClose = vi.fn();
