@@ -97,7 +97,9 @@ Claude Code skills automate the agent workflow — use these instead of manual s
 - `/block <id>` — Post blocked comment, set blocked label, stop
 - `/elaborate <id>` — Groom/triage an issue without claiming (read-only, structured verdict)
 - `/verify` — Run quality gates (lint, test, typecheck, build) with structured summary
-- `/review <pr>` — Review a PR against its linked issue's acceptance criteria
+- `/review <pr>` — Review a PR against its linked issue's acceptance criteria; auto-merges on approve, stops on needs-work
+- `/respond-to-review <pr>` — Address review findings: fix, accept, defer, or dispute each finding, push fixes, post structured response
+- `/merge <pr>` — Merge an approved PR (checks verdict, quality gates, updates issue labels, cleans up branch)
 - `/triage` — Rank and categorize all open issues (read-only)
 - `/resume <id>` — Resume a blocked issue (restore branch, update labels)
 - `/changelog [since]` — Generate categorized changelog from git history
@@ -114,6 +116,12 @@ A detailed plan, pre-made spec, or explicit implementation instructions do NOT b
 1. **Before writing any code** → `/claim <id>` (validates spec, explores codebase, claims if ready)
 2. **Implement** — follow the plan from the claim phase
 3. **After tests/typecheck/build pass** → `/handoff <id>` (pushes, creates PR, comments, updates labels, appends workflow log)
+
+**PR review cycle:**
+1. `/review <pr>` — reviewer posts structured findings with verdict
+2. `/respond-to-review <pr>` — author addresses each finding (fix/accept/defer/dispute), pushes, posts response
+3. `/review <pr>` — re-review after fixes (repeat until approved)
+4. `/merge <pr>` — squash merge once verdict is `approve`
 
 **Standalone tools:**
 - `/elaborate <id>` — groom/triage without claiming (no side effects)
