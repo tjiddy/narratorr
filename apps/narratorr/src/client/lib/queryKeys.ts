@@ -15,4 +15,8 @@ export const queryKeys = {
   downloadClients: () => ['downloadClients'] as const,
   notifiers: () => ['notifiers'] as const,
   blacklist: () => ['blacklist'] as const,
+  prowlarr: {
+    config: () => ['prowlarr', 'config'] as const,
+    preview: () => ['prowlarr', 'preview'] as const,
+  },
 } as const;

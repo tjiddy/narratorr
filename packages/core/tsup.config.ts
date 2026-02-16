@@ -8,6 +8,7 @@ export default defineConfig({
     'src/utils/index.ts',
     'src/utils/audio-scanner.ts',
     'src/metadata/index.ts',
+    'src/prowlarr/index.ts',
   ],
   format: ['esm'],
   dts: true,

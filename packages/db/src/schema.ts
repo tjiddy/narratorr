@@ -78,6 +78,8 @@ export const indexers = sqliteTable('indexers', {
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   priority: integer('priority').notNull().default(50),
   settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
+  source: text('source'),
+  sourceIndexerId: integer('source_indexer_id'),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),

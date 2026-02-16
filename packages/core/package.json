@@ -29,6 +29,10 @@
     "./metadata": {
       "import": "./dist/metadata/index.js",
       "types": "./dist/metadata/index.d.ts"
+    },
+    "./prowlarr": {
+      "import": "./dist/prowlarr/index.js",
+      "types": "./dist/prowlarr/index.d.ts"
     }
   },
   "scripts": {

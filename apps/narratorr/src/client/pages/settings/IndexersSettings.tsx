@@ -1,17 +1,21 @@
+import { useState } from 'react';
 import { api, type Indexer } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { IndexerCard } from '@/components/settings/IndexerCard';
+import { ProwlarrImport } from '@/components/settings/ProwlarrImport';
 import {
   LoadingSpinner,
   SearchIcon,
   PlusIcon,
   XIcon,
+  DownloadCloudIcon,
 } from '@/components/icons';
 import { useCrudSettings } from '@/hooks/useCrudSettings';
 import { type CreateIndexerFormData } from '../../../shared/schemas.js';
 
 export function IndexersSettings() {
+  const [showProwlarr, setShowProwlarr] = useState(false);
   const {
     items: indexers, isLoading, showForm, editingId,
     deleteTarget, setDeleteTarget,
@@ -43,18 +47,36 @@ export function IndexersSettings() {
             <p className="text-sm text-muted-foreground">Manage audiobook search sources</p>
           </div>
         </div>
-        <button
-          onClick={handleToggleForm}
-          className={`flex items-center gap-2 px-4 py-2.5 font-medium rounded-xl transition-all focus-ring ${
-            showForm
-              ? 'bg-muted text-muted-foreground hover:bg-muted/80'
-              : 'bg-primary text-primary-foreground hover:opacity-90'
-          }`}
-        >
-          {showForm ? <XIcon className="w-4 h-4" /> : <PlusIcon className="w-4 h-4" />}
-          <span className="hidden sm:inline">{showForm ? 'Cancel' : 'Add Indexer'}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setShowProwlarr(!showProwlarr); if (showForm) handleToggleForm(); }}
+            className={`flex items-center gap-2 px-4 py-2.5 font-medium rounded-xl transition-all focus-ring ${
+              showProwlarr
+                ? 'bg-muted text-muted-foreground hover:bg-muted/80'
+                : 'border border-border/50 hover:bg-muted/50'
+            }`}
+          >
+            {showProwlarr ? <XIcon className="w-4 h-4" /> : <DownloadCloudIcon className="w-4 h-4" />}
+            <span className="hidden sm:inline">{showProwlarr ? 'Close' : 'Prowlarr'}</span>
+          </button>
+          <button
+            onClick={() => { handleToggleForm(); if (showProwlarr) setShowProwlarr(false); }}
+            className={`flex items-center gap-2 px-4 py-2.5 font-medium rounded-xl transition-all focus-ring ${
+              showForm
+                ? 'bg-muted text-muted-foreground hover:bg-muted/80'
+                : 'bg-primary text-primary-foreground hover:opacity-90'
+            }`}
+          >
+            {showForm ? <XIcon className="w-4 h-4" /> : <PlusIcon className="w-4 h-4" />}
+            <span className="hidden sm:inline">{showForm ? 'Cancel' : 'Add Indexer'}</span>
+          </button>
+        </div>
       </div>
+
+      {/* Prowlarr Import */}
+      {showProwlarr && (
+        <ProwlarrImport onClose={() => setShowProwlarr(false)} />
+      )}
 
       {/* Add Form */}
       {showForm && (

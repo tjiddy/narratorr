@@ -7,3 +7,4 @@ export { MetadataService } from './metadata.service.js';
 export { ImportService } from './import.service.js';
 export { NotifierService } from './notifier.service.js';
 export { BlacklistService } from './blacklist.service.js';
+export { ProwlarrSyncService } from './prowlarr-sync.service.js';

@@ -9,6 +9,7 @@ export type { Notifier } from './notifiers.js';
 export type { BlacklistEntry } from './blacklist.js';
 export type { Settings, TestResult } from './settings.js';
 export type { DiscoveredBook, ScanResult, ImportConfirmItem, ImportResult } from './library-scan.js';
+export type { ProwlarrConfig, SyncPreviewItem, SyncResult } from './prowlarr.js';
 
 export { formatBytes, formatProgress } from './utils.js';
 
@@ -21,6 +22,7 @@ import { notifiersApi } from './notifiers.js';
 import { blacklistApi } from './blacklist.js';
 import { settingsApi } from './settings.js';
 import { libraryScanApi } from './library-scan.js';
+import { prowlarrApi } from './prowlarr.js';
 import { systemApi } from './system.js';
 
 export const api = {
@@ -33,5 +35,6 @@ export const api = {
   ...blacklistApi,
   ...settingsApi,
   ...libraryScanApi,
+  ...prowlarrApi,
   ...systemApi,
 };

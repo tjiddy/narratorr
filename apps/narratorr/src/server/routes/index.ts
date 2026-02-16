@@ -10,6 +10,7 @@ import {
   MetadataService,
   NotifierService,
   BlacklistService,
+  ProwlarrSyncService,
 } from '../services';
 import { ImportService } from '../services/import.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
@@ -25,6 +26,7 @@ import { metadataRoutes } from './metadata.js';
 import { libraryScanRoutes } from './library-scan.js';
 import { notifiersRoutes } from './notifiers.js';
 import { blacklistRoutes } from './blacklist.js';
+import { prowlarrRoutes } from './prowlarr.js';
 
 export interface Services {
   settings: SettingsService;
@@ -37,6 +39,7 @@ export interface Services {
   libraryScan: LibraryScanService;
   notifier: NotifierService;
   blacklist: BlacklistService;
+  prowlarrSync: ProwlarrSyncService;
 }
 
 export function createServices(db: Db, log: FastifyBaseLogger): Services {
@@ -50,8 +53,9 @@ export function createServices(db: Db, log: FastifyBaseLogger): Services {
   const importService = new ImportService(db, downloadClient, settings, log, notifier);
   const libraryScan = new LibraryScanService(db, book, log);
   const blacklistService = new BlacklistService(db, log);
+  const prowlarrSync = new ProwlarrSyncService(db, log);
 
-  return { settings, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, notifier, blacklist: blacklistService };
+  return { settings, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, notifier, blacklist: blacklistService, prowlarrSync };
 }
 
 export async function registerRoutes(
@@ -69,4 +73,5 @@ export async function registerRoutes(
   await systemRoutes(app, services);
   await notifiersRoutes(app, services.notifier);
   await blacklistRoutes(app, services.blacklist);
+  await prowlarrRoutes(app, services.prowlarrSync);
 }

@@ -3,3 +3,4 @@ export * from './download-clients/index.js';
 export * from './utils/index.js';
 export * from './metadata/index.js';
 export * from './notifiers/index.js';
+export * from './prowlarr/index.js';
