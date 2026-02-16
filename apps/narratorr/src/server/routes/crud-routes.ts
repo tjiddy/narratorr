@@ -118,14 +118,23 @@ export async function registerCrudRoutes(
   app.post(
     `${basePath}/test`,
     { schema: { body: createSchema } },
-    async (request) => {
-      const data = request.body as { type: string; settings: Record<string, unknown> };
-      const result = await service.testConfig({
-        type: data.type,
-        settings: data.settings,
-      });
-      request.log.debug({ type: data.type, success: result.success }, `${entityName} config test result`);
-      return result;
+    async (request, reply) => {
+      try {
+        const data = request.body as { type: string; settings: Record<string, unknown> };
+        const result = await service.testConfig({
+          type: data.type,
+          settings: data.settings,
+        });
+        if (result.success) {
+          request.log.info({ type: data.type }, `${entityName} config test passed`);
+        } else {
+          request.log.warn({ type: data.type, message: result.message }, `${entityName} config test failed`);
+        }
+        return result;
+      } catch (error) {
+        request.log.error(error, `${entityName} config test error`);
+        return reply.status(500).send({ error: 'Internal server error' });
+      }
     },
   );
 
@@ -133,11 +142,20 @@ export async function registerCrudRoutes(
   app.post(
     `${basePath}/:id/test`,
     { schema: { params: idParamSchema } },
-    async (request) => {
-      const { id } = request.params as { id: number };
-      const result = await service.test(id);
-      request.log.debug({ id, success: result.success }, `${entityName} test result`);
-      return result;
+    async (request, reply) => {
+      try {
+        const { id } = request.params as { id: number };
+        const result = await service.test(id);
+        if (result.success) {
+          request.log.info({ id }, `${entityName} test passed`);
+        } else {
+          request.log.warn({ id, message: result.message }, `${entityName} test failed`);
+        }
+        return result;
+      } catch (error) {
+        request.log.error(error, `${entityName} test error`);
+        return reply.status(500).send({ error: 'Internal server error' });
+      }
     },
   );
 }
