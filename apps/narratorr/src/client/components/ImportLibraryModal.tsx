@@ -20,7 +20,7 @@ export function ImportLibraryModal({ isOpen, onClose, defaultPath = '' }: Import
   const [discoveries, setDiscoveries] = useState<DiscoveredBook[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [scanStats, setScanStats] = useState({ totalFolders: 0, skippedDuplicates: 0 });
-  const [importResult, setImportResult] = useState({ imported: 0, failed: 0 });
+  const [importResult, setImportResult] = useState({ imported: 0, failed: 0, enriched: 0, enrichmentFailed: 0 });
 
   const scanMutation = useMutation({
     mutationFn: (path: string) => api.scanDirectory(path),
@@ -39,7 +39,12 @@ export function ImportLibraryModal({ isOpen, onClose, defaultPath = '' }: Import
   const importMutation = useMutation({
     mutationFn: (items: ImportConfirmItem[]) => api.confirmImport(items),
     onSuccess: (result) => {
-      setImportResult(result);
+      setImportResult({
+        imported: result.imported,
+        failed: result.failed,
+        enriched: result.enriched ?? 0,
+        enrichmentFailed: result.enrichmentFailed ?? 0,
+      });
       setStep('done');
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       if (result.imported > 0) {
@@ -235,9 +240,19 @@ export function ImportLibraryModal({ isOpen, onClose, defaultPath = '' }: Import
               <h3 className="font-display text-lg font-semibold mb-2">Import Complete</h3>
               <p className="text-muted-foreground text-center">
                 Imported {importResult.imported} book{importResult.imported !== 1 ? 's' : ''}
+                {importResult.enriched > 0 && (
+                  <span className="text-emerald-400">
+                    , {importResult.enriched} enriched
+                  </span>
+                )}
                 {importResult.failed > 0 && (
                   <span className="text-amber-400">
                     . {importResult.failed} failed.
+                  </span>
+                )}
+                {importResult.enrichmentFailed > 0 && (
+                  <span className="text-amber-400">
+                    {' '}{importResult.enrichmentFailed} enrichment failure{importResult.enrichmentFailed !== 1 ? 's' : ''}.
                   </span>
                 )}
               </p>

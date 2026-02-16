@@ -25,6 +25,8 @@ export interface ImportConfirmItem {
 export interface ImportResult {
   imported: number;
   failed: number;
+  enriched?: number;
+  enrichmentFailed?: number;
 }
 
 export const libraryScanApi = {

@@ -4,6 +4,12 @@ import type { Db } from '@narratorr/db';
 import type { BookService } from './book.service.js';
 import { parseFolderStructure, LibraryScanService } from './library-scan.service.js';
 
+vi.mock('./enrichment-utils.js', () => ({
+  enrichBookFromAudio: vi.fn().mockResolvedValue({ enriched: true }),
+}));
+
+import { enrichBookFromAudio } from './enrichment-utils.js';
+
 // ============================================================================
 // parseFolderStructure (pure function tests)
 // ============================================================================
@@ -90,6 +96,15 @@ describe('parseFolderStructure', () => {
     });
   });
 
+  it('treats numeric prefix with dash as title, not author', () => {
+    const result = parseFolderStructure(['01 - Harry Potter And The Philosopher\'s Stone']);
+    expect(result).toEqual({
+      title: 'Harry Potter And The Philosopher\'s Stone',
+      author: null,
+      series: null,
+    });
+  });
+
   it('handles empty parts array', () => {
     const result = parseFolderStructure([]);
     expect(result).toEqual({
@@ -125,9 +140,14 @@ describe('LibraryScanService', () => {
     findDuplicate: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
   };
+  let mockMetadataService: {
+    searchBooks: ReturnType<typeof vi.fn>;
+  };
   let log: ReturnType<typeof createMockLogger>;
 
   beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(enrichBookFromAudio).mockResolvedValue({ enriched: true });
     mockDb = {
       select: vi.fn().mockReturnThis(),
       from: vi.fn().mockReturnThis(),
@@ -144,10 +164,14 @@ describe('LibraryScanService', () => {
         status: 'imported',
       })),
     };
+    mockMetadataService = {
+      searchBooks: vi.fn().mockResolvedValue([]),
+    };
     log = createMockLogger();
     service = new LibraryScanService(
       mockDb as Db,
       mockBookService as unknown as BookService,
+      mockMetadataService as unknown as import('./metadata.service.js').MetadataService,
       log,
     );
   });
@@ -188,6 +212,136 @@ describe('LibraryScanService', () => {
 
       expect(result.imported).toBe(1);
       expect(result.failed).toBe(1);
+    });
+
+    it('calls enrichBookFromAudio for each imported book', async () => {
+      mockBookService.create
+        .mockResolvedValueOnce({ id: 10, title: 'Book A', status: 'imported', narrator: null, duration: null, coverUrl: null })
+        .mockResolvedValueOnce({ id: 11, title: 'Book B', status: 'imported', narrator: null, duration: null, coverUrl: null });
+
+      await service.confirmImport([
+        { path: '/audiobooks/A', title: 'Book A' },
+        { path: '/audiobooks/B', title: 'Book B' },
+      ]);
+
+      expect(enrichBookFromAudio).toHaveBeenCalledTimes(2);
+      expect(enrichBookFromAudio).toHaveBeenCalledWith(
+        10, '/audiobooks/A', expect.objectContaining({ narrator: null }), expect.anything(), expect.anything(),
+      );
+      expect(enrichBookFromAudio).toHaveBeenCalledWith(
+        11, '/audiobooks/B', expect.objectContaining({ narrator: null }), expect.anything(), expect.anything(),
+      );
+    });
+
+    it('returns enrichment counts', async () => {
+      vi.mocked(enrichBookFromAudio).mockResolvedValue({ enriched: true });
+
+      const result = await service.confirmImport([
+        { path: '/audiobooks/A', title: 'Book A' },
+      ]);
+
+      expect(result.enriched).toBe(1);
+      expect(result.enrichmentFailed).toBe(0);
+    });
+
+    it('counts enrichment failures without blocking import', async () => {
+      vi.mocked(enrichBookFromAudio).mockResolvedValue({ enriched: false, error: 'No audio files' });
+
+      const result = await service.confirmImport([
+        { path: '/audiobooks/A', title: 'Book A' },
+      ]);
+
+      expect(result.imported).toBe(1);
+      expect(result.enrichmentFailed).toBe(1);
+    });
+
+    it('does not call enrichment for skipped duplicates', async () => {
+      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 1, title: 'Existing' });
+
+      await service.confirmImport([
+        { path: '/audiobooks/A', title: 'Existing', authorName: 'Author' },
+      ]);
+
+      expect(enrichBookFromAudio).not.toHaveBeenCalled();
+    });
+
+    it('searches metadata providers and passes results to book create', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([{
+        title: 'Harry Potter and the Philosopher\'s Stone',
+        authors: [{ name: 'J.K. Rowling' }],
+        asin: 'B017V4IM1G',
+        description: 'The boy who lived...',
+        narrators: ['Stephen Fry'],
+        genres: ['fantasy', 'young-adult'],
+        coverUrl: 'https://example.com/cover.jpg',
+        duration: 480,
+        publishedDate: '1997-06-26',
+        providerId: 'hc-123',
+      }]);
+
+      await service.confirmImport([
+        { path: '/audiobooks/HP1', title: 'Harry Potter', authorName: 'J.K. Rowling' },
+      ]);
+
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledWith('Harry Potter J.K. Rowling');
+      expect(mockBookService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Harry Potter',
+          authorName: 'J.K. Rowling',
+          asin: 'B017V4IM1G',
+          description: 'The boy who lived...',
+          narrator: 'Stephen Fry',
+          genres: ['fantasy', 'young-adult'],
+          coverUrl: 'https://example.com/cover.jpg',
+          duration: 480,
+          providerId: 'hc-123',
+        }),
+      );
+    });
+
+    it('still imports when metadata lookup returns no results', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([]);
+
+      const result = await service.confirmImport([
+        { path: '/audiobooks/Obscure', title: 'Obscure Book' },
+      ]);
+
+      expect(result.imported).toBe(1);
+      expect(mockBookService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Obscure Book' }),
+      );
+    });
+
+    it('still imports when metadata lookup throws', async () => {
+      mockMetadataService.searchBooks.mockRejectedValue(new Error('API timeout'));
+
+      const result = await service.confirmImport([
+        { path: '/audiobooks/Timeout', title: 'Timeout Book' },
+      ]);
+
+      expect(result.imported).toBe(1);
+    });
+
+    it('preserves user-provided values over metadata', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([{
+        title: 'Different Title',
+        authors: [{ name: 'Different Author' }],
+        asin: 'B123',
+        coverUrl: 'https://provider.com/cover.jpg',
+      }]);
+
+      await service.confirmImport([
+        { path: '/audiobooks/A', title: 'My Title', authorName: 'My Author', coverUrl: '/my/cover.jpg', asin: 'MY-ASIN' },
+      ]);
+
+      expect(mockBookService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'My Title',
+          authorName: 'My Author',
+          coverUrl: '/my/cover.jpg',
+          asin: 'MY-ASIN',
+        }),
+      );
     });
   });
 });

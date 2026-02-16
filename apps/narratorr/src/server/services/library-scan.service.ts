@@ -6,6 +6,9 @@ import { books } from '@narratorr/db/schema';
 import { eq } from 'drizzle-orm';
 import { AUDIO_EXTENSIONS } from '@narratorr/core/utils';
 import type { BookService } from './book.service.js';
+import type { MetadataService } from './metadata.service.js';
+import type { BookMetadata } from '@narratorr/core/metadata';
+import { enrichBookFromAudio } from './enrichment-utils.js';
 
 export interface DiscoveredBook {
   path: string;
@@ -35,6 +38,7 @@ export class LibraryScanService {
   constructor(
     private db: Db,
     private bookService: BookService,
+    private metadataService: MetadataService,
     private log: FastifyBaseLogger,
   ) {}
 
@@ -102,13 +106,21 @@ export class LibraryScanService {
   }
 
   /**
-   * Confirm import — create book records for selected discoveries.
+   * Confirm import — create book records for selected discoveries,
+   * then enrich each with audio file metadata.
    */
-  async confirmImport(items: ImportConfirmItem[]): Promise<{ imported: number; failed: number }> {
+  async confirmImport(items: ImportConfirmItem[]): Promise<{
+    imported: number;
+    failed: number;
+    enriched: number;
+    enrichmentFailed: number;
+  }> {
     this.log.info({ count: items.length }, 'Starting library import');
 
     let imported = 0;
     let failed = 0;
+    let enriched = 0;
+    let enrichmentFailed = 0;
 
     for (const item of items) {
       try {
@@ -119,12 +131,23 @@ export class LibraryScanService {
           continue;
         }
 
+        // Search metadata providers for additional info (description, genres, narrator, ASIN)
+        const metadata = await this.lookupMetadata(item.title, item.authorName);
+
         const book = await this.bookService.create({
           title: item.title,
           authorName: item.authorName,
-          seriesName: item.seriesName,
-          coverUrl: item.coverUrl,
-          asin: item.asin,
+          seriesName: item.seriesName || metadata?.series?.[0]?.name,
+          seriesPosition: metadata?.series?.[0]?.position,
+          coverUrl: item.coverUrl || metadata?.coverUrl,
+          asin: item.asin || metadata?.asin,
+          isbn: metadata?.isbn,
+          narrator: metadata?.narrators?.join(', '),
+          description: metadata?.description,
+          duration: metadata?.duration,
+          publishedDate: metadata?.publishedDate,
+          genres: metadata?.genres,
+          providerId: metadata?.providerId,
           status: 'imported',
         });
 
@@ -137,14 +160,54 @@ export class LibraryScanService {
         }).where(eq(books.id, book.id));
 
         imported++;
+
+        // Enrich with audio file metadata (failure doesn't block import)
+        const result = await enrichBookFromAudio(
+          book.id,
+          item.path,
+          { narrator: book.narrator, duration: book.duration, coverUrl: book.coverUrl },
+          this.db,
+          this.log,
+        );
+        if (result.enriched) {
+          enriched++;
+        } else if (result.error) {
+          enrichmentFailed++;
+        }
       } catch (error) {
         this.log.error({ error, title: item.title, path: item.path }, 'Failed to import book');
         failed++;
       }
     }
 
-    this.log.info({ imported, failed }, 'Library import complete');
-    return { imported, failed };
+    this.log.info({ imported, failed, enriched, enrichmentFailed }, 'Library import complete');
+    return { imported, failed, enriched, enrichmentFailed };
+  }
+
+  /**
+   * Search metadata providers for a book by title + author.
+   * Returns the best match or null if no confident match found.
+   */
+  private async lookupMetadata(title: string, authorName?: string): Promise<BookMetadata | null> {
+    try {
+      const query = authorName ? `${title} ${authorName}` : title;
+      const results = await this.metadataService.searchBooks(query);
+      if (results.length === 0) {
+        this.log.debug({ title, authorName }, 'No metadata match found');
+        return null;
+      }
+
+      // Take the top result — providers return by relevance
+      const match = results[0];
+      this.log.info(
+        { title, matchedTitle: match.title, asin: match.asin, providerId: match.providerId },
+        'Metadata match found for imported book',
+      );
+      return match;
+    } catch (error) {
+      this.log.warn({ error, title }, 'Metadata lookup failed during import');
+      return null;
+    }
   }
 
   /**
@@ -254,9 +317,9 @@ function parseSingleFolder(folder: string): {
   author: string | null;
   series: string | null;
 } {
-  // Pattern: "Author - Title"
+  // Pattern: "Author - Title" (skip if left side is just a number like "01 - Title")
   const dashMatch = folder.match(/^(.+?)\s*-\s*(.+)$/);
-  if (dashMatch) {
+  if (dashMatch && !/^\d+$/.test(dashMatch[1].trim())) {
     return {
       title: cleanName(dashMatch[2]),
       author: cleanName(dashMatch[1]),
@@ -284,7 +347,7 @@ function parseSingleFolder(folder: string): {
 
 function cleanName(name: string): string {
   return name
-    .replace(/^\d+\.\s*/, '') // Remove leading numbers like "01. "
+    .replace(/^\d+[.\s]*-\s*|^\d+\.\s*/, '') // Remove leading numbers like "01. " or "01 - "
     .replace(/\s*\(\d{4}\)$/, '') // Remove trailing year like "(2020)"
     .replace(/\s*\[\d{4}\]$/, '') // Remove trailing year like "[2020]"
     .trim();

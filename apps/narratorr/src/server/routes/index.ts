@@ -51,7 +51,7 @@ export function createServices(db: Db, log: FastifyBaseLogger): Services {
   const notifier = new NotifierService(db, log);
   const download = new DownloadService(db, downloadClient, log, notifier);
   const importService = new ImportService(db, downloadClient, settings, log, notifier);
-  const libraryScan = new LibraryScanService(db, book, log);
+  const libraryScan = new LibraryScanService(db, book, metadata, log);
   const blacklistService = new BlacklistService(db, log);
   const prowlarrSync = new ProwlarrSyncService(db, log);
 
