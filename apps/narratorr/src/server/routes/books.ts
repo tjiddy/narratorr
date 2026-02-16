@@ -1,3 +1,5 @@
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { BookService, DownloadService } from '../services';
 
@@ -126,6 +128,41 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
       }
     }
   );
+
+  // GET /api/books/:id/cover — serve embedded cover art from library
+  app.get<{ Params: { id: string } }>('/api/books/:id/cover', async (request, reply) => {
+    try {
+      const id = parseInt(request.params.id, 10);
+      if (isNaN(id)) {
+        return reply.status(400).send({ error: 'Invalid ID' });
+      }
+
+      const book = await bookService.getById(id);
+      if (!book || !book.path) {
+        return reply.status(404).send({ error: 'Book not found' });
+      }
+
+      // Find cover file in book directory
+      const entries = await readdir(book.path);
+      const coverFile = entries.find(f => /^cover\.(jpg|jpeg|png|webp)$/i.test(f));
+      if (!coverFile) {
+        return reply.status(404).send({ error: 'No cover image' });
+      }
+
+      const mime = coverFile.endsWith('.png') ? 'image/png'
+        : coverFile.endsWith('.webp') ? 'image/webp'
+        : 'image/jpeg';
+
+      const data = await readFile(join(book.path, coverFile));
+      return reply
+        .header('Content-Type', mime)
+        .header('Cache-Control', 'public, max-age=86400')
+        .send(data);
+    } catch (error) {
+      request.log.error(error, 'Failed to serve cover image');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
 
   // DELETE /api/books/:id
   app.delete<{ Params: { id: string } }>('/api/books/:id', async (request, reply) => {

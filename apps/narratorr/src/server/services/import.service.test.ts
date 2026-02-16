@@ -11,9 +11,16 @@ vi.mock('node:fs/promises', () => ({
   cp: vi.fn().mockResolvedValue(undefined),
   stat: vi.fn().mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 1024 }),
   readdir: vi.fn().mockResolvedValue([]),
+  writeFile: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { mkdir, cp, stat, readdir } from 'node:fs/promises';
+// Mock audio scanner
+vi.mock('@narratorr/core/utils/audio-scanner', () => ({
+  scanAudioDirectory: vi.fn().mockResolvedValue(null),
+}));
+
+import { mkdir, cp, stat, readdir, writeFile } from 'node:fs/promises';
+import { scanAudioDirectory } from '@narratorr/core/utils/audio-scanner';
 
 const now = new Date();
 
@@ -308,6 +315,154 @@ describe('ImportService', () => {
 
       const results = await service.processCompletedDownloads();
       expect(results).toEqual([]);
+    });
+  });
+
+  describe('enrichFromAudioFiles (via importDownload)', () => {
+    const mockScanResult = {
+      codec: 'MPEG 1 Layer 3',
+      bitrate: 128000,
+      sampleRate: 44100,
+      channels: 2,
+      bitrateMode: 'cbr' as const,
+      fileFormat: 'mp3',
+      totalDuration: 7200, // 2 hours in seconds
+      totalSize: 500_000_000,
+      fileCount: 12,
+      tagNarrator: 'Steven Pacey',
+    };
+
+    function setupImportMocks() {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+    }
+
+    /** Extract the enrichment update (the one with audioCodec) from db.update calls. */
+    function getEnrichmentUpdate(): Record<string, unknown> | undefined {
+      const updateCalls = db.update.mock.results;
+      const setCalls = updateCalls
+        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .filter(Boolean);
+      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      return allSetArgs.find(a => a.audioCodec);
+    }
+
+    it('converts duration from seconds to minutes when writing to books.duration', async () => {
+      setupImportMocks();
+      const mockScan = vi.mocked(scanAudioDirectory);
+      mockScan.mockResolvedValueOnce(mockScanResult);
+
+      await service.importDownload(1);
+
+      const enrichmentCall = getEnrichmentUpdate();
+      expect(enrichmentCall).toBeDefined();
+      expect(enrichmentCall!.duration).toBe(120); // 7200 seconds / 60 = 120 minutes
+      expect(enrichmentCall!.audioDuration).toBe(7200); // stays in seconds
+    });
+
+    it('does not overwrite existing narrator', async () => {
+      const bookWithNarrator = { ...mockBook, narrator: 'Existing Narrator' };
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: bookWithNarrator, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const mockScan = vi.mocked(scanAudioDirectory);
+      mockScan.mockResolvedValueOnce(mockScanResult);
+
+      await service.importDownload(1);
+
+      const enrichmentCall = getEnrichmentUpdate();
+      expect(enrichmentCall).toBeDefined();
+      expect(enrichmentCall!.narrator).toBeUndefined(); // should not overwrite
+    });
+
+    it('does not overwrite existing duration', async () => {
+      const bookWithDuration = { ...mockBook, duration: 150 };
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: bookWithDuration, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const mockScan = vi.mocked(scanAudioDirectory);
+      mockScan.mockResolvedValueOnce(mockScanResult);
+
+      await service.importDownload(1);
+
+      const enrichmentCall = getEnrichmentUpdate();
+      expect(enrichmentCall).toBeDefined();
+      expect(enrichmentCall!.duration).toBeUndefined(); // should not overwrite
+    });
+
+    it('saves embedded cover art and sets coverUrl', async () => {
+      setupImportMocks();
+      const coverData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+      const mockScan = vi.mocked(scanAudioDirectory);
+      mockScan.mockResolvedValueOnce({
+        ...mockScanResult,
+        coverImage: coverData,
+        coverMimeType: 'image/png',
+      });
+
+      await service.importDownload(1);
+
+      expect(writeFile).toHaveBeenCalled();
+      const writeCall = (writeFile as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(writeCall[0]).toMatch(/cover\.png$/);
+      expect(writeCall[1]).toBe(coverData);
+
+      const enrichmentCall = getEnrichmentUpdate();
+      expect(enrichmentCall!.coverUrl).toBe('/api/books/1/cover');
+    });
+
+    it('does not save cover when book already has coverUrl', async () => {
+      const bookWithCover = { ...mockBook, coverUrl: 'https://example.com/cover.jpg' };
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: bookWithCover, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const coverData = Buffer.from([0xff, 0xd8, 0xff]);
+      const mockScan = vi.mocked(scanAudioDirectory);
+      mockScan.mockResolvedValueOnce({
+        ...mockScanResult,
+        coverImage: coverData,
+        coverMimeType: 'image/jpeg',
+      });
+
+      await service.importDownload(1);
+
+      expect(writeFile).not.toHaveBeenCalled();
+    });
+
+    it('continues gracefully when scanner returns null', async () => {
+      setupImportMocks();
+      const mockScan = vi.mocked(scanAudioDirectory);
+      mockScan.mockResolvedValueOnce(null);
+
+      const result = await service.importDownload(1);
+      expect(result.downloadId).toBe(1);
+      // Should complete without error
+    });
+
+    it('writes technical audio fields in enrichment update', async () => {
+      setupImportMocks();
+      const mockScan = vi.mocked(scanAudioDirectory);
+      mockScan.mockResolvedValueOnce(mockScanResult);
+
+      await service.importDownload(1);
+
+      const enrichmentCall = getEnrichmentUpdate();
+      expect(enrichmentCall).toMatchObject({
+        audioCodec: 'MPEG 1 Layer 3',
+        audioBitrate: 128000,
+        audioSampleRate: 44100,
+        audioChannels: 2,
+        audioBitrateMode: 'cbr',
+        audioFileFormat: 'mp3',
+        audioFileCount: 12,
+        audioTotalSize: 500_000_000,
+        audioDuration: 7200,
+        enrichmentStatus: 'file-enriched',
+      });
     });
   });
 });

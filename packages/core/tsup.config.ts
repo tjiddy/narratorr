@@ -6,6 +6,7 @@ export default defineConfig({
     'src/indexers/index.ts',
     'src/download-clients/index.ts',
     'src/utils/index.ts',
+    'src/utils/audio-scanner.ts',
     'src/metadata/index.ts',
   ],
   format: ['esm'],

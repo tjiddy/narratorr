@@ -4,9 +4,8 @@ import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { books } from '@narratorr/db/schema';
 import { eq } from 'drizzle-orm';
+import { AUDIO_EXTENSIONS } from '@narratorr/core/utils';
 import type { BookService } from './book.service.js';
-
-const AUDIO_EXTENSIONS = new Set(['.m4b', '.mp3', '.m4a', '.flac', '.ogg', '.opus', '.wma', '.aac']);
 
 export interface DiscoveredBook {
   path: string;

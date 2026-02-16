@@ -42,12 +42,22 @@ export const books = sqliteTable('books', {
     .notNull()
     .default('wanted'),
   enrichmentStatus: text('enrichment_status', {
-    enum: ['pending', 'enriched', 'failed', 'skipped'],
+    enum: ['pending', 'enriched', 'failed', 'skipped', 'file-enriched'],
   })
     .notNull()
     .default('pending'),
   path: text('path'),
   size: integer('size'),
+  // Audio technical info (populated by file-based enrichment)
+  audioCodec: text('audio_codec'),
+  audioBitrate: integer('audio_bitrate'),
+  audioSampleRate: integer('audio_sample_rate'),
+  audioChannels: integer('audio_channels'),
+  audioBitrateMode: text('audio_bitrate_mode'),
+  audioFileFormat: text('audio_file_format'),
+  audioFileCount: integer('audio_file_count'),
+  audioTotalSize: integer('audio_total_size'),
+  audioDuration: integer('audio_duration'),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),

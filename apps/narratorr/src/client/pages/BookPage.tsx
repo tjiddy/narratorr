@@ -7,6 +7,7 @@ import { formatDuration } from '@/lib/helpers';
 import { bookStatusConfig } from '@/lib/status';
 import { ArrowLeftIcon, SearchIcon, BookOpenIcon } from '@/components/icons';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
+import { AudioInfo } from '@/components/AudioInfo';
 
 const DESCRIPTION_COLLAPSE_LENGTH = 300;
 
@@ -234,6 +235,9 @@ export function BookPage() {
           </div>
         </div>
       )}
+
+      {/* Audio quality info */}
+      <AudioInfo book={libraryBook} />
 
       {/* Genre chips */}
       {genres && genres.length > 0 && (

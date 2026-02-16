@@ -26,6 +26,17 @@ export interface BookWithAuthor {
   status: string;
   path?: string | null;
   size?: number | null;
+  enrichmentStatus?: string | null;
+  // Audio technical info
+  audioCodec?: string | null;
+  audioBitrate?: number | null;
+  audioSampleRate?: number | null;
+  audioChannels?: number | null;
+  audioBitrateMode?: string | null;
+  audioFileFormat?: string | null;
+  audioFileCount?: number | null;
+  audioTotalSize?: number | null;
+  audioDuration?: number | null;
   createdAt: string;
   updatedAt: string;
   author?: Author;

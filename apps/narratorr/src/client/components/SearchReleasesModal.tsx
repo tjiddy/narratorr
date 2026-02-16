@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, formatBytes, type BookWithAuthor, type SearchResult } from '@/lib/api';
+import { calculateQuality, qualityTierBg } from '@narratorr/core/utils';
 import { queryKeys } from '@/lib/queryKeys';
 import {
   SearchIcon,
@@ -184,6 +185,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
                   <ReleaseCard
                     key={result.infoHash || index}
                     result={result}
+                    bookDurationSeconds={book.audioDuration ?? (book.duration ? book.duration * 60 : undefined)}
                     onGrab={() => handleGrab(result)}
                     onBlacklist={() => handleBlacklist(result)}
                     isGrabbing={grabMutation.isPending}
@@ -205,17 +207,22 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
 
 function ReleaseCard({
   result,
+  bookDurationSeconds,
   onGrab,
   onBlacklist,
   isGrabbing,
   isBlacklisting,
 }: {
   result: SearchResult;
+  bookDurationSeconds?: number;
   onGrab: () => void;
   onBlacklist: () => void;
   isGrabbing: boolean;
   isBlacklisting: boolean;
 }) {
+  const quality = result.size && bookDurationSeconds
+    ? calculateQuality(result.size, bookDurationSeconds)
+    : null;
   return (
     <div className="glass-card rounded-xl p-4 hover:border-primary/30 transition-all duration-200">
       <div className="flex gap-4">
@@ -253,6 +260,11 @@ function ReleaseCard({
             <span className="text-xs px-1.5 py-0.5 bg-muted rounded-md font-medium text-muted-foreground">
               {result.indexer}
             </span>
+            {quality && (
+              <span className={`text-xs px-1.5 py-0.5 rounded-md font-medium ${qualityTierBg(quality.tier)}`}>
+                {quality.tier} · {quality.mbPerHour} MB/hr
+              </span>
+            )}
           </div>
         </div>
 

@@ -1,10 +1,11 @@
 import { eq } from 'drizzle-orm';
-import { mkdir, cp, stat, readdir } from 'node:fs/promises';
+import { mkdir, cp, stat, readdir, writeFile } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, authors } from '@narratorr/db/schema';
-import { renderTemplate } from '@narratorr/core/utils';
+import { renderTemplate, AUDIO_EXTENSIONS } from '@narratorr/core/utils';
+import { scanAudioDirectory } from '@narratorr/core/utils/audio-scanner';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
@@ -12,8 +13,6 @@ import type { NotifierService } from './notifier.service.js';
 type DownloadRow = typeof downloads.$inferSelect;
 type BookRow = typeof books.$inferSelect;
 type AuthorRow = typeof authors.$inferSelect;
-
-const AUDIO_EXTENSIONS = new Set(['.m4b', '.mp3', '.m4a', '.flac', '.ogg', '.opus', '.wma', '.aac']);
 
 /** Extract a 4-digit year from a date string like "2010-11-02" or "2010". */
 function extractYear(publishedDate: string | null | undefined): string | undefined {
@@ -179,6 +178,9 @@ export class ImportService {
         updatedAt: new Date(),
       }).where(eq(books.id, book.id));
 
+      // 8b. File-based audio enrichment
+      await this.enrichFromAudioFiles(book.id, targetPath, book);
+
       // 9. Update download: status='imported'
       await this.db.update(downloads).set({ status: 'imported' }).where(eq(downloads.id, downloadId));
 
@@ -332,4 +334,80 @@ export class ImportService {
       this.log.error({ error, downloadId: download.id }, 'Failed to remove torrent after import');
     }
   }
+
+  /**
+   * Scan audio files in the imported directory and enrich the book record.
+   * Tag data only fills empty fields; technical info is always written.
+   */
+  private async enrichFromAudioFiles(
+    bookId: number,
+    targetPath: string,
+    book: BookRow,
+  ): Promise<void> {
+    try {
+      const scanResult = await scanAudioDirectory(targetPath);
+      if (!scanResult) {
+        this.log.debug({ bookId, targetPath }, 'No audio metadata extracted');
+        return;
+      }
+
+      // Build update: always write technical info
+      const update: Record<string, unknown> = {
+        audioCodec: scanResult.codec,
+        audioBitrate: scanResult.bitrate,
+        audioSampleRate: scanResult.sampleRate,
+        audioChannels: scanResult.channels,
+        audioBitrateMode: scanResult.bitrateMode,
+        audioFileFormat: scanResult.fileFormat,
+        audioFileCount: scanResult.fileCount,
+        audioTotalSize: scanResult.totalSize,
+        audioDuration: Math.round(scanResult.totalDuration),
+        enrichmentStatus: 'file-enriched',
+        updatedAt: new Date(),
+      };
+
+      // Tag data: only fill empty fields (don't overwrite user edits)
+      if (!book.narrator && scanResult.tagNarrator) {
+        update.narrator = scanResult.tagNarrator;
+      }
+      if (!book.duration && scanResult.totalDuration) {
+        update.duration = Math.round(scanResult.totalDuration / 60);
+      }
+
+      // Save embedded cover art when no cover URL exists
+      if (!book.coverUrl && scanResult.coverImage) {
+        try {
+          const ext = mimeToExt(scanResult.coverMimeType);
+          const coverPath = join(targetPath, `cover.${ext}`);
+          await writeFile(coverPath, scanResult.coverImage);
+          update.coverUrl = `/api/books/${bookId}/cover`;
+          this.log.info({ bookId, coverPath }, 'Saved embedded cover art');
+        } catch (coverError) {
+          this.log.warn({ error: coverError, bookId }, 'Failed to save embedded cover art');
+        }
+      }
+
+      await this.db.update(books).set(update).where(eq(books.id, bookId));
+
+      this.log.info(
+        {
+          bookId,
+          codec: scanResult.codec,
+          bitrate: scanResult.bitrate,
+          duration: Math.round(scanResult.totalDuration),
+          fileCount: scanResult.fileCount,
+        },
+        'Audio file enrichment complete',
+      );
+    } catch (error) {
+      this.log.warn({ error, bookId, targetPath }, 'Audio file enrichment failed');
+    }
+  }
+}
+
+/** Map MIME type to file extension for cover art. */
+function mimeToExt(mime?: string): string {
+  if (mime?.includes('png')) return 'png';
+  if (mime?.includes('webp')) return 'webp';
+  return 'jpg';
 }
