@@ -1,0 +1,75 @@
+name: CI
+run-name: CI for ${{ github.ref_name || gitea.ref_name }}
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality-gates:
+    runs-on: ${{ vars.RUNNER_TYPE || 'ubuntu-latest' }}
+
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: echo "store=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.store }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Health smoke test
+        run: |
+          DATABASE_URL=file:/tmp/ci-smoke-test.db PORT=3199 node apps/narratorr/dist/server/index.js &
+          SERVER_PID=$!
+
+          # Wait for server to be ready (max 30s)
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3199/api/health > /dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          # Assert health endpoint returns 200
+          HTTP_STATUS=$(curl -sf -o /dev/null -w '%{http_code}' http://localhost:3199/api/health)
+          kill $SERVER_PID 2>/dev/null || true
+
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "Health check failed with status $HTTP_STATUS"
+            exit 1
+          fi
+          echo "Health check passed (HTTP $HTTP_STATUS)"
