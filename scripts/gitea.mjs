@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 // Resolves and runs the gitea-workflow plugin CLI regardless of installed version.
+// This proxy exists so multiple agents (main + PR reviewer) can share the same
+// plugin but use different Gitea API keys via the project's .env file.
 import { readdirSync } from "fs";
 import { join } from "path";
 import { execFileSync } from "child_process";
