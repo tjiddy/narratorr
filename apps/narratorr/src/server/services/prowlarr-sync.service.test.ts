@@ -210,5 +210,59 @@ describe('ProwlarrSyncService', () => {
       expect(result.updated).toBe(0);
       expect(result.removed).toBe(0);
     });
+
+    it('skips new item when proxy not found for prowlarrId', async () => {
+      // buildProxyIndexers returns nothing matching prowlarrId 99
+      mockProwlarrClient.buildProxyIndexers.mockReturnValue([]);
+
+      const result = await service.apply(prowlarrConfig, {
+        items: [
+          { prowlarrId: 99, action: 'new', selected: true },
+        ],
+      });
+
+      expect(result.added).toBe(0);
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('throws when DB insert fails mid-sync', async () => {
+      db.insert.mockImplementation(() => { throw new Error('SQLITE_FULL'); });
+
+      await expect(
+        service.apply(prowlarrConfig, {
+          items: [
+            { prowlarrId: 1, action: 'new', selected: true },
+          ],
+        }),
+      ).rejects.toThrow('SQLITE_FULL');
+    });
+
+    it('skips update when local indexer not found in DB', async () => {
+      db.select.mockReturnValue(mockDbChain([]));  // local not found
+      db.update.mockReturnValue(mockDbChain());
+
+      const result = await service.apply(prowlarrConfig, {
+        items: [
+          { prowlarrId: 1, action: 'updated', selected: true },
+        ],
+      });
+
+      expect(result.updated).toBe(0);
+      expect(db.update).not.toHaveBeenCalled();
+    });
+
+    it('skips removal when local indexer not found in DB', async () => {
+      db.select.mockReturnValue(mockDbChain([]));  // local not found
+      db.delete.mockReturnValue(mockDbChain());
+
+      const result = await service.apply(prowlarrConfig, {
+        items: [
+          { prowlarrId: 1, action: 'removed', selected: true },
+        ],
+      });
+
+      expect(result.removed).toBe(0);
+      expect(db.delete).not.toHaveBeenCalled();
+    });
   });
 });

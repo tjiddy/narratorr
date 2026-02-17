@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import { BookService } from './book.service.js';
 
@@ -449,6 +449,87 @@ describe('BookService', () => {
 
       const result = await service.search('nonexistent');
       expect(result).toEqual([]);
+    });
+  });
+
+  describe('create edge cases', () => {
+    it('throws when author insert succeeds but book insert fails', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]));  // author lookup (not found)
+
+      db.insert
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // author insert OK
+        .mockImplementationOnce(() => { throw new Error('UNIQUE constraint failed: books.asin'); });
+
+      await expect(
+        service.create({
+          title: 'The Way of Kings',
+          authorName: 'Brandon Sanderson',
+          asin: 'DUPLICATE_ASIN',
+        }),
+      ).rejects.toThrow('UNIQUE constraint failed');
+    });
+
+    it('handles concurrent author creation race condition', async () => {
+      // First select: author not found
+      // Author insert fails (unique constraint)
+      // Retry select: author now exists
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // author lookup: not found
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))  // retry after constraint: found
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));  // getById
+
+      const raceChain = mockDbChain();
+      raceChain.then = (resolve: unknown, reject?: (err: Error) => void) => {
+        return Promise.reject(new Error('UNIQUE constraint failed')).then(resolve as any, reject);
+      };
+
+      db.insert
+        .mockReturnValueOnce(raceChain)  // author insert race condition
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]));  // book insert OK
+
+      const result = await service.create({
+        title: 'The Way of Kings',
+        authorName: 'Brandon Sanderson',
+      });
+
+      expect(result.title).toBe('The Way of Kings');
+    });
+
+    it('throws when author race retry also fails to find author', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // author lookup: not found
+        .mockReturnValueOnce(mockDbChain([]));  // retry: still not found
+
+      const failChain2 = mockDbChain();
+      failChain2.then = (resolve: unknown, reject?: (err: Error) => void) => {
+        return Promise.reject(new Error('UNIQUE constraint failed')).then(resolve as any, reject);
+      };
+      db.insert.mockReturnValueOnce(failChain2);
+
+      await expect(
+        service.create({
+          title: 'Test',
+          authorName: 'Ghost Author',
+        }),
+      ).rejects.toThrow('Failed to find or create author');
+    });
+  });
+
+  describe('findDuplicate edge cases', () => {
+    it('returns null when asin is undefined (not provided)', async () => {
+      // When ASIN is undefined, it should skip the ASIN check and go to title+author
+      db.select.mockReturnValueOnce(mockDbChain([]));  // title+author: not found
+
+      const result = await service.findDuplicate('Test', 'Author', undefined);
+      expect(result).toBeNull();
+      // Only one select call since ASIN was undefined
+      expect(db.select).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns null when no author name provided and no ASIN', async () => {
+      const result = await service.findDuplicate('Solo Title');
+      expect(result).toBeNull();
     });
   });
 });

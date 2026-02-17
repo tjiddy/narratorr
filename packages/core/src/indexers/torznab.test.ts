@@ -308,4 +308,138 @@ describe('TorznabIndexer', () => {
       expect(result.success).toBe(false);
     });
   });
+
+  describe('edge cases — NaN parsing', () => {
+    it('handles NaN size from invalid attr value', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0"><channel>
+          <item>
+            <title>NaN Size Book</title>
+            <enclosure url="https://tracker.test/dl/1.torrent" length="notanumber"/>
+            <torznab:attr name="size" value="notanumber"/>
+            <torznab:attr name="seeders" value="5"/>
+          </item>
+        </channel></rss>`;
+
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(xml, {
+            headers: { 'Content-Type': 'application/rss+xml' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results).toHaveLength(1);
+      // Number('notanumber') = NaN, size || undefined = undefined
+      expect(results[0].size).toBeUndefined();
+    });
+
+    it('handles NaN seeders/leechers/grabs from invalid attr values', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0"><channel>
+          <item>
+            <title>NaN Stats Book</title>
+            <enclosure url="https://tracker.test/dl/1.torrent" length="1000"/>
+            <torznab:attr name="seeders" value="abc"/>
+            <torznab:attr name="leechers" value="xyz"/>
+            <torznab:attr name="grabs" value="!!!"/>
+          </item>
+        </channel></rss>`;
+
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(xml, {
+            headers: { 'Content-Type': 'application/rss+xml' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results).toHaveLength(1);
+      // Number('abc') = NaN — these get passed through as NaN
+      expect(results[0].seeders).toBeNaN();
+      expect(results[0].leechers).toBeNaN();
+      expect(results[0].grabs).toBeNaN();
+    });
+
+    it('handles empty string infohash → undefined', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0"><channel>
+          <item>
+            <title>Empty Hash Book</title>
+            <enclosure url="https://tracker.test/dl/1.torrent" length="1000"/>
+            <torznab:attr name="infohash" value=""/>
+          </item>
+        </channel></rss>`;
+
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(xml, {
+            headers: { 'Content-Type': 'application/rss+xml' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results).toHaveLength(1);
+      // '' || undefined → undefined
+      expect(results[0].infoHash).toBeUndefined();
+    });
+
+    it('skips items with empty title', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0"><channel>
+          <item>
+            <title>   </title>
+            <enclosure url="https://tracker.test/dl/1.torrent"/>
+          </item>
+          <item>
+            <title>Valid Title</title>
+            <enclosure url="https://tracker.test/dl/2.torrent"/>
+          </item>
+        </channel></rss>`;
+
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(xml, {
+            headers: { 'Content-Type': 'application/rss+xml' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('Valid Title');
+    });
+
+    it('falls back to enclosure length when no size attr', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0"><channel>
+          <item>
+            <title>Enclosure Size</title>
+            <enclosure url="https://tracker.test/dl/1.torrent" length="5000000"/>
+          </item>
+        </channel></rss>`;
+
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(xml, {
+            headers: { 'Content-Type': 'application/rss+xml' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results[0].size).toBe(5000000);
+    });
+
+    it('strips trailing slashes from apiUrl', () => {
+      const idx = new TorznabIndexer({
+        apiUrl: 'https://tracker.test///',
+        apiKey: 'key',
+      });
+      expect(idx.name).toBe('tracker.test');
+    });
+  });
 });

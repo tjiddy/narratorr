@@ -169,6 +169,77 @@ describe('runSearchJob', () => {
     expect(download.grab).not.toHaveBeenCalled();
   });
 
+  it('returns searched count but zero grabbed when no indexer returns results', async () => {
+    const wantedBooks = [
+      { id: 1, title: 'Obscure Book', author: { name: 'Unknown Author' } },
+      { id: 2, title: 'Another Rare Book', author: { name: 'Nobody' } },
+    ];
+    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60, autoGrab: true });
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService([]); // no results for any search
+    const download = createMockDownloadService();
+
+    const result = await runSearchJob(settings, books, indexer, download, log as any);
+
+    expect(result.searched).toBe(2);
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+    // Should log "No results found" for each book
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1 }),
+      'No results found',
+    );
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 2 }),
+      'No results found',
+    );
+  });
+
+  it('counts only successful searches when one book throws during processing', async () => {
+    const wantedBooks = [
+      { id: 1, title: 'Book A', author: { name: 'Author' } },
+      { id: 2, title: 'Book B', author: { name: 'Author' } },
+      { id: 3, title: 'Book C', author: { name: 'Author' } },
+    ];
+    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60, autoGrab: true });
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService([]);
+    const results = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
+    (indexer.searchAll as any)
+      .mockResolvedValueOnce(results)     // Book A succeeds with results
+      .mockRejectedValueOnce(new Error('Network error'))  // Book B throws
+      .mockResolvedValueOnce(results);    // Book C succeeds with results
+    const download = createMockDownloadService();
+
+    const result = await runSearchJob(settings, books, indexer, download, log as any);
+
+    // Book A searched + grabbed, Book B failed (not counted), Book C searched + grabbed
+    expect(result.searched).toBe(2);
+    expect(result.grabbed).toBe(2);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 2 }),
+      'Search failed for book',
+    );
+    // All three books should have been attempted
+    expect(indexer.searchAll).toHaveBeenCalledTimes(3);
+  });
+
+  it('handles book with no author gracefully', async () => {
+    const wantedBooks = [
+      { id: 1, title: 'Anonymous Work', author: null },
+    ];
+    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60, autoGrab: false });
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService([]);
+    const download = createMockDownloadService();
+
+    const result = await runSearchJob(settings, books, indexer, download, log as any);
+
+    expect(result.searched).toBe(1);
+    // Query should just be the title without author
+    expect((indexer.searchAll as any).mock.calls[0][0]).toBe('Anonymous Work');
+  });
+
   it('continues on per-book failure', async () => {
     const wantedBooks = [
       { id: 1, title: 'Failing Book', author: { name: 'Author' } },

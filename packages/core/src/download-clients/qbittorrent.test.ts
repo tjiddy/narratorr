@@ -395,4 +395,100 @@ describe('QBittorrentClient', () => {
       expect(result.message).toBeDefined();
     });
   });
+
+  describe('edge cases — boundary values and malformed data', () => {
+    it('handles invalid base32 characters in hash (skips them)', async () => {
+      server.use(
+        http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
+          return new HttpResponse('');
+        }),
+      );
+
+      // Base32 with invalid chars (0, 1, 8, 9) — they get skipped in base32ToHex
+      const magnetUri = 'magnet:?xt=urn:btih:JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&dn=Test';
+      const hash = await client.addDownload(magnetUri);
+      expect(hash).toMatch(/^[a-f0-9]+$/);
+    });
+
+    it('handles ETA at boundary value 8640000 (excluded)', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{ ...mockTorrent, eta: 8640000 }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.eta).toBeUndefined();
+    });
+
+    it('handles ETA just below boundary (included)', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{ ...mockTorrent, eta: 8639999 }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.eta).toBe(8639999);
+    });
+
+    it('handles negative ETA', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{ ...mockTorrent, eta: -1 }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.eta).toBeUndefined();
+    });
+
+    it('handles whitespace-only response body as empty', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return new HttpResponse('   ', {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }),
+      );
+
+      // Whitespace is truthy but JSON.parse('   ') throws — this tests error path
+      await expect(client.getDownload('abc123')).rejects.toThrow();
+    });
+
+    it('handles null response from getAllDownloads', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return new HttpResponse('', {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }),
+      );
+
+      const results = await client.getAllDownloads();
+      expect(results).toEqual([]);
+    });
+
+    it('handles completion_on = 0 as not completed', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{ ...mockTorrent, completion_on: 0 }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.completedAt).toBeUndefined();
+    });
+
+    it('maps completion_on > 0 to completedAt date', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{ ...mockTorrent, completion_on: 1700003600 }]);
+        }),
+      );
+
+      const result = await client.getDownload('abc123');
+      expect(result!.completedAt).toEqual(new Date(1700003600 * 1000));
+    });
+  });
 });

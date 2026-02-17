@@ -556,4 +556,243 @@ describe('HardcoverProvider', () => {
       expect(capturedAuth).toBe('Bearer test-api-key');
     });
   });
+
+  describe('edge cases — NaN and null data', () => {
+    it('handles NaN Retry-After header', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': 'abc' },
+          });
+        }),
+      );
+
+      try {
+        await provider.searchBooks('test');
+      } catch (error) {
+        expect(error).toBeInstanceOf(RateLimitError);
+        expect((error as RateLimitError).retryAfterMs).toBeNaN();
+      }
+    });
+
+    it('handles null GraphQL data response', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({ data: null });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books).toEqual([]);
+    });
+
+    it('handles audio_seconds of 0 (falsy but valid)', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({
+            data: {
+              books: [{
+                id: 999,
+                title: 'Zero Audio',
+                contributions: [{ contribution: null, author: { id: 1, name: 'Author', slug: 'author' } }],
+                audio_seconds: 0,
+                default_audio_edition: null,
+                editions: [],
+              }],
+            },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('999');
+      // 0 is falsy, so Math.round(0/60) = 0 which is also falsy → undefined
+      expect(book!.duration).toBeUndefined();
+    });
+
+    it('handles search results with null document', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({
+            data: {
+              search: {
+                results: {
+                  hits: [{ document: null, text_match: 100 }],
+                  found: 1,
+                },
+              },
+            },
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books).toEqual([]);
+    });
+
+    it('handles search results with non-object results', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({
+            data: {
+              search: {
+                results: 'not an object',
+              },
+            },
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books).toEqual([]);
+    });
+
+    it('handles getBook with empty books array', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({
+            data: { books: [] },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('999');
+      expect(book).toBeNull();
+    });
+
+    it('handles getAuthor with empty authors array', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({
+            data: { authors: [] },
+          });
+        }),
+      );
+
+      const author = await provider.getAuthor('999');
+      expect(author).toBeNull();
+    });
+
+    it('handles getSeries with empty series array', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({
+            data: { series: [] },
+          });
+        }),
+      );
+
+      const series = await provider.getSeries('999');
+      expect(series).toBeNull();
+    });
+
+    it('handles getAuthorBooks with no contributions', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({
+            data: {
+              authors: [{
+                id: 999,
+                name: 'Author',
+                // no contributions field
+              }],
+            },
+          });
+        }),
+      );
+
+      const books = await provider.getAuthorBooks('999');
+      expect(books).toEqual([]);
+    });
+
+    it('handles image as string URL instead of object', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({
+            data: {
+              search: {
+                results: {
+                  hits: [{
+                    document: {
+                      id: 1,
+                      title: 'String Image',
+                      image: 'https://example.com/cover.jpg',
+                      contributions: [{ author: { name: 'Author', id: 1 } }],
+                    },
+                    text_match: 100,
+                  }],
+                  found: 1,
+                },
+              },
+            },
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books[0].coverUrl).toBe('https://example.com/cover.jpg');
+    });
+
+    it('handles empty string image URL', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({
+            data: {
+              search: {
+                results: {
+                  hits: [{
+                    document: {
+                      id: 1,
+                      title: 'Empty Image',
+                      image: '',
+                      contributions: [{ author: { name: 'Author', id: 1 } }],
+                    },
+                    text_match: 100,
+                  }],
+                  found: 1,
+                },
+              },
+            },
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books[0].coverUrl).toBeUndefined();
+    });
+
+    it('handles test() with unexpected response shape', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({ data: { search: {} } });
+        }),
+      );
+
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('Unexpected');
+    });
+
+    it('handles book detail with no cached_tags Genre key', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({
+            data: {
+              books: [{
+                id: 999,
+                title: 'No Genres',
+                cached_tags: { Mood: [{ tag: 'Dark', count: 5 }] },
+                contributions: [{ contribution: null, author: { id: 1, name: 'Author', slug: 'author' } }],
+                default_audio_edition: null,
+                editions: [],
+              }],
+            },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('999');
+      expect(book!.genres).toBeUndefined();
+    });
+  });
 });

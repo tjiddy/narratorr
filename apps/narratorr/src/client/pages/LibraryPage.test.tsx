@@ -28,6 +28,7 @@ vi.mock('sonner', () => ({
 }));
 
 import { api } from '@/lib/api';
+import { toast } from 'sonner';
 
 const mockBooks = [
   {
@@ -410,6 +411,34 @@ describe('LibraryPage', () => {
     // Modal should open — default sort is createdAt desc, so first card is "Words of Radiance"
     await waitFor(() => {
       expect(screen.getByText(/Releases for:/)).toBeInTheDocument();
+    });
+  });
+
+  it('shows error toast when delete fails', async () => {
+    vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+    vi.mocked(api.deleteBook).mockRejectedValue(new Error('Cannot delete'));
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    // Open context menu and click remove
+    const menuButtons = screen.getAllByLabelText('Book options');
+    await user.click(menuButtons[0]);
+    await user.click(screen.getByText('Remove from Library'));
+
+    // Confirm modal should appear
+    expect(screen.getByText(/Are you sure you want to remove/)).toBeInTheDocument();
+
+    const modal = screen.getByText(/Are you sure you want to remove/).closest('div[class*="relative w-full"]') as HTMLElement;
+    const removeButton = within(modal).getByRole('button', { name: 'Remove' });
+    await user.click(removeButton);
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to remove book: Cannot delete');
     });
   });
 });

@@ -222,4 +222,48 @@ describe('ActivityPage', () => {
       expect(vi.mocked(api.cancelDownload).mock.calls[0][0]).toBe(7);
     });
   });
+
+  it('shows error message on non-failed downloads with errorMessage', async () => {
+    const downloading = makeDownload({
+      id: 8,
+      title: 'Errored but Downloading',
+      status: 'downloading',
+      progress: 0.3,
+      errorMessage: 'Tracker returned error',
+    });
+    vi.mocked(api.getActivity).mockResolvedValue([downloading]);
+
+    renderWithProviders(<ActivityPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Errored but Downloading')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Tracker returned error')).toBeInTheDocument();
+  });
+
+  it('calls retryDownload when retry button clicked', async () => {
+    vi.mocked(api.retryDownload).mockResolvedValue(makeDownload({ id: 99, title: 'Retry Me', status: 'queued' }));
+    const failed = makeDownload({
+      id: 9,
+      title: 'Retry Me',
+      status: 'failed',
+      progress: 0,
+      errorMessage: 'Timed out',
+    });
+    vi.mocked(api.getActivity).mockResolvedValue([failed]);
+
+    renderWithProviders(<ActivityPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Retry Me')).toBeInTheDocument();
+    });
+
+    const retryButton = screen.getByRole('button', { name: /Retry/i });
+    fireEvent.click(retryButton);
+
+    await waitFor(() => {
+      expect(vi.mocked(api.retryDownload).mock.calls[0][0]).toBe(9);
+    });
+  });
 });

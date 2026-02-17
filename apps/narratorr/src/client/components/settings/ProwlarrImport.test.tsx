@@ -270,4 +270,56 @@ describe('ProwlarrImport', () => {
 
     expect(onClose).toHaveBeenCalled();
   });
+
+  it('shows error toast when sync fails', async () => {
+    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.saveConfig).mockResolvedValue({
+      url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
+    });
+    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
+    vi.mocked(api.sync).mockRejectedValue(new Error('Database locked'));
+    const user = userEvent.setup();
+
+    renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
+
+    await user.type(screen.getByPlaceholderText('http://localhost:9696'), 'http://prowlarr:9696');
+    await user.type(screen.getByPlaceholderText('Your Prowlarr API key'), 'key');
+    await user.click(screen.getByText('Test'));
+    await waitFor(() => expect(screen.getByText('Next')).not.toBeDisabled());
+    await user.click(screen.getByText('Next'));
+    await waitFor(() => expect(screen.getByText('MyAnonaMouse')).toBeInTheDocument());
+
+    await user.click(screen.getByText('Import Selected'));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Sync failed: Database locked');
+    });
+  });
+
+  it('disables import button while sync is pending', async () => {
+    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.saveConfig).mockResolvedValue({
+      url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
+    });
+    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
+    // Never resolve so sync stays pending
+    vi.mocked(api.sync).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+
+    renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
+
+    await user.type(screen.getByPlaceholderText('http://localhost:9696'), 'http://prowlarr:9696');
+    await user.type(screen.getByPlaceholderText('Your Prowlarr API key'), 'key');
+    await user.click(screen.getByText('Test'));
+    await waitFor(() => expect(screen.getByText('Next')).not.toBeDisabled());
+    await user.click(screen.getByText('Next'));
+    await waitFor(() => expect(screen.getByText('MyAnonaMouse')).toBeInTheDocument());
+
+    await user.click(screen.getByText('Import Selected'));
+
+    // Button should now be disabled (isPending)
+    await waitFor(() => {
+      expect(screen.getByText('Import Selected').closest('button')).toBeDisabled();
+    });
+  });
 });

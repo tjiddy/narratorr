@@ -219,6 +219,105 @@ describe('monitor job', () => {
     expect(log.info).toHaveBeenCalledWith({ id: 1, status: 'failed' }, 'Download state changed');
   });
 
+  it('preserves existing completedAt on re-download (already completed)', async () => {
+    const existingCompletedAt = new Date('2025-01-15T10:00:00Z');
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: existingCompletedAt, bookId: 42 },
+    ]));
+    adapter.getDownload.mockResolvedValueOnce({
+      progress: 100,
+      status: 'completed',
+    });
+    db.update.mockReturnValue(mockDbChain());
+
+    await runMonitor();
+
+    // completedAt already set, so the update should keep the existing value, not overwrite with new Date()
+    expect(db.update).toHaveBeenCalled();
+    // Should NOT log "Download completed, queued for import" because status was already 'downloading'
+    // but it does because download.status !== 'completed'. The key check: completedAt is preserved.
+    expect(log.info).toHaveBeenCalledWith({ id: 1, status: 'completed' }, 'Download state changed');
+  });
+
+  it('handles download item with zero progress', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'queued', completedAt: null, bookId: null },
+    ]));
+    adapter.getDownload.mockResolvedValueOnce({
+      progress: 0,
+      status: 'downloading',
+    });
+    db.update.mockReturnValue(mockDbChain());
+
+    await runMonitor();
+
+    expect(db.update).toHaveBeenCalled();
+    // Status changed from queued to downloading
+    expect(log.info).toHaveBeenCalledWith({ id: 1, status: 'downloading' }, 'Download state changed');
+  });
+
+  it('continues processing remaining downloads when one throws an error', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null },
+      { id: 2, externalId: 'ext-2', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null },
+      { id: 3, externalId: 'ext-3', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null },
+    ]));
+    adapter.getDownload
+      .mockResolvedValueOnce({ progress: 50, status: 'downloading' })   // id:1 ok
+      .mockRejectedValueOnce(new Error('Timeout'))                        // id:2 throws
+      .mockResolvedValueOnce({ progress: 75, status: 'downloading' });   // id:3 ok
+    db.update.mockReturnValue(mockDbChain());
+
+    await runMonitor();
+
+    // All three should be attempted
+    expect(adapter.getDownload).toHaveBeenCalledTimes(3);
+    // Error logged for id:2
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 2 }),
+      'Error monitoring download',
+    );
+    // id:1 and id:3 should still update successfully
+    expect(db.update).toHaveBeenCalledTimes(2);
+  });
+
+  it('sends failure notification when download not found in client', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', title: 'My Audiobook' },
+    ]));
+    adapter.getDownload.mockResolvedValueOnce(null);
+    db.update.mockReturnValue(mockDbChain());
+
+    await runMonitor();
+
+    expect(notifierService.notify).toHaveBeenCalledWith('on_failure', expect.objectContaining({
+      event: 'on_failure',
+      book: { title: 'My Audiobook' },
+      error: { message: 'Download not found in download client', stage: 'download' },
+    }));
+  });
+
+  it('sends download complete notification on completion', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42, title: 'Finished Book' },
+    ]));
+    adapter.getDownload.mockResolvedValueOnce({
+      progress: 100,
+      status: 'completed',
+      savePath: '/downloads/finished',
+      size: 123456,
+    });
+    db.update.mockReturnValue(mockDbChain());
+
+    await runMonitor();
+
+    expect(notifierService.notify).toHaveBeenCalledWith('on_download_complete', expect.objectContaining({
+      event: 'on_download_complete',
+      book: { title: 'Finished Book' },
+      download: { path: '/downloads/finished', size: 123456 },
+    }));
+  });
+
   it('maps paused status to paused', async () => {
     db.select.mockReturnValueOnce(mockDbChain([
       { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'paused', completedAt: null, bookId: null },

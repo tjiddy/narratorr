@@ -335,4 +335,140 @@ describe('AudnexusProvider', () => {
       expect(capturedUrl).toContain('region=uk');
     });
   });
+
+  describe('edge cases — NaN and malformed data', () => {
+    it('handles NaN series position from non-numeric string', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.json({
+            asin: 'B000TEST',
+            title: 'NaN Position',
+            authors: [{ name: 'Author' }],
+            seriesPrimary: { name: 'Series', position: 'prologue', asin: 'S001' },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B000TEST');
+      expect(book).not.toBeNull();
+      // parseFloat('prologue') = NaN, || undefined → undefined
+      expect(book!.series![0].position).toBeUndefined();
+    });
+
+    it('handles empty string narrator names (filtered out)', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.json({
+            asin: 'B000TEST',
+            title: 'Empty Narrator',
+            authors: [{ name: 'Author' }],
+            narrators: [{ name: '' }, { name: 'Jim Dale' }, { name: '' }],
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B000TEST');
+      expect(book!.narrators).toEqual(['Jim Dale']);
+    });
+
+    it('handles network error in getBook', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      const book = await provider.getBook('B000TEST');
+      expect(book).toBeNull();
+    });
+
+    it('handles network error in searchAuthors', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors', () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      const authors = await provider.searchAuthors('test');
+      expect(authors).toEqual([]);
+    });
+
+    it('handles author search result with missing name and asin', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors', () => {
+          return HttpResponse.json([
+            { description: 'No name or asin' },
+            { name: 'Valid Author', asin: 'B001' },
+          ]);
+        }),
+      );
+
+      const authors = await provider.searchAuthors('test');
+      // First entry has no key (asin or name), should be skipped
+      expect(authors).toHaveLength(1);
+      expect(authors[0].name).toBe('Valid Author');
+    });
+
+    it('deduplicates authors by name when asin is missing', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors', () => {
+          return HttpResponse.json([
+            { name: 'Same Author' },
+            { name: 'Same Author' },
+          ]);
+        }),
+      );
+
+      const authors = await provider.searchAuthors('test');
+      expect(authors).toHaveLength(1);
+    });
+
+    it('handles book with both seriesPrimary and seriesSecondary', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.json({
+            asin: 'B000TEST',
+            title: 'Multi Series',
+            authors: [{ name: 'Author' }],
+            seriesPrimary: { name: 'Main Series', position: '1', asin: 'S001' },
+            seriesSecondary: { name: 'Shared Universe', position: '5', asin: 'S002' },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B000TEST');
+      expect(book!.series).toHaveLength(2);
+      expect(book!.series![0].name).toBe('Main Series');
+      expect(book!.series![0].position).toBe(1);
+      expect(book!.series![1].name).toBe('Shared Universe');
+      expect(book!.series![1].position).toBe(5);
+    });
+
+    it('handles author with empty image string', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors/:asin', () => {
+          return HttpResponse.json({
+            asin: 'B001TEST',
+            name: 'No Image',
+            image: '',
+          });
+        }),
+      );
+
+      const author = await provider.getAuthor('B001TEST');
+      expect(author!.imageUrl).toBeUndefined();
+    });
+
+    it('handles 429 response in searchAuthors (no rate limit special handling)', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors', () => {
+          return new HttpResponse(null, { status: 429 });
+        }),
+      );
+
+      // Audnexus provider doesn't have RateLimitError handling — returns empty
+      const authors = await provider.searchAuthors('test');
+      expect(authors).toEqual([]);
+    });
+  });
 });

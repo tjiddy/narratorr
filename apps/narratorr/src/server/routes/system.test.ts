@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import Fastify from 'fastify';
 import { createMockServices } from '../__tests__/helpers.js';
 import { systemRoutes } from './system.js';
@@ -6,10 +6,10 @@ import { systemRoutes } from './system.js';
 describe('system routes', () => {
   const services = createMockServices({
     settings: {
-      get: async () => ({ enabled: false, intervalMinutes: 360, autoGrab: false }),
+      get: vi.fn().mockResolvedValue({ enabled: false, intervalMinutes: 360, autoGrab: false }),
     } as any,
     book: {
-      getAll: async () => [],
+      getAll: vi.fn().mockResolvedValue([]),
     } as any,
   });
 
@@ -69,6 +69,15 @@ describe('system routes', () => {
       expect(payload).toHaveProperty('grabbed');
       expect(payload.searched).toBe(0);
       expect(payload.grabbed).toBe(0);
+    });
+
+    it('returns 500 when search job throws', async () => {
+      // settings.get is the first async call in runSearchJob
+      (services.settings.get as any).mockRejectedValueOnce(new Error('DB connection lost'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search' });
+
+      expect(res.statusCode).toBe(500);
     });
   });
 });

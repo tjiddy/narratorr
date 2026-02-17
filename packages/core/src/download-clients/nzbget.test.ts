@@ -396,4 +396,124 @@ describe('NZBGetClient', () => {
       expect(item!.status).toBe('error');
     });
   });
+
+  describe('edge cases — division by zero and boundary values', () => {
+    it('handles DownloadTimeSec=0 (no division by zero in ETA)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [{ ...activeGroup, DownloadTimeSec: 0, RemainingSizeMB: 512 }],
+          history: () => [],
+        }),
+      );
+
+      const item = await client.getDownload('123');
+      expect(item).not.toBeNull();
+      // DownloadTimeSec = 0 → speedMbps calc skipped → eta = undefined
+      expect(item!.eta).toBeUndefined();
+    });
+
+    it('handles RemainingSizeMB=0 (download complete, no ETA)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [{ ...activeGroup, RemainingSizeMB: 0, DownloadedSizeMB: 1024, FileSizeMB: 1024 }],
+          history: () => [],
+        }),
+      );
+
+      const item = await client.getDownload('123');
+      expect(item!.eta).toBeUndefined();
+      expect(item!.progress).toBe(100);
+    });
+
+    it('handles unknown history status (fallback to completed)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'UNKNOWN_STATUS' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).toBe('completed');
+    });
+
+    it('maps DELETED/* history to error', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'DELETED/MANUAL' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.status).toBe('error');
+    });
+
+    it('handles null groups and history from RPC', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => null,
+          history: () => null,
+        }),
+      );
+
+      const items = await client.getAllDownloads();
+      expect(items).toEqual([]);
+    });
+
+    it('handles FileSizeMB=0 (progress = 0, no division by zero)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [{ ...activeGroup, FileSizeMB: 0, DownloadedSizeMB: 0 }],
+          history: () => [],
+        }),
+      );
+
+      const item = await client.getDownload('123');
+      expect(item!.progress).toBe(0);
+      expect(item!.size).toBe(0);
+    });
+
+    it('handles MinPostTime=0 in active group (falls back to new Date())', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [{ ...activeGroup, MinPostTime: 0 }],
+          history: () => [],
+        }),
+      );
+
+      const item = await client.getDownload('123');
+      expect(item!.addedAt).toBeInstanceOf(Date);
+    });
+
+    it('handles HistoryTime=0 in history item (completedAt undefined)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, HistoryTime: 0 }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.completedAt).toBeUndefined();
+    });
+
+    it('computes ETA correctly with valid download stats', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [{
+            ...activeGroup,
+            DownloadedSizeMB: 100,
+            RemainingSizeMB: 100,
+            DownloadTimeSec: 100,
+          }],
+          history: () => [],
+        }),
+      );
+
+      const item = await client.getDownload('123');
+      // speedMbps = 100/100 = 1, eta = 100/1 = 100
+      expect(item!.eta).toBe(100);
+    });
+  });
 });

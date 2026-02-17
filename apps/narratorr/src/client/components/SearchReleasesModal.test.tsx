@@ -218,4 +218,67 @@ describe('SearchReleasesModal', () => {
 
     expect(onClose).toHaveBeenCalled();
   });
+
+  it('shows error toast when grab fails', async () => {
+    vi.mocked(api.search).mockResolvedValue(mockResults);
+    vi.mocked(api.grab).mockRejectedValue(new Error('Download client unavailable'));
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+
+    const grabButtons = screen.getAllByText('Grab');
+    await user.click(grabButtons[0]);
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to grab: Download client unavailable');
+    });
+  });
+
+  it('disables grab button when downloadUrl is falsy', async () => {
+    const resultsWithoutUrl: SearchResult[] = [
+      {
+        title: 'No URL Release',
+        author: 'Author',
+        protocol: 'torrent',
+        infoHash: 'abc123',
+        downloadUrl: '',
+        size: 1024,
+        seeders: 5,
+        indexer: 'TestIndexer',
+      },
+    ];
+    vi.mocked(api.search).mockResolvedValue(resultsWithoutUrl);
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('No URL Release');
+
+    const grabButton = screen.getByText('Grab').closest('button');
+    expect(grabButton).toBeDisabled();
+  });
+
+  it('shows error toast when blacklist fails', async () => {
+    vi.mocked(api.search).mockResolvedValue(mockResults);
+    vi.mocked(api.addToBlacklist).mockRejectedValue(new Error('Server error'));
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+
+    const blacklistButtons = screen.getAllByText('Blacklist');
+    await user.click(blacklistButtons[0]);
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to blacklist: Server error');
+    });
+  });
 });

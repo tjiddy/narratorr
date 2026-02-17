@@ -259,4 +259,130 @@ describe('NewznabIndexer', () => {
       expect(result.success).toBe(false);
     });
   });
+
+  describe('edge cases — NaN parsing', () => {
+    it('handles NaN size from invalid attr value', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0"><channel>
+          <item>
+            <title>NaN Size Book</title>
+            <enclosure url="https://indexer.test/dl/1.nzb" length="abc"/>
+            <newznab:attr name="size" value="notanumber"/>
+            <newznab:attr name="grabs" value="10"/>
+          </item>
+        </channel></rss>`;
+
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(xml, {
+            headers: { 'Content-Type': 'application/rss+xml' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results).toHaveLength(1);
+      // Number('notanumber') = NaN, size || undefined = undefined
+      expect(results[0].size).toBeUndefined();
+    });
+
+    it('handles NaN grabs from invalid attr value', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0"><channel>
+          <item>
+            <title>NaN Grabs</title>
+            <enclosure url="https://indexer.test/dl/1.nzb" length="1000"/>
+            <newznab:attr name="grabs" value="xyz"/>
+          </item>
+        </channel></rss>`;
+
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(xml, {
+            headers: { 'Content-Type': 'application/rss+xml' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results).toHaveLength(1);
+      expect(results[0].grabs).toBeNaN();
+    });
+
+    it('skips items with empty title', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0"><channel>
+          <item>
+            <title></title>
+            <enclosure url="https://indexer.test/dl/empty.nzb"/>
+          </item>
+          <item>
+            <title>Valid Title</title>
+            <enclosure url="https://indexer.test/dl/valid.nzb"/>
+          </item>
+        </channel></rss>`;
+
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(xml, {
+            headers: { 'Content-Type': 'application/rss+xml' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('Valid Title');
+    });
+
+    it('falls back to enclosure length when no size attr', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0"><channel>
+          <item>
+            <title>Enclosure Size</title>
+            <enclosure url="https://indexer.test/dl/1.nzb" length="5000000"/>
+          </item>
+        </channel></rss>`;
+
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(xml, {
+            headers: { 'Content-Type': 'application/rss+xml' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results[0].size).toBe(5000000);
+    });
+
+    it('uses usenet protocol for all results', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0"><channel>
+          <item>
+            <title>Usenet Book</title>
+            <enclosure url="https://indexer.test/dl/1.nzb" length="1000"/>
+          </item>
+        </channel></rss>`;
+
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(xml, {
+            headers: { 'Content-Type': 'application/rss+xml' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results[0].protocol).toBe('usenet');
+    });
+
+    it('strips trailing slashes from apiUrl', () => {
+      const idx = new NewznabIndexer({
+        apiUrl: 'https://indexer.test///',
+        apiKey: 'key',
+      });
+      expect(idx.name).toBe('indexer.test');
+    });
+  });
 });

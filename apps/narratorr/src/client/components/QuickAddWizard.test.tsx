@@ -297,4 +297,65 @@ describe('QuickAddWizard', () => {
     // Author field should be empty
     expect(screen.getByLabelText('Author')).toHaveValue('');
   });
+
+  it('shows scan error message when scan rejects', async () => {
+    vi.mocked(api.scanSingleBook).mockRejectedValue(new Error('Directory not found'));
+    const user = userEvent.setup();
+
+    renderWithProviders(<QuickAddWizard isOpen={true} onClose={vi.fn()} />);
+
+    await user.type(screen.getByPlaceholderText('/path/to/audiobook'), '/nonexistent');
+    await user.click(screen.getByText('Scan'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Directory not found')).toBeInTheDocument();
+    });
+
+    // Should still be on path step
+    expect(screen.getByPlaceholderText('/path/to/audiobook')).toBeInTheDocument();
+  });
+
+  it('does not scan when path is empty', async () => {
+    const user = userEvent.setup();
+
+    renderWithProviders(<QuickAddWizard isOpen={true} onClose={vi.fn()} />);
+
+    // Scan button should be disabled since path is empty
+    const scanButton = screen.getByText('Scan');
+    expect(scanButton).toBeDisabled();
+
+    // Try clicking anyway
+    await user.click(scanButton);
+    expect(api.scanSingleBook).not.toHaveBeenCalled();
+  });
+
+  it('disables search button when both title and author are empty', async () => {
+    vi.mocked(api.scanSingleBook).mockResolvedValue({
+      book: {
+        path: '/audiobooks/Unknown',
+        parsedTitle: '',
+        parsedAuthor: null,
+        parsedSeries: null,
+        fileCount: 1,
+        totalSize: 50_000_000,
+      },
+      metadata: null,
+    });
+    const user = userEvent.setup();
+
+    renderWithProviders(<QuickAddWizard isOpen={true} onClose={vi.fn()} />);
+
+    await user.type(screen.getByPlaceholderText('/path/to/audiobook'), '/books');
+    await user.click(screen.getByText('Scan'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/No metadata match found/)).toBeInTheDocument();
+    });
+
+    // Clear the title field (parsedTitle was empty, but let's verify)
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: '' } });
+
+    const searchButton = screen.getByText('Search Providers');
+    expect(searchButton).toBeDisabled();
+  });
 });

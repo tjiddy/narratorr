@@ -247,4 +247,78 @@ describe('books routes', () => {
       expect(services.book.delete).toHaveBeenCalledWith(1);
     });
   });
+
+  describe('error paths', () => {
+    it('POST /api/books returns 500 when service.create throws', async () => {
+      (services.book.findDuplicate as any).mockResolvedValue(null);
+      (services.book.create as any).mockRejectedValue(new Error('DB insert failed'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'Test Book', authorName: 'Author' },
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+
+    it('GET /api/books/:id returns 400 for NaN id', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/books/abc' });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('Invalid ID');
+    });
+
+    it('PUT /api/books/:id returns 400 for NaN id', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/books/abc',
+        payload: { title: 'Test' },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('DELETE /api/books/:id returns 400 for NaN id', async () => {
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/abc' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('GET /api/books returns 500 when service throws', async () => {
+      (services.book.getAll as any).mockRejectedValue(new Error('DB error'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/books' });
+
+      expect(res.statusCode).toBe(500);
+    });
+
+    it('DELETE still succeeds when cancel() throws for one download', async () => {
+      const activeDownloads = [
+        { id: 10, bookId: 1, status: 'downloading' },
+        { id: 11, bookId: 1, status: 'queued' },
+      ];
+      (services.download.getActiveByBookId as any).mockResolvedValue(activeDownloads);
+      (services.download.cancel as any)
+        .mockRejectedValueOnce(new Error('cancel failed'))
+        .mockResolvedValueOnce(true);
+      (services.book.delete as any).mockResolvedValue(true);
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.book.delete).toHaveBeenCalledWith(1);
+    });
+
+    it('GET /api/books/:id/cover returns 400 for NaN id', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/books/abc/cover' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('GET /api/books/:id/cover returns 404 when book has no path', async () => {
+      (services.book.getById as any).mockResolvedValue({ ...mockBook, path: null });
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/cover' });
+
+      expect(res.statusCode).toBe(404);
+    });
+  });
 });

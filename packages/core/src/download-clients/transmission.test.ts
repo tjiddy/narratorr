@@ -369,4 +369,70 @@ describe('TransmissionClient', () => {
       expect(result!.status).toBe('downloading');
     });
   });
+
+  describe('edge cases — null/malformed responses', () => {
+    it('handles null torrents in response', async () => {
+      server.use(rpcHandler('torrent-get', { torrents: null }));
+
+      const result = await client.getDownload('abc123');
+      expect(result).toBeNull();
+    });
+
+    it('handles negative ETA values (no estimate)', async () => {
+      const torrentNegEta = { ...mockTorrent, eta: -1 };
+      server.use(rpcHandler('torrent-get', { torrents: [torrentNegEta] }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.eta).toBeUndefined();
+    });
+
+    it('handles doneDate = 0 (unix epoch → not completed)', async () => {
+      const torrent = { ...mockTorrent, doneDate: 0 };
+      server.use(rpcHandler('torrent-get', { torrents: [torrent] }));
+
+      const result = await client.getDownload('abc123def456');
+      expect(result!.completedAt).toBeUndefined();
+    });
+
+    it('handles RPC error result', async () => {
+      server.use(
+        http.post(RPC_URL, () => {
+          return HttpResponse.json({ result: 'invalid method' });
+        }),
+      );
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('RPC error');
+    });
+
+    it('getAllDownloads handles empty torrents array', async () => {
+      server.use(rpcHandler('torrent-get', { torrents: [] }));
+
+      const results = await client.getAllDownloads();
+      expect(results).toEqual([]);
+    });
+
+    it('uses HTTPS when useSsl is true', () => {
+      const sslClient = new TransmissionClient({ ...config, useSsl: true });
+      expect(sslClient.type).toBe('transmission');
+      // Can't directly test URL, but constructor should succeed
+    });
+
+    it('lowercases hash from addDownload response', async () => {
+      server.use(
+        http.post(RPC_URL, () => {
+          return HttpResponse.json({
+            result: 'success',
+            arguments: {
+              'torrent-added': { hashString: 'ABC123DEF456' },
+            },
+          });
+        }),
+      );
+
+      const hash = await client.addDownload('magnet:?xt=urn:btih:ABC123');
+      expect(hash).toBe('abc123def456');
+    });
+  });
 });

@@ -91,6 +91,22 @@ describe('parseAudiobookTitle', () => {
     // The narrator is still correctly extracted from rawTitle.
     expect(result.narrator).toBe('Michael Kramer');
   });
+
+  it('handles bracket variant [unabridged] without brackets on one side', () => {
+    const result = parseAudiobookTitle('The Way of Kings [unabridged');
+    // The regex \[?unabridged]? matches with or without brackets
+    expect(result.isUnabridged).toBe(true);
+  });
+
+  it('handles (Unabridged) in parentheses-like context', () => {
+    const result = parseAudiobookTitle('The Way of Kings Unabridged');
+    expect(result.isUnabridged).toBe(true);
+  });
+
+  it('handles mixed case brackets [UNABRIDGED]', () => {
+    const result = parseAudiobookTitle('Test Book [UNABRIDGED]');
+    expect(result.isUnabridged).toBe(true);
+  });
 });
 
 describe('slugify', () => {

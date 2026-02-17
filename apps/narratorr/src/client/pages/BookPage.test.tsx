@@ -196,4 +196,13 @@ describe('BookPage', () => {
       expect(screen.getByText('Book One of the Stormlight Archive')).toBeInTheDocument();
     });
   });
+
+  it('renders multiple skeleton elements during loading', () => {
+    vi.mocked(api.getBookById).mockReturnValue(new Promise(() => {}));
+    renderBookPage();
+
+    const skeletons = document.querySelectorAll('.skeleton');
+    // BookPageSkeleton has multiple skeleton placeholders (title, subtitle, author, etc.)
+    expect(skeletons.length).toBeGreaterThan(3);
+  });
 });

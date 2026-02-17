@@ -330,4 +330,22 @@ describe('AuthorPage', () => {
     expect(screen.getAllByText('Michael Kramer, Kate Reading').length).toBeGreaterThan(0);
     expect(screen.getByText('45h 29m')).toBeInTheDocument();
   });
+
+  it('renders multiple skeleton elements during loading', () => {
+    vi.mocked(api.getAuthor).mockReturnValue(new Promise(() => {}));
+    renderAuthorPage();
+
+    const skeletons = document.querySelectorAll('.skeleton');
+    // AuthorPageSkeleton has multiple skeleton placeholders (avatar, name, bio, series books, etc.)
+    expect(skeletons.length).toBeGreaterThan(5);
+  });
+
+  it('shows skeleton for series section with book rows', () => {
+    vi.mocked(api.getAuthor).mockReturnValue(new Promise(() => {}));
+    renderAuthorPage();
+
+    // The skeleton has a rounded-full element for the avatar
+    const roundedFull = document.querySelector('.skeleton.rounded-full');
+    expect(roundedFull).toBeInTheDocument();
+  });
 });

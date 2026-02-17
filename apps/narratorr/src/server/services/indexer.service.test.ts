@@ -223,5 +223,85 @@ describe('IndexerService', () => {
       expect(results).toHaveLength(1);
       expect(results[0].title).toBe('Book');
     });
+
+    it('returns empty array when all indexers fail', async () => {
+      const indexer2 = { ...mockIndexer, id: 2, name: 'Indexer2' };
+      db.select.mockReturnValue(mockDbChain([mockIndexer, indexer2]));
+
+      const errorAdapter1 = {
+        search: vi.fn().mockRejectedValue(new Error('Timeout')),
+        test: vi.fn(),
+      };
+      const errorAdapter2 = {
+        search: vi.fn().mockRejectedValue(new Error('DNS failure')),
+        test: vi.fn(),
+      };
+
+      vi.spyOn(service, 'getAdapter')
+        .mockResolvedValueOnce(errorAdapter1 as any)
+        .mockResolvedValueOnce(errorAdapter2 as any);
+
+      const results = await service.searchAll('test');
+      expect(results).toEqual([]);
+    });
+
+    it('returns empty array when no enabled indexers', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const results = await service.searchAll('test');
+      expect(results).toEqual([]);
+    });
+
+    it('returns partial results when one succeeds and one fails', async () => {
+      const indexer2 = { ...mockIndexer, id: 2, name: 'Indexer2' };
+      db.select.mockReturnValue(mockDbChain([mockIndexer, indexer2]));
+
+      const goodAdapter = {
+        search: vi.fn().mockResolvedValue([
+          { title: 'Book A', indexer: 'ABB' },
+          { title: 'Book B', indexer: 'ABB' },
+        ]),
+        test: vi.fn(),
+      };
+      const errorAdapter = {
+        search: vi.fn().mockRejectedValue(new Error('Network error')),
+        test: vi.fn(),
+      };
+
+      vi.spyOn(service, 'getAdapter')
+        .mockResolvedValueOnce(goodAdapter as any)
+        .mockResolvedValueOnce(errorAdapter as any);
+
+      const results = await service.searchAll('test');
+      expect(results).toHaveLength(2);
+      expect(results[0].title).toBe('Book A');
+      expect(results[1].title).toBe('Book B');
+    });
+  });
+
+  describe('test edge cases', () => {
+    it('catches adapter.test() throwing and returns failure', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+
+      const mockAdapter = { test: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')), search: vi.fn() };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as any);
+
+      const result = await service.test(1);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('ECONNREFUSED');
+    });
+
+    it('returns "Unknown error" for non-Error thrown values', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+
+      const mockAdapter = { test: vi.fn().mockRejectedValue('string thrown'), search: vi.fn() };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as any);
+
+      const result = await service.test(1);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('Unknown error');
+    });
   });
 });

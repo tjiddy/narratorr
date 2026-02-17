@@ -465,4 +465,104 @@ describe('ImportService', () => {
       });
     });
   });
+
+  describe('importDownload edge cases', () => {
+    it('throws when download has no downloadClientId (missing clientId early return)', async () => {
+      const downloadNoClient = { ...mockDownload, downloadClientId: null, externalId: null };
+      db.select.mockReturnValueOnce(mockDbChain([downloadNoClient]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await expect(service.importDownload(1)).rejects.toThrow('missing client or external ID');
+    });
+
+    it('throws when download has no externalId', async () => {
+      const downloadNoExtId = { ...mockDownload, externalId: null };
+      db.select.mockReturnValueOnce(mockDbChain([downloadNoExtId]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await expect(service.importDownload(1)).rejects.toThrow('missing client or external ID');
+    });
+
+    it('throws when adapter.getDownload returns null', async () => {
+      const adapterNoDownload = {
+        ...mockAdapter,
+        getDownload: vi.fn().mockResolvedValue(null),
+      };
+      (clientService.getAdapter as any).mockResolvedValue(adapterNoDownload);
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await expect(service.importDownload(1)).rejects.toThrow('not found in client');
+    });
+
+    it('throws when adapter.getDownload throws', async () => {
+      const adapterThrows = {
+        ...mockAdapter,
+        getDownload: vi.fn().mockRejectedValue(new Error('Client connection refused')),
+      };
+      (clientService.getAdapter as any).mockResolvedValue(adapterThrows);
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await expect(service.importDownload(1)).rejects.toThrow('Client connection refused');
+    });
+
+    it('throws when no audio files in directory', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // readdir returns no audio files
+      const readdirMock = readdir as unknown as ReturnType<typeof vi.fn>;
+      readdirMock.mockResolvedValue([
+        { name: 'readme.txt', isFile: () => true, isDirectory: () => false },
+        { name: 'cover.jpg', isFile: () => true, isDirectory: () => false },
+      ]);
+
+      await expect(service.importDownload(1)).rejects.toThrow('No audio files found');
+    });
+
+    it('sets download to failed when file copy fails mid-import', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // readdir returns audio file
+      const readdirMock = readdir as unknown as ReturnType<typeof vi.fn>;
+      readdirMock.mockResolvedValue([
+        { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
+      ]);
+
+      // cp throws mid-copy
+      const cpMock = cp as unknown as ReturnType<typeof vi.fn>;
+      cpMock.mockRejectedValueOnce(new Error('ENOSPC: no space left on device'));
+
+      await expect(service.importDownload(1)).rejects.toThrow('ENOSPC');
+      // Download should be set to failed
+      expect(db.update).toHaveBeenCalled();
+    });
+
+    it('throws when book not found for linked bookId', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([]));  // book not found
+
+      await expect(service.importDownload(1)).rejects.toThrow('Book 1 not found');
+    });
+
+    it('throws when download client adapter is null', async () => {
+      (clientService.getAdapter as any).mockResolvedValue(null);
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await expect(service.importDownload(1)).rejects.toThrow('not found');
+    });
+  });
 });

@@ -176,4 +176,49 @@ describe('activity routes', () => {
       expect(res.statusCode).toBe(500);
     });
   });
+
+  describe('error paths', () => {
+    it('DELETE /api/activity/:id returns 500 when cancel throws', async () => {
+      (services.download.cancel as any).mockRejectedValue(new Error('Adapter error'));
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/activity/1' });
+
+      expect(res.statusCode).toBe(500);
+    });
+
+    it('GET /api/activity returns 500 when service throws', async () => {
+      (services.download.getAll as any).mockRejectedValue(new Error('DB error'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity' });
+
+      expect(res.statusCode).toBe(500);
+    });
+
+    it('GET /api/activity/:id returns 400 for NaN id', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/activity/abc' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('DELETE /api/activity/:id returns 400 for NaN id', async () => {
+      const res = await app.inject({ method: 'DELETE', url: '/api/activity/abc' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('POST /api/activity/:id/retry returns 400 for NaN id', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/activity/abc/retry' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('POST /api/activity/:id/retry deletes old download after successful grab', async () => {
+      const newDownload = { ...mockDownload, id: 2 };
+      (services.download.getById as any).mockResolvedValue(mockDownload);
+      (services.download.grab as any).mockResolvedValue(newDownload);
+      (services.download.delete as any).mockResolvedValue(true);
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.download.delete).toHaveBeenCalledWith(1);
+    });
+  });
 });

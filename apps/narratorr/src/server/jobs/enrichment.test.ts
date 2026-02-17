@@ -188,6 +188,85 @@ describe('enrichment job', () => {
     expect(metadataService.enrichBook).not.toHaveBeenCalled();
   });
 
+  it('treats narrators: undefined differently from narrators: [] (undefined skips, empty array skips)', async () => {
+    // narrators: undefined — the `result.narrators?.length` check short-circuits via optional chaining
+    db.select
+      .mockReturnValueOnce(mockDbChain([]))  // no-asin
+      .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_UNDEF_NARR' }]))  // candidates
+      .mockReturnValueOnce(mockDbChain([{ narrator: null, duration: null }]));  // existing
+
+    metadataService.enrichBook.mockResolvedValueOnce({
+      title: 'Undefined Narrators',
+      authors: [{ name: 'Author' }],
+      // narrators key entirely absent → undefined
+      duration: 600,
+    });
+    db.update.mockReturnValue(mockDbChain());
+
+    await runEnrichment(db as any, metadataService as any, log as any);
+
+    // Should still mark as enriched — narrator stays null because narrators is undefined
+    expect(log.info).toHaveBeenCalledWith(
+      { bookId: 1, asin: 'B_UNDEF_NARR' },
+      'Book enriched successfully',
+    );
+  });
+
+  it('handles empty existing array from DB query (existing.length === 0)', async () => {
+    // Edge case: the book row is somehow missing between candidate selection and field lookup
+    db.select
+      .mockReturnValueOnce(mockDbChain([]))  // no-asin
+      .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_MISSING' }]))  // candidates
+      .mockReturnValueOnce(mockDbChain([]));  // existing book fields — empty!
+
+    metadataService.enrichBook.mockResolvedValueOnce({
+      title: 'Ghost Book',
+      authors: [{ name: 'Author' }],
+      narrators: ['Some Narrator'],
+      duration: 500,
+    });
+    db.update.mockReturnValue(mockDbChain());
+
+    await runEnrichment(db as any, metadataService as any, log as any);
+
+    // Should still update enrichmentStatus to 'enriched' but skip narrator/duration fields
+    expect(db.update).toHaveBeenCalled();
+    expect(log.info).toHaveBeenCalledWith(
+      { bookId: 1, asin: 'B_MISSING' },
+      'Book enriched successfully',
+    );
+  });
+
+  it('sets enrichmentStatus to enriched even when metadata returns null for all optional fields', async () => {
+    db.select
+      .mockReturnValueOnce(mockDbChain([]))  // no-asin
+      .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_ALL_NULL' }]))  // candidates
+      .mockReturnValueOnce(mockDbChain([{ narrator: null, duration: null }]));  // existing
+
+    // enrichBook returns a result object but with no narrators and no duration
+    metadataService.enrichBook.mockResolvedValueOnce({
+      title: null,
+      authors: null,
+      narrators: undefined,
+      duration: undefined,
+    });
+    db.update.mockReturnValue(mockDbChain());
+
+    await runEnrichment(db as any, metadataService as any, log as any);
+
+    // The result is truthy (it's an object), so it follows the enriched path not the failed path
+    expect(db.update).toHaveBeenCalled();
+    expect(log.info).toHaveBeenCalledWith(
+      { bookId: 1, asin: 'B_ALL_NULL' },
+      'Book enriched successfully',
+    );
+    // Should NOT have logged a failure
+    expect(log.warn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1 }),
+      'Book enrichment failed',
+    );
+  });
+
   it('breaks batch on RateLimitError and leaves remaining candidates pending', async () => {
     db.select
       .mockReturnValueOnce(mockDbChain([]))  // no-asin

@@ -358,4 +358,145 @@ describe('AudibleProvider', () => {
       expect(books[0].series![0].position).toBeUndefined();
     });
   });
+
+  describe('edge cases — NaN and malformed data', () => {
+    it('handles NaN Retry-After header (defaults to 60s)', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': 'not-a-number' },
+          });
+        }),
+      );
+
+      try {
+        await provider.searchBooks('test');
+      } catch (error) {
+        expect(error).toBeInstanceOf(RateLimitError);
+        // parseInt('not-a-number') = NaN, NaN * 1000 = NaN
+        expect((error as RateLimitError).retryAfterMs).toBeNaN();
+      }
+    });
+
+    it('handles malformed JSON response body', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return new HttpResponse('not json{{{', {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books).toEqual([]);
+    });
+
+    it('handles NaN series position from non-numeric sequence', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [{
+              asin: 'B000TEST',
+              title: 'Test',
+              authors: [{ name: 'Author' }],
+              series: [{ title: 'Series', sequence: 'prologue' }],
+            }],
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books[0].series![0].position).toBeUndefined();
+    });
+
+    it('handles invalid runtime_length_min (NaN)', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [{
+              asin: 'B000TEST',
+              title: 'NaN Duration',
+              authors: [{ name: 'Author' }],
+              runtime_length_min: NaN,
+            }],
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books[0].duration).toBeUndefined();
+    });
+
+    it('handles runtime_length_min of 0', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [{
+              asin: 'B000TEST',
+              title: 'Zero Duration',
+              authors: [{ name: 'Author' }],
+              runtime_length_min: 0,
+            }],
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      // 0 is falsy, so duration should be undefined
+      expect(books[0].duration).toBeUndefined();
+    });
+
+    it('handles empty string Retry-After header (falls back to 60s)', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': '' },
+          });
+        }),
+      );
+
+      try {
+        await provider.searchBooks('test');
+      } catch (error) {
+        expect(error).toBeInstanceOf(RateLimitError);
+        // Empty string is falsy → ternary falls to 60_000
+        expect((error as RateLimitError).retryAfterMs).toBe(60000);
+      }
+    });
+
+    it('handles product with empty authors array', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [{
+              asin: 'B000TEST',
+              title: 'No Authors',
+              authors: [],
+            }],
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books).toHaveLength(1);
+      expect(books[0].authors).toEqual([]);
+    });
+
+    it('getBook handles malformed JSON response', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return new HttpResponse('broken json', {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B000TEST');
+      expect(book).toBeNull();
+    });
+  });
 });

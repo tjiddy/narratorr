@@ -72,4 +72,26 @@ describe('settings routes', () => {
       expect(res.statusCode).toBe(200);
     });
   });
+
+  describe('error paths', () => {
+    it('GET /api/settings returns 500 when service throws', async () => {
+      (services.settings.getAll as any).mockRejectedValue(new Error('DB error'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/settings' });
+
+      expect(res.statusCode).toBe(500);
+    });
+
+    it('PUT /api/settings returns 500 when service throws', async () => {
+      (services.settings.update as any).mockRejectedValue(new Error('Upsert failed'));
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { library: { path: '/new' } },
+      });
+
+      expect(res.statusCode).toBe(500);
+    });
+  });
 });

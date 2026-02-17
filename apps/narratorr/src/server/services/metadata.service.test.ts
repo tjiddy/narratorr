@@ -356,6 +356,77 @@ describe('MetadataService', () => {
     });
   });
 
+  describe('enrichBook edge cases', () => {
+    it('returns data with empty narrators array and undefined duration', async () => {
+      mockAudnexus.getBook.mockResolvedValueOnce({
+        title: 'Sparse Data',
+        authors: [{ name: 'Author' }],
+        narrators: [],
+        duration: undefined,
+      });
+
+      const result = await service.enrichBook('B_SPARSE');
+      expect(result).not.toBeNull();
+      expect(result!.narrators).toEqual([]);
+      expect(result!.duration).toBeUndefined();
+    });
+
+    it('handles enrichBook with empty ASIN string gracefully', async () => {
+      // Empty string ASIN — Audnexus should still be called (validation is caller's job)
+      mockAudnexus.getBook.mockResolvedValueOnce(null);
+
+      const result = await service.enrichBook('');
+      expect(result).toBeNull();
+      expect(mockAudnexus.getBook).toHaveBeenCalledWith('');
+    });
+  });
+
+  describe('getAuthorBooks', () => {
+    it('delegates to the provider', async () => {
+      const mockBooks = [{ title: 'Book 1' }, { title: 'Book 2' }];
+      mockAudibleProvider.getAuthorBooks.mockResolvedValueOnce(mockBooks);
+
+      const result = await service.getAuthorBooks('15200');
+      expect(result).toEqual(mockBooks);
+    });
+
+    it('returns empty array when provider returns empty', async () => {
+      mockAudibleProvider.getAuthorBooks.mockResolvedValueOnce([]);
+
+      const result = await service.getAuthorBooks('15200');
+      expect(result).toEqual([]);
+    });
+
+    it('returns fallback on error', async () => {
+      mockAudibleProvider.getAuthorBooks.mockRejectedValueOnce(new Error('fail'));
+
+      const result = await service.getAuthorBooks('15200');
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('getSeries', () => {
+    it('returns null when not found', async () => {
+      const result = await service.getSeries('999');
+      expect(result).toBeNull();
+    });
+
+    it('returns series when found', async () => {
+      const mockSeries = { name: 'The Stormlight Archive', books: [] };
+      mockAudibleProvider.getSeries.mockResolvedValueOnce(mockSeries);
+
+      const result = await service.getSeries('100');
+      expect(result).toEqual(mockSeries);
+    });
+
+    it('returns fallback on error', async () => {
+      mockAudibleProvider.getSeries.mockRejectedValueOnce(new Error('fail'));
+
+      const result = await service.getSeries('100');
+      expect(result).toBeNull();
+    });
+  });
+
   describe('no API keys', () => {
     it('still has Audible provider when no API keys are set', async () => {
       vi.stubEnv('HARDCOVER_API_KEY', '');

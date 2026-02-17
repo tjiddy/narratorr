@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import { DownloadClientService } from './download-client.service.js';
 
@@ -232,6 +232,134 @@ describe('DownloadClientService', () => {
       });
       expect(result.success).toBe(false);
       expect(result.message).toContain('Unknown download client type');
+    });
+  });
+
+  describe('test edge cases', () => {
+    it('catches adapter.test() throwing and returns failure', async () => {
+      // Create a client that exists but whose adapter.test() throws
+      const throwingClient = {
+        ...mockClient,
+        type: 'qbittorrent' as const,
+      };
+      db.select.mockReturnValue(mockDbChain([throwingClient]));
+
+      // Spy on createAdapter to return an adapter that throws on test
+      const mockAdapter = { test: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')) };
+      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+
+      const result = await service.test(1);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('ECONNREFUSED');
+    });
+
+    it('returns "Unknown error" for non-Error thrown values', async () => {
+      const throwingClient = { ...mockClient };
+      db.select.mockReturnValue(mockDbChain([throwingClient]));
+
+      const mockAdapter = { test: vi.fn().mockRejectedValue('string error') };
+      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+
+      const result = await service.test(1);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('Unknown error');
+    });
+  });
+
+  describe('testConfig edge cases', () => {
+    it('catches adapter.test() network error and returns failure', async () => {
+      const mockAdapter = { test: vi.fn().mockRejectedValue(new Error('Network unreachable')) };
+      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+
+      const result = await service.testConfig({
+        type: 'qbittorrent',
+        settings: { host: '192.168.1.999', port: 8080 },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('Network unreachable');
+    });
+  });
+
+  describe('getAdapter edge cases', () => {
+    it('returns null when results.find returns undefined (client not in DB)', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const adapter = await service.getAdapter(42);
+      expect(adapter).toBeNull();
+    });
+  });
+
+  describe('getFirstEnabledAdapter', () => {
+    it('returns null when no enabled clients exist', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const adapter = await service.getFirstEnabledAdapter();
+      expect(adapter).toBeNull();
+    });
+
+    it('returns adapter for first enabled client', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([mockClient]))  // getFirstEnabled
+        .mockReturnValueOnce(mockDbChain([mockClient]));  // getById inside getAdapter
+
+      const adapter = await service.getFirstEnabledAdapter();
+      expect(adapter).not.toBeNull();
+    });
+  });
+
+  describe('createAdapter types', () => {
+    it('creates transmission adapter', async () => {
+      const transmissionClient = {
+        ...mockClient,
+        id: 5,
+        type: 'transmission' as const,
+        settings: { host: 'localhost', port: 9091, username: '', password: '', useSsl: false },
+      };
+      db.select.mockReturnValue(mockDbChain([transmissionClient]));
+
+      const adapter = await service.getAdapter(5);
+      expect(adapter).not.toBeNull();
+    });
+
+    it('creates sabnzbd adapter', async () => {
+      const sabClient = {
+        ...mockClient,
+        id: 6,
+        type: 'sabnzbd' as const,
+        settings: { host: 'localhost', port: 8080, apiKey: 'test-key', useSsl: false },
+      };
+      db.select.mockReturnValue(mockDbChain([sabClient]));
+
+      const adapter = await service.getAdapter(6);
+      expect(adapter).not.toBeNull();
+    });
+
+    it('creates nzbget adapter', async () => {
+      const nzbgetClient = {
+        ...mockClient,
+        id: 7,
+        type: 'nzbget' as const,
+        settings: { host: 'localhost', port: 6789, username: 'nzbget', password: '', useSsl: false },
+      };
+      db.select.mockReturnValue(mockDbChain([nzbgetClient]));
+
+      const adapter = await service.getAdapter(7);
+      expect(adapter).not.toBeNull();
+    });
+
+    it('throws for unknown client type', async () => {
+      const unknownClient = {
+        ...mockClient,
+        id: 8,
+        type: 'deluge' as never,
+        settings: {},
+      };
+      db.select.mockReturnValue(mockDbChain([unknownClient]));
+
+      await expect(service.getAdapter(8)).rejects.toThrow('Unknown download client type');
     });
   });
 });

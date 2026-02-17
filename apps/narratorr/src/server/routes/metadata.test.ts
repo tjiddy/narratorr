@@ -124,4 +124,46 @@ describe('metadata routes', () => {
       expect(JSON.parse(res.payload)).toHaveLength(1);
     });
   });
+
+  describe('error paths', () => {
+    it('GET /api/metadata/search returns 500 when service throws', async () => {
+      (services.metadata.search as any).mockRejectedValue(new Error('Rate limited'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/metadata/search?q=sanderson' });
+
+      expect(res.statusCode).toBe(500);
+    });
+
+    it('GET /api/metadata/authors/:id returns 500 when service throws', async () => {
+      (services.metadata.getAuthor as any).mockRejectedValue(new Error('Network error'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/metadata/authors/B001H6UJO8' });
+
+      expect(res.statusCode).toBe(500);
+    });
+
+    it('GET /api/metadata/authors/:id/books returns 500 when service throws', async () => {
+      (services.metadata.getAuthorBooks as any).mockRejectedValue(new Error('Timeout'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/metadata/authors/B001H6UJO8/books' });
+
+      expect(res.statusCode).toBe(500);
+    });
+
+    it('GET /api/metadata/books/:id returns 500 when service throws', async () => {
+      (services.metadata.getBook as any).mockRejectedValue(new Error('Provider error'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/metadata/books/B0030DL4GK' });
+
+      expect(res.statusCode).toBe(500);
+    });
+
+    it('GET /api/metadata/test returns 500 when service throws', async () => {
+      (services.metadata.testProviders as any).mockRejectedValue(new Error('All providers down'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/metadata/test' });
+
+      expect(res.statusCode).toBe(500);
+    });
+  });
 });

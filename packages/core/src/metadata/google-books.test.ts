@@ -243,4 +243,146 @@ describe('GoogleBooksProvider', () => {
       expect(result.message).toContain('Google Books');
     });
   });
+
+  describe('edge cases — malformed data', () => {
+    it('handles missing statusText on 403 in test()', async () => {
+      server.use(
+        http.get('https://www.googleapis.com/books/v1/volumes', () => {
+          return new HttpResponse(null, { status: 503 });
+        }),
+      );
+
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('503');
+    });
+
+    it('handles malformed JSON response body', async () => {
+      server.use(
+        http.get('https://www.googleapis.com/books/v1/volumes', () => {
+          return new HttpResponse('not valid json!!!', {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books).toEqual([]);
+    });
+
+    it('handles 403 with rate limit text as RateLimitError', async () => {
+      server.use(
+        http.get('https://www.googleapis.com/books/v1/volumes', () => {
+          return new HttpResponse(null, {
+            status: 403,
+            statusText: 'Rate Limit Exceeded',
+          });
+        }),
+      );
+
+      await expect(provider.searchBooks('test')).rejects.toThrow(RateLimitError);
+    });
+
+    it('handles NaN Retry-After on 429', async () => {
+      server.use(
+        http.get('https://www.googleapis.com/books/v1/volumes', () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': 'invalid' },
+          });
+        }),
+      );
+
+      try {
+        await provider.searchBooks('test');
+      } catch (error) {
+        expect(error).toBeInstanceOf(RateLimitError);
+        expect((error as RateLimitError).retryAfterMs).toBeNaN();
+      }
+    });
+
+    it('handles volume with no volumeInfo', async () => {
+      server.use(
+        http.get('https://www.googleapis.com/books/v1/volumes/:id', () => {
+          return HttpResponse.json({ id: 'test-id' });
+        }),
+      );
+
+      const book = await provider.getBook('test-id');
+      expect(book).toBeNull();
+    });
+
+    it('handles network error in test()', async () => {
+      server.use(
+        http.get('https://www.googleapis.com/books/v1/volumes', () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+    });
+
+    it('handles volume with missing ISBN identifiers', async () => {
+      server.use(
+        http.get('https://www.googleapis.com/books/v1/volumes', () => {
+          return HttpResponse.json({
+            items: [{
+              id: 'test',
+              volumeInfo: {
+                title: 'No ISBN',
+                authors: ['Author'],
+              },
+            }],
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books[0].isbn).toBeUndefined();
+    });
+
+    it('falls back to ISBN_10 when ISBN_13 is missing', async () => {
+      server.use(
+        http.get('https://www.googleapis.com/books/v1/volumes', () => {
+          return HttpResponse.json({
+            items: [{
+              id: 'test',
+              volumeInfo: {
+                title: 'ISBN10 Only',
+                authors: ['Author'],
+                industryIdentifiers: [
+                  { type: 'ISBN_10', identifier: '0765365278' },
+                ],
+              },
+            }],
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books[0].isbn).toBe('0765365278');
+    });
+
+    it('handles HTTP cover URL upgrade to HTTPS', async () => {
+      server.use(
+        http.get('https://www.googleapis.com/books/v1/volumes', () => {
+          return HttpResponse.json({
+            items: [{
+              id: 'test',
+              volumeInfo: {
+                title: 'HTTP Cover',
+                authors: ['Author'],
+                imageLinks: { thumbnail: 'http://books.google.com/cover.jpg' },
+              },
+            }],
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books[0].coverUrl).toBe('https://books.google.com/cover.jpg');
+    });
+  });
 });

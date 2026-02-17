@@ -469,4 +469,199 @@ describe('SABnzbdClient', () => {
       expect(item!.eta).toBeUndefined();
     });
   });
+
+  describe('edge cases — malformed data', () => {
+    it('handles malformed mb/percentage strings (NaN)', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({
+              queue: {
+                slots: [{
+                  ...queueSlot,
+                  mb: 'notanumber',
+                  mbleft: 'also-nan',
+                  percentage: 'abc',
+                }],
+              },
+            });
+          }
+          return HttpResponse.json({ history: { slots: [] } });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_abc123');
+      expect(item).not.toBeNull();
+      // parseFloat('notanumber') || 0 = 0
+      expect(item!.size).toBe(0);
+      expect(item!.downloaded).toBe(0);
+      // parseInt('abc') || 0 = 0
+      expect(item!.progress).toBe(0);
+    });
+
+    it('handles timeleft with 2 parts (invalid format)', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({
+              queue: {
+                slots: [{ ...queueSlot, timeleft: '30:00' }],
+              },
+            });
+          }
+          return HttpResponse.json({ history: { slots: [] } });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_abc123');
+      // 2 parts instead of 3 → undefined
+      expect(item!.eta).toBeUndefined();
+    });
+
+    it('handles timeleft with 4 parts (days:hours:minutes:seconds)', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({
+              queue: {
+                slots: [{ ...queueSlot, timeleft: '1:02:30:00' }],
+              },
+            });
+          }
+          return HttpResponse.json({ history: { slots: [] } });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_abc123');
+      // 4 parts → undefined (only 3-part format supported)
+      expect(item!.eta).toBeUndefined();
+    });
+
+    it('handles download_time > completed (negative addedAt calc)', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({ queue: { slots: [] } });
+          }
+          return HttpResponse.json({
+            history: {
+              slots: [{
+                ...historySlot,
+                download_time: 99999999, // Way more than completed timestamp
+                completed: 1000,
+              }],
+            },
+          });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_def456');
+      expect(item).not.toBeNull();
+      // addedAt = completed - download_time → negative epoch, but still a valid Date
+      expect(item!.addedAt.getTime()).toBeLessThan(item!.completedAt!.getTime());
+    });
+
+    it('handles completed = 0 in history slot', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({ queue: { slots: [] } });
+          }
+          return HttpResponse.json({
+            history: {
+              slots: [{
+                ...historySlot,
+                completed: 0,
+                download_time: 100,
+              }],
+            },
+          });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_def456');
+      expect(item!.completedAt).toBeUndefined();
+    });
+
+    it('maps Fetching queue status to downloading', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({
+              queue: {
+                slots: [{ ...queueSlot, status: 'Fetching' }],
+              },
+            });
+          }
+          return HttpResponse.json({ history: { slots: [] } });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_abc123');
+      expect(item!.status).toBe('downloading');
+    });
+
+    it('maps Extracting history status to downloading', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({ queue: { slots: [] } });
+          }
+          return HttpResponse.json({
+            history: {
+              slots: [{ ...historySlot, status: 'Extracting' }],
+            },
+          });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_def456');
+      expect(item!.status).toBe('downloading');
+    });
+
+    it('maps unknown history status to completed (fallback)', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({ queue: { slots: [] } });
+          }
+          return HttpResponse.json({
+            history: {
+              slots: [{ ...historySlot, status: 'SomeNewStatus' }],
+            },
+          });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_def456');
+      expect(item!.status).toBe('completed');
+    });
+
+    it('handles empty storage in queue slot', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({
+              queue: {
+                slots: [{ ...queueSlot, storage: undefined }],
+              },
+            });
+          }
+          return HttpResponse.json({ history: { slots: [] } });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_abc123');
+      expect(item!.savePath).toBe('');
+    });
+  });
 });

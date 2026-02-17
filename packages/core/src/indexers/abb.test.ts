@@ -226,4 +226,142 @@ describe('AudioBookBayIndexer', () => {
       expect(result.success).toBe(false);
     });
   });
+
+  describe('edge cases — NaN parsing and malformed HTML', () => {
+    it('handles NaN seeders from non-numeric text', async () => {
+      const detailWithBadSeeders = `
+        <html><body>
+          <h1>Test Book</h1>
+          <pre>Info Hash: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</pre>
+          <p>Seeders: N/A</p>
+          <p>Size: 1.5 GB</p>
+        </body></html>`;
+
+      server.use(
+        http.get(`${ABB_BASE}/`, () => {
+          return new HttpResponse(searchHtml, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
+          return new HttpResponse(detailWithBadSeeders, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results.length).toBeGreaterThan(0);
+      // "N/A" won't match the /Seeders?[:\s]*(\d+)/ regex, so seeders stays undefined
+      expect(results[0].seeders).toBeUndefined();
+    });
+
+    it('handles NaN size from malformed size text', async () => {
+      const detailWithBadSize = `
+        <html><body>
+          <h1>Test Book</h1>
+          <pre>Info Hash: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</pre>
+          <p>Size: unknown</p>
+        </body></html>`;
+
+      server.use(
+        http.get(`${ABB_BASE}/`, () => {
+          return new HttpResponse(searchHtml, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
+          return new HttpResponse(detailWithBadSize, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results.length).toBeGreaterThan(0);
+      // "unknown" won't match Size regex, so size stays undefined
+      expect(results[0].size).toBeUndefined();
+    });
+
+    it('handles detail page with hash only in body text (fallback regex)', async () => {
+      const detailHashInBody = `
+        <html><body>
+          <h1>Rare Book</h1>
+          <p>Some random text a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 more text</p>
+        </body></html>`;
+
+      server.use(
+        http.get(`${ABB_BASE}/`, () => {
+          return new HttpResponse(searchHtml, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
+          return new HttpResponse(detailHashInBody, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].infoHash).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
+    });
+
+    it('handles MB size parsing', async () => {
+      const detailWithMBSize = `
+        <html><body>
+          <h1>Small Book</h1>
+          <pre>Info Hash: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</pre>
+          <p>Size: 500 MB</p>
+        </body></html>`;
+
+      server.use(
+        http.get(`${ABB_BASE}/`, () => {
+          return new HttpResponse(searchHtml, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
+          return new HttpResponse(detailWithMBSize, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results.length).toBeGreaterThan(0);
+      // 500 MB = 500 * 1024 * 1024 = 524288000
+      expect(results[0].size).toBe(524288000);
+    });
+
+    it('extracts author and narrator from detail page text', async () => {
+      const detailWithMetadata = `
+        <html><body>
+          <h1>Test Book</h1>
+          <pre>Info Hash: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0</pre>
+          <p>Author: Brandon Sanderson</p>
+          <p>Narrator: Michael Kramer</p>
+          <p>Size: 1.0 GB</p>
+        </body></html>`;
+
+      server.use(
+        http.get(`${ABB_BASE}/`, () => {
+          return new HttpResponse(searchHtml, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+        http.get(`${ABB_BASE}/audio-books/:slug/`, () => {
+          return new HttpResponse(detailWithMetadata, {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].author).toBe('Brandon Sanderson');
+      expect(results[0].narrator).toBe('Michael Kramer');
+    });
+  });
 });

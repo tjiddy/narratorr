@@ -357,4 +357,211 @@ describe('DownloadService', () => {
       expect(result).toBe(false);
     });
   });
+
+  describe('grab edge cases', () => {
+    it('proceeds when adapter.addDownload returns empty string', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue(''),
+      };
+
+      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      const result = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+      });
+
+      expect(result.title).toBe('The Way of Kings');
+      expect(mockAdapter.addDownload).toHaveBeenCalled();
+    });
+
+    it('proceeds when adapter.addDownload returns null', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue(null),
+      };
+
+      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      const log = createMockLogger();
+      const svc = new DownloadService(db as any, clientService, log as any);
+
+      await svc.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+      });
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Test' }),
+        expect.stringContaining('no external ID'),
+      );
+    });
+
+    it('throws when DB insert fails after adapter succeeds', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-456'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+
+      db.insert.mockImplementation(() => { throw new Error('UNIQUE constraint failed'); });
+
+      await expect(
+        service.grab({
+          downloadUrl: 'magnet:?xt=urn:btih:abc',
+          title: 'Test',
+        }),
+      ).rejects.toThrow('UNIQUE constraint failed');
+    });
+
+    it('uses usenet protocol when specified', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('nzb-123'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue({ id: 2, name: 'SABnzbd' });
+      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, protocol: 'usenet' }, book: mockBook }]),
+      );
+
+      const result = await service.grab({
+        downloadUrl: 'https://nzb.example.com/download/123',
+        title: 'Test NZB',
+        protocol: 'usenet',
+      });
+
+      expect(clientService.getFirstEnabledForProtocol).toHaveBeenCalledWith('usenet');
+      expect(result).toBeDefined();
+    });
+
+    it('does not update book status when bookId is not provided', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, bookId: null }, book: null }]),
+      );
+
+      await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+      });
+
+      // db.update should NOT have been called (no book status update)
+      expect(db.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('cancel edge cases', () => {
+    it('skips adapter removal when externalId is null', async () => {
+      const downloadNoExtId = { ...mockDownload, externalId: null };
+      db.select.mockReturnValue(
+        mockDbChain([{ download: downloadNoExtId, book: mockBook }]),
+      );
+      db.update.mockReturnValue(mockDbChain());
+
+      const result = await service.cancel(1);
+
+      expect(result).toBe(true);
+      expect(clientService.getAdapter).not.toHaveBeenCalled();
+    });
+
+    it('skips adapter removal when downloadClientId is null', async () => {
+      const downloadNoClient = { ...mockDownload, downloadClientId: null };
+      db.select.mockReturnValue(
+        mockDbChain([{ download: downloadNoClient, book: mockBook }]),
+      );
+      db.update.mockReturnValue(mockDbChain());
+
+      const result = await service.cancel(1);
+
+      expect(result).toBe(true);
+      expect(clientService.getAdapter).not.toHaveBeenCalled();
+    });
+
+    it('logs error when adapter.removeDownload throws', async () => {
+      const mockAdapter = {
+        removeDownload: vi.fn().mockRejectedValue(new Error('Connection refused')),
+      };
+
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+      db.update.mockReturnValue(mockDbChain());
+      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+
+      const log = createMockLogger();
+      const svc = new DownloadService(db as any, clientService, log as any);
+
+      const result = await svc.cancel(1);
+
+      expect(result).toBe(true);
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1 }),
+        expect.stringContaining('Failed to remove'),
+      );
+    });
+
+    it('resets book to wanted when cancel has bookId', async () => {
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, downloadClientId: null, externalId: null }, book: mockBook }]),
+      );
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.cancel(1);
+
+      // Should have been called for both download status and book status reset
+      expect(db.update).toHaveBeenCalled();
+    });
+  });
+
+  describe('updateProgress edge cases', () => {
+    it('sets completedAt to null when progress < 1', async () => {
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await service.updateProgress(1, 0.5);
+
+      expect(chain.set).toHaveBeenCalledWith(
+        expect.objectContaining({ progress: 0.5, status: 'downloading', completedAt: null }),
+      );
+    });
+
+    it('sets completedAt to a Date when progress >= 1', async () => {
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await service.updateProgress(1, 1.0);
+
+      expect(chain.set).toHaveBeenCalledWith(
+        expect.objectContaining({ progress: 1.0, status: 'completed' }),
+      );
+      const setArgs = (chain.set as any).mock.calls[0][0];
+      expect(setArgs.completedAt).toBeInstanceOf(Date);
+    });
+  });
 });

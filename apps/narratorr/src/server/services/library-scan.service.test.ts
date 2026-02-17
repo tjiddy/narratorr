@@ -113,6 +113,25 @@ describe('parseFolderStructure', () => {
       series: null,
     });
   });
+
+  it('handles empty string title from folder name', () => {
+    // After cleanName strips everything, we still get something
+    const result = parseFolderStructure(['']);
+    expect(result.title).toBe('');
+    expect(result.author).toBeNull();
+  });
+
+  it('handles folder with only whitespace', () => {
+    const result = parseFolderStructure(['   ']);
+    expect(result.title).toBe('');
+    expect(result.author).toBeNull();
+  });
+
+  it('handles folder with only numbers (gets stripped by cleanName)', () => {
+    const result = parseFolderStructure(['01. ']);
+    expect(result.title).toBe('');
+    expect(result.author).toBeNull();
+  });
 });
 
 // ============================================================================
@@ -654,6 +673,17 @@ describe('LibraryScanService', () => {
       ]);
 
       expect(result.imported).toBe(1);
+    });
+
+    it('handles enrichBookFromAudio throwing without failing import', async () => {
+      vi.mocked(enrichBookFromAudio).mockRejectedValueOnce(new Error('Scanner crashed'));
+
+      // confirmImport catches errors at the outer level, so this becomes a failed import
+      const result = await service.confirmImport([
+        { path: '/audiobooks/A', title: 'Book A' },
+      ]);
+
+      expect(result.failed).toBe(1);
     });
 
     it('preserves user-provided values over metadata', async () => {

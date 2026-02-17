@@ -117,4 +117,47 @@ describe('search routes', () => {
       expect(JSON.parse(res.payload).error).toBe('No download client');
     });
   });
+
+  describe('error paths', () => {
+    it('GET /api/search returns 500 when searchAll throws', async () => {
+      (services.indexer.searchAll as any).mockRejectedValue(new Error('All indexers failed'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/search?q=sanderson' });
+
+      expect(res.statusCode).toBe(500);
+    });
+
+    it('GET /api/search filters results with null/empty infoHash (keeps them)', async () => {
+      const results = [
+        { ...mockSearchResult, infoHash: null },
+        { ...mockSearchResult, infoHash: '' },
+        { ...mockSearchResult, infoHash: 'abc123', title: 'Has Hash' },
+      ];
+      (services.indexer.searchAll as any).mockResolvedValue(results);
+      (services.blacklist.getBlacklistedHashes as any).mockResolvedValue(new Set(['abc123']));
+
+      const res = await app.inject({ method: 'GET', url: '/api/search?q=sanderson' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      // null and empty infoHash are falsy → kept; abc123 is blacklisted → filtered
+      expect(body).toHaveLength(2);
+    });
+
+    it('GET /api/search returns all results when no hashes present', async () => {
+      const results = [
+        { ...mockSearchResult, infoHash: undefined },
+        { ...mockSearchResult, infoHash: null },
+      ];
+      (services.indexer.searchAll as any).mockResolvedValue(results);
+
+      const res = await app.inject({ method: 'GET', url: '/api/search?q=sanderson' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).toHaveLength(2);
+      // blacklistService should not be called since hashes array is empty
+      expect(services.blacklist.getBlacklistedHashes).not.toHaveBeenCalled();
+    });
+  });
 });
