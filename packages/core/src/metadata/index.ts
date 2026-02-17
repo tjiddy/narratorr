@@ -5,3 +5,4 @@ export { RateLimitError } from './errors.js';
 export { AudnexusProvider, type AudnexusConfig } from './audnexus.js';
 export { HardcoverProvider, type HardcoverConfig } from './hardcover.js';
 export { GoogleBooksProvider, type GoogleBooksConfig } from './google-books.js';
+export { AudibleProvider, type AudibleConfig } from './audible.js';

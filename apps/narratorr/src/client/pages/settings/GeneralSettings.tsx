@@ -12,11 +12,13 @@ import {
   CheckIcon,
   TerminalIcon,
   PackageIcon,
+  HeadphonesIcon,
 } from '@/components/icons';
 import { renderTemplate, ALLOWED_TOKENS } from '@narratorr/core/utils';
 import {
   updateSettingsFormSchema,
   logLevelSchema,
+  audibleRegionSchema,
   type UpdateSettingsFormData,
 } from '../../../shared/schemas.js';
 
@@ -55,6 +57,9 @@ export function GeneralSettings() {
       general: {
         logLevel: 'info' as const,
       },
+      metadata: {
+        audibleRegion: 'us' as const,
+      },
     },
   });
 
@@ -77,6 +82,9 @@ export function GeneralSettings() {
         },
         general: {
           logLevel: settings.general?.logLevel || 'info',
+        },
+        metadata: {
+          audibleRegion: settings.metadata?.audibleRegion || 'us',
         },
       });
     }
@@ -380,6 +388,51 @@ export function GeneralSettings() {
             </select>
             <p className="text-sm text-muted-foreground mt-2">
               Set to Debug for detailed diagnostic output, or Error to reduce noise
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="glass-card rounded-2xl p-6 sm:p-8">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="p-2 bg-primary/10 rounded-xl">
+            <HeadphonesIcon className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <h2 className="font-display text-xl font-semibold">Metadata</h2>
+            <p className="text-sm text-muted-foreground">Configure audiobook metadata providers</p>
+          </div>
+        </div>
+
+        <div className="space-y-5">
+          <div>
+            <label className="block text-sm font-medium mb-2">Audible Region</label>
+            <select
+              {...register('metadata.audibleRegion')}
+              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+            >
+              {audibleRegionSchema.options.map((region) => {
+                const labels: Record<string, string> = {
+                  us: 'Audible.com (US)',
+                  ca: 'Audible.ca (Canada)',
+                  uk: 'Audible.co.uk (UK)',
+                  au: 'Audible.com.au (Australia)',
+                  fr: 'Audible.fr (France)',
+                  de: 'Audible.de (Germany)',
+                  jp: 'Audible.co.jp (Japan)',
+                  it: 'Audible.it (Italy)',
+                  in: 'Audible.in (India)',
+                  es: 'Audible.es (Spain)',
+                };
+                return (
+                  <option key={region} value={region}>
+                    {labels[region] ?? region}
+                  </option>
+                );
+              })}
+            </select>
+            <p className="text-sm text-muted-foreground mt-2">
+              Select your Audible region for metadata lookups. Affects which catalog is searched for audiobook details, narrators, and cover art.
             </p>
           </div>
         </div>

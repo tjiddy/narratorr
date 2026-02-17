@@ -10,6 +10,7 @@ import hardcoverAuthorDetail from '../fixtures/hardcover-author-detail.json';
 import hardcoverSeriesDetail from '../fixtures/hardcover-series-detail.json';
 import googleBooksSearch from '../fixtures/google-books-search.json';
 import googleBooksVolume from '../fixtures/google-books-volume.json';
+import audibleSearch from '../fixtures/audible-search.json';
 
 export const audnexusHandlers = [
   http.get('https://api.audnex.us/authors', ({ request }) => {
@@ -83,4 +84,15 @@ export const googleBooksHandlers = [
   }),
 ];
 
-export const handlers = [...audnexusHandlers, ...hardcoverHandlers, ...googleBooksHandlers];
+export const audibleHandlers = [
+  http.get('https://api.audible.com/1.0/catalog/products', () => {
+    return HttpResponse.json(audibleSearch);
+  }),
+
+  http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+    const product = audibleSearch.products[0];
+    return HttpResponse.json({ product });
+  }),
+];
+
+export const handlers = [...audnexusHandlers, ...hardcoverHandlers, ...googleBooksHandlers, ...audibleHandlers];

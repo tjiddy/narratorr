@@ -46,8 +46,8 @@ async function main() {
   await runMigrations(config.dbPath);
   const db = createDb(config.dbPath);
 
-  // Create services
-  const services = createServices(db, app.log);
+  // Create services (async — reads settings from DB for provider config)
+  const services = await createServices(db, app.log);
 
   // Apply persisted log level
   try {

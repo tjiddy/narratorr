@@ -1,3 +1,4 @@
+import type { AudibleRegion } from '../../../shared/schemas.js';
 import { fetchApi } from './client.js';
 
 export interface Settings {
@@ -16,6 +17,9 @@ export interface Settings {
   };
   general: {
     logLevel: 'error' | 'warn' | 'info' | 'debug';
+  };
+  metadata: {
+    audibleRegion: AudibleRegion;
   };
 }
 

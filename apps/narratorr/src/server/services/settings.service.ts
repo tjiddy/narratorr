@@ -23,6 +23,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   general: {
     logLevel: 'info',
   },
+  metadata: {
+    audibleRegion: 'us',
+  },
 };
 
 export class SettingsService {
@@ -48,6 +51,7 @@ export class SettingsService {
       search: (settingsMap.get('search') as AppSettings['search']) || DEFAULT_SETTINGS.search,
       import: (settingsMap.get('import') as AppSettings['import']) || DEFAULT_SETTINGS.import,
       general: (settingsMap.get('general') as AppSettings['general']) || DEFAULT_SETTINGS.general,
+      metadata: (settingsMap.get('metadata') as AppSettings['metadata']) || DEFAULT_SETTINGS.metadata,
     };
   }
 

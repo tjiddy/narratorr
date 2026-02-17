@@ -1,0 +1,334 @@
+import { BookMetadataSchema, AuthorMetadataSchema, SeriesMetadataSchema } from './schemas.js';
+import { RateLimitError } from './errors.js';
+import type {
+  MetadataProvider,
+  BookMetadata,
+  AuthorMetadata,
+  SeriesMetadata,
+  MetadataSearchResults,
+} from './types.js';
+
+export interface AudibleConfig {
+  region?: string;
+}
+
+const REGION_TLDS: Record<string, string> = {
+  us: '.com',
+  ca: '.ca',
+  uk: '.co.uk',
+  au: '.com.au',
+  fr: '.fr',
+  de: '.de',
+  jp: '.co.jp',
+  it: '.it',
+  in: '.in',
+  es: '.es',
+};
+
+const REQUEST_TIMEOUT_MS = 10000;
+const MAX_RESULTS = 10;
+const RESPONSE_GROUPS = 'contributors,product_desc,media,product_extended_attrs,series';
+
+export class AudibleProvider implements MetadataProvider {
+  readonly name: string;
+  readonly type = 'audible';
+
+  private tld: string;
+
+  constructor(config: AudibleConfig = {}) {
+    const region = config.region ?? 'us';
+    this.tld = REGION_TLDS[region] ?? '.com';
+    this.name = `Audible${this.tld}`;
+  }
+
+  async search(query: string): Promise<MetadataSearchResults> {
+    const books = await this.searchBooks(query);
+
+    // Deduplicate authors from book results
+    const authorMap = new Map<string, AuthorMetadata>();
+    for (const book of books) {
+      for (const authorRef of book.authors) {
+        if (!authorMap.has(authorRef.name)) {
+          const mapped = AuthorMetadataSchema.safeParse({
+            name: authorRef.name,
+            asin: authorRef.asin,
+          });
+          if (mapped.success) authorMap.set(authorRef.name, mapped.data);
+        }
+      }
+    }
+
+    // Deduplicate series from book results
+    const seriesMap = new Map<string, SeriesMetadata>();
+    for (const book of books) {
+      for (const seriesRef of book.series ?? []) {
+        if (!seriesMap.has(seriesRef.name)) {
+          const mapped = SeriesMetadataSchema.safeParse({
+            name: seriesRef.name,
+            asin: seriesRef.asin,
+            books: [],
+          });
+          if (mapped.success) seriesMap.set(seriesRef.name, mapped.data);
+        }
+      }
+    }
+
+    return {
+      books,
+      authors: Array.from(authorMap.values()),
+      series: Array.from(seriesMap.values()),
+    };
+  }
+
+  async searchBooks(query: string): Promise<BookMetadata[]> {
+    const params = new URLSearchParams({
+      keywords: query,
+      num_results: String(MAX_RESULTS),
+      products_sort_by: 'Relevance',
+      response_groups: RESPONSE_GROUPS,
+    });
+
+    const products = await this.fetchProducts(params);
+    const books: BookMetadata[] = [];
+    for (const product of products) {
+      const mapped = mapProduct(product);
+      const result = BookMetadataSchema.safeParse(mapped);
+      if (result.success) books.push(result.data);
+    }
+    return books;
+  }
+
+  async searchAuthors(query: string): Promise<AuthorMetadata[]> {
+    // Audible doesn't have a dedicated author search — extract from book results
+    const books = await this.searchBooks(query);
+    const authorMap = new Map<string, AuthorMetadata>();
+    for (const book of books) {
+      for (const authorRef of book.authors) {
+        if (!authorMap.has(authorRef.name)) {
+          const mapped = AuthorMetadataSchema.safeParse({
+            name: authorRef.name,
+            asin: authorRef.asin,
+          });
+          if (mapped.success) authorMap.set(authorRef.name, mapped.data);
+        }
+      }
+    }
+    return Array.from(authorMap.values());
+  }
+
+  async searchSeries(query: string): Promise<SeriesMetadata[]> {
+    // Audible doesn't have a dedicated series search — extract from book results
+    const books = await this.searchBooks(query);
+    const seriesMap = new Map<string, SeriesMetadata>();
+    for (const book of books) {
+      for (const seriesRef of book.series ?? []) {
+        if (!seriesMap.has(seriesRef.name)) {
+          const mapped = SeriesMetadataSchema.safeParse({
+            name: seriesRef.name,
+            asin: seriesRef.asin,
+            books: [],
+          });
+          if (mapped.success) seriesMap.set(seriesRef.name, mapped.data);
+        }
+      }
+    }
+    return Array.from(seriesMap.values());
+  }
+
+  async getBook(asin: string): Promise<BookMetadata | null> {
+    const params = new URLSearchParams({
+      response_groups: RESPONSE_GROUPS,
+    });
+
+    const product = await this.fetchProduct(asin, params);
+    if (!product) return null;
+
+    const mapped = mapProduct(product);
+    const result = BookMetadataSchema.safeParse(mapped);
+    return result.success ? result.data : null;
+  }
+
+  async getAuthor(_id: string): Promise<AuthorMetadata | null> {
+    // Audible catalog API doesn't support author detail lookups
+    return null;
+  }
+
+  async getAuthorBooks(_id: string): Promise<BookMetadata[]> {
+    // Audible catalog API doesn't support author book listings
+    return [];
+  }
+
+  async getSeries(_id: string): Promise<SeriesMetadata | null> {
+    // Audible catalog API doesn't support series detail lookups
+    return null;
+  }
+
+  async test(): Promise<{ success: boolean; message?: string }> {
+    try {
+      const params = new URLSearchParams({
+        title: 'test',
+        num_results: '1',
+        products_sort_by: 'Relevance',
+        response_groups: RESPONSE_GROUPS,
+      });
+      const data = await this.request<{ products?: AudibleProduct[] }>(
+        `https://api.audible${this.tld}/1.0/catalog/products?${params}`,
+      );
+      if (data && Array.isArray(data.products)) {
+        return { success: true, message: `Connected to Audible (${this.name})` };
+      }
+      return { success: false, message: 'No response from Audible API' };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Connection failed',
+      };
+    }
+  }
+
+  private async fetchProducts(params: URLSearchParams): Promise<AudibleProduct[]> {
+    const url = `https://api.audible${this.tld}/1.0/catalog/products?${params}`;
+    const data = await this.request<{ products?: AudibleProduct[] }>(url);
+    return data?.products ?? [];
+  }
+
+  private async fetchProduct(asin: string, params: URLSearchParams): Promise<AudibleProduct | null> {
+    const url = `https://api.audible${this.tld}/1.0/catalog/products/${asin}?${params}`;
+    const data = await this.request<{ product?: AudibleProduct }>(url);
+    return data?.product ?? null;
+  }
+
+  private async request<T>(url: string): Promise<T | null> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (res.status === 429) {
+        const retryAfter = res.headers.get('Retry-After');
+        const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 60_000;
+        throw new RateLimitError(waitMs, this.name);
+      }
+      if (!res.ok) return null;
+      return (await res.json()) as T;
+    } catch (error) {
+      if (error instanceof RateLimitError) throw error;
+      return null;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Internal response shapes
+// ---------------------------------------------------------------------------
+
+interface AudibleProduct {
+  asin?: string;
+  title?: string;
+  subtitle?: string;
+  authors?: Array<{ asin?: string; name: string }>;
+  narrators?: Array<{ name: string }>;
+  publisher_name?: string;
+  publisher_summary?: string;
+  merchandising_summary?: string;
+  release_date?: string;
+  issue_date?: string;
+  runtime_length_min?: number;
+  language?: string;
+  product_images?: Record<string, string>;
+  series?: Array<{
+    asin?: string;
+    sequence?: string;
+    title?: string;
+  }>;
+  format_type?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Mapping helpers
+// ---------------------------------------------------------------------------
+
+function mapProduct(product: AudibleProduct): Record<string, unknown> {
+  const authors = (product.authors ?? []).map((a) => ({
+    name: a.name,
+    asin: a.asin || undefined,
+  }));
+
+  const narrators = (product.narrators ?? []).map((n) => n.name);
+
+  const series = (product.series ?? [])
+    .filter((s) => s.title)
+    .map((s) => ({
+      name: s.title!,
+      position: parseSeriesPosition(s.sequence),
+      asin: s.asin || undefined,
+    }));
+
+  // Use the largest available product image
+  const coverUrl = extractCoverUrl(product.product_images);
+
+  // Strip HTML from description
+  const description = stripHtml(
+    product.publisher_summary ?? product.merchandising_summary,
+  );
+
+  // Extract publish year from release_date or issue_date
+  const releaseDate = product.release_date ?? product.issue_date;
+  const publishedDate = releaseDate ? releaseDate.slice(0, 4) : undefined;
+
+  return {
+    asin: product.asin || undefined,
+    title: cleanTitle(product.title ?? ''),
+    subtitle: product.subtitle || undefined,
+    authors,
+    narrators: narrators.length > 0 ? narrators : undefined,
+    series: series.length > 0 ? series : undefined,
+    description: description || undefined,
+    publisher: product.publisher_name || undefined,
+    publishedDate,
+    language: product.language ? capitalize(product.language) : undefined,
+    coverUrl,
+    duration: product.runtime_length_min && !isNaN(product.runtime_length_min)
+      ? product.runtime_length_min
+      : undefined,
+  };
+}
+
+/** Parse series position from Audible's sequence string (e.g. "2", "1.5", "Book 3"). */
+function parseSeriesPosition(sequence?: string): number | undefined {
+  if (!sequence) return undefined;
+  const match = sequence.match(/(\d+(?:\.\d+)?)/);
+  return match ? parseFloat(match[1]) : undefined;
+}
+
+/** Extract the best cover URL from product_images (prefer largest). */
+function extractCoverUrl(images?: Record<string, string>): string | undefined {
+  if (!images) return undefined;
+  // Keys are size numbers like "500", "1024" — pick the largest
+  const sizes = Object.keys(images)
+    .map(Number)
+    .filter((n) => !isNaN(n))
+    .sort((a, b) => b - a);
+  return sizes.length > 0 ? images[String(sizes[0])] : undefined;
+}
+
+/** Strip HTML tags from a string. */
+function stripHtml(html?: string): string | undefined {
+  if (!html) return undefined;
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim() || undefined;
+}
+
+/** Clean title — remove common suffixes like ", Book 2" that Audible appends. */
+function cleanTitle(title: string): string {
+  return title.replace(/,?\s*Book\s+\d+$/i, '').trim();
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+}

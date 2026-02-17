@@ -3,6 +3,7 @@ import {
   HardcoverProvider,
   AudnexusProvider,
   GoogleBooksProvider,
+  AudibleProvider,
   RateLimitError,
   type MetadataProvider,
   type MetadataSearchResults,
@@ -28,19 +29,26 @@ class RequestThrottle {
   }
 }
 
+export interface MetadataServiceConfig {
+  audibleRegion?: string;
+}
+
 export class MetadataService {
   private providers: MetadataProvider[] = [];
   private audnexus: AudnexusProvider;
   private throttle = new RequestThrottle();
   private rateLimitUntil: Map<string, number> = new Map();
 
-  constructor(private log: FastifyBaseLogger) {
+  constructor(private log: FastifyBaseLogger, config?: MetadataServiceConfig) {
+    // Audible is always available (no API key required)
+    const region = config?.audibleRegion ?? process.env.AUDIBLE_REGION ?? 'us';
+    this.providers.push(new AudibleProvider({ region }));
+    this.log.info({ region }, 'Metadata provider loaded: Audible');
+
     const apiKey = process.env.HARDCOVER_API_KEY;
     if (apiKey) {
       this.providers.push(new HardcoverProvider({ apiKey }));
       this.log.info('Metadata provider loaded: Hardcover');
-    } else {
-      this.log.warn('No HARDCOVER_API_KEY set — metadata lookups disabled');
     }
 
     const googleKey = process.env.GOOGLE_BOOKS_API_KEY;

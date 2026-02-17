@@ -1,0 +1,361 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { http, HttpResponse } from 'msw';
+import { useMswServer } from '../__tests__/msw/server.js';
+import { AudibleProvider } from './audible.js';
+import { RateLimitError } from './errors.js';
+
+describe('AudibleProvider', () => {
+  const server = useMswServer();
+  let provider: AudibleProvider;
+
+  beforeEach(() => {
+    provider = new AudibleProvider({ region: 'us' });
+  });
+
+  describe('searchBooks', () => {
+    it('returns books mapped from Audible catalog API', async () => {
+      const books = await provider.searchBooks('Harry Potter Chamber of Secrets');
+
+      expect(books).toHaveLength(2);
+      expect(books[0].title).toBe('Harry Potter and the Chamber of Secrets');
+      expect(books[0].asin).toBe('B017V4IWVG');
+      expect(books[0].authors).toEqual([{ name: 'J.K. Rowling', asin: 'B000AP9A6K' }]);
+    });
+
+    it('sends query as keywords param for title+author matching', async () => {
+      let capturedUrl: URL | undefined;
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', ({ request }) => {
+          capturedUrl = new URL(request.url);
+          return HttpResponse.json({ products: [] });
+        }),
+      );
+
+      await provider.searchBooks('Sanderson Way of Kings');
+      expect(capturedUrl?.searchParams.get('keywords')).toBe('Sanderson Way of Kings');
+      expect(capturedUrl?.searchParams.has('title')).toBe(false);
+    });
+
+    it('extracts narrators from search results', async () => {
+      const books = await provider.searchBooks('Harry Potter');
+
+      expect(books[0].narrators).toEqual(['Jim Dale']);
+      // Second result has multiple narrators (full-cast edition)
+      expect(books[1].narrators).toContain('Hugh Laurie');
+      expect(books[1].narrators!.length).toBeGreaterThan(1);
+    });
+
+    it('extracts duration in minutes', async () => {
+      const books = await provider.searchBooks('Harry Potter');
+
+      expect(books[0].duration).toBe(542);
+    });
+
+    it('extracts series with position', async () => {
+      const books = await provider.searchBooks('Harry Potter');
+
+      expect(books[0].series).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: 'Harry Potter', position: 2 }),
+        ]),
+      );
+    });
+
+    it('extracts cover URL from product images', async () => {
+      const books = await provider.searchBooks('Harry Potter');
+
+      expect(books[0].coverUrl).toContain('media-amazon.com');
+    });
+
+    it('strips HTML from description', async () => {
+      const books = await provider.searchBooks('Harry Potter');
+
+      expect(books[0].description).not.toContain('<p>');
+      expect(books[0].description).not.toContain('<br');
+      expect(books[0].description).toContain('Grammy Award');
+    });
+
+    it('cleans "Book N" suffix from title', async () => {
+      const books = await provider.searchBooks('Harry Potter');
+
+      // Original title is "Harry Potter and the Chamber of Secrets, Book 2"
+      expect(books[0].title).toBe('Harry Potter and the Chamber of Secrets');
+    });
+
+    it('extracts publisher', async () => {
+      const books = await provider.searchBooks('Harry Potter');
+
+      expect(books[0].publisher).toBe('Pottermore Publishing');
+    });
+
+    it('extracts language capitalized', async () => {
+      const books = await provider.searchBooks('Harry Potter');
+
+      expect(books[0].language).toBe('English');
+    });
+
+    it('returns empty array on API error', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({}, { status: 500 });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books).toEqual([]);
+    });
+
+    it('returns empty array on network error', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books).toEqual([]);
+    });
+
+    it('returns empty array when response has no products', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({ products: [] });
+        }),
+      );
+
+      const books = await provider.searchBooks('nonexistent');
+      expect(books).toEqual([]);
+    });
+
+    it('handles products with missing optional fields', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [{
+              asin: 'B000TEST',
+              title: 'Minimal Book',
+              authors: [{ name: 'Author' }],
+              // no narrators, no series, no images, no description
+            }],
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books).toHaveLength(1);
+      expect(books[0].title).toBe('Minimal Book');
+      expect(books[0].narrators).toBeUndefined();
+      expect(books[0].series).toBeUndefined();
+      expect(books[0].coverUrl).toBeUndefined();
+    });
+
+    it('throws RateLimitError on 429', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': '30' },
+          });
+        }),
+      );
+
+      await expect(provider.searchBooks('test')).rejects.toThrow(RateLimitError);
+    });
+
+    it('parses Retry-After header on 429', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': '45' },
+          });
+        }),
+      );
+
+      try {
+        await provider.searchBooks('test');
+      } catch (error) {
+        expect(error).toBeInstanceOf(RateLimitError);
+        expect((error as RateLimitError).retryAfterMs).toBe(45000);
+      }
+    });
+
+    it('defaults to 60s retry on 429 without Retry-After', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return new HttpResponse(null, { status: 429 });
+        }),
+      );
+
+      try {
+        await provider.searchBooks('test');
+      } catch (error) {
+        expect(error).toBeInstanceOf(RateLimitError);
+        expect((error as RateLimitError).retryAfterMs).toBe(60000);
+      }
+    });
+  });
+
+  describe('getBook', () => {
+    it('returns book by ASIN', async () => {
+      const book = await provider.getBook('B017V4IWVG');
+
+      expect(book).not.toBeNull();
+      expect(book!.asin).toBe('B017V4IWVG');
+      expect(book!.title).toBe('Harry Potter and the Chamber of Secrets');
+      expect(book!.narrators).toEqual(['Jim Dale']);
+    });
+
+    it('returns null on 404', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return new HttpResponse(null, { status: 404 });
+        }),
+      );
+
+      const book = await provider.getBook('B000UNKNOWN');
+      expect(book).toBeNull();
+    });
+  });
+
+  describe('search', () => {
+    it('returns books, authors, and series from search results', async () => {
+      const result = await provider.search('Harry Potter');
+
+      expect(result.books).toHaveLength(2);
+      expect(result.authors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: 'J.K. Rowling' }),
+        ]),
+      );
+      expect(result.series).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: 'Harry Potter' }),
+        ]),
+      );
+    });
+
+    it('deduplicates authors across results', async () => {
+      const result = await provider.search('Harry Potter');
+
+      // Both results have J.K. Rowling — should appear once
+      const rowlings = result.authors.filter((a) => a.name === 'J.K. Rowling');
+      expect(rowlings).toHaveLength(1);
+    });
+  });
+
+  describe('regional TLD', () => {
+    it('uses .co.uk for UK region', async () => {
+      const ukProvider = new AudibleProvider({ region: 'uk' });
+      expect(ukProvider.name).toBe('Audible.co.uk');
+
+      server.use(
+        http.get('https://api.audible.co.uk/1.0/catalog/products', () => {
+          return HttpResponse.json({ products: [] });
+        }),
+      );
+
+      const books = await ukProvider.searchBooks('test');
+      expect(books).toEqual([]);
+    });
+
+    it('defaults to .com for unknown region', async () => {
+      const unknownProvider = new AudibleProvider({ region: 'zz' });
+      expect(unknownProvider.name).toBe('Audible.com');
+    });
+
+    it('defaults to .com with no config', async () => {
+      const defaultProvider = new AudibleProvider();
+      expect(defaultProvider.name).toBe('Audible.com');
+    });
+  });
+
+  describe('unsupported methods', () => {
+    it('getAuthor returns null', async () => {
+      expect(await provider.getAuthor('B000AP9A6K')).toBeNull();
+    });
+
+    it('getAuthorBooks returns empty array', async () => {
+      expect(await provider.getAuthorBooks('B000AP9A6K')).toEqual([]);
+    });
+
+    it('getSeries returns null', async () => {
+      expect(await provider.getSeries('B0182NWM9I')).toBeNull();
+    });
+  });
+
+  describe('test', () => {
+    it('returns success when API responds', async () => {
+      const result = await provider.test();
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('Audible');
+    });
+
+    it('returns failure when API returns non-200', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return new HttpResponse(null, { status: 503 });
+        }),
+      );
+
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('series position parsing', () => {
+    it('handles fractional positions like "1.5"', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [{
+              asin: 'B000TEST',
+              title: 'Novella',
+              authors: [{ name: 'Author' }],
+              series: [{ title: 'Series', sequence: '1.5' }],
+            }],
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books[0].series![0].position).toBe(1.5);
+    });
+
+    it('handles "Book N" format in sequence', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [{
+              asin: 'B000TEST',
+              title: 'Test Book',
+              authors: [{ name: 'Author' }],
+              series: [{ title: 'Series', sequence: 'Book 3' }],
+            }],
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books[0].series![0].position).toBe(3);
+    });
+
+    it('handles missing sequence', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [{
+              asin: 'B000TEST',
+              title: 'Standalone',
+              authors: [{ name: 'Author' }],
+              series: [{ title: 'Series' }],
+            }],
+          });
+        }),
+      );
+
+      const books = await provider.searchBooks('test');
+      expect(books[0].series![0].position).toBeUndefined();
+    });
+  });
+});

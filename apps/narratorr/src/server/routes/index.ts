@@ -42,11 +42,17 @@ export interface Services {
   prowlarrSync: ProwlarrSyncService;
 }
 
-export function createServices(db: Db, log: FastifyBaseLogger): Services {
+export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
   const settings = new SettingsService(db, log);
   const indexer = new IndexerService(db, log);
   const downloadClient = new DownloadClientService(db, log);
-  const metadata = new MetadataService(log);
+
+  // Load metadata settings for Audible region
+  const metadataSettings = await settings.get('metadata');
+  const metadata = new MetadataService(log, {
+    audibleRegion: metadataSettings?.audibleRegion,
+  });
+
   const book = new BookService(db, log, metadata);
   const notifier = new NotifierService(db, log);
   const download = new DownloadService(db, downloadClient, log, notifier);

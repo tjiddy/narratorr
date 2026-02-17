@@ -38,7 +38,7 @@ export async function createE2EApp(): Promise<E2EApp> {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
-  const services = createServices(db, app.log);
+  const services = await createServices(db, app.log);
   await registerRoutes(app, services);
   await app.ready();
 

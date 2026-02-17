@@ -195,11 +195,19 @@ export const generalSettingsSchema = z.object({
   logLevel: logLevelSchema.default('info'),
 });
 
+export const audibleRegionSchema = z.enum(['us', 'ca', 'uk', 'au', 'fr', 'de', 'jp', 'it', 'in', 'es']);
+export type AudibleRegion = z.infer<typeof audibleRegionSchema>;
+
+export const metadataSettingsSchema = z.object({
+  audibleRegion: audibleRegionSchema.default('us'),
+});
+
 export const appSettingsSchema = z.object({
   library: librarySettingsSchema,
   search: searchSettingsSchema,
   import: importSettingsSchema,
   general: generalSettingsSchema,
+  metadata: metadataSettingsSchema,
 });
 
 export const updateSettingsSchema = z.object({
@@ -207,6 +215,7 @@ export const updateSettingsSchema = z.object({
   search: searchSettingsSchema.partial().optional(),
   import: importSettingsSchema.partial().optional(),
   general: generalSettingsSchema.partial().optional(),
+  metadata: metadataSettingsSchema.partial().optional(),
 });
 
 export type AppSettings = z.infer<typeof appSettingsSchema>;
@@ -242,6 +251,9 @@ export const updateSettingsFormSchema = z.object({
   }),
   general: z.object({
     logLevel: logLevelSchema,
+  }),
+  metadata: z.object({
+    audibleRegion: audibleRegionSchema,
   }),
 });
 

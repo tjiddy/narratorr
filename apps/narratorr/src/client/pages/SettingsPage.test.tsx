@@ -48,6 +48,7 @@ const mockSettings = {
   search: { intervalMinutes: 30, enabled: true, autoGrab: false },
   import: { deleteAfterImport: false, minSeedTime: 0 },
   general: { logLevel: 'info' as const },
+  metadata: { audibleRegion: 'us' as const },
 };
 
 const mockIndexer = {
