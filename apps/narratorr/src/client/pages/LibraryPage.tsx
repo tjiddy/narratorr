@@ -25,7 +25,7 @@ import {
   FolderIcon,
   LoadingSpinner,
 } from '@/components/icons';
-import { ImportLibraryModal } from '@/components/ImportLibraryModal';
+import { QuickAddWizard } from '@/components/QuickAddWizard';
 
 // ============================================================================
 // Types
@@ -175,7 +175,7 @@ export function LibraryPage() {
           <p className="text-muted-foreground mt-2">Your audiobook collection</p>
         </div>
         <EmptyLibraryState onImport={() => setImportOpen(true)} />
-        <ImportLibraryModal isOpen={importOpen} onClose={() => setImportOpen(false)} />
+        <QuickAddWizard isOpen={importOpen} onClose={() => setImportOpen(false)} />
       </div>
     );
   }
@@ -262,8 +262,8 @@ export function LibraryPage() {
         />
       )}
 
-      {/* Import Library Modal */}
-      <ImportLibraryModal isOpen={importOpen} onClose={() => setImportOpen(false)} />
+      {/* Quick Add Wizard */}
+      <QuickAddWizard isOpen={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );
 }
@@ -481,11 +481,20 @@ function LibraryBookCard({
         <div className="absolute inset-0 ring-1 ring-inset ring-black/10" />
 
         {/* Status badge */}
-        <div className="absolute top-3 left-3">
+        <div className="absolute top-3 left-3 flex items-center gap-1.5">
           <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold backdrop-blur-md bg-black/40 text-white`}>
             <span className={`w-1.5 h-1.5 rounded-full ${config.dotClass}`} />
             {config.label}
           </span>
+          {book.enrichmentStatus && book.enrichmentStatus !== 'enriched' && (
+            <span className={`px-2 py-1 rounded-lg text-[10px] font-medium backdrop-blur-md bg-black/40 ${
+              book.enrichmentStatus === 'failed' ? 'text-red-400'
+                : book.enrichmentStatus === 'pending' ? 'text-amber-400'
+                : 'text-white/60'
+            }`}>
+              {book.enrichmentStatus}
+            </span>
+          )}
         </div>
 
         {/* Context menu button */}

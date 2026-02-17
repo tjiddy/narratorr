@@ -26,6 +26,19 @@ export interface ImportConfirmItem {
   seriesName?: string;
   coverUrl?: string;
   asin?: string;
+  metadata?: BookMetadata;
+}
+
+export interface SingleBookResult {
+  book: DiscoveredBook;
+  metadata: BookMetadata | null;
+}
+
+export interface ImportSingleResult {
+  imported: boolean;
+  bookId?: number;
+  enriched: boolean;
+  error?: string;
 }
 
 export interface ScanResult {
@@ -106,6 +119,138 @@ export class LibraryScanService {
   }
 
   /**
+   * Scan a single book folder — validates it contains exactly one audiobook,
+   * parses folder structure, and looks up metadata providers.
+   */
+  async scanSingleBook(folderPath: string): Promise<SingleBookResult> {
+    this.log.info({ folderPath }, 'Scanning single book folder');
+
+    const leafFolders = await this.findAudioLeafFolders(folderPath);
+
+    if (leafFolders.length === 0) {
+      throw new Error('No audio files found in this folder');
+    }
+
+    if (leafFolders.length > 1) {
+      throw new Error(
+        `This folder contains ${leafFolders.length} audiobooks. Use Library Import for bulk imports.`,
+      );
+    }
+
+    const bookPath = leafFolders[0];
+    const relativePath = relative(folderPath, bookPath);
+    const parts = relativePath ? relativePath.split(/[/\\]/).filter(Boolean) : [];
+
+    // If parts is empty (audio files are directly in the given folder),
+    // try parsing the folder name itself
+    const parsed = parts.length > 0
+      ? parseFolderStructure(parts)
+      : parseFolderStructure([folderPath.split(/[/\\]/).filter(Boolean).pop() || 'Unknown']);
+
+    const { fileCount, totalSize } = await this.getAudioStats(bookPath);
+
+    const book: DiscoveredBook = {
+      path: bookPath,
+      parsedTitle: parsed.title,
+      parsedAuthor: parsed.author,
+      parsedSeries: parsed.series,
+      fileCount,
+      totalSize,
+    };
+
+    // Look up metadata providers
+    const metadata = await this.lookupMetadata(parsed.title, parsed.author || undefined);
+
+    return { book, metadata };
+  }
+
+  /**
+   * Import a single book — creates the DB record, sets path/size, and enriches.
+   * Shared pipeline used by both Quick Add and bulk Library Import.
+   */
+  async importSingleBook(item: ImportConfirmItem, metadata?: BookMetadata | null): Promise<ImportSingleResult> {
+    // Duplicate check
+    const existing = await this.bookService.findDuplicate(item.title, item.authorName);
+    if (existing) {
+      this.log.debug({ title: item.title }, 'Skipping duplicate during import');
+      return { imported: false, enriched: false, error: 'duplicate' };
+    }
+
+    // If no metadata passed, look it up
+    const meta = metadata !== undefined ? metadata : await this.lookupMetadata(item.title, item.authorName);
+
+    const book = await this.bookService.create({
+      title: item.title,
+      authorName: item.authorName,
+      seriesName: item.seriesName || meta?.series?.[0]?.name,
+      seriesPosition: meta?.series?.[0]?.position,
+      coverUrl: item.coverUrl || meta?.coverUrl,
+      asin: item.asin || meta?.asin,
+      isbn: meta?.isbn,
+      narrator: meta?.narrators?.join(', '),
+      description: meta?.description,
+      duration: meta?.duration,
+      publishedDate: meta?.publishedDate,
+      genres: meta?.genres,
+      providerId: meta?.providerId,
+      status: 'imported',
+    });
+
+    // Set the path and size
+    const stats = await this.getAudioStats(item.path);
+    await this.db.update(books).set({
+      path: item.path,
+      size: stats.totalSize,
+      updatedAt: new Date(),
+    }).where(eq(books.id, book.id));
+
+    // Enrich with audio file metadata
+    let enriched = false;
+    const audioResult = await enrichBookFromAudio(
+      book.id,
+      item.path,
+      { narrator: book.narrator, duration: book.duration, coverUrl: book.coverUrl },
+      this.db,
+      this.log,
+    );
+    enriched = audioResult.enriched;
+
+    // Inline Audnexus enrichment — try primary ASIN, then alternates
+    const primaryAsin = item.asin || meta?.asin;
+    const asinsToTry = [primaryAsin, ...(meta?.alternateAsins ?? [])].filter((a): a is string => !!a);
+
+    for (const asin of asinsToTry) {
+      try {
+        const audnexusData = await this.metadataService.enrichBook(asin);
+        if (audnexusData) {
+          const updates: Record<string, unknown> = {
+            enrichmentStatus: 'enriched',
+            updatedAt: new Date(),
+          };
+          if (asin !== primaryAsin) {
+            // Found data with an alternate ASIN — store it for future lookups
+            updates.asin = asin;
+          }
+          if (!book.narrator && audnexusData.narrators?.length) {
+            updates.narrator = audnexusData.narrators.join(', ');
+          }
+          if (!book.duration && audnexusData.duration) {
+            updates.duration = audnexusData.duration;
+          }
+          await this.db.update(books).set(updates).where(eq(books.id, book.id));
+          this.log.info({ bookId: book.id, asin, wasAlternate: asin !== primaryAsin }, 'Audnexus enrichment applied inline');
+          break;
+        }
+      } catch (error) {
+        this.log.warn({ error, bookId: book.id, asin }, 'Audnexus enrichment failed for ASIN');
+      }
+    }
+
+    this.log.info({ bookId: book.id, title: item.title, enriched }, 'Single book imported');
+    return { imported: true, bookId: book.id, enriched };
+  }
+
+  /**
    * Confirm import — create book records for selected discoveries,
    * then enrich each with audio file metadata.
    */
@@ -124,55 +269,14 @@ export class LibraryScanService {
 
     for (const item of items) {
       try {
-        // Final duplicate check
-        const existing = await this.bookService.findDuplicate(item.title, item.authorName);
-        if (existing) {
-          this.log.debug({ title: item.title }, 'Skipping duplicate during import');
-          continue;
-        }
-
-        // Search metadata providers for additional info (description, genres, narrator, ASIN)
-        const metadata = await this.lookupMetadata(item.title, item.authorName);
-
-        const book = await this.bookService.create({
-          title: item.title,
-          authorName: item.authorName,
-          seriesName: item.seriesName || metadata?.series?.[0]?.name,
-          seriesPosition: metadata?.series?.[0]?.position,
-          coverUrl: item.coverUrl || metadata?.coverUrl,
-          asin: item.asin || metadata?.asin,
-          isbn: metadata?.isbn,
-          narrator: metadata?.narrators?.join(', '),
-          description: metadata?.description,
-          duration: metadata?.duration,
-          publishedDate: metadata?.publishedDate,
-          genres: metadata?.genres,
-          providerId: metadata?.providerId,
-          status: 'imported',
-        });
-
-        // Set the path and size
-        const stats = await this.getAudioStats(item.path);
-        await this.db.update(books).set({
-          path: item.path,
-          size: stats.totalSize,
-          updatedAt: new Date(),
-        }).where(eq(books.id, book.id));
-
-        imported++;
-
-        // Enrich with audio file metadata (failure doesn't block import)
-        const result = await enrichBookFromAudio(
-          book.id,
-          item.path,
-          { narrator: book.narrator, duration: book.duration, coverUrl: book.coverUrl },
-          this.db,
-          this.log,
-        );
-        if (result.enriched) {
-          enriched++;
-        } else if (result.error) {
-          enrichmentFailed++;
+        const result = await this.importSingleBook(item);
+        if (result.imported) {
+          imported++;
+          if (result.enriched) {
+            enriched++;
+          } else {
+            enrichmentFailed++;
+          }
         }
       } catch (error) {
         this.log.error({ error, title: item.title, path: item.path }, 'Failed to import book');
@@ -188,7 +292,7 @@ export class LibraryScanService {
    * Search metadata providers for a book by title + author.
    * Returns the best match or null if no confident match found.
    */
-  private async lookupMetadata(title: string, authorName?: string): Promise<BookMetadata | null> {
+  async lookupMetadata(title: string, authorName?: string): Promise<BookMetadata | null> {
     try {
       const query = authorName ? `${title} ${authorName}` : title;
       const results = await this.metadataService.searchBooks(query);
@@ -198,7 +302,22 @@ export class LibraryScanService {
       }
 
       // Take the top result — providers return by relevance
-      const match = results[0];
+      let match = results[0];
+
+      // Search results lack edition-level data (ASIN, narrators).
+      // If we have a providerId, fetch full detail to get those fields.
+      if (match.providerId && !match.asin) {
+        try {
+          const detail = await this.metadataService.getBook(match.providerId);
+          if (detail) {
+            this.log.debug({ providerId: match.providerId, asin: detail.asin }, 'Fetched full book detail for ASIN');
+            match = { ...match, ...detail, title: match.title };
+          }
+        } catch (error) {
+          this.log.warn({ error, providerId: match.providerId }, 'Failed to fetch book detail — using search result');
+        }
+      }
+
       this.log.info(
         { title, matchedTitle: match.title, asin: match.asin, providerId: match.providerId },
         'Metadata match found for imported book',

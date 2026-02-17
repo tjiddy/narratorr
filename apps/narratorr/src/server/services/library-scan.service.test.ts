@@ -142,6 +142,8 @@ describe('LibraryScanService', () => {
   };
   let mockMetadataService: {
     searchBooks: ReturnType<typeof vi.fn>;
+    getBook: ReturnType<typeof vi.fn>;
+    enrichBook: ReturnType<typeof vi.fn>;
   };
   let log: ReturnType<typeof createMockLogger>;
 
@@ -166,6 +168,8 @@ describe('LibraryScanService', () => {
     };
     mockMetadataService = {
       searchBooks: vi.fn().mockResolvedValue([]),
+      getBook: vi.fn().mockResolvedValue(null),
+      enrichBook: vi.fn().mockResolvedValue(null),
     };
     log = createMockLogger();
     service = new LibraryScanService(
@@ -174,6 +178,336 @@ describe('LibraryScanService', () => {
       mockMetadataService as unknown as import('./metadata.service.js').MetadataService,
       log,
     );
+  });
+
+  describe('importSingleBook', () => {
+    it('creates book record and enriches', async () => {
+      const result = await service.importSingleBook({
+        path: '/audiobooks/Title',
+        title: 'Test Book',
+        authorName: 'Test Author',
+      });
+
+      expect(result.imported).toBe(true);
+      expect(result.bookId).toBe(1);
+      expect(result.enriched).toBe(true);
+      expect(mockBookService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Test Book', authorName: 'Test Author', status: 'imported' }),
+      );
+    });
+
+    it('returns duplicate error without creating', async () => {
+      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 1, title: 'Existing' });
+
+      const result = await service.importSingleBook({
+        path: '/audiobooks/Title',
+        title: 'Existing',
+        authorName: 'Author',
+      });
+
+      expect(result.imported).toBe(false);
+      expect(result.error).toBe('duplicate');
+      expect(mockBookService.create).not.toHaveBeenCalled();
+    });
+
+    it('uses passed metadata instead of looking up', async () => {
+      const metadata = {
+        title: 'Provider Title',
+        authors: [{ name: 'Provider Author' }],
+        asin: 'B123',
+        description: 'Provider description',
+        narrators: ['Narrator One'],
+        coverUrl: 'https://example.com/cover.jpg',
+      };
+
+      await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'My Title' },
+        metadata,
+      );
+
+      // Should NOT call searchBooks since metadata was passed
+      expect(mockMetadataService.searchBooks).not.toHaveBeenCalled();
+      expect(mockBookService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'My Title',
+          asin: 'B123',
+          description: 'Provider description',
+        }),
+      );
+    });
+
+    it('calls Audnexus enrichment inline when ASIN is available', async () => {
+      mockMetadataService.enrichBook.mockResolvedValueOnce({
+        narrators: ['Stephen Fry'],
+        duration: 480,
+      });
+
+      await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'HP', asin: 'B017V4IM1G' },
+      );
+
+      expect(mockMetadataService.enrichBook).toHaveBeenCalledWith('B017V4IM1G');
+    });
+
+    it('skips Audnexus enrichment when no ASIN', async () => {
+      await service.importSingleBook({
+        path: '/audiobooks/Title',
+        title: 'No ASIN Book',
+      });
+
+      expect(mockMetadataService.enrichBook).not.toHaveBeenCalled();
+    });
+
+    it('still imports when Audnexus enrichment fails', async () => {
+      mockMetadataService.enrichBook.mockRejectedValueOnce(new Error('Audnexus down'));
+
+      const result = await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'HP', asin: 'B017V4IM1G' },
+      );
+
+      expect(result.imported).toBe(true);
+    });
+
+    it('tries alternate ASINs when primary ASIN returns no Audnexus data', async () => {
+      // Primary ASIN returns null, alternate works
+      mockMetadataService.enrichBook
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ narrators: ['Jim Dale'], duration: 540 });
+
+      await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'HP', asin: 'B0NEW' },
+        { title: 'HP', authors: [{ name: 'JKR' }], asin: 'B0NEW', alternateAsins: ['B0OLD'] },
+      );
+
+      expect(mockMetadataService.enrichBook).toHaveBeenCalledTimes(2);
+      expect(mockMetadataService.enrichBook).toHaveBeenNthCalledWith(1, 'B0NEW');
+      expect(mockMetadataService.enrichBook).toHaveBeenNthCalledWith(2, 'B0OLD');
+    });
+
+    it('stops trying alternate ASINs after first successful match', async () => {
+      mockMetadataService.enrichBook
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ narrators: ['Jim Dale'] });
+
+      await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'HP', asin: 'B0NEW' },
+        { title: 'HP', authors: [{ name: 'JKR' }], asin: 'B0NEW', alternateAsins: ['B0OLD', 'B0OLDER'] },
+      );
+
+      // Should stop after B0OLD succeeds, never try B0OLDER
+      expect(mockMetadataService.enrichBook).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not apply Audnexus update when all ASINs return null', async () => {
+      mockMetadataService.enrichBook
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
+
+      const result = await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'HP', asin: 'B0NEW' },
+        { title: 'HP', authors: [{ name: 'JKR' }], asin: 'B0NEW', alternateAsins: ['B0OLD'] },
+      );
+
+      expect(result.imported).toBe(true);
+      expect(mockMetadataService.enrichBook).toHaveBeenCalledTimes(2);
+      // No enrichment update — db.update only called for path/size (not enrichmentStatus)
+    });
+
+    it('handles Audnexus returning empty narrators array', async () => {
+      mockMetadataService.enrichBook.mockResolvedValueOnce({
+        narrators: [],  // empty, not undefined
+        duration: 480,
+      });
+
+      const result = await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'HP', asin: 'B017V4IM1G' },
+      );
+
+      expect(result.imported).toBe(true);
+      // enrichBook was called but narrators was empty — should still import fine
+      expect(mockMetadataService.enrichBook).toHaveBeenCalledWith('B017V4IM1G');
+    });
+
+    it('handles Audnexus returning narrators but no duration', async () => {
+      mockMetadataService.enrichBook.mockResolvedValueOnce({
+        narrators: ['Jim Dale'],
+        // no duration field
+      });
+
+      const result = await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'HP', asin: 'B017V4IM1G' },
+      );
+
+      expect(result.imported).toBe(true);
+    });
+
+    it('stores alternate ASIN when primary fails but alternate succeeds', async () => {
+      mockMetadataService.enrichBook
+        .mockResolvedValueOnce(null)  // B0NEW fails
+        .mockResolvedValueOnce({ narrators: ['Jim Dale'] });  // B0OLD works
+
+      await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'HP', asin: 'B0NEW' },
+        { title: 'HP', authors: [{ name: 'JKR' }], asin: 'B0NEW', alternateAsins: ['B0OLD'] },
+      );
+
+      // DB update should include the working ASIN
+      expect((mockDb as Record<string, unknown>).update).toHaveBeenCalled();
+    });
+
+    it('looks up metadata when none passed', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([{
+        title: 'Matched',
+        authors: [{ name: 'Author' }],
+        asin: 'B456',
+      }]);
+
+      await service.importSingleBook({
+        path: '/audiobooks/Title',
+        title: 'Search Me',
+      });
+
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledWith('Search Me');
+      expect(mockBookService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ asin: 'B456' }),
+      );
+    });
+
+    it('propagates error when bookService.create throws', async () => {
+      mockBookService.create.mockRejectedValueOnce(new Error('DB constraint error'));
+
+      await expect(service.importSingleBook({
+        path: '/audiobooks/Title',
+        title: 'Broken',
+      })).rejects.toThrow('DB constraint error');
+    });
+
+    it('imports successfully with no metadata and no ASIN', async () => {
+      const result = await service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'Bare Book' },
+        null, // explicitly no metadata
+      );
+
+      expect(result.imported).toBe(true);
+      expect(mockMetadataService.searchBooks).not.toHaveBeenCalled();
+      expect(mockMetadataService.enrichBook).not.toHaveBeenCalled();
+      expect(mockBookService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Bare Book',
+          asin: undefined,
+          narrator: undefined,
+        }),
+      );
+    });
+  });
+
+  describe('lookupMetadata', () => {
+    it('searches with title and author', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([{ title: 'Result' }]);
+
+      const result = await service.lookupMetadata('Book Title', 'Author Name');
+
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledWith('Book Title Author Name');
+      expect(result).toEqual({ title: 'Result' });
+    });
+
+    it('searches with title only when no author', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([{ title: 'Result' }]);
+
+      await service.lookupMetadata('Book Title');
+
+      expect(mockMetadataService.searchBooks).toHaveBeenCalledWith('Book Title');
+    });
+
+    it('returns null when no results', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([]);
+
+      const result = await service.lookupMetadata('Obscure');
+      expect(result).toBeNull();
+    });
+
+    it('returns null on error', async () => {
+      mockMetadataService.searchBooks.mockRejectedValue(new Error('API down'));
+
+      const result = await service.lookupMetadata('Title');
+      expect(result).toBeNull();
+    });
+
+    it('fetches full book detail when search result has providerId but no ASIN', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([{
+        title: 'Harry Potter',
+        providerId: '12345',
+      }]);
+      mockMetadataService.getBook.mockResolvedValue({
+        title: 'Harry Potter and the Prisoner of Azkaban',
+        asin: 'B017V4IMKG',
+        narrators: ['Stephen Fry'],
+      });
+
+      const result = await service.lookupMetadata('Harry Potter');
+
+      expect(mockMetadataService.getBook).toHaveBeenCalledWith('12345');
+      expect(result?.asin).toBe('B017V4IMKG');
+      expect(result?.narrators).toEqual(['Stephen Fry']);
+      // Preserves the search result title (user's query match), not the detail title
+      expect(result?.title).toBe('Harry Potter');
+    });
+
+    it('falls back to search result when getBook throws', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([{
+        title: 'Harry Potter',
+        providerId: '12345',
+      }]);
+      mockMetadataService.getBook.mockRejectedValue(new Error('API timeout'));
+
+      const result = await service.lookupMetadata('Harry Potter');
+
+      // Should still return the search result, just without ASIN
+      expect(result?.title).toBe('Harry Potter');
+      expect(result?.asin).toBeUndefined();
+    });
+
+    it('uses search result when getBook returns null', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([{
+        title: 'Harry Potter',
+        providerId: '12345',
+      }]);
+      mockMetadataService.getBook.mockResolvedValue(null);
+
+      const result = await service.lookupMetadata('Harry Potter');
+
+      expect(mockMetadataService.getBook).toHaveBeenCalledWith('12345');
+      // Should still return search result, just without enriched fields
+      expect(result?.title).toBe('Harry Potter');
+      expect(result?.asin).toBeUndefined();
+    });
+
+    it('returns search result with partial data (no ASIN, no narrators, no coverUrl)', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([{
+        title: 'Obscure Title',
+        authors: [{ name: 'Unknown' }],
+        // no asin, no narrators, no coverUrl, no description
+      }]);
+
+      const result = await service.lookupMetadata('Obscure Title');
+
+      expect(result?.title).toBe('Obscure Title');
+      expect(result?.asin).toBeUndefined();
+      expect(result?.narrators).toBeUndefined();
+      expect(result?.coverUrl).toBeUndefined();
+    });
+
+    it('skips getBook when search result already has ASIN', async () => {
+      mockMetadataService.searchBooks.mockResolvedValue([{
+        title: 'Result',
+        providerId: '12345',
+        asin: 'B_ALREADY',
+      }]);
+
+      await service.lookupMetadata('Title');
+
+      expect(mockMetadataService.getBook).not.toHaveBeenCalled();
+    });
   });
 
   describe('confirmImport', () => {

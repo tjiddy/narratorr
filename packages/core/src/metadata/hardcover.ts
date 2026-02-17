@@ -569,14 +569,22 @@ function mapSearchSeries(doc: Record<string, unknown>): Record<string, unknown> 
 }
 
 function mapBookDetail(book: HardcoverBookDetail): Record<string, unknown> {
-  // Use contributions for author names; treat null contribution as author
+  // Use contributions for author names; treat null contribution as author, exclude narrators
   const authors = (book.contributions ?? [])
+    .filter((c) => c.contribution?.toLowerCase() !== 'narrator')
     .map((c) => ({ name: c.author.name }));
 
-  // Narrators: Hardcover currently returns contribution as null,
-  // so we can't reliably distinguish narrators from authors via this field.
-  // Audio edition narrators would need a separate query.
-  const narrators: string[] = [];
+  // Extract narrators from contributions or cached_contributors
+  // The contribution field is "Narrator" for narrators, null for authors
+  const allContributors = [
+    ...(book.contributions ?? []),
+    ...(book.cached_contributors ?? []),
+  ];
+  const narrators = [...new Set(
+    allContributors
+      .filter((c) => c.contribution?.toLowerCase() === 'narrator')
+      .map((c) => c.author.name),
+  )];
 
   const series = book.featured_book_series
     ? [{ name: book.featured_book_series.series.name, position: book.featured_book_series.position }]
@@ -591,6 +599,14 @@ function mapBookDetail(book: HardcoverBookDetail): Record<string, unknown> {
 
   // Prefer ASIN from editions (more likely to have it)
   const bestAsinEdition = book.editions?.find((e) => e.asin);
+  const primaryAsin = bestAsinEdition?.asin ?? audioEdition?.asin ?? undefined;
+
+  // Collect all unique ASINs from editions for fallback lookups (e.g. Audnexus)
+  const allAsins = [
+    ...(book.editions ?? []).map((e) => e.asin),
+    audioEdition?.asin,
+  ].filter((a): a is string => !!a);
+  const alternateAsins = [...new Set(allAsins)].filter((a) => a !== primaryAsin);
 
   return {
     title: book.title ?? '',
@@ -604,7 +620,8 @@ function mapBookDetail(book: HardcoverBookDetail): Record<string, unknown> {
     coverUrl: extractImageUrl(book.cached_image),
     duration: audioSeconds ? Math.round(audioSeconds / 60) : undefined,
     genres,
-    asin: bestAsinEdition?.asin ?? audioEdition?.asin ?? undefined,
+    asin: primaryAsin,
+    alternateAsins: alternateAsins.length > 0 ? alternateAsins : undefined,
     isbn: audioEdition?.isbn_13 ?? undefined,
   };
 }

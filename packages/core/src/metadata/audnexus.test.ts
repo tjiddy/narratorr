@@ -149,6 +149,94 @@ describe('AudnexusProvider', () => {
       // Actually let's check what happens
       expect(book).not.toBeNull();
     });
+
+    it('returns null when ASIN not available in region', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.json(
+            { error: { code: 'REGION_UNAVAILABLE', message: 'Item not available in region' } },
+            { status: 404 },
+          );
+        }),
+      );
+
+      const book = await provider.getBook('B0F151V9H2');
+      expect(book).toBeNull();
+    });
+
+    it('maps book with no narrators in response', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.json({
+            asin: 'B_NO_NARR',
+            title: 'Narrator-less Book',
+            authors: [{ name: 'Author' }],
+            runtimeLengthMin: 300,
+            // no narrators field at all
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B_NO_NARR');
+      expect(book).not.toBeNull();
+      expect(book!.narrators).toBeUndefined();
+      expect(book!.duration).toBe(300);
+    });
+
+    it('maps book with empty narrators array', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.json({
+            asin: 'B_EMPTY',
+            title: 'Empty Narrators',
+            authors: [{ name: 'Author' }],
+            narrators: [],
+            runtimeLengthMin: 200,
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B_EMPTY');
+      expect(book).not.toBeNull();
+      expect(book!.narrators).toEqual([]);
+      expect(book!.duration).toBe(200);
+    });
+
+    it('maps book with narrators but no duration', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.json({
+            asin: 'B_PARTIAL',
+            title: 'Partial Data',
+            authors: [{ name: 'Author' }],
+            narrators: [{ name: 'Jim Dale' }],
+            // no runtimeLengthMin
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B_PARTIAL');
+      expect(book).not.toBeNull();
+      expect(book!.narrators).toEqual(['Jim Dale']);
+      expect(book!.duration).toBeUndefined();
+    });
+
+    it('maps book with no series data', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.json({
+            asin: 'B_NOSERIES',
+            title: 'Standalone',
+            authors: [{ name: 'Author' }],
+            // no seriesPrimary or seriesSecondary
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B_NOSERIES');
+      expect(book).not.toBeNull();
+      expect(book!.series).toBeUndefined();
+    });
   });
 
   describe('getAuthor', () => {

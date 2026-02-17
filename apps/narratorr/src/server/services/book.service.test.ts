@@ -228,6 +228,75 @@ describe('BookService', () => {
     });
   });
 
+  describe('create with metadataService', () => {
+    let serviceWithMeta: BookService;
+    let mockMetadata: { getBook: ReturnType<typeof import('vitest').vi.fn> };
+
+    beforeEach(async () => {
+      const { vi } = await import('vitest');
+      mockMetadata = { getBook: vi.fn().mockResolvedValue(null) };
+      serviceWithMeta = new BookService(db as any, createMockLogger() as any, mockMetadata as any);
+    });
+
+    it('enriches ASIN from provider when not provided', async () => {
+      mockMetadata.getBook.mockResolvedValueOnce({ title: 'Book', authors: [], asin: 'B_ENRICHED' });
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // author lookup
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: 'B_ENRICHED' }, author: null }]));
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await serviceWithMeta.create({ title: 'Test', providerId: 'hc-123' });
+
+      expect(mockMetadata.getBook).toHaveBeenCalledWith('hc-123');
+    });
+
+    it('uses provided ASIN and skips enrichment', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: null }]));
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await serviceWithMeta.create({ title: 'Test', asin: 'B_ALREADY', providerId: 'hc-123' });
+
+      expect(mockMetadata.getBook).not.toHaveBeenCalled();
+    });
+
+    it('creates book when getBook returns null (no ASIN found)', async () => {
+      mockMetadata.getBook.mockResolvedValueOnce(null);
+      // no author (no authorName), so: book insert → getById select
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: null }, author: null }]));  // getById
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      const result = await serviceWithMeta.create({ title: 'No ASIN Book', providerId: 'hc-999' });
+
+      expect(result.title).toBe('The Way of Kings'); // from mock
+      expect(mockMetadata.getBook).toHaveBeenCalledWith('hc-999');
+    });
+
+    it('creates book when getBook returns detail without ASIN', async () => {
+      mockMetadata.getBook.mockResolvedValueOnce({ title: 'Book', authors: [] });  // no asin field
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: null }, author: null }]));  // getById
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      await serviceWithMeta.create({ title: 'Partial Detail', providerId: 'hc-456' });
+
+      expect(mockMetadata.getBook).toHaveBeenCalledWith('hc-456');
+    });
+
+    it('creates book when getBook throws', async () => {
+      mockMetadata.getBook.mockRejectedValueOnce(new Error('API timeout'));
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: null }]));  // getById
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+
+      const result = await serviceWithMeta.create({ title: 'Error Book', providerId: 'hc-bad' });
+
+      expect(result.title).toBe('The Way of Kings'); // still creates
+    });
+  });
+
   describe('trackUnmatchedGenres', () => {
     it('inserts unmatched genres into telemetry table', async () => {
       // Setup: create a book with genres that include unmatched ones

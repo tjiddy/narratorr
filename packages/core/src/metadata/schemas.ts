@@ -13,6 +13,7 @@ export const SeriesRefSchema = z.object({
 
 export const BookMetadataSchema = z.object({
   asin: z.string().optional(),
+  alternateAsins: z.array(z.string()).optional(),
   isbn: z.string().optional(),
   goodreadsId: z.string().optional(),
   providerId: z.string().optional(),

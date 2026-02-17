@@ -269,6 +269,121 @@ describe('HardcoverProvider', () => {
       expect(book!.publisher).toBe('Macmillan Audio');
     });
 
+    it('extracts narrators when contribution type is "Narrator"', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({
+            data: {
+              books: [{
+                id: 999,
+                title: 'Harry Potter',
+                cached_contributors: [
+                  { author: { id: 1, name: 'J.K. Rowling', slug: 'jk-rowling' }, contribution: null },
+                ],
+                contributions: [
+                  { contribution: null, author: { id: 1, name: 'J.K. Rowling', slug: 'jk-rowling' } },
+                  { contribution: 'Narrator', author: { id: 2, name: 'Jim Dale', slug: 'jim-dale' } },
+                ],
+                default_audio_edition: { id: 1, asin: 'B017V4IM1G' },
+                editions: [],
+              }],
+            },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('999');
+      expect(book!.narrators).toEqual(['Jim Dale']);
+      expect(book!.authors).toEqual([{ name: 'J.K. Rowling' }]);
+    });
+
+    it('deduplicates narrators from contributions and cached_contributors', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({
+            data: {
+              books: [{
+                id: 999,
+                title: 'A Book',
+                cached_contributors: [
+                  { author: { id: 2, name: 'Narrator One', slug: 'n1' }, contribution: 'Narrator' },
+                ],
+                contributions: [
+                  { contribution: 'Narrator', author: { id: 2, name: 'Narrator One', slug: 'n1' } },
+                  { contribution: 'Narrator', author: { id: 3, name: 'Narrator Two', slug: 'n2' } },
+                ],
+                default_audio_edition: null,
+                editions: [],
+              }],
+            },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('999');
+      expect(book!.narrators).toEqual(['Narrator One', 'Narrator Two']);
+    });
+
+    it('returns undefined narrators when no contributions have Narrator role', async () => {
+      // The default fixture has contribution: null on all entries
+      const book = await provider.getBook('386446');
+      expect(book!.narrators).toBeUndefined();
+    });
+
+    it('collects alternateAsins from other editions', async () => {
+      // Default fixture: editions[0].asin="B003ZWFO7E" (primary), editions[1].asin="1648813542"
+      // default_audio_edition.asin=null
+      const book = await provider.getBook('386446');
+
+      expect(book!.asin).toBe('B003ZWFO7E');
+      expect(book!.alternateAsins).toEqual(['1648813542']);
+    });
+
+    it('returns no alternateAsins when only one edition has an ASIN', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({
+            data: {
+              books: [{
+                id: 999,
+                title: 'Solo Edition',
+                contributions: [{ contribution: null, author: { id: 1, name: 'Author', slug: 'author' } }],
+                default_audio_edition: { id: 1, asin: 'B_ONLY' },
+                editions: [],
+              }],
+            },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('999');
+      expect(book!.asin).toBe('B_ONLY');
+      expect(book!.alternateAsins).toBeUndefined();
+    });
+
+    it('handles book with no editions and no default_audio_edition', async () => {
+      server.use(
+        http.post(API_URL, () => {
+          return HttpResponse.json({
+            data: {
+              books: [{
+                id: 999,
+                title: 'No Audio',
+                contributions: [{ contribution: null, author: { id: 1, name: 'Author', slug: 'author' } }],
+                default_audio_edition: null,
+                editions: [],
+              }],
+            },
+          });
+        }),
+      );
+
+      const book = await provider.getBook('999');
+      expect(book!.asin).toBeUndefined();
+      expect(book!.alternateAsins).toBeUndefined();
+      expect(book!.duration).toBeUndefined();
+    });
+
     it('returns null on API error', async () => {
       server.use(
         http.post(API_URL, () => new HttpResponse(null, { status: 500 })),

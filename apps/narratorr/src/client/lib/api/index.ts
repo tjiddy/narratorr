@@ -8,7 +8,7 @@ export type { DownloadClient } from './download-clients.js';
 export type { Notifier } from './notifiers.js';
 export type { BlacklistEntry } from './blacklist.js';
 export type { Settings, TestResult } from './settings.js';
-export type { DiscoveredBook, ScanResult, ImportConfirmItem, ImportResult } from './library-scan.js';
+export type { DiscoveredBook, ScanResult, SingleBookResult, ImportConfirmItem, ImportSingleResult, ImportResult } from './library-scan.js';
 export type { ProwlarrConfig, SyncPreviewItem, SyncResult } from './prowlarr.js';
 
 export { formatBytes, formatProgress } from './utils.js';

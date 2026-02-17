@@ -109,6 +109,85 @@ describe('enrichment job', () => {
     expect(db.update).not.toHaveBeenCalled();
   });
 
+  it('enriches with only narrators (no duration) from Audnexus', async () => {
+    db.select
+      .mockReturnValueOnce(mockDbChain([]))  // no-asin
+      .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_PARTIAL' }]))  // candidates
+      .mockReturnValueOnce(mockDbChain([{ narrator: null, duration: null }]));  // existing
+
+    metadataService.enrichBook.mockResolvedValueOnce({
+      title: 'Partial Book',
+      authors: [{ name: 'Author' }],
+      narrators: ['Jim Dale'],
+      // no duration field
+    });
+    db.update.mockReturnValue(mockDbChain());
+
+    await runEnrichment(db as any, metadataService as any, log as any);
+
+    expect(log.info).toHaveBeenCalledWith(
+      { bookId: 1, asin: 'B_PARTIAL' },
+      'Book enriched successfully',
+    );
+  });
+
+  it('enriches with only duration (no narrators) from Audnexus', async () => {
+    db.select
+      .mockReturnValueOnce(mockDbChain([]))  // no-asin
+      .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_DUR_ONLY' }]))  // candidates
+      .mockReturnValueOnce(mockDbChain([{ narrator: null, duration: null }]));  // existing
+
+    metadataService.enrichBook.mockResolvedValueOnce({
+      title: 'Duration Only',
+      authors: [{ name: 'Author' }],
+      duration: 480,
+      // no narrators field
+    });
+    db.update.mockReturnValue(mockDbChain());
+
+    await runEnrichment(db as any, metadataService as any, log as any);
+
+    expect(log.info).toHaveBeenCalledWith(
+      { bookId: 1, asin: 'B_DUR_ONLY' },
+      'Book enriched successfully',
+    );
+  });
+
+  it('handles empty narrators array without setting narrator field', async () => {
+    db.select
+      .mockReturnValueOnce(mockDbChain([]))  // no-asin
+      .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B_EMPTY_NARR' }]))  // candidates
+      .mockReturnValueOnce(mockDbChain([{ narrator: null, duration: null }]));  // existing
+
+    metadataService.enrichBook.mockResolvedValueOnce({
+      title: 'Empty Narrators',
+      authors: [{ name: 'Author' }],
+      narrators: [],  // empty array — should not set narrator
+      duration: 300,
+    });
+    db.update.mockReturnValue(mockDbChain());
+
+    await runEnrichment(db as any, metadataService as any, log as any);
+
+    // Still enriched (status updated), but narrator shouldn't be set from empty array
+    expect(log.info).toHaveBeenCalledWith(
+      { bookId: 1, asin: 'B_EMPTY_NARR' },
+      'Book enriched successfully',
+    );
+  });
+
+  it('does not call enrichBook for no-ASIN books', async () => {
+    db.select
+      .mockReturnValueOnce(mockDbChain([{ id: 1 }, { id: 2 }]))  // no-asin query
+      .mockReturnValueOnce(mockDbChain([]));  // candidates (empty)
+
+    db.update.mockReturnValue(mockDbChain());
+
+    await runEnrichment(db as any, metadataService as any, log as any);
+
+    expect(metadataService.enrichBook).not.toHaveBeenCalled();
+  });
+
   it('breaks batch on RateLimitError and leaves remaining candidates pending', async () => {
     db.select
       .mockReturnValueOnce(mockDbChain([]))  // no-asin

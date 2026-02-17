@@ -179,6 +179,48 @@ describe('MetadataService', () => {
       const result = await service.enrichBook('B000BROKEN');
       expect(result).toBeNull();
     });
+
+    it('returns partial data with only narrators (no duration)', async () => {
+      mockAudnexus.getBook.mockResolvedValueOnce({
+        title: 'Partial',
+        authors: [{ name: 'Author' }],
+        narrators: ['Jim Dale'],
+        // no duration
+      });
+
+      const result = await service.enrichBook('B_PARTIAL');
+      expect(result).not.toBeNull();
+      expect(result!.narrators).toEqual(['Jim Dale']);
+      expect(result!.duration).toBeUndefined();
+    });
+
+    it('returns data with empty narrators array', async () => {
+      mockAudnexus.getBook.mockResolvedValueOnce({
+        title: 'Empty Narr',
+        authors: [{ name: 'Author' }],
+        narrators: [],
+        duration: 480,
+      });
+
+      const result = await service.enrichBook('B_EMPTY');
+      expect(result).not.toBeNull();
+      expect(result!.narrators).toEqual([]);
+      expect(result!.duration).toBe(480);
+    });
+
+    it('returns data with only duration (no narrators)', async () => {
+      mockAudnexus.getBook.mockResolvedValueOnce({
+        title: 'Duration Only',
+        authors: [{ name: 'Author' }],
+        duration: 300,
+        // narrators not in response
+      });
+
+      const result = await service.enrichBook('B_DUR_ONLY');
+      expect(result).not.toBeNull();
+      expect(result!.narrators).toBeUndefined();
+      expect(result!.duration).toBe(300);
+    });
   });
 
   describe('testProviders', () => {

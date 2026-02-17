@@ -1,4 +1,5 @@
 import { fetchApi } from './client.js';
+import type { BookMetadata } from './books.js';
 
 export interface DiscoveredBook {
   path: string;
@@ -9,10 +10,9 @@ export interface DiscoveredBook {
   totalSize: number;
 }
 
-export interface ScanResult {
-  discoveries: DiscoveredBook[];
-  totalFolders: number;
-  skippedDuplicates: number;
+export interface SingleBookResult {
+  book: DiscoveredBook;
+  metadata: BookMetadata | null;
 }
 
 export interface ImportConfirmItem {
@@ -20,6 +20,22 @@ export interface ImportConfirmItem {
   title: string;
   authorName?: string;
   seriesName?: string;
+  coverUrl?: string;
+  asin?: string;
+  metadata?: BookMetadata;
+}
+
+export interface ImportSingleResult {
+  imported: boolean;
+  bookId?: number;
+  enriched: boolean;
+  error?: string;
+}
+
+export interface ScanResult {
+  discoveries: DiscoveredBook[];
+  totalFolders: number;
+  skippedDuplicates: number;
 }
 
 export interface ImportResult {
@@ -30,6 +46,16 @@ export interface ImportResult {
 }
 
 export const libraryScanApi = {
+  scanSingleBook: (path: string) =>
+    fetchApi<SingleBookResult>('/library/import/scan-single', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
+  importSingleBook: (item: ImportConfirmItem) =>
+    fetchApi<ImportSingleResult>('/library/import/single', {
+      method: 'POST',
+      body: JSON.stringify(item),
+    }),
   scanDirectory: (path: string) =>
     fetchApi<ScanResult>('/library/import/scan', {
       method: 'POST',
