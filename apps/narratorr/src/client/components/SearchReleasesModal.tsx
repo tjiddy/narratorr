@@ -232,7 +232,7 @@ function ReleaseCard({
           <CoverImage
             src={result.coverUrl}
             alt={result.title}
-            className="w-14 h-20 rounded-lg"
+            className="w-14 h-14 rounded-lg"
             fallback={<BookOpenIcon className="w-6 h-6 text-muted-foreground/40" />}
           />
         </div>

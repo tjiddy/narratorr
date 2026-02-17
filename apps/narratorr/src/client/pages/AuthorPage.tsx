@@ -83,7 +83,7 @@ function AuthorPageSkeleton() {
         <div className="glass-card rounded-2xl p-4 space-y-3">
           {[1, 2, 3].map((i) => (
             <div key={i} className="flex gap-4 items-center">
-              <div className="w-12 aspect-[2/3] skeleton rounded-lg shrink-0" />
+              <div className="w-12 aspect-square skeleton rounded-lg shrink-0" />
               <div className="flex-1 space-y-2">
                 <div className="h-4 w-3/4 skeleton rounded" />
                 <div className="h-3 w-1/2 skeleton rounded" />
@@ -146,7 +146,7 @@ function BookRow({
     <div className="flex items-center gap-3 sm:gap-4 py-3 group">
       {/* Cover thumbnail */}
       <div className="shrink-0">
-        <div className="relative w-10 sm:w-12 aspect-[2/3] rounded-lg overflow-hidden ring-1 ring-black/10 transition-transform duration-200 group-hover:scale-105">
+        <div className="relative w-10 sm:w-12 aspect-square rounded-lg overflow-hidden ring-1 ring-black/10 transition-transform duration-200 group-hover:scale-105">
           {book.coverUrl ? (
             <img
               src={book.coverUrl}

@@ -427,7 +427,7 @@ function DiscoverBookCard({
           <CoverImage
             src={book.coverUrl}
             alt={book.title}
-            className="w-20 h-28 sm:w-24 sm:h-32 rounded-xl"
+            className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl"
             fallback={<BookOpenIcon className="w-8 h-8 text-muted-foreground" />}
           />
         </div>
@@ -598,7 +598,7 @@ function IndexerResultCard({
           <CoverImage
             src={result.coverUrl}
             alt={result.title}
-            className="w-20 h-28 sm:w-24 sm:h-32 rounded-xl"
+            className="w-20 h-20 sm:w-24 sm:h-24 rounded-xl"
             fallback={<BookOpenIcon className="w-8 h-8 text-muted-foreground" />}
           />
         </div>

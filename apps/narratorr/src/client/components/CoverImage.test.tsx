@@ -53,10 +53,10 @@ describe('CoverImage', () => {
 
   it('applies className to container', () => {
     const { container } = renderWithProviders(
-      <CoverImage src="https://example.com/cover.jpg" alt="Test" fallback={<span>FB</span>} className="w-20 h-28" />,
+      <CoverImage src="https://example.com/cover.jpg" alt="Test" fallback={<span>FB</span>} className="w-20 h-20" />,
     );
 
-    const wrapper = container.querySelector('.w-20.h-28');
+    const wrapper = container.querySelector('.w-20.h-20');
     expect(wrapper).toBeInTheDocument();
   });
 });

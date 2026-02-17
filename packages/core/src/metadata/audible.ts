@@ -28,6 +28,7 @@ const REGION_TLDS: Record<string, string> = {
 const REQUEST_TIMEOUT_MS = 10000;
 const MAX_RESULTS = 10;
 const RESPONSE_GROUPS = 'contributors,product_desc,media,product_extended_attrs,series';
+const IMAGE_SIZES = '500,1024';
 
 export class AudibleProvider implements MetadataProvider {
   readonly name: string;
@@ -86,6 +87,7 @@ export class AudibleProvider implements MetadataProvider {
       num_results: String(MAX_RESULTS),
       products_sort_by: 'Relevance',
       response_groups: RESPONSE_GROUPS,
+      image_sizes: IMAGE_SIZES,
     });
 
     const products = await this.fetchProducts(params);
@@ -138,6 +140,7 @@ export class AudibleProvider implements MetadataProvider {
   async getBook(asin: string): Promise<BookMetadata | null> {
     const params = new URLSearchParams({
       response_groups: RESPONSE_GROUPS,
+      image_sizes: IMAGE_SIZES,
     });
 
     const product = await this.fetchProduct(asin, params);
@@ -170,6 +173,7 @@ export class AudibleProvider implements MetadataProvider {
         num_results: '1',
         products_sort_by: 'Relevance',
         response_groups: RESPONSE_GROUPS,
+        image_sizes: IMAGE_SIZES,
       });
       const data = await this.request<{ products?: AudibleProduct[] }>(
         `https://api.audible${this.tld}/1.0/catalog/products?${params}`,

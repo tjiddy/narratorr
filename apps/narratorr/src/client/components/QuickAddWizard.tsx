@@ -382,7 +382,7 @@ export function QuickAddWizard({ isOpen, onClose }: QuickAddWizardProps) {
                         onClick={() => applyMetadata(meta)}
                         className="w-full flex items-center gap-2.5 px-2.5 py-2 text-left rounded-xl hover:bg-muted/40 transition-colors group"
                       >
-                        <div className="w-7 h-9 shrink-0 rounded overflow-hidden bg-muted/30 relative">
+                        <div className="w-8 h-8 shrink-0 rounded overflow-hidden bg-muted/30 relative">
                           {meta.coverUrl ? (
                             <img src={meta.coverUrl} alt="" className="w-full h-full object-cover" />
                           ) : (

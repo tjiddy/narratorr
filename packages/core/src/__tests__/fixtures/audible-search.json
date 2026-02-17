@@ -26,7 +26,8 @@
         }
       ],
       "product_images": {
-        "500": "https://m.media-amazon.com/images/I/61fmfnA-uCL._SL500_.jpg"
+        "500": "https://m.media-amazon.com/images/I/61fmfnA-uCL._SL500_.jpg",
+        "1024": "https://m.media-amazon.com/images/I/91bYsX41DVL._SL1024_.jpg"
       },
       "publication_datetime": "2015-11-20T08:00:00Z",
       "publication_name": "Harry Potter",
@@ -123,7 +124,8 @@
         }
       ],
       "product_images": {
-        "500": "https://m.media-amazon.com/images/I/61p0qiVzZLL._SL500_.jpg"
+        "500": "https://m.media-amazon.com/images/I/61p0qiVzZLL._SL500_.jpg",
+        "1024": "https://m.media-amazon.com/images/I/71p0qiVzZLL._SL1024_.jpg"
       },
       "publication_datetime": "2025-12-16T08:00:00Z",
       "publication_name": "Harry Potter (Full-Cast Editions)",

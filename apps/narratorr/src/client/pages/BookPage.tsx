@@ -20,7 +20,7 @@ function BookPageSkeleton() {
     <div className="space-y-8">
       <div className="h-5 w-24 skeleton rounded" />
       <div className="flex flex-col sm:flex-row gap-8">
-        <div className="w-48 sm:w-56 lg:w-72 aspect-[2/3] skeleton rounded-2xl shrink-0 mx-auto sm:mx-0" />
+        <div className="w-48 sm:w-56 lg:w-72 aspect-square skeleton rounded-2xl shrink-0 mx-auto sm:mx-0" />
         <div className="flex-1 space-y-4">
           <div className="h-10 w-3/4 skeleton rounded" />
           <div className="h-5 w-1/2 skeleton rounded" />
@@ -135,7 +135,7 @@ export function BookPage() {
         <div className="flex flex-col sm:flex-row gap-6 sm:gap-8">
           {/* Cover */}
           <div className="shrink-0 mx-auto sm:mx-0 animate-fade-in-up stagger-1">
-            <div className="relative w-48 sm:w-56 lg:w-72 aspect-[2/3] rounded-2xl overflow-hidden shadow-card-hover ring-1 ring-black/10 group">
+            <div className="relative w-48 sm:w-56 lg:w-72 aspect-square rounded-2xl overflow-hidden shadow-card-hover ring-1 ring-black/10 group">
               {coverUrl ? (
                 <img
                   src={coverUrl}
