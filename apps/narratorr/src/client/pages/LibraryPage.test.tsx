@@ -112,31 +112,31 @@ describe('LibraryPage', () => {
     });
     expect(screen.getByText('Project Hail Mary')).toBeInTheDocument();
     expect(screen.getByText('Recursion')).toBeInTheDocument();
-    // Authors appear in both cards and dropdown, so use getAllByText
+    // Authors appear in cards and possibly dropdown, so use getAllByText
     expect(screen.getAllByText('Andy Weir').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Blake Crouch').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('shows status counts in tabs', async () => {
+  it('shows status counts in pills', async () => {
     vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
 
     renderWithProviders(<LibraryPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('(4)')).toBeInTheDocument(); // All
+      expect(screen.getByText('4')).toBeInTheDocument(); // All count
     });
     // Wanted count = 2
-    const wantedTab = screen.getByRole('button', { name: /Wanted/i });
-    expect(within(wantedTab).getByText('(2)')).toBeInTheDocument();
+    const wantedPill = screen.getByRole('button', { name: /Wanted/i });
+    expect(within(wantedPill).getByText('2')).toBeInTheDocument();
     // Downloading count = 1
-    const downloadingTab = screen.getByRole('button', { name: /Downloading/i });
-    expect(within(downloadingTab).getByText('(1)')).toBeInTheDocument();
+    const downloadingPill = screen.getByRole('button', { name: /Downloading/i });
+    expect(within(downloadingPill).getByText('1')).toBeInTheDocument();
     // Imported count = 1
-    const importedTab = screen.getByRole('button', { name: /Imported/i });
-    expect(within(importedTab).getByText('(1)')).toBeInTheDocument();
+    const importedPill = screen.getByRole('button', { name: /Imported/i });
+    expect(within(importedPill).getByText('1')).toBeInTheDocument();
   });
 
-  it('filters by status tab click', async () => {
+  it('filters by status pill click', async () => {
     vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
     const user = userEvent.setup();
 
@@ -154,7 +154,7 @@ describe('LibraryPage', () => {
     expect(screen.queryByText('Project Hail Mary')).not.toBeInTheDocument();
   });
 
-  it('filters by author dropdown', async () => {
+  it('toggles filter panel and filters by author', async () => {
     vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
     const user = userEvent.setup();
 
@@ -164,7 +164,13 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Select author filter
+    // Filters should be collapsed by default — no author dropdown visible
+    expect(screen.queryByDisplayValue('All Authors')).not.toBeInTheDocument();
+
+    // Open filters
+    await user.click(screen.getByRole('button', { name: /Toggle filters/i }));
+
+    // Now author dropdown should be visible
     const authorSelect = screen.getByDisplayValue('All Authors');
     await user.selectOptions(authorSelect, 'Andy Weir');
 
@@ -173,7 +179,7 @@ describe('LibraryPage', () => {
     expect(screen.queryByText('Recursion')).not.toBeInTheDocument();
   });
 
-  it('sorts by title', async () => {
+  it('shows active filter count badge', async () => {
     vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
     const user = userEvent.setup();
 
@@ -183,6 +189,29 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
+    // Open filters and select an author
+    await user.click(screen.getByRole('button', { name: /Toggle filters/i }));
+    const authorSelect = screen.getByDisplayValue('All Authors');
+    await user.selectOptions(authorSelect, 'Andy Weir');
+
+    // Filter badge should show "1"
+    const filtersButton = screen.getByRole('button', { name: /Toggle filters/i });
+    expect(within(filtersButton).getByText('1')).toBeInTheDocument();
+  });
+
+  it('sorts by title when filters are open', async () => {
+    vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    // Open filters to access sort
+    await user.click(screen.getByRole('button', { name: /Toggle filters/i }));
+
     // Change sort to title
     const sortSelect = screen.getByDisplayValue('Date Added');
     await user.selectOptions(sortSelect, 'title');
@@ -190,6 +219,25 @@ describe('LibraryPage', () => {
     // All books still present after sort change
     expect(screen.getByText('Recursion')).toBeInTheDocument();
     expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+  });
+
+  it('renders book cards as clickable links', async () => {
+    vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    // Cards should be rendered with role="link" for accessibility
+    const bookCards = screen.getAllByRole('link');
+    expect(bookCards.length).toBe(mockBooks.length);
+
+    // Each card should be focusable
+    for (const card of bookCards) {
+      expect(card).toHaveAttribute('tabIndex', '0');
+    }
   });
 
   it('opens context menu on three-dot click', async () => {
@@ -202,11 +250,10 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Click the first three-dot menu button
+    // Hover to reveal menu button, then click it
     const menuButtons = screen.getAllByLabelText('Book options');
     await user.click(menuButtons[0]);
 
-    expect(screen.getByText('View Details')).toBeInTheDocument();
     expect(screen.getByText('Search Releases')).toBeInTheDocument();
     expect(screen.getByText('Remove from Library')).toBeInTheDocument();
   });
@@ -236,7 +283,6 @@ describe('LibraryPage', () => {
     await user.click(removeButton);
 
     // Default sort is createdAt desc, so first book shown is id=4 (Words of Radiance)
-    // TanStack Query passes additional context as second arg to mutationFn
     await waitFor(() => {
       expect(vi.mocked(api.deleteBook).mock.calls[0][0]).toBe(4);
     });
@@ -275,7 +321,8 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Filter by Andy Weir
+    // Open filters and filter by Andy Weir
+    await user.click(screen.getByRole('button', { name: /Toggle filters/i }));
     const authorSelect = screen.getByDisplayValue('All Authors');
     await user.selectOptions(authorSelect, 'Andy Weir');
 
@@ -440,5 +487,17 @@ describe('LibraryPage', () => {
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to remove book: Cannot delete');
     });
+  });
+
+  it('shows ghost Quick Add card in grid', async () => {
+    vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Quick Add')).toBeInTheDocument();
   });
 });

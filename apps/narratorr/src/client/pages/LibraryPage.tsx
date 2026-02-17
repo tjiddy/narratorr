@@ -9,7 +9,6 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { useDeleteConfirmation } from '@/hooks/useDeleteConfirmation';
 import { useLibrarySearch } from '@/hooks/useLibrarySearch';
-import { bookStatusConfig } from '@/lib/status';
 import { queryKeys } from '@/lib/queryKeys';
 import {
   LibraryIcon as BookShelfIcon,
@@ -20,9 +19,8 @@ import {
   ChevronDownIcon,
   ArrowUpDownIcon,
   ArrowRightIcon,
-  EyeIcon,
   TrashIcon,
-  FolderIcon,
+  PlusIcon,
   LoadingSpinner,
 } from '@/components/icons';
 import { QuickAddWizard } from '@/components/QuickAddWizard';
@@ -41,6 +39,13 @@ const filterTabs: { key: StatusFilter; label: string }[] = [
   { key: 'downloading', label: 'Downloading' },
   { key: 'imported', label: 'Imported' },
 ];
+
+// Status border classes for card left-accent
+const statusBorderClass: Record<string, string> = {
+  wanted: 'border-l-[3px] border-l-amber-500',
+  searching: 'border-l-[3px] border-l-blue-500 animate-border-pulse',
+  downloading: 'border-l-[3px] border-l-blue-500 animate-border-pulse',
+};
 
 // ============================================================================
 // Helpers
@@ -87,6 +92,7 @@ export function LibraryPage() {
   const [seriesFilter, setSeriesFilter] = useState('');
   const [sortField, setSortField] = useState<SortField>('createdAt');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const deleteConfirm = useDeleteConfirmation<BookWithAuthor>();
   const [searchBook, setSearchBook] = useState<BookWithAuthor | null>(null);
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
@@ -141,6 +147,8 @@ export function LibraryPage() {
     return counts;
   }, [books]);
 
+  const activeFilterCount = (authorFilter ? 1 : 0) + (seriesFilter ? 1 : 0);
+
   // Close context menu on outside click
   const closeMenu = useCallback(() => setOpenMenuId(null), []);
 
@@ -154,10 +162,10 @@ export function LibraryPage() {
   // Loading
   if (isLoading) {
     return (
-      <div className="space-y-8">
+      <div className="space-y-6">
         <div className="animate-fade-in-up">
           <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Library</h1>
-          <p className="text-muted-foreground mt-2">Your audiobook collection</p>
+          <p className="text-muted-foreground mt-1">Your audiobook collection</p>
         </div>
         <div className="flex items-center justify-center py-24">
           <LoadingSpinner className="w-8 h-8 text-primary" />
@@ -169,10 +177,10 @@ export function LibraryPage() {
   // Empty library
   if (books.length === 0) {
     return (
-      <div className="space-y-8">
+      <div className="space-y-6">
         <div className="animate-fade-in-up">
           <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Library</h1>
-          <p className="text-muted-foreground mt-2">Your audiobook collection</p>
+          <p className="text-muted-foreground mt-1">Your audiobook collection</p>
         </div>
         <EmptyLibraryState onImport={() => setImportOpen(true)} />
         <QuickAddWizard isOpen={importOpen} onClose={() => setImportOpen(false)} />
@@ -181,24 +189,15 @@ export function LibraryPage() {
   }
 
   return (
-    <div className="space-y-8">
-      {/* Header */}
-      <div className="animate-fade-in-up flex items-start justify-between">
-        <div>
-          <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Library</h1>
-          <p className="text-muted-foreground mt-2">
-            {isSearching
-              ? `${filteredBooks.length} of ${books.length} book${books.length !== 1 ? 's' : ''}`
-              : `${books.length} book${books.length !== 1 ? 's' : ''} in your collection`}
-          </p>
-        </div>
-        <button
-          onClick={() => setImportOpen(true)}
-          className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium glass-card rounded-xl hover:border-primary/30 hover:text-primary transition-all focus-ring"
-        >
-          <FolderIcon className="w-4 h-4" />
-          Import Existing
-        </button>
+    <div className="space-y-5">
+      {/* Header — just title + count */}
+      <div className="animate-fade-in-up">
+        <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Library</h1>
+        <p className="text-muted-foreground mt-1">
+          {isSearching
+            ? `${filteredBooks.length} of ${books.length} book${books.length !== 1 ? 's' : ''}`
+            : `${books.length} book${books.length !== 1 ? 's' : ''} in your collection`}
+        </p>
       </div>
 
       {/* Toolbar */}
@@ -209,6 +208,9 @@ export function LibraryPage() {
         statusFilter={statusFilter}
         onStatusFilterChange={setStatusFilter}
         statusCounts={statusCounts}
+        filtersOpen={filtersOpen}
+        onFiltersToggle={() => setFiltersOpen(!filtersOpen)}
+        activeFilterCount={activeFilterCount}
         authorFilter={authorFilter}
         onAuthorFilterChange={setAuthorFilter}
         uniqueAuthors={uniqueAuthors}
@@ -225,7 +227,7 @@ export function LibraryPage() {
       {filteredBooks.length === 0 ? (
         <NoMatchState onClearFilters={() => { setStatusFilter('all'); setAuthorFilter(''); setSeriesFilter(''); clearSearch(); }} />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
           {filteredBooks.map((book, index) => (
             <LibraryBookCard
               key={book.id}
@@ -234,11 +236,23 @@ export function LibraryPage() {
               isMenuOpen={openMenuId === book.id}
               onMenuToggle={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === book.id ? null : book.id); }}
               onMenuClose={() => setOpenMenuId(null)}
-              onViewDetails={() => { navigate(`/books/${book.id}`); setOpenMenuId(null); }}
+              onClick={() => navigate(`/books/${book.id}`)}
               onSearchReleases={() => { setSearchBook(book); setOpenMenuId(null); }}
               onRemove={() => { deleteConfirm.requestDelete(book); setOpenMenuId(null); }}
             />
           ))}
+
+          {/* Ghost "Quick Add" card */}
+          <button
+            onClick={() => setImportOpen(true)}
+            className="group aspect-square rounded-2xl border-2 border-dashed border-border/40 hover:border-primary/50 flex flex-col items-center justify-center gap-3 transition-all duration-300 hover:bg-primary/5 hover:shadow-glow animate-fade-in-up"
+            style={{ animationDelay: `${Math.min(filteredBooks.length, 9) * 50}ms` }}
+          >
+            <div className="w-12 h-12 rounded-full bg-muted/40 group-hover:bg-primary/15 flex items-center justify-center transition-all duration-300 group-hover:scale-110">
+              <PlusIcon className="w-5 h-5 text-muted-foreground/60 group-hover:text-primary transition-colors" />
+            </div>
+            <span className="text-xs font-medium text-muted-foreground/60 group-hover:text-primary transition-colors">Quick Add</span>
+          </button>
         </div>
       )}
 
@@ -269,7 +283,7 @@ export function LibraryPage() {
 }
 
 // ============================================================================
-// Toolbar
+// Toolbar — single row default, collapsible filters
 // ============================================================================
 
 function LibraryToolbar({
@@ -279,6 +293,9 @@ function LibraryToolbar({
   statusFilter,
   onStatusFilterChange,
   statusCounts,
+  filtersOpen,
+  onFiltersToggle,
+  activeFilterCount,
   authorFilter,
   onAuthorFilterChange,
   uniqueAuthors,
@@ -296,6 +313,9 @@ function LibraryToolbar({
   statusFilter: StatusFilter;
   onStatusFilterChange: (f: StatusFilter) => void;
   statusCounts: Record<StatusFilter, number>;
+  filtersOpen: boolean;
+  onFiltersToggle: () => void;
+  activeFilterCount: number;
   authorFilter: string;
   onAuthorFilterChange: (f: string) => void;
   uniqueAuthors: string[];
@@ -314,123 +334,149 @@ function LibraryToolbar({
   };
 
   return (
-    <div className="space-y-4 animate-fade-in-up stagger-1">
-      {/* Search input */}
-      <div className="relative">
-        <SearchIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Search library..."
-          className="w-full glass-card rounded-xl pl-10 pr-10 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus-ring"
-        />
-        {searchQuery && (
-          <button
-            onClick={onSearchClear}
-            className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="Clear search"
-          >
-            <XIcon className="w-4 h-4" />
-          </button>
-        )}
-      </div>
-
-      {/* Status tabs */}
-      <div className="flex flex-wrap gap-2">
-        {filterTabs.map((tab) => {
-          const isActive = statusFilter === tab.key;
-          const count = statusCounts[tab.key];
-          return (
+    <div className="space-y-3 animate-fade-in-up stagger-1">
+      {/* Row 1: Search + status pills + filters toggle */}
+      <div className="flex items-center gap-3">
+        {/* Search input */}
+        <div className="relative flex-1 max-w-xs">
+          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Search library..."
+            className="w-full glass-card rounded-xl pl-9 pr-9 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-ring"
+          />
+          {searchQuery && (
             <button
-              key={tab.key}
-              onClick={() => onStatusFilterChange(tab.key)}
-              className={`
-                flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium
-                transition-all duration-200 focus-ring
-                ${isActive
-                  ? 'bg-primary text-primary-foreground shadow-glow'
-                  : 'glass-card text-muted-foreground hover:text-foreground hover:border-primary/30'
-                }
-              `}
+              onClick={onSearchClear}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Clear search"
             >
-              {tab.label}
-              <span className={`text-xs ${isActive ? 'opacity-75' : 'opacity-60'}`}>
-                ({count})
-              </span>
+              <XIcon className="w-3.5 h-3.5" />
             </button>
-          );
-        })}
-      </div>
-
-      {/* Filters & Sort row */}
-      <div className="flex flex-wrap items-center gap-3">
-        {/* Author filter */}
-        {uniqueAuthors.length > 1 && (
-          <div className="relative">
-            <select
-              value={authorFilter}
-              onChange={(e) => onAuthorFilterChange(e.target.value)}
-              className="appearance-none glass-card rounded-xl pl-3 pr-8 py-2 text-sm font-medium text-foreground focus-ring cursor-pointer"
-            >
-              <option value="">All Authors</option>
-              {uniqueAuthors.map((name) => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </select>
-            <ChevronDownIcon className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
-          </div>
-        )}
-
-        {/* Series filter */}
-        {uniqueSeries.length > 0 && (
-          <div className="relative">
-            <select
-              value={seriesFilter}
-              onChange={(e) => onSeriesFilterChange(e.target.value)}
-              className="appearance-none glass-card rounded-xl pl-3 pr-8 py-2 text-sm font-medium text-foreground focus-ring cursor-pointer"
-            >
-              <option value="">All Series</option>
-              {uniqueSeries.map((name) => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </select>
-            <ChevronDownIcon className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
-          </div>
-        )}
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Sort control */}
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <select
-              value={sortField}
-              onChange={(e) => onSortFieldChange(e.target.value as SortField)}
-              className="appearance-none glass-card rounded-xl pl-3 pr-8 py-2 text-sm font-medium text-foreground focus-ring cursor-pointer"
-            >
-              {Object.entries(sortLabels).map(([key, label]) => (
-                <option key={key} value={key}>{label}</option>
-              ))}
-            </select>
-            <ChevronDownIcon className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
-          </div>
-          <button
-            onClick={() => onSortDirectionChange(sortDirection === 'asc' ? 'desc' : 'asc')}
-            className="glass-card rounded-xl p-2 text-muted-foreground hover:text-foreground transition-colors focus-ring"
-            title={sortDirection === 'asc' ? 'Sort ascending' : 'Sort descending'}
-          >
-            <ArrowUpDownIcon className={`w-4 h-4 transition-transform ${sortDirection === 'asc' ? 'rotate-180' : ''}`} />
-          </button>
+          )}
         </div>
+
+        {/* Status pills */}
+        <div className="flex items-center gap-1.5">
+          {filterTabs.map((tab) => {
+            const isActive = statusFilter === tab.key;
+            const count = statusCounts[tab.key];
+            return (
+              <button
+                key={tab.key}
+                onClick={() => onStatusFilterChange(tab.key)}
+                className={`
+                  flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium
+                  transition-all duration-200 focus-ring whitespace-nowrap
+                  ${isActive
+                    ? 'bg-primary text-primary-foreground shadow-glow'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                  }
+                `}
+              >
+                {tab.label}
+                <span className={`text-[10px] ${isActive ? 'opacity-75' : 'opacity-50'}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Filters toggle */}
+        <button
+          onClick={onFiltersToggle}
+          aria-label="Toggle filters"
+          className={`
+            relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 focus-ring
+            ${filtersOpen
+              ? 'bg-muted/80 text-foreground'
+              : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+            }
+          `}
+        >
+          <ChevronDownIcon className={`w-3 h-3 transition-transform duration-200 ${filtersOpen ? 'rotate-180' : ''}`} />
+          Filters
+          {activeFilterCount > 0 && (
+            <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold">
+              {activeFilterCount}
+            </span>
+          )}
+        </button>
       </div>
+
+      {/* Row 2: Collapsible filters + sort */}
+      {filtersOpen && (
+        <div className="flex flex-wrap items-center gap-3 animate-fade-in">
+          {/* Author filter */}
+          {uniqueAuthors.length > 1 && (
+            <div className="relative">
+              <select
+                value={authorFilter}
+                onChange={(e) => onAuthorFilterChange(e.target.value)}
+                className="appearance-none glass-card rounded-lg pl-3 pr-7 py-1.5 text-xs font-medium text-foreground focus-ring cursor-pointer"
+              >
+                <option value="">All Authors</option>
+                {uniqueAuthors.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+              <ChevronDownIcon className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" />
+            </div>
+          )}
+
+          {/* Series filter */}
+          {uniqueSeries.length > 0 && (
+            <div className="relative">
+              <select
+                value={seriesFilter}
+                onChange={(e) => onSeriesFilterChange(e.target.value)}
+                className="appearance-none glass-card rounded-lg pl-3 pr-7 py-1.5 text-xs font-medium text-foreground focus-ring cursor-pointer"
+              >
+                <option value="">All Series</option>
+                {uniqueSeries.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+              <ChevronDownIcon className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" />
+            </div>
+          )}
+
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Sort control */}
+          <div className="flex items-center gap-1.5">
+            <div className="relative">
+              <select
+                value={sortField}
+                onChange={(e) => onSortFieldChange(e.target.value as SortField)}
+                className="appearance-none glass-card rounded-lg pl-3 pr-7 py-1.5 text-xs font-medium text-foreground focus-ring cursor-pointer"
+              >
+                {Object.entries(sortLabels).map(([key, label]) => (
+                  <option key={key} value={key}>{label}</option>
+                ))}
+              </select>
+              <ChevronDownIcon className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" />
+            </div>
+            <button
+              onClick={() => onSortDirectionChange(sortDirection === 'asc' ? 'desc' : 'asc')}
+              className="glass-card rounded-lg p-1.5 text-muted-foreground hover:text-foreground transition-colors focus-ring"
+              title={sortDirection === 'asc' ? 'Sort ascending' : 'Sort descending'}
+            >
+              <ArrowUpDownIcon className={`w-3.5 h-3.5 transition-transform ${sortDirection === 'asc' ? 'rotate-180' : ''}`} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ============================================================================
-// Book Card
+// Book Card — square cover, frosted overlay, clickable, border-based status
 // ============================================================================
 
 function LibraryBookCard({
@@ -439,7 +485,7 @@ function LibraryBookCard({
   isMenuOpen,
   onMenuToggle,
   onMenuClose,
-  onViewDetails,
+  onClick,
   onSearchReleases,
   onRemove,
 }: {
@@ -448,20 +494,24 @@ function LibraryBookCard({
   isMenuOpen: boolean;
   onMenuToggle: (e: React.MouseEvent) => void;
   onMenuClose: () => void;
-  onViewDetails: () => void;
+  onClick: () => void;
   onSearchReleases: () => void;
   onRemove: () => void;
 }) {
   const { hasError: imageError, onError: onImageError } = useImageError();
-  const config = bookStatusConfig[book.status] ?? bookStatusConfig.wanted;
+  const borderClass = statusBorderClass[book.status] ?? '';
 
   return (
     <div
-      className="group glass-card rounded-2xl overflow-hidden hover:shadow-card-hover hover:border-primary/30 transition-all duration-300 ease-out animate-fade-in-up"
+      role="link"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => { if (e.key === 'Enter') onClick(); }}
+      className={`group relative rounded-2xl overflow-hidden cursor-pointer shadow-card hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300 ease-out animate-fade-in-up ${borderClass}`}
       style={{ animationDelay: `${Math.min(index, 9) * 50}ms` }}
     >
-      {/* Cover */}
-      <div className="relative aspect-[3/4] bg-muted overflow-hidden">
+      {/* Cover — square */}
+      <div className="relative aspect-square bg-muted overflow-hidden">
         {book.coverUrl && !imageError ? (
           <img
             src={book.coverUrl}
@@ -471,101 +521,81 @@ function LibraryBookCard({
             onError={onImageError}
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <BookOpenIcon className="w-12 h-12 text-muted-foreground/30" />
+          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-muted to-muted/40">
+            <BookOpenIcon className="w-12 h-12 text-muted-foreground/20" />
           </div>
         )}
 
-        {/* Cover overlay gradient */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-        <div className="absolute inset-0 ring-1 ring-inset ring-black/10" />
+        {/* Vignette + gradient fade toward overlay */}
+        <div className="absolute inset-0 ring-1 ring-inset ring-white/5" />
+        <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/60 via-black/20 to-transparent pointer-events-none" />
 
-        {/* Status badge */}
-        <div className="absolute top-3 left-3 flex items-center gap-1.5">
-          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold backdrop-blur-md bg-black/40 text-white`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${config.dotClass}`} />
-            {config.label}
-          </span>
-          {book.enrichmentStatus && book.enrichmentStatus !== 'enriched' && (
-            <span className={`px-2 py-1 rounded-lg text-[10px] font-medium backdrop-blur-md bg-black/40 ${
-              book.enrichmentStatus === 'failed' ? 'text-red-400'
-                : book.enrichmentStatus === 'pending' ? 'text-amber-400'
-                : 'text-white/60'
-            }`}>
-              {book.enrichmentStatus}
-            </span>
-          )}
-        </div>
-
-        {/* Context menu button */}
-        <div className="absolute top-3 right-3">
+        {/* Context menu — hover-reveal only */}
+        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
           <button
-            onClick={onMenuToggle}
-            className={`p-2 rounded-lg backdrop-blur-md text-white/80 hover:text-white transition-all focus-ring ${isMenuOpen ? 'bg-black/70 text-white' : 'bg-black/40 hover:bg-black/60'}`}
+            onClick={(e) => { e.stopPropagation(); onMenuToggle(e); }}
+            className={`p-1.5 rounded-lg backdrop-blur-md text-white/80 hover:text-white transition-all focus-ring ${isMenuOpen ? 'bg-black/70 text-white opacity-100' : 'bg-black/40 hover:bg-black/60'}`}
             aria-label="Book options"
             aria-expanded={isMenuOpen}
             aria-haspopup="true"
           >
-            <MoreVerticalIcon className="w-4 h-4" />
+            <MoreVerticalIcon className="w-3.5 h-3.5" />
           </button>
 
           {isMenuOpen && (
             <BookContextMenu
-              onViewDetails={onViewDetails}
-              onSearchReleases={onSearchReleases}
-              onRemove={onRemove}
+              onSearchReleases={() => { onSearchReleases(); }}
+              onRemove={() => { onRemove(); }}
               onClose={onMenuClose}
             />
           )}
         </div>
 
-        {/* Series badge */}
-        {book.seriesName && (
-          <div className="absolute bottom-3 left-3 right-3">
-            <span
-              className="inline-block max-w-full truncate px-2.5 py-1 rounded-lg text-xs font-medium backdrop-blur-md bg-black/40 text-white/90"
-              title={`${book.seriesName}${book.seriesPosition != null ? ` #${book.seriesPosition}` : ''}`}
-            >
-              {book.seriesName}
-              {book.seriesPosition != null && ` #${book.seriesPosition}`}
-            </span>
+        {/* Frosted info strip — always visible at bottom */}
+        <div className="absolute inset-x-0 bottom-0 backdrop-blur-md bg-black/30 border-t border-white/5 transition-all duration-300 ease-out">
+          {/* Default: title + author */}
+          <div className="px-3 py-2">
+            <h3 className="text-sm font-semibold text-white leading-tight truncate drop-shadow-sm">{book.title}</h3>
+            <p className="text-xs text-white/70 truncate mt-0.5">{book.author?.name}</p>
           </div>
-        )}
-      </div>
 
-      {/* Info */}
-      <div className="p-4">
-        <h3 className="font-display text-base font-semibold leading-tight line-clamp-2 group-hover:text-primary transition-colors">
-          {book.title}
-        </h3>
-        {book.author?.name && (
-          <p className="text-sm text-muted-foreground mt-1 truncate">
-            {book.author.name}
-          </p>
-        )}
+          {/* Hover expand: narrator + series */}
+          {(book.narrator || book.seriesName) && (
+            <div className="max-h-0 opacity-0 group-hover:max-h-16 group-hover:opacity-100 overflow-hidden transition-all duration-300 ease-out">
+              <div className="px-3 pb-2 flex flex-wrap gap-x-3 gap-y-0.5">
+                {book.narrator && (
+                  <p className="text-[11px] text-white/50 truncate">{book.narrator}</p>
+                )}
+                {book.seriesName && (
+                  <p className="text-[11px] text-amber-400/80 truncate">
+                    {book.seriesName}{book.seriesPosition != null && ` #${book.seriesPosition}`}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
 // ============================================================================
-// Context Menu
+// Context Menu — removed "View Details" (card click handles it)
 // ============================================================================
 
 function BookContextMenu({
-  onViewDetails,
   onSearchReleases,
   onRemove,
   onClose,
 }: {
-  onViewDetails: () => void;
   onSearchReleases: () => void;
   onRemove: () => void;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [focusIndex, setFocusIndex] = useState(0);
-  const actions = [onViewDetails, onSearchReleases, onRemove];
+  const actions = [onSearchReleases, onRemove];
 
   useEffect(() => {
     const buttons = menuRef.current?.querySelectorAll<HTMLButtonElement>('button');
@@ -598,18 +628,10 @@ function BookContextMenu({
     <div
       ref={menuRef}
       role="menu"
-      className="absolute right-0 top-full mt-1 w-48 glass-card rounded-xl overflow-hidden shadow-lg z-10 animate-fade-in"
+      className="absolute right-0 top-full mt-1 w-44 glass-card rounded-xl overflow-hidden shadow-lg z-10 animate-fade-in"
       onClick={(e) => e.stopPropagation()}
       onKeyDown={handleKeyDown}
     >
-      <button
-        role="menuitem"
-        onClick={onViewDetails}
-        className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-left hover:bg-muted/80 transition-colors focus:bg-muted/80 focus:outline-none"
-      >
-        <EyeIcon className="w-4 h-4 text-muted-foreground" />
-        View Details
-      </button>
       <button
         role="menuitem"
         onClick={onSearchReleases}
@@ -663,8 +685,8 @@ function EmptyLibraryState({ onImport }: { onImport: () => void }) {
           onClick={onImport}
           className="inline-flex items-center gap-2 px-6 py-3 glass-card font-medium rounded-xl hover:border-primary/30 hover:text-primary transition-all duration-200 focus-ring"
         >
-          <FolderIcon className="w-4 h-4" />
-          Import Existing
+          <PlusIcon className="w-4 h-4" />
+          Quick Add
         </button>
       </div>
     </div>

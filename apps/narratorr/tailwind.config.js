@@ -65,6 +65,13 @@ export default {
         'fade-in': 'fade-in 0.3s ease-out forwards',
         'slide-in-right': 'slide-in-right 0.4s ease-out forwards',
         'pulse-glow': 'pulse-glow 2s ease-in-out infinite',
+        'border-pulse': 'border-pulse 2s ease-in-out infinite',
+      },
+      keyframes: {
+        'border-pulse': {
+          '0%, 100%': { borderLeftColor: 'rgb(59 130 246 / 0.5)' },
+          '50%': { borderLeftColor: 'rgb(59 130 246 / 1)' },
+        },
       },
     },
   },
