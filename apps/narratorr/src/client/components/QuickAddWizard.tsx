@@ -2,9 +2,11 @@ import { useState, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, formatBytes, type BookMetadata, type ImportConfirmItem, type SingleBookResult } from '@/lib/api';
+import { isBookInLibrary } from '@/lib/helpers';
 import { queryKeys } from '@/lib/queryKeys';
+import { useLibrary } from '@/hooks/useLibrary';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
-import { FolderIcon, SearchIcon, LoadingSpinner, CheckCircleIcon, AlertCircleIcon, BookOpenIcon, XIcon, HeadphonesIcon } from '@/components/icons';
+import { FolderIcon, SearchIcon, LoadingSpinner, CheckCircleIcon, AlertCircleIcon, BookOpenIcon, XIcon, HeadphonesIcon, PencilIcon } from '@/components/icons';
 
 interface QuickAddWizardProps {
   isOpen: boolean;
@@ -18,6 +20,7 @@ const STEP_LABELS = ['Locate', 'Verify', 'Import'];
 
 export function QuickAddWizard({ isOpen, onClose }: QuickAddWizardProps) {
   const queryClient = useQueryClient();
+  const { data: libraryBooks } = useLibrary();
   const modalRef = useRef<HTMLDivElement>(null);
   const [step, setStep] = useState<Step>('path');
   const [scanPath, setScanPath] = useState('');
@@ -123,15 +126,11 @@ export function QuickAddWizard({ isOpen, onClose }: QuickAddWizardProps) {
 
   const applyMetadata = (meta: BookMetadata) => {
     setSelectedMetadata(meta);
-    if (!title || title === scanResult?.book.parsedTitle) {
-      setTitle(meta.title);
-    }
-    if (!author && meta.authors?.[0]?.name) {
+    setTitle(meta.title);
+    if (meta.authors?.[0]?.name) {
       setAuthor(meta.authors[0].name);
     }
-    if (!series && meta.series?.[0]?.name) {
-      setSeries(meta.series[0].name);
-    }
+    setSeries(meta.series?.[0]?.name ?? '');
   };
 
   const handleScan = () => {
@@ -284,7 +283,15 @@ export function QuickAddWizard({ isOpen, onClose }: QuickAddWizardProps) {
                 <div className="flex-1 min-w-0 py-0.5">
                   {selectedMetadata ? (
                     <div className="space-y-1.5">
-                      <p className="text-sm font-semibold leading-tight line-clamp-2">{selectedMetadata.title}</p>
+                      <div className="flex items-start gap-2">
+                        <p className="text-sm font-semibold leading-tight line-clamp-2 flex-1">{selectedMetadata.title}</p>
+                        {isBookInLibrary(selectedMetadata, libraryBooks) && (
+                          <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/20">
+                            <CheckCircleIcon className="w-3 h-3" />
+                            In library
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-muted-foreground truncate">
                         {selectedMetadata.authors?.map(a => a.name).join(', ')}
                       </p>
@@ -386,8 +393,20 @@ export function QuickAddWizard({ isOpen, onClose }: QuickAddWizardProps) {
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="text-xs font-medium truncate group-hover:text-primary transition-colors">{meta.title}</p>
-                          <p className="text-xs text-muted-foreground/60 truncate">{meta.authors?.map(a => a.name).join(', ')}</p>
+                          <p className="text-xs text-muted-foreground/60 truncate flex items-center gap-1">
+                            <PencilIcon className="w-2.5 h-2.5 shrink-0" />
+                            {meta.authors?.map(a => a.name).join(', ')}
+                          </p>
+                          {meta.narrators?.length ? (
+                            <p className="text-xs text-muted-foreground/40 truncate flex items-center gap-1">
+                              <HeadphonesIcon className="w-2.5 h-2.5 shrink-0" />
+                              {meta.narrators.join(', ')}
+                            </p>
+                          ) : null}
                         </div>
+                        {isBookInLibrary(meta, libraryBooks) && (
+                          <CheckCircleIcon className="w-3.5 h-3.5 shrink-0 text-emerald-400/70" />
+                        )}
                       </button>
                     ))}
                   </div>
