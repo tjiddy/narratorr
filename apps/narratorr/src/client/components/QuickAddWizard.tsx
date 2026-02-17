@@ -107,15 +107,14 @@ export function QuickAddWizard({ isOpen, onClose }: QuickAddWizardProps) {
     mutationFn: (item: ImportConfirmItem) => api.importSingleBook(item),
     onSuccess: (result) => {
       if (result.imported) {
-        setImportSuccess(true);
-        setImportError(null);
         queryClient.invalidateQueries({ queryKey: queryKeys.books() });
         toast.success(`Added "${title}" to library`);
+        handleClose();
       } else {
         setImportSuccess(false);
         setImportError(result.error === 'duplicate' ? 'This book is already in your library.' : 'Import failed.');
+        setStep('done');
       }
-      setStep('done');
     },
     onError: (error: Error) => {
       setImportSuccess(false);
@@ -166,7 +165,7 @@ export function QuickAddWizard({ isOpen, onClose }: QuickAddWizardProps) {
   const currentStep = STEP_INDEX[step];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in" onClick={handleClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
         ref={modalRef}
@@ -174,7 +173,6 @@ export function QuickAddWizard({ isOpen, onClose }: QuickAddWizardProps) {
         aria-modal="true"
         aria-label="Quick Add audiobook"
         className="relative w-full max-w-xl flex flex-col glass-card rounded-2xl shadow-2xl animate-fade-in-up"
-        onClick={(e) => e.stopPropagation()}
         tabIndex={-1}
       >
         {/* Header */}
@@ -264,7 +262,7 @@ export function QuickAddWizard({ isOpen, onClose }: QuickAddWizardProps) {
               {/* Metadata preview card */}
               <div className="flex gap-4">
                 {/* Cover */}
-                <div className="w-[88px] h-[120px] shrink-0 rounded-lg overflow-hidden bg-muted/50 relative">
+                <div className="w-[100px] h-[100px] shrink-0 rounded-lg overflow-hidden bg-muted/50 relative">
                   {selectedMetadata?.coverUrl ? (
                     <img
                       src={selectedMetadata.coverUrl}

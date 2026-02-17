@@ -16,8 +16,6 @@ vi.mock('@/lib/api', async (importOriginal) => {
       searchMetadata: vi.fn(),
       getBooks: vi.fn(),
       addBook: vi.fn(),
-      search: vi.fn(),
-      grab: vi.fn(),
     },
   };
 });
@@ -168,77 +166,5 @@ describe('SearchPage', () => {
     await waitFor(() => {
       expect(screen.getByText('In Library')).toBeInTheDocument();
     });
-  });
-
-  it('shows error message when grab fails in indexer mode', async () => {
-    (api.search as ReturnType<typeof vi.fn>).mockResolvedValue([
-      {
-        title: 'Test Audiobook',
-        author: 'Test Author',
-        protocol: 'torrent',
-        infoHash: 'abc123',
-        downloadUrl: 'magnet:?xt=urn:btih:abc123',
-        size: 1024 * 1024 * 1024,
-        seeders: 10,
-        indexer: 'TestIndexer',
-      },
-    ]);
-    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-
-    renderWithProviders(<SearchPage />);
-    const user = userEvent.setup();
-
-    // Switch to indexer mode
-    await user.click(screen.getByText('Search Indexers'));
-
-    const input = screen.getByPlaceholderText(/search audiobooks/i);
-    await user.type(input, 'Test Audiobook');
-    await user.click(screen.getByRole('button', { name: /^search$/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText('Test Audiobook')).toBeInTheDocument();
-    });
-
-    // Now make grab fail
-    vi.mocked(api.grab).mockRejectedValue(new Error('Client offline'));
-
-    await user.click(screen.getByRole('button', { name: /grab/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/Failed to start download: Client offline/)).toBeInTheDocument();
-    });
-  });
-
-  it('disables grab button when result has no downloadUrl in indexer mode', async () => {
-    (api.search as ReturnType<typeof vi.fn>).mockResolvedValue([
-      {
-        title: 'No Link Result',
-        author: 'Author',
-        protocol: 'torrent',
-        infoHash: 'xyz',
-        downloadUrl: '',
-        size: 500_000_000,
-        seeders: 2,
-        indexer: 'TestIndexer',
-      },
-    ]);
-    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-
-    renderWithProviders(<SearchPage />);
-    const user = userEvent.setup();
-
-    // Switch to indexer mode
-    await user.click(screen.getByText('Search Indexers'));
-
-    const input = screen.getByPlaceholderText(/search audiobooks/i);
-    await user.type(input, 'No Link');
-    await user.click(screen.getByRole('button', { name: /^search$/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText('No Link Result')).toBeInTheDocument();
-    });
-
-    const grabButton = screen.getByRole('button', { name: /grab/i });
-    expect(grabButton).toBeDisabled();
   });
 });

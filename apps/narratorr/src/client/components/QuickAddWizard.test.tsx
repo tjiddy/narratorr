@@ -127,7 +127,7 @@ describe('QuickAddWizard', () => {
     });
   });
 
-  it('imports book with verified metadata', async () => {
+  it('imports book with verified metadata and closes modal', async () => {
     vi.mocked(api.scanSingleBook).mockResolvedValue(mockScanResult);
     vi.mocked(api.importSingleBook).mockResolvedValue({
       imported: true,
@@ -135,8 +135,9 @@ describe('QuickAddWizard', () => {
       enriched: true,
     });
     const user = userEvent.setup();
+    const onClose = vi.fn();
 
-    renderWithProviders(<QuickAddWizard isOpen={true} onClose={vi.fn()} />);
+    renderWithProviders(<QuickAddWizard isOpen={true} onClose={onClose} />);
 
     await user.type(screen.getByPlaceholderText('/path/to/audiobook'), '/books');
     await user.click(screen.getByText('Scan'));
@@ -148,17 +149,20 @@ describe('QuickAddWizard', () => {
     await user.click(screen.getByRole('button', { name: 'Import' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Added to Library')).toBeInTheDocument();
+      expect(api.importSingleBook).toHaveBeenCalledWith(
+        expect.objectContaining({
+          path: '/audiobooks/Author/Title',
+          title: 'The Way of Kings',
+          authorName: 'Brandon Sanderson',
+          asin: 'B003P2WO5E',
+        }),
+      );
     });
 
-    expect(api.importSingleBook).toHaveBeenCalledWith(
-      expect.objectContaining({
-        path: '/audiobooks/Author/Title',
-        title: 'The Way of Kings',
-        authorName: 'Brandon Sanderson',
-        asin: 'B003P2WO5E',
-      }),
-    );
+    // On success, modal should close
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalled();
+    });
   });
 
   it('shows duplicate error in done step', async () => {
