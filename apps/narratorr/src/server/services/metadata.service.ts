@@ -2,7 +2,6 @@ import type { FastifyBaseLogger } from 'fastify';
 import {
   HardcoverProvider,
   AudnexusProvider,
-  GoogleBooksProvider,
   AudibleProvider,
   RateLimitError,
   type MetadataProvider,
@@ -49,12 +48,6 @@ export class MetadataService {
     if (apiKey) {
       this.providers.push(new HardcoverProvider({ apiKey }));
       this.log.info('Metadata provider loaded: Hardcover');
-    }
-
-    const googleKey = process.env.GOOGLE_BOOKS_API_KEY;
-    if (googleKey) {
-      this.providers.push(new GoogleBooksProvider({ apiKey: googleKey }));
-      this.log.info('Metadata provider loaded: Google Books');
     }
 
     this.audnexus = new AudnexusProvider();

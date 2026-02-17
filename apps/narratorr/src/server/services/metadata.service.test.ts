@@ -37,20 +37,6 @@ const mockAudnexus = {
   getBook: vi.fn().mockResolvedValue(null),
 };
 
-const mockGoogleProvider = {
-  name: 'Google Books',
-  type: 'google-books',
-  search: vi.fn().mockResolvedValue({ books: [], authors: [], series: [] }),
-  searchAuthors: vi.fn().mockResolvedValue([]),
-  searchBooks: vi.fn().mockResolvedValue([]),
-  getAuthor: vi.fn().mockResolvedValue(null),
-  getAuthorBooks: vi.fn().mockResolvedValue([]),
-  getBook: vi.fn().mockResolvedValue(null),
-  getSeries: vi.fn().mockResolvedValue(null),
-  searchSeries: vi.fn().mockResolvedValue([]),
-  test: vi.fn().mockResolvedValue({ success: true }),
-};
-
 vi.mock('@narratorr/core', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('@narratorr/core')>();
@@ -59,7 +45,6 @@ vi.mock('@narratorr/core', async (importOriginal) => {
     AudibleProvider: vi.fn().mockImplementation(() => mockAudibleProvider),
     HardcoverProvider: vi.fn().mockImplementation(() => mockHardcoverProvider),
     AudnexusProvider: vi.fn().mockImplementation(() => mockAudnexus),
-    GoogleBooksProvider: vi.fn().mockImplementation(() => mockGoogleProvider),
   };
 });
 
@@ -269,37 +254,6 @@ describe('MetadataService', () => {
     });
   });
 
-  describe('Google Books registration', () => {
-    it('registers Google Books provider when GOOGLE_BOOKS_API_KEY is set', () => {
-      vi.stubEnv('GOOGLE_BOOKS_API_KEY', 'test-google-key');
-      const googleService = new MetadataService(createMockLogger() as any);
-
-      const providers = googleService.getProviders();
-      expect(providers).toHaveLength(3);
-      expect(providers[2]).toEqual({ name: 'Google Books', type: 'google-books' });
-    });
-
-    it('does not register Google Books when GOOGLE_BOOKS_API_KEY is not set', () => {
-      vi.stubEnv('GOOGLE_BOOKS_API_KEY', '');
-      const noGoogleService = new MetadataService(createMockLogger() as any);
-
-      const providers = noGoogleService.getProviders();
-      expect(providers).toHaveLength(2); // Audible + Hardcover
-      expect(providers.find((p) => p.type === 'google-books')).toBeUndefined();
-    });
-
-    it('includes Google Books in testProviders results', async () => {
-      vi.stubEnv('GOOGLE_BOOKS_API_KEY', 'test-google-key');
-      const googleService = new MetadataService(createMockLogger() as any);
-
-      const results = await googleService.testProviders();
-      expect(results).toHaveLength(3);
-      expect(results[2].name).toBe('Google Books');
-      expect(results[2].type).toBe('google-books');
-      expect(results[2].success).toBe(true);
-    });
-  });
-
   describe('rate limiting', () => {
     it('returns warnings when provider throws RateLimitError on search', async () => {
       mockAudibleProvider.searchBooks.mockRejectedValueOnce(new RateLimitError(30000, 'Audible.com'));
@@ -430,7 +384,6 @@ describe('MetadataService', () => {
   describe('no API keys', () => {
     it('still has Audible provider when no API keys are set', async () => {
       vi.stubEnv('HARDCOVER_API_KEY', '');
-      vi.stubEnv('GOOGLE_BOOKS_API_KEY', '');
       const minService = new MetadataService(createMockLogger() as any);
 
       // Audible is always available (no API key required)
