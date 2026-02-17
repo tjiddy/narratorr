@@ -1,7 +1,7 @@
 # Project Context Cache
 
 ## Recent Changes
-- PR #134 — #131 Increase test coverage: 726 new edge case / error path tests across 41 files covering core adapters, server services/jobs, routes, and frontend. Total: 581 → 1307 tests. Test-only, no production code changes.
+- PR #136 — #135 Remove Google Books metadata provider: deleted provider, test, fixtures, MSW handlers; removed all references from core index, MetadataService, and tests (807 lines removed)
 - PR #123 — #122 Enrich directory-scanned books with audio file metadata: extracted shared `enrichBookFromAudio` utility from ImportService, wired into LibraryScanService.confirmImport(), expanded ImportResult with enrichment counts, updated modal summary
 - PR #120 — #63 Prowlarr integration: ProwlarrClient in core, ProwlarrSyncService with preview/apply pattern, 5 API routes, ProwlarrImport UI with segmented sync mode toggle and animated preview table, source tracking via `source`/`sourceIndexerId` columns, 30 new tests
 - PR #116 — #64 Show protocol badges: New ProtocolBadge component (emerald torrent, violet usenet), wired into SearchReleasesModal and ActivityPage metadata rows, 4 new tests

@@ -1,17 +1,17 @@
 # Workflow Log
 
-## #131 Increase test coverage: error paths, edge cases — 2026-02-16
+## #135 Remove Google Books metadata provider — 2026-02-17
 **Skill path:** /implement → /claim (with elaborate subagent) → /handoff
-**Outcome:** success — PR #134
+**Outcome:** success — PR #136
 
 ### Workflow experience
-- What went smoothly: Parallelized agents for core/server/frontend work well. Background agents for services and jobs ran concurrently while route tests were written in main context.
-- Friction / issues encountered: Background agents used `mockDbChain` spread pattern `{...mockDbChain(), then: reject}` which doesn't work — chain methods return internal object, bypassing custom `.then`. Fixed with `mockImplementation(() => { throw ... })`. Also frontend agent produced 3 typecheck errors that needed manual fix.
+- What went smoothly: Straightforward deletion task. Subagent validation was fast, all files identified correctly. Single commit, all gates passed first try.
+- Friction / issues encountered: None — clean pass.
 
 ### Token efficiency
-- Highest-token actions: Reading all 35+ test files and their corresponding source files
-- Avoidable waste: Background agents writing broken mock patterns that needed manual fixing
-- Suggestions: Add a `mockRejectionChain(error)` helper to test helpers to avoid this pattern bug
+- Highest-token actions: Explore subagent scanning for all Google Books references
+- Avoidable waste: None
+- Suggestions: For pure deletion tasks, could skip the elaborate subagent entirely
 
 ## #122 Enrich directory-scanned books with audio file metadata — 2026-02-16
 **Skill path:** /implement → /claim (with elaborate subagent) → /handoff

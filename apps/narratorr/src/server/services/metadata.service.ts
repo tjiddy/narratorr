@@ -1,6 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
 import {
-  HardcoverProvider,
   AudnexusProvider,
   AudibleProvider,
   RateLimitError,
@@ -43,12 +42,6 @@ export class MetadataService {
     const region = config?.audibleRegion ?? process.env.AUDIBLE_REGION ?? 'us';
     this.providers.push(new AudibleProvider({ region }));
     this.log.info({ region }, 'Metadata provider loaded: Audible');
-
-    const apiKey = process.env.HARDCOVER_API_KEY;
-    if (apiKey) {
-      this.providers.push(new HardcoverProvider({ apiKey }));
-      this.log.info('Metadata provider loaded: Hardcover');
-    }
 
     this.audnexus = new AudnexusProvider();
     this.log.info('Audnexus enrichment provider loaded');
@@ -116,11 +109,33 @@ export class MetadataService {
   }
 
   async getAuthor(id: string): Promise<AuthorMetadata | null> {
-    return this.withThrottle('getAuthor', (provider) => provider.getAuthor(id), null);
+    if (this.isRateLimited('Audnexus')) {
+      this.log.warn({ id }, 'Author lookup skipped — Audnexus rate limited');
+      return null;
+    }
+
+    try {
+      await this.throttle.acquire();
+      return await this.audnexus.getAuthor(id);
+    } catch (error) {
+      if (error instanceof RateLimitError) {
+        this.setRateLimited(error.provider, error.retryAfterMs);
+        return null;
+      }
+      this.log.warn(error, 'Audnexus getAuthor failed');
+      return null;
+    }
   }
 
   async getAuthorBooks(id: string): Promise<BookMetadata[]> {
-    return this.withThrottle('getAuthorBooks', (provider) => provider.getAuthorBooks(id), []);
+    // Resolve author name via Audnexus, then search Audible by name
+    const author = await this.getAuthor(id);
+    if (!author?.name) {
+      this.log.debug({ id }, 'Cannot fetch author books — author not found');
+      return [];
+    }
+
+    return this.withThrottle('searchBooks', (provider) => provider.searchBooks(author.name), []);
   }
 
   async getBook(id: string): Promise<BookMetadata | null> {

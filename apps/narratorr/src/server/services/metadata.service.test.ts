@@ -17,24 +17,11 @@ const mockAudibleProvider = {
   test: vi.fn().mockResolvedValue({ success: true }),
 };
 
-const mockHardcoverProvider = {
-  name: 'Hardcover',
-  type: 'hardcover',
-  search: vi.fn().mockResolvedValue({ books: [], authors: [], series: [] }),
-  searchAuthors: vi.fn().mockResolvedValue([]),
-  searchBooks: vi.fn().mockResolvedValue([]),
-  getAuthor: vi.fn().mockResolvedValue(null),
-  getAuthorBooks: vi.fn().mockResolvedValue([]),
-  getBook: vi.fn().mockResolvedValue(null),
-  getSeries: vi.fn().mockResolvedValue(null),
-  searchSeries: vi.fn().mockResolvedValue([]),
-  test: vi.fn().mockResolvedValue({ success: true }),
-};
-
 const mockAudnexus = {
   name: 'Audnexus',
   type: 'audnexus',
   getBook: vi.fn().mockResolvedValue(null),
+  getAuthor: vi.fn().mockResolvedValue(null),
 };
 
 vi.mock('@narratorr/core', async (importOriginal) => {
@@ -43,7 +30,6 @@ vi.mock('@narratorr/core', async (importOriginal) => {
   return {
     ...actual,
     AudibleProvider: vi.fn().mockImplementation(() => mockAudibleProvider),
-    HardcoverProvider: vi.fn().mockImplementation(() => mockHardcoverProvider),
     AudnexusProvider: vi.fn().mockImplementation(() => mockAudnexus),
   };
 });
@@ -53,7 +39,6 @@ describe('MetadataService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubEnv('HARDCOVER_API_KEY', 'test-key');
     // Reset mock return values
     mockAudibleProvider.search.mockResolvedValue({ books: [], authors: [], series: [] });
     mockAudibleProvider.searchAuthors.mockResolvedValue([]);
@@ -63,15 +48,8 @@ describe('MetadataService', () => {
     mockAudibleProvider.getBook.mockResolvedValue(null);
     mockAudibleProvider.getSeries.mockResolvedValue(null);
     mockAudibleProvider.test.mockResolvedValue({ success: true });
-    mockHardcoverProvider.search.mockResolvedValue({ books: [], authors: [], series: [] });
-    mockHardcoverProvider.searchAuthors.mockResolvedValue([]);
-    mockHardcoverProvider.searchBooks.mockResolvedValue([]);
-    mockHardcoverProvider.getAuthor.mockResolvedValue(null);
-    mockHardcoverProvider.getAuthorBooks.mockResolvedValue([]);
-    mockHardcoverProvider.getBook.mockResolvedValue(null);
-    mockHardcoverProvider.getSeries.mockResolvedValue(null);
-    mockHardcoverProvider.test.mockResolvedValue({ success: true });
     mockAudnexus.getBook.mockResolvedValue(null);
+    mockAudnexus.getAuthor.mockResolvedValue(null);
     service = new MetadataService(createMockLogger() as any);
   });
 
@@ -130,17 +108,36 @@ describe('MetadataService', () => {
   });
 
   describe('getAuthor', () => {
-    it('returns null when not found', async () => {
-      const result = await service.getAuthor('15200');
+    it('routes to Audnexus and returns author when found', async () => {
+      const mockAuthor = { name: 'Brandon Sanderson', asin: 'B001IGFHW6' };
+      mockAudnexus.getAuthor.mockResolvedValueOnce(mockAuthor);
+
+      const result = await service.getAuthor('B001IGFHW6');
+      expect(result).toEqual(mockAuthor);
+      expect(mockAudnexus.getAuthor).toHaveBeenCalledWith('B001IGFHW6');
+      expect(mockAudibleProvider.getAuthor).not.toHaveBeenCalled();
+    });
+
+    it('returns null when Audnexus has no data', async () => {
+      const result = await service.getAuthor('UNKNOWN');
+      expect(result).toBeNull();
+      expect(mockAudnexus.getAuthor).toHaveBeenCalledWith('UNKNOWN');
+    });
+
+    it('returns null on Audnexus error', async () => {
+      mockAudnexus.getAuthor.mockRejectedValueOnce(new Error('Network error'));
+
+      const result = await service.getAuthor('B001IGFHW6');
       expect(result).toBeNull();
     });
 
-    it('returns author when found', async () => {
-      const mockAuthor = { name: 'Brandon Sanderson' };
-      mockAudibleProvider.getAuthor.mockResolvedValueOnce(mockAuthor);
+    it('returns null when Audnexus is rate limited', async () => {
+      mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(60000, 'Audnexus'));
+      await expect(service.enrichBook('B000FIRST')).rejects.toThrow(RateLimitError);
 
-      const result = await service.getAuthor('15200');
-      expect(result).toEqual(mockAuthor);
+      const result = await service.getAuthor('B001IGFHW6');
+      expect(result).toBeNull();
+      expect(mockAudnexus.getAuthor).not.toHaveBeenCalled();
     });
   });
 
@@ -228,29 +225,24 @@ describe('MetadataService', () => {
   });
 
   describe('provider registration', () => {
-    it('always registers Audible as first provider', () => {
+    it('registers Audible as the only provider', () => {
       const providers = service.getProviders();
+      expect(providers).toHaveLength(1);
       expect(providers[0]).toEqual({ name: 'Audible.com', type: 'audible' });
-    });
-
-    it('registers Hardcover when API key is set', () => {
-      const providers = service.getProviders();
-      expect(providers).toContainEqual({ name: 'Hardcover', type: 'hardcover' });
     });
 
     it('registers Audible with custom region', () => {
       const ukService = new MetadataService(createMockLogger() as any, { audibleRegion: 'uk' });
       const providers = ukService.getProviders();
+      expect(providers).toHaveLength(1);
       expect(providers[0].type).toBe('audible');
     });
 
-    it('testProviders includes Audible and Hardcover', async () => {
+    it('testProviders includes only Audible', async () => {
       const results = await service.testProviders();
-      expect(results.length).toBeGreaterThanOrEqual(2);
+      expect(results).toHaveLength(1);
       expect(results[0].name).toBe('Audible.com');
       expect(results[0].type).toBe('audible');
-      expect(results[1].name).toBe('Hardcover');
-      expect(results[1].type).toBe('hardcover');
     });
   });
 
@@ -283,15 +275,18 @@ describe('MetadataService', () => {
       expect(result).toBeNull();
     });
 
-    it('skips non-search methods during backoff window', async () => {
+    it('skips non-search methods during Audible backoff window', async () => {
       mockAudibleProvider.searchBooks.mockRejectedValueOnce(new RateLimitError(60000, 'Audible.com'));
       await service.search('test');
 
       expect(await service.getBook('123')).toBeNull();
-      expect(await service.getAuthor('123')).toBeNull();
-
       expect(mockAudibleProvider.getBook).not.toHaveBeenCalled();
-      expect(mockAudibleProvider.getAuthor).not.toHaveBeenCalled();
+
+      // getAuthor uses Audnexus, not Audible — should still work during Audible backoff
+      const mockAuthor = { name: 'Test Author', asin: '123' };
+      mockAudnexus.getAuthor.mockResolvedValueOnce(mockAuthor);
+      expect(await service.getAuthor('123')).toEqual(mockAuthor);
+      expect(mockAudnexus.getAuthor).toHaveBeenCalledWith('123');
     });
 
     it('skips enrichBook during Audnexus backoff window', async () => {
@@ -336,25 +331,29 @@ describe('MetadataService', () => {
   });
 
   describe('getAuthorBooks', () => {
-    it('delegates to the provider', async () => {
-      const mockBooks = [{ title: 'Book 1' }, { title: 'Book 2' }];
-      mockAudibleProvider.getAuthorBooks.mockResolvedValueOnce(mockBooks);
+    it('resolves author name via Audnexus then searches Audible', async () => {
+      const mockAuthor = { name: 'Brandon Sanderson', asin: 'B001IGFHW6' };
+      const mockBooks = [{ title: 'The Way of Kings' }, { title: 'Mistborn' }];
+      mockAudnexus.getAuthor.mockResolvedValueOnce(mockAuthor);
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce(mockBooks);
 
-      const result = await service.getAuthorBooks('15200');
+      const result = await service.getAuthorBooks('B001IGFHW6');
       expect(result).toEqual(mockBooks);
+      expect(mockAudnexus.getAuthor).toHaveBeenCalledWith('B001IGFHW6');
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('Brandon Sanderson');
     });
 
-    it('returns empty array when provider returns empty', async () => {
-      mockAudibleProvider.getAuthorBooks.mockResolvedValueOnce([]);
-
-      const result = await service.getAuthorBooks('15200');
+    it('returns empty array when author not found in Audnexus', async () => {
+      const result = await service.getAuthorBooks('UNKNOWN');
       expect(result).toEqual([]);
+      expect(mockAudibleProvider.searchBooks).not.toHaveBeenCalled();
     });
 
-    it('returns fallback on error', async () => {
-      mockAudibleProvider.getAuthorBooks.mockRejectedValueOnce(new Error('fail'));
+    it('returns empty array when Audible search fails', async () => {
+      mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'B123' });
+      mockAudibleProvider.searchBooks.mockRejectedValueOnce(new Error('fail'));
 
-      const result = await service.getAuthorBooks('15200');
+      const result = await service.getAuthorBooks('B123');
       expect(result).toEqual([]);
     });
   });
@@ -383,7 +382,6 @@ describe('MetadataService', () => {
 
   describe('no API keys', () => {
     it('still has Audible provider when no API keys are set', async () => {
-      vi.stubEnv('HARDCOVER_API_KEY', '');
       const minService = new MetadataService(createMockLogger() as any);
 
       // Audible is always available (no API key required)

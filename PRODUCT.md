@@ -18,7 +18,7 @@ Search for a book → Add to library as "wanted"
 
 - **Not a media server.** Narratorr does not play audiobooks. Audiobookshelf, Plex, Jellyfin, or whatever the user prefers handles playback.
 - **Not a library browser.** The library view exists to manage acquisition status (wanted, downloading, imported), not to be a rich browsing experience. The media server does that better.
-- **Not an audiobook database.** Metadata is fetched from providers (Hardcover, Audnexus) to support search, matching, and file organization. Narratorr is not trying to be Goodreads or Hardcover.
+- **Not an audiobook database.** Metadata is fetched from providers (Audible, Audnexus) to support search, matching, and file organization. Narratorr is not trying to be Goodreads or a metadata catalog.
 
 ## Where It Fits in the Stack
 
