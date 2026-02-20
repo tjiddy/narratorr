@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, type Mock } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { api } from '@/lib/api';
 import { BookDetails } from './BookDetails';
 import type { BookWithAuthor } from '@/lib/api';
 import type { MetadataBook } from './helpers';
@@ -10,6 +11,18 @@ vi.mock('@/components/SearchReleasesModal', () => ({
   SearchReleasesModal: ({ isOpen }: { isOpen: boolean }) =>
     isOpen ? <div role="dialog">Search Modal</div> : null,
 }));
+
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  const actualApi = (actual as { api: Record<string, unknown> }).api;
+  return {
+    ...actual,
+    api: {
+      ...actualApi,
+      getBookFiles: vi.fn(),
+    },
+  };
+});
 
 function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
   return {
@@ -179,6 +192,24 @@ describe('BookDetails', () => {
 
       expect(screen.getByText('Audio Quality')).toBeInTheDocument();
       expect(screen.queryByText('Genres')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('file list', () => {
+    it('shows file list section when book has path', async () => {
+      (api.getBookFiles as Mock).mockResolvedValue([
+        { name: 'Chapter 01.m4b', size: 52428800 },
+      ]);
+
+      renderBookDetails({ path: '/library/book1', status: 'imported' });
+
+      expect(await screen.findByText('Files (1)')).toBeInTheDocument();
+    });
+
+    it('hides file list section when book has no path', () => {
+      renderBookDetails({ path: null });
+
+      expect(screen.queryByText(/Files/)).not.toBeInTheDocument();
     });
   });
 

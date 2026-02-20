@@ -5,6 +5,7 @@ import { AudioInfo } from '@/components/AudioInfo';
 import type { BookWithAuthor } from '@/lib/api';
 import { BookHero } from './BookHero.js';
 import { BookDescription } from './BookDescription.js';
+import { FileList } from './FileList.js';
 import { mergeBookData, type MetadataBook } from './helpers.js';
 
 export function BookDetails({ libraryBook, metadataBook }: {
@@ -18,7 +19,8 @@ export function BookDetails({ libraryBook, metadataBook }: {
 
   const hasDescription = !!merged.description;
   const hasGenres = merged.genres && merged.genres.length > 0;
-  const hasSidebar = libraryBook.audioCodec || hasGenres;
+  const hasFiles = !!libraryBook.path;
+  const hasSidebar = libraryBook.audioCodec || hasGenres || hasFiles;
 
   return (
     <div className="space-y-6">
@@ -67,6 +69,8 @@ export function BookDetails({ libraryBook, metadataBook }: {
                   </div>
                 </div>
               )}
+
+              {hasFiles && <FileList bookId={libraryBook.id} />}
             </div>
           )}
         </div>

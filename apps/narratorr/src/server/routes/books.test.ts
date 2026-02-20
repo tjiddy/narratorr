@@ -1,6 +1,16 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
+import { readdir, stat } from 'node:fs/promises';
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    readdir: vi.fn(),
+    stat: vi.fn(),
+  };
+});
 
 const mockBook = {
   id: 1,
@@ -238,6 +248,81 @@ describe('books routes', () => {
       expect(services.download.cancel).toHaveBeenCalledWith(11);
       expect(services.download.cancel).toHaveBeenCalledTimes(2);
       expect(services.book.delete).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe('GET /api/books/:id/files', () => {
+    const bookWithPath = { ...mockBook, path: '/library/book1', status: 'imported' };
+
+    it('returns audio files with sizes, filtering non-audio files', async () => {
+      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
+      (readdir as Mock).mockResolvedValue(['Chapter 01.m4b', 'Chapter 02.m4b', 'cover.jpg', 'metadata.nfo']);
+      (stat as Mock).mockImplementation((filePath: string) => {
+        if (filePath.includes('Chapter 01')) return Promise.resolve({ size: 52428800 });
+        return Promise.resolve({ size: 48234496 });
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/files' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).toHaveLength(2);
+      expect(body[0]).toEqual({ name: 'Chapter 01.m4b', size: 52428800 });
+      expect(body[1]).toEqual({ name: 'Chapter 02.m4b', size: 48234496 });
+    });
+
+    it('sorts files numerically (ch2 before ch10)', async () => {
+      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
+      (readdir as Mock).mockResolvedValue(['Chapter 10.m4b', 'Chapter 2.m4b', 'Chapter 1.m4b']);
+      (stat as Mock).mockResolvedValue({ size: 1000 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/files' });
+
+      const body = JSON.parse(res.payload);
+      expect(body.map((f: { name: string }) => f.name)).toEqual([
+        'Chapter 1.m4b',
+        'Chapter 2.m4b',
+        'Chapter 10.m4b',
+      ]);
+    });
+
+    it('returns 400 for NaN id', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/books/abc/files' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 404 when book not found', async () => {
+      (services.book.getById as Mock).mockResolvedValue(null);
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/999/files' });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 404 when book has no path', async () => {
+      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, path: null });
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/files' });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns empty array when directory has no audio files', async () => {
+      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
+      (readdir as Mock).mockResolvedValue(['cover.jpg', 'metadata.nfo']);
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/files' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual([]);
+    });
+
+    it('returns empty array when readdir throws (deleted directory)', async () => {
+      (services.book.getById as Mock).mockResolvedValue(bookWithPath);
+      (readdir as Mock).mockRejectedValue(new Error('ENOENT: no such file or directory'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/files' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual([]);
     });
   });
 

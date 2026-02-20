@@ -16,7 +16,7 @@ import { ImportService } from '../services/import.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
 import { MatchJobService } from '../services/match-job.service.js';
 
-import { booksRoutes } from './books.js';
+import { booksRoutes, bookFilesRoute } from './books.js';
 import { searchRoutes } from './search.js';
 import { activityRoutes } from './activity.js';
 import { indexersRoutes } from './indexers.js';
@@ -72,6 +72,7 @@ export async function registerRoutes(
   services: Services
 ): Promise<void> {
   await booksRoutes(app, services.book, services.download);
+  await bookFilesRoute(app, services.book);
   await searchRoutes(app, services.indexer, services.download, services.blacklist);
   await activityRoutes(app, services.download);
   await indexersRoutes(app, services.indexer);

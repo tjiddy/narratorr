@@ -18,3 +18,12 @@ export function useLibraryBook(id: number | undefined) {
     staleTime: 30_000,
   });
 }
+
+export function useBookFiles(id: number | undefined) {
+  return useQuery({
+    queryKey: queryKeys.bookFiles(id!),
+    queryFn: () => api.getBookFiles(id!),
+    enabled: id != null && !isNaN(id),
+    staleTime: 5 * 60_000,
+  });
+}

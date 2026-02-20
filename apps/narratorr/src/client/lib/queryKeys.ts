@@ -1,6 +1,7 @@
 export const queryKeys = {
   books: () => ['books'] as const,
   book: (id: number) => ['books', id] as const,
+  bookFiles: (id: number) => ['books', id, 'files'] as const,
   activity: () => ['activity'] as const,
   activityCounts: () => ['activity', 'counts'] as const,
   search: (q: string) => ['search', q] as const,

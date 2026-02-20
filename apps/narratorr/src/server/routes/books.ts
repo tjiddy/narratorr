@@ -1,7 +1,9 @@
-import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readdir, readFile, stat } from 'node:fs/promises';
+import { join, extname } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { BookService, DownloadService } from '../services';
+
+const AUDIO_EXTENSIONS = new Set(['.mp3', '.m4a', '.m4b', '.flac', '.ogg', '.opus', '.wma', '.aac']);
 
 interface CreateBookBody {
   title: string;
@@ -195,6 +197,46 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
       return { success: true };
     } catch (error) {
       request.log.error(error, 'Failed to delete book');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+}
+
+export async function bookFilesRoute(app: FastifyInstance, bookService: BookService) {
+  app.get<{ Params: { id: string } }>('/api/books/:id/files', async (request, reply) => {
+    try {
+      const id = parseInt(request.params.id, 10);
+      if (isNaN(id)) {
+        return reply.status(400).send({ error: 'Invalid ID' });
+      }
+
+      const book = await bookService.getById(id);
+      if (!book || !book.path) {
+        return reply.status(404).send({ error: 'Book not found' });
+      }
+
+      let entries: string[];
+      try {
+        entries = await readdir(book.path);
+      } catch {
+        request.log.warn({ bookId: id, path: book.path }, 'Could not read book directory');
+        return [];
+      }
+
+      const audioFiles = entries.filter(f => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+      const files = await Promise.all(
+        audioFiles.map(async (name) => {
+          const info = await stat(join(book.path!, name));
+          return { name, size: info.size };
+        })
+      );
+
+      files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+      request.log.debug({ bookId: id, fileCount: files.length }, 'Listed book files');
+      return files;
+    } catch (error) {
+      request.log.error(error, 'Failed to list book files');
       return reply.status(500).send({ error: 'Internal server error' });
     }
   });

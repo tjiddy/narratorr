@@ -90,6 +90,11 @@ export interface MetadataSearchResults {
   series: unknown[];
 }
 
+export interface BookFile {
+  name: string;
+  size: number;
+}
+
 export const booksApi = {
   getBooks: (status?: string) =>
     fetchApi<BookWithAuthor[]>(status ? `/books?status=${encodeURIComponent(status)}` : '/books'),
@@ -102,6 +107,8 @@ export const booksApi = {
     }),
   deleteBook: (id: number) =>
     fetchApi<{ success: boolean }>(`/books/${id}`, { method: 'DELETE' }),
+  getBookFiles: (id: number) =>
+    fetchApi<BookFile[]>(`/books/${id}/files`),
 
   searchMetadata: (query: string) =>
     fetchApi<MetadataSearchResults>(`/metadata/search?q=${encodeURIComponent(query)}`),
