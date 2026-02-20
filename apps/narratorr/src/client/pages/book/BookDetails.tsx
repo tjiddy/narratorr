@@ -1,87 +1,33 @@
 import { useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import DOMPurify from 'dompurify';
-import { useBook } from '@/hooks/useMetadata';
-import { useLibraryBook } from '@/hooks/useLibrary';
 import { formatDuration } from '@/lib/helpers';
 import { bookStatusConfig } from '@/lib/status';
 import { ArrowLeftIcon, SearchIcon, BookOpenIcon } from '@/components/icons';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { AudioInfo } from '@/components/AudioInfo';
+import type { BookWithAuthor } from '@/lib/api';
 
 const DESCRIPTION_COLLAPSE_LENGTH = 300;
 
-// ============================================================================
-// Loading Skeleton
-// ============================================================================
-
-function BookPageSkeleton() {
-  return (
-    <div className="space-y-8">
-      <div className="h-5 w-24 skeleton rounded" />
-      <div className="flex flex-col sm:flex-row gap-8">
-        <div className="w-48 sm:w-56 lg:w-72 aspect-square skeleton rounded-2xl shrink-0 mx-auto sm:mx-0" />
-        <div className="flex-1 space-y-4">
-          <div className="h-10 w-3/4 skeleton rounded" />
-          <div className="h-5 w-1/2 skeleton rounded" />
-          <div className="h-4 w-1/3 skeleton rounded" />
-          <div className="h-4 w-1/4 skeleton rounded" />
-          <div className="h-4 w-2/5 skeleton rounded" />
-          <div className="flex gap-3 mt-6">
-            <div className="h-11 w-40 skeleton rounded-xl" />
-            <div className="h-11 w-40 skeleton rounded-xl" />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+interface MetadataBook {
+  subtitle?: string;
+  description?: string;
+  coverUrl?: string;
+  duration?: number;
+  genres?: string[];
+  narrators?: string[];
+  publisher?: string;
+  series?: { name: string; position?: number }[];
 }
 
-// ============================================================================
-// Not Found
-// ============================================================================
-
-function BookNotFound() {
-  return (
-    <div className="flex flex-col items-center justify-center py-24 animate-fade-in-up">
-      <div className="relative mb-8">
-        <div className="absolute inset-0 bg-primary/20 rounded-full blur-2xl" />
-        <div className="relative p-6 bg-gradient-to-br from-primary/10 to-amber-500/10 rounded-full">
-          <BookOpenIcon className="w-16 h-16 text-muted-foreground/50" />
-        </div>
-      </div>
-      <h2 className="font-display text-2xl font-semibold mb-2">Book not found</h2>
-      <p className="text-muted-foreground mb-6">The book you're looking for doesn't exist or couldn't be loaded.</p>
-      <Link
-        to="/library"
-        className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium glass-card rounded-xl hover:border-primary/30 hover:text-primary transition-all focus-ring"
-      >
-        <ArrowLeftIcon className="w-4 h-4" />
-        Back to Library
-      </Link>
-    </div>
-  );
-}
-
-// ============================================================================
-// Main Component
-// ============================================================================
-
-export function BookPage() {
-  const { id } = useParams<{ id: string }>();
+export function BookDetails({ libraryBook, metadataBook }: {
+  libraryBook: BookWithAuthor;
+  metadataBook?: MetadataBook | null;
+}) {
   const navigate = useNavigate();
-
-  const numericId = id ? parseInt(id, 10) : undefined;
-  const { data: libraryBook, isLoading: libraryLoading, isError: libraryError } = useLibraryBook(numericId);
-
-  // Optionally enrich with metadata if the library book has an ASIN
-  const { data: metadataBook } = useBook(libraryBook?.asin ?? undefined);
-
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
-
-  if (libraryLoading) return <BookPageSkeleton />;
-  if (libraryError || !libraryBook) return <BookNotFound />;
 
   // Merge: library data is primary, metadata supplements
   const title = libraryBook.title;

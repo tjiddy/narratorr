@@ -13,7 +13,7 @@ vi.mock('@/pages/SearchPage', () => ({
   SearchPage: () => <div data-testid="search-page">Search Page</div>,
 }));
 
-vi.mock('@/pages/ActivityPage', () => ({
+vi.mock('@/pages/activity', () => ({
   ActivityPage: () => <div data-testid="activity-page">Activity Page</div>,
 }));
 

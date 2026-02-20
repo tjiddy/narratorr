@@ -3,10 +3,10 @@ import { Toaster } from 'sonner';
 import { Layout } from './components/layout/Layout';
 import { LibraryPage } from './pages/LibraryPage';
 import { SearchPage } from './pages/SearchPage';
-import { ActivityPage } from './pages/ActivityPage';
-import { BookPage } from './pages/BookPage';
+import { ActivityPage } from './pages/activity';
+import { BookPage } from './pages/book';
 import { AuthorPage } from './pages/AuthorPage';
-import { ManualImportPage } from './pages/ManualImportPage';
+import { ManualImportPage } from './pages/manual-import';
 import {
   SettingsLayout,
   GeneralSettings,

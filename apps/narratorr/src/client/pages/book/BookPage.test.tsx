@@ -5,9 +5,8 @@ import { Routes, Route } from 'react-router-dom';
 import { render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { BookPage } from '@/pages/BookPage';
+import { BookPage } from './BookPage';
 
-// Mock api
 vi.mock('@/lib/api', () => ({
   api: {
     getBookById: vi.fn(),
@@ -15,7 +14,6 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
-// Mock sonner
 vi.mock('sonner', () => ({
   toast: {
     success: vi.fn(),
@@ -88,23 +86,38 @@ describe('BookPage', () => {
     vi.mocked(api.getBook).mockResolvedValue(mockMetadataBook);
   });
 
-  it('renders loading skeleton initially', () => {
+  it('shows loading state with book content not yet visible', () => {
     vi.mocked(api.getBookById).mockReturnValue(new Promise(() => {}));
     renderBookPage();
-    expect(document.querySelector('.skeleton')).toBeTruthy();
+
+    // Content should not be visible while loading
+    expect(screen.queryByText('The Way of Kings')).not.toBeInTheDocument();
+    expect(screen.queryByText('Brandon Sanderson')).not.toBeInTheDocument();
+    expect(screen.queryByText('Library')).not.toBeInTheDocument();
   });
 
-  it('renders library book data', async () => {
+  it('renders library book data with metadata enrichment', async () => {
     renderBookPage();
 
     await waitFor(() => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
+    // Author, narrator, series, duration
     expect(screen.getByText('Brandon Sanderson')).toBeInTheDocument();
     expect(screen.getByText(/Michael Kramer, Kate Reading/)).toBeInTheDocument();
     expect(screen.getByText(/The Stormlight Archive #1/)).toBeInTheDocument();
     expect(screen.getByText(/14h 32m/)).toBeInTheDocument();
+
+    // Metadata enrichment: subtitle arrives on a second query cycle
+    await waitFor(() => {
+      expect(screen.getByText('Book One of the Stormlight Archive')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Fantasy')).toBeInTheDocument();
+    expect(screen.getByText('Epic')).toBeInTheDocument();
+
+    // Status badge
+    expect(screen.getByText('Wanted')).toBeInTheDocument();
   });
 
   it('renders book without ASIN (no metadata enrichment)', async () => {
@@ -121,26 +134,7 @@ describe('BookPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Should not call metadata API when ASIN is null
     expect(api.getBook).not.toHaveBeenCalled();
-  });
-
-  it('renders genre chips', async () => {
-    renderBookPage();
-
-    await waitFor(() => {
-      expect(screen.getByText('Fantasy')).toBeInTheDocument();
-    });
-
-    expect(screen.getByText('Epic')).toBeInTheDocument();
-  });
-
-  it('shows status badge', async () => {
-    renderBookPage();
-
-    await waitFor(() => {
-      expect(screen.getByText('Wanted')).toBeInTheDocument();
-    });
   });
 
   it('shows "Book not found" when book fails to load', async () => {
@@ -150,9 +144,27 @@ describe('BookPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Book not found')).toBeInTheDocument();
     });
+
+    expect(screen.getByText(/Back to Library/)).toBeInTheDocument();
   });
 
-  it('renders back link to library', async () => {
+  it('still renders base data when metadata enrichment fails', async () => {
+    vi.mocked(api.getBook).mockRejectedValue(new Error('Metadata service down'));
+    renderBookPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    // Base data renders fine
+    expect(screen.getByText('Brandon Sanderson')).toBeInTheDocument();
+    expect(screen.getByText(/Michael Kramer, Kate Reading/)).toBeInTheDocument();
+
+    // Subtitle from metadata is not present since it failed
+    expect(screen.queryByText('Book One of the Stormlight Archive')).not.toBeInTheDocument();
+  });
+
+  it('navigates back to library when back button is clicked', async () => {
     const user = userEvent.setup();
     renderBookPage();
 
@@ -178,7 +190,8 @@ describe('BookPage', () => {
     expect(authorLink.closest('a')).toHaveAttribute('href', '/authors/A00SAND1234');
   });
 
-  it('renders description with show more toggle', async () => {
+  it('toggles description expand/collapse for long descriptions', async () => {
+    const user = userEvent.setup();
     const longDescription = '<p>' + 'A'.repeat(400) + '</p>';
     vi.mocked(api.getBookById).mockResolvedValue({ ...mockLibraryBook, description: longDescription });
 
@@ -187,22 +200,27 @@ describe('BookPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Show more')).toBeInTheDocument();
     });
+
+    await user.click(screen.getByText('Show more'));
+    expect(screen.getByText('Show less')).toBeInTheDocument();
+
+    await user.click(screen.getByText('Show less'));
+    expect(screen.getByText('Show more')).toBeInTheDocument();
   });
 
-  it('enriches with metadata subtitle when ASIN present', async () => {
+  it('opens search releases modal when button is clicked', async () => {
+    const user = userEvent.setup();
     renderBookPage();
 
     await waitFor(() => {
-      expect(screen.getByText('Book One of the Stormlight Archive')).toBeInTheDocument();
+      expect(screen.getByText('Search Releases')).toBeInTheDocument();
     });
-  });
 
-  it('renders multiple skeleton elements during loading', () => {
-    vi.mocked(api.getBookById).mockReturnValue(new Promise(() => {}));
-    renderBookPage();
+    await user.click(screen.getByText('Search Releases'));
 
-    const skeletons = document.querySelectorAll('.skeleton');
-    // BookPageSkeleton has multiple skeleton placeholders (title, subtitle, author, etc.)
-    expect(skeletons.length).toBeGreaterThan(3);
+    // Modal should open
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
   });
 });
