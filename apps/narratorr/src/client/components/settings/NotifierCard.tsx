@@ -1,28 +1,17 @@
-/* eslint-disable max-lines */
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { Notifier, TestResult } from '@/lib/api';
 import { TestResultMessage } from '@/components/TestResultMessage';
-import { TestButton } from '@/components/TestButton';
-import {
-  LoadingSpinner,
-  PlusIcon,
-  PencilIcon,
-  TrashIcon,
-  CheckIcon,
-  XIcon,
-} from '@/components/icons';
+import { SettingsCardShell, type IdTestResult } from './SettingsCardShell';
+import { SettingsFormActions } from './SettingsFormActions';
+import { NotifierFields } from './NotifierFields';
 import {
   createNotifierFormSchema,
   notifierTypeSchema,
   notificationEventSchema,
   type CreateNotifierFormData,
 } from '../../../shared/schemas.js';
-
-interface IdTestResult extends TestResult {
-  id: number;
-}
 
 interface NotifierCardProps {
   notifier?: Notifier;
@@ -90,30 +79,13 @@ const defaultValues: CreateNotifierFormData = {
   settings: { url: '', method: 'POST' as const },
 };
 
-// eslint-disable-next-line max-lines-per-function, complexity
-export function NotifierCard({
-  notifier,
-  mode,
-  onEdit,
-  onCancel,
-  onDelete,
-  onSubmit,
-  onFormTest,
-  onTest,
-  isPending,
-  testingId,
-  testResult,
-  testingForm,
-  formTestResult,
-  animationDelay,
-}: NotifierCardProps) {
+export function NotifierCard(props: NotifierCardProps) {
   const {
-    register,
-    handleSubmit,
-    reset,
-    watch,
-    setValue,
-    getValues,
+    notifier, mode, onEdit, onCancel, onDelete, onSubmit, onFormTest,
+    onTest, isPending, testingId, testResult, testingForm, formTestResult, animationDelay,
+  } = props;
+  const {
+    register, handleSubmit, reset, watch, setValue, getValues,
     formState: { errors },
   } = useForm<CreateNotifierFormData>({
     resolver: zodResolver(createNotifierFormSchema),
@@ -162,63 +134,28 @@ export function NotifierCard({
 
   const watchedEvents = watch('events') || [];
 
-  // View mode
   if (mode === 'view' && notifier) {
     return (
-      <div
-        className="glass-card rounded-2xl p-5 animate-fade-in-up"
-        style={animationDelay ? { animationDelay } : undefined}
+      <SettingsCardShell
+        name={notifier.name}
+        subtitle={`${TYPE_LABELS[notifier.type] || notifier.type} — ${viewSubtitle(notifier)}`}
+        enabled={notifier.enabled}
+        itemId={notifier.id}
+        onEdit={onEdit}
+        onTest={onTest}
+        onDelete={onDelete}
+        testingId={testingId}
+        testResult={testResult}
+        testResultTexts={{ success: 'Sent!', failure: 'Failed' }}
+        animationDelay={animationDelay}
       >
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4 min-w-0">
-            <div className={`w-3 h-3 rounded-full shrink-0 ${notifier.enabled ? 'bg-success animate-pulse' : 'bg-muted-foreground/40'}`} />
-            <div className="min-w-0">
-              <h3 className="font-display font-semibold truncate">{notifier.name}</h3>
-              <p className="text-sm text-muted-foreground truncate">
-                {TYPE_LABELS[notifier.type] || notifier.type} — {viewSubtitle(notifier)}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Events: {(notifier.events as string[]).map((e) => EVENT_LABELS[e] || e).join(', ')}
-              </p>
-              {testResult?.id === notifier.id && (
-                <TestResultMessage
-                  success={testResult.success}
-                  message={testResult.message}
-                  successText="Sent!"
-                  failureText="Failed"
-                />
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={onEdit}
-              aria-label={`Edit ${notifier.name}`}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium border border-border rounded-xl hover:bg-muted transition-all focus-ring"
-            >
-              <PencilIcon className="w-4 h-4" />
-              <span className="hidden sm:inline">Edit</span>
-            </button>
-            <TestButton
-              testing={testingId === notifier.id}
-              onClick={() => onTest?.(notifier.id)}
-              variant="inline"
-            />
-            <button
-              onClick={onDelete}
-              aria-label={`Delete ${notifier.name}`}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-destructive border border-destructive/30 rounded-xl hover:bg-destructive hover:text-destructive-foreground transition-all focus-ring"
-            >
-              <TrashIcon className="w-4 h-4" />
-              <span className="hidden sm:inline">Delete</span>
-            </button>
-          </div>
-        </div>
-      </div>
+        <p className="text-xs text-muted-foreground mt-1">
+          Events: {(notifier.events as string[]).map((e) => EVENT_LABELS[e] || e).join(', ')}
+        </p>
+      </SettingsCardShell>
     );
   }
 
-  // Edit / Create form mode
   const isEdit = mode === 'edit';
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="glass-card rounded-2xl p-6 animate-fade-in-up space-y-5">
@@ -269,7 +206,6 @@ export function NotifierCard({
           </div>
         )}
 
-        {/* Events checkboxes */}
         <div className={isEdit ? '' : 'sm:col-span-2'}>
           <label className="block text-sm font-medium mb-2">Events</label>
           <div className="flex flex-wrap gap-2">
@@ -290,160 +226,21 @@ export function NotifierCard({
           )}
         </div>
 
-        {/* Webhook fields */}
-        {selectedType === 'webhook' && (
-          <>
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium mb-2">URL</label>
-              <input
-                type="text"
-                {...register('settings.url')}
-                className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-                  errors.settings?.url ? 'border-destructive' : 'border-border'
-                }`}
-                placeholder="https://example.com/webhook"
-              />
-              {errors.settings?.url && (
-                <p className="text-sm text-destructive mt-1">{errors.settings.url.message}</p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Method</label>
-              <select
-                {...register('settings.method')}
-                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-              >
-                <option value="POST">POST</option>
-                <option value="PUT">PUT</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Headers (JSON)</label>
-              <input
-                type="text"
-                {...register('settings.headers')}
-                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-                placeholder='{"Authorization": "Bearer ..."}'
-              />
-              <p className="text-sm text-muted-foreground mt-1">Optional JSON key-value pairs</p>
-            </div>
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium mb-2">Body Template</label>
-              <textarea
-                {...register('settings.bodyTemplate')}
-                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all font-mono text-sm"
-                rows={3}
-                placeholder='{"event": "{event}", "title": "{book.title}", "author": "{book.author}"}'
-              />
-              <p className="text-sm text-muted-foreground mt-1">
-                Leave empty for default JSON. Tokens: {'{event}'}, {'{book.title}'}, {'{book.author}'}, {'{error.message}'}
-              </p>
-            </div>
-          </>
-        )}
-
-        {/* Discord fields */}
-        {selectedType === 'discord' && (
-          <>
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium mb-2">Webhook URL</label>
-              <input
-                type="text"
-                {...register('settings.webhookUrl')}
-                className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-                  errors.settings?.webhookUrl ? 'border-destructive' : 'border-border'
-                }`}
-                placeholder="https://discord.com/api/webhooks/..."
-              />
-              {errors.settings?.webhookUrl && (
-                <p className="text-sm text-destructive mt-1">{errors.settings.webhookUrl.message}</p>
-              )}
-            </div>
-            <div>
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  {...register('settings.includeCover')}
-                  className="w-5 h-5 rounded border-border text-primary focus:ring-primary focus:ring-offset-0"
-                />
-                <span className="text-sm font-medium">Include Cover Image</span>
-              </label>
-            </div>
-          </>
-        )}
-
-        {/* Script fields */}
-        {selectedType === 'script' && (
-          <>
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium mb-2">Script Path</label>
-              <input
-                type="text"
-                {...register('settings.path')}
-                className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-                  errors.settings?.path ? 'border-destructive' : 'border-border'
-                }`}
-                placeholder="/path/to/script.sh"
-              />
-              {errors.settings?.path && (
-                <p className="text-sm text-destructive mt-1">{errors.settings.path.message}</p>
-              )}
-              <p className="text-sm text-muted-foreground mt-1">
-                Event data passed as environment variables (NARRATORR_EVENT, NARRATORR_BOOK_TITLE, etc.) and JSON on stdin
-              </p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Timeout (seconds)</label>
-              <input
-                type="number"
-                {...register('settings.timeout', { valueAsNumber: true })}
-                min={1}
-                max={300}
-                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-              />
-            </div>
-          </>
-        )}
+        <NotifierFields selectedType={selectedType} register={register} errors={errors} />
       </div>
 
       {formTestResult && (
         <TestResultMessage success={formTestResult.success} message={formTestResult.message} />
       )}
 
-      <div className="flex items-center gap-3">
-        <TestButton
-          testing={!!testingForm}
-          onClick={handleSubmit(onFormTest)}
-          variant="form"
-        />
-        {isEdit && (
-          <button
-            type="button"
-            onClick={onCancel}
-            className="flex items-center gap-2 px-4 py-3 font-medium border border-border rounded-xl hover:bg-muted transition-all focus-ring"
-          >
-            <XIcon className="w-4 h-4" />
-            Cancel
-          </button>
-        )}
-        <button
-          type="submit"
-          disabled={isPending}
-          className="flex items-center gap-2 px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring"
-        >
-          {isPending ? (
-            <>
-              <LoadingSpinner className="w-4 h-4" />
-              {isEdit ? 'Saving...' : 'Adding...'}
-            </>
-          ) : (
-            <>
-              {isEdit ? <CheckIcon className="w-4 h-4" /> : <PlusIcon className="w-4 h-4" />}
-              {isEdit ? 'Save Changes' : 'Add Notifier'}
-            </>
-          )}
-        </button>
-      </div>
+      <SettingsFormActions
+        isEdit={isEdit}
+        isPending={isPending}
+        testingForm={testingForm}
+        onFormTest={handleSubmit(onFormTest)}
+        onCancel={onCancel}
+        entityLabel="Notifier"
+      />
     </form>
   );
 }
