@@ -38,7 +38,6 @@ export interface AudioScanOptions {
 }
 
 /** Scan a directory of audio files and extract metadata + technical info. */
-// eslint-disable-next-line complexity
 export async function scanAudioDirectory(
   dirPath: string,
   options?: AudioScanOptions,
@@ -71,78 +70,90 @@ export async function scanAudioDirectory(
 
       const metadata = await parseFile(filePath);
 
-      // Accumulate duration
       if (metadata.format.duration) {
         result.totalDuration += metadata.format.duration;
       }
 
-      // Extract technical info from first file
       if (!technicalExtracted && metadata.format.codec) {
-        result.codec = metadata.format.codec;
-        result.bitrate = metadata.format.bitrate ?? 0;
-        result.sampleRate = metadata.format.sampleRate ?? 0;
-        result.channels = metadata.format.numberOfChannels ?? 0;
-        result.fileFormat = extname(filePath).slice(1).toLowerCase();
-
-        if (metadata.format.codec?.toLowerCase().includes('vbr') ||
-            metadata.format.codecProfile?.toLowerCase().includes('vbr')) {
-          result.bitrateMode = 'vbr';
-        } else if (metadata.format.bitrate) {
-          result.bitrateMode = 'cbr';
-        }
-
+        extractTechnicalInfo(result, metadata.format, filePath);
         technicalExtracted = true;
       }
 
-      // Extract tags from first file that has them
       if (!tagsExtracted && (metadata.common.title || metadata.common.album || metadata.common.artist)) {
-        result.tagTitle = metadata.common.title || metadata.common.album;
-        result.tagAuthor = metadata.common.albumartist || metadata.common.artist;
-
-        // Narrator: check custom tags, composer, comment patterns, artist fallback
-        result.tagNarrator = extractNarrator(metadata.common, metadata.native);
-
-        result.tagSeries = metadata.common.grouping;
-        result.tagYear = metadata.common.year?.toString();
-        result.tagPublisher = metadata.common.label?.[0];
-
-        // Track number as series position
-        if (metadata.common.track?.no && metadata.common.grouping) {
-          result.tagSeriesPosition = metadata.common.track.no;
-        }
-
+        extractTagInfo(result, metadata.common, metadata.native);
         tagsExtracted = true;
       }
 
-      // Extract cover art from first file that has it
-      if (!result.hasCoverArt && metadata.common.picture?.length) {
-        result.hasCoverArt = true;
-        if (!skipCover) {
-          const pic = metadata.common.picture[0];
-          result.coverImage = Buffer.from(pic.data);
-          result.coverMimeType = pic.format;
-        }
-      }
-
-      // Chapter count (M4B files)
-      if (metadata.native?.['iTunes']?.some(t => t.id === 'chpl') ||
-          (metadata.format.container === 'MPEG-4' && metadata.format.codec === 'AAC')) {
-        // M4B chapter markers are in the chapter list if available
-        const chapters = metadata.native?.['iTunes']?.filter(t => t.id === 'chpl');
-        if (chapters?.length) {
-          result.chapterCount = chapters.length;
-        }
-      }
+      extractCoverArt(result, metadata.common, skipCover);
+      extractChapterCount(result, metadata);
     } catch {
-      // Skip files that can't be parsed (corrupt, not actually audio, etc.)
       continue;
     }
   }
 
-  // If no technical info could be extracted, return null
   if (!result.codec) return null;
 
   return result;
+}
+
+function extractTechnicalInfo(
+  result: AudioScanResult,
+  format: { codec?: string; bitrate?: number; sampleRate?: number; numberOfChannels?: number; codecProfile?: string },
+  filePath: string,
+): void {
+  result.codec = format.codec!;
+  result.bitrate = format.bitrate ?? 0;
+  result.sampleRate = format.sampleRate ?? 0;
+  result.channels = format.numberOfChannels ?? 0;
+  result.fileFormat = extname(filePath).slice(1).toLowerCase();
+
+  if (format.codec?.toLowerCase().includes('vbr') ||
+      format.codecProfile?.toLowerCase().includes('vbr')) {
+    result.bitrateMode = 'vbr';
+  } else if (format.bitrate) {
+    result.bitrateMode = 'cbr';
+  }
+}
+
+function extractTagInfo(
+  result: AudioScanResult,
+  common: ICommonTagsResult,
+  native?: Record<string, Array<{ id: string; value: unknown }>>,
+): void {
+  result.tagTitle = common.title || common.album;
+  result.tagAuthor = common.albumartist || common.artist;
+  result.tagNarrator = extractNarrator(common, native);
+  result.tagSeries = common.grouping;
+  result.tagYear = common.year?.toString();
+  result.tagPublisher = common.label?.[0];
+
+  if (common.track?.no && common.grouping) {
+    result.tagSeriesPosition = common.track.no;
+  }
+}
+
+function extractCoverArt(result: AudioScanResult, common: ICommonTagsResult, skipCover: boolean): void {
+  if (result.hasCoverArt || !common.picture?.length) return;
+  result.hasCoverArt = true;
+  if (!skipCover) {
+    const pic = common.picture[0];
+    result.coverImage = Buffer.from(pic.data);
+    result.coverMimeType = pic.format;
+  }
+}
+
+function extractChapterCount(
+  result: AudioScanResult,
+  metadata: { format: { container?: string; codec?: string }; native?: Record<string, Array<{ id: string; value: unknown }>> },
+): void {
+  if (result.chapterCount) return;
+  const isM4B = metadata.native?.['iTunes']?.some(t => t.id === 'chpl') ||
+    (metadata.format.container === 'MPEG-4' && metadata.format.codec === 'AAC');
+  if (!isM4B) return;
+  const chapters = metadata.native?.['iTunes']?.filter(t => t.id === 'chpl');
+  if (chapters?.length) {
+    result.chapterCount = chapters.length;
+  }
 }
 
 /** Recursively collect all audio files in a directory, sorted by name. */

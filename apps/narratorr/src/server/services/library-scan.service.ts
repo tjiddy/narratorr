@@ -1,4 +1,4 @@
-/* eslint-disable max-lines */
+/* eslint-disable max-lines -- service covers scan, import, and enrichment pipelines */
 import { readdir, stat, mkdir, cp, rm } from 'node:fs/promises';
 import { join, extname, relative } from 'node:path';
 import type { Db } from '@narratorr/db';
@@ -183,7 +183,6 @@ export class LibraryScanService {
    * Import a single book — creates the DB record, sets path/size, and enriches.
    * Shared pipeline used by both Quick Add and bulk Library Import.
    */
-  // eslint-disable-next-line complexity
   async importSingleBook(item: ImportConfirmItem, metadata?: BookMetadata | null, mode?: ImportMode): Promise<ImportSingleResult> {
     // Duplicate check
     const existing = await this.bookService.findDuplicate(item.title, item.authorName);
@@ -195,22 +194,7 @@ export class LibraryScanService {
     // If no metadata passed, look it up
     const meta = metadata !== undefined ? metadata : await this.lookupMetadata(item.title, item.authorName);
 
-    const book = await this.bookService.create({
-      title: item.title,
-      authorName: item.authorName,
-      seriesName: item.seriesName || meta?.series?.[0]?.name,
-      seriesPosition: meta?.series?.[0]?.position,
-      coverUrl: item.coverUrl || meta?.coverUrl,
-      asin: item.asin || meta?.asin,
-      isbn: meta?.isbn,
-      narrator: meta?.narrators?.join(', '),
-      description: meta?.description,
-      duration: meta?.duration,
-      publishedDate: meta?.publishedDate,
-      genres: meta?.genres,
-      providerId: meta?.providerId,
-      status: 'imported',
-    });
+    const book = await this.bookService.create(buildBookCreatePayload(item, meta, 'imported'));
 
     // Determine final path: copy/move to library or use source path
     let finalPath = item.path;
@@ -227,7 +211,6 @@ export class LibraryScanService {
     }).where(eq(books.id, book.id));
 
     // Enrich with audio file metadata
-    let enriched = false;
     const audioResult = await enrichBookFromAudio(
       book.id,
       finalPath,
@@ -235,40 +218,17 @@ export class LibraryScanService {
       this.db,
       this.log,
     );
-    enriched = audioResult.enriched;
 
-    // Inline Audnexus enrichment — try primary ASIN, then alternates
-    const primaryAsin = item.asin || meta?.asin;
-    const asinsToTry = [primaryAsin, ...(meta?.alternateAsins ?? [])].filter((a): a is string => !!a);
+    // Audnexus enrichment
+    await this.applyAudnexusEnrichment(book.id, {
+      primaryAsin: item.asin || meta?.asin,
+      alternateAsins: meta?.alternateAsins,
+      existingNarrator: book.narrator,
+      existingDuration: book.duration,
+    });
 
-    for (const asin of asinsToTry) {
-      try {
-        const audnexusData = await this.metadataService.enrichBook(asin);
-        if (audnexusData) {
-          const updates: Record<string, unknown> = {
-            enrichmentStatus: 'enriched',
-            updatedAt: new Date(),
-          };
-          if (asin !== primaryAsin) {
-            updates.asin = asin;
-          }
-          if (!book.narrator && audnexusData.narrators?.length) {
-            updates.narrator = audnexusData.narrators.join(', ');
-          }
-          if (!book.duration && audnexusData.duration) {
-            updates.duration = audnexusData.duration;
-          }
-          await this.db.update(books).set(updates).where(eq(books.id, book.id));
-          this.log.info({ bookId: book.id, asin, wasAlternate: asin !== primaryAsin }, 'Audnexus enrichment applied inline');
-          break;
-        }
-      } catch (error) {
-        this.log.warn({ error, bookId: book.id, asin }, 'Audnexus enrichment failed for ASIN');
-      }
-    }
-
-    this.log.info({ bookId: book.id, title: item.title, enriched, mode: mode ?? 'pointer' }, 'Single book imported');
-    return { imported: true, bookId: book.id, enriched };
+    this.log.info({ bookId: book.id, title: item.title, enriched: audioResult.enriched, mode: mode ?? 'pointer' }, 'Single book imported');
+    return { imported: true, bookId: book.id, enriched: audioResult.enriched };
   }
 
   /**
@@ -320,7 +280,6 @@ export class LibraryScanService {
    * Confirm import — create placeholder book records with status 'importing',
    * kick off background processing, and return immediately.
    */
-  // eslint-disable-next-line complexity
   async confirmImport(items: ImportConfirmItem[], mode?: ImportMode): Promise<{
     accepted: number;
   }> {
@@ -348,22 +307,7 @@ export class LibraryScanService {
           'Creating import placeholder',
         );
 
-        const book = await this.bookService.create({
-          title: item.title,
-          authorName: item.authorName,
-          seriesName: item.seriesName || item.metadata?.series?.[0]?.name,
-          seriesPosition: item.metadata?.series?.[0]?.position,
-          coverUrl: item.coverUrl || item.metadata?.coverUrl,
-          asin: item.asin || item.metadata?.asin,
-          isbn: item.metadata?.isbn,
-          narrator: item.metadata?.narrators?.join(', '),
-          description: item.metadata?.description,
-          duration: item.metadata?.duration,
-          publishedDate: item.metadata?.publishedDate,
-          genres: item.metadata?.genres,
-          providerId: item.metadata?.providerId,
-          status: 'importing',
-        });
+        const book = await this.bookService.create(buildBookCreatePayload(item, item.metadata ?? null, 'importing'));
 
         accepted.push({ bookId: book.id, item });
       } catch (error) {
@@ -384,77 +328,13 @@ export class LibraryScanService {
   /**
    * Background processing: copy/move files, enrich, update status.
    */
-  // eslint-disable-next-line complexity
   private async processImportsInBackground(
     items: Array<{ bookId: number; item: ImportConfirmItem }>,
     mode?: ImportMode,
   ): Promise<void> {
     for (const { bookId, item } of items) {
       try {
-        this.log.debug({ bookId, title: item.title, mode: mode ?? 'pointer' }, 'Processing import');
-
-        // Determine final path: copy/move to library or use source path
-        let finalPath = item.path;
-        if (mode) {
-          const bookRecord = await this.db.select().from(books).where(eq(books.id, bookId)).limit(1);
-          if (bookRecord.length > 0) {
-            finalPath = await this.copyToLibrary(item, bookRecord[0], item.metadata ?? null, mode);
-          }
-        }
-
-        // Set the path and size
-        const stats = await this.getAudioStats(finalPath);
-        this.log.debug({ bookId, finalPath, fileCount: stats.fileCount, totalSize: stats.totalSize }, 'Audio stats collected');
-        await this.db.update(books).set({
-          path: finalPath,
-          size: stats.totalSize,
-          updatedAt: new Date(),
-        }).where(eq(books.id, bookId));
-
-        // Enrich with audio file metadata (WITH cover extraction)
-        this.log.debug({ bookId }, 'Starting audio enrichment');
-        await enrichBookFromAudio(
-          bookId,
-          finalPath,
-          { narrator: item.metadata?.narrators?.join(', ') ?? null, duration: item.metadata?.duration ?? null, coverUrl: item.coverUrl || item.metadata?.coverUrl || null },
-          this.db,
-          this.log,
-        );
-
-        // Audnexus enrichment
-        const primaryAsin = item.asin || item.metadata?.asin;
-        const asinsToTry = [primaryAsin, ...(item.metadata?.alternateAsins ?? [])].filter((a): a is string => !!a);
-
-        for (const asin of asinsToTry) {
-          try {
-            const audnexusData = await this.metadataService.enrichBook(asin);
-            if (audnexusData) {
-              const updates: Record<string, unknown> = {
-                enrichmentStatus: 'enriched',
-                updatedAt: new Date(),
-              };
-              if (asin !== primaryAsin) updates.asin = asin;
-              if (!item.metadata?.narrators?.length && audnexusData.narrators?.length) {
-                updates.narrator = audnexusData.narrators.join(', ');
-              }
-              if (!item.metadata?.duration && audnexusData.duration) {
-                updates.duration = audnexusData.duration;
-              }
-              await this.db.update(books).set(updates).where(eq(books.id, bookId));
-              this.log.info({ bookId, asin }, 'Audnexus enrichment applied');
-              break;
-            }
-          } catch (error) {
-            this.log.warn({ error, bookId, asin }, 'Audnexus enrichment failed');
-          }
-        }
-
-        // Success — mark as imported
-        await this.db.update(books).set({
-          status: 'imported',
-          updatedAt: new Date(),
-        }).where(eq(books.id, bookId));
-
+        await this.processOneImport(bookId, item, mode);
         this.log.info({ bookId, title: item.title }, 'Book import completed');
       } catch (error) {
         this.log.error({ error, bookId, title: item.title }, 'Book import failed');
@@ -464,6 +344,53 @@ export class LibraryScanService {
         }).where(eq(books.id, bookId));
       }
     }
+  }
+
+  // eslint-disable-next-line complexity -- copy/move + enrich + audnexus pipeline, barely over threshold
+  private async processOneImport(bookId: number, item: ImportConfirmItem, mode?: ImportMode): Promise<void> {
+    this.log.debug({ bookId, title: item.title, mode: mode ?? 'pointer' }, 'Processing import');
+
+    const meta = item.metadata;
+    const narrator = meta?.narrators?.join(', ') ?? null;
+    const duration = meta?.duration ?? null;
+    const coverUrl = item.coverUrl || meta?.coverUrl || null;
+    const primaryAsin = item.asin || meta?.asin;
+
+    // Determine final path: copy/move to library or use source path
+    let finalPath = item.path;
+    if (mode) {
+      const bookRecord = await this.db.select().from(books).where(eq(books.id, bookId)).limit(1);
+      if (bookRecord.length > 0) {
+        finalPath = await this.copyToLibrary(item, bookRecord[0], meta ?? null, mode);
+      }
+    }
+
+    // Set the path and size
+    const stats = await this.getAudioStats(finalPath);
+    this.log.debug({ bookId, finalPath, fileCount: stats.fileCount, totalSize: stats.totalSize }, 'Audio stats collected');
+    await this.db.update(books).set({
+      path: finalPath,
+      size: stats.totalSize,
+      updatedAt: new Date(),
+    }).where(eq(books.id, bookId));
+
+    // Enrich with audio file metadata (WITH cover extraction)
+    this.log.debug({ bookId }, 'Starting audio enrichment');
+    await enrichBookFromAudio(bookId, finalPath, { narrator, duration, coverUrl }, this.db, this.log);
+
+    // Audnexus enrichment
+    await this.applyAudnexusEnrichment(bookId, {
+      primaryAsin,
+      alternateAsins: meta?.alternateAsins,
+      existingNarrator: narrator,
+      existingDuration: duration,
+    });
+
+    // Success — mark as imported
+    await this.db.update(books).set({
+      status: 'imported',
+      updatedAt: new Date(),
+    }).where(eq(books.id, bookId));
   }
 
   /**
@@ -566,6 +493,71 @@ export class LibraryScanService {
 
     return { fileCount, totalSize };
   }
+
+  /**
+   * Apply Audnexus enrichment — try primary ASIN, then alternates.
+   * Updates narrator/duration if not already present.
+   */
+  private async applyAudnexusEnrichment(
+    bookId: number,
+    opts: {
+      primaryAsin?: string | null;
+      alternateAsins?: string[];
+      existingNarrator?: string | null;
+      existingDuration?: number | null;
+    },
+  ): Promise<void> {
+    const asinsToTry = [opts.primaryAsin, ...(opts.alternateAsins ?? [])].filter((a): a is string => !!a);
+    if (asinsToTry.length === 0) return;
+
+    for (const asin of asinsToTry) {
+      try {
+        const data = await this.metadataService.enrichBook(asin);
+        if (data) {
+          const updates: Record<string, unknown> = {
+            enrichmentStatus: 'enriched',
+            updatedAt: new Date(),
+          };
+          if (asin !== opts.primaryAsin) updates.asin = asin;
+          if (!opts.existingNarrator && data.narrators?.length) {
+            updates.narrator = data.narrators.join(', ');
+          }
+          if (!opts.existingDuration && data.duration) {
+            updates.duration = data.duration;
+          }
+          await this.db.update(books).set(updates).where(eq(books.id, bookId));
+          this.log.info({ bookId, asin, wasAlternate: asin !== opts.primaryAsin }, 'Audnexus enrichment applied');
+          break;
+        }
+      } catch (error) {
+        this.log.warn({ error, bookId, asin }, 'Audnexus enrichment failed');
+      }
+    }
+  }
+}
+
+// eslint-disable-next-line complexity -- flat metadata coalescing across item + meta sources
+function buildBookCreatePayload(
+  item: ImportConfirmItem,
+  meta: BookMetadata | null,
+  status: 'imported' | 'importing',
+) {
+  return {
+    title: item.title,
+    authorName: item.authorName,
+    seriesName: item.seriesName || meta?.series?.[0]?.name,
+    seriesPosition: meta?.series?.[0]?.position,
+    coverUrl: item.coverUrl || meta?.coverUrl,
+    asin: item.asin || meta?.asin,
+    isbn: meta?.isbn,
+    narrator: meta?.narrators?.join(', '),
+    description: meta?.description,
+    duration: meta?.duration,
+    publishedDate: meta?.publishedDate,
+    genres: meta?.genres,
+    providerId: meta?.providerId,
+    status,
+  };
 }
 
 /**
