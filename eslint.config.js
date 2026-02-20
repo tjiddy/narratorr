@@ -50,11 +50,11 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       'react-refresh/only-export-components': [
-        'warn',
+        'error',
         { allowConstantExport: true },
       ],
       // No console in client code
-      'no-console': ['warn', { allow: ['warn', 'error'] }],
+      'no-console': ['error', { allow: ['warn', 'error'] }],
     },
   },
 
@@ -71,28 +71,28 @@ export default tseslint.config(
     rules: {
       // TypeScript
       '@typescript-eslint/no-unused-vars': [
-        'warn',
+        'error',
         {
           argsIgnorePattern: '^_',
           varsIgnorePattern: '^_',
           caughtErrorsIgnorePattern: '^_',
         },
       ],
-      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/consistent-type-imports': [
-        'warn',
+        'error',
         { prefer: 'type-imports', fixStyle: 'inline-type-imports' },
       ],
 
       // File hygiene
-      'max-lines': ['warn', { max: 400, skipBlankLines: true, skipComments: true }],
-      'max-lines-per-function': ['warn', { max: 150, skipBlankLines: true, skipComments: true }],
-      'complexity': ['warn', { max: 15 }],
+      'max-lines': ['error', { max: 400, skipBlankLines: true, skipComments: true }],
+      'max-lines-per-function': ['error', { max: 150, skipBlankLines: true, skipComments: true }],
+      'complexity': ['error', { max: 15 }],
       // General
-      'prefer-const': 'warn',
+      'prefer-const': 'error',
       'no-var': 'error',
-      'no-useless-escape': 'warn',
-      eqeqeq: ['warn', 'always', { null: 'ignore' }],
+      'no-useless-escape': 'error',
+      eqeqeq: ['error', 'always', { null: 'ignore' }],
     },
   },
 
