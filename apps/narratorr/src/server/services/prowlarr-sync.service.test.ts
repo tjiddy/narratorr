@@ -4,7 +4,7 @@ import { ProwlarrSyncService } from './prowlarr-sync.service.js';
 
 // Mock the ProwlarrClient
 vi.mock('@narratorr/core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@narratorr/core')>();
+  const actual = await importOriginal() as Record<string, unknown>;
   return {
     ...actual,
     ProwlarrClient: vi.fn().mockImplementation(() => mockProwlarrClient),

@@ -230,7 +230,7 @@ describe('BookService', () => {
 
   describe('create with metadataService', () => {
     let serviceWithMeta: BookService;
-    let mockMetadata: { getBook: ReturnType<typeof import('vitest').vi.fn> };
+    let mockMetadata: { getBook: ReturnType<typeof vi.fn> };
 
     beforeEach(async () => {
       const { vi } = await import('vitest');

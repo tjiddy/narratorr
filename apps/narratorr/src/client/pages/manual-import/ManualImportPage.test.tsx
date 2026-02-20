@@ -126,7 +126,7 @@ async function simulateMatchResults(
 ) {
   mockMatchResults = results;
   mockIsMatching = matching;
-  const Wrapper = createWrapper();
+  createWrapper();
   rerender(<ManualImportPage />);
   // Allow useEffect to process
   await screen.findByText(/selected/);

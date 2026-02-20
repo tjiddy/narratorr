@@ -96,12 +96,14 @@ export default tseslint.config(
     },
   },
 
-  // Test files - relax no-explicit-any for mock patterns
-  // TODO: Properly type test mock helpers to remove this override (see Gitea issue)
+  // Test files - relax rules that don't add value in tests
   {
     files: ['**/*.test.ts', '**/*.test.tsx'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
+      'max-lines': 'off',
+      'max-lines-per-function': 'off',
+      'complexity': 'off',
     },
   }
 );

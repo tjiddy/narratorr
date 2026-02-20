@@ -47,7 +47,7 @@ export async function scanAudioDirectory(
 
   const skipCover = options?.skipCover ?? false;
 
-  let result: AudioScanResult = {
+  const result: AudioScanResult = {
     codec: '',
     bitrate: 0,
     sampleRate: 0,

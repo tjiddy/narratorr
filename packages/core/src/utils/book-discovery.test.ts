@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import path from 'node:path';
+import type path from 'node:path';
 
 // Mock node:fs/promises before importing the module under test
 vi.mock('node:fs/promises', () => ({
@@ -20,7 +20,7 @@ vi.mock('node:path', async () => {
   };
 });
 
-import { discoverBooks, type DiscoveredFolder, type DiscoveryLogger } from './book-discovery.js';
+import { discoverBooks, type DiscoveryLogger } from './book-discovery.js';
 import { readdir, stat } from 'node:fs/promises';
 
 const mockReaddir = vi.mocked(readdir);

@@ -12,7 +12,6 @@ export function BookContextMenu({
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [focusIndex, setFocusIndex] = useState(0);
-  const actions = [onSearchReleases, onRemove];
 
   useEffect(() => {
     const buttons = menuRef.current?.querySelectorAll<HTMLButtonElement>('button');
@@ -20,6 +19,7 @@ export function BookContextMenu({
   }, [focusIndex]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const actions = [onSearchReleases, onRemove];
     switch (e.key) {
       case 'Escape':
         e.preventDefault();
@@ -39,7 +39,7 @@ export function BookContextMenu({
         actions[focusIndex]();
         break;
     }
-  }, [onClose, actions, focusIndex]);
+  }, [onClose, onSearchReleases, onRemove, focusIndex]);
 
   return (
     <div

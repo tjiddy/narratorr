@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, type useQueryClient } from '@tanstack/react-query';
 import { api, type BookMetadata, type AuthorMetadata } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { BookOpenIcon, UsersIcon, SearchIcon } from '@/components/icons';

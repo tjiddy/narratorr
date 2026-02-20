@@ -504,13 +504,6 @@ describe('LibraryPage', () => {
     const sortSelect = screen.getByDisplayValue('Date Added');
     await user.selectOptions(sortSelect, 'title');
 
-    // Get all book title elements in order
-    const bookCards = screen.getAllByRole('link').filter(el => el.getAttribute('tabIndex') === '0');
-    const titles = bookCards.map(card => {
-      const h3 = card.querySelector('h3');
-      return h3?.textContent;
-    });
-
     // Default sort direction is desc, so title desc = reverse alphabetical
     // Switch to asc for alphabetical
     const sortButton = screen.getByTitle(/Sort descending/i);

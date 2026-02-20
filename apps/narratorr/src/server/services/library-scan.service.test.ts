@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 import type { BookService } from './book.service.js';
+import type { MetadataService } from './metadata.service.js';
+import type { SettingsService } from './settings.service.js';
 import { parseFolderStructure, LibraryScanService } from './library-scan.service.js';
 
 vi.mock('./enrichment-utils.js', () => ({
@@ -217,8 +219,8 @@ describe('LibraryScanService', () => {
     service = new LibraryScanService(
       mockDb as Db,
       mockBookService as unknown as BookService,
-      mockMetadataService as unknown as import('./metadata.service.js').MetadataService,
-      mockSettingsService as unknown as import('./settings.service.js').SettingsService,
+      mockMetadataService as unknown as MetadataService,
+      mockSettingsService as unknown as SettingsService,
       log,
     );
   });

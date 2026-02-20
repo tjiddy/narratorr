@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { CoverImage } from '@/components/CoverImage';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, type useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type BookMetadata, type BookWithAuthor } from '@/lib/api';
 import { toast } from 'sonner';
 import { formatDuration, mapBookMetadataToPayload, isBookInLibrary } from '@/lib/helpers';

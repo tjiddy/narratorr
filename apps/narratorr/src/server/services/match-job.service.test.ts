@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockLogger } from '../__tests__/helpers.js';
 import { MatchJobService, type MatchCandidate } from './match-job.service.js';
 import type { MetadataService } from './metadata.service.js';
@@ -151,9 +151,7 @@ describe('MatchJobService', () => {
         title: `Book ${i}`,
       }));
 
-      let searchCallCount = 0;
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-        searchCallCount++;
         // Small delay to give cancellation a chance
         await new Promise(resolve => setTimeout(resolve, 5));
         return [];
