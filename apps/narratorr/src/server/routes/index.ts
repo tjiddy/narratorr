@@ -14,6 +14,7 @@ import {
 } from '../services';
 import { ImportService } from '../services/import.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
+import { MatchJobService } from '../services/match-job.service.js';
 
 import { booksRoutes } from './books.js';
 import { searchRoutes } from './search.js';
@@ -37,6 +38,7 @@ export interface Services {
   metadata: MetadataService;
   import: ImportService;
   libraryScan: LibraryScanService;
+  matchJob: MatchJobService;
   notifier: NotifierService;
   blacklist: BlacklistService;
   prowlarrSync: ProwlarrSyncService;
@@ -57,11 +59,12 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const notifier = new NotifierService(db, log);
   const download = new DownloadService(db, downloadClient, log, notifier);
   const importService = new ImportService(db, downloadClient, settings, log, notifier);
-  const libraryScan = new LibraryScanService(db, book, metadata, log);
+  const libraryScan = new LibraryScanService(db, book, metadata, settings, log);
+  const matchJob = new MatchJobService(metadata, log);
   const blacklistService = new BlacklistService(db, log);
   const prowlarrSync = new ProwlarrSyncService(db, log);
 
-  return { settings, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, notifier, blacklist: blacklistService, prowlarrSync };
+  return { settings, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync };
 }
 
 export async function registerRoutes(
@@ -75,7 +78,7 @@ export async function registerRoutes(
   await downloadClientsRoutes(app, services.downloadClient);
   await settingsRoutes(app, services.settings);
   await metadataRoutes(app, services.metadata);
-  await libraryScanRoutes(app, services.libraryScan);
+  await libraryScanRoutes(app, services.libraryScan, services.matchJob);
   await systemRoutes(app, services);
   await notifiersRoutes(app, services.notifier);
   await blacklistRoutes(app, services.blacklist);

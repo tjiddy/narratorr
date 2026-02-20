@@ -330,6 +330,7 @@ describe('ImportService', () => {
       totalSize: 500_000_000,
       fileCount: 12,
       tagNarrator: 'Steven Pacey',
+      hasCoverArt: false,
     };
 
     function setupImportMocks() {
@@ -399,6 +400,7 @@ describe('ImportService', () => {
       const mockScan = vi.mocked(scanAudioDirectory);
       mockScan.mockResolvedValueOnce({
         ...mockScanResult,
+        hasCoverArt: true,
         coverImage: coverData,
         coverMimeType: 'image/png',
       });
@@ -424,6 +426,7 @@ describe('ImportService', () => {
       const mockScan = vi.mocked(scanAudioDirectory);
       mockScan.mockResolvedValueOnce({
         ...mockScanResult,
+        hasCoverArt: true,
         coverImage: coverData,
         coverMimeType: 'image/jpeg',
       });

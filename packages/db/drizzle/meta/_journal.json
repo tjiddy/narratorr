@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1771132017071,
-      "tag": "0000_easy_cerebro",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1771146318958,
-      "tag": "0001_lethal_bloodstrike",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1771232028217,
-      "tag": "0002_cute_scarlet_spider",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1771275527347,
-      "tag": "0003_demonic_wasp",
+      "when": 1771450206422,
+      "tag": "0000_even_boomerang",
       "breakpoints": true
     }
   ]

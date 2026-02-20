@@ -43,6 +43,15 @@ CREATE TABLE `books` (
 	`enrichment_status` text DEFAULT 'pending' NOT NULL,
 	`path` text,
 	`size` integer,
+	`audio_codec` text,
+	`audio_bitrate` integer,
+	`audio_sample_rate` integer,
+	`audio_channels` integer,
+	`audio_bitrate_mode` text,
+	`audio_file_format` text,
+	`audio_file_count` integer,
+	`audio_total_size` integer,
+	`audio_duration` integer,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`updated_at` integer DEFAULT (unixepoch()) NOT NULL,
 	FOREIGN KEY (`author_id`) REFERENCES `authors`(`id`) ON UPDATE no action ON DELETE set null
@@ -92,6 +101,8 @@ CREATE TABLE `indexers` (
 	`enabled` integer DEFAULT true NOT NULL,
 	`priority` integer DEFAULT 50 NOT NULL,
 	`settings` text NOT NULL,
+	`source` text,
+	`source_indexer_id` integer,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL
 );
 --> statement-breakpoint
@@ -119,4 +130,11 @@ CREATE INDEX `idx_search_history_searched_at` ON `search_history` (`searched_at`
 CREATE TABLE `settings` (
 	`key` text PRIMARY KEY NOT NULL,
 	`value` text NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `unmatched_genres` (
+	`genre` text PRIMARY KEY NOT NULL,
+	`count` integer DEFAULT 1 NOT NULL,
+	`first_seen` integer DEFAULT (unixepoch()) NOT NULL,
+	`last_seen` integer DEFAULT (unixepoch()) NOT NULL
 );

@@ -37,7 +37,7 @@ export const books = sqliteTable('books', {
   publishedDate: text('published_date'),
   genres: text('genres', { mode: 'json' }).$type<string[]>(),
   status: text('status', {
-    enum: ['wanted', 'searching', 'downloading', 'imported', 'missing'],
+    enum: ['wanted', 'searching', 'downloading', 'importing', 'imported', 'missing'],
   })
     .notNull()
     .default('wanted'),

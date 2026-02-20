@@ -25,6 +25,20 @@ const REGION_TLDS: Record<string, string> = {
   es: '.es',
 };
 
+/** Primary language for each region — used to prefer matching-language results. */
+const REGION_LANGUAGES: Record<string, string> = {
+  us: 'english',
+  ca: 'english',
+  uk: 'english',
+  au: 'english',
+  in: 'english',
+  fr: 'french',
+  de: 'german',
+  jp: 'japanese',
+  it: 'italian',
+  es: 'spanish',
+};
+
 const REQUEST_TIMEOUT_MS = 10000;
 const MAX_RESULTS = 10;
 const RESPONSE_GROUPS = 'contributors,product_desc,media,product_extended_attrs,series';
@@ -35,10 +49,12 @@ export class AudibleProvider implements MetadataProvider {
   readonly type = 'audible';
 
   private tld: string;
+  private preferredLanguage: string;
 
   constructor(config: AudibleConfig = {}) {
     const region = config.region ?? 'us';
     this.tld = REGION_TLDS[region] ?? '.com';
+    this.preferredLanguage = REGION_LANGUAGES[region] ?? 'english';
     this.name = `Audible${this.tld}`;
   }
 
@@ -97,6 +113,15 @@ export class AudibleProvider implements MetadataProvider {
       const result = BookMetadataSchema.safeParse(mapped);
       if (result.success) books.push(result.data);
     }
+
+    // Sort preferred-language results first (Audible API doesn't support language filtering)
+    const preferred = this.preferredLanguage;
+    books.sort((a, b) => {
+      const aMatch = a.language?.toLowerCase() === preferred ? 0 : 1;
+      const bMatch = b.language?.toLowerCase() === preferred ? 0 : 1;
+      return aMatch - bMatch;
+    });
+
     return books;
   }
 
@@ -265,7 +290,7 @@ function mapProduct(product: AudibleProduct): Record<string, unknown> {
   const series = (product.series ?? [])
     .filter((s) => s.title)
     .map((s) => ({
-      name: s.title!,
+      name: cleanTitle(s.title!),
       position: parseSeriesPosition(s.sequence),
       asin: s.asin || undefined,
     }));
@@ -328,9 +353,12 @@ function stripHtml(html?: string): string | undefined {
     .trim() || undefined;
 }
 
-/** Clean title — remove common suffixes like ", Book 2" that Audible appends. */
+/** Clean title — remove Audible-appended suffixes like ", Book 2" and "(Narrated by ...)". */
 function cleanTitle(title: string): string {
-  return title.replace(/,?\s*Book\s+\d+$/i, '').trim();
+  return title
+    .replace(/\s*\(Narrated by [^)]+\)/i, '')
+    .replace(/,?\s*Book\s+\d+$/i, '')
+    .trim();
 }
 
 function capitalize(s: string): string {

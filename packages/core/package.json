@@ -26,6 +26,10 @@
       "import": "./dist/utils/audio-scanner.js",
       "types": "./dist/utils/audio-scanner.d.ts"
     },
+    "./utils/book-discovery": {
+      "import": "./dist/utils/book-discovery.js",
+      "types": "./dist/utils/book-discovery.d.ts"
+    },
     "./metadata": {
       "import": "./dist/metadata/index.js",
       "types": "./dist/metadata/index.d.ts"

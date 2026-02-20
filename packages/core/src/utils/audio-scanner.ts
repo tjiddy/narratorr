@@ -14,6 +14,8 @@ export interface AudioScanResult {
   tagPublisher?: string;
   coverImage?: Buffer;
   coverMimeType?: string;
+  /** Whether any audio file contains embedded cover art */
+  hasCoverArt: boolean;
 
   // Technical (from first audio file)
   codec: string;
@@ -30,10 +32,20 @@ export interface AudioScanResult {
   chapterCount?: number;
 }
 
+export interface AudioScanOptions {
+  /** When true, detect cover art presence but skip buffer extraction */
+  skipCover?: boolean;
+}
+
 /** Scan a directory of audio files and extract metadata + technical info. */
-export async function scanAudioDirectory(dirPath: string): Promise<AudioScanResult | null> {
+export async function scanAudioDirectory(
+  dirPath: string,
+  options?: AudioScanOptions,
+): Promise<AudioScanResult | null> {
   const audioFiles = await collectAudioFiles(dirPath);
   if (audioFiles.length === 0) return null;
+
+  const skipCover = options?.skipCover ?? false;
 
   let result: AudioScanResult = {
     codec: '',
@@ -45,6 +57,7 @@ export async function scanAudioDirectory(dirPath: string): Promise<AudioScanResu
     totalDuration: 0,
     totalSize: 0,
     fileCount: audioFiles.length,
+    hasCoverArt: false,
   };
 
   let tagsExtracted = false;
@@ -101,10 +114,13 @@ export async function scanAudioDirectory(dirPath: string): Promise<AudioScanResu
       }
 
       // Extract cover art from first file that has it
-      if (!result.coverImage && metadata.common.picture?.length) {
-        const pic = metadata.common.picture[0];
-        result.coverImage = Buffer.from(pic.data);
-        result.coverMimeType = pic.format;
+      if (!result.hasCoverArt && metadata.common.picture?.length) {
+        result.hasCoverArt = true;
+        if (!skipCover) {
+          const pic = metadata.common.picture[0];
+          result.coverImage = Buffer.from(pic.data);
+          result.coverMimeType = pic.format;
+        }
       }
 
       // Chapter count (M4B files)

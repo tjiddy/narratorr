@@ -55,6 +55,7 @@ describe('enrichBookFromAudio', () => {
       fileCount: 10,
       totalSize: 500_000_000,
       totalDuration: 36000,
+      hasCoverArt: false,
     });
 
     const result = await enrichBookFromAudio(
@@ -107,6 +108,7 @@ describe('enrichBookFromAudio', () => {
       totalSize: 1000,
       totalDuration: 100,
       tagNarrator: 'Tim Gerard Reynolds',
+      hasCoverArt: false,
     });
 
     await enrichBookFromAudio(
@@ -135,6 +137,7 @@ describe('enrichBookFromAudio', () => {
       totalSize: 1000,
       totalDuration: 100,
       tagNarrator: 'Wrong Narrator',
+      hasCoverArt: false,
     });
 
     await enrichBookFromAudio(
@@ -164,6 +167,7 @@ describe('enrichBookFromAudio', () => {
       totalDuration: 100,
       coverImage: Buffer.from('fake-image'),
       coverMimeType: 'image/jpeg',
+      hasCoverArt: true,
     });
 
     await enrichBookFromAudio(
@@ -193,6 +197,7 @@ describe('enrichBookFromAudio', () => {
       totalSize: 1000,
       totalDuration: 100,
       coverImage: Buffer.from('fake-image'),
+      hasCoverArt: true,
     });
 
     await enrichBookFromAudio(
@@ -235,6 +240,7 @@ describe('enrichBookFromAudio', () => {
       totalDuration: 100,
       coverImage: Buffer.from('fake-image'),
       coverMimeType: 'image/png',
+      hasCoverArt: true,
     });
 
     await enrichBookFromAudio(

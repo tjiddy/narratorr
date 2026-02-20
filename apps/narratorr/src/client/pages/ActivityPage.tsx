@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, formatBytes, formatProgress, type Download } from '@/lib/api';
+import { api, formatBytes, formatProgress, type Download } from   '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import {
   LoadingSpinner,

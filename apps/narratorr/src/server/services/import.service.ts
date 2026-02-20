@@ -48,7 +48,7 @@ export function buildTargetPath(
 }
 
 /** Recursively get total size of a path (file or directory). */
-async function getPathSize(path: string): Promise<number> {
+export async function getPathSize(path: string): Promise<number> {
   const stats = await stat(path);
   if (stats.isFile()) return stats.size;
 

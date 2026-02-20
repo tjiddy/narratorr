@@ -67,7 +67,7 @@ Uses Fastify's built-in Pino logger. Log level is configurable at Settings > Gen
 - Routes: use `request.log.info(...)` / `request.log.error(error, '...')`
 - Services: use `this.log.info(...)` (injected `FastifyBaseLogger` via constructor)
 - Jobs: use the `log` instance passed at initialization
-- Core adapters (`packages/core/`): do NOT use a logger — throw errors or return failures; the calling service logs
+- Core adapters (`packages/core/`): do NOT use a logger — throw errors or return failures; the calling service logs, UNLESS it makes sense to do so.
 
 **Important:** Use `FastifyBaseLogger` from `fastify` for logger types — NOT `BaseLogger` from `pino`. Pino is a transitive dependency (not directly installed), so importing from it causes TypeScript errors.
 
@@ -76,6 +76,8 @@ Uses Fastify's built-in Pino logger. Log level is configurable at Settings > Gen
 ## Testing
 
 All new/changed code must include tests. Run `pnpm test` (Vitest via Turborepo) to execute all suites.
+
+**Test-first convention:** When implementing spec behaviors, write stub test cases _before_ the implementation. Each acceptance criterion or behavioral requirement from the spec becomes a failing test first, then code to make it pass. This applies to both backend logic and frontend component behavior. The goal isn't full TDD — it's ensuring spec requirements have explicit test coverage before the implementation is "done."
 
 **Conventions:**
 - Co-located test files: `foo.ts` → `foo.test.ts` (or `.test.tsx` for JSX)
@@ -86,6 +88,8 @@ All new/changed code must include tests. Run `pnpm test` (Vitest via Turborepo) 
 - Frontend hooks: `renderHook` from Testing Library (`*.test.ts(x)`)
 - Global setup (client): `src/client/__tests__/setup.ts` (matchMedia mock, auto-cleanup)
 - Test helpers: `src/client/__tests__/helpers.tsx` (`renderWithProviders`)
+
+**Coverage gate:** `/verify` runs coverage on files changed in the branch. Any source file (non-test) at 0% coverage is a hard block on handoff. This catches entirely untested new code — not a substitute for behavioral tests, but a safety net against shipping with no tests at all.
 
 **Required before PR:** `pnpm lint`, `pnpm test` (zero failures), `pnpm typecheck`, `pnpm build`.
 

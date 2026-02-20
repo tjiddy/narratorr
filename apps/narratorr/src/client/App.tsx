@@ -6,6 +6,7 @@ import { SearchPage } from './pages/SearchPage';
 import { ActivityPage } from './pages/ActivityPage';
 import { BookPage } from './pages/BookPage';
 import { AuthorPage } from './pages/AuthorPage';
+import { ManualImportPage } from './pages/ManualImportPage';
 import {
   SettingsLayout,
   GeneralSettings,
@@ -23,6 +24,7 @@ export function App() {
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/library" replace />} />
           <Route path="library" element={<LibraryPage />} />
+          <Route path="import" element={<ManualImportPage />} />
           <Route path="search" element={<SearchPage />} />
           <Route path="activity" element={<ActivityPage />} />
           <Route path="books/:id" element={<BookPage />} />

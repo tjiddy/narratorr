@@ -98,6 +98,8 @@ describe('LibraryPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Your library is empty')).toBeInTheDocument();
     });
+    expect(screen.getByText('Manual Import')).toBeInTheDocument();
+    expect(screen.getByText('Manual Import').closest('a')).toHaveAttribute('href', '/import');
     expect(screen.getByText('Discover Books')).toBeInTheDocument();
     expect(screen.getByText('Discover Books').closest('a')).toHaveAttribute('href', '/search');
   });
@@ -231,13 +233,9 @@ describe('LibraryPage', () => {
     });
 
     // Cards should be rendered with role="link" for accessibility
-    const bookCards = screen.getAllByRole('link');
+    // Filter to only book cards (they have tabIndex=0), excluding nav links
+    const bookCards = screen.getAllByRole('link').filter(el => el.getAttribute('tabIndex') === '0');
     expect(bookCards.length).toBe(mockBooks.length);
-
-    // Each card should be focusable
-    for (const card of bookCards) {
-      expect(card).toHaveAttribute('tabIndex', '0');
-    }
   });
 
   it('opens context menu on three-dot click', async () => {
@@ -489,7 +487,7 @@ describe('LibraryPage', () => {
     });
   });
 
-  it('shows ghost Quick Add card in grid', async () => {
+  it('shows import link in toolbar', async () => {
     vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
 
     renderWithProviders(<LibraryPage />);
@@ -498,6 +496,7 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Quick Add')).toBeInTheDocument();
+    const importLink = screen.getByText('Import');
+    expect(importLink.closest('a')).toHaveAttribute('href', '/import');
   });
 });

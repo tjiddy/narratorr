@@ -1,13 +1,16 @@
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, stat, mkdir, cp, rm } from 'node:fs/promises';
 import { join, extname, relative } from 'node:path';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { books } from '@narratorr/db/schema';
 import { eq } from 'drizzle-orm';
 import { AUDIO_EXTENSIONS } from '@narratorr/core/utils';
+import { discoverBooks } from '@narratorr/core/utils/book-discovery';
 import type { BookService } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
+import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '@narratorr/core/metadata';
+import { buildTargetPath, getPathSize } from './import.service.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 
 export interface DiscoveredBook {
@@ -18,6 +21,8 @@ export interface DiscoveredBook {
   fileCount: number;
   totalSize: number;
 }
+
+export type ImportMode = 'copy' | 'move';
 
 export interface ImportConfirmItem {
   path: string;
@@ -52,35 +57,36 @@ export class LibraryScanService {
     private db: Db,
     private bookService: BookService,
     private metadataService: MetadataService,
+    private settingsService: SettingsService,
     private log: FastifyBaseLogger,
   ) {}
 
   /**
    * Scan a directory tree for audiobook folders.
-   * Returns discovered books with parsed metadata from folder names.
+   * Uses core discoverBooks() for filesystem walk, then enriches each folder
+   * with parsed folder structure + audio tag data.
    */
   async scanDirectory(rootPath: string): Promise<ScanResult> {
     this.log.info({ rootPath }, 'Starting directory scan');
 
-    const leafFolders = await this.findAudioLeafFolders(rootPath);
-    this.log.info({ count: leafFolders.length }, 'Found audio folders');
+    const folders = await discoverBooks(rootPath, { log: this.log });
+    this.log.info({ count: folders.length }, 'Found audio folders');
 
     const discoveries: DiscoveredBook[] = [];
     let skippedDuplicates = 0;
 
-    for (const folderPath of leafFolders) {
-      const relativePath = relative(rootPath, folderPath);
-      const parts = relativePath.split(/[/\\]/).filter(Boolean);
-      const parsed = parseFolderStructure(parts);
+    for (const folder of folders) {
+      const parsed = parseFolderStructure(folder.folderParts);
 
       // Check for duplicates by path
       const existingByPath = await this.db
         .select()
         .from(books)
-        .where(eq(books.path, folderPath))
+        .where(eq(books.path, folder.path))
         .limit(1);
 
       if (existingByPath.length > 0) {
+        this.log.debug({ path: folder.path }, 'Skipping duplicate (path match)');
         skippedDuplicates++;
         continue;
       }
@@ -89,31 +95,39 @@ export class LibraryScanService {
       if (parsed.title) {
         const existing = await this.bookService.findDuplicate(parsed.title, parsed.author || undefined);
         if (existing) {
+          this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Skipping duplicate (title+author match)');
           skippedDuplicates++;
           continue;
         }
       }
 
-      const { fileCount, totalSize } = await this.getAudioStats(folderPath);
+      this.log.debug(
+        {
+          path: folder.path,
+          folderParse: { title: parsed.title, author: parsed.author, series: parsed.series },
+          fileCount: folder.audioFileCount,
+        },
+        'Discovered book folder',
+      );
 
       discoveries.push({
-        path: folderPath,
+        path: folder.path,
         parsedTitle: parsed.title,
         parsedAuthor: parsed.author,
         parsedSeries: parsed.series,
-        fileCount,
-        totalSize,
+        fileCount: folder.audioFileCount,
+        totalSize: folder.totalSize,
       });
     }
 
     this.log.info(
-      { discoveries: discoveries.length, skippedDuplicates, totalFolders: leafFolders.length },
+      { discoveries: discoveries.length, skippedDuplicates, totalFolders: folders.length },
       'Directory scan complete',
     );
 
     return {
       discoveries,
-      totalFolders: leafFolders.length,
+      totalFolders: folders.length,
       skippedDuplicates,
     };
   }
@@ -168,7 +182,7 @@ export class LibraryScanService {
    * Import a single book — creates the DB record, sets path/size, and enriches.
    * Shared pipeline used by both Quick Add and bulk Library Import.
    */
-  async importSingleBook(item: ImportConfirmItem, metadata?: BookMetadata | null): Promise<ImportSingleResult> {
+  async importSingleBook(item: ImportConfirmItem, metadata?: BookMetadata | null, mode?: ImportMode): Promise<ImportSingleResult> {
     // Duplicate check
     const existing = await this.bookService.findDuplicate(item.title, item.authorName);
     if (existing) {
@@ -196,10 +210,16 @@ export class LibraryScanService {
       status: 'imported',
     });
 
+    // Determine final path: copy/move to library or use source path
+    let finalPath = item.path;
+    if (mode) {
+      finalPath = await this.copyToLibrary(item, book, meta, mode);
+    }
+
     // Set the path and size
-    const stats = await this.getAudioStats(item.path);
+    const stats = await this.getAudioStats(finalPath);
     await this.db.update(books).set({
-      path: item.path,
+      path: finalPath,
       size: stats.totalSize,
       updatedAt: new Date(),
     }).where(eq(books.id, book.id));
@@ -208,7 +228,7 @@ export class LibraryScanService {
     let enriched = false;
     const audioResult = await enrichBookFromAudio(
       book.id,
-      item.path,
+      finalPath,
       { narrator: book.narrator, duration: book.duration, coverUrl: book.coverUrl },
       this.db,
       this.log,
@@ -228,7 +248,6 @@ export class LibraryScanService {
             updatedAt: new Date(),
           };
           if (asin !== primaryAsin) {
-            // Found data with an alternate ASIN — store it for future lookups
             updates.asin = asin;
           }
           if (!book.narrator && audnexusData.narrators?.length) {
@@ -246,46 +265,201 @@ export class LibraryScanService {
       }
     }
 
-    this.log.info({ bookId: book.id, title: item.title, enriched }, 'Single book imported');
+    this.log.info({ bookId: book.id, title: item.title, enriched, mode: mode ?? 'pointer' }, 'Single book imported');
     return { imported: true, bookId: book.id, enriched };
   }
 
   /**
-   * Confirm import — create book records for selected discoveries,
-   * then enrich each with audio file metadata.
+   * Copy (or move) source files into the library directory structure.
+   * Returns the final library path.
    */
-  async confirmImport(items: ImportConfirmItem[]): Promise<{
-    imported: number;
-    failed: number;
-    enriched: number;
-    enrichmentFailed: number;
-  }> {
-    this.log.info({ count: items.length }, 'Starting library import');
+  private async copyToLibrary(
+    item: ImportConfirmItem,
+    book: { id: number; title: string; seriesName?: string | null; seriesPosition?: number | null; narrator?: string | null; publishedDate?: string | null },
+    meta: BookMetadata | null,
+    mode: ImportMode,
+  ): Promise<string> {
+    const librarySettings = await this.settingsService.get('library');
+    const targetPath = buildTargetPath(
+      librarySettings.path,
+      librarySettings.folderFormat,
+      {
+        title: item.title,
+        seriesName: item.seriesName || meta?.series?.[0]?.name,
+        seriesPosition: meta?.series?.[0]?.position,
+        narrator: book.narrator,
+        publishedDate: meta?.publishedDate,
+      },
+      item.authorName ?? null,
+    );
 
-    let imported = 0;
-    let failed = 0;
-    let enriched = 0;
-    let enrichmentFailed = 0;
+    await mkdir(targetPath, { recursive: true });
+    this.log.info({ source: item.path, target: targetPath, mode }, 'Copying files to library');
+    await cp(item.path, targetPath, { recursive: true, errorOnExist: false });
+
+    // Verify copy (99% threshold)
+    const sourceSize = await getPathSize(item.path);
+    const targetSize = await getPathSize(targetPath);
+    this.log.debug({ source: item.path, sourceSize, targetSize, ratio: sourceSize > 0 ? (targetSize / sourceSize).toFixed(4) : 'N/A' }, 'Copy verification');
+    if (targetSize < sourceSize * 0.99) {
+      throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
+    }
+
+    // If move mode, delete source after successful copy
+    if (mode === 'move') {
+      await rm(item.path, { recursive: true });
+      this.log.info({ source: item.path }, 'Source directory removed after move');
+    }
+
+    return targetPath;
+  }
+
+  /**
+   * Confirm import — create placeholder book records with status 'importing',
+   * kick off background processing, and return immediately.
+   */
+  async confirmImport(items: ImportConfirmItem[], mode?: ImportMode): Promise<{
+    accepted: number;
+  }> {
+    this.log.info({ count: items.length, mode: mode ?? 'pointer' }, 'Accepting library import');
+
+    // Create placeholder records synchronously
+    const accepted: Array<{ bookId: number; item: ImportConfirmItem }> = [];
 
     for (const item of items) {
       try {
-        const result = await this.importSingleBook(item);
-        if (result.imported) {
-          imported++;
-          if (result.enriched) {
-            enriched++;
-          } else {
-            enrichmentFailed++;
-          }
+        // Duplicate check
+        const existing = await this.bookService.findDuplicate(item.title, item.authorName);
+        if (existing) {
+          this.log.debug({ title: item.title }, 'Skipping duplicate during import');
+          continue;
         }
+
+        this.log.debug(
+          {
+            title: item.title,
+            author: item.authorName,
+            hasMetadata: !!item.metadata,
+            asin: item.asin || item.metadata?.asin,
+          },
+          'Creating import placeholder',
+        );
+
+        const book = await this.bookService.create({
+          title: item.title,
+          authorName: item.authorName,
+          seriesName: item.seriesName || item.metadata?.series?.[0]?.name,
+          seriesPosition: item.metadata?.series?.[0]?.position,
+          coverUrl: item.coverUrl || item.metadata?.coverUrl,
+          asin: item.asin || item.metadata?.asin,
+          isbn: item.metadata?.isbn,
+          narrator: item.metadata?.narrators?.join(', '),
+          description: item.metadata?.description,
+          duration: item.metadata?.duration,
+          publishedDate: item.metadata?.publishedDate,
+          genres: item.metadata?.genres,
+          providerId: item.metadata?.providerId,
+          status: 'importing',
+        });
+
+        accepted.push({ bookId: book.id, item });
       } catch (error) {
-        this.log.error({ error, title: item.title, path: item.path }, 'Failed to import book');
-        failed++;
+        this.log.error({ error, title: item.title }, 'Failed to create placeholder for import');
       }
     }
 
-    this.log.info({ imported, failed, enriched, enrichmentFailed }, 'Library import complete');
-    return { imported, failed, enriched, enrichmentFailed };
+    this.log.info({ accepted: accepted.length }, 'Import placeholders created, starting background processing');
+
+    // Fire-and-forget background processing
+    this.processImportsInBackground(accepted, mode).catch(error => {
+      this.log.error({ error }, 'Background import processing failed');
+    });
+
+    return { accepted: accepted.length };
+  }
+
+  /**
+   * Background processing: copy/move files, enrich, update status.
+   */
+  private async processImportsInBackground(
+    items: Array<{ bookId: number; item: ImportConfirmItem }>,
+    mode?: ImportMode,
+  ): Promise<void> {
+    for (const { bookId, item } of items) {
+      try {
+        this.log.debug({ bookId, title: item.title, mode: mode ?? 'pointer' }, 'Processing import');
+
+        // Determine final path: copy/move to library or use source path
+        let finalPath = item.path;
+        if (mode) {
+          const bookRecord = await this.db.select().from(books).where(eq(books.id, bookId)).limit(1);
+          if (bookRecord.length > 0) {
+            finalPath = await this.copyToLibrary(item, bookRecord[0], item.metadata ?? null, mode);
+          }
+        }
+
+        // Set the path and size
+        const stats = await this.getAudioStats(finalPath);
+        this.log.debug({ bookId, finalPath, fileCount: stats.fileCount, totalSize: stats.totalSize }, 'Audio stats collected');
+        await this.db.update(books).set({
+          path: finalPath,
+          size: stats.totalSize,
+          updatedAt: new Date(),
+        }).where(eq(books.id, bookId));
+
+        // Enrich with audio file metadata (WITH cover extraction)
+        this.log.debug({ bookId }, 'Starting audio enrichment');
+        await enrichBookFromAudio(
+          bookId,
+          finalPath,
+          { narrator: item.metadata?.narrators?.join(', ') ?? null, duration: item.metadata?.duration ?? null, coverUrl: item.coverUrl || item.metadata?.coverUrl || null },
+          this.db,
+          this.log,
+        );
+
+        // Audnexus enrichment
+        const primaryAsin = item.asin || item.metadata?.asin;
+        const asinsToTry = [primaryAsin, ...(item.metadata?.alternateAsins ?? [])].filter((a): a is string => !!a);
+
+        for (const asin of asinsToTry) {
+          try {
+            const audnexusData = await this.metadataService.enrichBook(asin);
+            if (audnexusData) {
+              const updates: Record<string, unknown> = {
+                enrichmentStatus: 'enriched',
+                updatedAt: new Date(),
+              };
+              if (asin !== primaryAsin) updates.asin = asin;
+              if (!item.metadata?.narrators?.length && audnexusData.narrators?.length) {
+                updates.narrator = audnexusData.narrators.join(', ');
+              }
+              if (!item.metadata?.duration && audnexusData.duration) {
+                updates.duration = audnexusData.duration;
+              }
+              await this.db.update(books).set(updates).where(eq(books.id, bookId));
+              this.log.info({ bookId, asin }, 'Audnexus enrichment applied');
+              break;
+            }
+          } catch (error) {
+            this.log.warn({ error, bookId, asin }, 'Audnexus enrichment failed');
+          }
+        }
+
+        // Success — mark as imported
+        await this.db.update(books).set({
+          status: 'imported',
+          updatedAt: new Date(),
+        }).where(eq(books.id, bookId));
+
+        this.log.info({ bookId, title: item.title }, 'Book import completed');
+      } catch (error) {
+        this.log.error({ error, bookId, title: item.title }, 'Book import failed');
+        await this.db.update(books).set({
+          status: 'missing',
+          updatedAt: new Date(),
+        }).where(eq(books.id, bookId));
+      }
+    }
   }
 
   /**
@@ -296,8 +470,8 @@ export class LibraryScanService {
     try {
       const query = authorName ? `${title} ${authorName}` : title;
       const results = await this.metadataService.searchBooks(query);
+      this.log.debug({ title, authorName, query, resultCount: results.length }, 'Metadata search completed');
       if (results.length === 0) {
-        this.log.debug({ title, authorName }, 'No metadata match found');
         return null;
       }
 

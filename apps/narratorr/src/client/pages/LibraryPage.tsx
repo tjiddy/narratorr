@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useImageError } from '@/hooks/useImageError';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useLibrary } from '@/hooks/useLibrary';
@@ -20,10 +20,9 @@ import {
   ArrowUpDownIcon,
   ArrowRightIcon,
   TrashIcon,
-  PlusIcon,
   LoadingSpinner,
+  FolderIcon,
 } from '@/components/icons';
-import { QuickAddWizard } from '@/components/QuickAddWizard';
 
 // ============================================================================
 // Types
@@ -45,6 +44,7 @@ const statusBorderClass: Record<string, string> = {
   wanted: 'border-l-[3px] border-l-amber-500',
   searching: 'border-l-[3px] border-l-blue-500 animate-border-pulse',
   downloading: 'border-l-[3px] border-l-blue-500 animate-border-pulse',
+  importing: 'border-l-[3px] border-l-blue-500 animate-border-pulse',
 };
 
 // ============================================================================
@@ -55,7 +55,7 @@ function matchesStatusFilter(status: string, filter: StatusFilter): boolean {
   if (filter === 'all') return true;
   if (filter === 'wanted') return status === 'wanted';
   if (filter === 'downloading') return status === 'searching' || status === 'downloading';
-  if (filter === 'imported') return status === 'imported';
+  if (filter === 'imported') return status === 'imported' || status === 'importing';
   return false;
 }
 
@@ -86,6 +86,26 @@ export function LibraryPage() {
   const queryClient = useQueryClient();
   const { data: books = [], isLoading } = useLibrary();
 
+  // Track importing books → show toast when all finish
+  const importingCount = useMemo(() => books.filter(b => b.status === 'importing').length, [books]);
+  const prevImportingRef = useRef(0);
+
+  useEffect(() => {
+    if (prevImportingRef.current > 0 && importingCount === 0) {
+      toast.success('Import complete');
+    }
+    prevImportingRef.current = importingCount;
+  }, [importingCount]);
+
+  // Refetch more frequently when books are importing
+  useEffect(() => {
+    if (importingCount === 0) return;
+    const interval = setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [importingCount, queryClient]);
+
   // State
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [authorFilter, setAuthorFilter] = useState('');
@@ -96,7 +116,6 @@ export function LibraryPage() {
   const deleteConfirm = useDeleteConfirmation<BookWithAuthor>();
   const [searchBook, setSearchBook] = useState<BookWithAuthor | null>(null);
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
-  const [importOpen, setImportOpen] = useState(false);
   const { query: searchQuery, setQuery: setSearchQuery, clearQuery: clearSearch, results: searchResults, isSearching } = useLibrarySearch(books);
 
   // Delete mutation
@@ -182,8 +201,7 @@ export function LibraryPage() {
           <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Library</h1>
           <p className="text-muted-foreground mt-1">Your audiobook collection</p>
         </div>
-        <EmptyLibraryState onImport={() => setImportOpen(true)} />
-        <QuickAddWizard isOpen={importOpen} onClose={() => setImportOpen(false)} />
+        <EmptyLibraryState />
       </div>
     );
   }
@@ -241,18 +259,6 @@ export function LibraryPage() {
               onRemove={() => { deleteConfirm.requestDelete(book); setOpenMenuId(null); }}
             />
           ))}
-
-          {/* Ghost "Quick Add" card */}
-          <button
-            onClick={() => setImportOpen(true)}
-            className="group aspect-square rounded-2xl border-2 border-dashed border-border/40 hover:border-primary/50 flex flex-col items-center justify-center gap-3 transition-all duration-300 hover:bg-primary/5 hover:shadow-glow animate-fade-in-up"
-            style={{ animationDelay: `${Math.min(filteredBooks.length, 9) * 50}ms` }}
-          >
-            <div className="w-12 h-12 rounded-full bg-muted/40 group-hover:bg-primary/15 flex items-center justify-center transition-all duration-300 group-hover:scale-110">
-              <PlusIcon className="w-5 h-5 text-muted-foreground/60 group-hover:text-primary transition-colors" />
-            </div>
-            <span className="text-xs font-medium text-muted-foreground/60 group-hover:text-primary transition-colors">Quick Add</span>
-          </button>
         </div>
       )}
 
@@ -275,9 +281,6 @@ export function LibraryPage() {
           onClose={() => setSearchBook(null)}
         />
       )}
-
-      {/* Quick Add Wizard */}
-      <QuickAddWizard isOpen={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );
 }
@@ -405,6 +408,15 @@ function LibraryToolbar({
             </span>
           )}
         </button>
+
+        {/* Manual Import */}
+        <Link
+          to="/import"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all duration-200 focus-ring"
+        >
+          <FolderIcon className="w-3 h-3" />
+          Import
+        </Link>
       </div>
 
       {/* Row 2: Collapsible filters + sort */}
@@ -657,7 +669,7 @@ function BookContextMenu({
 // Empty States
 // ============================================================================
 
-function EmptyLibraryState({ onImport }: { onImport: () => void }) {
+function EmptyLibraryState() {
   return (
     <div className="flex flex-col items-center justify-center py-16 sm:py-24 animate-fade-in-up stagger-2">
       <div className="relative mb-8">
@@ -673,21 +685,21 @@ function EmptyLibraryState({ onImport }: { onImport: () => void }) {
         Start building your audiobook collection by discovering and adding books
       </p>
       <div className="flex flex-wrap items-center gap-3">
-        <a
-          href="/search"
+        <Link
+          to="/import"
           className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 hover:shadow-glow transition-all duration-200 focus-ring"
+        >
+          <FolderIcon className="w-4 h-4" />
+          Manual Import
+          <ArrowRightIcon className="w-4 h-4" />
+        </Link>
+        <Link
+          to="/search"
+          className="inline-flex items-center gap-2 px-6 py-3 glass-card font-medium rounded-xl hover:border-primary/30 hover:text-primary transition-all duration-200 focus-ring"
         >
           <SearchIcon className="w-4 h-4" />
           Discover Books
-          <ArrowRightIcon className="w-4 h-4" />
-        </a>
-        <button
-          onClick={onImport}
-          className="inline-flex items-center gap-2 px-6 py-3 glass-card font-medium rounded-xl hover:border-primary/30 hover:text-primary transition-all duration-200 focus-ring"
-        >
-          <PlusIcon className="w-4 h-4" />
-          Quick Add
-        </button>
+        </Link>
       </div>
     </div>
   );

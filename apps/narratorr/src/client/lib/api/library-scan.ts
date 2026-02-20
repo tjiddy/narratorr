@@ -1,6 +1,8 @@
 import { fetchApi } from './client.js';
 import type { BookMetadata } from './books.js';
 
+export type ImportMode = 'copy' | 'move';
+
 export interface DiscoveredBook {
   path: string;
   parsedTitle: string;
@@ -39,10 +41,31 @@ export interface ScanResult {
 }
 
 export interface ImportResult {
-  imported: number;
-  failed: number;
-  enriched?: number;
-  enrichmentFailed?: number;
+  accepted: number;
+}
+
+export type Confidence = 'high' | 'medium' | 'none';
+
+export interface MatchCandidate {
+  path: string;
+  title: string;
+  author?: string;
+}
+
+export interface MatchResult {
+  path: string;
+  confidence: Confidence;
+  bestMatch: BookMetadata | null;
+  alternatives: BookMetadata[];
+  error?: string;
+}
+
+export interface MatchJobStatus {
+  id: string;
+  status: 'matching' | 'completed' | 'cancelled';
+  total: number;
+  matched: number;
+  results: MatchResult[];
 }
 
 export const libraryScanApi = {
@@ -51,7 +74,7 @@ export const libraryScanApi = {
       method: 'POST',
       body: JSON.stringify({ path }),
     }),
-  importSingleBook: (item: ImportConfirmItem) =>
+  importSingleBook: (item: ImportConfirmItem & { mode?: ImportMode }) =>
     fetchApi<ImportSingleResult>('/library/import/single', {
       method: 'POST',
       body: JSON.stringify(item),
@@ -61,9 +84,20 @@ export const libraryScanApi = {
       method: 'POST',
       body: JSON.stringify({ path }),
     }),
-  confirmImport: (books: ImportConfirmItem[]) =>
+  confirmImport: (books: ImportConfirmItem[], mode?: ImportMode) =>
     fetchApi<ImportResult>('/library/import/confirm', {
       method: 'POST',
+      body: JSON.stringify({ books, mode }),
+    }),
+  startMatchJob: (books: MatchCandidate[]) =>
+    fetchApi<{ jobId: string }>('/library/import/match', {
+      method: 'POST',
       body: JSON.stringify({ books }),
+    }),
+  getMatchJob: (jobId: string) =>
+    fetchApi<MatchJobStatus>(`/library/import/match/${jobId}`),
+  cancelMatchJob: (jobId: string) =>
+    fetchApi<{ cancelled: boolean }>(`/library/import/match/${jobId}`, {
+      method: 'DELETE',
     }),
 };
