@@ -89,6 +89,13 @@ All new/changed code must include tests. Run `pnpm test` (Vitest via Turborepo) 
 - Global setup (client): `src/client/__tests__/setup.ts` (matchMedia mock, auto-cleanup)
 - Test helpers: `src/client/__tests__/helpers.tsx` (`renderWithProviders`)
 
+**Test quality standards:**
+- **Test user flows, not rendering.** Every frontend test should include at least one `userEvent` interaction (click, type, select). A test with no interactions is only valid for pure display components (badges, status indicators). "It renders" is not a test — it's a smoke check.
+- **Assert consequences, not implementation.** Don't assert CSS classes or internal state. Assert what the user sees (text, visibility, disabled behavior) and what the system does (API called with correct args, navigation occurred, toast appeared). Test the contract, not the wiring.
+- **Mock at the API boundary.** Mock `api.*` methods or use MSW — never mock child components or hooks. The more of the real component tree that executes, the more bugs you catch. If a test mocks a child component, it's testing nothing useful.
+- **Every error path gets a test.** API rejection → user sees error message. Empty data → empty state renders. Network failure mid-flow → UI recovers gracefully. If a catch block exists, a test should trigger it.
+- **Interaction chains over snapshots.** The highest-value tests exercise a full flow: action → state change → UI update → API call → response → UI update. These catch the integration bugs that unit tests miss.
+
 **Coverage gate:** `/verify` runs coverage on files changed in the branch. Any source file (non-test) at 0% coverage is a hard block on handoff. This catches entirely untested new code — not a substitute for behavioral tests, but a safety net against shipping with no tests at all.
 
 **Required before PR:** `pnpm lint`, `pnpm test` (zero failures), `pnpm typecheck`, `pnpm build`.

@@ -11,7 +11,15 @@ const base = join(
   ".claude/plugins/cache/tjiddy-plugins/gitea-workflow"
 );
 
-const version = readdirSync(base)[0];
+const versions = readdirSync(base).sort((a, b) => {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+  }
+  return 0;
+});
+const version = versions[versions.length - 1];
 if (!version) {
   console.error("gitea-workflow plugin not found. Install: claude plugin install gitea-workflow");
   process.exit(1);
