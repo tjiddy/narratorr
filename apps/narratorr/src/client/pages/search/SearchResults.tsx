@@ -4,12 +4,10 @@ import { api, type BookMetadata, type AuthorMetadata } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { BookOpenIcon, UsersIcon, SearchIcon } from '@/components/icons';
 import { EmptyState } from '@/components/EmptyState';
-import { SearchBookCard } from './SearchBookCard.js';
-import { SearchAuthorCard } from './SearchAuthorCard.js';
+import { BooksTabContent, AuthorsTabContent } from './SearchTabContent.js';
 
 type DiscoverTab = 'books' | 'authors';
 
-// eslint-disable-next-line complexity
 export function SearchResults({
   results,
   searchTerm,
@@ -24,7 +22,6 @@ export function SearchResults({
   const [tab, setTab] = useState<DiscoverTab>('books');
   const hasResults = results && (results.authors.length > 0 || results.books.length > 0);
 
-  // Fetch library books to check "already in library"
   const { data: libraryBooks } = useQuery({
     queryKey: queryKeys.books(),
     queryFn: () => api.getBooks(),
@@ -91,34 +88,11 @@ export function SearchResults({
       </div>
 
       {/* Tab Content */}
-      {tab === 'books' && results.books.length > 0 && (
-        <div className="grid gap-4">
-          {results.books.map((book, index) => (
-            <SearchBookCard
-              key={book.asin || index}
-              book={book}
-              index={index}
-              libraryBooks={libraryBooks}
-              queryClient={queryClient}
-            />
-          ))}
-        </div>
+      {tab === 'books' && (
+        <BooksTabContent books={results.books} libraryBooks={libraryBooks} queryClient={queryClient} />
       )}
-
-      {tab === 'books' && results.books.length === 0 && (
-        <p className="text-center text-muted-foreground py-8">No books found</p>
-      )}
-
-      {tab === 'authors' && results.authors.length > 0 && (
-        <div className="grid gap-3">
-          {results.authors.map((author, index) => (
-            <SearchAuthorCard key={author.asin || index} author={author} index={index} />
-          ))}
-        </div>
-      )}
-
-      {tab === 'authors' && results.authors.length === 0 && (
-        <p className="text-center text-muted-foreground py-8">No authors found</p>
+      {tab === 'authors' && (
+        <AuthorsTabContent authors={results.authors} />
       )}
     </div>
   );

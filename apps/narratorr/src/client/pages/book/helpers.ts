@@ -1,0 +1,47 @@
+import { formatDuration } from '@/lib/helpers';
+import { bookStatusConfig } from '@/lib/status';
+import type { BookWithAuthor } from '@/lib/api';
+
+export interface MetadataBook {
+  subtitle?: string;
+  description?: string;
+  coverUrl?: string;
+  duration?: number;
+  genres?: string[];
+  narrators?: string[];
+  publisher?: string;
+  series?: { name: string; position?: number }[];
+}
+
+// eslint-disable-next-line complexity -- flat data coalescing across two sources, no nesting
+export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: MetadataBook | null) {
+  const description = libraryBook.description || metadataBook?.description;
+  const coverUrl = libraryBook.coverUrl || metadataBook?.coverUrl;
+  const genres = libraryBook.genres ?? metadataBook?.genres;
+  const seriesName = libraryBook.seriesName || metadataBook?.series?.[0]?.name;
+  const seriesPosition = libraryBook.seriesPosition ?? metadataBook?.series?.[0]?.position;
+  const duration = formatDuration(libraryBook.duration ?? metadataBook?.duration);
+  const publisher = metadataBook?.publisher;
+  const status = bookStatusConfig[libraryBook.status] ?? bookStatusConfig.wanted;
+  const narratorNames = libraryBook.narrator || metadataBook?.narrators?.join(', ');
+
+  const metaDots: string[] = [];
+  if (seriesName) {
+    metaDots.push(`${seriesName}${seriesPosition != null ? ` #${seriesPosition}` : ''}`);
+  }
+  if (duration) metaDots.push(duration);
+  if (publisher) metaDots.push(publisher);
+
+  return {
+    description,
+    coverUrl,
+    genres,
+    narratorNames,
+    metaDots,
+    statusLabel: status.label,
+    statusDotClass: status.dotClass,
+    subtitle: metadataBook?.subtitle,
+    authorName: libraryBook.author?.name,
+    authorAsin: libraryBook.author?.asin,
+  };
+}
