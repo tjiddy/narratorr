@@ -5,7 +5,7 @@ import { Routes, Route } from 'react-router-dom';
 import { render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { AuthorPage } from '@/pages/AuthorPage';
+import { AuthorPage } from './AuthorPage';
 
 // Mock api
 vi.mock('@/lib/api', () => ({
@@ -118,10 +118,15 @@ describe('AuthorPage', () => {
     vi.mocked(api.getBooks).mockResolvedValue(mockLibraryBooks);
   });
 
-  it('renders loading skeleton initially', () => {
+  it('renders loading skeleton with multiple placeholders', () => {
     vi.mocked(api.getAuthor).mockReturnValue(new Promise(() => {}));
     renderAuthorPage();
-    expect(document.querySelector('.skeleton')).toBeTruthy();
+
+    // Skeleton renders visible placeholder content
+    const skeletons = document.querySelectorAll('.skeleton');
+    expect(skeletons.length).toBeGreaterThan(5);
+    // Avatar placeholder is a rounded-full skeleton
+    expect(document.querySelector('.skeleton.rounded-full')).toBeInTheDocument();
   });
 
   it('renders author name and image', async () => {
@@ -144,34 +149,34 @@ describe('AuthorPage', () => {
     expect(screen.getByText('Science Fiction')).toBeInTheDocument();
   });
 
-  it('renders book count', async () => {
+  it('renders book count and series count in stats', async () => {
     renderAuthorPage();
 
     await waitFor(() => {
       expect(screen.getByText(/4 audiobooks/)).toBeInTheDocument();
     });
+    expect(screen.getByText(/2 series/)).toBeInTheDocument();
   });
 
-  it('renders author bio', async () => {
-    renderAuthorPage();
-
-    await waitFor(() => {
-      expect(screen.getByText(/Brandon Sanderson is an American author/)).toBeInTheDocument();
-    });
-  });
-
-  it('renders bio with show more toggle for long descriptions', async () => {
+  it('renders author bio and toggles show more/less', async () => {
     const longBio = '<p>' + 'A'.repeat(400) + '</p>';
     vi.mocked(api.getAuthor).mockResolvedValue({ ...mockAuthor, description: longBio });
+    const user = userEvent.setup();
 
     renderAuthorPage();
 
     await waitFor(() => {
       expect(screen.getByText('Show more')).toBeInTheDocument();
     });
+
+    await user.click(screen.getByText('Show more'));
+    expect(screen.getByText('Show less')).toBeInTheDocument();
+
+    await user.click(screen.getByText('Show less'));
+    expect(screen.getByText('Show more')).toBeInTheDocument();
   });
 
-  it('groups books by series', async () => {
+  it('groups books by series with standalone section', async () => {
     renderAuthorPage();
 
     await waitFor(() => {
@@ -180,28 +185,11 @@ describe('AuthorPage', () => {
 
     expect(screen.getByText('Mistborn')).toBeInTheDocument();
     expect(screen.getByText('Standalone')).toBeInTheDocument();
-  });
-
-  it('renders books within series with position', async () => {
-    renderAuthorPage();
-
-    await waitFor(() => {
-      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
-    });
-
+    // All book titles present
+    expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     expect(screen.getByText('Words of Radiance')).toBeInTheDocument();
     expect(screen.getByText('The Final Empire')).toBeInTheDocument();
     expect(screen.getByText('Warbreaker')).toBeInTheDocument();
-  });
-
-  it('renders standalone books in separate section', async () => {
-    renderAuthorPage();
-
-    await waitFor(() => {
-      expect(screen.getByText('Warbreaker')).toBeInTheDocument();
-    });
-
-    expect(screen.getByText('Standalone')).toBeInTheDocument();
   });
 
   it('shows "Author not found" when author fails to load', async () => {
@@ -211,6 +199,10 @@ describe('AuthorPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Author not found')).toBeInTheDocument();
     });
+
+    // Has a back-to-library link
+    const backLink = screen.getByText('Back to Library').closest('a');
+    expect(backLink).toHaveAttribute('href', '/library');
   });
 
   it('renders add buttons for books not in library', async () => {
@@ -220,7 +212,6 @@ describe('AuthorPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Should have add buttons (+ icons) for books not in library
     const addButtons = screen.getAllByTitle(/Add ".*" to library/);
     expect(addButtons.length).toBe(4);
   });
@@ -275,20 +266,18 @@ describe('AuthorPage', () => {
     expect(addButtons.length).toBe(3);
   });
 
-  it('renders back button', async () => {
+  it('renders back button that navigates back', async () => {
+    const user = userEvent.setup();
     renderAuthorPage();
 
     await waitFor(() => {
       expect(screen.getByText('Back')).toBeInTheDocument();
     });
-  });
 
-  it('renders book titles in catalog', async () => {
-    renderAuthorPage();
-
-    await waitFor(() => {
-      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
-    });
+    // The back button exists and is clickable
+    await user.click(screen.getByText('Back'));
+    // Navigation is handled by navigate(-1), which we don't mock deeply,
+    // but clicking should not throw
   });
 
   it('renders initials avatar when no image', async () => {
@@ -300,15 +289,7 @@ describe('AuthorPage', () => {
     });
   });
 
-  it('shows series count in stats', async () => {
-    renderAuthorPage();
-
-    await waitFor(() => {
-      expect(screen.getByText(/2 series/)).toBeInTheDocument();
-    });
-  });
-
-  it('renders "Add All" buttons for each series', async () => {
+  it('renders "Add All" buttons for each series section', async () => {
     renderAuthorPage();
 
     await waitFor(() => {
@@ -318,6 +299,31 @@ describe('AuthorPage', () => {
     const addAllButtons = screen.getAllByText(/Add All/);
     // 3 sections: Stormlight Archive, Mistborn, Standalone
     expect(addAllButtons.length).toBe(3);
+  });
+
+  it('clicks Add All to add all books in a series', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.addBook).mockResolvedValue({
+      id: 10,
+      title: 'Added',
+      status: 'wanted',
+      createdAt: '2024-01-01',
+      updatedAt: '2024-01-01',
+    });
+
+    renderAuthorPage();
+
+    await waitFor(() => {
+      expect(screen.getByText('The Stormlight Archive')).toBeInTheDocument();
+    });
+
+    const addAllButtons = screen.getAllByText(/Add All/);
+    // Click the first "Add All" (Mistborn comes first alphabetically, 1 book)
+    await user.click(addAllButtons[0]);
+
+    await waitFor(() => {
+      expect(api.addBook).toHaveBeenCalled();
+    });
   });
 
   it('renders narrator and duration for books', async () => {
@@ -331,21 +337,30 @@ describe('AuthorPage', () => {
     expect(screen.getByText('45h 29m')).toBeInTheDocument();
   });
 
-  it('renders multiple skeleton elements during loading', () => {
-    vi.mocked(api.getAuthor).mockReturnValue(new Promise(() => {}));
+  it('shows error toast when addBook fails', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.addBook).mockRejectedValue(new Error('Server error'));
+
     renderAuthorPage();
 
-    const skeletons = document.querySelectorAll('.skeleton');
-    // AuthorPageSkeleton has multiple skeleton placeholders (avatar, name, bio, series books, etc.)
-    expect(skeletons.length).toBeGreaterThan(5);
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    const addButton = screen.getByTitle('Add "The Way of Kings" to library');
+    await user.click(addButton);
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalled();
+    });
   });
 
-  it('shows skeleton for series section with book rows', () => {
-    vi.mocked(api.getAuthor).mockReturnValue(new Promise(() => {}));
+  it('shows empty catalog message when author has no books', async () => {
+    vi.mocked(api.getAuthorBooks).mockResolvedValue([]);
     renderAuthorPage();
 
-    // The skeleton has a rounded-full element for the avatar
-    const roundedFull = document.querySelector('.skeleton.rounded-full');
-    expect(roundedFull).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('No audiobooks found for this author.')).toBeInTheDocument();
+    });
   });
 });

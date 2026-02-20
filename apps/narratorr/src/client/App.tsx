@@ -1,11 +1,11 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { Layout } from './components/layout/Layout';
-import { LibraryPage } from './pages/LibraryPage';
-import { SearchPage } from './pages/SearchPage';
+import { LibraryPage } from './pages/library';
+import { SearchPage } from './pages/search';
 import { ActivityPage } from './pages/activity';
 import { BookPage } from './pages/book';
-import { AuthorPage } from './pages/AuthorPage';
+import { AuthorPage } from './pages/author';
 import { ManualImportPage } from './pages/manual-import';
 import {
   SettingsLayout,

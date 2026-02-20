@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { renderWithProviders } from '../__tests__/helpers';
+import { renderWithProviders } from '../../__tests__/helpers';
 import { SearchPage } from './SearchPage';
 import { api, ApiError } from '@/lib/api';
 import type { BookMetadata, BookWithAuthor } from '@/lib/api';
@@ -141,6 +141,80 @@ describe('SearchPage', () => {
     await waitFor(() => {
       expect(screen.getByText('In Library')).toBeInTheDocument();
     });
+  });
+
+  it('shows empty state before searching', () => {
+    renderWithProviders(<SearchPage />);
+    expect(screen.getByText('Start your search')).toBeInTheDocument();
+  });
+
+  it('shows no results message when search returns empty', async () => {
+    (api.searchMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+      books: [],
+      authors: [],
+    });
+
+    renderWithProviders(<SearchPage />);
+    const user = userEvent.setup();
+
+    const input = screen.getByPlaceholderText(/search by title/i);
+    await user.type(input, 'nonexistent book');
+    await user.click(screen.getByRole('button', { name: /^search$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/No results for "nonexistent book"/)).toBeInTheDocument();
+    });
+  });
+
+  it('shows error message when search fails', async () => {
+    (api.searchMetadata as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('Network error'),
+    );
+
+    renderWithProviders(<SearchPage />);
+    const user = userEvent.setup();
+
+    const input = screen.getByPlaceholderText(/search by title/i);
+    await user.type(input, 'Way of Kings');
+    await user.click(screen.getByRole('button', { name: /^search$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Network error')).toBeInTheDocument();
+    });
+  });
+
+  it('disables search button when query is too short', () => {
+    renderWithProviders(<SearchPage />);
+    const searchButton = screen.getByRole('button', { name: /^search$/i });
+    expect(searchButton).toBeDisabled();
+  });
+
+  it('shows multiple results with book count', async () => {
+    const secondBook: BookMetadata = {
+      ...mockBookMetadata,
+      title: 'Words of Radiance',
+      asin: 'B00ANOTHER',
+    };
+    (api.searchMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+      books: [mockBookMetadata, secondBook],
+      authors: [],
+    });
+    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    renderWithProviders(<SearchPage />);
+    const user = userEvent.setup();
+
+    const input = screen.getByPlaceholderText(/search by title/i);
+    await user.type(input, 'Sanderson');
+    await user.click(screen.getByRole('button', { name: /^search$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      expect(screen.getByText('Words of Radiance')).toBeInTheDocument();
+    });
+
+    // Book count shown in tab
+    expect(screen.getByText('(2)')).toBeInTheDocument();
   });
 
   it('handles 409 duplicate gracefully', async () => {

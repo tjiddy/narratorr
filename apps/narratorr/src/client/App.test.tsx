@@ -5,11 +5,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { App } from '@/App';
 
 // Mock page components to avoid pulling in their dependencies
-vi.mock('@/pages/LibraryPage', () => ({
+vi.mock('@/pages/library', () => ({
   LibraryPage: () => <div data-testid="library-page">Library Page</div>,
 }));
 
-vi.mock('@/pages/SearchPage', () => ({
+vi.mock('@/pages/search', () => ({
   SearchPage: () => <div data-testid="search-page">Search Page</div>,
 }));
 
