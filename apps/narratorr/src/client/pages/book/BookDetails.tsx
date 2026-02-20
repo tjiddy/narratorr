@@ -16,8 +16,12 @@ export function BookDetails({ libraryBook, metadataBook }: {
 
   const merged = mergeBookData(libraryBook, metadataBook);
 
+  const hasDescription = !!merged.description;
+  const hasGenres = merged.genres && merged.genres.length > 0;
+  const hasSidebar = libraryBook.audioCodec || hasGenres;
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <BookHero
         title={libraryBook.title}
         subtitle={merged.subtitle}
@@ -32,22 +36,39 @@ export function BookDetails({ libraryBook, metadataBook }: {
         onSearchClick={() => setSearchModalOpen(true)}
       />
 
-      {merged.description && <BookDescription description={merged.description} />}
+      {(hasDescription || hasSidebar) && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in-up stagger-5">
+          {hasDescription && (
+            <div className={hasSidebar ? 'lg:col-span-2' : 'lg:col-span-3'}>
+              <BookDescription description={merged.description!} />
+            </div>
+          )}
 
-      <AudioInfo book={libraryBook} />
+          {hasSidebar && (
+            <div className={`space-y-6 ${hasDescription ? '' : 'lg:col-span-3 lg:max-w-sm'}`}>
+              <AudioInfo book={libraryBook} compact />
 
-      {merged.genres && merged.genres.length > 0 && (
-        <div className="animate-fade-in-up stagger-6">
-          <div className="flex flex-wrap gap-2">
-            {merged.genres.map((genre) => (
-              <span
-                key={genre}
-                className="glass-card rounded-xl px-3 py-1.5 text-xs font-medium"
-              >
-                {genre}
-              </span>
-            ))}
-          </div>
+              {hasGenres && (
+                <div>
+                  <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+                    Genres
+                  </h2>
+                  <div className="glass-card rounded-2xl p-4">
+                    <div className="flex flex-wrap gap-2">
+                      {merged.genres!.map((genre) => (
+                        <span
+                          key={genre}
+                          className="rounded-lg bg-muted px-3 py-1.5 text-xs font-medium text-muted-foreground"
+                        >
+                          {genre}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

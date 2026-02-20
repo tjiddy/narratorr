@@ -21,7 +21,7 @@ export function BookHero({
   onBackClick, onSearchClick,
 }: BookHeroProps) {
   return (
-    <div className="relative -mx-4 sm:-mx-6 lg:-mx-8 -mt-4 sm:-mt-6 px-4 sm:px-6 lg:px-8 pt-6 pb-8 overflow-hidden">
+    <div className="relative -mx-4 sm:-mx-6 lg:-mx-8 -mt-4 sm:-mt-6 px-4 sm:px-6 lg:px-8 pt-6 pb-6 overflow-hidden">
       {coverUrl && (
         <div className="absolute inset-0 -z-10">
           <img src={coverUrl} alt="" aria-hidden="true" className="w-full h-full object-cover blur-3xl opacity-20 scale-110" />
@@ -39,7 +39,7 @@ export function BookHero({
 
       <div className="flex flex-col sm:flex-row gap-6 sm:gap-8">
         <div className="shrink-0 mx-auto sm:mx-0 animate-fade-in-up stagger-1">
-          <div className="relative w-48 sm:w-56 lg:w-72 aspect-square rounded-2xl overflow-hidden shadow-card-hover ring-1 ring-black/10 group">
+          <div className="relative w-48 sm:w-56 lg:w-72 aspect-[2/3] rounded-2xl overflow-hidden shadow-card-hover ring-1 ring-black/10 group">
             {coverUrl ? (
               <img src={coverUrl} alt={`Cover of ${title}`} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" loading="lazy" />
             ) : (

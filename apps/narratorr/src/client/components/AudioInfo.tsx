@@ -23,14 +23,8 @@ function formatChannels(channels: number): string {
   return `${channels}ch`;
 }
 
-interface AudioInfoProps {
-  book: BookWithAuthor;
-}
-
-export function AudioInfo({ book }: AudioInfoProps) {
-  if (!book.audioCodec) return null;
-
-  const codec = book.audioCodec.toUpperCase();
+function buildAudioParts(book: BookWithAuthor): { techParts: string[]; fileParts: string[] } {
+  const codec = book.audioCodec!.toUpperCase();
   const bitrate = book.audioBitrate ? formatBitrate(book.audioBitrate) : null;
   const bitrateMode = book.audioBitrateMode?.toUpperCase();
   const sampleRate = book.audioSampleRate ? formatSampleRate(book.audioSampleRate) : null;
@@ -39,19 +33,33 @@ export function AudioInfo({ book }: AudioInfoProps) {
   const totalSize = book.audioTotalSize ? formatBytes(book.audioTotalSize) : null;
   const duration = book.audioDuration ? formatDurationLong(book.audioDuration) : null;
 
-  const techParts = [codec, bitrate && bitrateMode ? `${bitrate} ${bitrateMode}` : bitrate, sampleRate, channels].filter(Boolean);
+  const techParts = [codec, bitrate && bitrateMode ? `${bitrate} ${bitrateMode}` : bitrate, sampleRate, channels].filter(Boolean) as string[];
   const fileParts = [
     fileCount ? `${fileCount} file${fileCount > 1 ? 's' : ''}` : null,
     totalSize,
     duration ? `${duration} actual` : null,
-  ].filter(Boolean);
+  ].filter(Boolean) as string[];
+
+  return { techParts, fileParts };
+}
+
+interface AudioInfoProps {
+  book: BookWithAuthor;
+  /** When true, renders without outer animation wrapper and uses tighter padding */
+  compact?: boolean;
+}
+
+export function AudioInfo({ book, compact }: AudioInfoProps) {
+  if (!book.audioCodec) return null;
+
+  const { techParts, fileParts } = buildAudioParts(book);
 
   return (
-    <div className="animate-fade-in-up stagger-6">
+    <div className={compact ? '' : 'animate-fade-in-up stagger-6'}>
       <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
         Audio Quality
       </h2>
-      <div className="glass-card rounded-2xl p-6 space-y-2">
+      <div className={`glass-card rounded-2xl ${compact ? 'p-4' : 'p-6'} space-y-2`}>
         {techParts.length > 0 && (
           <p className="text-sm">
             <span className="text-muted-foreground mr-2">🎧</span>

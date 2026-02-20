@@ -8,13 +8,13 @@ export function BookDescription({ description }: { description: string }) {
   const isLong = description.length > DESCRIPTION_COLLAPSE_LENGTH;
 
   return (
-    <div className="animate-fade-in-up stagger-5">
+    <div>
       <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
         About This Book
       </h2>
       <div className="glass-card rounded-2xl p-6">
         <div
-          className={`prose prose-sm dark:prose-invert max-w-none ${!expanded && isLong ? 'line-clamp-4' : ''}`}
+          className={`prose prose-sm dark:prose-invert max-w-none ${!expanded && isLong ? 'line-clamp-4 lg:line-clamp-6' : ''}`}
           dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(description) }}
         />
         {isLong && (

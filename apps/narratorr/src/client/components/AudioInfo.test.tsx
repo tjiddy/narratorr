@@ -92,4 +92,22 @@ describe('AudioInfo', () => {
 
     expect(screen.getByText(/1 file(?!s)/)).toBeInTheDocument();
   });
+
+  describe('compact mode', () => {
+    it('renders heading and content in compact mode', () => {
+      render(<AudioInfo book={makeBook({
+        audioCodec: 'AAC',
+        audioBitrate: 128000,
+        audioChannels: 2,
+      })} compact />);
+
+      expect(screen.getByText('Audio Quality')).toBeInTheDocument();
+      expect(screen.getByText(/AAC/)).toBeInTheDocument();
+    });
+
+    it('renders nothing in compact mode when no audioCodec', () => {
+      const { container } = render(<AudioInfo book={makeBook()} compact />);
+      expect(container.innerHTML).toBe('');
+    });
+  });
 });
