@@ -43,6 +43,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
     "test": "vitest run",
     "test:watch": "vitest"
   },

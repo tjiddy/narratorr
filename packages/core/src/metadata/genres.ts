@@ -166,7 +166,7 @@ export function normalizeGenres(genres: string[] | undefined | null): string[] |
  * synonym map.
  */
 export function findUnmatchedGenres(
-  raw: string[] | undefined | null,
+  _raw: string[] | undefined | null,
   normalized: string[] | undefined | null,
 ): string[] {
   if (!normalized) return [];
