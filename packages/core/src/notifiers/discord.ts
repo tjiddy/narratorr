@@ -19,7 +19,7 @@ const EVENT_TITLES: Record<NotificationEvent, string> = {
   on_failure: 'Failure',
 };
 
-// eslint-disable-next-line complexity
+// eslint-disable-next-line complexity -- event-specific embed field building
 function buildEmbed(event: NotificationEvent, payload: EventPayload, includeCover: boolean) {
   const fields: { name: string; value: string; inline?: boolean }[] = [];
 

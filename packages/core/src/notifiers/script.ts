@@ -6,7 +6,7 @@ export interface ScriptConfig {
   timeout?: number; // seconds, default 30
 }
 
-// eslint-disable-next-line complexity
+// eslint-disable-next-line complexity -- flat env construction from event-specific payload fields
 function payloadToEnv(event: NotificationEvent, payload: EventPayload): Record<string, string> {
   const env: Record<string, string> = {
     NARRATORR_EVENT: event,

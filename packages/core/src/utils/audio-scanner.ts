@@ -179,7 +179,7 @@ async function collectAudioFiles(dirPath: string): Promise<string[]> {
 }
 
 /** Extract narrator from metadata tags with broad fallback chain. */
-// eslint-disable-next-line complexity
+// eslint-disable-next-line complexity -- 4-tier fallback chain: native tags → composer → comment regex → artist
 function extractNarrator(
   common: ICommonTagsResult,
   native?: Record<string, Array<{ id: string; value: unknown }>>,

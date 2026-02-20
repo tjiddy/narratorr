@@ -99,7 +99,7 @@ export class TorznabIndexer implements IndexerAdapter {
     const $ = cheerio.load(xml, { xmlMode: true });
     const results: SearchResult[] = [];
 
-    // eslint-disable-next-line complexity
+    // eslint-disable-next-line complexity -- XML item parsing with optional attribute extraction
     $('item').each((_, element) => {
       if (results.length >= limit) return false; // break
 

@@ -8,7 +8,7 @@ import {
 } from '@/components/icons';
 import { useManualImport } from './useManualImport.js';
 
-// eslint-disable-next-line complexity
+// eslint-disable-next-line complexity -- 3-step page with 21 hook props and conditional step rendering
 export function ManualImportPage() {
   const {
     step, scanPath, setScanPath, scanError, setScanError, rows,

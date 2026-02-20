@@ -32,7 +32,7 @@ interface SearchReleasesModalProps {
 // Component
 // ============================================================================
 
-// eslint-disable-next-line max-lines-per-function, complexity
+// eslint-disable-next-line max-lines-per-function, complexity -- modal orchestrates query + mutations + 5 conditional states
 export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesModalProps) {
   const queryClient = useQueryClient();
   const searchQuery = `${book.title} ${book.author?.name ?? ''}`.trim();

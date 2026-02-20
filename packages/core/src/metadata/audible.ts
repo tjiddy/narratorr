@@ -279,7 +279,7 @@ interface AudibleProduct {
 // Mapping helpers
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line complexity
+// eslint-disable-next-line complexity -- API response mapping with nullable field handling
 function mapProduct(product: AudibleProduct): Record<string, unknown> {
   const authors = (product.authors ?? []).map((a) => ({
     name: a.name,

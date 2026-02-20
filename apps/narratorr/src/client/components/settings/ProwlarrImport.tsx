@@ -43,7 +43,7 @@ interface ProwlarrImportProps {
   onClose: () => void;
 }
 
-// eslint-disable-next-line max-lines-per-function, complexity
+// eslint-disable-next-line max-lines-per-function, complexity -- multi-step wizard (connect, select, sync) with independent state per step
 export function ProwlarrImport({ isOpen, onClose }: ProwlarrImportProps) {
   const queryClient = useQueryClient();
   const modalRef = useRef<HTMLDivElement>(null);

@@ -33,7 +33,7 @@ interface BookEditModalProps {
   onClose: () => void;
 }
 
-// eslint-disable-next-line max-lines-per-function, complexity
+// eslint-disable-next-line max-lines-per-function, complexity -- metadata edit form with preview, search, and multi-field validation
 export function BookEditModal({ book, initial, confidence, alternatives, onSave, onClose }: BookEditModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const { data: libraryBooks } = useLibrary();

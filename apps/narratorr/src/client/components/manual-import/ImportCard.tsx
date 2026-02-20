@@ -59,7 +59,7 @@ function ConfidenceBadge({ confidence }: { confidence?: Confidence }) {
   );
 }
 
-// eslint-disable-next-line complexity
+// eslint-disable-next-line complexity -- confidence scoring display with conditional styles and layouts
 export function ImportCard({ row, onToggle, onEdit }: ImportCardProps) {
   const confidence = row.matchResult?.confidence;
   const showPencilAlways = !confidence || confidence === 'medium' || confidence === 'none';

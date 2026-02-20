@@ -117,7 +117,7 @@ export class DownloadClientService {
     return this.getAdapter(client.id);
   }
 
-  // eslint-disable-next-line complexity
+  // eslint-disable-next-line complexity -- switch/case factory for 4 client types
   private createAdapter(client: DownloadClientRow): DownloadClientAdapter {
     const settings = client.settings as Record<string, unknown>;
 
