@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import { ImportService, buildTargetPath } from './import.service.js';
 import { sanitizePath } from '@narratorr/core/utils';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { Db } from '@narratorr/db';
 
 // Mock node:fs/promises
 vi.mock('node:fs/promises', () => ({
@@ -210,7 +211,7 @@ describe('ImportService', () => {
     db = createMockDb();
     clientService = createMockDownloadClientService();
     settingsService = createMockSettingsService();
-    service = new ImportService(db as any, clientService, settingsService, createMockLogger() as any);
+    service = new ImportService(db as unknown as Db, clientService, settingsService, createMockLogger());
 
     // Default: stat returns a directory for source, then directory for target (size verification)
     const statMock = stat as unknown as ReturnType<typeof vi.fn>;
@@ -493,7 +494,7 @@ describe('ImportService', () => {
         ...mockAdapter,
         getDownload: vi.fn().mockResolvedValue(null),
       };
-      (clientService.getAdapter as any).mockResolvedValue(adapterNoDownload);
+      (clientService.getAdapter as Mock).mockResolvedValue(adapterNoDownload);
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
@@ -507,7 +508,7 @@ describe('ImportService', () => {
         ...mockAdapter,
         getDownload: vi.fn().mockRejectedValue(new Error('Client connection refused')),
       };
-      (clientService.getAdapter as any).mockResolvedValue(adapterThrows);
+      (clientService.getAdapter as Mock).mockResolvedValue(adapterThrows);
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
@@ -559,7 +560,7 @@ describe('ImportService', () => {
     });
 
     it('throws when download client adapter is null', async () => {
-      (clientService.getAdapter as any).mockResolvedValue(null);
+      (clientService.getAdapter as Mock).mockResolvedValue(null);
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));

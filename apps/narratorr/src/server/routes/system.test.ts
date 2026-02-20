@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi, type Mock } from 'vitest';
 import Fastify from 'fastify';
 import { createMockServices } from '../__tests__/helpers.js';
 import { systemRoutes } from './system.js';
@@ -7,10 +7,10 @@ describe('system routes', () => {
   const services = createMockServices({
     settings: {
       get: vi.fn().mockResolvedValue({ enabled: false, intervalMinutes: 360, autoGrab: false }),
-    } as any,
+    } as Record<string, unknown>,
     book: {
       getAll: vi.fn().mockResolvedValue([]),
-    } as any,
+    } as Record<string, unknown>,
   });
 
   let app: Awaited<ReturnType<typeof Fastify>>;
@@ -73,7 +73,7 @@ describe('system routes', () => {
 
     it('returns 500 when search job throws', async () => {
       // settings.get is the first async call in runSearchJob
-      (services.settings.get as any).mockRejectedValueOnce(new Error('DB connection lost'));
+      (services.settings.get as Mock).mockRejectedValueOnce(new Error('DB connection lost'));
 
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search' });
 

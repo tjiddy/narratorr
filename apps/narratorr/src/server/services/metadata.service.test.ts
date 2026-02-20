@@ -50,7 +50,7 @@ describe('MetadataService', () => {
     mockAudibleProvider.test.mockResolvedValue({ success: true });
     mockAudnexus.getBook.mockResolvedValue(null);
     mockAudnexus.getAuthor.mockResolvedValue(null);
-    service = new MetadataService(createMockLogger() as any);
+    service = new MetadataService(createMockLogger());
   });
 
   describe('search', () => {
@@ -232,7 +232,7 @@ describe('MetadataService', () => {
     });
 
     it('registers Audible with custom region', () => {
-      const ukService = new MetadataService(createMockLogger() as any, { audibleRegion: 'uk' });
+      const ukService = new MetadataService(createMockLogger(), { audibleRegion: 'uk' });
       const providers = ukService.getProviders();
       expect(providers).toHaveLength(1);
       expect(providers[0].type).toBe('audible');
@@ -382,7 +382,7 @@ describe('MetadataService', () => {
 
   describe('no API keys', () => {
     it('still has Audible provider when no API keys are set', async () => {
-      const minService = new MetadataService(createMockLogger() as any);
+      const minService = new MetadataService(createMockLogger());
 
       // Audible is always available (no API key required)
       expect(minService.getProviders()).toHaveLength(1);

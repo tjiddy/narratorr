@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import { DownloadService } from './download.service.js';
 import { type DownloadClientService } from './download-client.service.js';
+import type { Db } from '@narratorr/db';
 
 const now = new Date();
 
@@ -56,7 +57,7 @@ describe('DownloadService', () => {
   beforeEach(() => {
     db = createMockDb();
     clientService = createMockDownloadClientService();
-    service = new DownloadService(db as any, clientService, createMockLogger() as any);
+    service = new DownloadService(db as unknown as Db, clientService, createMockLogger());
   });
 
   describe('getAll', () => {
@@ -166,8 +167,8 @@ describe('DownloadService', () => {
       };
 
       const enabledClient = { id: 1, name: 'qBit', enabled: true };
-      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue(enabledClient);
-      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue(enabledClient);
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
@@ -187,7 +188,7 @@ describe('DownloadService', () => {
     });
 
     it('throws when no download client configured', async () => {
-      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue(null);
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue(null);
 
       await expect(
         service.grab({
@@ -198,8 +199,8 @@ describe('DownloadService', () => {
     });
 
     it('throws when adapter cannot be initialized', async () => {
-      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue({ id: 1 });
-      (clientService.getAdapter as any).mockResolvedValue(null);
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1 });
+      (clientService.getAdapter as Mock).mockResolvedValue(null);
 
       await expect(
         service.grab({
@@ -214,8 +215,8 @@ describe('DownloadService', () => {
         addDownload: vi.fn().mockResolvedValue('ext-123'),
       };
 
-      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue({ id: 1 });
-      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1 });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
@@ -262,7 +263,7 @@ describe('DownloadService', () => {
     it('logs at info level', async () => {
       db.update.mockReturnValue(mockDbChain());
       const log = createMockLogger();
-      const svc = new DownloadService(db as any, clientService, log as any);
+      const svc = new DownloadService(db as unknown as Db, clientService, log);
 
       await svc.updateStatus(1, 'completed');
 
@@ -286,7 +287,7 @@ describe('DownloadService', () => {
     it('logs at warn level', async () => {
       db.update.mockReturnValue(mockDbChain());
       const log = createMockLogger();
-      const svc = new DownloadService(db as any, clientService, log as any);
+      const svc = new DownloadService(db as unknown as Db, clientService, log);
 
       await svc.setError(1, 'Disk full');
 
@@ -307,7 +308,7 @@ describe('DownloadService', () => {
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
       db.update.mockReturnValue(mockDbChain());
-      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
       const result = await service.cancel(1);
 
@@ -332,7 +333,7 @@ describe('DownloadService', () => {
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
       db.update.mockReturnValue(mockDbChain());
-      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
       const result = await service.cancel(1);
       expect(result).toBe(true);
@@ -364,8 +365,8 @@ describe('DownloadService', () => {
         addDownload: vi.fn().mockResolvedValue(''),
       };
 
-      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue({ id: 1, name: 'qBit' });
-      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
@@ -387,8 +388,8 @@ describe('DownloadService', () => {
         addDownload: vi.fn().mockResolvedValue(null),
       };
 
-      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue({ id: 1, name: 'qBit' });
-      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
@@ -397,7 +398,7 @@ describe('DownloadService', () => {
       );
 
       const log = createMockLogger();
-      const svc = new DownloadService(db as any, clientService, log as any);
+      const svc = new DownloadService(db as unknown as Db, clientService, log);
 
       await svc.grab({
         downloadUrl: 'magnet:?xt=urn:btih:abc',
@@ -415,8 +416,8 @@ describe('DownloadService', () => {
         addDownload: vi.fn().mockResolvedValue('ext-456'),
       };
 
-      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue({ id: 1, name: 'qBit' });
-      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
       db.insert.mockImplementation(() => { throw new Error('UNIQUE constraint failed'); });
 
@@ -433,8 +434,8 @@ describe('DownloadService', () => {
         addDownload: vi.fn().mockResolvedValue('nzb-123'),
       };
 
-      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue({ id: 2, name: 'SABnzbd' });
-      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 2, name: 'SABnzbd' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
@@ -457,8 +458,8 @@ describe('DownloadService', () => {
         addDownload: vi.fn().mockResolvedValue('ext-123'),
       };
 
-      (clientService.getFirstEnabledForProtocol as any).mockResolvedValue({ id: 1, name: 'qBit' });
-      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
@@ -512,10 +513,10 @@ describe('DownloadService', () => {
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
       db.update.mockReturnValue(mockDbChain());
-      (clientService.getAdapter as any).mockResolvedValue(mockAdapter);
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
       const log = createMockLogger();
-      const svc = new DownloadService(db as any, clientService, log as any);
+      const svc = new DownloadService(db as unknown as Db, clientService, log);
 
       const result = await svc.cancel(1);
 
@@ -560,7 +561,7 @@ describe('DownloadService', () => {
       expect(chain.set).toHaveBeenCalledWith(
         expect.objectContaining({ progress: 1.0, status: 'completed' }),
       );
-      const setArgs = (chain.set as any).mock.calls[0][0];
+      const setArgs = (chain.set as Mock).mock.calls[0][0] as Record<string, unknown>;
       expect(setArgs.completedAt).toBeInstanceOf(Date);
     });
   });

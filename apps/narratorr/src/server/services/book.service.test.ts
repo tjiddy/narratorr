@@ -1,6 +1,8 @@
-import { describe, it, expect, beforeEach, type vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import { BookService } from './book.service.js';
+import type { Db } from '@narratorr/db';
+import type { MetadataService } from './metadata.service.js';
 
 const now = new Date();
 
@@ -47,7 +49,7 @@ describe('BookService', () => {
 
   beforeEach(() => {
     db = createMockDb();
-    service = new BookService(db as any, createMockLogger() as any);
+    service = new BookService(db as unknown as Db, createMockLogger());
   });
 
   describe('getAll', () => {
@@ -232,10 +234,9 @@ describe('BookService', () => {
     let serviceWithMeta: BookService;
     let mockMetadata: { getBook: ReturnType<typeof vi.fn> };
 
-    beforeEach(async () => {
-      const { vi } = await import('vitest');
+    beforeEach(() => {
       mockMetadata = { getBook: vi.fn().mockResolvedValue(null) };
-      serviceWithMeta = new BookService(db as any, createMockLogger() as any, mockMetadata as any);
+      serviceWithMeta = new BookService(db as unknown as Db, createMockLogger(), mockMetadata as unknown as MetadataService);
     });
 
     it('enriches ASIN from provider when not provided', async () => {
@@ -481,7 +482,7 @@ describe('BookService', () => {
 
       const raceChain = mockDbChain();
       raceChain.then = (resolve: unknown, reject?: (err: Error) => void) => {
-        return Promise.reject(new Error('UNIQUE constraint failed')).then(resolve as any, reject);
+        return Promise.reject(new Error('UNIQUE constraint failed')).then(resolve as (v: unknown) => void, reject);
       };
 
       db.insert
@@ -503,7 +504,7 @@ describe('BookService', () => {
 
       const failChain2 = mockDbChain();
       failChain2.then = (resolve: unknown, reject?: (err: Error) => void) => {
-        return Promise.reject(new Error('UNIQUE constraint failed')).then(resolve as any, reject);
+        return Promise.reject(new Error('UNIQUE constraint failed')).then(resolve as (v: unknown) => void, reject);
       };
       db.insert.mockReturnValueOnce(failChain2);
 

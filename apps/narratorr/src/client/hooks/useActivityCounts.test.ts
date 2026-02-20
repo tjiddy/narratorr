@@ -26,7 +26,7 @@ describe('useActivityCounts', () => {
   });
 
   it('returns counts from API', async () => {
-    (api.getActivityCounts as any).mockResolvedValue({ active: 3, completed: 5 });
+    vi.mocked(api.getActivityCounts).mockResolvedValue({ active: 3, completed: 5 });
 
     const { result } = renderHook(() => useActivityCounts(), {
       wrapper: createWrapper(),
@@ -41,7 +41,7 @@ describe('useActivityCounts', () => {
   });
 
   it('defaults to zero before data loads', () => {
-    (api.getActivityCounts as any).mockReturnValue(new Promise(() => {}));
+    vi.mocked(api.getActivityCounts).mockReturnValue(new Promise(() => {}));
 
     const { result } = renderHook(() => useActivityCounts(), {
       wrapper: createWrapper(),
@@ -50,5 +50,20 @@ describe('useActivityCounts', () => {
     expect(result.current.active).toBe(0);
     expect(result.current.completed).toBe(0);
     expect(result.current.isLoading).toBe(true);
+  });
+
+  it('falls back to zero counts when API rejects', async () => {
+    vi.mocked(api.getActivityCounts).mockRejectedValue(new Error('Network error'));
+
+    const { result } = renderHook(() => useActivityCounts(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.active).toBe(0);
+    expect(result.current.completed).toBe(0);
   });
 });

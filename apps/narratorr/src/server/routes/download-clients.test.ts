@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
@@ -29,7 +29,7 @@ describe('download-clients routes', () => {
     Object.values(services).forEach((svc) => {
       Object.values(svc).forEach((fn) => {
         if (typeof fn === 'function' && 'mockReset' in fn) {
-          (fn as any).mockReset();
+          (fn as Mock).mockReset();
         }
       });
     });
@@ -37,7 +37,7 @@ describe('download-clients routes', () => {
 
   describe('GET /api/download-clients', () => {
     it('returns all clients', async () => {
-      (services.downloadClient.getAll as any).mockResolvedValue([mockClient]);
+      (services.downloadClient.getAll as Mock).mockResolvedValue([mockClient]);
 
       const res = await app.inject({ method: 'GET', url: '/api/download-clients' });
 
@@ -48,7 +48,7 @@ describe('download-clients routes', () => {
 
   describe('GET /api/download-clients/:id', () => {
     it('returns client when found', async () => {
-      (services.downloadClient.getById as any).mockResolvedValue(mockClient);
+      (services.downloadClient.getById as Mock).mockResolvedValue(mockClient);
 
       const res = await app.inject({ method: 'GET', url: '/api/download-clients/1' });
 
@@ -57,7 +57,7 @@ describe('download-clients routes', () => {
     });
 
     it('returns 404 when not found', async () => {
-      (services.downloadClient.getById as any).mockResolvedValue(null);
+      (services.downloadClient.getById as Mock).mockResolvedValue(null);
 
       const res = await app.inject({ method: 'GET', url: '/api/download-clients/999' });
 
@@ -67,7 +67,7 @@ describe('download-clients routes', () => {
 
   describe('POST /api/download-clients', () => {
     it('creates client and returns 201', async () => {
-      (services.downloadClient.create as any).mockResolvedValue(mockClient);
+      (services.downloadClient.create as Mock).mockResolvedValue(mockClient);
 
       const res = await app.inject({
         method: 'POST',
@@ -97,7 +97,7 @@ describe('download-clients routes', () => {
 
   describe('PUT /api/download-clients/:id', () => {
     it('updates client when found', async () => {
-      (services.downloadClient.update as any).mockResolvedValue(mockClient);
+      (services.downloadClient.update as Mock).mockResolvedValue(mockClient);
 
       const res = await app.inject({
         method: 'PUT',
@@ -109,7 +109,7 @@ describe('download-clients routes', () => {
     });
 
     it('returns 404 when not found', async () => {
-      (services.downloadClient.update as any).mockResolvedValue(null);
+      (services.downloadClient.update as Mock).mockResolvedValue(null);
 
       const res = await app.inject({
         method: 'PUT',
@@ -123,7 +123,7 @@ describe('download-clients routes', () => {
 
   describe('DELETE /api/download-clients/:id', () => {
     it('deletes client and returns success', async () => {
-      (services.downloadClient.delete as any).mockResolvedValue(true);
+      (services.downloadClient.delete as Mock).mockResolvedValue(true);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/download-clients/1' });
 
@@ -132,7 +132,7 @@ describe('download-clients routes', () => {
     });
 
     it('returns 404 when not found', async () => {
-      (services.downloadClient.delete as any).mockResolvedValue(false);
+      (services.downloadClient.delete as Mock).mockResolvedValue(false);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/download-clients/999' });
 
@@ -142,7 +142,7 @@ describe('download-clients routes', () => {
 
   describe('POST /api/download-clients/test', () => {
     it('returns test result for config payload', async () => {
-      (services.downloadClient.testConfig as any).mockResolvedValue({ success: true, message: 'Connected' });
+      (services.downloadClient.testConfig as Mock).mockResolvedValue({ success: true, message: 'Connected' });
 
       const res = await app.inject({
         method: 'POST',
@@ -179,7 +179,7 @@ describe('download-clients routes', () => {
 
   describe('POST /api/download-clients/:id/test', () => {
     it('returns test result', async () => {
-      (services.downloadClient.test as any).mockResolvedValue({ success: true });
+      (services.downloadClient.test as Mock).mockResolvedValue({ success: true });
 
       const res = await app.inject({ method: 'POST', url: '/api/download-clients/1/test' });
 

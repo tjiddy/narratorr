@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
@@ -38,7 +38,7 @@ describe('activity routes', () => {
     Object.values(services).forEach((svc) => {
       Object.values(svc).forEach((fn) => {
         if (typeof fn === 'function' && 'mockReset' in fn) {
-          (fn as any).mockReset();
+          (fn as Mock).mockReset();
         }
       });
     });
@@ -46,7 +46,7 @@ describe('activity routes', () => {
 
   describe('GET /api/activity', () => {
     it('returns all downloads', async () => {
-      (services.download.getAll as any).mockResolvedValue([mockDownload]);
+      (services.download.getAll as Mock).mockResolvedValue([mockDownload]);
 
       const res = await app.inject({ method: 'GET', url: '/api/activity' });
 
@@ -55,7 +55,7 @@ describe('activity routes', () => {
     });
 
     it('passes status filter', async () => {
-      (services.download.getAll as any).mockResolvedValue([]);
+      (services.download.getAll as Mock).mockResolvedValue([]);
 
       await app.inject({ method: 'GET', url: '/api/activity?status=downloading' });
 
@@ -65,7 +65,7 @@ describe('activity routes', () => {
 
   describe('GET /api/activity/active', () => {
     it('returns active downloads', async () => {
-      (services.download.getActive as any).mockResolvedValue([mockDownload]);
+      (services.download.getActive as Mock).mockResolvedValue([mockDownload]);
 
       const res = await app.inject({ method: 'GET', url: '/api/activity/active' });
 
@@ -76,7 +76,7 @@ describe('activity routes', () => {
 
   describe('GET /api/activity/counts', () => {
     it('returns active and completed counts', async () => {
-      (services.download.getCounts as any).mockResolvedValue({ active: 3, completed: 7 });
+      (services.download.getCounts as Mock).mockResolvedValue({ active: 3, completed: 7 });
 
       const res = await app.inject({ method: 'GET', url: '/api/activity/counts' });
 
@@ -87,7 +87,7 @@ describe('activity routes', () => {
     });
 
     it('returns zeros when no downloads', async () => {
-      (services.download.getCounts as any).mockResolvedValue({ active: 0, completed: 0 });
+      (services.download.getCounts as Mock).mockResolvedValue({ active: 0, completed: 0 });
 
       const res = await app.inject({ method: 'GET', url: '/api/activity/counts' });
 
@@ -100,7 +100,7 @@ describe('activity routes', () => {
 
   describe('GET /api/activity/:id', () => {
     it('returns download when found', async () => {
-      (services.download.getById as any).mockResolvedValue(mockDownload);
+      (services.download.getById as Mock).mockResolvedValue(mockDownload);
 
       const res = await app.inject({ method: 'GET', url: '/api/activity/1' });
 
@@ -109,7 +109,7 @@ describe('activity routes', () => {
     });
 
     it('returns 404 when not found', async () => {
-      (services.download.getById as any).mockResolvedValue(null);
+      (services.download.getById as Mock).mockResolvedValue(null);
 
       const res = await app.inject({ method: 'GET', url: '/api/activity/999' });
 
@@ -119,7 +119,7 @@ describe('activity routes', () => {
 
   describe('DELETE /api/activity/:id', () => {
     it('cancels download and returns success', async () => {
-      (services.download.cancel as any).mockResolvedValue(true);
+      (services.download.cancel as Mock).mockResolvedValue(true);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/activity/1' });
 
@@ -128,7 +128,7 @@ describe('activity routes', () => {
     });
 
     it('returns 404 when not found', async () => {
-      (services.download.cancel as any).mockResolvedValue(false);
+      (services.download.cancel as Mock).mockResolvedValue(false);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/activity/999' });
 
@@ -139,9 +139,9 @@ describe('activity routes', () => {
   describe('POST /api/activity/:id/retry', () => {
     it('retries download', async () => {
       const newDownload = { ...mockDownload, id: 2 };
-      (services.download.getById as any).mockResolvedValue(mockDownload);
-      (services.download.grab as any).mockResolvedValue(newDownload);
-      (services.download.delete as any).mockResolvedValue(true);
+      (services.download.getById as Mock).mockResolvedValue(mockDownload);
+      (services.download.grab as Mock).mockResolvedValue(newDownload);
+      (services.download.delete as Mock).mockResolvedValue(true);
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
@@ -151,7 +151,7 @@ describe('activity routes', () => {
     });
 
     it('returns 404 when download not found', async () => {
-      (services.download.getById as any).mockResolvedValue(null);
+      (services.download.getById as Mock).mockResolvedValue(null);
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/999/retry' });
 
@@ -159,7 +159,7 @@ describe('activity routes', () => {
     });
 
     it('returns 400 when no download URL', async () => {
-      (services.download.getById as any).mockResolvedValue({ ...mockDownload, downloadUrl: null });
+      (services.download.getById as Mock).mockResolvedValue({ ...mockDownload, downloadUrl: null });
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
@@ -168,8 +168,8 @@ describe('activity routes', () => {
     });
 
     it('returns 500 when grab fails', async () => {
-      (services.download.getById as any).mockResolvedValue(mockDownload);
-      (services.download.grab as any).mockRejectedValue(new Error('No client'));
+      (services.download.getById as Mock).mockResolvedValue(mockDownload);
+      (services.download.grab as Mock).mockRejectedValue(new Error('No client'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
@@ -179,7 +179,7 @@ describe('activity routes', () => {
 
   describe('error paths', () => {
     it('DELETE /api/activity/:id returns 500 when cancel throws', async () => {
-      (services.download.cancel as any).mockRejectedValue(new Error('Adapter error'));
+      (services.download.cancel as Mock).mockRejectedValue(new Error('Adapter error'));
 
       const res = await app.inject({ method: 'DELETE', url: '/api/activity/1' });
 
@@ -187,7 +187,7 @@ describe('activity routes', () => {
     });
 
     it('GET /api/activity returns 500 when service throws', async () => {
-      (services.download.getAll as any).mockRejectedValue(new Error('DB error'));
+      (services.download.getAll as Mock).mockRejectedValue(new Error('DB error'));
 
       const res = await app.inject({ method: 'GET', url: '/api/activity' });
 
@@ -211,9 +211,9 @@ describe('activity routes', () => {
 
     it('POST /api/activity/:id/retry deletes old download after successful grab', async () => {
       const newDownload = { ...mockDownload, id: 2 };
-      (services.download.getById as any).mockResolvedValue(mockDownload);
-      (services.download.grab as any).mockResolvedValue(newDownload);
-      (services.download.delete as any).mockResolvedValue(true);
+      (services.download.getById as Mock).mockResolvedValue(mockDownload);
+      (services.download.grab as Mock).mockResolvedValue(newDownload);
+      (services.download.delete as Mock).mockResolvedValue(true);
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 

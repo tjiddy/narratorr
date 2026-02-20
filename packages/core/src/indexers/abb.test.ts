@@ -20,7 +20,7 @@ describe('AudioBookBayIndexer', () => {
   beforeEach(() => {
     indexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1 });
     // Speed up tests by removing delays
-    vi.spyOn(indexer as any, 'delay').mockResolvedValue(undefined);
+    vi.spyOn(indexer as never, 'delay').mockResolvedValue(undefined);
   });
 
   describe('properties', () => {

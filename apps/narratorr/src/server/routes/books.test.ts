@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
@@ -33,7 +33,7 @@ describe('books routes', () => {
     Object.values(services).forEach((svc) => {
       Object.values(svc).forEach((fn) => {
         if (typeof fn === 'function' && 'mockReset' in fn) {
-          (fn as any).mockReset();
+          (fn as Mock).mockReset();
         }
       });
     });
@@ -41,7 +41,7 @@ describe('books routes', () => {
 
   describe('GET /api/books', () => {
     it('returns all books', async () => {
-      (services.book.getAll as any).mockResolvedValue([mockBook]);
+      (services.book.getAll as Mock).mockResolvedValue([mockBook]);
 
       const res = await app.inject({ method: 'GET', url: '/api/books' });
 
@@ -52,7 +52,7 @@ describe('books routes', () => {
     });
 
     it('returns empty array when no books', async () => {
-      (services.book.getAll as any).mockResolvedValue([]);
+      (services.book.getAll as Mock).mockResolvedValue([]);
 
       const res = await app.inject({ method: 'GET', url: '/api/books' });
 
@@ -61,7 +61,7 @@ describe('books routes', () => {
     });
 
     it('passes status query param to service', async () => {
-      (services.book.getAll as any).mockResolvedValue([]);
+      (services.book.getAll as Mock).mockResolvedValue([]);
 
       await app.inject({ method: 'GET', url: '/api/books?status=wanted' });
 
@@ -71,7 +71,7 @@ describe('books routes', () => {
 
   describe('GET /api/books/:id', () => {
     it('returns book when found', async () => {
-      (services.book.getById as any).mockResolvedValue(mockBook);
+      (services.book.getById as Mock).mockResolvedValue(mockBook);
 
       const res = await app.inject({ method: 'GET', url: '/api/books/1' });
 
@@ -80,7 +80,7 @@ describe('books routes', () => {
     });
 
     it('returns 404 when not found', async () => {
-      (services.book.getById as any).mockResolvedValue(null);
+      (services.book.getById as Mock).mockResolvedValue(null);
 
       const res = await app.inject({ method: 'GET', url: '/api/books/999' });
 
@@ -91,8 +91,8 @@ describe('books routes', () => {
 
   describe('POST /api/books', () => {
     it('creates book and returns 201', async () => {
-      (services.book.findDuplicate as any).mockResolvedValue(null);
-      (services.book.create as any).mockResolvedValue(mockBook);
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue(mockBook);
 
       const res = await app.inject({
         method: 'POST',
@@ -105,8 +105,8 @@ describe('books routes', () => {
     });
 
     it('creates book with full metadata and returns 201', async () => {
-      (services.book.findDuplicate as any).mockResolvedValue(null);
-      (services.book.create as any).mockResolvedValue({
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue({
         ...mockBook,
         asin: 'B003P2WO5E',
         seriesName: 'The Stormlight Archive',
@@ -142,7 +142,7 @@ describe('books routes', () => {
     });
 
     it('returns 409 when duplicate found', async () => {
-      (services.book.findDuplicate as any).mockResolvedValue(mockBook);
+      (services.book.findDuplicate as Mock).mockResolvedValue(mockBook);
 
       const res = await app.inject({
         method: 'POST',
@@ -166,8 +166,8 @@ describe('books routes', () => {
     });
 
     it('passes providerId to service for ASIN enrichment', async () => {
-      (services.book.findDuplicate as any).mockResolvedValue(null);
-      (services.book.create as any).mockResolvedValue({ ...mockBook, asin: 'B003ZWFO7E' });
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue({ ...mockBook, asin: 'B003ZWFO7E' });
 
       const res = await app.inject({
         method: 'POST',
@@ -183,7 +183,7 @@ describe('books routes', () => {
   describe('PUT /api/books/:id', () => {
     it('updates book when found', async () => {
       const updated = { ...mockBook, title: 'Updated Title' };
-      (services.book.update as any).mockResolvedValue(updated);
+      (services.book.update as Mock).mockResolvedValue(updated);
 
       const res = await app.inject({
         method: 'PUT',
@@ -196,7 +196,7 @@ describe('books routes', () => {
     });
 
     it('returns 404 when not found', async () => {
-      (services.book.update as any).mockResolvedValue(null);
+      (services.book.update as Mock).mockResolvedValue(null);
 
       const res = await app.inject({
         method: 'PUT',
@@ -210,8 +210,8 @@ describe('books routes', () => {
 
   describe('DELETE /api/books/:id', () => {
     it('deletes book and returns success', async () => {
-      (services.download.getActiveByBookId as any).mockResolvedValue([]);
-      (services.book.delete as any).mockResolvedValue(true);
+      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
+      (services.book.delete as Mock).mockResolvedValue(true);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
 
@@ -221,8 +221,8 @@ describe('books routes', () => {
     });
 
     it('returns 404 when not found', async () => {
-      (services.download.getActiveByBookId as any).mockResolvedValue([]);
-      (services.book.delete as any).mockResolvedValue(false);
+      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
+      (services.book.delete as Mock).mockResolvedValue(false);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/999' });
 
@@ -234,9 +234,9 @@ describe('books routes', () => {
         { id: 10, bookId: 1, status: 'downloading' },
         { id: 11, bookId: 1, status: 'queued' },
       ];
-      (services.download.getActiveByBookId as any).mockResolvedValue(activeDownloads);
-      (services.download.cancel as any).mockResolvedValue(true);
-      (services.book.delete as any).mockResolvedValue(true);
+      (services.download.getActiveByBookId as Mock).mockResolvedValue(activeDownloads);
+      (services.download.cancel as Mock).mockResolvedValue(true);
+      (services.book.delete as Mock).mockResolvedValue(true);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
 
@@ -250,8 +250,8 @@ describe('books routes', () => {
 
   describe('error paths', () => {
     it('POST /api/books returns 500 when service.create throws', async () => {
-      (services.book.findDuplicate as any).mockResolvedValue(null);
-      (services.book.create as any).mockRejectedValue(new Error('DB insert failed'));
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockRejectedValue(new Error('DB insert failed'));
 
       const res = await app.inject({
         method: 'POST',
@@ -284,7 +284,7 @@ describe('books routes', () => {
     });
 
     it('GET /api/books returns 500 when service throws', async () => {
-      (services.book.getAll as any).mockRejectedValue(new Error('DB error'));
+      (services.book.getAll as Mock).mockRejectedValue(new Error('DB error'));
 
       const res = await app.inject({ method: 'GET', url: '/api/books' });
 
@@ -296,11 +296,11 @@ describe('books routes', () => {
         { id: 10, bookId: 1, status: 'downloading' },
         { id: 11, bookId: 1, status: 'queued' },
       ];
-      (services.download.getActiveByBookId as any).mockResolvedValue(activeDownloads);
-      (services.download.cancel as any)
+      (services.download.getActiveByBookId as Mock).mockResolvedValue(activeDownloads);
+      (services.download.cancel as Mock)
         .mockRejectedValueOnce(new Error('cancel failed'))
         .mockResolvedValueOnce(true);
-      (services.book.delete as any).mockResolvedValue(true);
+      (services.book.delete as Mock).mockResolvedValue(true);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
 
@@ -314,7 +314,7 @@ describe('books routes', () => {
     });
 
     it('GET /api/books/:id/cover returns 404 when book has no path', async () => {
-      (services.book.getById as any).mockResolvedValue({ ...mockBook, path: null });
+      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, path: null });
 
       const res = await app.inject({ method: 'GET', url: '/api/books/1/cover' });
 

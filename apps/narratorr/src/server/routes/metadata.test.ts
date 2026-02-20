@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
@@ -22,7 +22,7 @@ describe('metadata routes', () => {
     Object.values(services).forEach((svc) => {
       Object.values(svc).forEach((fn) => {
         if (typeof fn === 'function' && 'mockReset' in fn) {
-          (fn as any).mockReset();
+          (fn as Mock).mockReset();
         }
       });
     });
@@ -30,7 +30,7 @@ describe('metadata routes', () => {
 
   describe('GET /api/metadata/search', () => {
     it('returns search results', async () => {
-      (services.metadata.search as any).mockResolvedValue({
+      (services.metadata.search as Mock).mockResolvedValue({
         books: [],
         authors: [mockAuthor],
         series: [],
@@ -52,7 +52,7 @@ describe('metadata routes', () => {
 
   describe('GET /api/metadata/authors/:id', () => {
     it('returns author when found', async () => {
-      (services.metadata.getAuthor as any).mockResolvedValue(mockAuthor);
+      (services.metadata.getAuthor as Mock).mockResolvedValue(mockAuthor);
 
       const res = await app.inject({ method: 'GET', url: '/api/metadata/authors/B001H6UJO8' });
 
@@ -61,7 +61,7 @@ describe('metadata routes', () => {
     });
 
     it('returns 404 when not found', async () => {
-      (services.metadata.getAuthor as any).mockResolvedValue(null);
+      (services.metadata.getAuthor as Mock).mockResolvedValue(null);
 
       const res = await app.inject({ method: 'GET', url: '/api/metadata/authors/INVALID' });
 
@@ -71,7 +71,7 @@ describe('metadata routes', () => {
 
   describe('GET /api/metadata/authors/:id/books', () => {
     it('returns author books', async () => {
-      (services.metadata.getAuthorBooks as any).mockResolvedValue([mockBook]);
+      (services.metadata.getAuthorBooks as Mock).mockResolvedValue([mockBook]);
 
       const res = await app.inject({ method: 'GET', url: '/api/metadata/authors/B001H6UJO8/books' });
 
@@ -82,7 +82,7 @@ describe('metadata routes', () => {
 
   describe('GET /api/metadata/books/:id', () => {
     it('returns book when found', async () => {
-      (services.metadata.getBook as any).mockResolvedValue(mockBook);
+      (services.metadata.getBook as Mock).mockResolvedValue(mockBook);
 
       const res = await app.inject({ method: 'GET', url: '/api/metadata/books/B0030DL4GK' });
 
@@ -91,7 +91,7 @@ describe('metadata routes', () => {
     });
 
     it('returns 404 when not found', async () => {
-      (services.metadata.getBook as any).mockResolvedValue(null);
+      (services.metadata.getBook as Mock).mockResolvedValue(null);
 
       const res = await app.inject({ method: 'GET', url: '/api/metadata/books/INVALID' });
 
@@ -101,7 +101,7 @@ describe('metadata routes', () => {
 
   describe('GET /api/metadata/test', () => {
     it('returns provider test results', async () => {
-      (services.metadata.testProviders as any).mockResolvedValue([
+      (services.metadata.testProviders as Mock).mockResolvedValue([
         { name: 'Audnexus', type: 'audnexus', success: true },
       ]);
 
@@ -114,7 +114,7 @@ describe('metadata routes', () => {
 
   describe('GET /api/metadata/providers', () => {
     it('returns provider list', async () => {
-      (services.metadata.getProviders as any).mockReturnValue([
+      (services.metadata.getProviders as Mock).mockReturnValue([
         { name: 'Audnexus', type: 'audnexus' },
       ]);
 
@@ -127,7 +127,7 @@ describe('metadata routes', () => {
 
   describe('error paths', () => {
     it('GET /api/metadata/search returns 500 when service throws', async () => {
-      (services.metadata.search as any).mockRejectedValue(new Error('Rate limited'));
+      (services.metadata.search as Mock).mockRejectedValue(new Error('Rate limited'));
 
       const res = await app.inject({ method: 'GET', url: '/api/metadata/search?q=sanderson' });
 
@@ -135,7 +135,7 @@ describe('metadata routes', () => {
     });
 
     it('GET /api/metadata/authors/:id returns 500 when service throws', async () => {
-      (services.metadata.getAuthor as any).mockRejectedValue(new Error('Network error'));
+      (services.metadata.getAuthor as Mock).mockRejectedValue(new Error('Network error'));
 
       const res = await app.inject({ method: 'GET', url: '/api/metadata/authors/B001H6UJO8' });
 
@@ -143,7 +143,7 @@ describe('metadata routes', () => {
     });
 
     it('GET /api/metadata/authors/:id/books returns 500 when service throws', async () => {
-      (services.metadata.getAuthorBooks as any).mockRejectedValue(new Error('Timeout'));
+      (services.metadata.getAuthorBooks as Mock).mockRejectedValue(new Error('Timeout'));
 
       const res = await app.inject({ method: 'GET', url: '/api/metadata/authors/B001H6UJO8/books' });
 
@@ -151,7 +151,7 @@ describe('metadata routes', () => {
     });
 
     it('GET /api/metadata/books/:id returns 500 when service throws', async () => {
-      (services.metadata.getBook as any).mockRejectedValue(new Error('Provider error'));
+      (services.metadata.getBook as Mock).mockRejectedValue(new Error('Provider error'));
 
       const res = await app.inject({ method: 'GET', url: '/api/metadata/books/B0030DL4GK' });
 
@@ -159,7 +159,7 @@ describe('metadata routes', () => {
     });
 
     it('GET /api/metadata/test returns 500 when service throws', async () => {
-      (services.metadata.testProviders as any).mockRejectedValue(new Error('All providers down'));
+      (services.metadata.testProviders as Mock).mockRejectedValue(new Error('All providers down'));
 
       const res = await app.inject({ method: 'GET', url: '/api/metadata/test' });
 

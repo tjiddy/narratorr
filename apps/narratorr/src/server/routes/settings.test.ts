@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
@@ -26,7 +26,7 @@ describe('settings routes', () => {
     Object.values(services).forEach((svc) => {
       Object.values(svc).forEach((fn) => {
         if (typeof fn === 'function' && 'mockReset' in fn) {
-          (fn as any).mockReset();
+          (fn as Mock).mockReset();
         }
       });
     });
@@ -34,7 +34,7 @@ describe('settings routes', () => {
 
   describe('GET /api/settings', () => {
     it('returns all settings', async () => {
-      (services.settings.getAll as any).mockResolvedValue(mockSettings);
+      (services.settings.getAll as Mock).mockResolvedValue(mockSettings);
 
       const res = await app.inject({ method: 'GET', url: '/api/settings' });
 
@@ -48,7 +48,7 @@ describe('settings routes', () => {
   describe('PUT /api/settings', () => {
     it('updates settings', async () => {
       const updated = { ...mockSettings, library: { path: '/new', folderFormat: '{title}' } };
-      (services.settings.update as any).mockResolvedValue(updated);
+      (services.settings.update as Mock).mockResolvedValue(updated);
 
       const res = await app.inject({
         method: 'PUT',
@@ -61,7 +61,7 @@ describe('settings routes', () => {
     });
 
     it('accepts partial updates', async () => {
-      (services.settings.update as any).mockResolvedValue(mockSettings);
+      (services.settings.update as Mock).mockResolvedValue(mockSettings);
 
       const res = await app.inject({
         method: 'PUT',
@@ -75,7 +75,7 @@ describe('settings routes', () => {
 
   describe('error paths', () => {
     it('GET /api/settings returns 500 when service throws', async () => {
-      (services.settings.getAll as any).mockRejectedValue(new Error('DB error'));
+      (services.settings.getAll as Mock).mockRejectedValue(new Error('DB error'));
 
       const res = await app.inject({ method: 'GET', url: '/api/settings' });
 
@@ -83,7 +83,7 @@ describe('settings routes', () => {
     });
 
     it('PUT /api/settings returns 500 when service throws', async () => {
-      (services.settings.update as any).mockRejectedValue(new Error('Upsert failed'));
+      (services.settings.update as Mock).mockRejectedValue(new Error('Upsert failed'));
 
       const res = await app.inject({
         method: 'PUT',

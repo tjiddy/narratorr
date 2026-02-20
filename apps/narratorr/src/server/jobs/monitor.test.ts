@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
+import type { Db } from '@narratorr/db';
+import type { DownloadClientService } from '../services/download-client.service.js';
+import type { NotifierService } from '../services/notifier.service.js';
 
 let cronCallback: (() => Promise<void>) | null = null;
 
@@ -30,7 +33,7 @@ describe('monitor job', () => {
     cronCallback = null;
 
     // Register the cron callback
-    startMonitorJob(db as any, downloadClientService as any, notifierService as any, log as any);
+    startMonitorJob(db as unknown as Db, downloadClientService as unknown as DownloadClientService, notifierService as unknown as NotifierService, log);
   });
 
   async function runMonitor() {

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import { IndexerService } from './indexer.service.js';
+import type { Db } from '@narratorr/db';
 
 const now = new Date();
 
@@ -22,7 +23,7 @@ describe('IndexerService', () => {
 
   beforeEach(() => {
     db = createMockDb();
-    service = new IndexerService(db as any, createMockLogger() as any);
+    service = new IndexerService(db as unknown as Db, createMockLogger());
   });
 
   describe('getAll', () => {
@@ -134,7 +135,7 @@ describe('IndexerService', () => {
     });
 
     it('throws for unknown indexer type', async () => {
-      const badIndexer = { ...mockIndexer, type: 'unknown' as any };
+      const badIndexer = { ...mockIndexer, type: 'unknown' as never };
 
       await expect(service.getAdapter(badIndexer)).rejects.toThrow('Unknown indexer type');
     });
@@ -195,7 +196,7 @@ describe('IndexerService', () => {
       };
 
       // Override getAdapter to return our mock
-      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as any);
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const results = await service.searchAll('sanderson');
       expect(results).toHaveLength(1);
@@ -216,8 +217,8 @@ describe('IndexerService', () => {
       };
 
       vi.spyOn(service, 'getAdapter')
-        .mockResolvedValueOnce(errorAdapter as any)
-        .mockResolvedValueOnce(goodAdapter as any);
+        .mockResolvedValueOnce(errorAdapter as never)
+        .mockResolvedValueOnce(goodAdapter as never);
 
       const results = await service.searchAll('test');
       expect(results).toHaveLength(1);
@@ -238,8 +239,8 @@ describe('IndexerService', () => {
       };
 
       vi.spyOn(service, 'getAdapter')
-        .mockResolvedValueOnce(errorAdapter1 as any)
-        .mockResolvedValueOnce(errorAdapter2 as any);
+        .mockResolvedValueOnce(errorAdapter1 as never)
+        .mockResolvedValueOnce(errorAdapter2 as never);
 
       const results = await service.searchAll('test');
       expect(results).toEqual([]);
@@ -269,8 +270,8 @@ describe('IndexerService', () => {
       };
 
       vi.spyOn(service, 'getAdapter')
-        .mockResolvedValueOnce(goodAdapter as any)
-        .mockResolvedValueOnce(errorAdapter as any);
+        .mockResolvedValueOnce(goodAdapter as never)
+        .mockResolvedValueOnce(errorAdapter as never);
 
       const results = await service.searchAll('test');
       expect(results).toHaveLength(2);
@@ -284,7 +285,7 @@ describe('IndexerService', () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
 
       const mockAdapter = { test: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')), search: vi.fn() };
-      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as any);
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const result = await service.test(1);
 
@@ -296,7 +297,7 @@ describe('IndexerService', () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));
 
       const mockAdapter = { test: vi.fn().mockRejectedValue('string thrown'), search: vi.fn() };
-      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as any);
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
 
       const result = await service.test(1);
 

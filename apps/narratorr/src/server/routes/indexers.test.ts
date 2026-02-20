@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
@@ -29,7 +29,7 @@ describe('indexers routes', () => {
     Object.values(services).forEach((svc) => {
       Object.values(svc).forEach((fn) => {
         if (typeof fn === 'function' && 'mockReset' in fn) {
-          (fn as any).mockReset();
+          (fn as Mock).mockReset();
         }
       });
     });
@@ -37,7 +37,7 @@ describe('indexers routes', () => {
 
   describe('GET /api/indexers', () => {
     it('returns all indexers', async () => {
-      (services.indexer.getAll as any).mockResolvedValue([mockIndexer]);
+      (services.indexer.getAll as Mock).mockResolvedValue([mockIndexer]);
 
       const res = await app.inject({ method: 'GET', url: '/api/indexers' });
 
@@ -48,7 +48,7 @@ describe('indexers routes', () => {
 
   describe('GET /api/indexers/:id', () => {
     it('returns indexer when found', async () => {
-      (services.indexer.getById as any).mockResolvedValue(mockIndexer);
+      (services.indexer.getById as Mock).mockResolvedValue(mockIndexer);
 
       const res = await app.inject({ method: 'GET', url: '/api/indexers/1' });
 
@@ -57,7 +57,7 @@ describe('indexers routes', () => {
     });
 
     it('returns 404 when not found', async () => {
-      (services.indexer.getById as any).mockResolvedValue(null);
+      (services.indexer.getById as Mock).mockResolvedValue(null);
 
       const res = await app.inject({ method: 'GET', url: '/api/indexers/999' });
 
@@ -67,7 +67,7 @@ describe('indexers routes', () => {
 
   describe('POST /api/indexers', () => {
     it('creates indexer and returns 201', async () => {
-      (services.indexer.create as any).mockResolvedValue(mockIndexer);
+      (services.indexer.create as Mock).mockResolvedValue(mockIndexer);
 
       const res = await app.inject({
         method: 'POST',
@@ -97,7 +97,7 @@ describe('indexers routes', () => {
 
   describe('PUT /api/indexers/:id', () => {
     it('updates indexer when found', async () => {
-      (services.indexer.update as any).mockResolvedValue({ ...mockIndexer, name: 'Updated' });
+      (services.indexer.update as Mock).mockResolvedValue({ ...mockIndexer, name: 'Updated' });
 
       const res = await app.inject({
         method: 'PUT',
@@ -109,7 +109,7 @@ describe('indexers routes', () => {
     });
 
     it('returns 404 when not found', async () => {
-      (services.indexer.update as any).mockResolvedValue(null);
+      (services.indexer.update as Mock).mockResolvedValue(null);
 
       const res = await app.inject({
         method: 'PUT',
@@ -123,7 +123,7 @@ describe('indexers routes', () => {
 
   describe('DELETE /api/indexers/:id', () => {
     it('deletes indexer and returns success', async () => {
-      (services.indexer.delete as any).mockResolvedValue(true);
+      (services.indexer.delete as Mock).mockResolvedValue(true);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/indexers/1' });
 
@@ -132,7 +132,7 @@ describe('indexers routes', () => {
     });
 
     it('returns 404 when not found', async () => {
-      (services.indexer.delete as any).mockResolvedValue(false);
+      (services.indexer.delete as Mock).mockResolvedValue(false);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/indexers/999' });
 
@@ -142,7 +142,7 @@ describe('indexers routes', () => {
 
   describe('POST /api/indexers/test', () => {
     it('returns test result for config payload', async () => {
-      (services.indexer.testConfig as any).mockResolvedValue({ success: true, message: 'Connected' });
+      (services.indexer.testConfig as Mock).mockResolvedValue({ success: true, message: 'Connected' });
 
       const res = await app.inject({
         method: 'POST',
@@ -177,7 +177,7 @@ describe('indexers routes', () => {
 
   describe('POST /api/indexers/:id/test', () => {
     it('returns test result', async () => {
-      (services.indexer.test as any).mockResolvedValue({ success: true, message: 'Connected' });
+      (services.indexer.test as Mock).mockResolvedValue({ success: true, message: 'Connected' });
 
       const res = await app.inject({ method: 'POST', url: '/api/indexers/1/test' });
 

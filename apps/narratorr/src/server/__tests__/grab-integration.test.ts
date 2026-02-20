@@ -4,6 +4,7 @@ import { http, HttpResponse } from 'msw';
 import { createMockDb, createMockLogger, mockDbChain } from './helpers.js';
 import { DownloadService } from '../services/download.service.js';
 import { DownloadClientService } from '../services/download-client.service.js';
+import type { Db } from '@narratorr/db';
 
 const QB_BASE = 'http://localhost:8080';
 const MAGNET_HASH = 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d';
@@ -58,8 +59,8 @@ describe('Grab flow integration', () => {
     // DB returns the qbittorrent client for all select queries (getFirstEnabledForProtocol + getById)
     db.select.mockReturnValue(mockDbChain([mockClientRow]));
 
-    clientService = new DownloadClientService(db as any, log as any);
-    downloadService = new DownloadService(db as any, clientService, log as any);
+    clientService = new DownloadClientService(db as unknown as Db, log);
+    downloadService = new DownloadService(db as unknown as Db, clientService, log);
   });
 
   it('grabs a magnet URI, extracts the correct hash, and calls the adapter via MSW', async () => {

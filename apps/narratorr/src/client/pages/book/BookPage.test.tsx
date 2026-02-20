@@ -126,7 +126,7 @@ describe('BookPage', () => {
       asin: null,
       description: '<p>Library description only.</p>',
     });
-    vi.mocked(api.getBook).mockResolvedValue(null as any);
+    vi.mocked(api.getBook).mockResolvedValue(null as never);
 
     renderBookPage();
 

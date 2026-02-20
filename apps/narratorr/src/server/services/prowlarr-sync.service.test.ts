@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import { ProwlarrSyncService } from './prowlarr-sync.service.js';
+import type { Db } from '@narratorr/db';
 
 // Mock the ProwlarrClient
 vi.mock('@narratorr/core', async (importOriginal) => {
@@ -42,7 +43,7 @@ describe('ProwlarrSyncService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     db = createMockDb();
-    service = new ProwlarrSyncService(db as any, createMockLogger() as any);
+    service = new ProwlarrSyncService(db as unknown as Db, createMockLogger());
 
     // Default mock setup
     mockProwlarrClient.getIndexers.mockResolvedValue(mockRemoteIndexers);

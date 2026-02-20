@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyBaseLogger } from 'fastify';
 import {
   serializerCompiler,
   validatorCompiler,
@@ -59,8 +59,9 @@ export function createMockDb() {
 
 /**
  * Creates a mock Pino BaseLogger with all methods as vi.fn() stubs.
+ * Typed as FastifyBaseLogger so callers can pass directly to service constructors.
  */
-export function createMockLogger() {
+export function createMockLogger(): FastifyBaseLogger {
   return {
     info: vi.fn(),
     warn: vi.fn(),
@@ -71,7 +72,7 @@ export function createMockLogger() {
     child: vi.fn().mockReturnThis(),
     level: 'info',
     silent: vi.fn(),
-  };
+  } as unknown as FastifyBaseLogger;
 }
 
 /**
@@ -97,4 +98,18 @@ export function createMockServices(overrides?: Partial<Record<keyof Services, Re
     });
   }
   return services as unknown as Services;
+}
+
+/**
+ * Resets all vi.fn() stubs on every service in a Services object.
+ * Replaces the identical `beforeEach` loop duplicated across route tests.
+ */
+export function resetMockServices(services: Services) {
+  for (const svc of Object.values(services)) {
+    for (const fn of Object.values(svc as Record<string, unknown>)) {
+      if (typeof fn === 'function' && 'mockReset' in fn) {
+        (fn as { mockReset: () => void }).mockReset();
+      }
+    }
+  }
 }

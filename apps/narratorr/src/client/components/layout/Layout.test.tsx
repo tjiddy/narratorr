@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { Layout } from '@/components/layout/Layout';
 
@@ -11,7 +12,7 @@ import { useActivityCounts } from '@/hooks/useActivityCounts';
 
 describe('Layout', () => {
   function mockCounts(active: number) {
-    (useActivityCounts as any).mockReturnValue({
+    vi.mocked(useActivityCounts).mockReturnValue({
       active,
       completed: 0,
       isLoading: false,
@@ -70,5 +71,15 @@ describe('Layout', () => {
     renderWithProviders(<Layout />, { route: '/search' });
 
     expect(screen.getByLabelText('1 active download')).toBeInTheDocument();
+  });
+
+  it('toggles theme on button click', async () => {
+    mockCounts(0);
+    renderWithProviders(<Layout />);
+
+    const toggleButton = screen.getByTitle(/switch to dark mode/i);
+    await userEvent.click(toggleButton);
+
+    expect(screen.getByTitle(/switch to light mode/i)).toBeInTheDocument();
   });
 });

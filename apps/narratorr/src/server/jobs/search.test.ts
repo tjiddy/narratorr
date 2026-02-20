@@ -111,7 +111,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService();
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log as any);
+    const result = await runSearchJob(settings, books, indexer, download, log);
 
     expect(result).toEqual({ searched: 0, grabbed: 0 });
     expect(books.getAll).not.toHaveBeenCalled();
@@ -127,12 +127,12 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService([]);
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log as any);
+    const result = await runSearchJob(settings, books, indexer, download, log);
 
     expect(result.searched).toBe(2);
     expect(indexer.searchAll).toHaveBeenCalledTimes(2);
-    expect((indexer.searchAll as any).mock.calls[0][0]).toBe('Book One Author A');
-    expect((indexer.searchAll as any).mock.calls[1][0]).toBe('Book Two Author B');
+    expect(vi.mocked(indexer.searchAll).mock.calls[0][0]).toBe('Book One Author A');
+    expect(vi.mocked(indexer.searchAll).mock.calls[1][0]).toBe('Book Two Author B');
   });
 
   it('auto-grabs when enabled and results found', async () => {
@@ -143,7 +143,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log as any);
+    const result = await runSearchJob(settings, books, indexer, download, log);
 
     expect(result.grabbed).toBe(1);
     expect(download.grab).toHaveBeenCalledWith(
@@ -162,7 +162,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log as any);
+    const result = await runSearchJob(settings, books, indexer, download, log);
 
     expect(result.searched).toBe(1);
     expect(result.grabbed).toBe(0);
@@ -179,7 +179,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService([]); // no results for any search
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log as any);
+    const result = await runSearchJob(settings, books, indexer, download, log);
 
     expect(result.searched).toBe(2);
     expect(result.grabbed).toBe(0);
@@ -205,13 +205,13 @@ describe('runSearchJob', () => {
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const results = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    (indexer.searchAll as any)
+    vi.mocked(indexer.searchAll)
       .mockResolvedValueOnce(results)     // Book A succeeds with results
       .mockRejectedValueOnce(new Error('Network error'))  // Book B throws
       .mockResolvedValueOnce(results);    // Book C succeeds with results
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log as any);
+    const result = await runSearchJob(settings, books, indexer, download, log);
 
     // Book A searched + grabbed, Book B failed (not counted), Book C searched + grabbed
     expect(result.searched).toBe(2);
@@ -233,11 +233,11 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService([]);
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log as any);
+    const result = await runSearchJob(settings, books, indexer, download, log);
 
     expect(result.searched).toBe(1);
     // Query should just be the title without author
-    expect((indexer.searchAll as any).mock.calls[0][0]).toBe('Anonymous Work');
+    expect(vi.mocked(indexer.searchAll).mock.calls[0][0]).toBe('Anonymous Work');
   });
 
   it('continues on per-book failure', async () => {
@@ -248,12 +248,12 @@ describe('runSearchJob', () => {
     const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60, autoGrab: false });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService([]);
-    (indexer.searchAll as any)
+    vi.mocked(indexer.searchAll)
       .mockRejectedValueOnce(new Error('Indexer down'))
       .mockResolvedValueOnce([]);
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log as any);
+    const result = await runSearchJob(settings, books, indexer, download, log);
 
     expect(result.searched).toBe(1); // only second book counted
     expect(log.warn).toHaveBeenCalled();

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
@@ -31,7 +31,7 @@ describe('prowlarr routes', () => {
     Object.values(services).forEach((svc) => {
       Object.values(svc).forEach((fn) => {
         if (typeof fn === 'function' && 'mockReset' in fn) {
-          (fn as any).mockReset();
+          (fn as Mock).mockReset();
         }
       });
     });
@@ -39,7 +39,7 @@ describe('prowlarr routes', () => {
 
   describe('POST /api/prowlarr/test', () => {
     it('returns success on valid connection', async () => {
-      (services.prowlarrSync.testConnection as any).mockResolvedValue({ success: true });
+      (services.prowlarrSync.testConnection as Mock).mockResolvedValue({ success: true });
 
       const res = await app.inject({
         method: 'POST',
@@ -74,7 +74,7 @@ describe('prowlarr routes', () => {
 
   describe('GET /api/prowlarr/config', () => {
     it('returns config when configured', async () => {
-      (services.prowlarrSync.getConfig as any).mockResolvedValue(mockConfig);
+      (services.prowlarrSync.getConfig as Mock).mockResolvedValue(mockConfig);
 
       const res = await app.inject({ method: 'GET', url: '/api/prowlarr/config' });
 
@@ -83,7 +83,7 @@ describe('prowlarr routes', () => {
     });
 
     it('returns 404 when not configured', async () => {
-      (services.prowlarrSync.getConfig as any).mockResolvedValue(null);
+      (services.prowlarrSync.getConfig as Mock).mockResolvedValue(null);
 
       const res = await app.inject({ method: 'GET', url: '/api/prowlarr/config' });
 
@@ -93,7 +93,7 @@ describe('prowlarr routes', () => {
 
   describe('PUT /api/prowlarr/config', () => {
     it('saves and returns config', async () => {
-      (services.prowlarrSync.saveConfig as any).mockResolvedValue(undefined);
+      (services.prowlarrSync.saveConfig as Mock).mockResolvedValue(undefined);
 
       const res = await app.inject({
         method: 'PUT',
@@ -118,8 +118,8 @@ describe('prowlarr routes', () => {
 
   describe('POST /api/prowlarr/preview', () => {
     it('returns preview items', async () => {
-      (services.prowlarrSync.getConfig as any).mockResolvedValue(mockConfig);
-      (services.prowlarrSync.preview as any).mockResolvedValue(mockPreview);
+      (services.prowlarrSync.getConfig as Mock).mockResolvedValue(mockConfig);
+      (services.prowlarrSync.preview as Mock).mockResolvedValue(mockPreview);
 
       const res = await app.inject({
         method: 'POST',
@@ -131,7 +131,7 @@ describe('prowlarr routes', () => {
     });
 
     it('returns 400 when not configured', async () => {
-      (services.prowlarrSync.getConfig as any).mockResolvedValue(null);
+      (services.prowlarrSync.getConfig as Mock).mockResolvedValue(null);
 
       const res = await app.inject({
         method: 'POST',
@@ -144,8 +144,8 @@ describe('prowlarr routes', () => {
 
   describe('POST /api/prowlarr/sync', () => {
     it('applies sync and returns result', async () => {
-      (services.prowlarrSync.getConfig as any).mockResolvedValue(mockConfig);
-      (services.prowlarrSync.apply as any).mockResolvedValue({ added: 1, updated: 0, removed: 0 });
+      (services.prowlarrSync.getConfig as Mock).mockResolvedValue(mockConfig);
+      (services.prowlarrSync.apply as Mock).mockResolvedValue({ added: 1, updated: 0, removed: 0 });
 
       const res = await app.inject({
         method: 'POST',
@@ -160,7 +160,7 @@ describe('prowlarr routes', () => {
     });
 
     it('returns 400 when not configured', async () => {
-      (services.prowlarrSync.getConfig as any).mockResolvedValue(null);
+      (services.prowlarrSync.getConfig as Mock).mockResolvedValue(null);
 
       const res = await app.inject({
         method: 'POST',

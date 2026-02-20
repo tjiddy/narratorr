@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
@@ -28,7 +28,7 @@ describe('search routes', () => {
     Object.values(services).forEach((svc) => {
       Object.values(svc).forEach((fn) => {
         if (typeof fn === 'function' && 'mockReset' in fn) {
-          (fn as any).mockReset();
+          (fn as Mock).mockReset();
         }
       });
     });
@@ -36,7 +36,7 @@ describe('search routes', () => {
 
   describe('GET /api/search', () => {
     it('returns search results', async () => {
-      (services.indexer.searchAll as any).mockResolvedValue([mockSearchResult]);
+      (services.indexer.searchAll as Mock).mockResolvedValue([mockSearchResult]);
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=sanderson' });
 
@@ -62,7 +62,7 @@ describe('search routes', () => {
   describe('POST /api/search/grab', () => {
     it('grabs download and returns 201', async () => {
       const mockDownload = { id: 1, title: 'Test', status: 'downloading' };
-      (services.download.grab as any).mockResolvedValue(mockDownload);
+      (services.download.grab as Mock).mockResolvedValue(mockDownload);
 
       const res = await app.inject({
         method: 'POST',
@@ -102,7 +102,7 @@ describe('search routes', () => {
     });
 
     it('returns 500 when grab fails', async () => {
-      (services.download.grab as any).mockRejectedValue(new Error('No download client'));
+      (services.download.grab as Mock).mockRejectedValue(new Error('No download client'));
 
       const res = await app.inject({
         method: 'POST',
@@ -120,7 +120,7 @@ describe('search routes', () => {
 
   describe('error paths', () => {
     it('GET /api/search returns 500 when searchAll throws', async () => {
-      (services.indexer.searchAll as any).mockRejectedValue(new Error('All indexers failed'));
+      (services.indexer.searchAll as Mock).mockRejectedValue(new Error('All indexers failed'));
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=sanderson' });
 
@@ -133,8 +133,8 @@ describe('search routes', () => {
         { ...mockSearchResult, infoHash: '' },
         { ...mockSearchResult, infoHash: 'abc123', title: 'Has Hash' },
       ];
-      (services.indexer.searchAll as any).mockResolvedValue(results);
-      (services.blacklist.getBlacklistedHashes as any).mockResolvedValue(new Set(['abc123']));
+      (services.indexer.searchAll as Mock).mockResolvedValue(results);
+      (services.blacklist.getBlacklistedHashes as Mock).mockResolvedValue(new Set(['abc123']));
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=sanderson' });
 
@@ -149,7 +149,7 @@ describe('search routes', () => {
         { ...mockSearchResult, infoHash: undefined },
         { ...mockSearchResult, infoHash: null },
       ];
-      (services.indexer.searchAll as any).mockResolvedValue(results);
+      (services.indexer.searchAll as Mock).mockResolvedValue(results);
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=sanderson' });
 

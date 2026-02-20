@@ -100,7 +100,6 @@ export default tseslint.config(
   {
     files: ['**/*.test.ts', '**/*.test.tsx'],
     rules: {
-      '@typescript-eslint/no-explicit-any': 'off',
       'max-lines': 'off',
       'max-lines-per-function': 'off',
       'complexity': 'off',
