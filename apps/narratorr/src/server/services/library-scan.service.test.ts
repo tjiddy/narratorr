@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 import type { BookService } from './book.service.js';
@@ -161,7 +162,7 @@ describe('parseFolderStructure', () => {
 // ============================================================================
 
 function createMockLogger() {
-  return {
+  return inject<FastifyBaseLogger>({
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -171,7 +172,7 @@ function createMockLogger() {
     child: vi.fn().mockReturnThis(),
     silent: vi.fn(),
     level: 'info',
-  } as unknown as FastifyBaseLogger;
+  });
 }
 
 describe('LibraryScanService', () => {
@@ -217,10 +218,10 @@ describe('LibraryScanService', () => {
       get: vi.fn().mockResolvedValue({ path: '/library', folderFormat: '{author}/{title}' }),
     };
     service = new LibraryScanService(
-      mockDb as Db,
-      mockBookService as unknown as BookService,
-      mockMetadataService as unknown as MetadataService,
-      mockSettingsService as unknown as SettingsService,
+      inject<Db>(mockDb),
+      inject<BookService>(mockBookService),
+      inject<MetadataService>(mockMetadataService),
+      inject<SettingsService>(mockSettingsService),
       log,
     );
   });

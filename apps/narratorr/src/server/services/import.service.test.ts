@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
-import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { ImportService, buildTargetPath } from './import.service.js';
 import { sanitizePath } from '@narratorr/core/utils';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 
 // Mock node:fs/promises
@@ -101,19 +102,19 @@ const mockAdapter = {
 };
 
 function createMockDownloadClientService(): DownloadClientService {
-  return {
+  return inject<DownloadClientService>({
     getAdapter: vi.fn().mockResolvedValue(mockAdapter),
-  } as unknown as DownloadClientService;
+  });
 }
 
 function createMockSettingsService(): SettingsService {
-  return {
+  return inject<SettingsService>({
     get: vi.fn().mockImplementation((key: string) => {
       if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}' });
       if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
       return Promise.resolve({});
     }),
-  } as unknown as SettingsService;
+  });
 }
 
 describe('sanitizePath', () => {
@@ -211,17 +212,17 @@ describe('ImportService', () => {
     db = createMockDb();
     clientService = createMockDownloadClientService();
     settingsService = createMockSettingsService();
-    service = new ImportService(db as unknown as Db, clientService, settingsService, createMockLogger());
+    service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(createMockLogger()));
 
     // Default: stat returns a directory for source, then directory for target (size verification)
-    const statMock = stat as unknown as ReturnType<typeof vi.fn>;
-    statMock.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 });
+    const statMock = vi.mocked(stat);
+    statMock.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
 
     // readdir returns one audio file
-    const readdirMock = readdir as unknown as ReturnType<typeof vi.fn>;
+    const readdirMock = vi.mocked(readdir);
     readdirMock.mockResolvedValue([
       { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
-    ]);
+    ] as never);
   });
 
   describe('importDownload', () => {
@@ -260,7 +261,7 @@ describe('ImportService', () => {
       db.update.mockReturnValue(mockDbChain());
 
       // Make stat throw to simulate file not found
-      const statMock = stat as unknown as ReturnType<typeof vi.fn>;
+      const statMock = vi.mocked(stat);
       statMock.mockRejectedValueOnce(new Error('ENOENT'));
 
       // The second update (setting importing) succeeds, then stat fails
@@ -409,7 +410,7 @@ describe('ImportService', () => {
       await service.importDownload(1);
 
       expect(writeFile).toHaveBeenCalled();
-      const writeCall = (writeFile as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+      const writeCall = vi.mocked(writeFile).mock.calls[0];
       expect(writeCall[0]).toMatch(/cover\.png$/);
       expect(writeCall[1]).toBe(coverData);
 
@@ -523,11 +524,11 @@ describe('ImportService', () => {
       db.update.mockReturnValue(mockDbChain());
 
       // readdir returns no audio files
-      const readdirMock = readdir as unknown as ReturnType<typeof vi.fn>;
+      const readdirMock = vi.mocked(readdir);
       readdirMock.mockResolvedValue([
         { name: 'readme.txt', isFile: () => true, isDirectory: () => false },
         { name: 'cover.jpg', isFile: () => true, isDirectory: () => false },
-      ]);
+      ] as never);
 
       await expect(service.importDownload(1)).rejects.toThrow('No audio files found');
     });
@@ -538,13 +539,13 @@ describe('ImportService', () => {
       db.update.mockReturnValue(mockDbChain());
 
       // readdir returns audio file
-      const readdirMock = readdir as unknown as ReturnType<typeof vi.fn>;
+      const readdirMock = vi.mocked(readdir);
       readdirMock.mockResolvedValue([
         { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
-      ]);
+      ] as never);
 
       // cp throws mid-copy
-      const cpMock = cp as unknown as ReturnType<typeof vi.fn>;
+      const cpMock = vi.mocked(cp);
       cpMock.mockRejectedValueOnce(new Error('ENOSPC: no space left on device'));
 
       await expect(service.importDownload(1)).rejects.toThrow('ENOSPC');

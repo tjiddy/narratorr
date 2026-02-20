@@ -1,5 +1,5 @@
 import { describe, it, expect, type vi, beforeAll, afterAll, beforeEach } from 'vitest';
-import { createTestApp, createMockServices } from '../__tests__/helpers.js';
+import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
 describe('library-scan routes', () => {
@@ -16,13 +16,7 @@ describe('library-scan routes', () => {
   });
 
   beforeEach(() => {
-    Object.values(services).forEach((svc) => {
-      Object.values(svc).forEach((fn) => {
-        if (typeof fn === 'function' && 'mockReset' in fn) {
-          (fn as ReturnType<typeof vi.fn>).mockReset();
-        }
-      });
-    });
+    resetMockServices(services);
   });
 
   describe('POST /api/library/import/scan', () => {

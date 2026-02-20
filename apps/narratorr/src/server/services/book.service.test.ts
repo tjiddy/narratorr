@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { BookService } from './book.service.js';
+import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 import type { MetadataService } from './metadata.service.js';
 
@@ -49,7 +50,7 @@ describe('BookService', () => {
 
   beforeEach(() => {
     db = createMockDb();
-    service = new BookService(db as unknown as Db, createMockLogger());
+    service = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
   });
 
   describe('getAll', () => {
@@ -236,7 +237,7 @@ describe('BookService', () => {
 
     beforeEach(() => {
       mockMetadata = { getBook: vi.fn().mockResolvedValue(null) };
-      serviceWithMeta = new BookService(db as unknown as Db, createMockLogger(), mockMetadata as unknown as MetadataService);
+      serviceWithMeta = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()), inject<MetadataService>(mockMetadata));
     });
 
     it('enriches ASIN from provider when not provided', async () => {

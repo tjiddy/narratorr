@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 
@@ -15,7 +16,7 @@ import { writeFile } from 'node:fs/promises';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 
 function createMockLogger() {
-  return {
+  return inject<FastifyBaseLogger>({
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
@@ -25,7 +26,7 @@ function createMockLogger() {
     child: vi.fn().mockReturnThis(),
     silent: vi.fn(),
     level: 'info',
-  } as unknown as FastifyBaseLogger;
+  });
 }
 
 describe('enrichBookFromAudio', () => {
@@ -62,7 +63,7 @@ describe('enrichBookFromAudio', () => {
       1,
       '/books/test',
       { narrator: null, duration: null, coverUrl: null },
-      mockDb as unknown as Db,
+      inject<Db>(mockDb),
       log,
     );
 
@@ -87,7 +88,7 @@ describe('enrichBookFromAudio', () => {
       1,
       '/books/empty',
       { narrator: null, duration: null, coverUrl: null },
-      mockDb as unknown as Db,
+      inject<Db>(mockDb),
       log,
     );
 
@@ -115,7 +116,7 @@ describe('enrichBookFromAudio', () => {
       1,
       '/books/test',
       { narrator: null, duration: null, coverUrl: null },
-      mockDb as unknown as Db,
+      inject<Db>(mockDb),
       log,
     );
 
@@ -144,7 +145,7 @@ describe('enrichBookFromAudio', () => {
       1,
       '/books/test',
       { narrator: 'Correct Narrator', duration: null, coverUrl: null },
-      mockDb as unknown as Db,
+      inject<Db>(mockDb),
       log,
     );
 
@@ -174,7 +175,7 @@ describe('enrichBookFromAudio', () => {
       42,
       '/books/test',
       { narrator: null, duration: null, coverUrl: null },
-      mockDb as unknown as Db,
+      inject<Db>(mockDb),
       log,
     );
 
@@ -204,7 +205,7 @@ describe('enrichBookFromAudio', () => {
       1,
       '/books/test',
       { narrator: null, duration: null, coverUrl: '/api/books/1/cover' },
-      mockDb as unknown as Db,
+      inject<Db>(mockDb),
       log,
     );
 
@@ -218,7 +219,7 @@ describe('enrichBookFromAudio', () => {
       1,
       '/books/locked',
       { narrator: null, duration: null, coverUrl: null },
-      mockDb as unknown as Db,
+      inject<Db>(mockDb),
       log,
     );
 
@@ -247,7 +248,7 @@ describe('enrichBookFromAudio', () => {
       1,
       '/books/test',
       { narrator: null, duration: null, coverUrl: null },
-      mockDb as unknown as Db,
+      inject<Db>(mockDb),
       log,
     );
 

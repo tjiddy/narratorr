@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
+import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 import type { DownloadClientService } from '../services/download-client.service.js';
 import type { NotifierService } from '../services/notifier.service.js';
@@ -33,7 +34,7 @@ describe('monitor job', () => {
     cronCallback = null;
 
     // Register the cron callback
-    startMonitorJob(db as unknown as Db, downloadClientService as unknown as DownloadClientService, notifierService as unknown as NotifierService, log);
+    startMonitorJob(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log));
   });
 
   async function runMonitor() {

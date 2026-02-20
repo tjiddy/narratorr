@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
@@ -11,6 +11,9 @@ vi.mock('@/hooks/useActivityCounts', () => ({
 import { useActivityCounts } from '@/hooks/useActivityCounts';
 
 describe('Layout', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
   function mockCounts(active: number) {
     vi.mocked(useActivityCounts).mockReturnValue({
       active,

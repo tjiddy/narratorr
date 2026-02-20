@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
-import { createTestApp, createMockServices } from '../__tests__/helpers.js';
+import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
 const mockSettings = {
@@ -23,13 +23,7 @@ describe('settings routes', () => {
   });
 
   beforeEach(() => {
-    Object.values(services).forEach((svc) => {
-      Object.values(svc).forEach((fn) => {
-        if (typeof fn === 'function' && 'mockReset' in fn) {
-          (fn as Mock).mockReset();
-        }
-      });
-    });
+    resetMockServices(services);
   });
 
   describe('GET /api/settings', () => {

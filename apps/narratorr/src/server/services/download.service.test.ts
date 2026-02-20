@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
-import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { DownloadService } from './download.service.js';
 import { type DownloadClientService } from './download-client.service.js';
+import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 
 const now = new Date();
@@ -35,7 +36,7 @@ const mockDownload = {
 };
 
 function createMockDownloadClientService(): DownloadClientService {
-  return {
+  return inject<DownloadClientService>({
     getAll: vi.fn(),
     getById: vi.fn(),
     getFirstEnabled: vi.fn(),
@@ -46,7 +47,7 @@ function createMockDownloadClientService(): DownloadClientService {
     getAdapter: vi.fn(),
     getFirstEnabledAdapter: vi.fn(),
     test: vi.fn(),
-  } as unknown as DownloadClientService;
+  });
 }
 
 describe('DownloadService', () => {
@@ -57,7 +58,7 @@ describe('DownloadService', () => {
   beforeEach(() => {
     db = createMockDb();
     clientService = createMockDownloadClientService();
-    service = new DownloadService(db as unknown as Db, clientService, createMockLogger());
+    service = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(createMockLogger()));
   });
 
   describe('getAll', () => {
@@ -263,7 +264,7 @@ describe('DownloadService', () => {
     it('logs at info level', async () => {
       db.update.mockReturnValue(mockDbChain());
       const log = createMockLogger();
-      const svc = new DownloadService(db as unknown as Db, clientService, log);
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
 
       await svc.updateStatus(1, 'completed');
 
@@ -287,7 +288,7 @@ describe('DownloadService', () => {
     it('logs at warn level', async () => {
       db.update.mockReturnValue(mockDbChain());
       const log = createMockLogger();
-      const svc = new DownloadService(db as unknown as Db, clientService, log);
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
 
       await svc.setError(1, 'Disk full');
 
@@ -398,7 +399,7 @@ describe('DownloadService', () => {
       );
 
       const log = createMockLogger();
-      const svc = new DownloadService(db as unknown as Db, clientService, log);
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
 
       await svc.grab({
         downloadUrl: 'magnet:?xt=urn:btih:abc',
@@ -516,7 +517,7 @@ describe('DownloadService', () => {
       (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
       const log = createMockLogger();
-      const svc = new DownloadService(db as unknown as Db, clientService, log);
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
 
       const result = await svc.cancel(1);
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { SettingsService } from './settings.service.js';
+import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 
 describe('SettingsService', () => {
@@ -9,7 +10,7 @@ describe('SettingsService', () => {
 
   beforeEach(() => {
     db = createMockDb();
-    service = new SettingsService(db as unknown as Db, createMockLogger());
+    service = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
   });
 
   describe('get', () => {

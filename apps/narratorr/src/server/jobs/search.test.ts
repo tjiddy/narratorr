@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createMockLogger } from '../__tests__/helpers.js';
+import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { selectBestResult, runSearchJob } from './search.js';
+import type { FastifyBaseLogger } from 'fastify';
 import type { SettingsService } from '../services/settings.service.js';
 import type { BookService } from '../services/book.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
@@ -8,16 +9,16 @@ import type { DownloadService } from '../services/download.service.js';
 import type { SearchResult } from '@narratorr/core';
 
 function createMockSettingsService(searchSettings = { enabled: true, intervalMinutes: 60, autoGrab: false }): SettingsService {
-  return {
+  return inject<SettingsService>({
     get: vi.fn().mockResolvedValue(searchSettings),
     getAll: vi.fn(),
     set: vi.fn(),
     update: vi.fn(),
-  } as unknown as SettingsService;
+  });
 }
 
 function createMockBookService(books: unknown[] = []): BookService {
-  return {
+  return inject<BookService>({
     getAll: vi.fn().mockResolvedValue(books),
     getById: vi.fn(),
     create: vi.fn(),
@@ -26,11 +27,11 @@ function createMockBookService(books: unknown[] = []): BookService {
     delete: vi.fn(),
     search: vi.fn(),
     findDuplicate: vi.fn(),
-  } as unknown as BookService;
+  });
 }
 
 function createMockIndexerService(results: SearchResult[] = []): IndexerService {
-  return {
+  return inject<IndexerService>({
     searchAll: vi.fn().mockResolvedValue(results),
     getAll: vi.fn(),
     getById: vi.fn(),
@@ -40,11 +41,11 @@ function createMockIndexerService(results: SearchResult[] = []): IndexerService 
     getAdapter: vi.fn(),
     test: vi.fn(),
     testConfig: vi.fn(),
-  } as unknown as IndexerService;
+  });
 }
 
 function createMockDownloadService(): DownloadService {
-  return {
+  return inject<DownloadService>({
     grab: vi.fn().mockResolvedValue({ id: 1 }),
     getAll: vi.fn(),
     getById: vi.fn(),
@@ -55,7 +56,7 @@ function createMockDownloadService(): DownloadService {
     setError: vi.fn(),
     cancel: vi.fn(),
     delete: vi.fn(),
-  } as unknown as DownloadService;
+  });
 }
 
 const mockResult = (seeders: number, downloadUrl?: string): SearchResult => ({
@@ -111,7 +112,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService();
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log);
+    const result = await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
     expect(result).toEqual({ searched: 0, grabbed: 0 });
     expect(books.getAll).not.toHaveBeenCalled();
@@ -127,7 +128,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService([]);
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log);
+    const result = await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
     expect(result.searched).toBe(2);
     expect(indexer.searchAll).toHaveBeenCalledTimes(2);
@@ -143,7 +144,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log);
+    const result = await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(1);
     expect(download.grab).toHaveBeenCalledWith(
@@ -162,7 +163,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log);
+    const result = await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
     expect(result.searched).toBe(1);
     expect(result.grabbed).toBe(0);
@@ -179,7 +180,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService([]); // no results for any search
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log);
+    const result = await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
     expect(result.searched).toBe(2);
     expect(result.grabbed).toBe(0);
@@ -211,7 +212,7 @@ describe('runSearchJob', () => {
       .mockResolvedValueOnce(results);    // Book C succeeds with results
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log);
+    const result = await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
     // Book A searched + grabbed, Book B failed (not counted), Book C searched + grabbed
     expect(result.searched).toBe(2);
@@ -233,7 +234,7 @@ describe('runSearchJob', () => {
     const indexer = createMockIndexerService([]);
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log);
+    const result = await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
     expect(result.searched).toBe(1);
     // Query should just be the title without author
@@ -253,7 +254,7 @@ describe('runSearchJob', () => {
       .mockResolvedValueOnce([]);
     const download = createMockDownloadService();
 
-    const result = await runSearchJob(settings, books, indexer, download, log);
+    const result = await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
     expect(result.searched).toBe(1); // only second book counted
     expect(log.warn).toHaveBeenCalled();

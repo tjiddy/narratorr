@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll, beforeEach } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
-import { createMockDb, createMockLogger, mockDbChain } from './helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain } from './helpers.js';
 import { DownloadService } from '../services/download.service.js';
 import { DownloadClientService } from '../services/download-client.service.js';
+import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 
 const QB_BASE = 'http://localhost:8080';
@@ -59,8 +60,8 @@ describe('Grab flow integration', () => {
     // DB returns the qbittorrent client for all select queries (getFirstEnabledForProtocol + getById)
     db.select.mockReturnValue(mockDbChain([mockClientRow]));
 
-    clientService = new DownloadClientService(db as unknown as Db, log);
-    downloadService = new DownloadService(db as unknown as Db, clientService, log);
+    clientService = new DownloadClientService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+    downloadService = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
   });
 
   it('grabs a magnet URI, extracts the correct hash, and calls the adapter via MSW', async () => {

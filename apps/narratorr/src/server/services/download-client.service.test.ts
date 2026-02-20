@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { DownloadClientService } from './download-client.service.js';
+import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 
 const now = new Date();
@@ -21,7 +22,7 @@ describe('DownloadClientService', () => {
 
   beforeEach(() => {
     db = createMockDb();
-    service = new DownloadClientService(db as unknown as Db, createMockLogger());
+    service = new DownloadClientService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
   });
 
   describe('getAll', () => {

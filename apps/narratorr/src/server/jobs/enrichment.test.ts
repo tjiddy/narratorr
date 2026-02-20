@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { RateLimitError } from '@narratorr/core';
-import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { runEnrichment } from './enrichment.js';
+import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 import type { MetadataService } from '../services/metadata.service.js';
 
@@ -24,7 +25,7 @@ describe('enrichment job', () => {
 
     db.update.mockReturnValue(mockDbChain());
 
-    await runEnrichment(db as unknown as Db, metadataService as unknown as MetadataService, log);
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<FastifyBaseLogger>(log));
 
     expect(db.update).toHaveBeenCalledTimes(2);
     expect(log.info).toHaveBeenCalledWith({ count: 2 }, 'Books without ASIN marked as skipped');
@@ -47,7 +48,7 @@ describe('enrichment job', () => {
     metadataService.enrichBook.mockResolvedValueOnce(enrichedData);
     db.update.mockReturnValue(mockDbChain());
 
-    await runEnrichment(db as unknown as Db, metadataService as unknown as MetadataService, log);
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<FastifyBaseLogger>(log));
 
     expect(metadataService.enrichBook).toHaveBeenCalledWith('B003P2WO5E');
     expect(db.update).toHaveBeenCalled();
@@ -65,7 +66,7 @@ describe('enrichment job', () => {
     metadataService.enrichBook.mockResolvedValueOnce(null);
     db.update.mockReturnValue(mockDbChain());
 
-    await runEnrichment(db as unknown as Db, metadataService as unknown as MetadataService, log);
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<FastifyBaseLogger>(log));
 
     expect(db.update).toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalledWith(
@@ -90,7 +91,7 @@ describe('enrichment job', () => {
     metadataService.enrichBook.mockResolvedValueOnce(enrichedData);
     db.update.mockReturnValue(mockDbChain());
 
-    await runEnrichment(db as unknown as Db, metadataService as unknown as MetadataService, log);
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<FastifyBaseLogger>(log));
 
     // Should still call update (for enrichmentStatus) but not include narrator/duration overrides
     expect(db.update).toHaveBeenCalled();
@@ -105,7 +106,7 @@ describe('enrichment job', () => {
       .mockReturnValueOnce(mockDbChain([]))  // no-asin
       .mockReturnValueOnce(mockDbChain([]));  // candidates (none)
 
-    await runEnrichment(db as unknown as Db, metadataService as unknown as MetadataService, log);
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<FastifyBaseLogger>(log));
 
     expect(metadataService.enrichBook).not.toHaveBeenCalled();
     expect(db.update).not.toHaveBeenCalled();
@@ -125,7 +126,7 @@ describe('enrichment job', () => {
     });
     db.update.mockReturnValue(mockDbChain());
 
-    await runEnrichment(db as unknown as Db, metadataService as unknown as MetadataService, log);
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<FastifyBaseLogger>(log));
 
     expect(log.info).toHaveBeenCalledWith(
       { bookId: 1, asin: 'B_PARTIAL' },
@@ -147,7 +148,7 @@ describe('enrichment job', () => {
     });
     db.update.mockReturnValue(mockDbChain());
 
-    await runEnrichment(db as unknown as Db, metadataService as unknown as MetadataService, log);
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<FastifyBaseLogger>(log));
 
     expect(log.info).toHaveBeenCalledWith(
       { bookId: 1, asin: 'B_DUR_ONLY' },
@@ -169,7 +170,7 @@ describe('enrichment job', () => {
     });
     db.update.mockReturnValue(mockDbChain());
 
-    await runEnrichment(db as unknown as Db, metadataService as unknown as MetadataService, log);
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<FastifyBaseLogger>(log));
 
     // Still enriched (status updated), but narrator shouldn't be set from empty array
     expect(log.info).toHaveBeenCalledWith(
@@ -185,7 +186,7 @@ describe('enrichment job', () => {
 
     db.update.mockReturnValue(mockDbChain());
 
-    await runEnrichment(db as unknown as Db, metadataService as unknown as MetadataService, log);
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<FastifyBaseLogger>(log));
 
     expect(metadataService.enrichBook).not.toHaveBeenCalled();
   });
@@ -205,7 +206,7 @@ describe('enrichment job', () => {
     });
     db.update.mockReturnValue(mockDbChain());
 
-    await runEnrichment(db as unknown as Db, metadataService as unknown as MetadataService, log);
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<FastifyBaseLogger>(log));
 
     // Should still mark as enriched — narrator stays null because narrators is undefined
     expect(log.info).toHaveBeenCalledWith(
@@ -229,7 +230,7 @@ describe('enrichment job', () => {
     });
     db.update.mockReturnValue(mockDbChain());
 
-    await runEnrichment(db as unknown as Db, metadataService as unknown as MetadataService, log);
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<FastifyBaseLogger>(log));
 
     // Should still update enrichmentStatus to 'enriched' but skip narrator/duration fields
     expect(db.update).toHaveBeenCalled();
@@ -254,7 +255,7 @@ describe('enrichment job', () => {
     });
     db.update.mockReturnValue(mockDbChain());
 
-    await runEnrichment(db as unknown as Db, metadataService as unknown as MetadataService, log);
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<FastifyBaseLogger>(log));
 
     // The result is truthy (it's an object), so it follows the enriched path not the failed path
     expect(db.update).toHaveBeenCalled();
@@ -286,7 +287,7 @@ describe('enrichment job', () => {
     db.select.mockReturnValueOnce(mockDbChain([{ narrator: null, duration: null }]));  // existing book fields for book 1
     db.update.mockReturnValue(mockDbChain());
 
-    await runEnrichment(db as unknown as Db, metadataService as unknown as MetadataService, log);
+    await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<FastifyBaseLogger>(log));
 
     // Only first book's enrichment should have been processed, second throws, third skipped
     expect(metadataService.enrichBook).toHaveBeenCalledTimes(2);

@@ -1,4 +1,4 @@
-import Fastify, { type FastifyBaseLogger } from 'fastify';
+import Fastify from 'fastify';
 import {
   serializerCompiler,
   validatorCompiler,
@@ -6,6 +6,23 @@ import {
 } from 'fastify-type-provider-zod';
 import { vi } from 'vitest';
 import { registerRoutes, type Services } from '../routes/index.js';
+
+/**
+ * Cast a mock object to a production type for dependency injection in tests.
+ *
+ * Test mocks are partial implementations — they only stub the methods each test
+ * exercises. Production types (Db, FastifyBaseLogger, service classes) have
+ * complex internal shapes that mocks can't structurally satisfy without
+ * reimplementing framework internals. Changing production constructors to accept
+ * narrower interfaces would be production code changes motivated solely by tests.
+ *
+ * This helper centralizes the unavoidable type override so each call site is
+ * explicit about the cast (`inject<Db>(db)`) without needing per-line lint
+ * suppression. If you're casting data objects (not dependencies), complete the
+ * mock data instead.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function inject<T>(mock: unknown): T { return mock as any; }
 
 /**
  * Creates a Fastify instance with Zod type provider and all routes registered.
@@ -59,9 +76,9 @@ export function createMockDb() {
 
 /**
  * Creates a mock Pino BaseLogger with all methods as vi.fn() stubs.
- * Typed as FastifyBaseLogger so callers can pass directly to service constructors.
+ * Use `inject<FastifyBaseLogger>(log)` when passing to service constructors.
  */
-export function createMockLogger(): FastifyBaseLogger {
+export function createMockLogger() {
   return {
     info: vi.fn(),
     warn: vi.fn(),
@@ -72,7 +89,7 @@ export function createMockLogger(): FastifyBaseLogger {
     child: vi.fn().mockReturnThis(),
     level: 'info',
     silent: vi.fn(),
-  } as unknown as FastifyBaseLogger;
+  };
 }
 
 /**
@@ -97,7 +114,9 @@ export function createMockServices(overrides?: Partial<Record<keyof Services, Re
       },
     });
   }
-  return services as unknown as Services;
+  // Proxy-based mock can't be statically verified against Services interface.
+  // Every property access returns a vi.fn() stub at runtime.
+  return inject<Services>(services);
 }
 
 /**

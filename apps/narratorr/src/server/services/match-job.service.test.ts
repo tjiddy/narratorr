@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createMockLogger } from '../__tests__/helpers.js';
+import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { MatchJobService, type MatchCandidate } from './match-job.service.js';
+import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import type { BookMetadata } from '@narratorr/core/metadata';
 
@@ -28,7 +29,7 @@ function makeBookMetadata(overrides: Partial<BookMetadata> = {}): BookMetadata {
 }
 
 function createMockMetadataService(): MetadataService {
-  return {
+  return inject<MetadataService>({
     searchBooks: vi.fn().mockResolvedValue([]),
     getBook: vi.fn().mockResolvedValue(null),
     search: vi.fn(),
@@ -39,7 +40,7 @@ function createMockMetadataService(): MetadataService {
     getSeries: vi.fn(),
     configure: vi.fn(),
     test: vi.fn(),
-  } as unknown as MetadataService;
+  });
 }
 
 /** Flush microtask queue so async job work completes */
@@ -74,7 +75,7 @@ describe('MatchJobService', () => {
     vi.clearAllMocks();
     log = createMockLogger();
     metadataService = createMockMetadataService();
-    service = new MatchJobService(metadataService, log as never);
+    service = new MatchJobService(metadataService, inject<FastifyBaseLogger>(log));
     (randomUUID as ReturnType<typeof vi.fn>).mockReturnValue('test-job-id');
   });
 
