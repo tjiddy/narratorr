@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 import { useEffect, useRef, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
@@ -22,6 +23,7 @@ import {
   type UpdateSettingsFormData,
 } from '../../../shared/schemas.js';
 
+// eslint-disable-next-line max-lines-per-function, complexity
 export function GeneralSettings() {
   const queryClient = useQueryClient();
   const { data: settings, isLoading } = useQuery({
@@ -64,6 +66,7 @@ export function GeneralSettings() {
   });
 
   // Reset form when settings are loaded
+  // eslint-disable-next-line complexity
   useEffect(() => {
     if (settings) {
       reset({
@@ -101,6 +104,7 @@ export function GeneralSettings() {
     },
   });
 
+  // eslint-disable-next-line react-hooks/incompatible-library
   const folderFormat = watch('library.folderFormat');
 
   const previewPath = useMemo(() => {

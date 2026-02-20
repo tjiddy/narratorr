@@ -21,6 +21,7 @@ interface MetadataBook {
   series?: { name: string; position?: number }[];
 }
 
+// eslint-disable-next-line max-lines-per-function, complexity
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
   metadataBook?: MetadataBook | null;

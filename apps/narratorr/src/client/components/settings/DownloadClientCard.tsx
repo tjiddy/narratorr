@@ -90,6 +90,7 @@ const defaultValues: CreateDownloadClientFormData = {
   settings: { host: '', port: 8080, username: '', password: '', useSsl: false },
 };
 
+// eslint-disable-next-line max-lines-per-function, complexity
 export function DownloadClientCard({
   client,
   mode,

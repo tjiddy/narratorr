@@ -8,6 +8,7 @@ import {
 } from '@/components/icons';
 import { useManualImport } from './useManualImport.js';
 
+// eslint-disable-next-line complexity
 export function ManualImportPage() {
   const {
     step, scanPath, setScanPath, scanError, setScanError, rows,

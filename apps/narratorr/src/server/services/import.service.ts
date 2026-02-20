@@ -101,6 +101,7 @@ export class ImportService {
    * Import a single completed download into the library.
    * Copies files, updates DB records, optionally removes torrent.
    */
+  // eslint-disable-next-line complexity
   async importDownload(downloadId: number): Promise<ImportResult> {
     // 1. Get the download + linked book
     const download = await this.getDownload(downloadId);

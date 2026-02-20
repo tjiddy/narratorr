@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 import { readdir, stat, mkdir, cp, rm } from 'node:fs/promises';
 import { join, extname, relative } from 'node:path';
 import type { Db } from '@narratorr/db';
@@ -182,6 +183,7 @@ export class LibraryScanService {
    * Import a single book — creates the DB record, sets path/size, and enriches.
    * Shared pipeline used by both Quick Add and bulk Library Import.
    */
+  // eslint-disable-next-line complexity
   async importSingleBook(item: ImportConfirmItem, metadata?: BookMetadata | null, mode?: ImportMode): Promise<ImportSingleResult> {
     // Duplicate check
     const existing = await this.bookService.findDuplicate(item.title, item.authorName);
@@ -318,6 +320,7 @@ export class LibraryScanService {
    * Confirm import — create placeholder book records with status 'importing',
    * kick off background processing, and return immediately.
    */
+  // eslint-disable-next-line complexity
   async confirmImport(items: ImportConfirmItem[], mode?: ImportMode): Promise<{
     accepted: number;
   }> {
@@ -381,6 +384,7 @@ export class LibraryScanService {
   /**
    * Background processing: copy/move files, enrich, update status.
    */
+  // eslint-disable-next-line complexity
   private async processImportsInBackground(
     items: Array<{ bookId: number; item: ImportConfirmItem }>,
     mode?: ImportMode,

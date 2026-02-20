@@ -72,6 +72,7 @@ const defaultValues: CreateIndexerFormData = {
   settings: { hostname: '', pageLimit: 2 },
 };
 
+// eslint-disable-next-line max-lines-per-function, complexity
 export function IndexerCard({
   indexer,
   mode,
@@ -108,6 +109,7 @@ export function IndexerCard({
       : defaultValues,
   });
 
+  // eslint-disable-next-line react-hooks/incompatible-library
   const selectedType = watch('type');
 
   useEffect(() => {

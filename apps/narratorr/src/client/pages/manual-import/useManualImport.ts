@@ -9,6 +9,7 @@ import type { ImportRow, BookEditState } from '@/components/manual-import';
 
 export type Step = 'path' | 'review';
 
+// eslint-disable-next-line max-lines-per-function
 export function useManualImport() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();

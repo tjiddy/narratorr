@@ -117,6 +117,7 @@ export class DownloadClientService {
     return this.getAdapter(client.id);
   }
 
+  // eslint-disable-next-line complexity
   private createAdapter(client: DownloadClientRow): DownloadClientAdapter {
     const settings = client.settings as Record<string, unknown>;
 

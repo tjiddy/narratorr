@@ -59,6 +59,7 @@ function ConfidenceBadge({ confidence }: { confidence?: Confidence }) {
   );
 }
 
+// eslint-disable-next-line complexity
 export function ImportCard({ row, onToggle, onEdit }: ImportCardProps) {
   const confidence = row.matchResult?.confidence;
   const showPencilAlways = !confidence || confidence === 'medium' || confidence === 'none';

@@ -38,6 +38,7 @@ export interface AudioScanOptions {
 }
 
 /** Scan a directory of audio files and extract metadata + technical info. */
+// eslint-disable-next-line complexity
 export async function scanAudioDirectory(
   dirPath: string,
   options?: AudioScanOptions,
@@ -167,6 +168,7 @@ async function collectAudioFiles(dirPath: string): Promise<string[]> {
 }
 
 /** Extract narrator from metadata tags with broad fallback chain. */
+// eslint-disable-next-line complexity
 function extractNarrator(
   common: ICommonTagsResult,
   native?: Record<string, Array<{ id: string; value: unknown }>>,

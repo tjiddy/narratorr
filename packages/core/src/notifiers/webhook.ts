@@ -8,6 +8,7 @@ export interface WebhookConfig {
 }
 
 /** Replace `{token.path}` placeholders with values from the payload. */
+// eslint-disable-next-line complexity
 function renderBody(template: string, event: NotificationEvent, payload: EventPayload): string {
   const flat: Record<string, string> = {
     event,

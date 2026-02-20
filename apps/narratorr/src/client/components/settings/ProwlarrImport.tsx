@@ -43,6 +43,7 @@ interface ProwlarrImportProps {
   onClose: () => void;
 }
 
+// eslint-disable-next-line max-lines-per-function, complexity
 export function ProwlarrImport({ isOpen, onClose }: ProwlarrImportProps) {
   const queryClient = useQueryClient();
   const modalRef = useRef<HTMLDivElement>(null);

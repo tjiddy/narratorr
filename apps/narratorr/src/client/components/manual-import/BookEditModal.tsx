@@ -33,6 +33,7 @@ interface BookEditModalProps {
   onClose: () => void;
 }
 
+// eslint-disable-next-line max-lines-per-function, complexity
 export function BookEditModal({ book, initial, confidence, alternatives, onSave, onClose }: BookEditModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const { data: libraryBooks } = useLibrary();

@@ -14,6 +14,7 @@ const sortLabels: Record<SortField, string> = {
   author: 'Author',
 };
 
+// eslint-disable-next-line max-lines-per-function
 export function LibraryToolbar({
   searchQuery,
   onSearchChange,

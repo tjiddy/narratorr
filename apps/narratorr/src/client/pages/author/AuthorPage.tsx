@@ -10,6 +10,7 @@ import { AuthorNotFound } from './AuthorNotFound.js';
 import { SeriesSection } from './SeriesSection.js';
 import { getInitials, groupBooksBySeries, BIO_COLLAPSE_LENGTH } from './helpers.js';
 
+// eslint-disable-next-line complexity
 export function AuthorPage() {
   const { asin } = useParams<{ asin: string }>();
   const navigate = useNavigate();

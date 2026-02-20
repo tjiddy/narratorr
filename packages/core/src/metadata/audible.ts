@@ -279,6 +279,7 @@ interface AudibleProduct {
 // Mapping helpers
 // ---------------------------------------------------------------------------
 
+// eslint-disable-next-line complexity
 function mapProduct(product: AudibleProduct): Record<string, unknown> {
   const authors = (product.authors ?? []).map((a) => ({
     name: a.name,

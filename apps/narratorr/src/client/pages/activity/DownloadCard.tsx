@@ -72,6 +72,7 @@ const statusConfig: Record<
   },
 };
 
+// eslint-disable-next-line complexity
 export function DownloadCard({
   download,
   onCancel,

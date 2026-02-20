@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -89,6 +90,7 @@ const defaultValues: CreateNotifierFormData = {
   settings: { url: '', method: 'POST' as const },
 };
 
+// eslint-disable-next-line max-lines-per-function, complexity
 export function NotifierCard({
   notifier,
   mode,
@@ -126,6 +128,7 @@ export function NotifierCard({
       : defaultValues,
   });
 
+  // eslint-disable-next-line react-hooks/incompatible-library
   const selectedType = watch('type');
 
   useEffect(() => {

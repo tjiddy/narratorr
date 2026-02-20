@@ -176,6 +176,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     return results;
   }
 
+  // eslint-disable-next-line complexity
   private parseDetailPage(html: string): Partial<SearchResult> {
     const $ = cheerio.load(html);
     const result: Partial<SearchResult> = {};

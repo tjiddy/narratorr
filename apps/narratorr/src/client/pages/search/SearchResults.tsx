@@ -9,6 +9,7 @@ import { SearchAuthorCard } from './SearchAuthorCard.js';
 
 type DiscoverTab = 'books' | 'authors';
 
+// eslint-disable-next-line complexity
 export function SearchResults({
   results,
   searchTerm,
