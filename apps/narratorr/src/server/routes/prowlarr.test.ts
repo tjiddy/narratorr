@@ -167,4 +167,68 @@ describe('prowlarr routes', () => {
       expect(res.statusCode).toBe(400);
     });
   });
+
+  describe('error paths', () => {
+    it('POST /test returns 500 when testConnection throws', async () => {
+      (services.prowlarrSync.testConnection as Mock).mockRejectedValue(new Error('ECONNREFUSED'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/prowlarr/test',
+        payload: { url: 'https://prowlarr.test', apiKey: 'key' },
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ success: false, message: 'ECONNREFUSED' });
+    });
+
+    it('GET /config returns 500 when getConfig throws', async () => {
+      (services.prowlarrSync.getConfig as Mock).mockRejectedValue(new Error('DB error'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/prowlarr/config' });
+
+      expect(res.statusCode).toBe(500);
+    });
+
+    it('PUT /config returns 500 when saveConfig throws', async () => {
+      (services.prowlarrSync.saveConfig as Mock).mockRejectedValue(new Error('Write failed'));
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/prowlarr/config',
+        payload: mockConfig,
+      });
+
+      expect(res.statusCode).toBe(500);
+    });
+
+    it('POST /preview returns 500 when preview throws', async () => {
+      (services.prowlarrSync.getConfig as Mock).mockResolvedValue(mockConfig);
+      (services.prowlarrSync.preview as Mock).mockRejectedValue(new Error('API unreachable'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/prowlarr/preview',
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'API unreachable' });
+    });
+
+    it('POST /sync returns 500 when apply throws', async () => {
+      (services.prowlarrSync.getConfig as Mock).mockResolvedValue(mockConfig);
+      (services.prowlarrSync.apply as Mock).mockRejectedValue(new Error('Partial sync failure'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/prowlarr/sync',
+        payload: {
+          items: [{ prowlarrId: 1, action: 'new', selected: true }],
+        },
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Partial sync failure' });
+    });
+  });
 });
