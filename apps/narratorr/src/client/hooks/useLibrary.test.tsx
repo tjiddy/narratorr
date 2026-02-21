@@ -2,13 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
-import { useLibrary, useLibraryBook } from './useLibrary';
-import type { BookWithAuthor } from '@/lib/api';
+import { useLibrary, useLibraryBook, useBookFiles } from './useLibrary';
+import type { BookWithAuthor, BookFile } from '@/lib/api';
 
 vi.mock('@/lib/api', () => ({
   api: {
     getBooks: vi.fn(),
     getBookById: vi.fn(),
+    getBookFiles: vi.fn(),
   },
 }));
 
@@ -204,5 +205,51 @@ describe('useLibraryBook', () => {
 
     expect(api.getBookById).toHaveBeenCalledWith(42);
     expect(result.current.data).toEqual(mockBook);
+  });
+});
+
+describe('useBookFiles', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('calls api.getBookFiles when id is valid', async () => {
+    const mockFiles: BookFile[] = [
+      { name: 'chapter1.mp3', size: 1024000 },
+      { name: 'chapter2.mp3', size: 2048000 },
+    ];
+
+    vi.mocked(api.getBookFiles).mockResolvedValue(mockFiles);
+
+    const { result } = renderHook(() => useBookFiles(1), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(api.getBookFiles).toHaveBeenCalledWith(1);
+    expect(result.current.data).toEqual(mockFiles);
+  });
+
+  it('does not call api when id is undefined (query disabled)', () => {
+    const { result } = renderHook(() => useBookFiles(undefined), {
+      wrapper: createWrapper(),
+    });
+
+    expect(api.getBookFiles).not.toHaveBeenCalled();
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it('does not call api when id is NaN (query disabled)', () => {
+    const { result } = renderHook(() => useBookFiles(NaN), {
+      wrapper: createWrapper(),
+    });
+
+    expect(api.getBookFiles).not.toHaveBeenCalled();
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.isLoading).toBe(false);
   });
 });
