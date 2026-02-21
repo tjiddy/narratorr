@@ -44,7 +44,6 @@ config/
 tmp/
 temp/
 
-.claude/settings.local.json
-.claude/project-context.md
-.claude/workflow-log.md
-.claude/workflow-log.backup.md
+# Claude Code — ignore everything except skills
+.claude/*
+!.claude/skills/
