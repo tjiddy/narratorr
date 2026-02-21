@@ -4,6 +4,16 @@
 
 Narratorr is a self-hosted audiobook management application ("*arr for audiobooks"). Searches indexers, sends downloads to torrent clients, imports into a library folder structure.
 
+## Project Philosophy
+
+This is an AI-built codebase. PRs are authored by AI agents, there's no QA team, and no human reviews every line of code. The architecture, tests, and automated review pipeline are the guardrails that keep things from silently breaking.
+
+**What that means in practice:**
+- **Tests are the product.** They're not a checkbox — they're the only thing catching regressions between the code being written and a user hitting a bug. Every new file gets a test. Every error path gets a test. When in doubt, over-test.
+- **Coverage that catches defects is valuable. Compliance theater is noise.** A validation error test that catches a broken form schema is worth writing. Adding an unrelated button click to a render assertion just to satisfy a rule is not. Every test should exist because it could catch a real regression.
+- **Structure enables autonomy.** Clean separation of concerns, consistent patterns, and precise specs mean an AI agent can pick up any issue and implement it without breaking unrelated things. Sloppy architecture makes every change risky.
+- **Specs are contracts.** Acceptance criteria should be precise enough that both the implementing agent and the reviewing agent interpret them the same way. Ambiguous AC leads to wasted review cycles.
+
 ## Tech Stack
 
 Monorepo (Turborepo + pnpm) | Node.js 20+ | Fastify 5 | Drizzle ORM + libSQL | React 18 + Vite 6 | TanStack Query | Tailwind CSS | Docker
