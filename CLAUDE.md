@@ -6,13 +6,13 @@ Narratorr is a self-hosted audiobook management application ("*arr for audiobook
 
 ## Project Philosophy
 
-This is an AI-built codebase. PRs are authored by AI agents, there's no QA team, and no human reviews every line of code. The architecture, tests, and automated review pipeline are the guardrails that keep things from silently breaking.
+Narratorr uses AI-assisted development extensively — AI agents author PRs, review code, and run quality gates. Human oversight focuses on architecture, priorities, and product direction rather than line-by-line review. This works because the project invests heavily in the things that make *any* codebase reliable: thorough tests, clean architecture, and precise specifications.
 
-**What that means in practice:**
-- **Tests are the product.** They're not a checkbox — they're the only thing catching regressions between the code being written and a user hitting a bug. Every new file gets a test. Every error path gets a test. When in doubt, over-test.
-- **Coverage that catches defects is valuable. Compliance theater is noise.** A validation error test that catches a broken form schema is worth writing. Adding an unrelated button click to a render assertion just to satisfy a rule is not. Every test should exist because it could catch a real regression.
-- **Structure enables autonomy.** Clean separation of concerns, consistent patterns, and precise specs mean an AI agent can pick up any issue and implement it without breaking unrelated things. Sloppy architecture makes every change risky.
-- **Specs are contracts.** Acceptance criteria should be precise enough that both the implementing agent and the reviewing agent interpret them the same way. Ambiguous AC leads to wasted review cycles.
+**Principles:**
+- **Tests are first-class deliverables.** Every new file gets a test file. Every error path gets a test. Tests are the primary safety net against regressions — treat them with the same care as production code. When in doubt, over-test.
+- **Test what matters.** Every test should exist because it could catch a real defect. A validation error test that catches a broken form schema is valuable. A pointless interaction tacked onto a render assertion to satisfy a coverage rule is noise. Optimize for defect detection, not metric compliance.
+- **Structure enables safe changes.** Clean separation of concerns, consistent patterns, and co-located code mean any contributor (human or AI) can pick up an issue and implement it without breaking unrelated things. When the architecture is right, changes are small and localized.
+- **Specs are contracts.** Acceptance criteria are precise enough that the implementer and the reviewer interpret them the same way. Ambiguous specs lead to wasted cycles. If a requirement is unclear, clarify it before building.
 
 ## Tech Stack
 
