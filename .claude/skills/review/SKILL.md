@@ -1,3 +1,12 @@
+---
+name: review
+description: Review a PR against its linked issue's acceptance criteria. Posts structured
+  findings with verdict, auto-merges on approve. Use when user says "review PR",
+  "review pull request", or invokes /review.
+argument-hint: <pr-number>
+disable-model-invocation: true
+---
+
 # /review <pr-number> — Review a pull request against its linked issue
 
 Reviews a PR by checking the diff against the linked issue's acceptance criteria, the project's design principles, and code quality standards. Posts a structured review comment with machine-parseable findings.

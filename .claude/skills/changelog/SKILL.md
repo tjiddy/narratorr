@@ -1,3 +1,10 @@
+---
+name: changelog
+description: Generate a categorized changelog from git history and linked Gitea issues.
+  Use when user says "changelog", "release notes", or invokes /changelog.
+argument-hint: "[since]"
+---
+
 # /changelog [since] — Generate a changelog from git history
 
 Read-only skill that generates a categorized changelog from git commits and linked Gitea issues. Runs as an Explore subagent.

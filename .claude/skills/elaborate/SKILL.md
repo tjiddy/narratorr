@@ -1,3 +1,11 @@
+---
+name: elaborate
+description: Groom, validate, or respond to spec review findings on a Gitea issue.
+  Auto-detects mode from issue comments. Use when user says "elaborate", "groom issue",
+  or invokes /elaborate.
+argument-hint: <issue-id>
+---
+
 # /elaborate <id> — Groom, validate, or respond to spec review findings
 
 Standalone grooming/triage skill with two modes:

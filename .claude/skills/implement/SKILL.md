@@ -1,3 +1,12 @@
+---
+name: implement
+description: Full lifecycle implementation of a Gitea issue — validates, claims,
+  implements, and hands off with a PR. Use when user says "implement issue", "build
+  this", or invokes /implement.
+argument-hint: <issue-id>
+disable-model-invocation: true
+---
+
 # /implement <id> — Full lifecycle: elaborate → claim → implement → handoff
 
 End-to-end orchestrator skill. Validates the issue, claims it, implements the solution, and hands off with a PR. Chains `/claim` and `/handoff` via the Skill tool.

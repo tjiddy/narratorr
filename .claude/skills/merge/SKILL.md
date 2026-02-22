@@ -1,3 +1,12 @@
+---
+name: merge
+description: Merge an approved pull request after verifying approval, quality gates,
+  and no unresolved disputes. Use when user says "merge PR", "merge pull request",
+  or invokes /merge.
+argument-hint: <pr-number>
+disable-model-invocation: true
+---
+
 # /merge <pr-number> — Merge an approved pull request
 
 Merges a PR after verifying it has been approved, quality gates pass, and there are no unresolved disputes.

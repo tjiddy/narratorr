@@ -1,3 +1,10 @@
+---
+name: verify
+description: Run quality gates (lint, test, typecheck, build) via subagent and return
+  a structured pass/fail summary. Use when user says "run checks", "verify", "quality
+  gates", or invokes /verify.
+---
+
 # /verify — Run quality gates and report structured results
 
 Runs the project's quality gate commands sequentially and returns a compact structured summary. Designed to be invoked by other skills (`/handoff`, `/implement`) to keep verbose build output out of the main context.

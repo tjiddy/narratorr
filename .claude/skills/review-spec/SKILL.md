@@ -1,3 +1,12 @@
+---
+name: review-spec
+description: Review an elaborated spec for gaps, missing test plans, and codebase
+  assumption errors. Posts structured findings with approve/needs-work verdict. Use
+  when user says "review spec", "check spec", or invokes /review-spec.
+argument-hint: <issue-id>
+disable-model-invocation: true
+---
+
 # /review-spec <id> — Review an issue spec for gaps and quality
 
 Reviews an elaborated issue spec with fresh eyes. Explores the codebase exhaustively to validate assumptions, find gaps, and suggest improvements. Posts structured findings as a comment. Moves to `ready` on approve, stays `backlog` on needs-work.

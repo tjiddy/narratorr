@@ -1,3 +1,10 @@
+---
+name: triage
+description: Rank and categorize all open issues by priority. Read-only analysis
+  with no side effects. Use when user says "triage issues", "prioritize backlog",
+  or invokes /triage.
+---
+
 # /triage — Rank and categorize open issues
 
 Read-only skill that surveys all open issues and produces a prioritized ranking. Runs as a general-purpose subagent to keep verbose output out of main context.

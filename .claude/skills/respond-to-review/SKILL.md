@@ -1,3 +1,12 @@
+---
+name: respond-to-review
+description: Address review findings on a PR — fix, accept, defer, or dispute each
+  finding, push fixes, and post a structured response. Use when user says "respond
+  to review", "address findings", or invokes /respond-to-review.
+argument-hint: <pr-number>
+disable-model-invocation: true
+---
+
 # /respond-to-review <pr-number> — Address review findings on a PR
 
 Author agent reads the review, addresses each finding with an explicit resolution, pushes fixes, and posts a structured response.

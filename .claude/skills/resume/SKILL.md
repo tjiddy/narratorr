@@ -1,3 +1,11 @@
+---
+name: resume
+description: Resume a previously blocked Gitea issue by restoring the branch and
+  working state. Use when user says "resume issue", "unblock", or invokes /resume.
+argument-hint: <issue-id>
+disable-model-invocation: true
+---
+
 # /resume <id> — Resume a blocked issue
 
 Picks up a previously blocked issue by finding the blocker context, checking for answers, and restoring the working state.

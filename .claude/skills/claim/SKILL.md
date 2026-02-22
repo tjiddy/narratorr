@@ -1,3 +1,11 @@
+---
+name: claim
+description: Claim a spec-approved Gitea issue for implementation. Creates the feature
+  branch, extracts test stubs, and posts a claim comment. Use when user says "claim
+  issue", "start working on", or invokes /claim.
+argument-hint: <issue-id>
+---
+
 # /claim <id> — Claim a spec-approved Gitea issue for implementation
 
 Claims an issue that has passed spec review (`status/ready`). Creates the feature branch, extracts test stubs, and posts a claim comment with the implementation plan.

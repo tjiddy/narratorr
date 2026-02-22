@@ -1,3 +1,11 @@
+---
+name: handoff
+description: Push changes, create a PR, and hand off a Gitea issue. Runs quality
+  gates, posts handoff comment, updates labels, and captures learnings. Use when user
+  says "hand off", "create PR", "submit for review", or invokes /handoff.
+argument-hint: <issue-id>
+---
+
 # /handoff <id> — Push, create PR, and hand off a Gitea issue
 
 Automates the "Push + Create PR + Update issue" workflow.

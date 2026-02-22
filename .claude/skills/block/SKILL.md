@@ -1,3 +1,10 @@
+---
+name: block
+description: Mark a Gitea issue as blocked. Use when user says "block issue", "mark
+  blocked", or invokes /block.
+argument-hint: <issue-id>
+---
+
 # /block <id> — Mark a Gitea issue as blocked
 
 Automates the "BLOCKED" workflow.
