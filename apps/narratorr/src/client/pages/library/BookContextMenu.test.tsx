@@ -1,0 +1,116 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { BookContextMenu } from './BookContextMenu';
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+function renderMenu(overrides = {}) {
+  const props = {
+    onSearchReleases: vi.fn(),
+    onRemove: vi.fn(),
+    onClose: vi.fn(),
+    ...overrides,
+  };
+  render(<BookContextMenu {...props} />);
+  return props;
+}
+
+describe('BookContextMenu', () => {
+  it('renders menu with correct role', () => {
+    renderMenu();
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+  });
+
+  it('renders Search Releases and Remove from Library items', () => {
+    renderMenu();
+    expect(screen.getByText('Search Releases')).toBeInTheDocument();
+    expect(screen.getByText('Remove from Library')).toBeInTheDocument();
+  });
+
+  it('renders menu items with menuitem role', () => {
+    renderMenu();
+    const items = screen.getAllByRole('menuitem');
+    expect(items).toHaveLength(2);
+  });
+
+  it('calls onSearchReleases when Search Releases is clicked', async () => {
+    const user = userEvent.setup();
+    const props = renderMenu();
+
+    await user.click(screen.getByText('Search Releases'));
+    expect(props.onSearchReleases).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onRemove when Remove from Library is clicked', async () => {
+    const user = userEvent.setup();
+    const props = renderMenu();
+
+    await user.click(screen.getByText('Remove from Library'));
+    expect(props.onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  describe('keyboard navigation', () => {
+    it('focuses first item on initial render', () => {
+      renderMenu();
+      const items = screen.getAllByRole('menuitem');
+      expect(items[0]).toHaveFocus();
+    });
+
+    it('ArrowDown moves focus to next item', async () => {
+      const user = userEvent.setup();
+      renderMenu();
+
+      await user.keyboard('{ArrowDown}');
+      const items = screen.getAllByRole('menuitem');
+      expect(items[1]).toHaveFocus();
+    });
+
+    it('ArrowDown on last item wraps to first', async () => {
+      const user = userEvent.setup();
+      renderMenu();
+
+      await user.keyboard('{ArrowDown}'); // -> Remove
+      await user.keyboard('{ArrowDown}'); // -> Search (wrap)
+      const items = screen.getAllByRole('menuitem');
+      expect(items[0]).toHaveFocus();
+    });
+
+    it('ArrowUp on first item wraps to last', async () => {
+      const user = userEvent.setup();
+      renderMenu();
+
+      await user.keyboard('{ArrowUp}'); // wrap to Remove
+      const items = screen.getAllByRole('menuitem');
+      expect(items[1]).toHaveFocus();
+    });
+
+    it('Enter activates focused item', async () => {
+      const user = userEvent.setup();
+      const props = renderMenu();
+
+      // Focus is on first item (Search Releases)
+      await user.keyboard('{Enter}');
+      expect(props.onSearchReleases).toHaveBeenCalledTimes(1);
+    });
+
+    it('Space activates focused item', async () => {
+      const user = userEvent.setup();
+      const props = renderMenu();
+
+      await user.keyboard('{ArrowDown}'); // -> Remove
+      await user.keyboard(' ');
+      expect(props.onRemove).toHaveBeenCalledTimes(1);
+    });
+
+    it('Escape calls onClose', async () => {
+      const user = userEvent.setup();
+      const props = renderMenu();
+
+      await user.keyboard('{Escape}');
+      expect(props.onClose).toHaveBeenCalledTimes(1);
+    });
+  });
+});

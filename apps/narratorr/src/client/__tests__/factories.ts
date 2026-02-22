@@ -1,4 +1,5 @@
 import type { Author, BookWithAuthor, BookMetadata, AuthorMetadata } from '../lib/api/books.js';
+import type { Download } from '../lib/api/activity.js';
 import type { DownloadClient } from '../lib/api/download-clients.js';
 import type { Indexer } from '../lib/api/indexers.js';
 import type { Notifier } from '../lib/api/notifiers.js';
@@ -101,6 +102,19 @@ export function createMockNotifier(overrides?: Partial<Notifier>): Notifier {
     events: ['on_grab', 'on_import'],
     settings: { url: 'https://example.com/hook', method: 'POST' },
     createdAt: '2024-01-01T00:00:00Z',
+    ...overrides,
+  };
+}
+
+export function createMockDownload(overrides?: Partial<Download>): Download {
+  const id = overrides?.id ?? nextId++;
+  return {
+    id,
+    title: 'Test Audiobook',
+    protocol: 'torrent',
+    status: 'queued',
+    progress: 0,
+    addedAt: '2024-06-01T00:00:00Z',
     ...overrides,
   };
 }
