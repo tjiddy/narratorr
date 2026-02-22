@@ -38,7 +38,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - If `CI: success` → proceed to merge
    - If `CI: pending` → **STOP**: "CI checks are still running for this PR. Wait for CI to complete and re-run `/merge`."
    - If `CI: failure` or `CI: error` → **STOP**: "CI checks failed. Fix the failures, push, and re-run `/merge`." Include the per-check status output.
-   - If `CI: no status checks found` → check PR comments and conversation for a recent `/verify` pass (look for `OVERALL: pass` within the last few comments). If found, proceed to merge. If not found, **STOP**: "No CI status checks found and no recent `/verify` pass. Run `/verify` to confirm quality gates before merging."
+   - If `CI: no status checks found` → check PR comments and conversation for a `/verify` pass (`OVERALL: pass`) posted **after the most recent push** to the PR branch (compare the verify comment's timestamp against the latest commit date on the head branch). If a post-push verify is found, proceed to merge. If not found or the verify predates the latest push, **STOP**: "No CI status checks found and no recent `/verify` pass. Run `/verify` to confirm quality gates before merging."
 
 5. **Merge the PR:**
    - `gitea pr-merge <pr-number>` (defaults to squash — one clean commit on main)
