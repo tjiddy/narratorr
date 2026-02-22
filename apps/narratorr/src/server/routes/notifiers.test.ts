@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { createTestApp, createMockServices } from '../__tests__/helpers.js';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import type { Services } from './index.js';
 
 const mockNotifier = {
   id: 1,
@@ -13,7 +14,7 @@ const mockNotifier = {
 
 describe('notifiers routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
-  let services: ReturnType<typeof createMockServices>;
+  let services: Services;
 
   beforeAll(async () => {
     services = createMockServices();
@@ -22,6 +23,10 @@ describe('notifiers routes', () => {
 
   afterAll(async () => {
     await app.close();
+  });
+
+  beforeEach(() => {
+    resetMockServices(services);
   });
 
   describe('GET /api/notifiers', () => {

@@ -96,6 +96,10 @@ export function createMockLogger() {
  * Returns a Services object where every method on every service is a `vi.fn()`.
  * Uses Proxy to auto-create stubs on access — adding new service methods requires no changes here.
  * Accepts partial overrides to customize specific services.
+ *
+ * All auto-created stubs default to `mockResolvedValue(undefined)` since service
+ * methods are async. This prevents `undefined.catch is not a function` on
+ * fire-and-forget calls like `notifier.notify(...).catch(...)`.
  */
 export function createMockServices(overrides?: Partial<Record<keyof Services, Record<string, unknown>>>): Services {
   const serviceNames: (keyof Services)[] = [
@@ -108,7 +112,7 @@ export function createMockServices(overrides?: Partial<Record<keyof Services, Re
       get(target, prop) {
         if (prop in target) return target[prop];
         if (typeof prop === 'symbol') return undefined;
-        const fn = vi.fn();
+        const fn = vi.fn().mockResolvedValue(undefined);
         target[prop] = fn;
         return fn;
       },
@@ -122,12 +126,17 @@ export function createMockServices(overrides?: Partial<Record<keyof Services, Re
 /**
  * Resets all vi.fn() stubs on every service in a Services object.
  * Replaces the identical `beforeEach` loop duplicated across route tests.
+ *
+ * After resetting, re-applies `mockResolvedValue(undefined)` so stubs always
+ * return promises (matching `createMockServices` behavior).
  */
 export function resetMockServices(services: Services) {
   for (const svc of Object.values(services)) {
     for (const fn of Object.values(svc as Record<string, unknown>)) {
       if (typeof fn === 'function' && 'mockReset' in fn) {
-        (fn as { mockReset: () => void }).mockReset();
+        const mock = fn as unknown as { mockReset: () => void; mockResolvedValue: (v: unknown) => void };
+        mock.mockReset();
+        mock.mockResolvedValue(undefined);
       }
     }
   }

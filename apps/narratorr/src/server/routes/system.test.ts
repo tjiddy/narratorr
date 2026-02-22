@@ -1,28 +1,22 @@
-import { describe, it, expect, beforeAll, afterAll, vi, type Mock } from 'vitest';
-import Fastify from 'fastify';
-import { createMockServices } from '../__tests__/helpers.js';
-import { systemRoutes } from './system.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
+import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import type { Services } from './index.js';
 
 describe('system routes', () => {
-  const services = createMockServices({
-    settings: {
-      get: vi.fn().mockResolvedValue({ enabled: false, intervalMinutes: 360, autoGrab: false }),
-    } as Record<string, unknown>,
-    book: {
-      getAll: vi.fn().mockResolvedValue([]),
-    } as Record<string, unknown>,
-  });
-
-  let app: Awaited<ReturnType<typeof Fastify>>;
+  let app: Awaited<ReturnType<typeof createTestApp>>;
+  let services: Services;
 
   beforeAll(async () => {
-    app = Fastify({ logger: false });
-    await systemRoutes(app, services);
-    await app.ready();
+    services = createMockServices();
+    app = await createTestApp(services);
   });
 
   afterAll(async () => {
     await app.close();
+  });
+
+  beforeEach(() => {
+    resetMockServices(services);
   });
 
   describe('GET /api/system/status', () => {
@@ -60,6 +54,9 @@ describe('system routes', () => {
 
   describe('POST /api/system/tasks/search', () => {
     it('returns 200 with search summary', async () => {
+      (services.settings.get as Mock).mockResolvedValue({ enabled: false, intervalMinutes: 360, autoGrab: false });
+      (services.book.getAll as Mock).mockResolvedValue([]);
+
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search' });
 
       expect(res.statusCode).toBe(200);
@@ -72,8 +69,7 @@ describe('system routes', () => {
     });
 
     it('returns 500 when search job throws', async () => {
-      // settings.get is the first async call in runSearchJob
-      (services.settings.get as Mock).mockRejectedValueOnce(new Error('DB connection lost'));
+      (services.settings.get as Mock).mockRejectedValue(new Error('DB connection lost'));
 
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search' });
 
