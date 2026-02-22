@@ -96,6 +96,21 @@ Triggered automatically when the latest review comment has `Verdict: needs-work`
 
    All `blocking` findings MUST be `fixed` or `disputed`. `suggestion` findings can be any disposition.
 
+   **Root cause capture:** For every finding resolved as `fixed`, write a learning file to `.claude/learnings/` capturing what gap let this slip through. Create the directory if it doesn't exist.
+   - Filename: `.claude/learnings/spec-review-<finding-id-lowercase>.md` (e.g., `spec-review-f1.md`)
+   - Format:
+     ```yaml
+     ---
+     scope: [<matching issue scope labels>]
+     files: []
+     issue: <issue-id>
+     source: spec-review
+     date: <YYYY-MM-DD>
+     ---
+     <What the reviewer caught, why the spec missed it, and what would have prevented it (vague AC? missing test plan? scope/claim mismatch? didn't check codebase?).>
+     ```
+   This feeds the same learning pipeline as PR review learnings — `/triage` can graduate recurring spec gaps into process fixes.
+
 **R4. Update the issue body.** Apply all `fixed` changes to the spec:
    - Preserve ALL existing content structure
    - Modify in-place where the finding points to a specific section (e.g., fix an AC item, add a Test Plan section)
