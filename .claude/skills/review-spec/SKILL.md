@@ -13,6 +13,8 @@ Reviews an elaborated issue spec with fresh eyes. Explores the codebase exhausti
 
 **This skill must be run by a different agent than the one that wrote the spec.**
 
+**Review policy: high recall.** Prefer false positives over missed defects. The cost of a spec author dismissing a noisy suggestion is far lower than the cost of a missed gap reaching implementation. Do not cap the number of findings — report everything you find. Use `suggestion` liberally for anything that *might* matter; reserve `blocking` strictly for issues that would cause implementation failure, incorrect behavior, or untestable requirements.
+
 ## Gitea CLI
 
 All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
@@ -76,9 +78,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Flag any mismatch between described behavior and actual implementation as `category: "behavioral-accuracy"`, severity `blocking`. Example: spec says "hook implements optimistic updates" but the hook only invalidates queries on success.
    - Skip this check for feature/bug issues where the spec describes *new* behavior to implement.
 
-5. **Classify findings** — For every issue found, create a finding with severity:
-   - **`"blocking"`**: Spec cannot be implemented correctly without addressing this. Missing AC, contradictions, wrong assumptions about existing code, untestable requirements.
-   - **`"suggestion"`**: Would improve the spec but not strictly required. Better edge case coverage, alternative approaches, pattern improvements.
+5. **Classify findings** — For every issue found, create a finding with severity. Do not cap the number of findings — report everything you find.
+   - **`"blocking"`**: Spec cannot be implemented correctly without addressing this. Missing AC, contradictions, wrong assumptions about existing code, untestable requirements. Blocking findings must be evidence-based — point to a specific spec line and a specific codebase fact that conflicts, or a concrete scenario that the spec fails to handle.
+   - **`"suggestion"`**: Would improve the spec but not strictly required. Use liberally across these categories: edge case coverage, alternative approaches, pattern improvements, test-quality gaps, maintainability concerns, observability/logging gaps, naming clarity, and future regression risk.
    - Every finding MUST include a concrete "why" and ideally a proposed fix or question to resolve it.
 
 6. **Determine verdict:**
@@ -158,5 +160,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 - Findings should be actionable. "This could be better" is not a finding. "AC item 3 says 'handles errors' but doesn't specify what the user sees when the API returns 500" is a finding.
 - The codebase exploration in step 3 is critical — most high-value findings come from discovering that the spec's assumptions don't match reality. Don't skip or shortcut it.
 - An `approve` verdict means zero blocking findings. Any blocking finding → `needs-work`.
+- Blocking findings require concrete evidence — a specific spec statement that conflicts with a specific codebase fact, or a concrete scenario that would fail. "This might cause issues" is not blocking; "AC 2 assumes `getBook()` returns narrators but it doesn't — see `services/book.ts:45`" is blocking.
+- Use suggestions liberally. When in doubt about severity, make it a suggestion — the spec author can promote it if they agree it matters.
 - If there are no findings at all, use an empty array: `[]`
 - Consult the project's CLAUDE.md philosophy section — optimize findings for defect prevention, not compliance.

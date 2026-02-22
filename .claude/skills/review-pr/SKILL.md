@@ -11,6 +11,8 @@ disable-model-invocation: true
 
 Reviews a PR by checking the diff against the linked issue's acceptance criteria, the project's design principles, and code quality standards. Posts a structured review comment with machine-parseable findings.
 
+**Review policy: high recall.** Prefer false positives over missed defects. The cost of a PR author dismissing a noisy suggestion is far lower than the cost of a bug reaching main. Do not cap the number of findings — report everything you find. Use `suggestion` liberally for anything that *might* matter; reserve `blocking` strictly for issues backed by concrete evidence (broken behavior, missing tests for new code paths, verified design violations). No speculative blockers — if you can't point to a specific line and a specific consequence, it's a suggestion.
+
 ## Gitea CLI
 
 All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
@@ -86,9 +88,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Minor variable naming within a function body
    - Adding comments to obvious code
 
-11. **Classify findings** — For **every** issue found in steps 6-9 (including 7b), create a finding entry and assign a `severity` value. **Audit yourself**: re-read the Architecture Review table from step 8 and the test quality checks from step 7b. If any row says "violation" or any test quality issue was noted, there MUST be a corresponding finding below. An issue noted in a table but absent from findings is a review defect.
-    - **`"blocking"`**: Must fix before merge. Bugs, missing AC, security issues, missing tests for new behavior, clear design principle violations (SRP, DRY, Open/Closed).
-    - **`"suggestion"`**: Worth considering but not a merge blocker. Minor improvements, alternative approaches, potential future issues.
+11. **Classify findings** — For **every** issue found in steps 6-9 (including 7b), create a finding entry and assign a `severity` value. Do not cap the number of findings — report everything you find. **Audit yourself**: re-read the Architecture Review table from step 8 and the test quality checks from step 7b. If any row says "violation" or any test quality issue was noted, there MUST be a corresponding finding below. An issue noted in a table but absent from findings is a review defect.
+    - **`"blocking"`**: Must fix before merge. Bugs, missing AC, security issues, missing tests for new behavior, clear design principle violations (SRP, DRY, Open/Closed). Blocking findings must be evidence-based — point to a specific line and a specific consequence (broken behavior, untested code path, verified principle violation). No speculative blockers: "this *might* cause issues in the future" is a suggestion, not a blocker.
+    - **`"suggestion"`**: Worth considering but not a merge blocker. Use liberally across: minor improvements, alternative approaches, potential future issues, test quality gaps, maintainability concerns, observability/logging gaps, naming clarity, and future regression risk. When in doubt about severity, make it a suggestion.
     - Do NOT use other severity terms like "high", "medium", "low", "critical" — only `"blocking"` or `"suggestion"`. This is consumed by `/respond-to-pr-review` which has different resolution rules per severity.
     - Every finding MUST include a concrete "why" — what breaks, what's inconsistent, what principle is violated. No vague "this could be better."
 
@@ -157,7 +159,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 - If no `Refs #<id>` found in PR body, ask the user which issue to review against
 - The diff can be large — focus on changed files, not the entire codebase
-- Be constructive — flag real issues, not style preferences
+- Be constructive — flag real issues, not style preferences. But err on the side of reporting: a dismissed suggestion costs the author 10 seconds, a missed defect costs a full review cycle.
 - The `## Findings` JSON block is consumed by `/respond-to-pr-review` — ensure it is valid JSON with `severity` values of exactly `"blocking"` or `"suggestion"` (no other terms)
 - An `approve` verdict means zero blocking findings. Any blocking finding → `needs-work`
 - If there are no findings at all, use an empty array: `[]`
