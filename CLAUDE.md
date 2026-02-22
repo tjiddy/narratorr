@@ -112,7 +112,7 @@ All new/changed code must include tests. Run `pnpm test` (Vitest via Turborepo) 
 
 ## Project Management (Gitea)
 
-All work is tracked as Gitea issues at `https://git.tjiddy.com/todd/narratorr`. Specs live in issue bodies — each issue is self-contained. The Gitea CLI is provided by the `gitea-workflow` plugin — use `/gitea-workflow:issue <id>`, `/gitea-workflow:issues`, etc.
+All work is tracked as Gitea issues at `https://git.tjiddy.com/todd/narratorr`. Specs live in issue bodies — each issue is self-contained. The Gitea CLI is at `scripts/gitea.ts` — use `/issue <id>`, `/issues`, etc.
 
 ### Workflow Skills
 
