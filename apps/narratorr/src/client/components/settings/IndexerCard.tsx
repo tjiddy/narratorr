@@ -136,8 +136,9 @@ export function IndexerCard(props: IndexerCardProps) {
 
       <div className="grid gap-5 sm:grid-cols-2">
         <div>
-          <label className="block text-sm font-medium mb-2">Name</label>
+          <label htmlFor="indexerName" className="block text-sm font-medium mb-2">Name</label>
           <input
+            id="indexerName"
             type="text"
             {...register('name')}
             className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
@@ -151,8 +152,9 @@ export function IndexerCard(props: IndexerCardProps) {
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-2">Type</label>
+          <label htmlFor="indexerType" className="block text-sm font-medium mb-2">Type</label>
           <select
+            id="indexerType"
             {...register('type')}
             className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
           >
@@ -177,8 +179,9 @@ export function IndexerCard(props: IndexerCardProps) {
               </label>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-2">Priority</label>
+              <label htmlFor="indexerPriority" className="block text-sm font-medium mb-2">Priority</label>
               <input
+                id="indexerPriority"
                 type="number"
                 {...register('priority', { valueAsNumber: true })}
                 className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"

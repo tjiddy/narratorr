@@ -145,8 +145,9 @@ export function DownloadClientCard(props: DownloadClientCardProps) {
       </h3>
       <div className="grid gap-5 sm:grid-cols-2">
         <div>
-          <label className="block text-sm font-medium mb-2">Name</label>
+          <label htmlFor="clientName" className="block text-sm font-medium mb-2">Name</label>
           <input
+            id="clientName"
             type="text"
             {...register('name')}
             className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
@@ -159,8 +160,9 @@ export function DownloadClientCard(props: DownloadClientCardProps) {
           )}
         </div>
         <div>
-          <label className="block text-sm font-medium mb-2">Type</label>
+          <label htmlFor="clientType" className="block text-sm font-medium mb-2">Type</label>
           <select
+            id="clientType"
             {...register('type')}
             className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
           >
@@ -184,8 +186,9 @@ export function DownloadClientCard(props: DownloadClientCardProps) {
               </label>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-2">Priority</label>
+              <label htmlFor="clientPriority" className="block text-sm font-medium mb-2">Priority</label>
               <input
+                id="clientPriority"
                 type="number"
                 {...register('priority', { valueAsNumber: true })}
                 className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"

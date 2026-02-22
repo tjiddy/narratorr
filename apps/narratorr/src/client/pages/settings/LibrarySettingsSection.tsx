@@ -56,8 +56,9 @@ export function LibrarySettingsSection({ register, errors, setValue, watch }: Li
       description="Configure where audiobooks are stored"
     >
       <div>
-        <label className="block text-sm font-medium mb-2">Library Path</label>
+        <label htmlFor="libraryPath" className="block text-sm font-medium mb-2">Library Path</label>
         <input
+          id="libraryPath"
           type="text"
           {...register('library.path')}
           className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
@@ -74,8 +75,9 @@ export function LibrarySettingsSection({ register, errors, setValue, watch }: Li
       </div>
 
       <div>
-        <label className="block text-sm font-medium mb-2">Folder Format</label>
+        <label htmlFor="folderFormat" className="block text-sm font-medium mb-2">Folder Format</label>
         <input
+          id="folderFormat"
           type="text"
           {...(() => {
             const { ref: rhfRef, ...rest } = register('library.folderFormat');

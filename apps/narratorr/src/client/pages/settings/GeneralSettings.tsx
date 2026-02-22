@@ -110,8 +110,9 @@ export function GeneralSettings() {
         description="Control server log verbosity"
       >
         <div>
-          <label className="block text-sm font-medium mb-2">Log Level</label>
+          <label htmlFor="logLevel" className="block text-sm font-medium mb-2">Log Level</label>
           <select
+            id="logLevel"
             {...register('general.logLevel')}
             className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
           >
@@ -133,8 +134,9 @@ export function GeneralSettings() {
         description="Configure audiobook metadata providers"
       >
         <div>
-          <label className="block text-sm font-medium mb-2">Audible Region</label>
+          <label htmlFor="audibleRegion" className="block text-sm font-medium mb-2">Audible Region</label>
           <select
+            id="audibleRegion"
             {...register('metadata.audibleRegion')}
             className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
           >

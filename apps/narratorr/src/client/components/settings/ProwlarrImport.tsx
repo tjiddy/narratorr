@@ -210,8 +210,9 @@ export function ProwlarrImport({ isOpen, onClose }: ProwlarrImportProps) {
         {step === 'connect' && (
           <div className="px-6 pb-6 space-y-4">
             <div>
-              <label className="block text-sm font-medium mb-1.5">Prowlarr URL</label>
+              <label htmlFor="prowlarrUrl" className="block text-sm font-medium mb-1.5">Prowlarr URL</label>
               <input
+                id="prowlarrUrl"
                 type="text"
                 value={url}
                 onChange={(e) => { setUrl(e.target.value); setTestPassed(false); }}
@@ -221,8 +222,9 @@ export function ProwlarrImport({ isOpen, onClose }: ProwlarrImportProps) {
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1.5">API Key</label>
+              <label htmlFor="prowlarrApiKey" className="block text-sm font-medium mb-1.5">API Key</label>
               <input
+                id="prowlarrApiKey"
                 type="password"
                 value={apiKey}
                 onChange={(e) => { setApiKey(e.target.value); setTestPassed(false); }}
@@ -257,8 +259,9 @@ export function ProwlarrImport({ isOpen, onClose }: ProwlarrImportProps) {
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-1.5">Categories</label>
+                <label htmlFor="prowlarrCategories" className="block text-sm font-medium mb-1.5">Categories</label>
                 <input
+                  id="prowlarrCategories"
                   type="text"
                   value={categories}
                   onChange={(e) => setCategories(e.target.value)}

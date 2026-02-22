@@ -13,8 +13,9 @@ export function NotifierFields({ selectedType, register, errors }: NotifierField
     return (
       <>
         <div className="sm:col-span-2">
-          <label className="block text-sm font-medium mb-2">URL</label>
+          <label htmlFor="notifierUrl" className="block text-sm font-medium mb-2">URL</label>
           <input
+            id="notifierUrl"
             type="text"
             {...register('settings.url')}
             className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
@@ -27,8 +28,9 @@ export function NotifierFields({ selectedType, register, errors }: NotifierField
           )}
         </div>
         <div>
-          <label className="block text-sm font-medium mb-2">Method</label>
+          <label htmlFor="notifierMethod" className="block text-sm font-medium mb-2">Method</label>
           <select
+            id="notifierMethod"
             {...register('settings.method')}
             className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
           >
@@ -37,8 +39,9 @@ export function NotifierFields({ selectedType, register, errors }: NotifierField
           </select>
         </div>
         <div>
-          <label className="block text-sm font-medium mb-2">Headers (JSON)</label>
+          <label htmlFor="notifierHeaders" className="block text-sm font-medium mb-2">Headers (JSON)</label>
           <input
+            id="notifierHeaders"
             type="text"
             {...register('settings.headers')}
             className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
@@ -47,8 +50,9 @@ export function NotifierFields({ selectedType, register, errors }: NotifierField
           <p className="text-sm text-muted-foreground mt-1">Optional JSON key-value pairs</p>
         </div>
         <div className="sm:col-span-2">
-          <label className="block text-sm font-medium mb-2">Body Template</label>
+          <label htmlFor="notifierBodyTemplate" className="block text-sm font-medium mb-2">Body Template</label>
           <textarea
+            id="notifierBodyTemplate"
             {...register('settings.bodyTemplate')}
             className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all font-mono text-sm"
             rows={3}
@@ -66,8 +70,9 @@ export function NotifierFields({ selectedType, register, errors }: NotifierField
     return (
       <>
         <div className="sm:col-span-2">
-          <label className="block text-sm font-medium mb-2">Webhook URL</label>
+          <label htmlFor="notifierWebhookUrl" className="block text-sm font-medium mb-2">Webhook URL</label>
           <input
+            id="notifierWebhookUrl"
             type="text"
             {...register('settings.webhookUrl')}
             className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
@@ -97,8 +102,9 @@ export function NotifierFields({ selectedType, register, errors }: NotifierField
     return (
       <>
         <div className="sm:col-span-2">
-          <label className="block text-sm font-medium mb-2">Script Path</label>
+          <label htmlFor="notifierScriptPath" className="block text-sm font-medium mb-2">Script Path</label>
           <input
+            id="notifierScriptPath"
             type="text"
             {...register('settings.path')}
             className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
@@ -114,8 +120,9 @@ export function NotifierFields({ selectedType, register, errors }: NotifierField
           </p>
         </div>
         <div>
-          <label className="block text-sm font-medium mb-2">Timeout (seconds)</label>
+          <label htmlFor="notifierTimeout" className="block text-sm font-medium mb-2">Timeout (seconds)</label>
           <input
+            id="notifierTimeout"
             type="number"
             {...register('settings.timeout', { valueAsNumber: true })}
             min={1}

@@ -17,20 +17,21 @@ export function ImportSettingsSection({ register, errors }: ImportSettingsSectio
     >
       <div className="flex items-center justify-between">
         <div>
-          <label className="block text-sm font-medium">Delete After Import</label>
+          <label htmlFor="deleteAfterImport" className="block text-sm font-medium">Delete After Import</label>
           <p className="text-sm text-muted-foreground mt-0.5">
             Remove torrent from download client after files are imported
           </p>
         </div>
         <label className="relative inline-flex items-center cursor-pointer">
-          <input type="checkbox" {...register('import.deleteAfterImport')} className="sr-only peer" />
+          <input id="deleteAfterImport" type="checkbox" {...register('import.deleteAfterImport')} className="sr-only peer" />
           <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
         </label>
       </div>
 
       <div>
-        <label className="block text-sm font-medium mb-2">Minimum Seed Time (minutes)</label>
+        <label htmlFor="minSeedTime" className="block text-sm font-medium mb-2">Minimum Seed Time (minutes)</label>
         <input
+          id="minSeedTime"
           type="number"
           {...register('import.minSeedTime', { valueAsNumber: true })}
           className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${

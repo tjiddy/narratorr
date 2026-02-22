@@ -13,8 +13,9 @@ export function IndexerFields({ selectedType, register, errors }: IndexerFieldsP
     return (
       <>
         <div>
-          <label className="block text-sm font-medium mb-2">Hostname</label>
+          <label htmlFor="indexerHostname" className="block text-sm font-medium mb-2">Hostname</label>
           <input
+            id="indexerHostname"
             type="text"
             {...register('settings.hostname')}
             className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
@@ -29,8 +30,9 @@ export function IndexerFields({ selectedType, register, errors }: IndexerFieldsP
           )}
         </div>
         <div>
-          <label className="block text-sm font-medium mb-2">Page Limit</label>
+          <label htmlFor="indexerPageLimit" className="block text-sm font-medium mb-2">Page Limit</label>
           <input
+            id="indexerPageLimit"
             type="number"
             {...register('settings.pageLimit', { valueAsNumber: true })}
             min={1}
@@ -51,8 +53,9 @@ export function IndexerFields({ selectedType, register, errors }: IndexerFieldsP
     return (
       <>
         <div className="sm:col-span-2">
-          <label className="block text-sm font-medium mb-2">API URL</label>
+          <label htmlFor="indexerApiUrl" className="block text-sm font-medium mb-2">API URL</label>
           <input
+            id="indexerApiUrl"
             type="text"
             {...register('settings.apiUrl')}
             className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
@@ -67,8 +70,9 @@ export function IndexerFields({ selectedType, register, errors }: IndexerFieldsP
           )}
         </div>
         <div className="sm:col-span-2">
-          <label className="block text-sm font-medium mb-2">API Key</label>
+          <label htmlFor="indexerApiKey" className="block text-sm font-medium mb-2">API Key</label>
           <input
+            id="indexerApiKey"
             type="password"
             {...register('settings.apiKey')}
             className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${

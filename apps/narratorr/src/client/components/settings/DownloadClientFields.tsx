@@ -21,8 +21,9 @@ export function DownloadClientFields({ selectedType, register, errors }: Downloa
   return (
     <>
       <div>
-        <label className="block text-sm font-medium mb-2">Host</label>
+        <label htmlFor="clientHost" className="block text-sm font-medium mb-2">Host</label>
         <input
+          id="clientHost"
           type="text"
           {...register('settings.host')}
           className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
@@ -37,8 +38,9 @@ export function DownloadClientFields({ selectedType, register, errors }: Downloa
         )}
       </div>
       <div>
-        <label className="block text-sm font-medium mb-2">Port</label>
+        <label htmlFor="clientPort" className="block text-sm font-medium mb-2">Port</label>
         <input
+          id="clientPort"
           type="number"
           {...register('settings.port', { valueAsNumber: true })}
           className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
@@ -52,8 +54,9 @@ export function DownloadClientFields({ selectedType, register, errors }: Downloa
 
       {fields.username && (
         <div>
-          <label className="block text-sm font-medium mb-2">Username</label>
+          <label htmlFor="clientUsername" className="block text-sm font-medium mb-2">Username</label>
           <input
+            id="clientUsername"
             type="text"
             {...register('settings.username')}
             className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
@@ -63,8 +66,9 @@ export function DownloadClientFields({ selectedType, register, errors }: Downloa
       )}
       {fields.password && (
         <div>
-          <label className="block text-sm font-medium mb-2">Password</label>
+          <label htmlFor="clientPassword" className="block text-sm font-medium mb-2">Password</label>
           <input
+            id="clientPassword"
             type="password"
             {...register('settings.password')}
             className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
@@ -74,8 +78,9 @@ export function DownloadClientFields({ selectedType, register, errors }: Downloa
 
       {fields.apiKey && (
         <div className="sm:col-span-2">
-          <label className="block text-sm font-medium mb-2">API Key</label>
+          <label htmlFor="clientApiKey" className="block text-sm font-medium mb-2">API Key</label>
           <input
+            id="clientApiKey"
             type="password"
             {...register('settings.apiKey')}
             className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${

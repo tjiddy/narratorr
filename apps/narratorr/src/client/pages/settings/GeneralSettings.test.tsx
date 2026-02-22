@@ -132,9 +132,8 @@ describe('GeneralSettings', () => {
       expect(screen.getByText('Log Level')).toBeInTheDocument();
     });
 
-    // Label isn't associated via for/htmlFor — find the select by its sibling relationship
-    const logLabel = screen.getByText('Log Level');
-    const logSelect = logLabel.closest('div')!.querySelector('select')!;
+    const logSelect = screen.getByLabelText('Log Level');
+    expect(screen.getByRole('combobox', { name: 'Log Level' })).toBe(logSelect);
     await user.selectOptions(logSelect, 'debug');
 
     const saveButton = screen.getByText('Save Changes').closest('button')!;
@@ -159,8 +158,8 @@ describe('GeneralSettings', () => {
       expect(screen.getByText('Audible Region')).toBeInTheDocument();
     });
 
-    const regionLabel = screen.getByText('Audible Region');
-    const regionSelect = regionLabel.closest('div')!.querySelector('select')!;
+    const regionSelect = screen.getByLabelText('Audible Region');
+    expect(screen.getByRole('combobox', { name: 'Audible Region' })).toBe(regionSelect);
     await user.selectOptions(regionSelect, 'uk');
 
     await user.click(screen.getByText('Save Changes').closest('button')!);
@@ -182,10 +181,7 @@ describe('GeneralSettings', () => {
       expect(screen.getByText('Enable Scheduled Search')).toBeInTheDocument();
     });
 
-    // The checkbox is a sr-only input next to the toggle label
-    const searchCheckbox = screen.getByText('Enable Scheduled Search')
-      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]')!;
-
+    const searchCheckbox = screen.getByRole('checkbox', { name: 'Enable Scheduled Search' });
     await user.click(searchCheckbox);
 
     const saveButton = screen.getByText('Save Changes').closest('button')!;

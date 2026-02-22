@@ -165,9 +165,8 @@ export function NotifierCard(props: NotifierCardProps) {
 
       <div className="grid gap-5 sm:grid-cols-2">
         <div>
-          <label className="block text-sm font-medium mb-2">Name</label>
-          <input
-            type="text"
+          <label htmlFor="notifierName" className="block text-sm font-medium mb-2">Name</label>
+          <input id="notifierName" type="text"
             {...register('name')}
             className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
               errors.name ? 'border-destructive' : 'border-border'
@@ -180,9 +179,8 @@ export function NotifierCard(props: NotifierCardProps) {
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-2">Type</label>
-          <select
-            {...register('type')}
+          <label htmlFor="notifierType" className="block text-sm font-medium mb-2">Type</label>
+          <select id="notifierType" {...register('type')}
             className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
           >
             {notifierTypeSchema.options.map((t) => (
