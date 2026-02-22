@@ -92,6 +92,19 @@ async function api<T = unknown>(path: string, options?: RequestInit): Promise<T>
   return (text ? JSON.parse(text) : null) as T;
 }
 
+async function fetchAllComments(issuePath: string): Promise<GiteaComment[]> {
+  const all: GiteaComment[] = [];
+  let page = 1;
+  const limit = 50;
+  while (true) {
+    const batch = await api<GiteaComment[]>(`${issuePath}/comments?limit=${limit}&page=${page}`);
+    all.push(...batch);
+    if (batch.length < limit) break;
+    page++;
+  }
+  return all;
+}
+
 // --- Formatters ---
 
 interface GiteaLabel {
@@ -421,7 +434,7 @@ switch (cmd) {
       console.error("Usage: gitea issue-comments <id>");
       process.exit(1);
     }
-    const comments = await api<GiteaComment[]>(`/issues/${id}/comments?limit=100`);
+    const comments = await fetchAllComments(`/issues/${id}`);
     fmtComments(comments);
     break;
   }
@@ -552,7 +565,7 @@ switch (cmd) {
       console.error("Usage: gitea pr-comments <number>");
       process.exit(1);
     }
-    const comments = await api<GiteaComment[]>(`/issues/${num}/comments?limit=100`);
+    const comments = await fetchAllComments(`/issues/${num}`);
     fmtComments(comments);
     break;
   }
