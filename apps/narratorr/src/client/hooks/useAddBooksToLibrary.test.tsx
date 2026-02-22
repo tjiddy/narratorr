@@ -3,6 +3,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { useAddBooksToLibrary } from './useAddBooksToLibrary';
+import { createMockBook } from '@/__tests__/factories';
 import type { BookMetadata, BookWithAuthor } from '@/lib/api';
 
 vi.mock('@/lib/api', () => ({
@@ -30,16 +31,11 @@ function makeBook(overrides: Partial<BookMetadata> = {}): BookMetadata {
 }
 
 function makeLibraryBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
-  return {
-    id: 1,
+  return createMockBook({
     title: 'Test Book',
-    authorId: 1,
-    status: 'wanted',
-    createdAt: '2023-01-01T00:00:00Z',
-    updatedAt: '2023-01-01T00:00:00Z',
     author: { id: 1, name: 'Test Author', slug: 'test-author' },
     ...overrides,
-  };
+  });
 }
 
 function createQueryClient() {

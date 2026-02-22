@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockNotifier } from '@/__tests__/factories';
 import { NotificationsSettings } from './NotificationsSettings';
 import type { Mock } from 'vitest';
 
@@ -24,24 +25,20 @@ import { api } from '@/lib/api';
 import { toast } from 'sonner';
 
 const mockNotifiers = [
-  {
+  createMockNotifier({
     id: 1,
     name: 'My Discord',
-    type: 'discord' as const,
-    enabled: true,
+    type: 'discord',
     events: ['on_grab', 'on_download_complete'],
     settings: { webhookUrl: 'https://discord.com/api/webhooks/123', includeCover: true },
-    createdAt: '2024-01-01T00:00:00Z',
-  },
-  {
+  }),
+  createMockNotifier({
     id: 2,
     name: 'My Webhook',
-    type: 'webhook' as const,
     enabled: false,
     events: ['on_grab'],
     settings: { url: 'https://example.com/hook', method: 'POST', headers: '', bodyTemplate: '' },
-    createdAt: '2024-01-01T00:00:00Z',
-  },
+  }),
 ];
 
 beforeEach(() => {

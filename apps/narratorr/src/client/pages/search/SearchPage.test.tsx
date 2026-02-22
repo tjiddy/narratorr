@@ -4,7 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../__tests__/helpers';
 import { SearchPage } from './SearchPage';
 import { api, ApiError } from '@/lib/api';
-import type { BookMetadata, BookWithAuthor } from '@/lib/api';
+import { createMockBook } from '@/__tests__/factories';
+import type { BookMetadata } from '@/lib/api';
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -32,27 +33,12 @@ const mockBookMetadata: BookMetadata = {
   genres: ['Fantasy'],
 };
 
-const mockLibraryBook: BookWithAuthor = {
-  id: 1,
+const mockLibraryBook = createMockBook({
   title: 'Existing Book',
-  authorId: 1,
-  narrator: null,
-  description: null,
-  coverUrl: null,
   asin: 'B000EXISTING',
-  isbn: null,
-  seriesName: null,
-  seriesPosition: null,
-  duration: null,
-  publishedDate: null,
-  genres: null,
-  status: 'wanted',
-  path: null,
-  size: null,
-  createdAt: '2024-01-01T00:00:00Z',
-  updatedAt: '2024-01-01T00:00:00Z',
+  narrator: null,
   author: { id: 1, name: 'Some Author', slug: 'some-author' },
-};
+});
 
 describe('SearchPage', () => {
   beforeEach(() => {

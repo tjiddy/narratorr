@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockBook, createMockAuthor } from '@/__tests__/factories';
 import { LibraryPage } from './LibraryPage';
 
 // Mock api
@@ -31,20 +32,11 @@ import { api } from '@/lib/api';
 import { toast } from 'sonner';
 
 const mockBooks = [
-  {
+  createMockBook({
     id: 1,
-    title: 'The Way of Kings',
-    authorId: 1,
-    narrator: 'Michael Kramer',
     coverUrl: 'https://example.com/cover1.jpg',
-    seriesName: 'The Stormlight Archive',
-    seriesPosition: 1,
-    status: 'wanted',
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-01T00:00:00Z',
-    author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' },
-  },
-  {
+  }),
+  createMockBook({
     id: 2,
     title: 'Project Hail Mary',
     authorId: 2,
@@ -55,9 +47,9 @@ const mockBooks = [
     status: 'downloading',
     createdAt: '2024-01-02T00:00:00Z',
     updatedAt: '2024-01-02T00:00:00Z',
-    author: { id: 2, name: 'Andy Weir', slug: 'andy-weir' },
-  },
-  {
+    author: createMockAuthor({ id: 2, name: 'Andy Weir', slug: 'andy-weir' }),
+  }),
+  createMockBook({
     id: 3,
     title: 'Recursion',
     authorId: 3,
@@ -68,21 +60,16 @@ const mockBooks = [
     status: 'imported',
     createdAt: '2024-01-03T00:00:00Z',
     updatedAt: '2024-01-03T00:00:00Z',
-    author: { id: 3, name: 'Blake Crouch', slug: 'blake-crouch' },
-  },
-  {
+    author: createMockAuthor({ id: 3, name: 'Blake Crouch', slug: 'blake-crouch' }),
+  }),
+  createMockBook({
     id: 4,
     title: 'Words of Radiance',
-    authorId: 1,
-    narrator: 'Michael Kramer',
     coverUrl: 'https://example.com/cover4.jpg',
-    seriesName: 'The Stormlight Archive',
     seriesPosition: 2,
-    status: 'wanted',
     createdAt: '2024-01-04T00:00:00Z',
     updatedAt: '2024-01-04T00:00:00Z',
-    author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' },
-  },
+  }),
 ];
 
 beforeEach(() => {

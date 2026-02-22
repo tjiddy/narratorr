@@ -1,17 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { AudioInfo } from './AudioInfo';
+import { createMockBook } from '@/__tests__/factories';
 import type { BookWithAuthor } from '@/lib/api';
 
 function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
-  return {
-    id: 1,
-    title: 'Test Book',
-    status: 'imported',
-    createdAt: '2024-01-01',
-    updatedAt: '2024-01-01',
-    ...overrides,
-  };
+  return createMockBook({ status: 'imported', ...overrides });
 }
 
 describe('AudioInfo', () => {

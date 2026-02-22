@@ -5,16 +5,10 @@ import { type DownloadClientService } from './download-client.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 
-const now = new Date();
+import { createMockDbBook } from '../__tests__/factories.js';
 
-const mockBook = {
-  id: 1,
-  title: 'The Way of Kings',
-  authorId: 1,
-  status: 'wanted' as const,
-  createdAt: now,
-  updatedAt: now,
-};
+const now = new Date();
+const mockBook = createMockDbBook();
 
 const mockDownload = {
   id: 1,

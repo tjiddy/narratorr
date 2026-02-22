@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockDownloadClient } from '@/__tests__/factories';
 import { DownloadClientsSettings } from './DownloadClientsSettings';
 import type { Mock } from 'vitest';
 
@@ -24,24 +25,15 @@ import { api } from '@/lib/api';
 import { toast } from 'sonner';
 
 const mockClients = [
-  {
-    id: 1,
-    name: 'My qBittorrent',
-    type: 'qbittorrent' as const,
-    enabled: true,
-    priority: 50,
-    settings: { host: 'localhost', port: 8080, username: 'admin', password: 'pass', useSsl: false },
-    createdAt: '2024-01-01T00:00:00Z',
-  },
-  {
+  createMockDownloadClient({ id: 1 }),
+  createMockDownloadClient({
     id: 2,
     name: 'My SABnzbd',
-    type: 'sabnzbd' as const,
+    type: 'sabnzbd',
     enabled: false,
     priority: 30,
     settings: { host: '192.168.1.10', port: 8085, apiKey: 'abc123', useSsl: true },
-    createdAt: '2024-01-01T00:00:00Z',
-  },
+  }),
 ];
 
 beforeEach(() => {

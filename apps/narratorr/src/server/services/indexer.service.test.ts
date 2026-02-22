@@ -1,22 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDbIndexer } from '../__tests__/factories.js';
 import { IndexerService } from './indexer.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 
-const now = new Date();
-
-const mockIndexer = {
-  id: 1,
-  name: 'AudioBookBay',
-  type: 'abb' as const,
-  enabled: true,
-  priority: 50,
-  settings: { hostname: 'audiobookbay.lu', pageLimit: 2 },
-  source: null,
-  sourceIndexerId: null,
-  createdAt: now,
-};
+const mockIndexer = createMockDbIndexer();
 
 describe('IndexerService', () => {
   let db: ReturnType<typeof createMockDb>;

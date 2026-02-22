@@ -35,25 +35,17 @@ function createMockLogger() {
   };
 }
 
-const mockWebhookNotifier = {
-  id: 1,
-  name: 'Test Webhook',
-  type: 'webhook',
-  enabled: true,
-  events: ['on_grab', 'on_import'],
-  settings: { url: 'https://example.com/hook' },
-  createdAt: new Date(),
-};
+import { createMockDbNotifier } from '../__tests__/factories.js';
 
-const mockDiscordNotifier = {
+const mockWebhookNotifier = createMockDbNotifier();
+
+const mockDiscordNotifier = createMockDbNotifier({
   id: 2,
   name: 'Discord',
   type: 'discord',
-  enabled: true,
   events: ['on_failure'],
   settings: { webhookUrl: 'https://discord.com/api/webhooks/123/abc' },
-  createdAt: new Date(),
-};
+});
 
 describe('NotifierService', () => {
   let db: ReturnType<typeof createMockDb>;

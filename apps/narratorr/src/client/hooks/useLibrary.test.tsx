@@ -3,7 +3,8 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { useLibrary, useLibraryBook, useBookFiles } from './useLibrary';
-import type { BookWithAuthor, BookFile } from '@/lib/api';
+import { createMockBook } from '@/__tests__/factories';
+import type { BookFile } from '@/lib/api';
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -33,36 +34,7 @@ describe('useLibrary', () => {
   });
 
   it('calls api.getBooks and returns data', async () => {
-    const mockBooks: BookWithAuthor[] = [
-      {
-        id: 1,
-        title: 'Test Book',
-        authorId: 1,
-        narrator: 'Test Narrator',
-        description: 'A test book',
-        coverUrl: 'https://example.com/cover.jpg',
-        asin: 'B001',
-        isbn: null,
-        seriesName: null,
-        seriesPosition: null,
-        duration: 3600,
-        publishedDate: '2023-01-01',
-        genres: ['Fiction'],
-        status: 'wanted',
-        path: null,
-        size: null,
-        createdAt: '2023-01-01T00:00:00Z',
-        updatedAt: '2023-01-01T00:00:00Z',
-        author: {
-          id: 1,
-          name: 'Test Author',
-          slug: 'test-author',
-          asin: 'A001',
-          imageUrl: null,
-          bio: null,
-        },
-      },
-    ];
+    const mockBooks = [createMockBook({ id: 1, title: 'Test Book' })];
 
     vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
 
@@ -100,34 +72,7 @@ describe('useLibraryBook', () => {
   });
 
   it('calls api.getBookById with the given id', async () => {
-    const mockBook: BookWithAuthor = {
-      id: 1,
-      title: 'Test Book',
-      authorId: 1,
-      narrator: 'Test Narrator',
-      description: 'A test book',
-      coverUrl: 'https://example.com/cover.jpg',
-      asin: 'B001',
-      isbn: null,
-      seriesName: null,
-      seriesPosition: null,
-      duration: 3600,
-      publishedDate: '2023-01-01',
-      genres: ['Fiction'],
-      status: 'wanted',
-      path: null,
-      size: null,
-      createdAt: '2023-01-01T00:00:00Z',
-      updatedAt: '2023-01-01T00:00:00Z',
-      author: {
-        id: 1,
-        name: 'Test Author',
-        slug: 'test-author',
-        asin: 'A001',
-        imageUrl: null,
-        bio: null,
-      },
-    };
+    const mockBook = createMockBook({ id: 1, title: 'Test Book' });
 
     vi.mocked(api.getBookById).mockResolvedValue(mockBook);
 
@@ -164,34 +109,16 @@ describe('useLibraryBook', () => {
   });
 
   it('returns data when id is valid', async () => {
-    const mockBook: BookWithAuthor = {
+    const mockBook = createMockBook({
       id: 42,
       title: 'Another Book',
       authorId: 2,
       narrator: null,
-      description: null,
-      coverUrl: null,
-      asin: null,
-      isbn: null,
-      seriesName: null,
-      seriesPosition: null,
-      duration: null,
-      publishedDate: null,
-      genres: null,
       status: 'monitored',
       path: '/library/another-book',
       size: 1024000,
-      createdAt: '2023-02-01T00:00:00Z',
-      updatedAt: '2023-02-01T00:00:00Z',
-      author: {
-        id: 2,
-        name: 'Another Author',
-        slug: 'another-author',
-        asin: null,
-        imageUrl: null,
-        bio: null,
-      },
-    };
+      author: { id: 2, name: 'Another Author', slug: 'another-author' },
+    });
 
     vi.mocked(api.getBookById).mockResolvedValue(mockBook);
 

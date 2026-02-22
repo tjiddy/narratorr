@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { Services } from './index.js';
 import { readdir, stat } from 'node:fs/promises';
 
@@ -13,16 +14,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 });
 
 const mockBook = {
-  id: 1,
-  title: 'The Way of Kings',
-  authorId: 1,
-  narrator: 'Michael Kramer',
-  description: 'An epic fantasy',
-  coverUrl: null,
-  status: 'wanted',
-  createdAt: new Date(),
-  updatedAt: new Date(),
-  author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' },
+  ...createMockDbBook(),
+  author: createMockDbAuthor(),
 };
 
 describe('books routes', () => {

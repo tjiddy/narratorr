@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockSettings } from '@/__tests__/factories';
 import { GeneralSettings } from './GeneralSettings';
 import type { Mock } from 'vitest';
 import type { Settings } from '@/lib/api';
@@ -26,13 +27,7 @@ vi.mock('@narratorr/core/utils', () => ({
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 
-const mockSettings: Settings = {
-  library: { path: '/audiobooks', folderFormat: '{author}/{title}' },
-  search: { enabled: true, intervalMinutes: 360, autoGrab: false },
-  import: { deleteAfterImport: false, minSeedTime: 60 },
-  general: { logLevel: 'info' },
-  metadata: { audibleRegion: 'us' },
-};
+const mockSettings: Settings = createMockSettings();
 
 beforeEach(() => {
   vi.clearAllMocks();

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockIndexer } from '@/__tests__/factories';
 import { IndexersSettings } from './IndexersSettings';
 import type { Mock } from 'vitest';
 
@@ -24,24 +25,15 @@ import { api } from '@/lib/api';
 import { toast } from 'sonner';
 
 const mockIndexers = [
-  {
-    id: 1,
-    name: 'My ABB',
-    type: 'abb' as const,
-    enabled: true,
-    priority: 50,
-    settings: { hostname: 'audiobookbay.lu', pageLimit: 2 },
-    createdAt: '2024-01-01T00:00:00Z',
-  },
-  {
+  createMockIndexer({ id: 1 }),
+  createMockIndexer({
     id: 2,
     name: 'My Torznab',
-    type: 'torznab' as const,
+    type: 'torznab',
     enabled: false,
     priority: 30,
     settings: { apiUrl: 'https://indexer.example.com/api', apiKey: 'secret' },
-    createdAt: '2024-01-01T00:00:00Z',
-  },
+  }),
 ];
 
 beforeEach(() => {

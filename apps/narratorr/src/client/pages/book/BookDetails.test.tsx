@@ -2,6 +2,7 @@ import { describe, it, expect, vi, type Mock } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockBook } from '@/__tests__/factories';
 import { api } from '@/lib/api';
 import { BookDetails } from './BookDetails';
 import type { BookWithAuthor } from '@/lib/api';
@@ -25,18 +26,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
 });
 
 function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
-  return {
-    id: 1,
-    title: 'The Way of Kings',
-    status: 'wanted',
-    authorId: 1,
-    narrator: 'Michael Kramer',
-    description: '<p>An epic fantasy novel.</p>',
-    coverUrl: 'https://example.com/cover.jpg',
-    genres: ['Fantasy', 'Epic'],
-    seriesName: 'The Stormlight Archive',
-    seriesPosition: 1,
-    duration: 52320,
+  return createMockBook({
     audioCodec: 'AAC',
     audioBitrate: 128000,
     audioSampleRate: 44100,
@@ -45,11 +35,9 @@ function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
     audioFileCount: 12,
     audioTotalSize: 500_000_000,
     audioDuration: 36000,
-    createdAt: '2024-01-01',
-    updatedAt: '2024-01-01',
     author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson', asin: 'A001' },
     ...overrides,
-  };
+  });
 }
 
 const fullMetadata: MetadataBook = {

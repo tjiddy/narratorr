@@ -1,32 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useLibrarySearch } from './useLibrarySearch';
+import { createMockBook, createMockAuthor } from '@/__tests__/factories';
 import type { BookWithAuthor } from '@/lib/api';
 
 const mockBooks: BookWithAuthor[] = [
-  {
+  createMockBook({
     id: 1,
-    title: 'The Way of Kings',
-    narrator: 'Michael Kramer',
-    seriesName: 'The Stormlight Archive',
     genres: ['Fantasy', 'Epic Fantasy'],
     status: 'imported',
-    createdAt: '2024-01-01',
-    updatedAt: '2024-01-01',
-    author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' },
-  },
-  {
+  }),
+  createMockBook({
     id: 2,
     title: 'Words of Radiance',
-    narrator: 'Michael Kramer',
-    seriesName: 'The Stormlight Archive',
     genres: ['Fantasy'],
     status: 'wanted',
     createdAt: '2024-01-02',
     updatedAt: '2024-01-02',
-    author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' },
-  },
-  {
+  }),
+  createMockBook({
     id: 3,
     title: 'Dune',
     narrator: 'Scott Brick',
@@ -35,8 +27,8 @@ const mockBooks: BookWithAuthor[] = [
     status: 'imported',
     createdAt: '2024-01-03',
     updatedAt: '2024-01-03',
-    author: { id: 2, name: 'Frank Herbert', slug: 'frank-herbert' },
-  },
+    author: createMockAuthor({ id: 2, name: 'Frank Herbert', slug: 'frank-herbert' }),
+  }),
 ];
 
 describe('useLibrarySearch', () => {

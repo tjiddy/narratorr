@@ -5,6 +5,7 @@ import { Routes, Route } from 'react-router-dom';
 import { render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createMockBook, createMockAuthor } from '@/__tests__/factories';
 import { AuthorPage } from './AuthorPage';
 
 // Mock api
@@ -81,15 +82,12 @@ const mockBooks = [
 ];
 
 const mockLibraryBooks = [
-  {
+  createMockBook({
     id: 1,
     title: 'Project Hail Mary',
     asin: 'B00OTHER',
-    status: 'wanted',
-    createdAt: '2024-01-01',
-    updatedAt: '2024-01-01',
-    author: { id: 1, name: 'Andy Weir', slug: 'andy-weir' },
-  },
+    author: createMockAuthor({ id: 1, name: 'Andy Weir', slug: 'andy-weir' }),
+  }),
 ];
 
 function renderAuthorPage(asin = 'A00SAND1234') {
@@ -218,14 +216,7 @@ describe('AuthorPage', () => {
 
   it('adds a book to library on button click', async () => {
     const user = userEvent.setup();
-    vi.mocked(api.addBook).mockResolvedValue({
-      id: 2,
-      title: 'The Way of Kings',
-      asin: 'B001',
-      status: 'wanted',
-      createdAt: '2024-01-01',
-      updatedAt: '2024-01-01',
-    });
+    vi.mocked(api.addBook).mockResolvedValue(createMockBook({ id: 2, asin: 'B001' }));
 
     renderAuthorPage();
 
@@ -244,15 +235,7 @@ describe('AuthorPage', () => {
 
   it('shows check icon for books already in library', async () => {
     vi.mocked(api.getBooks).mockResolvedValue([
-      {
-        id: 1,
-        title: 'The Way of Kings',
-        asin: 'B001',
-        status: 'wanted',
-        createdAt: '2024-01-01',
-        updatedAt: '2024-01-01',
-        author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' },
-      },
+      createMockBook({ id: 1, asin: 'B001' }),
     ]);
 
     renderAuthorPage();
@@ -303,13 +286,7 @@ describe('AuthorPage', () => {
 
   it('clicks Add All to add all books in a series', async () => {
     const user = userEvent.setup();
-    vi.mocked(api.addBook).mockResolvedValue({
-      id: 10,
-      title: 'Added',
-      status: 'wanted',
-      createdAt: '2024-01-01',
-      updatedAt: '2024-01-01',
-    });
+    vi.mocked(api.addBook).mockResolvedValue(createMockBook({ id: 10, title: 'Added' }));
 
     renderAuthorPage();
 

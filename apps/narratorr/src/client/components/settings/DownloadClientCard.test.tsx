@@ -2,19 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockDownloadClient } from '@/__tests__/factories';
 import { DownloadClientCard } from './DownloadClientCard';
 import type { DownloadClient, TestResult } from '@/lib/api';
 import type { IdTestResult } from './SettingsCardShell';
 
-const mockClient: DownloadClient = {
-  id: 1,
-  name: 'My qBit',
-  type: 'qbittorrent',
-  enabled: true,
-  priority: 50,
-  settings: { host: 'localhost', port: 8080, username: 'admin', password: 'pass', useSsl: false },
-  createdAt: '2024-01-01T00:00:00Z',
-};
+const mockClient: DownloadClient = createMockDownloadClient({ id: 1, name: 'My qBit' });
 
 beforeEach(() => {
   vi.clearAllMocks();

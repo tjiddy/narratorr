@@ -3,7 +3,8 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
-import type { BookWithAuthor, SearchResult } from '@/lib/api';
+import type { SearchResult } from '@/lib/api';
+import { createMockBook } from '@/__tests__/factories';
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -27,15 +28,7 @@ vi.mock('sonner', () => ({
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 
-const mockBook: BookWithAuthor = {
-  id: 1,
-  title: 'The Way of Kings',
-  authorId: 1,
-  status: 'wanted',
-  createdAt: '2024-01-01T00:00:00Z',
-  updatedAt: '2024-01-01T00:00:00Z',
-  author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' },
-};
+const mockBook = createMockBook();
 
 const mockResults: SearchResult[] = [
   {

@@ -1,48 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { BookService } from './book.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 import type { MetadataService } from './metadata.service.js';
 
-const now = new Date();
-
-const mockAuthor = {
-  id: 1,
-  name: 'Brandon Sanderson',
-  slug: 'brandon-sanderson',
-  asin: null,
-  imageUrl: null,
-  bio: null,
-  monitored: false,
-  lastCheckedAt: null,
-  createdAt: now,
-  updatedAt: now,
-};
-
-const mockBook = {
-  id: 1,
-  title: 'The Way of Kings',
-  authorId: 1,
-  narrator: 'Michael Kramer',
-  description: 'An epic fantasy',
-  coverUrl: null,
-  goodreadsId: null,
-  audibleId: null,
-  asin: null,
-  isbn: null,
-  seriesName: null,
-  seriesPosition: null,
-  duration: null,
-  publishedDate: null,
-  genres: null,
-  status: 'wanted' as const,
-  enrichmentStatus: 'pending' as const,
-  path: null,
-  size: null,
-  createdAt: now,
-  updatedAt: now,
-};
+const mockAuthor = createMockDbAuthor();
+const mockBook = createMockDbBook();
 
 describe('BookService', () => {
   let db: ReturnType<typeof createMockDb>;

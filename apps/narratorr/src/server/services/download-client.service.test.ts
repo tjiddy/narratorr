@@ -1,20 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDbDownloadClient } from '../__tests__/factories.js';
 import { DownloadClientService } from './download-client.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 
-const now = new Date();
-
-const mockClient = {
-  id: 1,
-  name: 'qBittorrent',
-  type: 'qbittorrent' as const,
-  enabled: true,
-  priority: 50,
-  settings: { host: 'localhost', port: 8080, username: 'admin', password: 'pass', useSsl: false },
-  createdAt: now,
-};
+const mockClient = createMockDbDownloadClient();
 
 describe('DownloadClientService', () => {
   let db: ReturnType<typeof createMockDb>;

@@ -5,6 +5,7 @@ import { Routes, Route } from 'react-router-dom';
 import { render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createMockBook } from '@/__tests__/factories';
 import { BookPage } from './BookPage';
 
 vi.mock('@/lib/api', () => ({
@@ -24,27 +25,12 @@ vi.mock('sonner', () => ({
 
 import { api } from '@/lib/api';
 
-const mockLibraryBook = {
-  id: 1,
-  title: 'The Way of Kings',
-  authorId: 1,
-  narrator: 'Michael Kramer, Kate Reading',
-  description: '<p>An epic fantasy novel.</p>',
-  coverUrl: 'https://example.com/cover.jpg',
+const mockLibraryBook = createMockBook({
   asin: 'B00ABC1234',
-  isbn: null,
-  seriesName: 'The Stormlight Archive',
-  seriesPosition: 1,
+  narrator: 'Michael Kramer, Kate Reading',
   duration: 872,
-  publishedDate: '2010-08-31',
-  genres: ['Fantasy', 'Epic'],
-  status: 'wanted',
-  path: null,
-  size: null,
-  createdAt: '2024-01-01',
-  updatedAt: '2024-01-01',
   author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson', asin: 'A00SAND1234' },
-};
+});
 
 const mockMetadataBook = {
   title: 'The Way of Kings',

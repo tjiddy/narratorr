@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { formatDuration, mapBookMetadataToPayload, isBookInLibrary } from './helpers.js';
+import { createMockBook } from '@/__tests__/factories';
 import type { BookMetadata, BookWithAuthor } from './api/index.js';
 
 describe('formatDuration', () => {
@@ -101,15 +102,7 @@ describe('mapBookMetadataToPayload', () => {
 });
 
 describe('isBookInLibrary', () => {
-  const libraryBook: BookWithAuthor = {
-    id: 1,
-    title: 'The Way of Kings',
-    asin: 'B003P2WO5E',
-    status: 'available',
-    createdAt: '2024-01-01',
-    updatedAt: '2024-01-01',
-    author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' },
-  };
+  const libraryBook: BookWithAuthor = createMockBook();
 
   it('returns false for undefined libraryBooks', () => {
     const book: BookMetadata = { title: 'Test', authors: [{ name: 'Author' }] };

@@ -42,34 +42,20 @@ vi.mock('sonner', () => ({
 
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
+import { createMockSettings, createMockIndexer, createMockDownloadClient } from '@/__tests__/factories';
 
-const mockSettings = {
-  library: { path: '/audiobooks', folderFormat: '{author}/{title}' },
-  search: { intervalMinutes: 30, enabled: true, autoGrab: false },
+const mockSettings = createMockSettings({
+  search: { enabled: true, intervalMinutes: 30, autoGrab: false },
   import: { deleteAfterImport: false, minSeedTime: 0 },
-  general: { logLevel: 'info' as const },
-  metadata: { audibleRegion: 'us' as const },
-};
+});
 
-const mockIndexer = {
-  id: 1,
-  name: 'AudioBookBay',
-  type: 'abb' as const,
-  enabled: true,
-  priority: 50,
-  settings: { hostname: 'audiobookbay.lu', pageLimit: 2 },
-  createdAt: '2024-01-01T00:00:00Z',
-};
+const mockIndexer = createMockIndexer({ id: 1, name: 'AudioBookBay' });
 
-const mockClient = {
+const mockClient = createMockDownloadClient({
   id: 1,
   name: 'qBittorrent',
-  type: 'qbittorrent' as const,
-  enabled: true,
-  priority: 50,
   settings: { host: 'localhost', port: 8080, username: 'admin', password: 'secret', useSsl: false },
-  createdAt: '2024-01-01T00:00:00Z',
-};
+});
 
 function renderSettingsPage(route = '/settings/indexers') {
   const queryClient = new QueryClient({

@@ -2,29 +2,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockNotifier } from '@/__tests__/factories';
 import { NotifierCard } from './NotifierCard';
 import type { Notifier, TestResult } from '@/lib/api';
 import type { IdTestResult } from './SettingsCardShell';
 
-const mockNotifier: Notifier = {
-  id: 1,
-  name: 'My Webhook',
-  type: 'webhook',
-  enabled: true,
-  events: ['on_grab', 'on_import'],
-  settings: { url: 'https://example.com/hook', method: 'POST' },
-  createdAt: '2024-01-01T00:00:00Z',
-};
+const mockNotifier: Notifier = createMockNotifier({ id: 1 });
 
-const mockDiscordNotifier: Notifier = {
+const mockDiscordNotifier: Notifier = createMockNotifier({
   id: 2,
   name: 'Discord',
   type: 'discord',
-  enabled: true,
   events: ['on_grab', 'on_download_complete', 'on_import', 'on_failure'],
   settings: { webhookUrl: 'https://discord.com/api/webhooks/123/abc', includeCover: true },
-  createdAt: '2024-01-01T00:00:00Z',
-};
+});
 
 beforeEach(() => {
   vi.clearAllMocks();

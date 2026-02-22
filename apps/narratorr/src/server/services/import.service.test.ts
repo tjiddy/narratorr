@@ -24,44 +24,19 @@ vi.mock('@narratorr/core/utils/audio-scanner', () => ({
 import { mkdir, cp, stat, readdir, writeFile } from 'node:fs/promises';
 import { scanAudioDirectory } from '@narratorr/core/utils/audio-scanner';
 
+import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
+
 const now = new Date();
 
-const mockBook = {
-  id: 1,
-  title: 'The Way of Kings',
-  authorId: 1,
+const mockBook = createMockDbBook({
   narrator: null,
   description: null,
-  coverUrl: null,
-  goodreadsId: null,
-  audibleId: null,
-  asin: null,
-  isbn: null,
   seriesName: 'The Stormlight Archive',
   seriesPosition: 1,
-  duration: null,
-  publishedDate: null,
-  genres: null,
   status: 'downloading' as const,
-  enrichmentStatus: 'pending' as const,
-  path: null,
-  size: null,
-  createdAt: now,
-  updatedAt: now,
-};
+});
 
-const mockAuthor = {
-  id: 1,
-  name: 'Brandon Sanderson',
-  slug: 'brandon-sanderson',
-  asin: null,
-  imageUrl: null,
-  bio: null,
-  monitored: false,
-  lastCheckedAt: null,
-  createdAt: now,
-  updatedAt: now,
-};
+const mockAuthor = createMockDbAuthor();
 
 const mockDownload = {
   id: 1,

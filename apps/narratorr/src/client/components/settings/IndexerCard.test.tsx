@@ -2,29 +2,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockIndexer } from '@/__tests__/factories';
 import { IndexerCard } from './IndexerCard';
 import type { Indexer, TestResult } from '@/lib/api';
 import type { IdTestResult } from './SettingsCardShell';
 
-const mockIndexer: Indexer = {
-  id: 1,
-  name: 'My ABB',
-  type: 'abb',
-  enabled: true,
-  priority: 50,
-  settings: { hostname: 'audiobookbay.lu', pageLimit: 2 },
-  createdAt: '2024-01-01T00:00:00Z',
-};
+const mockIndexer: Indexer = createMockIndexer({ id: 1 });
 
-const mockTorznabIndexer: Indexer = {
+const mockTorznabIndexer: Indexer = createMockIndexer({
   id: 2,
   name: 'My Torznab',
   type: 'torznab',
   enabled: false,
   priority: 30,
   settings: { apiUrl: 'https://indexer.example.com/api', apiKey: 'secret123' },
-  createdAt: '2024-01-01T00:00:00Z',
-};
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
