@@ -29,11 +29,17 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **`status/in-progress`** → STOP — "Issue #<id> is already in progress."
    - **`status/blocked`** → STOP — "Issue #<id> is blocked. Check issue comments for details, or run `/resume <id>`."
 
-3. **Check for existing PRs:**
+3. **Extract reviewer suggestions from approval:**
+   - From the issue comments (step 1), find the most recent `## Spec Review` comment with `## Verdict: approve`
+   - If it has a `## Findings` JSON block with `suggestion` severity findings, extract them — these are refinements the reviewer identified that should be incorporated during implementation
+   - Carry these forward to include in the claim comment (step 5)
+   - If no approval comment or no suggestions, skip this step
+
+4. **Check for existing PRs:**
    - Run `gitea prs` and check if any open PR title contains `#<id>`.
    - If one exists, STOP: "PR already open for #<id>: <PR link>"
 
-4. **Explore the codebase** for implementation planning:
+5. **Explore the codebase** for implementation planning:
    - Read `.claude/project-context.md` for recent changes context
    - Read CLAUDE.md for design principles and conventions
    - Explore files/modules relevant to the issue scope
@@ -44,7 +50,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Phase 2 — Claim
 
-5. **Post a claim comment** on the issue:
+6. **Post a claim comment** on the issue:
    - Write the comment to a temp file, then post it:
    ```bash
    gitea issue-comment <id> --body-file <temp-file-path>
@@ -60,6 +66,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Verification: `<tests to run>`
    - Codebase findings: <relevant patterns, interfaces, wiring points>
    - Known learnings: <relevant learnings from `.claude/learnings/` and `.claude/debt.md`, or "none">
+   - Reviewer suggestions: <suggestion findings from the approval comment (step 3), or "none">
    - Design checklist:
        - [ ] Each new file has a single responsibility
        - [ ] No duplicated patterns — reuses existing hooks/components or extracts shared ones
@@ -69,14 +76,14 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    If any design check fails, note the mitigation.
    - Clean up the temp file after posting.
 
-6. **Set labels to `status/in-progress` + `stage/dev`** (keeping all other existing labels):
+7. **Set labels to `status/in-progress` + `stage/dev`** (keeping all other existing labels):
    - From the issue output, extract the current label names.
    - Replace any `status/*` label with `status/in-progress`.
    - Replace any `stage/*` label with `stage/dev` (or add `stage/dev` if none exists).
    - Run: `gitea issue-update <id> labels "<comma-separated label names>"`
    - Verify the output shows `status/in-progress` and `stage/dev`. If it doesn't, STOP and report the error.
 
-7. **Create the feature branch:**
+8. **Create the feature branch:**
    ```bash
    git stash --include-untracked
    git checkout main
@@ -93,7 +100,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    Note: `git stash pop` may silently succeed with no stash if working directory was clean — that's fine.
 
-8. **Extract test stubs from spec (if present).**
+9. **Extract test stubs from spec (if present).**
    Scan the issue body for `## User Interactions`, `## System Behaviors`, and `## Edge Cases (auto-generated)` sections (or equivalent interaction-style requirements like "user does X → Y" / "when X → Y" anywhere in the spec):
 
    **For User Interactions** (frontend):
@@ -118,4 +125,4 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    These stubs are the **minimum test coverage** — every spec interaction and system behavior must have a corresponding test. The implementer should add additional tests beyond these stubs for edge cases, error states, and implementation details discovered during development. The stubs are a floor, not a ceiling.
 
-9. Tell the user the issue is claimed and show the plan, including codebase findings from step 4.
+10. Tell the user the issue is claimed and show the plan, including codebase findings from step 5.
