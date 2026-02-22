@@ -1,13 +1,13 @@
 ---
-name: respond-to-review
+name: respond-to-pr-review
 description: Address review findings on a PR — fix, accept, defer, or dispute each
   finding, push fixes, and post a structured response. Use when user says "respond
-  to review", "address findings", or invokes /respond-to-review.
+  to PR review", "address PR findings", or invokes /respond-to-pr-review.
 argument-hint: <pr-number>
 disable-model-invocation: true
 ---
 
-# /respond-to-review <pr-number> — Address review findings on a PR
+# /respond-to-pr-review <pr-number> — Address review findings on a PR
 
 Author agent reads the review, addresses each finding with an explicit resolution, pushes fixes, and posts a structured response.
 
@@ -35,7 +35,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **`disputed`** — The finding is genuinely wrong. Provide a rebuttal with evidence (code references, docs, test results). Valid for `blocking` findings only — if you believe a blocking finding is incorrect, dispute it rather than silently accepting.
 
    **Root cause capture:** For every finding resolved as `fixed`, write a learning file to `.claude/learnings/` capturing what gap let this slip through. Create the directory if it doesn't exist.
-   - Filename: `.claude/learnings/review-<finding-id-lowercase>.md` (e.g., `review-f1.md`)
+   - Filename: `.claude/learnings/review-<issue-id>-<finding-id-lowercase>.md` (e.g., `review-158-f1.md`)
    - Format:
      ```yaml
      ---

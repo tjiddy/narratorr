@@ -1,19 +1,14 @@
 ---
 name: elaborate
-description: Groom, validate, or respond to spec review findings on a Gitea issue.
-  Auto-detects mode from issue comments. Use when user says "elaborate", "groom issue",
-  or invokes /elaborate.
+description: Groom and validate a Gitea issue spec. Checks completeness, explores
+  the codebase for gaps, and reports a structured readiness verdict. Use when user
+  says "elaborate", "groom issue", or invokes /elaborate.
 argument-hint: <issue-id>
 ---
 
-# /elaborate <id> — Groom, validate, or respond to spec review findings
+# /elaborate <id> — Groom and validate a Gitea issue spec
 
-Standalone grooming/triage skill with two modes:
-
-- **Groom mode** (default): Reads the issue, explores the codebase for gaps, checks dependencies, and reports a structured readiness verdict.
-- **Respond mode** (automatic): When the latest comment is a `/review-spec` verdict of `needs-work`, shifts to addressing the review findings — updates the spec body to fix each finding, posts a structured response comment, then reports readiness.
-
-Mode is detected automatically from issue comments — no flags needed.
+Standalone grooming/triage skill. Reads the issue, explores the codebase for gaps, checks dependencies, and reports a structured readiness verdict. Read-only except for updating the issue body with durable content (missing AC, test plan items, scope boundaries).
 
 ## Gitea CLI
 
@@ -25,7 +20,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 1. **Read the issue:** Run `gitea issue $ARGUMENTS` and capture the full output (title, body, labels, milestone).
 
-1b. **Check for spec review findings:** Run `gitea issue-comments <id>`. Look for the most recent comment containing `## Spec Review` and `## Verdict:`. If found and the verdict is `needs-work`, switch to **Respond mode** (jump to step R1). If the verdict is `approve` or no review comment exists, continue with **Groom mode** (step 2).
+1b. **Check for spec review findings:** Run `gitea issue-comments <id>`. Look for the most recent comment containing `## Spec Review` and `## Verdict:`. If found and the verdict is `needs-work`, **STOP**: "Issue #<id> has unresolved spec review findings. Run `/respond-to-spec-review <id>` to address them." If the verdict is `approve` or no review comment exists, continue with step 2.
 
 2. **Parse spec completeness.** Check the issue body for:
    - **Acceptance Criteria** — clear, testable statements (REQUIRED)
@@ -83,67 +78,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    Followed by a brief prose explanation (2-3 sentences max) of the verdict.
 
----
-
-## Respond Mode (spec review findings)
-
-Triggered automatically when the latest review comment has `Verdict: needs-work`.
-
-**R1. Parse the review findings.** Extract the `## Findings` JSON block from the latest review comment. For each finding, note:
-   - `id` (F1, F2, etc.)
-   - `severity` (blocking / suggestion)
-   - `category`, `description`, `reason`, `suggestion`
-
-**R2. Explore the codebase** as needed to address the findings. Same as groom mode step 4 — only explore for info not in the context cache.
-
-**R3. Address each finding.** For each finding, determine a disposition:
-   - **`fixed`** — Update the spec body to address the finding. Describe what changed.
-   - **`accepted`** — Agree with the finding but handle it differently than suggested. Explain why.
-   - **`deferred`** — Valid finding but out of scope. Create a chore issue if needed: `gitea issue-create "<title>" --body-file <path> "type/chore"`.
-   - **`disputed`** — Disagree with the finding. Explain why with evidence.
-
-   All `blocking` findings MUST be `fixed` or `disputed`. `suggestion` findings can be any disposition.
-
-   **Root cause capture:** For every finding resolved as `fixed`, write a learning file to `.claude/learnings/` capturing what gap let this slip through. Create the directory if it doesn't exist.
-   - Filename: `.claude/learnings/spec-review-<finding-id-lowercase>.md` (e.g., `spec-review-f1.md`)
-   - Format:
-     ```yaml
-     ---
-     scope: [<matching issue scope labels>]
-     files: []
-     issue: <issue-id>
-     source: spec-review
-     date: <YYYY-MM-DD>
-     ---
-     <What the reviewer caught, why the spec missed it, and what would have prevented it (vague AC? missing test plan? scope/claim mismatch? didn't check codebase?).>
-     ```
-   This feeds the same learning pipeline as PR review learnings — `/triage` can graduate recurring spec gaps into process fixes.
-
-**R4. Update the issue body.** Apply all `fixed` changes to the spec:
-   - Preserve ALL existing content structure
-   - Modify in-place where the finding points to a specific section (e.g., fix an AC item, add a Test Plan section)
-   - Write updated body to a temp file, then: `gitea issue-update <id> body --body-file <temp-file-path>`
-   - Clean up the temp file
-
-**R5. Post a response comment.** Write a structured response and post it:
-   ```
-   ## Spec Review Response
-
-   <1-2 sentence summary of changes made>
-
-   | Finding | Severity | Disposition | Detail |
-   |---------|----------|-------------|--------|
-   | F1 | blocking | fixed | <what changed> |
-   | F2 | suggestion | accepted | <why> |
-   ```
-   Write to temp file, then: `gitea issue-comment <id> --body-file <temp-file-path>`
-
-**R6. Report readiness verdict** — same format as groom mode step 8. The verdict reflects the spec's state *after* your fixes.
-
 ## Important
 
-- **Groom mode** is read-only except for updating the issue body (step 7) with durable content
-- **Respond mode** writes to the issue body (step R4) and posts a response comment (step R5)
-- Do NOT change labels or create branches in either mode — that's `/claim`'s job (groom) or `/review-spec`'s job (respond)
+- This skill is read-only except for updating the issue body (step 7) with durable content
+- Do NOT change labels or create branches — that's `/claim`'s job
 - Do NOT suggest claiming or starting implementation — just report readiness
 - Ephemeral codebase findings stay in the verdict output — they're consumed by `/claim` or the user, not persisted to the issue

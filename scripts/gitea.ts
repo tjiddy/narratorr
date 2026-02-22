@@ -21,6 +21,7 @@
 //   pr-comment <number> <body|--body-file path>
 //   pr-comments <number>       List all comments on a PR
 //   pr-merge <number> [merge|rebase|squash]  Merge a PR (default: squash)
+//   commit-status <ref>        Get combined CI status (branch/tag/SHA)
 //   whoami                     Print authenticated user's login name
 //
 // Reads GITEA_URL, GITEA_TOKEN, GITEA_OWNER, GITEA_REPO from
@@ -122,10 +123,26 @@ interface GiteaPR {
   title: string;
   body?: string;
   user: { login: string };
-  head: { label: string; ref: string };
+  head: { label: string; ref: string; sha: string };
   base: { label: string; ref: string };
   labels?: GiteaLabel[];
   html_url: string;
+}
+
+interface GiteaCommitStatus {
+  id: number;
+  status: string;
+  context: string;
+  description: string;
+  target_url: string;
+  created_at: string;
+}
+
+interface GiteaCombinedStatus {
+  state: string;
+  sha: string;
+  total_count: number;
+  statuses: GiteaCommitStatus[];
 }
 
 interface GiteaComment {
@@ -190,7 +207,7 @@ function fmtMilestones(milestones: GiteaMilestone[]): void {
 
 function fmtPR(pr: GiteaPR): void {
   console.log(`#${pr.number} [${pr.state}] ${pr.title}`);
-  console.log(`${pr.head.ref} → ${pr.base.ref} | author: ${pr.user.login} | ${pr.html_url}`);
+  console.log(`${pr.head.ref} → ${pr.base.ref} | author: ${pr.user.login} | sha: ${pr.head.sha} | ${pr.html_url}`);
   const labels = (pr.labels || []).map((l) => l.name).join(", ");
   if (labels) console.log(`labels: ${labels}`);
   if (pr.body) {
@@ -404,7 +421,7 @@ switch (cmd) {
       console.error("Usage: gitea issue-comments <id>");
       process.exit(1);
     }
-    const comments = await api<GiteaComment[]>(`/issues/${id}/comments`);
+    const comments = await api<GiteaComment[]>(`/issues/${id}/comments?limit=100`);
     fmtComments(comments);
     break;
   }
@@ -535,7 +552,7 @@ switch (cmd) {
       console.error("Usage: gitea pr-comments <number>");
       process.exit(1);
     }
-    const comments = await api<GiteaComment[]>(`/issues/${num}/comments`);
+    const comments = await api<GiteaComment[]>(`/issues/${num}/comments?limit=100`);
     fmtComments(comments);
     break;
   }
@@ -556,6 +573,24 @@ switch (cmd) {
       body: JSON.stringify({ Do: method }),
     });
     console.log(`PR #${num} merged via ${method}`);
+    break;
+  }
+
+  case "commit-status": {
+    const ref = args[0];
+    if (!ref) {
+      console.error("Usage: gitea commit-status <ref> (branch name, tag, or SHA)");
+      process.exit(1);
+    }
+    const status = await api<GiteaCombinedStatus>(`/commits/${ref}/status`);
+    if (status.total_count === 0) {
+      console.log(`CI: no status checks found for ${ref}`);
+    } else {
+      console.log(`CI: ${status.state} (${status.total_count} checks)`);
+      for (const s of status.statuses) {
+        console.log(`  ${s.context}: ${s.status}`);
+      }
+    }
     break;
   }
 
@@ -604,6 +639,7 @@ Commands:
   pr-comment <n> <body>      Add comment to PR
   pr-comments <number>       List all comments on a PR
   pr-merge <n> [method]      Merge PR (merge|rebase|squash, default: squash)
+  commit-status <ref>        Get combined CI status for a ref (branch/tag/SHA)
   whoami                     Print authenticated user's login name
 
 Body args accept --body-file <path> to read content from a file

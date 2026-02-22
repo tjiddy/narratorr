@@ -1,13 +1,13 @@
 ---
-name: review
+name: review-pr
 description: Review a PR against its linked issue's acceptance criteria. Posts structured
   findings with verdict, auto-merges on approve. Use when user says "review PR",
-  "review pull request", or invokes /review.
+  "review pull request", or invokes /review-pr.
 argument-hint: <pr-number>
 disable-model-invocation: true
 ---
 
-# /review <pr-number> — Review a pull request against its linked issue
+# /review-pr <pr-number> — Review a pull request against its linked issue
 
 Reviews a PR by checking the diff against the linked issue's acceptance criteria, the project's design principles, and code quality standards. Posts a structured review comment with machine-parseable findings.
 
@@ -22,8 +22,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Linked issue: parse `Refs #<id>` from PR body
 
 2. **Self-review guard:** Run `gitea whoami` to get your authenticated username. Compare against the PR author from step 1.
-   - If your username **matches** the PR author → **STOP**: "Cannot review your own PR. The authenticated user (`<username>`) is the PR author. Run `/review <pr>` from a session authenticated as a different Gitea user (e.g., the reviewer account)."
-   - Before stopping, consider: did the user actually want `/respond-to-review <pr>` instead? If the PR already has review comments with findings from another user, the user likely wants the author to address those findings — suggest `/respond-to-review <pr>` in your stop message.
+   - If your username **matches** the PR author → **STOP**: "Cannot review your own PR. The authenticated user (`<username>`) is the PR author. Run `/review-pr <pr>` from a session authenticated as a different Gitea user (e.g., the reviewer account)."
+   - Before stopping, consider: did the user actually want `/respond-to-pr-review <pr>` instead? If the PR already has review comments with findings from another user, the user likely wants the author to address those findings — suggest `/respond-to-pr-review <pr>` in your stop message.
    - If they differ → proceed (you are a different user than the author).
 
 3. **Read linked issue:** Run `gitea issue <id>`. Extract the **Acceptance Criteria** section.
@@ -89,7 +89,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 11. **Classify findings** — For **every** issue found in steps 6-9 (including 7b), create a finding entry and assign a `severity` value. **Audit yourself**: re-read the Architecture Review table from step 8 and the test quality checks from step 7b. If any row says "violation" or any test quality issue was noted, there MUST be a corresponding finding below. An issue noted in a table but absent from findings is a review defect.
     - **`"blocking"`**: Must fix before merge. Bugs, missing AC, security issues, missing tests for new behavior, clear design principle violations (SRP, DRY, Open/Closed).
     - **`"suggestion"`**: Worth considering but not a merge blocker. Minor improvements, alternative approaches, potential future issues.
-    - Do NOT use other severity terms like "high", "medium", "low", "critical" — only `"blocking"` or `"suggestion"`. This is consumed by `/respond-to-review` which has different resolution rules per severity.
+    - Do NOT use other severity terms like "high", "medium", "low", "critical" — only `"blocking"` or `"suggestion"`. This is consumed by `/respond-to-pr-review` which has different resolution rules per severity.
     - Every finding MUST include a concrete "why" — what breaks, what's inconsistent, what principle is violated. No vague "this could be better."
 
 12. **Post review comment on PR:**
@@ -148,7 +148,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
     - If merge fails, report the error — do not retry
 
     **If verdict is `needs-work`:**
-    - **STOP.** Do not attempt to fix anything — that's the author's job via `/respond-to-review`
+    - **STOP.** Do not attempt to fix anything — that's the author's job via `/respond-to-pr-review`
     - Report findings to the main agent and wait for human to trigger the next cycle
 
 14. **Report to main agent:** Overall verdict + outcome (merged or awaiting author response).
@@ -158,6 +158,6 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 - If no `Refs #<id>` found in PR body, ask the user which issue to review against
 - The diff can be large — focus on changed files, not the entire codebase
 - Be constructive — flag real issues, not style preferences
-- The `## Findings` JSON block is consumed by `/respond-to-review` — ensure it is valid JSON with `severity` values of exactly `"blocking"` or `"suggestion"` (no other terms)
+- The `## Findings` JSON block is consumed by `/respond-to-pr-review` — ensure it is valid JSON with `severity` values of exactly `"blocking"` or `"suggestion"` (no other terms)
 - An `approve` verdict means zero blocking findings. Any blocking finding → `needs-work`
 - If there are no findings at all, use an empty array: `[]`

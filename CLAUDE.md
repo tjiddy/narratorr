@@ -57,7 +57,7 @@ pnpm typecheck     # TypeScript checking
 
 All issues with `scope/frontend` must include a UI/UX design pass during implementation. New or significantly changed UI components should be refined using the `frontend-design` skill before handoff. The goal is production-grade polish — not just functional markup. This is enforced at two points:
 - `/implement` runs the design pass proactively after quality gates pass
-- `/review` checks that frontend components meet the app's design standard and flags unpolished UI as a blocking finding
+- `/review-pr` checks that frontend components meet the app's design standard and flags unpolished UI as a blocking finding
 
 ## Code Style
 
@@ -122,10 +122,11 @@ Claude Code skills automate the agent workflow — use these instead of manual s
 - `/claim <id>` — Validate spec (via subagent) + claim issue (use when implementing manually)
 - `/handoff <id>` — Verify, push, create PR, post handoff comment, update context cache
 - `/block <id>` — Post blocked comment, set blocked label, stop
-- `/elaborate <id>` — Groom/triage an issue without claiming (read-only, structured verdict)
+- `/elaborate <id>` — Groom/validate an issue spec (read-only, structured verdict)
 - `/verify` — Run quality gates (lint, test, typecheck, build) with structured summary
-- `/review <pr>` — Review a PR against its linked issue's acceptance criteria; auto-merges on approve, stops on needs-work
-- `/respond-to-review <pr>` — Address review findings: fix, accept, defer, or dispute each finding, push fixes, post structured response
+- `/review-pr <pr>` — Review a PR against its linked issue's acceptance criteria; auto-merges on approve, stops on needs-work
+- `/respond-to-pr-review <pr>` — Address PR review findings: fix, accept, defer, or dispute each finding, push fixes, post structured response
+- `/respond-to-spec-review <id>` — Address spec review findings: update spec body, post structured response
 - `/merge <pr>` — Merge an approved PR (checks verdict, quality gates, updates issue labels, cleans up branch)
 - `/triage` — Rank and categorize all open issues (read-only)
 - `/resume <id>` — Resume a blocked issue (restore branch, update labels)
@@ -145,9 +146,9 @@ A detailed plan, pre-made spec, or explicit implementation instructions do NOT b
 3. **After tests/typecheck/build pass** → `/handoff <id>` (pushes, creates PR, comments, updates labels, appends workflow log)
 
 **PR review cycle:**
-1. `/review <pr>` — reviewer posts structured findings with verdict
-2. `/respond-to-review <pr>` — author addresses each finding (fix/accept/defer/dispute), pushes, posts response
-3. `/review <pr>` — re-review after fixes (repeat until approved)
+1. `/review-pr <pr>` — reviewer posts structured findings with verdict
+2. `/respond-to-pr-review <pr>` — author addresses each finding (fix/accept/defer/dispute), pushes, posts response
+3. `/review-pr <pr>` — re-review after fixes (repeat until approved)
 4. `/merge <pr>` — squash merge once verdict is `approve`
 
 **Standalone tools:**
@@ -158,10 +159,10 @@ Skipping `/claim` means no validation, no branch, no tracking, no audit trail.
 Skipping `/handoff` means no PR, no label update, no workflow log entry.
 
 **Workflow guardrails:**
-- **No pausing between sub-skills.** When `/claim`, `/verify`, or `/handoff` returns inside a parent skill (`/implement`, `/respond-to-review`), immediately continue the parent flow. These are mid-flow return values, not stopping points.
-- **Self-review guard.** `/review` checks the current user against the PR author — if they match, it STOPs and suggests `/respond-to-review` instead.
+- **No pausing between sub-skills.** When `/claim`, `/verify`, or `/handoff` returns inside a parent skill (`/implement`, `/respond-to-pr-review`), immediately continue the parent flow. These are mid-flow return values, not stopping points.
+- **Self-review guard.** `/review-pr` checks the current user against the PR author — if they match, it STOPs and suggests `/respond-to-pr-review` instead.
 - **Merge author validation.** `/merge` requires the most recent `approve` verdict to come from a different user than the PR author. Stale approvals (superseded by `needs-work`) are ignored.
-- **Dispute escalation.** If `/respond-to-review` disputes a blocking finding, the issue goes `status/blocked` + `stage/review` and STOPs for human input.
+- **Dispute escalation.** If `/respond-to-pr-review` disputes a blocking finding, the issue goes `status/blocked` + `stage/review` and STOPs for human input.
 - **Auto-maintained files.** `/handoff` auto-updates `.claude/project-context.md` (recent changes, 10-entry cap) and prepends to `.claude/workflow-log.md`.
 
 ### Labels (2-axis model)

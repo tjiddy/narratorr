@@ -2,6 +2,7 @@
 name: spec
 description: Create a new Gitea issue from the spec template. Use when user says
   "new issue", "create issue", "write a spec", or invokes /spec.
+argument-hint: <title>
 ---
 
 # /spec <title> — Create a Gitea issue from template

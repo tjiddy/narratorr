@@ -32,27 +32,13 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Scan comments for any `## Status: needs-human-input` that hasn't been followed by a new review cycle
    - If unresolved disputes exist, stop and report — human must weigh in first
 
-4. **Verify quality gates:**
-   - Check if a recent `/verify` run passed (look for verify output in recent comments or conversation)
-   - If no recent verification, launch a **haiku subagent** (Task tool, `subagent_type: "Bash"`, `model: "haiku"`) to run gates:
-
-     > Run these commands sequentially from the repo root. Use `--no-color` flag where supported. For each command, capture the exit code and extract only failure details (first 3-5 actionable error lines). Stop on first failure — report remaining as `skipped`.
-     >
-     > 1. `pnpm lint`
-     > 2. `pnpm test`
-     > 3. `pnpm typecheck`
-     > 4. `pnpm build`
-     >
-     > Return ONLY this structured summary (no other output):
-     > ```
-     > LINT: pass | fail (N errors: <first 3>)
-     > TEST: pass (N suites, M tests) | fail (N failed: <test names>)
-     > TYPECHECK: pass | fail (<first 5 errors>)
-     > BUILD: pass | fail (<error summary>)
-     > OVERALL: pass | fail
-     > ```
-
-   - All gates must pass. If OVERALL: fail → stop and report
+4. **Verify CI status:**
+   - Extract the head SHA from the PR details (step 1 output, `sha: <value>`)
+   - Run `gitea commit-status <sha>` to check the combined CI status
+   - If `CI: success` → proceed to merge
+   - If `CI: pending` → **STOP**: "CI checks are still running for this PR. Wait for CI to complete and re-run `/merge`."
+   - If `CI: failure` or `CI: error` → **STOP**: "CI checks failed. Fix the failures, push, and re-run `/merge`." Include the per-check status output.
+   - If `CI: no status checks found` → **STOP**: "No CI status checks found for this PR. Either CI hasn't run or isn't configured for this branch. Run `/verify` manually or push to trigger CI."
 
 5. **Merge the PR:**
    - `gitea pr-merge <pr-number>` (defaults to squash — one clean commit on main)

@@ -269,9 +269,11 @@ If you're using Claude Code, workflow skills automate the steps above:
 | `/claim <id>` | Validate spec + claim issue |
 | `/handoff <id>` | Verify, push, create PR, update labels |
 | `/block <id>` | Post blocked comment, set labels, stop |
-| `/elaborate <id>` | Groom/triage without claiming (read-only) |
+| `/elaborate <id>` | Groom/validate issue spec (read-only) |
 | `/verify` | Run quality gates with structured summary |
-| `/review <pr>` | Review PR against linked issue AC |
+| `/review-pr <pr>` | Review PR against linked issue AC |
+| `/respond-to-pr-review <pr>` | Address PR review findings |
+| `/respond-to-spec-review <id>` | Address spec review findings |
 | `/triage` | Rank and categorize open issues |
 | `/resume <id>` | Resume a blocked issue |
 | `/changelog [since]` | Generate changelog from git history |

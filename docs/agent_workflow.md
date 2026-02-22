@@ -9,7 +9,7 @@ This document defines the **implementor workflow** for working Gitea issues in t
 **Goal:** Take a `status/ready` issue → implement on a branch → open a PR → update the issue for downstream agents (review/QA/merge).
 **Do NOT merge** unless explicitly instructed.
 
-> **Skills available:** `/implement <id>`, `/claim <id>`, `/handoff <id>`, `/block <id>`, `/elaborate <id>` automate the steps below. Use these for the standard workflow; refer to this doc for edge cases and templates.
+> **Skills available:** `/implement <id>`, `/claim <id>`, `/handoff <id>`, `/block <id>`, `/elaborate <id>`, `/review-pr <pr>`, `/respond-to-pr-review <pr>`, `/respond-to-spec-review <id>` automate the steps below. Use these for the standard workflow; refer to this doc for edge cases and templates.
 
 ---
 
