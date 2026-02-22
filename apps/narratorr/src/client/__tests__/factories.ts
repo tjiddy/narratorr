@@ -1,4 +1,4 @@
-import type { Author, BookWithAuthor } from '../lib/api/books.js';
+import type { Author, BookWithAuthor, BookMetadata, AuthorMetadata } from '../lib/api/books.js';
 import type { DownloadClient } from '../lib/api/download-clients.js';
 import type { Indexer } from '../lib/api/indexers.js';
 import type { Notifier } from '../lib/api/notifiers.js';
@@ -101,6 +101,32 @@ export function createMockNotifier(overrides?: Partial<Notifier>): Notifier {
     events: ['on_grab', 'on_import'],
     settings: { url: 'https://example.com/hook', method: 'POST' },
     createdAt: '2024-01-01T00:00:00Z',
+    ...overrides,
+  };
+}
+
+export function createMockBookMetadata(overrides?: Partial<BookMetadata>): BookMetadata {
+  return {
+    asin: 'B003P2WO5E',
+    title: 'The Way of Kings',
+    authors: [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }],
+    narrators: ['Michael Kramer', 'Kate Reading'],
+    series: [{ name: 'The Stormlight Archive', position: 1 }],
+    description: 'An epic fantasy novel',
+    coverUrl: 'https://example.com/cover.jpg',
+    duration: 2700,
+    genres: ['Fantasy', 'Epic', 'Adventure'],
+    ...overrides,
+  };
+}
+
+export function createMockAuthorMetadata(overrides?: Partial<AuthorMetadata>): AuthorMetadata {
+  return {
+    asin: 'B001IGFHW6',
+    name: 'Brandon Sanderson',
+    description: 'American author of epic fantasy',
+    imageUrl: 'https://example.com/author.jpg',
+    genres: ['Fantasy', 'Science Fiction'],
     ...overrides,
   };
 }
