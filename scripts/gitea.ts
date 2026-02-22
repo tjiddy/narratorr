@@ -7,6 +7,7 @@
 //   issue <id>                  Get issue details
 //   issue-create <title> <body|--body-file path> [labels] [milestone]
 //   issue-update <id> <state|labels|milestone|title|body> <value|--body-file path>
+//   issue-comments <id>         List all comments on an issue
 //   issue-comment <id> <body|--body-file path>
 //   labels                      List all labels
 //   label-create <name> <color> [description]
@@ -396,6 +397,17 @@ switch (cmd) {
     break;
   }
 
+  case "issue-comments": {
+    const id = args[0];
+    if (!id) {
+      console.error("Usage: gitea issue-comments <id>");
+      process.exit(1);
+    }
+    const comments = await api<GiteaComment[]>(`/issues/${id}/comments`);
+    fmtComments(comments);
+    break;
+  }
+
   case "issue-comment": {
     const id = args[0];
     const [body] = extractBody(args.slice(1));
@@ -578,6 +590,7 @@ Commands:
   issue <id>                  Get issue details
   issue-create <t> <b> [l] [m]  Create issue
   issue-update <id> <f> <v>  Update field (state/labels/milestone/title/body)
+  issue-comments <id>       List all comments on an issue
   issue-comment <id> <body>  Add comment
   labels                     List labels
   label-create <n> <c> [d]   Create label
