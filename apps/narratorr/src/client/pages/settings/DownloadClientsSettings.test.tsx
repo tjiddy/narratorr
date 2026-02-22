@@ -3,6 +3,15 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockDownloadClient } from '@/__tests__/factories';
+import {
+  waitForListLoad,
+  assertDeleteFlow,
+  assertCancelDelete,
+  assertDeleteError,
+  assertToggleAddForm,
+  assertSuccessToast,
+  assertErrorToast,
+} from '@/__tests__/crud-settings-helpers';
 import { DownloadClientsSettings } from './DownloadClientsSettings';
 import type { Mock } from 'vitest';
 
@@ -22,7 +31,6 @@ vi.mock('sonner', () => ({
 }));
 
 import { api } from '@/lib/api';
-import { toast } from 'sonner';
 
 const mockClients = [
   createMockDownloadClient({ id: 1 }),
@@ -46,9 +54,7 @@ describe('DownloadClientsSettings', () => {
     renderWithProviders(<DownloadClientsSettings />);
 
     expect(screen.getByText('Download Clients')).toBeInTheDocument();
-    await waitFor(() => {
-      expect(screen.getByText('My qBittorrent')).toBeInTheDocument();
-    });
+    await waitForListLoad('My qBittorrent');
     expect(screen.getByText('My SABnzbd')).toBeInTheDocument();
   });
 
@@ -64,33 +70,21 @@ describe('DownloadClientsSettings', () => {
   it('toggles add form when Add Client button is clicked', async () => {
     const user = userEvent.setup();
     renderWithProviders(<DownloadClientsSettings />);
+    await waitForListLoad('My qBittorrent');
 
-    await waitFor(() => {
-      expect(screen.getByText('My qBittorrent')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByText('Add Client').closest('button')!);
-    expect(screen.getByText('Add Download Client')).toBeInTheDocument();
-
-    await user.click(screen.getByText('Cancel').closest('button')!);
-    expect(screen.queryByText('Add Download Client')).not.toBeInTheDocument();
+    await assertToggleAddForm(user, 'Add Client', 'Add Download Client');
   });
 
   it('creates a new download client', async () => {
     const user = userEvent.setup();
     (api.createClient as Mock).mockResolvedValue({ id: 3, name: 'New Client', type: 'qbittorrent', enabled: true, priority: 50, settings: {}, createdAt: '2024-01-01T00:00:00Z' });
     renderWithProviders(<DownloadClientsSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My qBittorrent')).toBeInTheDocument();
-    });
+    await waitForListLoad('My qBittorrent');
 
     await user.click(screen.getByText('Add Client').closest('button')!);
     await user.type(screen.getByPlaceholderText('qBittorrent'), 'New Client');
     await user.type(screen.getByPlaceholderText('localhost'), '192.168.1.5');
-
-    const submitButton = screen.getByRole('button', { name: /Add Client/i });
-    await user.click(submitButton);
+    await user.click(screen.getByRole('button', { name: /Add Client/i }));
 
     await waitFor(() => {
       expect(api.createClient).toHaveBeenCalled();
@@ -100,39 +94,28 @@ describe('DownloadClientsSettings', () => {
       settings: expect.objectContaining({ host: '192.168.1.5' }),
     });
 
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Download client added successfully');
-    });
+    await assertSuccessToast('Download client added successfully');
   });
 
   it('shows error toast when create fails', async () => {
     const user = userEvent.setup();
     (api.createClient as Mock).mockRejectedValue(new Error('fail'));
     renderWithProviders(<DownloadClientsSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My qBittorrent')).toBeInTheDocument();
-    });
+    await waitForListLoad('My qBittorrent');
 
     await user.click(screen.getByText('Add Client').closest('button')!);
     await user.type(screen.getByPlaceholderText('qBittorrent'), 'Fail');
     await user.type(screen.getByPlaceholderText('localhost'), 'example.com');
-
     await user.click(screen.getByRole('button', { name: /Add Client/i }));
 
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to add download client');
-    });
+    await assertErrorToast('Failed to add download client');
   });
 
   it('switches to edit mode and updates a client', async () => {
     const user = userEvent.setup();
     (api.updateClient as Mock).mockResolvedValue({ ...mockClients[0], name: 'Updated' });
     renderWithProviders(<DownloadClientsSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My qBittorrent')).toBeInTheDocument();
-    });
+    await waitForListLoad('My qBittorrent');
 
     await user.click(screen.getByLabelText('Edit My qBittorrent'));
     expect(screen.getByText('Edit Download Client')).toBeInTheDocument();
@@ -149,103 +132,53 @@ describe('DownloadClientsSettings', () => {
     expect(id).toBe(1);
     expect(data).toMatchObject({ name: 'Updated' });
 
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Download client updated');
-    });
+    await assertSuccessToast('Download client updated');
   });
 
   it('shows error toast when update fails', async () => {
     const user = userEvent.setup();
     (api.updateClient as Mock).mockRejectedValue(new Error('fail'));
     renderWithProviders(<DownloadClientsSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My qBittorrent')).toBeInTheDocument();
-    });
+    await waitForListLoad('My qBittorrent');
 
     await user.click(screen.getByLabelText('Edit My qBittorrent'));
     await user.click(screen.getByText('Save Changes'));
 
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to update download client');
-    });
+    await assertErrorToast('Failed to update download client');
   });
 
   it('opens delete modal and deletes a client', async () => {
     const user = userEvent.setup();
     (api.deleteClient as Mock).mockResolvedValue({});
     renderWithProviders(<DownloadClientsSettings />);
+    await waitForListLoad('My qBittorrent');
 
-    await waitFor(() => {
-      expect(screen.getByText('My qBittorrent')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByLabelText('Delete My qBittorrent'));
-
-    const dialog = screen.getByRole('dialog');
-    expect(screen.getByText(/Are you sure you want to delete "My qBittorrent"/)).toBeInTheDocument();
-
-    const confirmButton = Array.from(dialog.querySelectorAll('button')).find(
-      (btn) => btn.textContent === 'Delete',
-    )!;
-    await user.click(confirmButton);
-
-    await waitFor(() => {
-      expect((api.deleteClient as Mock).mock.calls[0][0]).toBe(1);
-    });
-
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Download client removed successfully');
-    });
+    await assertDeleteFlow(user, 'My qBittorrent', api.deleteClient as Mock, 1, 'Download client');
   });
 
   it('cancels delete confirmation', async () => {
     const user = userEvent.setup();
     renderWithProviders(<DownloadClientsSettings />);
+    await waitForListLoad('My qBittorrent');
 
-    await waitFor(() => {
-      expect(screen.getByText('My qBittorrent')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByLabelText('Delete My qBittorrent'));
-    await user.click(screen.getByText('Cancel'));
-
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(api.deleteClient).not.toHaveBeenCalled();
+    await assertCancelDelete(user, 'My qBittorrent', api.deleteClient as Mock);
   });
 
   it('shows error toast when delete fails', async () => {
     const user = userEvent.setup();
     (api.deleteClient as Mock).mockRejectedValue(new Error('fail'));
     renderWithProviders(<DownloadClientsSettings />);
+    await waitForListLoad('My qBittorrent');
 
-    await waitFor(() => {
-      expect(screen.getByText('My qBittorrent')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByLabelText('Delete My qBittorrent'));
-
-    const dialog = screen.getByRole('dialog');
-    const confirmButton = Array.from(dialog.querySelectorAll('button')).find(
-      (btn) => btn.textContent === 'Delete',
-    )!;
-    await user.click(confirmButton);
-
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to delete download client');
-    });
+    await assertDeleteError(user, 'My qBittorrent', 'Download client');
   });
 
   it('shows validation errors when submitting empty name', async () => {
     const user = userEvent.setup();
     renderWithProviders(<DownloadClientsSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My qBittorrent')).toBeInTheDocument();
-    });
+    await waitForListLoad('My qBittorrent');
 
     await user.click(screen.getByText('Add Client').closest('button')!);
-    // Fill host but leave name empty
     await user.type(screen.getByPlaceholderText('localhost'), 'example.com');
     await user.click(screen.getByRole('button', { name: /Add Client/i }));
 
@@ -258,13 +191,9 @@ describe('DownloadClientsSettings', () => {
   it('shows validation errors when submitting empty host', async () => {
     const user = userEvent.setup();
     renderWithProviders(<DownloadClientsSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My qBittorrent')).toBeInTheDocument();
-    });
+    await waitForListLoad('My qBittorrent');
 
     await user.click(screen.getByText('Add Client').closest('button')!);
-    // Fill name but leave host empty
     await user.type(screen.getByPlaceholderText('qBittorrent'), 'Test');
     await user.click(screen.getByRole('button', { name: /Add Client/i }));
 
@@ -278,10 +207,7 @@ describe('DownloadClientsSettings', () => {
     const user = userEvent.setup();
     (api.testClient as Mock).mockResolvedValue({ success: true, message: 'Connected' });
     renderWithProviders(<DownloadClientsSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My qBittorrent')).toBeInTheDocument();
-    });
+    await waitForListLoad('My qBittorrent');
 
     const testButtons = screen.getAllByText('Test').map((el) => el.closest('button')!);
     await user.click(testButtons[0]);

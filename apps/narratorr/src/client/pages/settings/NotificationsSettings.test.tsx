@@ -3,6 +3,15 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockNotifier } from '@/__tests__/factories';
+import {
+  waitForListLoad,
+  assertDeleteFlow,
+  assertCancelDelete,
+  assertDeleteError,
+  assertToggleAddForm,
+  assertSuccessToast,
+  assertErrorToast,
+} from '@/__tests__/crud-settings-helpers';
 import { NotificationsSettings } from './NotificationsSettings';
 import type { Mock } from 'vitest';
 
@@ -22,7 +31,6 @@ vi.mock('sonner', () => ({
 }));
 
 import { api } from '@/lib/api';
-import { toast } from 'sonner';
 
 const mockNotifiers = [
   createMockNotifier({
@@ -51,9 +59,7 @@ describe('NotificationsSettings', () => {
     renderWithProviders(<NotificationsSettings />);
 
     expect(screen.getByText('Notifications')).toBeInTheDocument();
-    await waitFor(() => {
-      expect(screen.getByText('My Discord')).toBeInTheDocument();
-    });
+    await waitForListLoad('My Discord');
     expect(screen.getByText('My Webhook')).toBeInTheDocument();
   });
 
@@ -69,26 +75,16 @@ describe('NotificationsSettings', () => {
   it('toggles add form when Add Notifier button is clicked', async () => {
     const user = userEvent.setup();
     renderWithProviders(<NotificationsSettings />);
+    await waitForListLoad('My Discord');
 
-    await waitFor(() => {
-      expect(screen.getByText('My Discord')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByText('Add Notifier').closest('button')!);
-    expect(screen.getByText('Add New Notifier')).toBeInTheDocument();
-
-    await user.click(screen.getByText('Cancel').closest('button')!);
-    expect(screen.queryByText('Add New Notifier')).not.toBeInTheDocument();
+    await assertToggleAddForm(user, 'Add Notifier', 'Add New Notifier');
   });
 
   it('creates a new notifier', async () => {
     const user = userEvent.setup();
     (api.createNotifier as Mock).mockResolvedValue({ id: 3, name: 'New', type: 'discord', enabled: true, events: [], settings: {}, createdAt: '2024-01-01T00:00:00Z' });
     renderWithProviders(<NotificationsSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My Discord')).toBeInTheDocument();
-    });
+    await waitForListLoad('My Discord');
 
     await user.click(screen.getByText('Add Notifier').closest('button')!);
     await user.type(screen.getByPlaceholderText('My Webhook'), 'New Discord');
@@ -107,39 +103,28 @@ describe('NotificationsSettings', () => {
       type: 'discord',
     });
 
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Notifier added successfully');
-    });
+    await assertSuccessToast('Notifier added successfully');
   });
 
   it('shows error toast when create fails', async () => {
     const user = userEvent.setup();
     (api.createNotifier as Mock).mockRejectedValue(new Error('fail'));
     renderWithProviders(<NotificationsSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My Discord')).toBeInTheDocument();
-    });
+    await waitForListLoad('My Discord');
 
     await user.click(screen.getByText('Add Notifier').closest('button')!);
     await user.type(screen.getByPlaceholderText('My Webhook'), 'Fail');
     await user.type(screen.getByPlaceholderText('https://example.com/webhook'), 'https://example.com');
-
     await user.click(screen.getByRole('button', { name: /Add Notifier/i }));
 
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to add notifier');
-    });
+    await assertErrorToast('Failed to add notifier');
   });
 
   it('switches to edit mode and updates a notifier', async () => {
     const user = userEvent.setup();
     (api.updateNotifier as Mock).mockResolvedValue({ ...mockNotifiers[0], name: 'Updated' });
     renderWithProviders(<NotificationsSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My Discord')).toBeInTheDocument();
-    });
+    await waitForListLoad('My Discord');
 
     await user.click(screen.getByLabelText('Edit My Discord'));
     expect(screen.getByText('Edit Notifier')).toBeInTheDocument();
@@ -156,103 +141,53 @@ describe('NotificationsSettings', () => {
     expect(id).toBe(1);
     expect(data).toMatchObject({ name: 'Updated' });
 
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Notifier updated');
-    });
+    await assertSuccessToast('Notifier updated');
   });
 
   it('shows error toast when update fails', async () => {
     const user = userEvent.setup();
     (api.updateNotifier as Mock).mockRejectedValue(new Error('fail'));
     renderWithProviders(<NotificationsSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My Discord')).toBeInTheDocument();
-    });
+    await waitForListLoad('My Discord');
 
     await user.click(screen.getByLabelText('Edit My Discord'));
     await user.click(screen.getByText('Save Changes'));
 
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to update notifier');
-    });
+    await assertErrorToast('Failed to update notifier');
   });
 
   it('opens delete modal and deletes a notifier', async () => {
     const user = userEvent.setup();
     (api.deleteNotifier as Mock).mockResolvedValue({});
     renderWithProviders(<NotificationsSettings />);
+    await waitForListLoad('My Discord');
 
-    await waitFor(() => {
-      expect(screen.getByText('My Discord')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByLabelText('Delete My Discord'));
-
-    const dialog = screen.getByRole('dialog');
-    expect(screen.getByText(/Are you sure you want to delete "My Discord"/)).toBeInTheDocument();
-
-    const confirmButton = Array.from(dialog.querySelectorAll('button')).find(
-      (btn) => btn.textContent === 'Delete',
-    )!;
-    await user.click(confirmButton);
-
-    await waitFor(() => {
-      expect((api.deleteNotifier as Mock).mock.calls[0][0]).toBe(1);
-    });
-
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Notifier removed successfully');
-    });
+    await assertDeleteFlow(user, 'My Discord', api.deleteNotifier as Mock, 1, 'Notifier');
   });
 
   it('cancels delete confirmation', async () => {
     const user = userEvent.setup();
     renderWithProviders(<NotificationsSettings />);
+    await waitForListLoad('My Discord');
 
-    await waitFor(() => {
-      expect(screen.getByText('My Discord')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByLabelText('Delete My Discord'));
-    await user.click(screen.getByText('Cancel'));
-
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(api.deleteNotifier).not.toHaveBeenCalled();
+    await assertCancelDelete(user, 'My Discord', api.deleteNotifier as Mock);
   });
 
   it('shows error toast when delete fails', async () => {
     const user = userEvent.setup();
     (api.deleteNotifier as Mock).mockRejectedValue(new Error('fail'));
     renderWithProviders(<NotificationsSettings />);
+    await waitForListLoad('My Discord');
 
-    await waitFor(() => {
-      expect(screen.getByText('My Discord')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByLabelText('Delete My Discord'));
-
-    const dialog = screen.getByRole('dialog');
-    const confirmButton = Array.from(dialog.querySelectorAll('button')).find(
-      (btn) => btn.textContent === 'Delete',
-    )!;
-    await user.click(confirmButton);
-
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to delete notifier');
-    });
+    await assertDeleteError(user, 'My Discord', 'Notifier');
   });
 
   it('shows validation errors when submitting empty name', async () => {
     const user = userEvent.setup();
     renderWithProviders(<NotificationsSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My Discord')).toBeInTheDocument();
-    });
+    await waitForListLoad('My Discord');
 
     await user.click(screen.getByText('Add Notifier').closest('button')!);
-    // Fill URL but leave name empty
     await user.type(screen.getByPlaceholderText('https://example.com/webhook'), 'https://example.com');
     await user.click(screen.getByRole('button', { name: /Add Notifier/i }));
 
@@ -265,13 +200,9 @@ describe('NotificationsSettings', () => {
   it('shows validation errors when submitting without required settings', async () => {
     const user = userEvent.setup();
     renderWithProviders(<NotificationsSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My Discord')).toBeInTheDocument();
-    });
+    await waitForListLoad('My Discord');
 
     await user.click(screen.getByText('Add Notifier').closest('button')!);
-    // Fill name but leave URL empty (webhook type requires url)
     await user.type(screen.getByPlaceholderText('My Webhook'), 'Test');
     await user.click(screen.getByRole('button', { name: /Add Notifier/i }));
 
@@ -285,10 +216,7 @@ describe('NotificationsSettings', () => {
     const user = userEvent.setup();
     (api.testNotifier as Mock).mockResolvedValue({ success: true, message: 'Sent' });
     renderWithProviders(<NotificationsSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My Discord')).toBeInTheDocument();
-    });
+    await waitForListLoad('My Discord');
 
     const testButtons = screen.getAllByText('Test').map((el) => el.closest('button')!);
     await user.click(testButtons[0]);

@@ -3,6 +3,15 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockIndexer } from '@/__tests__/factories';
+import {
+  waitForListLoad,
+  assertDeleteFlow,
+  assertCancelDelete,
+  assertDeleteError,
+  assertToggleAddForm,
+  assertSuccessToast,
+  assertErrorToast,
+} from '@/__tests__/crud-settings-helpers';
 import { IndexersSettings } from './IndexersSettings';
 import type { Mock } from 'vitest';
 
@@ -22,7 +31,6 @@ vi.mock('sonner', () => ({
 }));
 
 import { api } from '@/lib/api';
-import { toast } from 'sonner';
 
 const mockIndexers = [
   createMockIndexer({ id: 1 }),
@@ -46,9 +54,7 @@ describe('IndexersSettings', () => {
     renderWithProviders(<IndexersSettings />);
 
     expect(screen.getByText('Indexers')).toBeInTheDocument();
-    await waitFor(() => {
-      expect(screen.getByText('My ABB')).toBeInTheDocument();
-    });
+    await waitForListLoad('My ABB');
     expect(screen.getByText('My Torznab')).toBeInTheDocument();
   });
 
@@ -64,36 +70,17 @@ describe('IndexersSettings', () => {
   it('toggles add form when Add Indexer button is clicked', async () => {
     const user = userEvent.setup();
     renderWithProviders(<IndexersSettings />);
+    await waitForListLoad('My ABB');
 
-    await waitFor(() => {
-      expect(screen.getByText('My ABB')).toBeInTheDocument();
-    });
-
-    // Use closest('button') because button text is in a hidden sm:inline span
-    const addButton = screen.getByText('Add Indexer').closest('button')!;
-    await user.click(addButton);
-
-    expect(screen.getByText('Add New Indexer')).toBeInTheDocument();
-
-    // Click again to cancel
-    const cancelButton = screen.getByText('Cancel').closest('button')!;
-    await user.click(cancelButton);
-
-    expect(screen.queryByText('Add New Indexer')).not.toBeInTheDocument();
+    await assertToggleAddForm(user, 'Add Indexer', 'Add New Indexer');
   });
 
   it('opens Prowlarr import modal', async () => {
     const user = userEvent.setup();
     renderWithProviders(<IndexersSettings />);
+    await waitForListLoad('My ABB');
 
-    await waitFor(() => {
-      expect(screen.getByText('My ABB')).toBeInTheDocument();
-    });
-
-    const prowlarrButton = screen.getByText('Prowlarr').closest('button')!;
-    await user.click(prowlarrButton);
-
-    // ProwlarrImport renders when isOpen is true
+    await user.click(screen.getByText('Prowlarr').closest('button')!);
     expect(screen.getByText('Import from Prowlarr')).toBeInTheDocument();
   });
 
@@ -102,17 +89,12 @@ describe('IndexersSettings', () => {
     const newIndexer = { id: 3, name: 'New Indexer', type: 'abb', enabled: true, priority: 50, settings: { hostname: 'example.com', pageLimit: 2 }, createdAt: '2024-01-01T00:00:00Z' };
     (api.createIndexer as Mock).mockResolvedValue(newIndexer);
     renderWithProviders(<IndexersSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My ABB')).toBeInTheDocument();
-    });
+    await waitForListLoad('My ABB');
 
     await user.click(screen.getByText('Add Indexer').closest('button')!);
     await user.type(screen.getByPlaceholderText('AudioBookBay'), 'New Indexer');
     await user.type(screen.getByPlaceholderText('audiobookbay.lu'), 'example.com');
-    // Submit button says "Add Indexer" — but it's a submit button, distinct from the toggle button
-    const submitButton = screen.getByRole('button', { name: /Add Indexer/i });
-    await user.click(submitButton);
+    await user.click(screen.getByRole('button', { name: /Add Indexer/i }));
 
     await waitFor(() => {
       expect(api.createIndexer).toHaveBeenCalled();
@@ -123,41 +105,29 @@ describe('IndexersSettings', () => {
       settings: expect.objectContaining({ hostname: 'example.com' }),
     });
 
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Indexer added successfully');
-    });
+    await assertSuccessToast('Indexer added successfully');
   });
 
   it('shows error toast when create fails', async () => {
     const user = userEvent.setup();
     (api.createIndexer as Mock).mockRejectedValue(new Error('Server error'));
     renderWithProviders(<IndexersSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My ABB')).toBeInTheDocument();
-    });
+    await waitForListLoad('My ABB');
 
     await user.click(screen.getByText('Add Indexer').closest('button')!);
     await user.type(screen.getByPlaceholderText('AudioBookBay'), 'Fail');
     await user.type(screen.getByPlaceholderText('audiobookbay.lu'), 'example.com');
-    const submitButton = screen.getByRole('button', { name: /Add Indexer/i });
-    await user.click(submitButton);
+    await user.click(screen.getByRole('button', { name: /Add Indexer/i }));
 
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to add indexer');
-    });
+    await assertErrorToast('Failed to add indexer');
   });
 
   it('switches to edit mode when edit button is clicked', async () => {
     const user = userEvent.setup();
     renderWithProviders(<IndexersSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My ABB')).toBeInTheDocument();
-    });
+    await waitForListLoad('My ABB');
 
     await user.click(screen.getByLabelText('Edit My ABB'));
-
     expect(screen.getByText('Edit Indexer')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('AudioBookBay')).toHaveValue('My ABB');
   });
@@ -166,10 +136,7 @@ describe('IndexersSettings', () => {
     const user = userEvent.setup();
     (api.updateIndexer as Mock).mockResolvedValue({ ...mockIndexers[0], name: 'Updated ABB' });
     renderWithProviders(<IndexersSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My ABB')).toBeInTheDocument();
-    });
+    await waitForListLoad('My ABB');
 
     await user.click(screen.getByLabelText('Edit My ABB'));
     const nameInput = screen.getByPlaceholderText('AudioBookBay');
@@ -184,107 +151,53 @@ describe('IndexersSettings', () => {
     expect(id).toBe(1);
     expect(data).toMatchObject({ name: 'Updated ABB' });
 
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Indexer updated');
-    });
+    await assertSuccessToast('Indexer updated');
   });
 
   it('shows error toast when update fails', async () => {
     const user = userEvent.setup();
     (api.updateIndexer as Mock).mockRejectedValue(new Error('fail'));
     renderWithProviders(<IndexersSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My ABB')).toBeInTheDocument();
-    });
+    await waitForListLoad('My ABB');
 
     await user.click(screen.getByLabelText('Edit My ABB'));
     await user.click(screen.getByText('Save Changes'));
 
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to update indexer');
-    });
+    await assertErrorToast('Failed to update indexer');
   });
 
   it('opens delete confirmation modal and deletes indexer', async () => {
     const user = userEvent.setup();
     (api.deleteIndexer as Mock).mockResolvedValue({});
     renderWithProviders(<IndexersSettings />);
+    await waitForListLoad('My ABB');
 
-    await waitFor(() => {
-      expect(screen.getByText('My ABB')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByLabelText('Delete My ABB'));
-
-    // Confirm modal should appear
-    const dialog = screen.getByRole('dialog');
-    expect(dialog).toBeInTheDocument();
-    expect(screen.getByText(/Are you sure you want to delete "My ABB"/)).toBeInTheDocument();
-
-    // Click the Delete button inside the modal
-    const confirmButton = Array.from(dialog.querySelectorAll('button')).find(
-      (btn) => btn.textContent === 'Delete',
-    )!;
-    await user.click(confirmButton);
-
-    await waitFor(() => {
-      expect((api.deleteIndexer as Mock).mock.calls[0][0]).toBe(1);
-    });
-
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Indexer removed successfully');
-    });
+    await assertDeleteFlow(user, 'My ABB', api.deleteIndexer as Mock, 1, 'Indexer');
   });
 
   it('cancels delete confirmation modal', async () => {
     const user = userEvent.setup();
     renderWithProviders(<IndexersSettings />);
+    await waitForListLoad('My ABB');
 
-    await waitFor(() => {
-      expect(screen.getByText('My ABB')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByLabelText('Delete My ABB'));
-    expect(screen.getByText('Delete Indexer')).toBeInTheDocument();
-
-    await user.click(screen.getByText('Cancel'));
-    expect(screen.queryByText('Delete Indexer')).not.toBeInTheDocument();
-    expect(api.deleteIndexer).not.toHaveBeenCalled();
+    await assertCancelDelete(user, 'My ABB', api.deleteIndexer as Mock);
   });
 
   it('shows error toast when delete fails', async () => {
     const user = userEvent.setup();
     (api.deleteIndexer as Mock).mockRejectedValue(new Error('fail'));
     renderWithProviders(<IndexersSettings />);
+    await waitForListLoad('My ABB');
 
-    await waitFor(() => {
-      expect(screen.getByText('My ABB')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByLabelText('Delete My ABB'));
-
-    const dialog = screen.getByRole('dialog');
-    const confirmButton = Array.from(dialog.querySelectorAll('button')).find(
-      (btn) => btn.textContent === 'Delete',
-    )!;
-    await user.click(confirmButton);
-
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to delete indexer');
-    });
+    await assertDeleteError(user, 'My ABB', 'Indexer');
   });
 
   it('shows validation errors when submitting empty name', async () => {
     const user = userEvent.setup();
     renderWithProviders(<IndexersSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My ABB')).toBeInTheDocument();
-    });
+    await waitForListLoad('My ABB');
 
     await user.click(screen.getByText('Add Indexer').closest('button')!);
-    // Fill hostname but leave name empty
     await user.type(screen.getByPlaceholderText('audiobookbay.lu'), 'example.com');
     await user.click(screen.getByRole('button', { name: /Add Indexer/i }));
 
@@ -297,13 +210,9 @@ describe('IndexersSettings', () => {
   it('shows validation errors when submitting empty required settings', async () => {
     const user = userEvent.setup();
     renderWithProviders(<IndexersSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('My ABB')).toBeInTheDocument();
-    });
+    await waitForListLoad('My ABB');
 
     await user.click(screen.getByText('Add Indexer').closest('button')!);
-    // Fill name but leave hostname empty (abb type requires hostname)
     await user.type(screen.getByPlaceholderText('AudioBookBay'), 'Test');
     await user.click(screen.getByRole('button', { name: /Add Indexer/i }));
 
@@ -317,12 +226,8 @@ describe('IndexersSettings', () => {
     const user = userEvent.setup();
     (api.testIndexer as Mock).mockResolvedValue({ success: true, message: 'OK' });
     renderWithProviders(<IndexersSettings />);
+    await waitForListLoad('My ABB');
 
-    await waitFor(() => {
-      expect(screen.getByText('My ABB')).toBeInTheDocument();
-    });
-
-    // Test buttons are rendered per card — click the first one
     const testButtons = screen.getAllByText('Test').map((el) => el.closest('button')!);
     await user.click(testButtons[0]);
 
