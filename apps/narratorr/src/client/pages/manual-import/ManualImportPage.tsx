@@ -1,4 +1,7 @@
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { ImportCard, ImportSummaryBar, BookEditModal } from '@/components/manual-import';
+import { DirectoryBrowserModal } from '@/components/DirectoryBrowserModal';
 import {
   FolderIcon,
   AlertCircleIcon,
@@ -6,10 +9,15 @@ import {
   ArrowLeftIcon,
   CheckIcon,
 } from '@/components/icons';
+import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { useManualImport } from './useManualImport.js';
 
-// eslint-disable-next-line complexity -- 3-step page with 21 hook props and conditional step rendering
+// eslint-disable-next-line complexity, max-lines-per-function -- 3-step page with 21 hook props, directory browser modal, and conditional step rendering
 export function ManualImportPage() {
+  const [browseOpen, setBrowseOpen] = useState(false);
+  const { data: settings } = useQuery({ queryKey: queryKeys.settings(), queryFn: api.getSettings });
+
   const {
     step, scanPath, setScanPath, scanError, setScanError, rows,
     mode, setMode, editIndex, setEditIndex, skippedDuplicates,
@@ -47,7 +55,14 @@ export function ManualImportPage() {
       {step === 'path' && (
         <div className="max-w-xl space-y-4 animate-fade-in-up stagger-1">
           <div className="relative">
-            <FolderIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <button
+              type="button"
+              onClick={() => setBrowseOpen(true)}
+              className="absolute left-3 top-1/2 -translate-y-1/2 p-0.5 text-muted-foreground hover:text-foreground rounded transition-colors focus-ring"
+              aria-label="Browse directories"
+            >
+              <FolderIcon className="w-4 h-4" />
+            </button>
             <input
               type="text"
               value={scanPath}
@@ -149,6 +164,18 @@ export function ManualImportPage() {
           onClose={() => setEditIndex(null)}
         />
       )}
+
+      {/* Directory Browser Modal */}
+      <DirectoryBrowserModal
+        isOpen={browseOpen}
+        initialPath={scanPath || settings?.library?.path || '/'}
+        onSelect={(path) => {
+          setScanPath(path);
+          setScanError(null);
+          setBrowseOpen(false);
+        }}
+        onClose={() => setBrowseOpen(false)}
+      />
     </div>
   );
 }

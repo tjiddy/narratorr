@@ -31,6 +31,9 @@ vi.mock('react-router-dom', async () => {
 const mockScanDirectory = vi.fn();
 const mockConfirmImport = vi.fn();
 
+const mockBrowseDirectory = vi.fn();
+const mockGetSettings = vi.fn();
+
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual('@/lib/api');
   return {
@@ -39,6 +42,8 @@ vi.mock('@/lib/api', async () => {
       scanDirectory: (...args: unknown[]) => mockScanDirectory(...args),
       confirmImport: (...args: unknown[]) => mockConfirmImport(...args),
       searchMetadata: vi.fn().mockResolvedValue({ books: [], authors: [], series: [] }),
+      browseDirectory: (...args: unknown[]) => mockBrowseDirectory(...args),
+      getSettings: (...args: unknown[]) => mockGetSettings(...args),
     },
     formatBytes: (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`,
   };
@@ -139,6 +144,8 @@ describe('ManualImportPage', () => {
     mockIsMatching = false;
     mockStartMatching = vi.fn();
     mockCancelMatching = vi.fn();
+    mockGetSettings.mockResolvedValue({ library: { path: '/audiobooks', folderFormat: '{author}/{title}' } });
+    mockBrowseDirectory.mockResolvedValue({ dirs: ['audiobooks', 'media'], parent: '/' });
   });
 
   describe('scan step', () => {
@@ -541,6 +548,40 @@ describe('ManualImportPage', () => {
 
       // Old book should be gone
       expect(screen.queryByText('Book Title')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('directory browser integration', () => {
+    it('opens directory browser when folder icon is clicked', async () => {
+      renderPage();
+
+      await userEvent.click(screen.getByLabelText('Browse directories'));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByText('Browse Directories')).toBeInTheDocument();
+    });
+
+    it('populates scan path input when directory is selected', async () => {
+      mockBrowseDirectory
+        .mockResolvedValueOnce({ dirs: ['projects', 'music'], parent: '/' })
+        .mockResolvedValueOnce({ dirs: ['Author1', 'Author2'], parent: '/' });
+
+      renderPage();
+
+      await userEvent.click(screen.getByLabelText('Browse directories'));
+      const dialog = await screen.findByRole('dialog');
+      await within(dialog).findByText('projects');
+
+      // Navigate into projects
+      await userEvent.click(within(dialog).getByText('projects'));
+      await within(dialog).findByText('Author1');
+
+      // Select current path
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Select' }));
+
+      // Modal should close and path should be populated
+      expect(screen.queryByText('Browse Directories')).not.toBeInTheDocument();
+      const input = screen.getByPlaceholderText('/path/to/audiobooks') as HTMLInputElement;
+      expect(input.value).toContain('projects');
     });
   });
 });

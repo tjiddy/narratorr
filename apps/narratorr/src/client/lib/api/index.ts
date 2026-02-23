@@ -11,6 +11,7 @@ export type { Settings, TestResult } from './settings.js';
 export type { AuthStatus, AuthConfig } from './auth.js';
 export type { DiscoveredBook, ScanResult, SingleBookResult, ImportConfirmItem, ImportSingleResult, ImportResult, ImportMode, Confidence, MatchCandidate, MatchResult, MatchJobStatus } from './library-scan.js';
 export type { ProwlarrConfig, SyncPreviewItem, SyncResult } from './prowlarr.js';
+export type { BrowseResult } from './filesystem.js';
 
 export { formatBytes, formatProgress } from './utils.js';
 
@@ -26,6 +27,7 @@ import { libraryScanApi } from './library-scan.js';
 import { prowlarrApi } from './prowlarr.js';
 import { systemApi } from './system.js';
 import { authApi } from './auth.js';
+import { filesystemApi } from './filesystem.js';
 
 export const api = {
   ...booksApi,
@@ -40,4 +42,5 @@ export const api = {
   ...prowlarrApi,
   ...systemApi,
   ...authApi,
+  ...filesystemApi,
 };

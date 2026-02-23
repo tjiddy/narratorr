@@ -30,6 +30,7 @@ import { notifiersRoutes } from './notifiers.js';
 import { blacklistRoutes } from './blacklist.js';
 import { prowlarrRoutes } from './prowlarr.js';
 import { authRoutes } from './auth.js';
+import { filesystemRoutes } from './filesystem.js';
 
 export interface Services {
   settings: SettingsService;
@@ -90,4 +91,5 @@ export async function registerRoutes(
   await blacklistRoutes(app, services.blacklist);
   await prowlarrRoutes(app, services.prowlarrSync);
   await authRoutes(app, services.auth);
+  await filesystemRoutes(app);
 }
