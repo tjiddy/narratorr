@@ -9,6 +9,8 @@ import { http, HttpResponse } from 'msw';
 export const QB_BASE = 'http://localhost:8080';
 export const INDEXER_BASE = 'http://indexer.test';
 export const WEBHOOK_URL = 'http://webhook.test/hook';
+export const WEBHOOK_URL_2 = 'http://webhook.test/hook2';
+export const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/123456/test-token';
 
 export const TORRENT_HASH = 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d';
 
@@ -122,6 +124,28 @@ export function webhookCaptureHandler(url = WEBHOOK_URL): {
       headers: Object.fromEntries(request.headers.entries()),
     });
     return new HttpResponse(null, { status: 200 });
+  });
+  return { handler, captured };
+}
+
+/**
+ * Creates a Discord webhook handler that captures requests for later assertion.
+ * Returns 204 (Discord's success response).
+ */
+export function discordCaptureHandler(url = DISCORD_WEBHOOK_URL): {
+  handler: ReturnType<typeof http.post>;
+  captured: CapturedRequest[];
+} {
+  const captured: CapturedRequest[] = [];
+  const handler = http.post(url, async ({ request }) => {
+    const body = await request.json();
+    captured.push({
+      url: request.url,
+      method: request.method,
+      body,
+      headers: Object.fromEntries(request.headers.entries()),
+    });
+    return new HttpResponse(null, { status: 204 });
   });
   return { handler, captured };
 }
