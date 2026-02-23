@@ -136,6 +136,8 @@ export type CreateDownloadClientFormData = z.infer<typeof createDownloadClientFo
 export const searchQuerySchema = z.object({
   q: z.string().min(2, 'Query must be at least 2 characters').max(500),
   limit: z.string().optional().transform((val) => (val ? parseInt(val, 10) : 50)),
+  author: z.string().max(200).optional(),
+  title: z.string().max(500).optional(),
 });
 
 export const grabSchema = z.object({

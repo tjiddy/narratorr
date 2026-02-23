@@ -3,6 +3,7 @@ import { type Download } from './activity.js';
 
 export interface SearchResult {
   title: string;
+  rawTitle?: string;
   author?: string;
   narrator?: string;
   protocol: 'torrent' | 'usenet';
@@ -15,11 +16,21 @@ export interface SearchResult {
   indexer: string;
   detailsUrl?: string;
   coverUrl?: string;
+  matchScore?: number;
+}
+
+export interface SearchContext {
+  author?: string;
+  title?: string;
 }
 
 export const searchApi = {
-  search: (query: string) =>
-    fetchApi<SearchResult[]>(`/search?q=${encodeURIComponent(query)}`),
+  search: (query: string, context?: SearchContext) => {
+    const params = new URLSearchParams({ q: query });
+    if (context?.author) params.set('author', context.author);
+    if (context?.title) params.set('title', context.title);
+    return fetchApi<SearchResult[]>(`/search?${params.toString()}`);
+  },
 
   grab: (params: {
     downloadUrl: string;

@@ -12,13 +12,25 @@ export interface SearchJobResult {
 
 /**
  * Select the best result from a list of search results.
- * Filters out results without a downloadUrl, then sorts by seeders descending.
+ * Filters out results without a downloadUrl, then ranks by:
+ * 1. matchScore (when difference > 0.1 threshold — relevance matters more than seeders)
+ * 2. seeders (fallback when scores are similar or absent)
  */
 export function selectBestResult(results: SearchResult[]): SearchResult | null {
   const downloadable = results.filter((r) => r.downloadUrl);
   if (downloadable.length === 0) return null;
 
-  downloadable.sort((a, b) => (b.seeders ?? 0) - (a.seeders ?? 0));
+  downloadable.sort((a, b) => {
+    const scoreA = a.matchScore ?? 0;
+    const scoreB = b.matchScore ?? 0;
+    const scoreDiff = scoreB - scoreA;
+
+    // If score difference is significant, prefer higher score
+    if (Math.abs(scoreDiff) > 0.1) return scoreDiff;
+
+    // Otherwise, prefer more seeders
+    return (b.seeders ?? 0) - (a.seeders ?? 0);
+  });
   return downloadable[0];
 }
 
@@ -52,7 +64,10 @@ export async function runSearchJob(
   for (const book of wantedBooks) {
     const query = [book.title, book.author?.name].filter(Boolean).join(' ');
     try {
-      const results = await indexerService.searchAll(query);
+      const results = await indexerService.searchAll(query, {
+        title: book.title,
+        author: book.author?.name,
+      });
       searched++;
 
       if (results.length === 0) {

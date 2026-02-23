@@ -270,6 +270,152 @@ describe('IndexerService', () => {
     });
   });
 
+  describe('release name parsing integration', () => {
+    it('populates author and title from parsed release name on torznab results', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        search: vi.fn().mockResolvedValue([
+          { title: 'Brandon Sanderson - The Way of Kings', indexer: 'Torznab', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.searchAll('sanderson');
+      expect(results[0].author).toBe('Brandon Sanderson');
+      expect(results[0].title).toBe('The Way of Kings');
+    });
+
+    it('sets rawTitle to original indexer title before parsing', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        search: vi.fn().mockResolvedValue([
+          { title: 'Brandon Sanderson - The Way of Kings', indexer: 'Torznab', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.searchAll('sanderson');
+      expect(results[0].rawTitle).toBe('Brandon Sanderson - The Way of Kings');
+    });
+
+    it('does not overwrite author when adapter already set it (ABB case)', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        search: vi.fn().mockResolvedValue([
+          { title: 'The Way of Kings', author: 'Brandon Sanderson', indexer: 'ABB', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.searchAll('sanderson');
+      expect(results[0].author).toBe('Brandon Sanderson');
+      expect(results[0].rawTitle).toBeUndefined();
+    });
+
+    it('uses cleaned title even when parsing extracts no author', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        search: vi.fn().mockResolvedValue([
+          { title: 'Some Random Title', indexer: 'Torznab', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.searchAll('random');
+      // Title unchanged by parser, so rawTitle is not set
+      expect(results[0].title).toBe('Some Random Title');
+      expect(results[0].author).toBeUndefined();
+      expect(results[0].rawTitle).toBeUndefined();
+    });
+
+    it('sets rawTitle and cleans title when parser strips noise without extracting author', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        search: vi.fn().mockResolvedValue([
+          { title: 'Some Random Title [MP3] [ENG]', indexer: 'Torznab', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.searchAll('random');
+      expect(results[0].title).toBe('Some Random Title');
+      expect(results[0].rawTitle).toBe('Some Random Title [MP3] [ENG]');
+      expect(results[0].author).toBeUndefined();
+    });
+
+    it('logs unparsed non-hash release names at debug level', async () => {
+      const log = createMockLogger();
+      const svc = new IndexerService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        search: vi.fn().mockResolvedValue([
+          { title: 'Some Random Title', indexer: 'Torznab', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(svc, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      await svc.searchAll('random');
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ rawTitle: 'Some Random Title' }),
+        'Unparsed release name',
+      );
+    });
+  });
+
+  describe('fuzzy scoring', () => {
+    it('sets matchScore on results when title context is provided', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        search: vi.fn().mockResolvedValue([
+          { title: 'Brandon Sanderson - The Way of Kings', indexer: 'Torznab', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.searchAll('sanderson', { title: 'The Way of Kings', author: 'Brandon Sanderson' });
+      expect(results[0].matchScore).toBeDefined();
+      expect(results[0].matchScore).toBeGreaterThan(0.5);
+    });
+
+    it('sorts results by matchScore descending when context is provided', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        search: vi.fn().mockResolvedValue([
+          { title: 'Completely Wrong Book', indexer: 'Torznab', protocol: 'torrent' },
+          { title: 'Brandon Sanderson - The Way of Kings', indexer: 'Torznab', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.searchAll('sanderson', { title: 'The Way of Kings' });
+      expect(results[0].title).toBe('The Way of Kings');
+    });
+
+    it('does not score or sort when no context is provided', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        search: vi.fn().mockResolvedValue([
+          { title: 'Book B', indexer: 'Torznab', protocol: 'torrent' },
+          { title: 'Book A', indexer: 'Torznab', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.searchAll('books');
+      expect(results[0].matchScore).toBeUndefined();
+      expect(results[0].title).toBe('Book B'); // order preserved
+    });
+  });
+
   describe('test edge cases', () => {
     it('catches adapter.test() throwing and returns failure', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));

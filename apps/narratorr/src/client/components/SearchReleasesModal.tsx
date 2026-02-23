@@ -44,7 +44,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
     refetch,
   } = useQuery({
     queryKey: ['search-releases', book.id, searchQuery],
-    queryFn: () => api.search(searchQuery),
+    queryFn: () => api.search(searchQuery, { title: book.title, author: book.author?.name }),
     enabled: isOpen && searchQuery.length >= 2,
   });
 
@@ -241,8 +241,14 @@ function ReleaseCard({
         {/* Content */}
         <div className="flex-1 min-w-0 flex flex-col">
           <h4 className="font-medium text-sm leading-tight line-clamp-2">
+            {result.author && <span className="text-muted-foreground">{result.author} — </span>}
             {result.title}
           </h4>
+          {result.rawTitle && (
+            <p className="text-xs text-muted-foreground/60 truncate mt-0.5" title={result.rawTitle}>
+              {result.rawTitle}
+            </p>
+          )}
           {result.narrator && (
             <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
               <UsersIcon className="w-3 h-3" />

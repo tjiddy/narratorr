@@ -97,6 +97,48 @@ describe('selectBestResult', () => {
     const results = [mockResult(10, undefined), mockResult(20, undefined)];
     expect(selectBestResult(results)).toBeNull();
   });
+
+  it('prefers result with higher matchScore over higher seeders when score difference > 0.1', () => {
+    const results = [
+      mockResult(100, 'magnet:?xt=urn:btih:aaa'),
+      mockResult(5, 'magnet:?xt=urn:btih:bbb'),
+    ];
+    // Low seeders but high score
+    (results[1] as SearchResult & { matchScore: number }).matchScore = 0.9;
+    // High seeders but low score
+    (results[0] as SearchResult & { matchScore: number }).matchScore = 0.3;
+
+    const best = selectBestResult(results);
+    expect(best).not.toBeNull();
+    expect(best!.seeders).toBe(5); // Higher score wins despite fewer seeders
+  });
+
+  it('falls back to seeders when matchScore difference is insignificant', () => {
+    const results = [
+      mockResult(5, 'magnet:?xt=urn:btih:aaa'),
+      mockResult(50, 'magnet:?xt=urn:btih:bbb'),
+    ];
+    (results[0] as SearchResult & { matchScore: number }).matchScore = 0.85;
+    (results[1] as SearchResult & { matchScore: number }).matchScore = 0.80;
+
+    const best = selectBestResult(results);
+    expect(best).not.toBeNull();
+    expect(best!.seeders).toBe(50); // Score diff < 0.1, so seeders win
+  });
+
+  it('handles mix of scored and unscored results', () => {
+    const results = [
+      mockResult(100, 'magnet:?xt=urn:btih:aaa'),
+      mockResult(5, 'magnet:?xt=urn:btih:bbb'),
+    ];
+    // Only second has a score
+    (results[1] as SearchResult & { matchScore: number }).matchScore = 0.9;
+
+    const best = selectBestResult(results);
+    expect(best).not.toBeNull();
+    // Score 0.9 vs 0 — difference > 0.1, so scored result wins
+    expect(best!.seeders).toBe(5);
+  });
 });
 
 describe('runSearchJob', () => {

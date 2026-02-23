@@ -2,6 +2,7 @@ export type DownloadProtocol = 'torrent' | 'usenet';
 
 export interface SearchResult {
   title: string;
+  rawTitle?: string;
   author?: string;
   narrator?: string;
   protocol: DownloadProtocol;
@@ -14,11 +15,13 @@ export interface SearchResult {
   indexer: string;
   detailsUrl?: string;
   coverUrl?: string;
+  matchScore?: number;
 }
 
 export interface SearchOptions {
   limit?: number;
   author?: string;
+  title?: string;
 }
 
 export interface IndexerAdapter {

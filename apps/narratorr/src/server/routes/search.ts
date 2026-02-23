@@ -24,9 +24,9 @@ export async function searchRoutes(
       },
     },
     async (request) => {
-      const { q, limit } = request.query as SearchQuery;
-      request.log.debug({ q }, 'Search request');
-      const results = await indexerService.searchAll(q, { limit });
+      const { q, limit, author, title } = request.query as SearchQuery;
+      request.log.debug({ q, author, title }, 'Search request');
+      const results = await indexerService.searchAll(q, { limit, author, title });
       const hashes = results
         .map((r: { infoHash?: string }) => r.infoHash)
         .filter((h): h is string => !!h);

@@ -86,7 +86,10 @@ describe('SearchReleasesModal', () => {
     );
 
     await waitFor(() => {
-      expect(api.search).toHaveBeenCalledWith('The Way of Kings Brandon Sanderson');
+      expect(api.search).toHaveBeenCalledWith(
+        'The Way of Kings Brandon Sanderson',
+        { title: 'The Way of Kings', author: 'Brandon Sanderson' },
+      );
     });
   });
 

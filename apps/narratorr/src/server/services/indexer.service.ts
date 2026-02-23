@@ -6,6 +6,8 @@ import {
   AudioBookBayIndexer,
   NewznabIndexer,
   TorznabIndexer,
+  parseAudiobookTitle,
+  scoreResult,
   type IndexerAdapter,
   type SearchResult,
   type SearchOptions,
@@ -140,6 +142,23 @@ export class IndexerService {
     }
   }
 
+  /** Parse release names to extract author/title for results that don't already have them */
+  private parseReleaseNames(results: SearchResult[]): void {
+    for (const result of results) {
+      if (result.author) continue;
+      const parsed = parseAudiobookTitle(result.title);
+      if (parsed.title !== result.title || parsed.author) {
+        result.rawTitle = result.title;
+        result.title = parsed.title;
+      }
+      if (parsed.author) result.author = parsed.author;
+      if (parsed.narrator && !result.narrator) result.narrator = parsed.narrator;
+      if (!parsed.author && !/^[a-f0-9]{32,}$/i.test(result.title)) {
+        this.log.debug({ rawTitle: result.rawTitle ?? result.title }, 'Unparsed release name');
+      }
+    }
+  }
+
   async searchAll(query: string, options?: SearchOptions): Promise<SearchResult[]> {
     const enabledIndexers = await this.db
       .select()
@@ -160,6 +179,21 @@ export class IndexerService {
       } catch (error) {
         this.log.warn({ indexer: indexer.name, query, error }, 'Error searching indexer');
       }
+    }
+
+    this.parseReleaseNames(results);
+
+    // Score results against search context when title is provided
+    if (options?.title) {
+      const context = { title: options.title, author: options.author };
+      for (const result of results) {
+        result.matchScore = scoreResult(
+          { title: result.title, author: result.author },
+          context,
+        );
+      }
+      // Sort by matchScore descending
+      results.sort((a, b) => (b.matchScore ?? 0) - (a.matchScore ?? 0));
     }
 
     this.log.debug({ totalResults: results.length }, 'Search complete');
