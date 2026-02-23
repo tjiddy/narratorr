@@ -47,16 +47,18 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 5b. **Read prior review history:** Run `gitea pr-comments <pr-number>`. Parse ALL comments containing `## Verdict:` (prior reviews) and `## Review Response` (author responses). Build a map of prior findings and their resolutions:
    - For each prior finding ID (F1, F2, etc.), note: the original finding, the author's resolution (`fixed`, `accepted`, `disputed`), and any rationale provided.
    - **This context is mandatory for re-reviews.** If this is the first review (no prior `## Verdict:` comments), skip to step 6.
+   - **This does NOT reduce the scope of the review.** Steps 6-9 still run in full — you may find net-new issues that prior rounds missed. The prior history only affects how you handle findings that overlap with previously-disputed items (see dispute engagement rules below).
 
-   **Dispute engagement rules** — these apply when evaluating findings in steps 6-9:
+   **Dispute engagement rules** — these apply in step 11 when classifying findings. After completing the full review (steps 6-9), check each finding against the prior history map:
    - If a finding was previously raised and the author **fixed** it, verify the fix addresses the issue. If it does, drop the finding. If the fix is incomplete or introduces new problems, raise a NEW finding explaining what's still wrong (don't re-raise the old one verbatim).
-   - If a finding was previously raised and the author **disputed** it with rationale (code references, tool output, docs, test results), you MUST engage with the specific argument. You have three options:
+   - If a finding overlaps with something the author previously **disputed** with rationale (code references, tool output, docs, test results), you MUST engage with their specific argument before re-raising it. You have three options:
      1. **Withdraw** — the author's rationale is correct. Drop the finding entirely.
-     2. **Rebut** — the author's rationale is wrong. Raise the finding again with a NEW reason that directly addresses their argument. Explain specifically why their evidence doesn't hold. "The spec says X" is not a rebuttal if the author demonstrated X is technically impossible.
+     2. **Rebut** — the author's rationale is wrong. Raise the finding again with a NEW reason that directly addresses and refutes their argument. Explain specifically why their evidence doesn't hold. "The spec says X" is not a rebuttal if the author demonstrated X is technically impossible.
      3. **Refine** — the author's rationale is partially correct but misses something. Raise a narrower or modified finding that accounts for their point.
    - **Re-raising a finding with the same description and reason after it was disputed is NOT allowed.** If you can't produce a concrete rebuttal to the author's specific argument, withdraw the finding. Repeating yourself is not reviewing — it's a bug.
    - If a finding was previously raised and the author **accepted** it (suggestion severity), it's resolved — don't re-raise.
    - If a finding was previously raised and the author **deferred** it to a new issue, it's resolved — don't re-raise.
+   - **Net-new findings are always welcome.** The dispute rules only constrain re-raised findings. If the full review surfaces something genuinely new that wasn't in any prior round, raise it normally regardless of prior history.
 
 6. **Check each AC criterion against the diff:**
    - For each acceptance criterion, determine: `pass` | `partial` | `missing`
