@@ -44,6 +44,20 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    ```
    Use `origin/main` (not local `main`) to avoid false positives from stale local state. The three-dot syntax shows only changes introduced on the branch.
 
+5b. **Read prior review history:** Run `gitea pr-comments <pr-number>`. Parse ALL comments containing `## Verdict:` (prior reviews) and `## Review Response` (author responses). Build a map of prior findings and their resolutions:
+   - For each prior finding ID (F1, F2, etc.), note: the original finding, the author's resolution (`fixed`, `accepted`, `disputed`), and any rationale provided.
+   - **This context is mandatory for re-reviews.** If this is the first review (no prior `## Verdict:` comments), skip to step 6.
+
+   **Dispute engagement rules** — these apply when evaluating findings in steps 6-9:
+   - If a finding was previously raised and the author **fixed** it, verify the fix addresses the issue. If it does, drop the finding. If the fix is incomplete or introduces new problems, raise a NEW finding explaining what's still wrong (don't re-raise the old one verbatim).
+   - If a finding was previously raised and the author **disputed** it with rationale (code references, tool output, docs, test results), you MUST engage with the specific argument. You have three options:
+     1. **Withdraw** — the author's rationale is correct. Drop the finding entirely.
+     2. **Rebut** — the author's rationale is wrong. Raise the finding again with a NEW reason that directly addresses their argument. Explain specifically why their evidence doesn't hold. "The spec says X" is not a rebuttal if the author demonstrated X is technically impossible.
+     3. **Refine** — the author's rationale is partially correct but misses something. Raise a narrower or modified finding that accounts for their point.
+   - **Re-raising a finding with the same description and reason after it was disputed is NOT allowed.** If you can't produce a concrete rebuttal to the author's specific argument, withdraw the finding. Repeating yourself is not reviewing — it's a bug.
+   - If a finding was previously raised and the author **accepted** it (suggestion severity), it's resolved — don't re-raise.
+   - If a finding was previously raised and the author **deferred** it to a new issue, it's resolved — don't re-raise.
+
 6. **Check each AC criterion against the diff:**
    - For each acceptance criterion, determine: `pass` | `partial` | `missing`
    - Note specific files/lines that address each criterion
@@ -94,6 +108,12 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
     - Do NOT use other severity terms like "high", "medium", "low", "critical" — only `"blocking"` or `"suggestion"`. This is consumed by `/respond-to-pr-review` which has different resolution rules per severity.
     - Every finding MUST include a concrete "why" — what breaks, what's inconsistent, what principle is violated. No vague "this could be better."
 
+    **Prior-round deduplication (mandatory for re-reviews):**
+    - Before finalizing findings, cross-reference each finding against the prior finding map from step 5b.
+    - If a finding matches one that was previously `fixed`, verify the fix in the current diff. If fixed, do not re-raise. If the fix is incomplete or wrong, raise a new finding with a description that explains what the fix missed.
+    - If a finding matches one that was previously `disputed`, apply the dispute engagement rules from step 5b. You MUST either withdraw it or raise it with a substantively different reason that rebuts the author's argument. Copy-pasting the old finding is a review defect.
+    - Include a `## Prior Findings` section in the review comment (see template in step 12) that explicitly states the disposition of each previously-raised finding: `withdrawn`, `verified-fixed`, or `re-raised (rebuttal: ...)`. This creates an audit trail and forces you to account for every prior finding.
+
 12. **Post review comment on PR:**
     - Write comment to temp file, then: `gitea pr-comment <pr-number> --body-file <temp-file-path>`
     - Template:
@@ -120,6 +140,12 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
       - Co-location: pass | violation (<what's misplaced>)
       - Consistency: pass | inconsistent (<what pattern is broken>)
       - Over-engineering: pass | concern (<what's unnecessary>)
+
+      ## Prior Findings (omit on first review)
+
+      | Prior ID | Original Description | Disposition |
+      |----------|---------------------|-------------|
+      | F1 (round 1) | <description> | verified-fixed / withdrawn / re-raised as F<N> (rebuttal: <why author's argument doesn't hold>) |
 
       ## Verdict: approve | needs-work
 
@@ -163,3 +189,5 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 - The `## Findings` JSON block is consumed by `/respond-to-pr-review` — ensure it is valid JSON with `severity` values of exactly `"blocking"` or `"suggestion"` (no other terms)
 - An `approve` verdict means zero blocking findings. Any blocking finding → `needs-work`
 - If there are no findings at all, use an empty array: `[]`
+- **Re-reviews require prior comment reading.** On any PR that already has `## Verdict:` comments, step 5b is mandatory. Skipping it produces review loops where the same finding bounces back and forth. The author has done work to address your findings — respect that by reading their response before re-reviewing.
+- **Stand your ground when you're right.** If the author disputes a finding and their rationale is wrong, rebut it with specific evidence. Don't withdraw just because they pushed back — withdraw because they proved you wrong. But if they DID prove you wrong (showed the code works, demonstrated a tool produces no output, cited docs), have the intellectual honesty to drop it.
