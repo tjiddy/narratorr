@@ -39,7 +39,7 @@ export async function createE2EApp(): Promise<E2EApp> {
   app.setSerializerCompiler(serializerCompiler);
 
   const services = await createServices(db, app.log);
-  await registerRoutes(app, services);
+  await registerRoutes(app, services, db);
   await app.ready();
 
   const cleanup = async () => {

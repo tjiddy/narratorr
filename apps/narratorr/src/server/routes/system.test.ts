@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
-import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
+import type { Db } from '@narratorr/db';
+import { createTestApp, createMockServices, resetMockServices, inject } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
 describe('system routes', () => {
@@ -37,7 +38,7 @@ describe('system routes', () => {
   });
 
   describe('GET /api/health', () => {
-    it('returns 200 with status and valid ISO timestamp', async () => {
+    it('returns 200 with status and valid ISO timestamp when DB probe succeeds', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/health' });
 
       expect(res.statusCode).toBe(200);
@@ -49,6 +50,25 @@ describe('system routes', () => {
       // Verify timestamp is a valid ISO string
       const timestamp = new Date(payload.timestamp);
       expect(timestamp.toISOString()).toBe(payload.timestamp);
+    });
+
+    it('returns 503 with error when DB probe fails', async () => {
+      const failingDb = inject<Db>({ run: vi.fn().mockRejectedValue(new Error('SQLITE_CANTOPEN')) });
+      const failServices = createMockServices();
+      const failApp = await createTestApp(failServices, failingDb);
+
+      const res = await failApp.inject({ method: 'GET', url: '/api/health' });
+
+      expect(res.statusCode).toBe(503);
+
+      const payload = JSON.parse(res.payload);
+      expect(payload.status).toBe('error');
+      expect(payload.error).toBe('SQLITE_CANTOPEN');
+      expect(payload.timestamp).toBeDefined();
+      const timestamp = new Date(payload.timestamp);
+      expect(timestamp.toISOString()).toBe(payload.timestamp);
+
+      await failApp.close();
     });
   });
 

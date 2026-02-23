@@ -73,7 +73,8 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
 
 export async function registerRoutes(
   app: FastifyInstance,
-  services: Services
+  services: Services,
+  db: Db,
 ): Promise<void> {
   await booksRoutes(app, services.book, services.download);
   await bookFilesRoute(app, services.book);
@@ -84,7 +85,7 @@ export async function registerRoutes(
   await settingsRoutes(app, services.settings);
   await metadataRoutes(app, services.metadata);
   await libraryScanRoutes(app, services.libraryScan, services.matchJob);
-  await systemRoutes(app, services);
+  await systemRoutes(app, services, db);
   await notifiersRoutes(app, services.notifier);
   await blacklistRoutes(app, services.blacklist);
   await prowlarrRoutes(app, services.prowlarrSync);

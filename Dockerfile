@@ -66,4 +66,7 @@ ENV DATABASE_URL=file:/config/narratorr.db
 
 WORKDIR /app/apps/narratorr
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget --spider -q http://localhost:3000/api/health || exit 1
+
 CMD ["node", "dist/server/index.js"]

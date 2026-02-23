@@ -5,6 +5,7 @@ import {
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
 import { vi } from 'vitest';
+import type { Db } from '@narratorr/db';
 import { registerRoutes, type Services } from '../routes/index.js';
 
 /**
@@ -26,9 +27,12 @@ export function inject<T>(mock: unknown): T { return mock as any; }
 
 /**
  * Creates a Fastify instance with Zod type provider and all routes registered.
- * No CORS, no static files, no DB, no jobs — pure route testing via `app.inject()`.
+ * No CORS, no static files, no jobs — pure route testing via `app.inject()`.
+ *
+ * Accepts an optional mock DB for routes that need it (e.g., health check probe).
+ * Defaults to a mock with a successful `run()` stub.
  */
-export async function createTestApp(services: Services) {
+export async function createTestApp(services: Services, db?: Db) {
   const app = Fastify({
     logger: false,
   }).withTypeProvider<ZodTypeProvider>();
@@ -36,7 +40,8 @@ export async function createTestApp(services: Services) {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
-  await registerRoutes(app, services);
+  const mockDb = db ?? inject<Db>({ run: vi.fn().mockResolvedValue(undefined) });
+  await registerRoutes(app, services, mockDb);
   await app.ready();
 
   return app;

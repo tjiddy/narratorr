@@ -68,7 +68,7 @@ async function main() {
   await app.register(authPlugin, { authService: services.auth });
 
   // Register API routes
-  await registerRoutes(app, services);
+  await registerRoutes(app, services, db);
 
   // Serve static files in production
   if (!config.isDev) {
