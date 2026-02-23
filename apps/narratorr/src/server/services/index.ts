@@ -1,4 +1,5 @@
 export { SettingsService, type AppSettings } from './settings.service.js';
+export { AuthService, type AuthConfig, type AuthStatus, type AuthPublicConfig } from './auth.service.js';
 export { IndexerService } from './indexer.service.js';
 export { DownloadClientService } from './download-client.service.js';
 export { BookService, type BookWithAuthor } from './book.service.js';

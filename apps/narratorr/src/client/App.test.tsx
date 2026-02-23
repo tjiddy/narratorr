@@ -4,7 +4,32 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { App } from '@/App';
 
+// Mock AuthProvider as pass-through (avoids API calls from useAuth)
+vi.mock('@/components/AuthProvider', () => ({
+  AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+// Mock hooks used by Layout
+vi.mock('@/hooks/useActivityCounts', () => ({
+  useActivityCounts: () => ({ active: 0, completed: 0, isLoading: false }),
+}));
+
+vi.mock('@/hooks/useAuthContext', () => ({
+  useAuthContext: () => ({
+    mode: 'none',
+    hasUser: false,
+    localBypass: false,
+    isAuthenticated: true,
+    isLoading: false,
+    logout: vi.fn(),
+  }),
+}));
+
 // Mock page components to avoid pulling in their dependencies
+vi.mock('@/pages/login', () => ({
+  LoginPage: () => <div data-testid="login-page">Login Page</div>,
+}));
+
 vi.mock('@/pages/library', () => ({
   LibraryPage: () => <div data-testid="library-page">Library Page</div>,
 }));
@@ -24,6 +49,7 @@ vi.mock('@/pages/settings', () => ({
   DownloadClientsSettings: () => <div>Download Clients</div>,
   NotificationsSettings: () => <div>Notifications</div>,
   BlacklistSettings: () => <div>Blacklist</div>,
+  SecuritySettings: () => <div>Security</div>,
 }));
 
 function renderApp(route = '/') {

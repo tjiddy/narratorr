@@ -10,4 +10,5 @@ export const config = {
   configPath: process.env.CONFIG_PATH || './config',
   libraryPath: process.env.LIBRARY_PATH || './audiobooks',
   dbPath: process.env.DATABASE_URL || './config/narratorr.db',
+  authBypass: process.env.AUTH_BYPASS === 'true',
 };

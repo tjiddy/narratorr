@@ -8,6 +8,7 @@ export type { DownloadClient } from './download-clients.js';
 export type { Notifier } from './notifiers.js';
 export type { BlacklistEntry } from './blacklist.js';
 export type { Settings, TestResult } from './settings.js';
+export type { AuthStatus, AuthConfig } from './auth.js';
 export type { DiscoveredBook, ScanResult, SingleBookResult, ImportConfirmItem, ImportSingleResult, ImportResult, ImportMode, Confidence, MatchCandidate, MatchResult, MatchJobStatus } from './library-scan.js';
 export type { ProwlarrConfig, SyncPreviewItem, SyncResult } from './prowlarr.js';
 
@@ -24,6 +25,7 @@ import { settingsApi } from './settings.js';
 import { libraryScanApi } from './library-scan.js';
 import { prowlarrApi } from './prowlarr.js';
 import { systemApi } from './system.js';
+import { authApi } from './auth.js';
 
 export const api = {
   ...booksApi,
@@ -37,4 +39,5 @@ export const api = {
   ...libraryScanApi,
   ...prowlarrApi,
   ...systemApi,
+  ...authApi,
 };

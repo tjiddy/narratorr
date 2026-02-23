@@ -4,3 +4,4 @@ export { IndexersSettings } from './IndexersSettings.js';
 export { DownloadClientsSettings } from './DownloadClientsSettings.js';
 export { NotificationsSettings } from './NotificationsSettings.js';
 export { BlacklistSettings } from './BlacklistSettings.js';
+export { SecuritySettings } from './SecuritySettings.js';

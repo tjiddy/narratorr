@@ -3,6 +3,7 @@ import { type Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import {
   SettingsService,
+  AuthService,
   IndexerService,
   DownloadClientService,
   BookService,
@@ -28,9 +29,11 @@ import { libraryScanRoutes } from './library-scan.js';
 import { notifiersRoutes } from './notifiers.js';
 import { blacklistRoutes } from './blacklist.js';
 import { prowlarrRoutes } from './prowlarr.js';
+import { authRoutes } from './auth.js';
 
 export interface Services {
   settings: SettingsService;
+  auth: AuthService;
   indexer: IndexerService;
   downloadClient: DownloadClientService;
   book: BookService;
@@ -46,6 +49,7 @@ export interface Services {
 
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
   const settings = new SettingsService(db, log);
+  const auth = new AuthService(db, log);
   const indexer = new IndexerService(db, log);
   const downloadClient = new DownloadClientService(db, log);
 
@@ -64,7 +68,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const blacklistService = new BlacklistService(db, log);
   const prowlarrSync = new ProwlarrSyncService(db, log);
 
-  return { settings, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync };
+  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync };
 }
 
 export async function registerRoutes(
@@ -84,4 +88,5 @@ export async function registerRoutes(
   await notifiersRoutes(app, services.notifier);
   await blacklistRoutes(app, services.blacklist);
   await prowlarrRoutes(app, services.prowlarrSync);
+  await authRoutes(app, services.auth);
 }

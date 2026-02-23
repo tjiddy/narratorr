@@ -20,4 +20,8 @@ export const queryKeys = {
     config: () => ['prowlarr', 'config'] as const,
     preview: () => ['prowlarr', 'preview'] as const,
   },
+  auth: {
+    status: () => ['auth', 'status'] as const,
+    config: () => ['auth', 'config'] as const,
+  },
 } as const;

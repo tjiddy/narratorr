@@ -10,6 +10,7 @@ dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
 
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import {
   serializerCompiler,
@@ -20,6 +21,7 @@ import { createDb, runMigrations } from '@narratorr/db';
 import { config } from './config.js';
 import { createServices, registerRoutes } from './routes';
 import { startJobs } from './jobs';
+import authPlugin from './plugins/auth.js';
 
 async function main() {
   const app = Fastify({
@@ -33,6 +35,7 @@ async function main() {
   // CORS
   await app.register(cors, {
     origin: config.isDev ? true : config.corsOrigin,
+    credentials: true,
   });
 
   // Ensure config directory exists
@@ -58,6 +61,11 @@ async function main() {
   } catch (err) {
     app.log.warn(err, 'Failed to load log level setting, using default');
   }
+
+  // Initialize auth and register cookie/auth plugins
+  await services.auth.initialize();
+  await app.register(cookie);
+  await app.register(authPlugin, { authService: services.auth });
 
   // Register API routes
   await registerRoutes(app, services);

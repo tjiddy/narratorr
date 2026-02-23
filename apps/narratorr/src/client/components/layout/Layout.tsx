@@ -1,6 +1,8 @@
-import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import { useState } from 'react';
+import { Outlet, NavLink, useLocation, Link } from 'react-router-dom';
 import { useTheme } from '@/hooks/useTheme';
 import { useActivityCounts } from '@/hooks/useActivityCounts';
+import { useAuthContext } from '@/hooks/useAuthContext';
 import {
   HeadphonesIcon,
   SearchIcon,
@@ -9,7 +11,11 @@ import {
   SunIcon,
   MoonIcon,
   LibraryIcon,
+  AlertTriangleIcon,
+  XIcon,
 } from '@/components/icons';
+
+const BANNER_DISMISSED_KEY = 'narratorr:auth-banner-dismissed';
 
 const navItems = [
   { to: '/library', label: 'Library', icon: LibraryIcon },
@@ -22,9 +28,45 @@ export function Layout() {
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const { active: activeDownloadCount } = useActivityCounts();
+  const { mode } = useAuthContext();
+  const [bannerDismissed, setBannerDismissed] = useState(
+    () => localStorage.getItem(BANNER_DISMISSED_KEY) === 'true',
+  );
+
+  function dismissBanner() {
+    setBannerDismissed(true);
+    localStorage.setItem(BANNER_DISMISSED_KEY, 'true');
+  }
 
   return (
     <div className="min-h-screen gradient-bg noise-overlay">
+      {/* Auth Warning Banner */}
+      {mode === 'none' && !bannerDismissed && (
+        <div className="bg-amber-500/15 border-b border-amber-500/30 animate-fade-in">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2.5 text-sm text-amber-700 dark:text-amber-300">
+              <AlertTriangleIcon className="w-4 h-4 shrink-0" />
+              <span>
+                Authentication is disabled.{' '}
+                <Link
+                  to="/settings/security"
+                  className="underline underline-offset-2 font-medium hover:text-amber-800 dark:hover:text-amber-200 transition-colors"
+                >
+                  Configure it in Settings &gt; Security
+                </Link>
+              </span>
+            </div>
+            <button
+              onClick={dismissBanner}
+              className="shrink-0 p-1.5 rounded-lg text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-colors"
+              aria-label="Dismiss auth warning"
+            >
+              <XIcon className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="sticky top-0 z-50 backdrop-blur-xl bg-background/80 border-b border-border/50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

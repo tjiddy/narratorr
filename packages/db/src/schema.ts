@@ -184,6 +184,17 @@ export const unmatchedGenres = sqliteTable('unmatched_genres', {
     .default(sql`(unixepoch())`),
 });
 
+// ============ AUTH ============
+
+export const users = sqliteTable('users', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  username: text('username').notNull().unique(),
+  passwordHash: text('password_hash').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 // ============ SETTINGS ============
 
 export const settings = sqliteTable('settings', {

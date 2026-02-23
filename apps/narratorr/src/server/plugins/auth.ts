@@ -1,0 +1,182 @@
+import fp from 'fastify-plugin';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import type { AuthService } from '../services/auth.service.js';
+import { config } from '../config.js';
+
+export interface AuthPluginOptions {
+  authService: AuthService;
+}
+
+/** Routes that never require authentication. */
+const PUBLIC_ROUTES = new Set([
+  '/api/auth/status',
+  '/api/auth/login',
+  '/api/health',
+  '/api/system/status',
+]);
+
+/**
+ * Private IP ranges for local network bypass.
+ * 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, ::1, fe80::/10
+ */
+function isPrivateIp(ip: string): boolean {
+  if (ip.startsWith('10.')) return true;
+  if (ip.startsWith('192.168.')) return true;
+  if (ip.startsWith('127.')) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(ip)) return true;
+  if (ip === '::1') return true;
+  if (ip === '::ffff:127.0.0.1') return true;
+  if (ip.toLowerCase().startsWith('fe80:')) return true;
+
+  const v4Mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (v4Mapped) return isPrivateIp(v4Mapped[1]);
+
+  return false;
+}
+
+function setUser(request: FastifyRequest, username: string) {
+  (request as unknown as Record<string, unknown>).user = { username };
+}
+
+/** Try API key auth. Returns true if handled (pass or reject), false to continue. */
+async function tryApiKey(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  authService: AuthService,
+): Promise<boolean> {
+  const apiKeyHeader = request.headers['x-api-key'] as string | undefined;
+  const apiKeyQuery = (request.query as Record<string, string>)?.apikey;
+  const apiKey = apiKeyHeader || apiKeyQuery;
+
+  if (!apiKey) return false;
+
+  const valid = await authService.validateApiKey(apiKey);
+  if (valid) {
+    request.log.debug('Auth: API key validated');
+    setUser(request, 'api-key');
+    return true;
+  }
+
+  request.log.debug('Auth: invalid API key');
+  reply.status(401).send({ error: 'Invalid API key' });
+  return true;
+}
+
+/** Handle Basic auth mode. Returns true if handled. */
+async function handleBasicAuth(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  authService: AuthService,
+): Promise<boolean> {
+  const authHeader = request.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Basic ')) {
+    reply.header('www-authenticate', 'Basic realm="Narratorr"');
+    reply.status(401).send({ error: 'Authentication required' });
+    return true;
+  }
+
+  const decoded = Buffer.from(authHeader.slice(6), 'base64').toString();
+  const [username, password] = decoded.split(':');
+  const verified = await authService.verifyCredentials(username, password);
+
+  if (!verified) {
+    reply.header('www-authenticate', 'Basic realm="Narratorr"');
+    reply.status(401).send({ error: 'Invalid credentials' });
+    return true;
+  }
+
+  setUser(request, verified.username);
+  return true;
+}
+
+/** Handle Forms auth mode. Returns true if handled. */
+async function handleFormsAuth(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  authService: AuthService,
+): Promise<boolean> {
+  const sessionCookie = request.cookies?.['narratorr_session'];
+  if (!sessionCookie) {
+    reply.status(401).send({ error: 'Authentication required' });
+    return true;
+  }
+
+  const secret = await authService.getSessionSecret();
+  const result = authService.verifySessionCookie(sessionCookie, secret);
+
+  if (!result) {
+    reply.status(401).send({ error: 'Invalid or expired session' });
+    return true;
+  }
+
+  setUser(request, result.payload.username);
+
+  // Sliding expiry — renew cookie if >50% through TTL
+  if (result.shouldRenew) {
+    const newCookie = authService.createSessionCookie(result.payload.username, secret);
+    reply.setCookie('narratorr_session', newCookie, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: !config.isDev,
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60,
+    });
+    request.log.debug({ username: result.payload.username }, 'Auth: session cookie renewed (sliding expiry)');
+  }
+
+  return true;
+}
+
+async function authPlugin(app: FastifyInstance, opts: AuthPluginOptions) {
+  const { authService } = opts;
+
+  app.decorateRequest('user', null);
+
+  app.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
+    // Only intercept /api/* routes
+    if (!request.url.startsWith('/api/')) return;
+
+    const routePath = request.url.split('?')[0];
+
+    // Public routes
+    if (PUBLIC_ROUTES.has(routePath)) return;
+
+    // /api/auth/setup is public when no user exists
+    if (routePath === '/api/auth/setup' && request.method === 'POST') {
+      const hasUser = await authService.hasUser();
+      if (!hasUser) return;
+    }
+
+    // AUTH_BYPASS env var
+    if (config.authBypass) {
+      request.log.debug('Auth bypassed via AUTH_BYPASS env var');
+      return;
+    }
+
+    // API key auth — works in all modes
+    if (await tryApiKey(request, reply, authService)) return;
+
+    // Get auth status for mode + bypass checks
+    const status = await authService.getStatus();
+
+    // Local network bypass
+    if (status.localBypass && isPrivateIp(request.ip)) {
+      request.log.debug({ ip: request.ip }, 'Auth: local bypass for private IP');
+      setUser(request, 'local-bypass');
+      return;
+    }
+
+    if (status.mode === 'none') return;
+    if (status.mode === 'basic') { await handleBasicAuth(request, reply, authService); return; }
+    if (status.mode === 'forms') { await handleFormsAuth(request, reply, authService); return; }
+
+    reply.status(401).send({ error: 'Authentication required' });
+  });
+}
+
+export default fp(authPlugin, {
+  name: 'auth',
+  dependencies: ['@fastify/cookie'],
+});
+
+export { isPrivateIp };
