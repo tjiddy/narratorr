@@ -17,8 +17,6 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Steps
 
-0. **Read the project context cache:** Read `.claude/project-context.md` to understand current codebase state (interfaces, patterns, wiring, schema). Only explore the codebase further for information NOT covered by the cache.
-
 1. **Read the issue:** Run `gitea issue $ARGUMENTS` and capture the full output (title, body, labels, milestone).
 
 2. **Verify spec review findings exist:** Run `gitea issue-comments <id>`. Look for the most recent comment containing `## Spec Review` and `## Verdict:`.
@@ -31,7 +29,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - `severity` (blocking / suggestion)
    - `category`, `description`, `reason`, `suggestion`
 
-4. **Explore the codebase** as needed to address the findings. Only explore for info not in the context cache.
+4. **Explore the codebase** as needed to address the findings.
 
 5. **Address each finding.** For each finding, determine a disposition:
    - **`fixed`** — Update the spec body to address the finding. Describe what changed.

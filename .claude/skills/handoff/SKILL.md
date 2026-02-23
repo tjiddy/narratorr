@@ -173,10 +173,4 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    3. <third most impactful>
    ```
 
-11. **Update project context cache** (`.claude/project-context.md`) — if the file exists:
-    - Read the file, find the `## Recent Changes` section
-    - Prepend a new entry at the top of the list: `- PR #<number> — #<id> <issue title>: <2-3 bullet summary of what changed>`
-    - If the section has more than 10 entries, remove the oldest ones (bottom of the list)
-    - Write the updated file
-
-12. Tell the user the PR is created and show the link.
+11. Tell the user the PR is created and show the link.

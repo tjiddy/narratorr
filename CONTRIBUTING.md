@@ -184,10 +184,6 @@ packages/
 
 **Frontend** uses React Router (routes in `App.tsx`), nav items in `Layout.tsx`, TanStack Query for server state, Tailwind for styling.
 
-### Codebase context cache
-
-`.claude/project-context.md` contains a pre-built summary of interfaces, service patterns, DB schema, test patterns, and recent changes. Read this before exploring the codebase from scratch — it saves significant time.
-
 ---
 
 ## Testing

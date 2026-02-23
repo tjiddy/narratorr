@@ -16,8 +16,6 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Steps
 
-0. **Read the project context cache:** Read `.claude/project-context.md` to understand current codebase state (interfaces, patterns, wiring, schema). Only explore the codebase further for information NOT covered by the cache.
-
 1. **Read the issue:** Run `gitea issue $ARGUMENTS` and capture the full output (title, body, labels, milestone).
 
 1b. **Check for spec review findings:** Run `gitea issue-comments <id>`. Look for the most recent comment containing `## Spec Review` and `## Verdict:`. If found and the verdict is `needs-work`, **STOP**: "Issue #<id> has unresolved spec review findings. Run `/respond-to-spec-review <id>` to address them." If the verdict is `approve` or no review comment exists, continue with step 2.
@@ -36,8 +34,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Read `.claude/debt.md` if it exists — check for known debt items in the target area.
    - Carry forward any relevant findings to include in the verdict output under a **"Implementation Hazards"** heading (e.g., "workflow log shows mock update churn in this area", "learning: useMutation passes extra args to mutationFn", "debt: missing mock factories for Book type").
 
-4. **Explore the codebase for gaps not covered by context cache:**
-   - Only explore if the context cache doesn't have the needed info
+4. **Explore the codebase for gaps:**
    - Find similar existing features (e.g., if adding a new adapter, look at existing adapters)
    - Check interfaces/types relevant to the issue
    - Identify touch points — wiring files, registries, route registrations

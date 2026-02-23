@@ -28,8 +28,6 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 2. **Read project context:**
    - Read `CLAUDE.md` for design principles, testing standards, project philosophy, and architecture patterns
-   - Read `.claude/project-context.md` if it exists for recent changes and current state
-
 3. **Explore the codebase** — Do a thorough exploration relevant to the issue scope. This is not a token-saving step — be exhaustive:
    - Find existing code that the spec will touch or extend
    - Understand current patterns, interfaces, and data flow in the affected areas

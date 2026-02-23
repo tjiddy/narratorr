@@ -40,7 +40,6 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - If one exists, STOP: "PR already open for #<id>: <PR link>"
 
 5. **Explore the codebase** for implementation planning:
-   - Read `.claude/project-context.md` for recent changes context
    - Read CLAUDE.md for design principles and conventions
    - Explore files/modules relevant to the issue scope
    - Check for overlapping work: `gitea prs`

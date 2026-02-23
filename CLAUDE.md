@@ -61,7 +61,7 @@ All issues with `scope/frontend` must include a UI/UX design pass during impleme
 
 ## Code Style
 
-TypeScript strict, ESM (`.js` extensions), functional React components, TanStack Query for server state, Tailwind CSS (no CSS files), `@/` path alias for client imports.
+TypeScript strict, ESM (`.js` extensions), functional React components, TanStack Query for server state, Tailwind CSS (no CSS files), `@/` path alias for client imports. Always use `return await` (not bare `return`) for async calls inside try/catch blocks — without `await`, the catch block is dead code for rejected promises.
 
 ## Logging
 
@@ -105,6 +105,7 @@ All new/changed code must include tests. Run `pnpm test` (Vitest via Turborepo) 
 - **Mock at the API boundary.** Mock `api.*` methods or use MSW — never mock child components or hooks. The more of the real component tree that executes, the more bugs you catch. If a test mocks a child component, it's testing nothing useful.
 - **Every error path gets a test.** API rejection → user sees error message. Empty data → empty state renders. Network failure mid-flow → UI recovers gracefully. If a catch block exists, a test should trigger it.
 - **Interaction chains over snapshots.** The highest-value tests exercise a full flow: action → state change → UI update → API call → response → UI update. These catch the integration bugs that unit tests miss.
+- **Read source before writing assertions.** When testing components that format or transform values, read the formatter/helper source first to understand edge cases (zero values, boundary conditions, format skipping). Most test assertion mismatches come from assuming output format without checking.
 
 **Coverage gate:** `/verify` runs coverage on files changed in the branch. Any source file (non-test) at 0% coverage is a hard block on handoff. This catches entirely untested new code — not a substitute for behavioral tests, but a safety net against shipping with no tests at all.
 
@@ -163,7 +164,7 @@ Skipping `/handoff` means no PR, no label update, no workflow log entry.
 - **Self-review guard.** `/review-pr` checks the current user against the PR author — if they match, it STOPs and suggests `/respond-to-pr-review` instead.
 - **Merge author validation.** `/merge` requires the most recent `approve` verdict to come from a different user than the PR author. Stale approvals (superseded by `needs-work`) are ignored.
 - **Dispute escalation.** If `/respond-to-pr-review` disputes a blocking finding, the issue goes `status/blocked` + `stage/review` and STOPs for human input.
-- **Auto-maintained files.** `/handoff` auto-updates `.claude/project-context.md` (recent changes, 10-entry cap) and prepends to `.claude/workflow-log.md`.
+- **Auto-maintained files.** `/handoff` prepends to `.claude/workflow-log.md`.
 
 ### Labels (2-axis model)
 
