@@ -21,6 +21,7 @@ import { SettingsSection } from './SettingsSection';
 import { LibrarySettingsSection } from './LibrarySettingsSection';
 import { SearchSettingsSection } from './SearchSettingsSection';
 import { ImportSettingsSection } from './ImportSettingsSection';
+import { ProcessingSettingsSection } from './ProcessingSettingsSection';
 
 const AUDIBLE_REGION_LABELS: Record<string, string> = {
   us: 'Audible.com (US)',
@@ -41,8 +42,10 @@ const defaultValues: UpdateSettingsFormData = {
   import: { deleteAfterImport: false, minSeedTime: 60 },
   general: { logLevel: 'info' as const },
   metadata: { audibleRegion: 'us' as const },
+  processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'multi-file-only' as const },
 };
 
+// eslint-disable-next-line complexity -- flat null-coalescing map, no branching logic
 function settingsToFormData(settings: NonNullable<ReturnType<typeof api.getSettings> extends Promise<infer T> ? T : never>): UpdateSettingsFormData {
   return {
     library: { path: settings.library.path, folderFormat: settings.library.folderFormat },
@@ -57,6 +60,13 @@ function settingsToFormData(settings: NonNullable<ReturnType<typeof api.getSetti
     },
     general: { logLevel: settings.general?.logLevel || 'info' },
     metadata: { audibleRegion: settings.metadata?.audibleRegion || 'us' },
+    processing: {
+      enabled: settings.processing?.enabled ?? false,
+      ffmpegPath: settings.processing?.ffmpegPath ?? '',
+      outputFormat: settings.processing?.outputFormat ?? 'm4b',
+      bitrate: settings.processing?.bitrate ?? 128,
+      mergeBehavior: settings.processing?.mergeBehavior ?? 'multi-file-only',
+    },
   };
 }
 
@@ -80,13 +90,20 @@ export function GeneralSettings() {
   }, [settings, reset]);
 
   const mutation = useMutation({
-    mutationFn: api.updateSettings,
+    mutationFn: async (data: UpdateSettingsFormData) => {
+      // Probe ffmpeg before saving when processing is enabled
+      if (data.processing.enabled && data.processing.ffmpegPath.trim()) {
+        await api.probeFfmpeg(data.processing.ffmpegPath);
+      }
+      return await api.updateSettings(data);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
       toast.success('Settings saved successfully');
     },
-    onError: () => {
-      toast.error('Failed to save settings');
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : 'Failed to save settings';
+      toast.error(message);
     },
   });
 
@@ -103,6 +120,7 @@ export function GeneralSettings() {
       <LibrarySettingsSection register={register} errors={errors} setValue={setValue} watch={watch} />
       <SearchSettingsSection register={register} errors={errors} />
       <ImportSettingsSection register={register} errors={errors} />
+      <ProcessingSettingsSection register={register} errors={errors} watch={watch} />
 
       <SettingsSection
         icon={<TerminalIcon className="w-5 h-5 text-primary" />}

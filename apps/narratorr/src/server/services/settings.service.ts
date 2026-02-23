@@ -26,6 +26,13 @@ const DEFAULT_SETTINGS: AppSettings = {
   metadata: {
     audibleRegion: 'us',
   },
+  processing: {
+    enabled: false,
+    ffmpegPath: '',
+    outputFormat: 'm4b',
+    bitrate: 128,
+    mergeBehavior: 'multi-file-only',
+  },
 };
 
 export class SettingsService {
@@ -52,6 +59,7 @@ export class SettingsService {
       import: (settingsMap.get('import') as AppSettings['import']) || DEFAULT_SETTINGS.import,
       general: (settingsMap.get('general') as AppSettings['general']) || DEFAULT_SETTINGS.general,
       metadata: (settingsMap.get('metadata') as AppSettings['metadata']) || DEFAULT_SETTINGS.metadata,
+      processing: (settingsMap.get('processing') as AppSettings['processing']) || DEFAULT_SETTINGS.processing,
     };
   }
 

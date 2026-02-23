@@ -4,6 +4,7 @@ import { ImportService, buildTargetPath } from './import.service.js';
 import { sanitizePath } from '@narratorr/core/utils';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { NotifierService } from './notifier.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 
@@ -21,8 +22,14 @@ vi.mock('@narratorr/core/utils/audio-scanner', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 
+// Mock audio processor
+vi.mock('@narratorr/core/utils/audio-processor', () => ({
+  processAudioFiles: vi.fn().mockResolvedValue({ success: true, outputFiles: [] }),
+}));
+
 import { mkdir, cp, stat, readdir, writeFile } from 'node:fs/promises';
 import { scanAudioDirectory } from '@narratorr/core/utils/audio-scanner';
+import { processAudioFiles } from '@narratorr/core/utils/audio-processor';
 
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 
@@ -87,6 +94,7 @@ function createMockSettingsService(): SettingsService {
     get: vi.fn().mockImplementation((key: string) => {
       if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}' });
       if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
+      if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only' });
       return Promise.resolve({});
     }),
   });
@@ -543,6 +551,100 @@ describe('ImportService', () => {
       db.update.mockReturnValue(mockDbChain());
 
       await expect(service.importDownload(1)).rejects.toThrow('not found');
+    });
+  });
+
+  describe('audio processing integration', () => {
+    function setupImportWithProcessing(processingEnabled: boolean) {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
+        if (key === 'processing') return Promise.resolve({
+          enabled: processingEnabled,
+          ffmpegPath: '/usr/bin/ffmpeg',
+          outputFormat: 'm4b',
+          bitrate: 128,
+          mergeBehavior: 'multi-file-only',
+        });
+        return Promise.resolve({});
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+    }
+
+    it('calls audio processor when processing enabled and multi-file import', async () => {
+      setupImportWithProcessing(true);
+      const mockProcess = vi.mocked(processAudioFiles);
+      mockProcess.mockResolvedValue({ success: true, outputFiles: ['/audiobooks/out.m4b'] });
+
+      await service.importDownload(1);
+
+      expect(mockProcess).toHaveBeenCalledWith(
+        expect.stringMatching(/audiobooks/),
+        expect.objectContaining({ ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b' }),
+        expect.objectContaining({ author: 'Brandon Sanderson', title: 'The Way of Kings' }),
+      );
+    });
+
+    it('skips audio processor when processing disabled', async () => {
+      setupImportWithProcessing(false);
+      const mockProcess = vi.mocked(processAudioFiles);
+
+      await service.importDownload(1);
+
+      expect(mockProcess).not.toHaveBeenCalled();
+    });
+
+    it('sets book status to failed on processor error', async () => {
+      setupImportWithProcessing(true);
+      const mockProcess = vi.mocked(processAudioFiles);
+      mockProcess.mockResolvedValue({ success: false, error: 'ffmpeg crashed' });
+
+      await expect(service.importDownload(1)).rejects.toThrow('Audio processing failed: ffmpeg crashed');
+
+      // Verify book was set to 'failed' status
+      const updateCalls = db.update.mock.results;
+      const setCalls = updateCalls
+        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .filter(Boolean);
+      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
+    });
+
+    it('fires on_failure notification on processor error', async () => {
+      const mockNotifier = {
+        notify: vi.fn().mockResolvedValue(undefined),
+      };
+      const serviceWithNotifier = new ImportService(
+        inject<Db>(db), clientService, settingsService,
+        inject<FastifyBaseLogger>(createMockLogger()),
+        inject<NotifierService>(mockNotifier),
+      );
+
+      setupImportWithProcessing(true);
+      const mockProcess = vi.mocked(processAudioFiles);
+      mockProcess.mockResolvedValue({ success: false, error: 'ffmpeg crashed' });
+
+      await expect(serviceWithNotifier.importDownload(1)).rejects.toThrow();
+
+      expect(mockNotifier.notify).toHaveBeenCalledWith('on_failure', expect.objectContaining({
+        error: expect.objectContaining({ stage: 'import' }),
+      }));
+    });
+
+    it('proceeds to enrichment after successful processing', async () => {
+      setupImportWithProcessing(true);
+      const mockProcess = vi.mocked(processAudioFiles);
+      mockProcess.mockResolvedValue({ success: true, outputFiles: ['/audiobooks/out.m4b'] });
+
+      const result = await service.importDownload(1);
+
+      expect(result.downloadId).toBe(1);
+      // scanAudioDirectory is called during enrichment
+      expect(scanAudioDirectory).toHaveBeenCalled();
     });
   });
 });

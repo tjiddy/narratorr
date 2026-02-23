@@ -30,6 +30,14 @@
       "import": "./dist/utils/book-discovery.js",
       "types": "./dist/utils/book-discovery.d.ts"
     },
+    "./utils/chapter-resolver": {
+      "import": "./dist/utils/chapter-resolver.js",
+      "types": "./dist/utils/chapter-resolver.d.ts"
+    },
+    "./utils/audio-processor": {
+      "import": "./dist/utils/audio-processor.js",
+      "types": "./dist/utils/audio-processor.d.ts"
+    },
     "./metadata": {
       "import": "./dist/metadata/index.js",
       "types": "./dist/metadata/index.d.ts"

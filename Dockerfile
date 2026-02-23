@@ -33,6 +33,9 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+# Install ffmpeg for audio processing (merge/convert)
+RUN apk add --no-cache ffmpeg
+
 # Install pnpm for production dependencies
 RUN corepack enable
 

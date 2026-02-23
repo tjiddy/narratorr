@@ -119,7 +119,7 @@ describe('GeneralSettings', () => {
     await user.click(screen.getByText('Save Changes').closest('button')!);
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to save settings');
+      expect(toast.error).toHaveBeenCalledWith('fail');
     });
   });
 

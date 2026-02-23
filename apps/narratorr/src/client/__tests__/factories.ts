@@ -60,6 +60,7 @@ export function createMockSettings(overrides?: Partial<Settings>): Settings {
     import: { deleteAfterImport: false, minSeedTime: 60 },
     general: { logLevel: 'info' },
     metadata: { audibleRegion: 'us' },
+    processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only' },
     ...overrides,
   };
 }

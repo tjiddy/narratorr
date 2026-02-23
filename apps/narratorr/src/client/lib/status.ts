@@ -24,6 +24,11 @@ export const bookStatusConfig: Record<string, { label: string; dotClass: string;
     dotClass: 'bg-destructive',
     textClass: 'text-destructive',
   },
+  failed: {
+    label: 'Failed',
+    dotClass: 'bg-destructive',
+    textClass: 'text-destructive',
+  },
 };
 
 export const downloadStatusConfig: Record<

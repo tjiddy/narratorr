@@ -188,6 +188,20 @@ export const importSettingsSchema = z.object({
   minSeedTime: z.number().int().min(0).default(0),
 });
 
+export const outputFormatSchema = z.enum(['m4b', 'mp3']);
+export type OutputFormat = z.infer<typeof outputFormatSchema>;
+
+export const mergeBehaviorSchema = z.enum(['always', 'multi-file-only', 'never']);
+export type MergeBehavior = z.infer<typeof mergeBehaviorSchema>;
+
+export const processingSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  ffmpegPath: z.string().default(''),
+  outputFormat: outputFormatSchema.default('m4b'),
+  bitrate: z.number().int().min(32).max(512).default(128),
+  mergeBehavior: mergeBehaviorSchema.default('multi-file-only'),
+});
+
 export const logLevelSchema = z.enum(['error', 'warn', 'info', 'debug']);
 export type LogLevel = z.infer<typeof logLevelSchema>;
 
@@ -208,6 +222,7 @@ export const appSettingsSchema = z.object({
   import: importSettingsSchema,
   general: generalSettingsSchema,
   metadata: metadataSettingsSchema,
+  processing: processingSettingsSchema,
 });
 
 export const updateSettingsSchema = z.object({
@@ -216,6 +231,15 @@ export const updateSettingsSchema = z.object({
   import: importSettingsSchema.partial().optional(),
   general: generalSettingsSchema.partial().optional(),
   metadata: metadataSettingsSchema.partial().optional(),
+  processing: processingSettingsSchema.partial().optional(),
+}).superRefine((data, ctx) => {
+  if (data.processing?.enabled && !data.processing.ffmpegPath?.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['processing', 'ffmpegPath'],
+      message: 'ffmpeg path is required when processing is enabled',
+    });
+  }
 });
 
 export type AppSettings = z.infer<typeof appSettingsSchema>;
@@ -255,6 +279,21 @@ export const updateSettingsFormSchema = z.object({
   metadata: z.object({
     audibleRegion: audibleRegionSchema,
   }),
+  processing: z.object({
+    enabled: z.boolean(),
+    ffmpegPath: z.string(),
+    outputFormat: outputFormatSchema,
+    bitrate: z.number().int().min(32).max(512),
+    mergeBehavior: mergeBehaviorSchema,
+  }),
+}).superRefine((data, ctx) => {
+  if (data.processing.enabled && !data.processing.ffmpegPath.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['processing', 'ffmpegPath'],
+      message: 'ffmpeg not found at specified path',
+    });
+  }
 });
 
 export type UpdateSettingsFormData = z.infer<typeof updateSettingsFormSchema>;

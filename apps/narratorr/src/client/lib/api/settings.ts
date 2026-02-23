@@ -1,4 +1,4 @@
-import type { AudibleRegion } from '../../../shared/schemas.js';
+import type { AudibleRegion, OutputFormat, MergeBehavior } from '../../../shared/schemas.js';
 import { fetchApi } from './client.js';
 
 export interface Settings {
@@ -21,6 +21,17 @@ export interface Settings {
   metadata: {
     audibleRegion: AudibleRegion;
   };
+  processing: {
+    enabled: boolean;
+    ffmpegPath: string;
+    outputFormat: OutputFormat;
+    bitrate: number;
+    mergeBehavior: MergeBehavior;
+  };
+}
+
+export interface FfmpegProbeResult {
+  version: string;
 }
 
 export interface TestResult {
@@ -34,5 +45,10 @@ export const settingsApi = {
     fetchApi<Settings>('/settings', {
       method: 'PUT',
       body: JSON.stringify(data),
+    }),
+  probeFfmpeg: (path: string) =>
+    fetchApi<FfmpegProbeResult>('/settings/ffmpeg-probe', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
     }),
 };

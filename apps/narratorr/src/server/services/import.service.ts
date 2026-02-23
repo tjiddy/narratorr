@@ -5,6 +5,7 @@ import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, authors } from '@narratorr/db/schema';
 import { renderTemplate, AUDIO_EXTENSIONS } from '@narratorr/core/utils';
+import { processAudioFiles } from '@narratorr/core/utils/audio-processor';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -121,9 +122,10 @@ export class ImportService {
       const savePath = await this.resolveSavePath(download);
 
       // 4. Build target path
-      const [librarySettings, importSettings] = await Promise.all([
+      const [librarySettings, importSettings, processingSettings] = await Promise.all([
         this.settingsService.get('library'),
         this.settingsService.get('import'),
+        this.settingsService.get('processing'),
       ]);
 
       const targetPath = buildTargetPath(
@@ -163,12 +165,53 @@ export class ImportService {
         await cp(sourcePath, targetFile, { errorOnExist: false });
       }
 
-      // 7. Verify copy (compare total size)
-      const sourceSize = await getPathSize(sourcePath);
-      const targetSize = await getPathSize(targetPath);
+      // 6b. Audio processing (merge/convert) — only for download imports when enabled
+      if (processingSettings?.enabled) {
+        this.log.info({ targetPath, config: processingSettings }, 'Running audio processing');
 
-      if (targetSize < sourceSize * 0.99) {
-        throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
+        if (processingSettings.outputFormat === 'mp3' && processingSettings.mergeBehavior !== 'never') {
+          this.log.warn('MP3 output does not support embedded chapters');
+        }
+
+        const processingResult = await processAudioFiles(
+          targetPath,
+          {
+            ffmpegPath: processingSettings.ffmpegPath,
+            outputFormat: processingSettings.outputFormat,
+            bitrate: processingSettings.bitrate,
+            mergeBehavior: processingSettings.mergeBehavior,
+          },
+          {
+            author: author?.name ?? 'Unknown Author',
+            title: book.title,
+          },
+        );
+
+        if (!processingResult.success) {
+          // Set book status to 'failed', preserve source files
+          await this.db.update(books).set({
+            status: 'failed',
+            updatedAt: new Date(),
+          }).where(eq(books.id, book.id));
+
+          throw new Error(`Audio processing failed: ${processingResult.error}`);
+        }
+
+        this.log.info(
+          { outputFiles: processingResult.outputFiles.length },
+          'Audio processing completed',
+        );
+      }
+
+      // 7. Verify copy (compare total size) — skip when processing ran
+      // because merge/convert changes the files in the target directory
+      const targetSize = await getPathSize(targetPath);
+      if (!processingSettings?.enabled) {
+        const sourceSize = await getPathSize(sourcePath);
+
+        if (targetSize < sourceSize * 0.99) {
+          throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
+        }
       }
 
       // 8. Update book: status='imported', path=targetPath
