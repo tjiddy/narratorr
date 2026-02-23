@@ -26,6 +26,21 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Full issue body (spec)
    - Existing comments (prior review findings, elaboration notes)
 
+1b. **Parse prior review history (re-reviews only):** From the comments extracted in step 1, find all comments containing `## Spec Review` (prior reviews) and `## Spec Review Response` (author responses). Build a map of prior findings and their resolutions:
+   - For each prior finding ID (F1, F2, etc.), note: the original finding, the author's resolution (`fixed`, `accepted`, `disputed`), and any rationale provided.
+   - If this is the first review (no prior `## Spec Review` comments), skip to step 2.
+   - **This does NOT reduce the scope of the review.** Steps 2-4 still run in full — you may find net-new issues that prior rounds missed. The prior history only affects how you handle findings that overlap with previously-disputed items (see dispute engagement rules below).
+
+   **Dispute engagement rules** — these apply in step 5 when classifying findings. After completing the full review (steps 2-4), check each finding against the prior history map:
+   - If a finding was previously raised and the author **fixed** it (updated the spec), verify the update addresses the issue. If it does, drop the finding. If the fix is incomplete, raise a NEW finding explaining what's still wrong.
+   - If a finding overlaps with something the author previously **disputed** with rationale, you MUST engage with their specific argument before re-raising it:
+     1. **Withdraw** — the author's rationale is correct. Drop the finding.
+     2. **Rebut** — the author's rationale is wrong. Raise the finding with a NEW reason that directly refutes their argument.
+     3. **Refine** — the author's rationale is partially correct. Raise a narrower finding that accounts for their point.
+   - **Re-raising a finding with the same description and reason after it was disputed is NOT allowed.** If you can't rebut the author's specific argument, withdraw. Repeating yourself is not reviewing.
+   - If a finding was previously **accepted** or **deferred**, it's resolved — don't re-raise.
+   - **Net-new findings are always welcome** regardless of prior history.
+
 2. **Read project context:**
    - Read `CLAUDE.md` for design principles, testing standards, project philosophy, and architecture patterns
 3. **Explore the codebase** — Do a thorough exploration relevant to the issue scope. This is not a token-saving step — be exhaustive:
@@ -118,6 +133,12 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      - Approach: pass | issues (<details>)
      - Behavioral accuracy: pass | mismatch (<details>) | N/A (not a test spec)
 
+     ## Prior Findings (omit on first review)
+
+     | Prior ID | Original Description | Disposition |
+     |----------|---------------------|-------------|
+     | F1 (round 1) | <description> | verified-fixed / withdrawn / re-raised as F<N> (rebuttal: <why author's argument doesn't hold>) |
+
      ## Verdict: approve | needs-work
 
      <Summary — what's strong about the spec, what needs to change>
@@ -162,3 +183,5 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 - Use suggestions liberally. When in doubt about severity, make it a suggestion — the spec author can promote it if they agree it matters.
 - If there are no findings at all, use an empty array: `[]`
 - Consult the project's CLAUDE.md philosophy section — optimize findings for defect prevention, not compliance.
+- **Re-reviews require prior comment reading.** On any issue that already has `## Spec Review` comments, step 1b is mandatory. Skipping it produces review loops where the same finding bounces back and forth.
+- **Stand your ground when you're right.** If the author disputes a finding and their rationale is wrong, rebut it with specific evidence. Don't withdraw just because they pushed back — withdraw because they proved you wrong. But if they DID prove you wrong, have the intellectual honesty to drop it.
