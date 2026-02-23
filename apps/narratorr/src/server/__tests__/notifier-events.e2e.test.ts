@@ -158,7 +158,7 @@ describe('Notifier event triggers E2E', () => {
 
   afterEach(() => {
     mswServer.resetHandlers();
-    (e2e.services.downloadClient as unknown as { adapters: Map<number, unknown> }).adapters.clear();
+    e2e.services.downloadClient.clearAdapterCache();
     vi.mocked(scanAudioDirectory).mockReset();
     vi.mocked(scanAudioDirectory).mockResolvedValue(null);
   });

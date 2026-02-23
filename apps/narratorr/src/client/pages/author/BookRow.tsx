@@ -55,7 +55,7 @@ export function BookRow({
       {/* Add button */}
       <div className="shrink-0">
         {inLibrary ? (
-          <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-success/10 text-success">
+          <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-success/10 text-success" role="img" aria-label="In library">
             <CheckIcon className="w-4 h-4" />
           </span>
         ) : (

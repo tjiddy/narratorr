@@ -39,10 +39,8 @@ describe('crud-routes shared error paths', () => {
 
       const res = await app.inject({ method: 'GET', url: '/api/notifiers' });
 
-      // Note: getAll uses `return service.getAll()` without await, so the
-      // catch block is dead code — Fastify's default error handler catches
-      // the rejection instead, producing its own 500 format.
       expect(res.statusCode).toBe(500);
+      expect(res.json()).toEqual({ error: 'Internal server error' });
     });
   });
 

@@ -29,7 +29,7 @@ export async function registerCrudRoutes(
   // GET /api/<resource>
   app.get(basePath, async (request, reply) => {
     try {
-      return service.getAll();
+      return await service.getAll();
     } catch (error) {
       request.log.error(error, `Failed to fetch ${lower}s`);
       return reply.status(500).send({ error: 'Internal server error' });

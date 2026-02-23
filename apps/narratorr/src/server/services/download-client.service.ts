@@ -30,6 +30,10 @@ export class DownloadClientService {
 
   constructor(private db: Db, private log: FastifyBaseLogger) {}
 
+  clearAdapterCache(): void {
+    this.adapters.clear();
+  }
+
   async getAll(): Promise<DownloadClientRow[]> {
     return this.db.select().from(downloadClients).orderBy(downloadClients.priority);
   }

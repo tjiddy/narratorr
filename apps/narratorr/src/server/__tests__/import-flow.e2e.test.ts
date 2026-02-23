@@ -113,7 +113,7 @@ describe('Import flow E2E', () => {
 
   afterEach(async () => {
     mswServer.resetHandlers();
-    (e2e.services.downloadClient as unknown as { adapters: Map<number, unknown> }).adapters.clear();
+    e2e.services.downloadClient.clearAdapterCache();
     vi.mocked(scanAudioDirectory).mockReset();
     vi.mocked(scanAudioDirectory).mockResolvedValue(null);
     // Restore default import settings (torrent tests modify these)

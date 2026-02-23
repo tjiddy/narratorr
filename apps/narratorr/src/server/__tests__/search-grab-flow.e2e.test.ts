@@ -78,7 +78,7 @@ describe('Search → Grab flow E2E', () => {
     // Clear adapter cache so each test gets fresh adapter behavior.
     // The qBittorrent adapter caches its auth session — without clearing,
     // error-path tests reuse the cached (authenticated) adapter.
-    (e2e.services.downloadClient as unknown as { adapters: Map<number, unknown> }).adapters.clear();
+    e2e.services.downloadClient.clearAdapterCache();
   });
 
   afterAll(async () => {

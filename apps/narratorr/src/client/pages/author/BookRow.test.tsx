@@ -33,10 +33,9 @@ describe('BookRow', () => {
   });
 
   it('shows check icon when inLibrary', () => {
-    const { container } = render(<BookRow book={createMockBookMetadata()} inLibrary={true} onAdd={onAdd} isAdding={false} />);
+    render(<BookRow book={createMockBookMetadata()} inLibrary={true} onAdd={onAdd} isAdding={false} />);
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
-    // Check icon is rendered in a span, not a button
-    expect(container.querySelector('.text-success')).toBeInTheDocument();
+    expect(screen.getByLabelText('In library')).toBeInTheDocument();
   });
 
   it('shows Add button when not in library', () => {
