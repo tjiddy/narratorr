@@ -6,6 +6,18 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 import type { MetadataService } from './metadata.service.js';
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    rm: vi.fn(),
+    readdir: vi.fn(),
+  };
+});
+
+import { rm, readdir } from 'node:fs/promises';
+import type { Mock } from 'vitest';
+
 const mockAuthor = createMockDbAuthor();
 const mockBook = createMockDbBook();
 
@@ -397,6 +409,85 @@ describe('BookService', () => {
       const result = await service.delete(999);
       expect(result).toBe(false);
       expect(db.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('deleteBookFiles', () => {
+    beforeEach(() => {
+      vi.mocked(rm).mockReset();
+      vi.mocked(readdir).mockReset();
+    });
+
+    it('deletes book directory recursively', async () => {
+      (rm as Mock).mockResolvedValue(undefined);
+      (readdir as Mock).mockResolvedValue(['other-file.txt']);
+
+      await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
+
+      expect(rm).toHaveBeenCalledWith('/audiobooks/Author/Book', { recursive: true, force: true });
+    });
+
+    it('cleans up empty parent directories up to library root', async () => {
+      (rm as Mock).mockResolvedValue(undefined);
+      (readdir as Mock)
+        .mockResolvedValueOnce([])   // /audiobooks/Author is empty
+        .mockResolvedValueOnce([]);  // shouldn't be called — /audiobooks is library root
+
+      await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
+
+      // rm called for: book dir + empty Author dir
+      expect(rm).toHaveBeenCalledTimes(2);
+      expect(rm).toHaveBeenNthCalledWith(1, '/audiobooks/Author/Book', { recursive: true, force: true });
+      expect(rm).toHaveBeenNthCalledWith(2, expect.stringContaining('Author'));
+    });
+
+    it('stops cleaning parents at non-empty directory', async () => {
+      (rm as Mock).mockResolvedValue(undefined);
+      (readdir as Mock).mockResolvedValueOnce(['other-book']); // Author dir has other books
+
+      await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
+
+      // Only the book dir itself gets deleted
+      expect(rm).toHaveBeenCalledTimes(1);
+    });
+
+    it('never deletes the library root', async () => {
+      (rm as Mock).mockResolvedValue(undefined);
+      (readdir as Mock).mockResolvedValue([]);
+
+      await service.deleteBookFiles('/audiobooks/Book', '/audiobooks');
+
+      // Only the book dir itself gets deleted — /audiobooks is root so not cleaned
+      expect(rm).toHaveBeenCalledTimes(1);
+      expect(rm).toHaveBeenCalledWith('/audiobooks/Book', { recursive: true, force: true });
+    });
+
+    it('skips parent cleanup when book path is not under library root', async () => {
+      (rm as Mock).mockResolvedValue(undefined);
+
+      await service.deleteBookFiles('/other-location/Book', '/audiobooks');
+
+      // Still deletes the book dir, but no parent cleanup
+      expect(rm).toHaveBeenCalledTimes(1);
+      expect(readdir).not.toHaveBeenCalled();
+    });
+
+    it('skips parent cleanup when path is a prefix match but not a true descendant', async () => {
+      (rm as Mock).mockResolvedValue(undefined);
+
+      // /audiobooks2 starts with /audiobooks but is NOT a descendant
+      await service.deleteBookFiles('/audiobooks2/Author/Book', '/audiobooks');
+
+      expect(rm).toHaveBeenCalledTimes(1);
+      expect(readdir).not.toHaveBeenCalled();
+    });
+
+    it('throws when rm fails', async () => {
+      (rm as Mock).mockRejectedValue(new Error('EACCES: permission denied'));
+
+      await expect(
+        service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks'),
+      ).rejects.toThrow('EACCES: permission denied');
     });
   });
 

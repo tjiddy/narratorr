@@ -105,8 +105,8 @@ export const booksApi = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  deleteBook: (id: number) =>
-    fetchApi<{ success: boolean }>(`/books/${id}`, { method: 'DELETE' }),
+  deleteBook: (id: number, options?: { deleteFiles?: boolean }) =>
+    fetchApi<{ success: boolean }>(`/books/${id}${options?.deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }),
   getBookFiles: (id: number) =>
     fetchApi<BookFile[]>(`/books/${id}/files`),
 

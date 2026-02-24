@@ -270,6 +270,102 @@ describe('LibraryPage', () => {
     // Default sort is createdAt desc, so first book shown is id=4 (Words of Radiance)
     await waitFor(() => {
       expect(vi.mocked(api.deleteBook).mock.calls[0][0]).toBe(4);
+      // Without checking the box, deleteFiles should not be passed
+      expect(vi.mocked(api.deleteBook).mock.calls[0][1]).toBeUndefined();
+    });
+  });
+
+  it('shows delete files checkbox for books with path and passes deleteFiles to API', async () => {
+    const booksWithPath = [
+      createMockBook({
+        id: 5,
+        title: 'Imported Book',
+        path: '/audiobooks/Author/Imported Book',
+        status: 'imported',
+        createdAt: '2024-01-05T00:00:00Z',
+        updatedAt: '2024-01-05T00:00:00Z',
+      }),
+    ];
+    vi.mocked(api.getBooks).mockResolvedValue(booksWithPath);
+    vi.mocked(api.deleteBook).mockResolvedValue({ success: true });
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Imported Book')).toBeInTheDocument();
+    });
+
+    const menuButtons = screen.getAllByLabelText('Book options');
+    await user.click(menuButtons[0]);
+    await user.click(screen.getByText('Remove from Library'));
+
+    // Checkbox should be visible for book with path
+    const checkbox = screen.getByLabelText('Delete files from disk');
+    expect(checkbox).not.toBeChecked();
+
+    // Check the box and confirm
+    await user.click(checkbox);
+    expect(checkbox).toBeChecked();
+
+    const modal = screen.getByText(/Are you sure you want to remove/).closest('div[class*="relative w-full"]') as HTMLElement;
+    await user.click(within(modal).getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => {
+      expect(vi.mocked(api.deleteBook)).toHaveBeenCalledWith(5, { deleteFiles: true });
+    });
+  });
+
+  it('does not show delete files checkbox for books without path', async () => {
+    vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    const menuButtons = screen.getAllByLabelText('Book options');
+    await user.click(menuButtons[0]);
+    await user.click(screen.getByText('Remove from Library'));
+
+    expect(screen.getByText(/Are you sure you want to remove/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Delete files from disk')).not.toBeInTheDocument();
+  });
+
+  it('shows different success toast when files are deleted', async () => {
+    const booksWithPath = [
+      createMockBook({
+        id: 5,
+        title: 'Imported Book',
+        path: '/audiobooks/Author/Imported Book',
+        status: 'imported',
+        createdAt: '2024-01-05T00:00:00Z',
+        updatedAt: '2024-01-05T00:00:00Z',
+      }),
+    ];
+    vi.mocked(api.getBooks).mockResolvedValue(booksWithPath);
+    vi.mocked(api.deleteBook).mockResolvedValue({ success: true });
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Imported Book')).toBeInTheDocument();
+    });
+
+    const menuButtons = screen.getAllByLabelText('Book options');
+    await user.click(menuButtons[0]);
+    await user.click(screen.getByText('Remove from Library'));
+
+    await user.click(screen.getByLabelText('Delete files from disk'));
+
+    const modal = screen.getByText(/Are you sure you want to remove/).closest('div[class*="relative w-full"]') as HTMLElement;
+    await user.click(within(modal).getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Removed book and deleted files from disk');
     });
   });
 

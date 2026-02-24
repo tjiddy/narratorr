@@ -81,7 +81,7 @@ export async function registerRoutes(
   services: Services,
   db: Db,
 ): Promise<void> {
-  await booksRoutes(app, services.book, services.download);
+  await booksRoutes(app, services.book, services.download, services.settings);
   await bookFilesRoute(app, services.book);
   await searchRoutes(app, services.indexer, services.download, services.blacklist);
   await activityRoutes(app, services.download);

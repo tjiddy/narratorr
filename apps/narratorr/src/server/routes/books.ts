@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import type { BookService, DownloadService } from '../services';
+import type { BookService, DownloadService, SettingsService } from '../services';
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.m4a', '.m4b', '.flac', '.ogg', '.opus', '.wma', '.aac']);
 
@@ -30,7 +30,7 @@ interface UpdateBookBody {
   status?: 'wanted' | 'searching' | 'downloading' | 'imported' | 'missing';
 }
 
-export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService) {
+export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService) {
   // GET /api/books
   app.get('/api/books', async (request, reply) => {
     try {
@@ -131,6 +131,63 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
     }
   );
 
+  // DELETE /api/books/:id
+  app.delete<{ Params: { id: string }; Querystring: { deleteFiles?: string } }>('/api/books/:id', async (request, reply) => {
+    try {
+      const id = parseInt(request.params.id, 10);
+      if (isNaN(id)) {
+        return reply.status(400).send({ error: 'Invalid ID' });
+      }
+
+      const deleteFiles = request.query.deleteFiles === 'true';
+
+      // If deleteFiles requested, attempt file deletion BEFORE cancelling downloads or removing DB record
+      if (deleteFiles) {
+        const book = await bookService.getById(id);
+        if (!book) {
+          return reply.status(404).send({ error: 'Book not found' });
+        }
+
+        if (book.path) {
+          try {
+            const librarySettings = await settingsService.get('library');
+            await bookService.deleteBookFiles(book.path, librarySettings.path);
+          } catch (error) {
+            request.log.error({ bookId: id, error }, 'Failed to delete book files');
+            return reply.status(500).send({ error: 'Failed to delete book files from disk' });
+          }
+        }
+      }
+
+      // Cancel any active downloads for this book
+      const activeDownloads = await downloadService.getActiveByBookId(id);
+      for (const download of activeDownloads) {
+        try {
+          await downloadService.cancel(download.id);
+        } catch (error) {
+          request.log.warn({ downloadId: download.id, error }, 'Failed to cancel download during book deletion');
+        }
+      }
+      if (activeDownloads.length > 0) {
+        request.log.info({ bookId: id, count: activeDownloads.length }, 'Cancelled active downloads for book');
+      }
+
+      const deleted = await bookService.delete(id);
+
+      if (!deleted) {
+        return reply.status(404).send({ error: 'Book not found' });
+      }
+
+      request.log.info({ id, deleteFiles }, 'Book deleted');
+      return { success: true };
+    } catch (error) {
+      request.log.error(error, 'Failed to delete book');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+}
+
+export async function bookFilesRoute(app: FastifyInstance, bookService: BookService) {
   // GET /api/books/:id/cover — serve embedded cover art from library
   app.get<{ Params: { id: string } }>('/api/books/:id/cover', async (request, reply) => {
     try {
@@ -166,43 +223,6 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
     }
   });
 
-  // DELETE /api/books/:id
-  app.delete<{ Params: { id: string } }>('/api/books/:id', async (request, reply) => {
-    try {
-      const id = parseInt(request.params.id, 10);
-      if (isNaN(id)) {
-        return reply.status(400).send({ error: 'Invalid ID' });
-      }
-
-      // Cancel any active downloads for this book
-      const activeDownloads = await downloadService.getActiveByBookId(id);
-      for (const download of activeDownloads) {
-        try {
-          await downloadService.cancel(download.id);
-        } catch (error) {
-          request.log.warn({ downloadId: download.id, error }, 'Failed to cancel download during book deletion');
-        }
-      }
-      if (activeDownloads.length > 0) {
-        request.log.info({ bookId: id, count: activeDownloads.length }, 'Cancelled active downloads for book');
-      }
-
-      const deleted = await bookService.delete(id);
-
-      if (!deleted) {
-        return reply.status(404).send({ error: 'Book not found' });
-      }
-
-      request.log.info({ id }, 'Book deleted');
-      return { success: true };
-    } catch (error) {
-      request.log.error(error, 'Failed to delete book');
-      return reply.status(500).send({ error: 'Internal server error' });
-    }
-  });
-}
-
-export async function bookFilesRoute(app: FastifyInstance, bookService: BookService) {
   app.get<{ Params: { id: string } }>('/api/books/:id/files', async (request, reply) => {
     try {
       const id = parseInt(request.params.id, 10);
