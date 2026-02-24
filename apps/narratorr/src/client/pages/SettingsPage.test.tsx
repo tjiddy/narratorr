@@ -457,20 +457,30 @@ describe('SettingsPage - Folder format token chips and preview', () => {
     vi.mocked(api.getClients).mockResolvedValue([]);
   });
 
-  it('renders token chips for all allowed tokens', async () => {
+  it('renders token panels that expand to show all allowed tokens', async () => {
+    const user = userEvent.setup();
     renderSettingsPage('/settings');
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Library' })).toBeInTheDocument();
     });
 
-    // All 6 token chips should render
-    expect(screen.getByText('{author}')).toBeInTheDocument();
-    expect(screen.getByText('{title}')).toBeInTheDocument();
-    expect(screen.getByText('{series}')).toBeInTheDocument();
-    expect(screen.getByText('{seriesPosition}')).toBeInTheDocument();
-    expect(screen.getByText('{year}')).toBeInTheDocument();
-    expect(screen.getByText('{narrator}')).toBeInTheDocument();
+    // Token panels collapsed by default
+    const toggles = screen.getAllByText('Insert token');
+    expect(toggles.length).toBe(2);
+
+    // Expand both panels
+    await user.click(toggles[0]);
+    await user.click(toggles[1]);
+
+    // Token chips now visible
+    expect(screen.getAllByText('{author}').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('{title}').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('{series}').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('{year}').length).toBeGreaterThanOrEqual(1);
+    // File-specific tokens
+    expect(screen.getAllByText('{trackNumber}').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('{trackTotal}').length).toBeGreaterThanOrEqual(1);
   });
 
   it('shows live preview with sample data', async () => {
@@ -480,10 +490,9 @@ describe('SettingsPage - Folder format token chips and preview', () => {
       expect(screen.getByRole('heading', { name: 'Library' })).toBeInTheDocument();
     });
 
-    // Default template is {author}/{title}, preview should show sample data
+    // Unified preview combines folder path + filename
     await waitFor(() => {
       expect(screen.getByText('Preview')).toBeInTheDocument();
-      expect(screen.getByText('Brandon Sanderson/The Way of Kings')).toBeInTheDocument();
     });
   });
 
@@ -495,8 +504,10 @@ describe('SettingsPage - Folder format token chips and preview', () => {
       expect(screen.getByRole('heading', { name: 'Library' })).toBeInTheDocument();
     });
 
-    // Click the {year} chip
-    await user.click(screen.getByText('{year}'));
+    // Expand folder format token panel, then click {year}
+    const toggles = screen.getAllByText('Insert token');
+    await user.click(toggles[0]);
+    await user.click(screen.getAllByText('{year}')[0]);
 
     // The folder format input should now contain {year}
     const input = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;

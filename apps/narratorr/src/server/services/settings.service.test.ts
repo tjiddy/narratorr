@@ -26,7 +26,7 @@ describe('SettingsService', () => {
       db.select.mockReturnValue(mockDbChain([]));
 
       const result = await service.get('library');
-      expect(result).toEqual({ path: '/audiobooks', folderFormat: '{author}/{title}' });
+      expect(result).toEqual({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
     });
 
     it('returns default search settings when not stored', async () => {
@@ -68,7 +68,7 @@ describe('SettingsService', () => {
       const chain = mockDbChain();
       db.insert.mockReturnValue(chain);
 
-      await service.set('library', { path: '/new', folderFormat: '{author}/{title}' });
+      await service.set('library', { path: '/new', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
 
       expect(db.insert).toHaveBeenCalled();
       expect(chain.values).toHaveBeenCalled();
@@ -83,7 +83,7 @@ describe('SettingsService', () => {
       db.select.mockReturnValue(mockDbChain([]));
 
       const result = await service.update({
-        library: { path: '/updated', folderFormat: '{title}' },
+        library: { path: '/updated', folderFormat: '{title}', fileFormat: '{title}' },
       });
 
       expect(db.insert).toHaveBeenCalled();

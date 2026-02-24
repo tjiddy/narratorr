@@ -322,6 +322,20 @@ describe('NZBGetClient', () => {
       expect(result.success).toBe(false);
     });
 
+    it('returns failure when server returns HTML instead of JSON', async () => {
+      server.use(
+        http.post(RPC_URL, () => {
+          return new HttpResponse('<!doctype html><html><body>Welcome</body></html>', {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('didn\'t respond as expected');
+    });
+
     it('returns failure on RPC error', async () => {
       server.use(
         http.post(RPC_URL, () => {

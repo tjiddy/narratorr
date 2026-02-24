@@ -6,8 +6,12 @@ import { LibrarySettingsSection } from './LibrarySettingsSection';
 import type { UpdateSettingsFormData } from '../../../shared/schemas.js';
 
 vi.mock('@narratorr/core/utils', () => ({
-  renderTemplate: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{title}', 'The Way of Kings'),
-  ALLOWED_TOKENS: ['author', 'title', 'series', 'seriesPosition', 'year', 'narrator'],
+  renderTemplate: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{authorLastFirst}', 'Sanderson, Brandon').replace('{title}', 'The Way of Kings').replace('{titleSort}', 'Way of Kings').replace('{narratorLastFirst}', 'Kramer, Michael & Reading, Kate'),
+  renderFilename: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{title}', 'The Way of Kings').replace('{trackNumber}', '1').replace('{trackTotal}', '12').replace('{partName}', 'The Way of Kings'),
+  toLastFirst: (name: string) => name,
+  toSortTitle: (title: string) => title,
+  ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
+  FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
 }));
 
 function Wrapper({
@@ -20,7 +24,7 @@ function Wrapper({
   const methods = useForm<UpdateSettingsFormData>({
     defaultValues: {
       search: { enabled: false, intervalMinutes: 360, autoGrab: false },
-      library: { path: '/audiobooks', folderFormat: defaultFolderFormat },
+      library: { path: '/audiobooks', folderFormat: defaultFolderFormat, fileFormat: '{author} - {title}' },
       import: { deleteAfterImport: false, minSeedTime: 60 },
       general: { logLevel: 'info' },
       metadata: { audibleRegion: 'us' },
@@ -30,7 +34,7 @@ function Wrapper({
 }
 
 describe('LibrarySettingsSection', () => {
-  it('renders fields, tokens, and preview, then accepts path input', async () => {
+  it('renders fields and preview, then accepts path input', async () => {
     const user = userEvent.setup();
     render(
       <Wrapper>
@@ -43,17 +47,20 @@ describe('LibrarySettingsSection', () => {
     // Fields present
     expect(screen.getByText('Library Path')).toBeInTheDocument();
     expect(screen.getByText('Folder Format')).toBeInTheDocument();
+    expect(screen.getByText('File Format')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('/audiobooks')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
+    expect(screen.getByPlaceholderText('{author} - {title}')).toHaveValue('{author} - {title}');
 
-    // Token buttons present
-    expect(screen.getByText('{author}')).toBeInTheDocument();
-    expect(screen.getByText('{title}')).toBeInTheDocument();
-    expect(screen.getByText('{series}')).toBeInTheDocument();
+    // Token panels collapsed by default — buttons not visible
+    expect(screen.queryByText('{series}')).not.toBeInTheDocument();
 
-    // Preview present
+    // "Insert token" toggles visible for both panels
+    const toggles = screen.getAllByText('Insert token');
+    expect(toggles).toHaveLength(2);
+
+    // Unified preview present
     expect(screen.getByText('Preview')).toBeInTheDocument();
-    expect(screen.getByText('Brandon Sanderson/The Way of Kings')).toBeInTheDocument();
 
     // Interact with path input
     const pathInput = screen.getByPlaceholderText('/audiobooks');
@@ -62,10 +69,9 @@ describe('LibrarySettingsSection', () => {
     expect(pathInput).toHaveValue('/new-lib');
   });
 
-  it('inserts a token when a token button is clicked', async () => {
+  it('expands token panel and inserts a token when clicked', async () => {
     const user = userEvent.setup();
 
-    // Spy component reads RHF state so we can assert on it
     function FolderFormatSpy() {
       const value = useFormContext<UpdateSettingsFormData>().watch('library.folderFormat');
       return <span data-testid="folder-format-spy">{value}</span>;
@@ -97,9 +103,15 @@ describe('LibrarySettingsSection', () => {
       </WrapperWithSpy>,
     );
 
-    await user.click(screen.getByText('{series}'));
+    // Expand folder format token panel
+    const toggles = screen.getAllByText('Insert token');
+    await user.click(toggles[0]);
 
-    // setValue updates RHF internal state — spy component watches the value
+    // Token buttons now visible
+    expect(screen.getAllByText('{series}').length).toBeGreaterThanOrEqual(1);
+
+    await user.click(screen.getAllByText('{series}')[0]);
+
     await waitFor(() => {
       expect(screen.getByTestId('folder-format-spy')).toHaveTextContent('{series}');
     });
@@ -115,6 +127,32 @@ describe('LibrarySettingsSection', () => {
     );
 
     expect(screen.getByText(/Template must include/)).toBeInTheDocument();
+  });
+
+  it('renders file format field with file-specific tokens in expanded panel', async () => {
+    const user = userEvent.setup();
+    render(
+      <Wrapper>
+        {({ register, formState: { errors }, setValue, watch }) => (
+          <LibrarySettingsSection register={register} errors={errors} setValue={setValue} watch={watch} />
+        )}
+      </Wrapper>,
+    );
+
+    expect(screen.getByText('File Format')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('{author} - {title}')).toHaveValue('{author} - {title}');
+
+    // Expand file format token panel (second toggle)
+    const toggles = screen.getAllByText('Insert token');
+    await user.click(toggles[1]);
+
+    // File-specific tokens visible (highlighted separately)
+    expect(screen.getAllByText('{trackNumber}').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('{trackTotal}').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('{partName}').length).toBeGreaterThanOrEqual(1);
+
+    // Single unified preview
+    expect(screen.getByText('Preview')).toBeInTheDocument();
   });
 
   it('shows author suggestion when title is present but author is missing', () => {

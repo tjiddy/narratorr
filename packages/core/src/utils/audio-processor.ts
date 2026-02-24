@@ -4,13 +4,16 @@ import { join, extname, basename } from 'node:path';
 import { promisify } from 'node:util';
 import { AUDIO_EXTENSIONS } from './audio-constants.js';
 import { readChapterSources, resolveChapterTitle } from './chapter-resolver.js';
+import type { ChapterSource } from './chapter-resolver.js';
+import { renderFilename } from './naming.js';
 
 const execFileAsync = promisify(execFile);
 
 export interface ProcessingConfig {
   ffmpegPath: string;
   outputFormat: 'm4b' | 'mp3';
-  bitrate: number;
+  /** Target bitrate in kbps. When omitted, the original bitrate is preserved (copy codec where possible). */
+  bitrate?: number;
   mergeBehavior: 'always' | 'multi-file-only' | 'never';
 }
 
@@ -19,6 +22,10 @@ export interface ProcessingContext {
   author: string;
   /** Book title for output file naming */
   title: string;
+  /** Optional file naming template (e.g. '{author} - {title}'). When omitted, falls back to '{author} - {title}'. */
+  fileFormat?: string;
+  /** Additional book-level tokens for renderFilename (series, year, narrator, etc.) */
+  bookTokens?: Record<string, string | number | undefined | null>;
 }
 
 export type ProcessingResult =
@@ -59,10 +66,13 @@ export async function processAudioFiles(
     (config.mergeBehavior === 'multi-file-only' && audioFiles.length > 1);
 
   try {
+    // Read chapter sources once — needed for merge (chapter markers) and convert (file naming)
+    const chapterSources = await readChapterSources(audioFiles);
+
     if (shouldMerge && audioFiles.length > 1) {
-      return await mergeFiles(targetDir, audioFiles, config, context);
+      return await mergeFiles(targetDir, chapterSources, config, context);
     } else {
-      return await convertFiles(targetDir, audioFiles, config);
+      return await convertFiles(targetDir, audioFiles, config, context, chapterSources);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Audio processing failed';
@@ -79,16 +89,24 @@ export async function processAudioFiles(
  */
 async function mergeFiles(
   targetDir: string,
-  audioFiles: string[],
+  chapterSources: ChapterSource[],
   config: ProcessingConfig,
   context: ProcessingContext,
 ): Promise<ProcessingResult> {
   const outputExt = config.outputFormat;
-  const outputName = `${context.author} - ${context.title}.${outputExt}`;
-  const outputPath = join(targetDir, outputName);
+  const audioFiles = chapterSources.map(s => s.filePath);
 
-  // Read chapter sources to get sorted order + metadata
-  const chapterSources = await readChapterSources(audioFiles);
+  const baseTokens = {
+    author: context.author,
+    title: context.title,
+    ...context.bookTokens,
+  };
+
+  const outputStem = context.fileFormat
+    ? renderFilename(context.fileFormat, baseTokens)
+    : `${context.author} - ${context.title}`;
+  const outputName = `${outputStem}.${outputExt}`;
+  const outputPath = join(targetDir, outputName);
 
   // Get durations for chapter markers
   const durations = await getFileDurations(config.ffmpegPath, chapterSources.map(s => s.filePath));
@@ -119,10 +137,15 @@ async function mergeFiles(
       // mp3 doesn't support chapters — this is logged by the caller
     }
 
-    args.push(
-      '-c:a', outputExt === 'm4b' ? 'aac' : 'libmp3lame',
-      '-b:a', `${config.bitrate}k`,
-    );
+    if (config.bitrate != null) {
+      args.push(
+        '-c:a', outputExt === 'm4b' ? 'aac' : 'libmp3lame',
+        '-b:a', `${config.bitrate}k`,
+      );
+    } else {
+      // Keep original bitrate — re-encode without specifying bitrate (ffmpeg uses default quality)
+      args.push('-c:a', outputExt === 'm4b' ? 'aac' : 'libmp3lame');
+    }
 
     if (outputExt === 'm4b') {
       args.push('-f', 'mp4');
@@ -151,11 +174,34 @@ async function convertFiles(
   targetDir: string,
   audioFiles: string[],
   config: ProcessingConfig,
+  context: ProcessingContext,
+  chapterSources: ChapterSource[],
 ): Promise<ProcessingResult> {
   const outputFiles: string[] = [];
+  const trackTotal = audioFiles.length;
 
-  for (const filePath of audioFiles) {
-    const stem = basename(filePath, extname(filePath));
+  // Build a map from filePath → ChapterSource for quick lookup
+  const sourceMap = new Map(chapterSources.map(s => [s.filePath, s]));
+
+  for (let i = 0; i < audioFiles.length; i++) {
+    const filePath = audioFiles[i];
+    const source = sourceMap.get(filePath);
+
+    let stem: string;
+    if (context.fileFormat) {
+      const tokens: Record<string, string | number | undefined | null> = {
+        author: context.author,
+        title: context.title,
+        ...context.bookTokens,
+        trackNumber: source?.trackNumber ?? (i + 1),
+        trackTotal,
+        partName: source ? resolveChapterTitle(source, i) : undefined,
+      };
+      stem = renderFilename(context.fileFormat, tokens);
+    } else {
+      stem = basename(filePath, extname(filePath));
+    }
+
     const outputPath = join(targetDir, `${stem}.${config.outputFormat}`);
     const sameFile = filePath === outputPath;
 
@@ -168,8 +214,11 @@ async function convertFiles(
       '-y',
       '-i', filePath,
       '-c:a', config.outputFormat === 'm4b' ? 'aac' : 'libmp3lame',
-      '-b:a', `${config.bitrate}k`,
     ];
+
+    if (config.bitrate != null) {
+      args.push('-b:a', `${config.bitrate}k`);
+    }
 
     if (config.outputFormat === 'm4b') {
       args.push('-f', 'mp4');

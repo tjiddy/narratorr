@@ -213,6 +213,23 @@ describe('processAudioFiles', () => {
     );
   });
 
+  it('omits -b:a flag when bitrate is undefined (keep original)', async () => {
+    mockReaddir.mockResolvedValue([
+      { name: 'book.mp3', isFile: () => true, isDirectory: () => false },
+    ] as never);
+
+    mockExecFileSuccess('');
+
+    const config: ProcessingConfig = { ...defaultConfig, bitrate: undefined };
+    const result = await processAudioFiles('/lib/book', config, defaultContext);
+    expect(result.success).toBe(true);
+
+    // ffmpeg should be called without -b:a
+    const ffmpegArgs = mockExecFile.mock.calls[0][1] as string[];
+    expect(ffmpegArgs).not.toContain('-b:a');
+    expect(ffmpegArgs).toContain('-c:a');
+  });
+
   it('returns error result on non-zero ffmpeg exit', async () => {
     mockReaddir.mockResolvedValue([
       { name: 'book.mp3', isFile: () => true, isDirectory: () => false },
@@ -225,6 +242,72 @@ describe('processAudioFiles', () => {
     if (!result.success) {
       expect(result.error).toContain('ffmpeg exited with code 1');
       expect(result.error).toContain('Conversion failed: invalid input');
+    }
+  });
+
+  it('uses fileFormat template for merged output filename', async () => {
+    mockReaddir.mockResolvedValue([
+      { name: '01.mp3', isFile: () => true, isDirectory: () => false },
+      { name: '02.mp3', isFile: () => true, isDirectory: () => false },
+    ] as never);
+
+    mockReadChapterSources.mockResolvedValue([
+      { filePath: '/lib/book/01.mp3', trackNumber: 1 },
+      { filePath: '/lib/book/02.mp3', trackNumber: 2 },
+    ]);
+    mockResolveChapterTitle.mockImplementation((_s, i) => `Ch ${i + 1}`);
+
+    let callCount = 0;
+    mockExecFile.mockImplementation((...args: unknown[]) => {
+      const cb = args[args.length - 1] as (err: Error | null, result: { stdout: string; stderr: string }) => void;
+      if (typeof cb === 'function') {
+        callCount++;
+        cb(null, { stdout: callCount <= 2 ? '120.0\n' : '', stderr: '' });
+      }
+      return {} as never;
+    });
+
+    const ctx: ProcessingContext = {
+      author: 'Tolkien',
+      title: 'The Hobbit',
+      fileFormat: '{title} by {author}',
+    };
+    const result = await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, ctx);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.outputFiles).toEqual([join('/lib/book', 'The Hobbit by Tolkien.m4b')]);
+    }
+  });
+
+  it('uses fileFormat template for converted output filenames', async () => {
+    mockReaddir.mockResolvedValue([
+      { name: 'ch01.mp3', isFile: () => true, isDirectory: () => false },
+      { name: 'ch02.mp3', isFile: () => true, isDirectory: () => false },
+    ] as never);
+
+    mockReadChapterSources.mockResolvedValue([
+      { filePath: join('/lib/book', 'ch01.mp3'), trackNumber: 1, title: 'Introduction' },
+      { filePath: join('/lib/book', 'ch02.mp3'), trackNumber: 2, title: 'The Journey' },
+    ]);
+    mockResolveChapterTitle
+      .mockReturnValueOnce('Introduction')
+      .mockReturnValueOnce('The Journey');
+
+    mockExecFileSuccess('');
+
+    const ctx: ProcessingContext = {
+      author: 'Tolkien',
+      title: 'The Hobbit',
+      fileFormat: '{trackNumber:00} - {partName}',
+    };
+    const config: ProcessingConfig = { ...defaultConfig, mergeBehavior: 'never' };
+    const result = await processAudioFiles('/lib/book', config, ctx);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.outputFiles).toEqual([
+        join('/lib/book', '01 - Introduction.m4b'),
+        join('/lib/book', '02 - The Journey.m4b'),
+      ]);
     }
   });
 

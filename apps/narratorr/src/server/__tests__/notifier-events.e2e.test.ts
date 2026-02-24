@@ -107,6 +107,7 @@ describe('Notifier event triggers E2E', () => {
     await e2e.services.settings.set('library', {
       path: libraryDir,
       folderFormat: '{author}/{title}',
+      fileFormat: '{author} - {title}',
     });
     await e2e.services.settings.set('import', {
       deleteAfterImport: false,

@@ -172,6 +172,11 @@ export class NZBGetClient implements DownloadClientAdapter {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
+      const contentType = response.headers.get('content-type') ?? '';
+      if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
+        throw new Error(`Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
+      }
+
       const data = (await response.json()) as { result: T; error?: string };
 
       if (data.error) {

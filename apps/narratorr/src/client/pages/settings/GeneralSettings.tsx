@@ -37,18 +37,18 @@ const AUDIBLE_REGION_LABELS: Record<string, string> = {
 };
 
 const defaultValues: UpdateSettingsFormData = {
-  library: { path: '', folderFormat: '{author}/{title}' },
+  library: { path: '', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
   search: { enabled: false, intervalMinutes: 360, autoGrab: false },
   import: { deleteAfterImport: false, minSeedTime: 60 },
   general: { logLevel: 'info' as const },
   metadata: { audibleRegion: 'us' as const },
-  processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'multi-file-only' as const },
+  processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b' as const, keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' as const },
 };
 
 // eslint-disable-next-line complexity -- flat null-coalescing map, no branching logic
 function settingsToFormData(settings: NonNullable<ReturnType<typeof api.getSettings> extends Promise<infer T> ? T : never>): UpdateSettingsFormData {
   return {
-    library: { path: settings.library.path, folderFormat: settings.library.folderFormat },
+    library: { path: settings.library.path, folderFormat: settings.library.folderFormat, fileFormat: settings.library.fileFormat ?? '{author} - {title}' },
     search: {
       enabled: settings.search?.enabled ?? false,
       intervalMinutes: settings.search?.intervalMinutes ?? 360,
@@ -64,6 +64,7 @@ function settingsToFormData(settings: NonNullable<ReturnType<typeof api.getSetti
       enabled: settings.processing?.enabled ?? false,
       ffmpegPath: settings.processing?.ffmpegPath ?? '',
       outputFormat: settings.processing?.outputFormat ?? 'm4b',
+      keepOriginalBitrate: settings.processing?.keepOriginalBitrate ?? false,
       bitrate: settings.processing?.bitrate ?? 128,
       mergeBehavior: settings.processing?.mergeBehavior ?? 'multi-file-only',
     },

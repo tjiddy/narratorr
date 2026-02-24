@@ -39,7 +39,7 @@ export function BookHero({
 
       <div className="flex flex-col sm:flex-row gap-6 sm:gap-8">
         <div className="shrink-0 mx-auto sm:mx-0 animate-fade-in-up stagger-1">
-          <div className="relative w-48 sm:w-56 lg:w-72 aspect-[2/3] rounded-2xl overflow-hidden shadow-card-hover ring-1 ring-black/10 group">
+          <div className="relative w-44 sm:w-48 lg:w-56 aspect-square rounded-2xl overflow-hidden shadow-card-hover ring-1 ring-white/[0.08] group">
             {coverUrl ? (
               <img src={coverUrl} alt={`Cover of ${title}`} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" loading="lazy" />
             ) : (
@@ -47,7 +47,7 @@ export function BookHero({
                 <BookOpenIcon className="w-16 h-16 text-muted-foreground/30" />
               </div>
             )}
-            <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-2xl" />
+            <div className="absolute inset-0 ring-1 ring-inset ring-white/[0.08] rounded-2xl" />
           </div>
         </div>
 

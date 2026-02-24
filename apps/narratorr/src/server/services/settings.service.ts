@@ -10,6 +10,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   library: {
     path: '/audiobooks',
     folderFormat: '{author}/{title}',
+    fileFormat: '{author} - {title}',
   },
   search: {
     intervalMinutes: 360,
@@ -30,6 +31,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     enabled: false,
     ffmpegPath: '',
     outputFormat: 'm4b',
+    keepOriginalBitrate: false,
     bitrate: 128,
     mergeBehavior: 'multi-file-only',
   },

@@ -102,6 +102,7 @@ describe('Import flow E2E', () => {
     await e2e.services.settings.set('library', {
       path: libraryDir,
       folderFormat: '{author}/{title}',
+      fileFormat: '{author} - {title}',
     });
 
     // Import settings: default — no auto-delete
@@ -182,7 +183,11 @@ describe('Import flow E2E', () => {
 
     // Files actually copied to library
     const targetFiles = await readdir(expectedTarget);
-    expect(targetFiles.sort()).toEqual(['book.m4b', 'chapter2.m4b']);
+    // Files renamed using fileFormat template '{author} - {title}'
+    expect(targetFiles.sort()).toEqual([
+      'Brandon Sanderson - The Way of Kings (2).m4b',
+      'Brandon Sanderson - The Way of Kings.m4b',
+    ]);
 
     // Book record: status + path + enrichment fields from mock scan result
     const bookRes = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });

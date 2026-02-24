@@ -5,6 +5,7 @@ export interface Settings {
   library: {
     path: string;
     folderFormat: string;
+    fileFormat: string;
   };
   search: {
     intervalMinutes: number;
@@ -25,6 +26,7 @@ export interface Settings {
     enabled: boolean;
     ffmpegPath: string;
     outputFormat: OutputFormat;
+    keepOriginalBitrate: boolean;
     bitrate: number;
     mergeBehavior: MergeBehavior;
   };

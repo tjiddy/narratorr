@@ -21,7 +21,11 @@ vi.mock('sonner', () => ({
 
 vi.mock('@narratorr/core/utils', () => ({
   renderTemplate: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
-  ALLOWED_TOKENS: ['author', 'title', 'series', 'seriesPosition', 'year', 'narrator'],
+  renderFilename: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
+  toLastFirst: (name: string) => name,
+  toSortTitle: (title: string) => title,
+  ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
+  FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
 }));
 
 import { api } from '@/lib/api';
@@ -35,17 +39,18 @@ beforeEach(() => {
 });
 
 describe('ProcessingSettingsSection', () => {
-  it('renders Processing settings section with all fields', async () => {
+  it('renders Post Processing section with all fields', async () => {
     renderWithProviders(<GeneralSettings />);
 
     await waitFor(() => {
-      expect(screen.getByText('Processing')).toBeInTheDocument();
+      expect(screen.getByText('Post Processing')).toBeInTheDocument();
     });
 
-    expect(screen.getByLabelText('Enable Processing')).toBeInTheDocument();
+    expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
     expect(screen.getByLabelText('ffmpeg Path')).toBeInTheDocument();
     expect(screen.getByLabelText('Output Format')).toBeInTheDocument();
     expect(screen.getByLabelText('Target Bitrate (kbps)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Keep original')).toBeInTheDocument();
     expect(screen.getByLabelText('Merge Behavior')).toBeInTheDocument();
   });
 
@@ -60,6 +65,7 @@ describe('ProcessingSettingsSection', () => {
     expect(screen.getByLabelText('ffmpeg Path')).toBeDisabled();
     expect(screen.getByLabelText('Output Format')).toBeDisabled();
     expect(screen.getByLabelText('Target Bitrate (kbps)')).toBeDisabled();
+    expect(screen.getByLabelText('Keep original')).toBeDisabled();
     expect(screen.getByLabelText('Merge Behavior')).toBeDisabled();
   });
 
@@ -68,17 +74,38 @@ describe('ProcessingSettingsSection', () => {
     renderWithProviders(<GeneralSettings />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Enable Processing')).toBeInTheDocument();
+      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByLabelText('Enable Processing'));
+    await user.click(screen.getByLabelText('Enable Post Processing'));
 
     await waitFor(() => {
       expect(screen.getByLabelText('ffmpeg Path')).not.toBeDisabled();
     });
     expect(screen.getByLabelText('Output Format')).not.toBeDisabled();
     expect(screen.getByLabelText('Target Bitrate (kbps)')).not.toBeDisabled();
+    expect(screen.getByLabelText('Keep original')).not.toBeDisabled();
     expect(screen.getByLabelText('Merge Behavior')).not.toBeDisabled();
+  });
+
+  it('disables bitrate input when "Keep original" is checked', async () => {
+    const user = userEvent.setup();
+    const settingsWithProcessing: Settings = createMockSettings({
+      processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
+    });
+    (api.getSettings as Mock).mockResolvedValue(settingsWithProcessing);
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Target Bitrate (kbps)')).not.toBeDisabled();
+    });
+
+    await user.click(screen.getByLabelText('Keep original'));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Target Bitrate (kbps)')).toBeDisabled();
+    });
+    expect(screen.getByText('Files will be re-encoded using the original source bitrate.')).toBeInTheDocument();
   });
 
   it('shows ffmpeg version on successful probe', async () => {
@@ -86,7 +113,7 @@ describe('ProcessingSettingsSection', () => {
     (api.probeFfmpeg as Mock).mockResolvedValue({ version: '6.1.1' });
 
     const settingsWithProcessing: Settings = createMockSettings({
-      processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only' },
+      processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
     });
     (api.getSettings as Mock).mockResolvedValue(settingsWithProcessing);
     renderWithProviders(<GeneralSettings />);
@@ -108,7 +135,7 @@ describe('ProcessingSettingsSection', () => {
     (api.probeFfmpeg as Mock).mockRejectedValue(new Error('spawn ENOENT'));
 
     const settingsWithProcessing: Settings = createMockSettings({
-      processing: { enabled: true, ffmpegPath: '/bad/path', outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only' },
+      processing: { enabled: true, ffmpegPath: '/bad/path', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
     });
     (api.getSettings as Mock).mockResolvedValue(settingsWithProcessing);
     renderWithProviders(<GeneralSettings />);
@@ -127,7 +154,7 @@ describe('ProcessingSettingsSection', () => {
   it('shows mp3 chapter warning when mp3 format selected', async () => {
     const user = userEvent.setup();
     const settingsWithProcessing: Settings = createMockSettings({
-      processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only' },
+      processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
     });
     (api.getSettings as Mock).mockResolvedValue(settingsWithProcessing);
     renderWithProviders(<GeneralSettings />);

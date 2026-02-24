@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizePath, renderTemplate, parseTemplate, ALLOWED_TOKENS } from './naming.js';
+import { sanitizePath, renderTemplate, renderFilename, parseTemplate, toLastFirst, toSortTitle, ALLOWED_TOKENS, FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from './naming.js';
 
 describe('sanitizePath', () => {
   it('removes illegal filesystem characters', () => {
@@ -147,7 +147,7 @@ describe('parseTemplate', () => {
 
   it('errors on missing {title}', () => {
     const result = parseTemplate('{author}/{series}');
-    expect(result.errors).toContain('Template must include {title}');
+    expect(result.errors).toContain('Template must include {title} or {titleSort}');
   });
 
   it('warns on missing {author}', () => {
@@ -184,5 +184,169 @@ describe('parseTemplate', () => {
     expect(result.errors).toEqual([]);
     expect(result.warnings).toEqual([]);
     expect(result.tokens.sort()).toEqual([...ALLOWED_TOKENS].sort());
+  });
+
+  it('accepts {titleSort} as valid title token', () => {
+    const result = parseTemplate('{author}/{titleSort}');
+    expect(result.errors).toEqual([]);
+  });
+
+  it('accepts {authorLastFirst} as valid author token', () => {
+    const result = parseTemplate('{authorLastFirst}/{title}');
+    expect(result.errors).toEqual([]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('accepts file-specific tokens when FILE_ALLOWED_TOKENS is passed', () => {
+    const result = parseTemplate('{author} - {title} {trackNumber:00}', FILE_ALLOWED_TOKENS);
+    expect(result.errors).toEqual([]);
+  });
+
+  it('rejects file-specific tokens with default (folder) token list', () => {
+    const result = parseTemplate('{author}/{title} {trackNumber}');
+    expect(result.errors).toContain('Unknown token: {trackNumber}');
+  });
+});
+
+describe('renderFilename', () => {
+  it('replaces tokens and sanitizes as a single filename', () => {
+    const result = renderFilename('{author} - {title}', {
+      author: 'Brandon Sanderson',
+      title: 'The Way of Kings',
+    });
+    expect(result).toBe('Brandon Sanderson - The Way of Kings');
+  });
+
+  it('does not split on slashes (treats as single segment)', () => {
+    const result = renderFilename('{author}/{title}', {
+      author: 'Author',
+      title: 'Book',
+    });
+    // Slashes are illegal chars and get stripped
+    expect(result).not.toContain('/');
+  });
+
+  it('supports conditional blocks', () => {
+    const result = renderFilename('{trackNumber? - Part }{title}', {
+      trackNumber: 3,
+      title: 'The Way of Kings',
+    });
+    expect(result).toBe('3 - Part The Way of Kings');
+  });
+
+  it('omits conditional when token is missing', () => {
+    const result = renderFilename('{trackNumber? - Part }{title}', {
+      title: 'The Way of Kings',
+    });
+    expect(result).toBe('The Way of Kings');
+  });
+
+  it('supports zero-padding format specifiers', () => {
+    const result = renderFilename('{trackNumber:00} - {title}', {
+      trackNumber: 1,
+      title: 'Chapter One',
+    });
+    expect(result).toBe('01 - Chapter One');
+  });
+
+  it('handles missing tokens gracefully', () => {
+    const result = renderFilename('{author} - {title}', {
+      title: 'Book',
+    });
+    expect(result).toBe('- Book');
+  });
+
+  it('sanitizes illegal filename characters', () => {
+    const result = renderFilename('{title}', { title: 'Book: Subtitle?' });
+    expect(result).toBe('Book Subtitle');
+  });
+
+  it('returns Unknown for empty result', () => {
+    const result = renderFilename('{author}', { author: '' });
+    expect(result).toBe('Unknown');
+  });
+});
+
+describe('FOLDER_ALLOWED_TOKENS / FILE_ALLOWED_TOKENS', () => {
+  it('FOLDER_ALLOWED_TOKENS matches ALLOWED_TOKENS', () => {
+    expect([...FOLDER_ALLOWED_TOKENS]).toEqual([...ALLOWED_TOKENS]);
+  });
+
+  it('FILE_ALLOWED_TOKENS includes folder tokens plus file-specific tokens', () => {
+    for (const token of FOLDER_ALLOWED_TOKENS) {
+      expect(FILE_ALLOWED_TOKENS).toContain(token);
+    }
+    expect(FILE_ALLOWED_TOKENS).toContain('trackNumber');
+    expect(FILE_ALLOWED_TOKENS).toContain('trackTotal');
+    expect(FILE_ALLOWED_TOKENS).toContain('partName');
+  });
+});
+
+describe('toLastFirst', () => {
+  it('flips "First Last" to "Last, First"', () => {
+    expect(toLastFirst('Brandon Sanderson')).toBe('Sanderson, Brandon');
+  });
+
+  it('handles single name (no flip)', () => {
+    expect(toLastFirst('Madonna')).toBe('Madonna');
+  });
+
+  it('handles multiple first names', () => {
+    expect(toLastFirst('J. R. R. Tolkien')).toBe('Tolkien, J. R. R.');
+  });
+
+  it('passes through already "Last, First" format', () => {
+    expect(toLastFirst('Sanderson, Brandon')).toBe('Sanderson, Brandon');
+  });
+
+  it('flips multiple authors separated by &', () => {
+    expect(toLastFirst('Brandon Sanderson & Robert Jordan')).toBe('Sanderson, Brandon & Jordan, Robert');
+  });
+
+  it('flips multiple authors separated by "and"', () => {
+    expect(toLastFirst('Brandon Sanderson and Robert Jordan')).toBe('Sanderson, Brandon & Jordan, Robert');
+  });
+
+  it('handles empty string', () => {
+    expect(toLastFirst('')).toBe('');
+  });
+
+  it('handles whitespace-only string', () => {
+    expect(toLastFirst('   ')).toBe('   ');
+  });
+
+  it('handles multiple narrators with commas (comma-separated list)', () => {
+    // "Michael Kramer, Kate Reading" — commas indicate separate people
+    expect(toLastFirst('Michael Kramer, Kate Reading')).toBe('Kramer, Michael & Reading, Kate');
+  });
+});
+
+describe('toSortTitle', () => {
+  it('strips leading "The"', () => {
+    expect(toSortTitle('The Way of Kings')).toBe('Way of Kings');
+  });
+
+  it('strips leading "A"', () => {
+    expect(toSortTitle('A Game of Thrones')).toBe('Game of Thrones');
+  });
+
+  it('strips leading "An"', () => {
+    expect(toSortTitle('An Echo of Things to Come')).toBe('Echo of Things to Come');
+  });
+
+  it('is case-insensitive', () => {
+    expect(toSortTitle('the way of kings')).toBe('way of kings');
+  });
+
+  it('does not strip articles mid-title', () => {
+    expect(toSortTitle('Into the Wild')).toBe('Into the Wild');
+  });
+
+  it('returns original if stripping would leave empty', () => {
+    expect(toSortTitle('The')).toBe('The');
+  });
+
+  it('passes through titles without leading articles', () => {
+    expect(toSortTitle('Mistborn')).toBe('Mistborn');
   });
 });

@@ -43,12 +43,102 @@ function ProbeResultFeedback({ result, error }: { result: { version: string } | 
   return null;
 }
 
+function FfmpegPathField({ register, errors, enabled, ffmpegPath, probing, probeResult, probeError, onProbe }: {
+  register: UseFormRegister<UpdateSettingsFormData>;
+  errors: FieldErrors<UpdateSettingsFormData>;
+  enabled: boolean;
+  ffmpegPath: string | undefined;
+  probing: boolean;
+  probeResult: { version: string } | null;
+  probeError: string | null;
+  onProbe: () => void;
+}) {
+  return (
+    <div>
+      <label htmlFor="ffmpegPath" className="block text-sm font-medium mb-2">ffmpeg Path</label>
+      <div className="flex gap-2">
+        <input
+          id="ffmpegPath"
+          type="text"
+          {...register('processing.ffmpegPath')}
+          disabled={!enabled}
+          className={`flex-1 px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed ${
+            errors.processing?.ffmpegPath ? 'border-destructive' : 'border-border'
+          }`}
+          placeholder="/usr/bin/ffmpeg"
+        />
+        <button
+          type="button"
+          onClick={onProbe}
+          disabled={!enabled || !ffmpegPath?.trim() || probing}
+          className="px-4 py-3 bg-muted text-foreground font-medium rounded-xl hover:bg-muted/80 disabled:opacity-50 disabled:cursor-not-allowed transition-all whitespace-nowrap flex items-center gap-2"
+        >
+          {probing ? <LoadingSpinner className="w-4 h-4" /> : 'Test'}
+        </button>
+      </div>
+      {errors.processing?.ffmpegPath && (
+        <p className="text-sm text-destructive mt-1">{errors.processing.ffmpegPath.message}</p>
+      )}
+      <ProbeResultFeedback result={probeResult} error={probeError} />
+      <p className="text-sm text-muted-foreground mt-2">
+        Path to the ffmpeg binary. In Docker, this is typically <code className="px-1 py-0.5 bg-muted rounded text-xs">/usr/bin/ffmpeg</code>.
+      </p>
+    </div>
+  );
+}
+
+function BitrateField({ register, errors, enabled, keepOriginalBitrate }: {
+  register: UseFormRegister<UpdateSettingsFormData>;
+  errors: FieldErrors<UpdateSettingsFormData>;
+  enabled: boolean;
+  keepOriginalBitrate: boolean;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <label htmlFor="bitrate" className="block text-sm font-medium">Target Bitrate (kbps)</label>
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input
+            id="keepOriginalBitrate"
+            type="checkbox"
+            {...register('processing.keepOriginalBitrate')}
+            disabled={!enabled}
+            className="rounded border-border text-primary focus:ring-primary disabled:cursor-not-allowed"
+          />
+          Keep original
+        </label>
+      </div>
+      <input
+        id="bitrate"
+        type="number"
+        {...register('processing.bitrate', { valueAsNumber: true })}
+        disabled={!enabled || keepOriginalBitrate}
+        className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed ${
+          errors.processing?.bitrate ? 'border-destructive' : 'border-border'
+        }`}
+        min={32}
+        max={512}
+        placeholder="128"
+      />
+      {errors.processing?.bitrate && !keepOriginalBitrate && (
+        <p className="text-sm text-destructive mt-1">{errors.processing.bitrate.message}</p>
+      )}
+      <p className="text-sm text-muted-foreground mt-2">
+        {keepOriginalBitrate
+          ? 'Files will be re-encoded using the original source bitrate.'
+          : 'Audio bitrate for the output file (32-512 kbps). 128 is good for speech; use 64 for smaller files.'}
+      </p>
+    </div>
+  );
+}
+
 export function ProcessingSettingsSection({ register, errors, watch }: ProcessingSettingsSectionProps) {
   const [probeResult, setProbeResult] = useState<{ version: string } | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
   const enabled = watch('processing.enabled');
   const ffmpegPath = watch('processing.ffmpegPath');
+  const keepOriginalBitrate = watch('processing.keepOriginalBitrate');
 
   async function handleProbe() {
     if (!ffmpegPath?.trim()) return;
@@ -71,12 +161,12 @@ export function ProcessingSettingsSection({ register, errors, watch }: Processin
   return (
     <SettingsSection
       icon={<ZapIcon className="w-5 h-5 text-primary" />}
-      title="Processing"
-      description="Post-import audio file merge and conversion"
+      title="Post Processing"
+      description="Audio file merge and conversion after import"
     >
       <div className="flex items-center justify-between">
         <div>
-          <label htmlFor="processingEnabled" className="block text-sm font-medium">Enable Processing</label>
+          <label htmlFor="processingEnabled" className="block text-sm font-medium">Enable Post Processing</label>
           <p className="text-sm text-muted-foreground mt-0.5">
             Merge and convert audio files after import. Requires ffmpeg.
           </p>
@@ -88,36 +178,16 @@ export function ProcessingSettingsSection({ register, errors, watch }: Processin
       </div>
 
       <div className={`space-y-5 transition-opacity duration-200 ${enabled ? 'opacity-100' : 'opacity-40'}`}>
-        <div>
-          <label htmlFor="ffmpegPath" className="block text-sm font-medium mb-2">ffmpeg Path</label>
-          <div className="flex gap-2">
-            <input
-              id="ffmpegPath"
-              type="text"
-              {...register('processing.ffmpegPath')}
-              disabled={!enabled}
-              className={`flex-1 px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed ${
-                errors.processing?.ffmpegPath ? 'border-destructive' : 'border-border'
-              }`}
-              placeholder="/usr/bin/ffmpeg"
-            />
-            <button
-              type="button"
-              onClick={handleProbe}
-              disabled={!enabled || !ffmpegPath?.trim() || probing}
-              className="px-4 py-3 bg-muted text-foreground font-medium rounded-xl hover:bg-muted/80 disabled:opacity-50 disabled:cursor-not-allowed transition-all whitespace-nowrap flex items-center gap-2"
-            >
-              {probing ? <LoadingSpinner className="w-4 h-4" /> : 'Test'}
-            </button>
-          </div>
-          {errors.processing?.ffmpegPath && (
-            <p className="text-sm text-destructive mt-1">{errors.processing.ffmpegPath.message}</p>
-          )}
-          <ProbeResultFeedback result={probeResult} error={probeError} />
-          <p className="text-sm text-muted-foreground mt-2">
-            Path to the ffmpeg binary. In Docker, this is typically <code className="px-1 py-0.5 bg-muted rounded text-xs">/usr/bin/ffmpeg</code>.
-          </p>
-        </div>
+        <FfmpegPathField
+          register={register}
+          errors={errors}
+          enabled={enabled}
+          ffmpegPath={ffmpegPath}
+          probing={probing}
+          probeResult={probeResult}
+          probeError={probeError}
+          onProbe={handleProbe}
+        />
 
         <div>
           <label htmlFor="outputFormat" className="block text-sm font-medium mb-2">Output Format</label>
@@ -141,27 +211,12 @@ export function ProcessingSettingsSection({ register, errors, watch }: Processin
           )}
         </div>
 
-        <div>
-          <label htmlFor="bitrate" className="block text-sm font-medium mb-2">Target Bitrate (kbps)</label>
-          <input
-            id="bitrate"
-            type="number"
-            {...register('processing.bitrate', { valueAsNumber: true })}
-            disabled={!enabled}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed ${
-              errors.processing?.bitrate ? 'border-destructive' : 'border-border'
-            }`}
-            min={32}
-            max={512}
-            placeholder="128"
-          />
-          {errors.processing?.bitrate && (
-            <p className="text-sm text-destructive mt-1">{errors.processing.bitrate.message}</p>
-          )}
-          <p className="text-sm text-muted-foreground mt-2">
-            Audio bitrate for the output file (32-512 kbps). 128 is good for speech; use 64 for smaller files.
-          </p>
-        </div>
+        <BitrateField
+          register={register}
+          errors={errors}
+          enabled={enabled}
+          keepOriginalBitrate={keepOriginalBitrate}
+        />
 
         <div>
           <label htmlFor="mergeBehavior" className="block text-sm font-medium mb-2">Merge Behavior</label>

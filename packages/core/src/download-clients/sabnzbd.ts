@@ -1,9 +1,20 @@
+import { dirname, basename } from 'node:path';
 import type {
   DownloadClientAdapter,
   DownloadItemInfo,
   AddDownloadOptions,
   DownloadProtocol,
 } from './types.js';
+
+/**
+ * SABnzbd's `storage` is the full destination path (e.g., `/downloads/complete/BookTitle`).
+ * The import pipeline expects `savePath` (parent) + `name` (child) joined together.
+ * Split storage into parent/base to match that contract.
+ */
+function splitStorage(storage: string | undefined, fallbackName: string): { parent: string; base: string } {
+  if (!storage) return { parent: '', base: fallbackName };
+  return { parent: dirname(storage), base: basename(storage) };
+}
 
 export interface SABnzbdConfig {
   host: string;
@@ -221,6 +232,11 @@ export class SABnzbdClient implements DownloadClientAdapter {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
+      const contentType = response.headers.get('content-type') ?? '';
+      if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
+        throw new Error(`Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
+      }
+
       return (await response.json()) as T;
     } finally {
       clearTimeout(timeoutId);
@@ -233,12 +249,16 @@ export class SABnzbdClient implements DownloadClientAdapter {
     const size = Math.round(totalMb * 1024 * 1024);
     const downloaded = Math.round((totalMb - leftMb) * 1024 * 1024);
 
+    // SABnzbd's `storage` is the full destination path — split into parent + name
+    // to match the contract expected by import (join(savePath, name))
+    const { parent, base } = splitStorage(slot.storage, slot.filename);
+
     return {
       id: slot.nzo_id,
-      name: slot.filename,
+      name: base,
       progress: parseInt(slot.percentage, 10) || 0,
       status: this.mapQueueStatus(slot.status),
-      savePath: slot.storage || '',
+      savePath: parent,
       size,
       downloaded,
       uploaded: 0,
@@ -252,12 +272,15 @@ export class SABnzbdClient implements DownloadClientAdapter {
   }
 
   private mapHistorySlot(slot: SABnzbdHistorySlot): DownloadItemInfo {
+    // SABnzbd's `storage` is the full destination path — split into parent + name
+    const { parent, base } = splitStorage(slot.storage, slot.name);
+
     return {
       id: slot.nzo_id,
-      name: slot.name,
+      name: base,
       progress: 100,
       status: this.mapHistoryStatus(slot.status),
-      savePath: slot.storage || '',
+      savePath: parent,
       size: slot.bytes,
       downloaded: slot.bytes,
       uploaded: 0,

@@ -1,10 +1,10 @@
 import { eq } from 'drizzle-orm';
-import { mkdir, cp, stat, readdir } from 'node:fs/promises';
+import { mkdir, cp, stat, readdir, rename } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, authors } from '@narratorr/db/schema';
-import { renderTemplate, AUDIO_EXTENSIONS } from '@narratorr/core/utils';
+import { renderTemplate, renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '@narratorr/core/utils';
 import { processAudioFiles } from '@narratorr/core/utils/audio-processor';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { applyPathMapping } from '@narratorr/core/utils/path-mapping';
@@ -37,12 +37,16 @@ export function buildTargetPath(
   },
   authorName: string | null,
 ): string {
+  const author = authorName || 'Unknown Author';
   const tokens: Record<string, string | number | undefined> = {
-    author: authorName || 'Unknown Author',
+    author,
+    authorLastFirst: toLastFirst(author),
     title: book.title,
+    titleSort: toSortTitle(book.title),
     series: book.seriesName || undefined,
     seriesPosition: book.seriesPosition ?? undefined,
     narrator: book.narrator || undefined,
+    narratorLastFirst: book.narrator ? toLastFirst(book.narrator) : undefined,
     year: extractYear(book.publishedDate),
   };
 
@@ -191,17 +195,28 @@ export class ImportService {
           this.log.warn('MP3 output does not support embedded chapters');
         }
 
+        const authorName = author?.name ?? 'Unknown Author';
         const processingResult = await processAudioFiles(
           targetPath,
           {
             ffmpegPath: processingSettings.ffmpegPath,
             outputFormat: processingSettings.outputFormat,
-            bitrate: processingSettings.bitrate,
+            bitrate: processingSettings.keepOriginalBitrate ? undefined : processingSettings.bitrate,
             mergeBehavior: processingSettings.mergeBehavior,
           },
           {
-            author: author?.name ?? 'Unknown Author',
+            author: authorName,
             title: book.title,
+            fileFormat: librarySettings.fileFormat,
+            bookTokens: {
+              authorLastFirst: toLastFirst(authorName),
+              titleSort: toSortTitle(book.title),
+              series: book.seriesName || undefined,
+              seriesPosition: book.seriesPosition ?? undefined,
+              narrator: book.narrator || undefined,
+              narratorLastFirst: book.narrator ? toLastFirst(book.narrator) : undefined,
+              year: extractYear(book.publishedDate),
+            },
           },
         );
 
@@ -219,6 +234,13 @@ export class ImportService {
           { outputFiles: processingResult.outputFiles.length },
           'Audio processing completed',
         );
+      }
+
+      // 6c. Rename files using file format template
+      // Runs after processing so it applies to final output files.
+      // If processing already named files via template, this is a no-op.
+      if (librarySettings.fileFormat) {
+        await this.renameFilesWithTemplate(targetPath, librarySettings.fileFormat, book, author?.name ?? null);
       }
 
       // 7. Verify copy (compare total size) — skip when processing ran
@@ -381,6 +403,66 @@ export class ImportService {
       }
     }
     return count;
+  }
+
+  private async renameFilesWithTemplate(
+    targetPath: string,
+    fileFormat: string,
+    book: BookRow,
+    authorName: string | null,
+  ): Promise<void> {
+    const entries = await readdir(targetPath, { withFileTypes: true });
+    const audioFiles = entries
+      .filter(e => e.isFile() && AUDIO_EXTENSIONS.has(extname(e.name).toLowerCase()))
+      .map(e => e.name)
+      .sort();
+
+    if (audioFiles.length === 0) return;
+
+    const author = authorName || 'Unknown Author';
+    const baseTokens: Record<string, string | number | undefined | null> = {
+      author,
+      authorLastFirst: toLastFirst(author),
+      title: book.title,
+      titleSort: toSortTitle(book.title),
+      series: book.seriesName || undefined,
+      seriesPosition: book.seriesPosition ?? undefined,
+      narrator: book.narrator || undefined,
+      narratorLastFirst: book.narrator ? toLastFirst(book.narrator) : undefined,
+      year: extractYear(book.publishedDate),
+    };
+
+    // Build new names first to detect collisions
+    const renames: { from: string; to: string }[] = [];
+    const seen = new Set<string>();
+
+    for (let i = 0; i < audioFiles.length; i++) {
+      const fileName = audioFiles[i];
+      const ext = extname(fileName);
+      const tokens = {
+        ...baseTokens,
+        trackNumber: i + 1,
+        trackTotal: audioFiles.length,
+        partName: basename(fileName, ext),
+      };
+      let newStem = renderFilename(fileFormat, tokens);
+
+      // Deduplicate: if this name was already used, append track number
+      if (seen.has(newStem.toLowerCase())) {
+        newStem = `${newStem} (${i + 1})`;
+      }
+      seen.add(newStem.toLowerCase());
+
+      const newName = `${newStem}${ext}`;
+      if (newName !== fileName) {
+        renames.push({ from: fileName, to: newName });
+      }
+    }
+
+    for (const { from, to } of renames) {
+      await rename(join(targetPath, from), join(targetPath, to));
+      this.log.debug({ from, to }, 'Renamed file using template');
+    }
   }
 
   private async handleTorrentRemoval(download: DownloadRow, minSeedTimeMinutes: number): Promise<void> {

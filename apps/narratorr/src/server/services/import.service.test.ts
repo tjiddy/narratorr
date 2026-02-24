@@ -16,6 +16,7 @@ vi.mock('node:fs/promises', () => ({
   stat: vi.fn().mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 1024 }),
   readdir: vi.fn().mockResolvedValue([]),
   writeFile: vi.fn().mockResolvedValue(undefined),
+  rename: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock audio scanner
@@ -28,7 +29,7 @@ vi.mock('@narratorr/core/utils/audio-processor', () => ({
   processAudioFiles: vi.fn().mockResolvedValue({ success: true, outputFiles: [] }),
 }));
 
-import { mkdir, cp, stat, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, cp, stat, readdir, writeFile, rename } from 'node:fs/promises';
 import { scanAudioDirectory } from '@narratorr/core/utils/audio-scanner';
 import { processAudioFiles } from '@narratorr/core/utils/audio-processor';
 
@@ -93,9 +94,9 @@ function createMockDownloadClientService(): DownloadClientService {
 function createMockSettingsService(): SettingsService {
   return inject<SettingsService>({
     get: vi.fn().mockImplementation((key: string) => {
-      if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}' });
+      if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
       if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
-      if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only' });
+      if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' });
       return Promise.resolve({});
     }),
   });
@@ -183,6 +184,26 @@ describe('buildTargetPath', () => {
     expect(result).toMatch(/Book/);
     expect(result).not.toMatch(/- /);
   });
+
+  it('renders {authorLastFirst} as "Last, First"', () => {
+    const result = buildTargetPath('/audiobooks', '{authorLastFirst}/{title}', { title: 'Book' }, 'Brandon Sanderson');
+    expect(result).toMatch(/Sanderson, Brandon/);
+  });
+
+  it('renders {titleSort} without leading article', () => {
+    const result = buildTargetPath('/audiobooks', '{author}/{titleSort}', { title: 'The Way of Kings' }, 'Author');
+    expect(result).toMatch(/Way of Kings/);
+  });
+
+  it('renders {narratorLastFirst} for single narrator', () => {
+    const result = buildTargetPath('/audiobooks', '{author}/{title} [{narratorLastFirst}]', { title: 'Book', narrator: 'Michael Kramer' }, 'Author');
+    expect(result).toMatch(/Kramer, Michael/);
+  });
+
+  it('renders {narratorLastFirst} for multiple narrators', () => {
+    const result = buildTargetPath('/audiobooks', '{author}/{title} [{narratorLastFirst}]', { title: 'Book', narrator: 'Michael Kramer, Kate Reading' }, 'Author');
+    expect(result).toMatch(/Kramer, Michael & Reading, Kate/);
+  });
 });
 
 describe('ImportService', () => {
@@ -255,7 +276,7 @@ describe('ImportService', () => {
     it('handles torrent removal when deleteAfterImport is true', async () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
-        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}' });
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
         if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0 });
         return Promise.resolve({});
       });
@@ -272,7 +293,7 @@ describe('ImportService', () => {
     it('skips torrent removal when minSeedTime not elapsed', async () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
-        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}' });
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
         if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 120 }); // 2 hours
         return Promise.resolve({});
       });
@@ -555,16 +576,36 @@ describe('ImportService', () => {
     });
   });
 
+  describe('file renaming with template (non-processing path)', () => {
+    it('renames audio files using fileFormat template after import', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // readdir returns audio files for the rename step (second call after containsAudioFiles)
+      const readdirMock = vi.mocked(readdir);
+      readdirMock.mockResolvedValue([
+        { name: 'scene-release-01.mp3', isFile: () => true, isDirectory: () => false },
+      ] as never);
+
+      await service.importDownload(1);
+
+      const renameMock = vi.mocked(rename);
+      expect(renameMock).toHaveBeenCalled();
+    });
+  });
+
   describe('audio processing integration', () => {
     function setupImportWithProcessing(processingEnabled: boolean) {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
-        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}' });
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
         if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
         if (key === 'processing') return Promise.resolve({
           enabled: processingEnabled,
           ffmpegPath: '/usr/bin/ffmpeg',
           outputFormat: 'm4b',
+          keepOriginalBitrate: false,
           bitrate: 128,
           mergeBehavior: 'multi-file-only',
         });
@@ -634,6 +675,38 @@ describe('ImportService', () => {
       expect(mockNotifier.notify).toHaveBeenCalledWith('on_failure', expect.objectContaining({
         error: expect.objectContaining({ stage: 'import' }),
       }));
+    });
+
+    it('passes undefined bitrate when keepOriginalBitrate is true', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
+        if (key === 'processing') return Promise.resolve({
+          enabled: true,
+          ffmpegPath: '/usr/bin/ffmpeg',
+          outputFormat: 'm4b',
+          keepOriginalBitrate: true,
+          bitrate: 128,
+          mergeBehavior: 'multi-file-only',
+        });
+        return Promise.resolve({});
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const mockProcess = vi.mocked(processAudioFiles);
+      mockProcess.mockResolvedValue({ success: true, outputFiles: ['/audiobooks/out.m4b'] });
+
+      await service.importDownload(1);
+
+      expect(mockProcess).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ bitrate: undefined }),
+        expect.any(Object),
+      );
     });
 
     it('proceeds to enrichment after successful processing', async () => {

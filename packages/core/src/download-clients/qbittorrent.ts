@@ -133,7 +133,11 @@ export class QBittorrentClient implements DownloadClientAdapter {
         return undefined as T;
       }
 
-      return JSON.parse(text) as T;
+      try {
+        return JSON.parse(text) as T;
+      } catch {
+        throw new Error('Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.');
+      }
     } finally {
       clearTimeout(timeoutId);
     }

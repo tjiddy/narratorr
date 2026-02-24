@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 import { z } from 'zod';
 
 // ============================================================================
@@ -176,11 +177,22 @@ export type GrabInput = z.infer<typeof grabSchema>;
 // Settings schemas
 // ============================================================================
 
-const FOLDER_FORMAT_ALLOWED_TOKENS = ['author', 'title', 'series', 'seriesPosition', 'year', 'narrator'];
+const FOLDER_FORMAT_ALLOWED_TOKENS = [
+  'author', 'authorLastFirst',
+  'title', 'titleSort',
+  'series', 'seriesPosition',
+  'year',
+  'narrator', 'narratorLastFirst',
+];
+
+const FILE_FORMAT_ALLOWED_TOKENS = [
+  ...FOLDER_FORMAT_ALLOWED_TOKENS,
+  'trackNumber', 'trackTotal', 'partName',
+];
 
 export const folderFormatSchema = z.string().default('{author}/{title}').refine(
-  (val) => /\{title(?::\d+)?(?:\?[^}]*)?\}/.test(val),
-  { message: 'Template must include {title}' },
+  (val) => /\{title(?:Sort)?(?::\d+)?(?:\?[^}]*)?\}/.test(val),
+  { message: 'Template must include {title} or {titleSort}' },
 ).refine(
   (val) => {
     const tokenPattern = /\{(\w+)(?::\d+)?(?:\?[^}]*)?\}/g;
@@ -190,12 +202,28 @@ export const folderFormatSchema = z.string().default('{author}/{title}').refine(
     }
     return true;
   },
-  { message: 'Unknown token in template. Allowed: {author}, {title}, {series}, {seriesPosition}, {year}, {narrator}' },
+  { message: 'Unknown token in template. Allowed: {author}, {authorLastFirst}, {title}, {titleSort}, {series}, {seriesPosition}, {year}, {narrator}, {narratorLastFirst}' },
+);
+
+export const fileFormatSchema = z.string().default('{author} - {title}').refine(
+  (val) => /\{title(?:Sort)?(?::\d+)?(?:\?[^}]*)?\}/.test(val),
+  { message: 'Template must include {title} or {titleSort}' },
+).refine(
+  (val) => {
+    const tokenPattern = /\{(\w+)(?::\d+)?(?:\?[^}]*)?\}/g;
+    let match: RegExpExecArray | null;
+    while ((match = tokenPattern.exec(val)) !== null) {
+      if (!FILE_FORMAT_ALLOWED_TOKENS.includes(match[1])) return false;
+    }
+    return true;
+  },
+  { message: 'Unknown token in template. Allowed: {author}, {title}, {trackNumber}, {trackTotal}, {partName}, and more' },
 );
 
 export const librarySettingsSchema = z.object({
   path: z.string().min(1, 'Library path is required'),
   folderFormat: folderFormatSchema,
+  fileFormat: fileFormatSchema,
 });
 
 export const searchSettingsSchema = z.object({
@@ -219,6 +247,7 @@ export const processingSettingsSchema = z.object({
   enabled: z.boolean().default(false),
   ffmpegPath: z.string().default(''),
   outputFormat: outputFormatSchema.default('m4b'),
+  keepOriginalBitrate: z.boolean().default(false),
   bitrate: z.number().int().min(32).max(512).default(128),
   mergeBehavior: mergeBehaviorSchema.default('multi-file-only'),
 });
@@ -271,8 +300,8 @@ export const updateSettingsFormSchema = z.object({
   library: z.object({
     path: z.string().min(1, 'Library path is required'),
     folderFormat: z.string().min(1, 'Folder format is required').refine(
-      (val) => /\{title(?::\d+)?(?:\?[^}]*)?\}/.test(val),
-      { message: 'Template must include {title}' },
+      (val) => /\{title(?:Sort)?(?::\d+)?(?:\?[^}]*)?\}/.test(val),
+      { message: 'Template must include {title} or {titleSort}' },
     ).refine(
       (val) => {
         const tokenPattern = /\{(\w+)(?::\d+)?(?:\?[^}]*)?\}/g;
@@ -283,6 +312,20 @@ export const updateSettingsFormSchema = z.object({
         return true;
       },
       { message: 'Unknown token in template' },
+    ),
+    fileFormat: z.string().min(1, 'File format is required').refine(
+      (val) => /\{title(?:Sort)?(?::\d+)?(?:\?[^}]*)?\}/.test(val),
+      { message: 'Template must include {title} or {titleSort}' },
+    ).refine(
+      (val) => {
+        const tokenPattern = /\{(\w+)(?::\d+)?(?:\?[^}]*)?\}/g;
+        let match: RegExpExecArray | null;
+        while ((match = tokenPattern.exec(val)) !== null) {
+          if (!FILE_FORMAT_ALLOWED_TOKENS.includes(match[1])) return false;
+        }
+        return true;
+      },
+      { message: 'Unknown token in file template' },
     ),
   }),
   search: z.object({
@@ -304,6 +347,7 @@ export const updateSettingsFormSchema = z.object({
     enabled: z.boolean(),
     ffmpegPath: z.string(),
     outputFormat: outputFormatSchema,
+    keepOriginalBitrate: z.boolean(),
     bitrate: z.number().int().min(32).max(512),
     mergeBehavior: mergeBehaviorSchema,
   }),

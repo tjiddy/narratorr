@@ -394,6 +394,20 @@ describe('QBittorrentClient', () => {
       expect(result.success).toBe(false);
       expect(result.message).toBeDefined();
     });
+
+    it('returns failure when server returns HTML instead of JSON', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/app/version`, () => {
+          return new HttpResponse('<!doctype html><html><body>Welcome</body></html>', {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('didn\'t respond as expected');
+    });
   });
 
   describe('edge cases — boundary values and malformed data', () => {

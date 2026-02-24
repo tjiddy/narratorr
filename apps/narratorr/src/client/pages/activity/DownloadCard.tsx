@@ -48,7 +48,7 @@ export function DownloadCard({
               </h3>
               <div className="flex flex-wrap items-center gap-3 mt-1.5 text-sm text-muted-foreground">
                 {download.size && <span>{formatBytes(download.size)}</span>}
-                {download.seeders !== undefined && (
+                {download.seeders !== undefined && download.protocol !== 'usenet' && (
                   <span>{download.seeders} seeders</span>
                 )}
                 <ProtocolBadge protocol={download.protocol} />

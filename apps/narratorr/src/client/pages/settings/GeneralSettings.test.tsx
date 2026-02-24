@@ -20,8 +20,12 @@ vi.mock('sonner', () => ({
 
 // Mock renderTemplate to avoid importing the core package
 vi.mock('@narratorr/core/utils', () => ({
-  renderTemplate: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{title}', 'The Way of Kings'),
-  ALLOWED_TOKENS: ['author', 'title', 'series', 'seriesPosition', 'year', 'narrator'],
+  renderTemplate: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{authorLastFirst}', 'Sanderson, Brandon').replace('{title}', 'The Way of Kings').replace('{titleSort}', 'Way of Kings').replace('{narratorLastFirst}', 'Kramer, Michael & Reading, Kate'),
+  renderFilename: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{title}', 'The Way of Kings'),
+  toLastFirst: (name: string) => name,
+  toSortTitle: (title: string) => title,
+  ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
+  FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
 }));
 
 import { api } from '@/lib/api';
@@ -195,10 +199,13 @@ describe('GeneralSettings', () => {
     await waitFor(() => {
       expect(screen.getByText('Preview')).toBeInTheDocument();
     });
-    expect(screen.getByText('Brandon Sanderson/The Way of Kings')).toBeInTheDocument();
+    // Unified preview — folder path is dimmed, filename is highlighted; text split across spans
+    expect(screen.getByText(/Brandon Sanderson\/The Way of Kings\//)).toBeInTheDocument();
 
-    // Click a token button to verify interaction works
-    await user.click(screen.getByText('{series}'));
+    // Expand token panel, then click a token button
+    const toggles = screen.getAllByText('Insert token');
+    await user.click(toggles[0]);
+    await user.click(screen.getAllByText('{series}')[0]);
     // Form should become dirty after token insertion
     const saveButton = screen.getByText('Save Changes').closest('button')!;
     await waitFor(() => {
@@ -211,13 +218,15 @@ describe('GeneralSettings', () => {
     renderWithProviders(<GeneralSettings />);
 
     await waitFor(() => {
-      expect(screen.getByText('{series}')).toBeInTheDocument();
+      expect(screen.getAllByText('Insert token').length).toBeGreaterThanOrEqual(1);
     });
 
-    await user.click(screen.getByText('{series}'));
+    // Expand token panel, then click a token
+    const toggles = screen.getAllByText('Insert token');
+    await user.click(toggles[0]);
+    await user.click(screen.getAllByText('{series}')[0]);
 
     // setValue updates RHF state → watch triggers preview re-render
-    // Preview should now include the series token (mocked renderTemplate just does string replace)
     await waitFor(() => {
       const saveButton = screen.getByText('Save Changes').closest('button')!;
       // Form should be dirty after token insertion

@@ -67,11 +67,11 @@ describe('AudibleProvider', () => {
       expect(books[0].coverUrl).toContain('media-amazon.com');
     });
 
-    it('strips HTML from description', async () => {
+    it('preserves safe HTML tags in description', async () => {
       const books = await provider.searchBooks('Harry Potter');
 
-      expect(books[0].description).not.toContain('<p>');
-      expect(books[0].description).not.toContain('<br');
+      expect(books[0].description).toContain('<p>');
+      expect(books[0].description).toContain('<i>');
       expect(books[0].description).toContain('Grammy Award');
     });
 

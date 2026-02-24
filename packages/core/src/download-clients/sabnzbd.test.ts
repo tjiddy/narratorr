@@ -369,6 +369,20 @@ describe('SABnzbdClient', () => {
       const result = await client.test();
       expect(result.success).toBe(false);
     });
+
+    it('returns descriptive error when server returns HTML instead of JSON', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse('<!doctype html><html><body>Not Found</body></html>', {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('didn\'t respond as expected');
+    });
   });
 
   describe('status mapping', () => {

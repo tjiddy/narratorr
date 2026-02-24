@@ -299,8 +299,8 @@ function mapProduct(product: AudibleProduct): Record<string, unknown> {
   // Use the largest available product image
   const coverUrl = extractCoverUrl(product.product_images);
 
-  // Strip HTML from description
-  const description = stripHtml(
+  // Clean HTML description — keep structural/formatting tags, strip junk
+  const description = cleanHtml(
     product.publisher_summary ?? product.merchandising_summary,
   );
 
@@ -344,14 +344,17 @@ function extractCoverUrl(images?: Record<string, string>): string | undefined {
   return sizes.length > 0 ? images[String(sizes[0])] : undefined;
 }
 
-/** Strip HTML tags from a string. */
-function stripHtml(html?: string): string | undefined {
+/** Clean HTML — keep safe structural/formatting tags, strip everything else. */
+function cleanHtml(html?: string): string | undefined {
   if (!html) return undefined;
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
+  const ALLOWED_TAGS = new Set(['p', 'br', 'b', 'strong', 'i', 'em', 'ul', 'ol', 'li']);
+  const cleaned = html
+    .replace(/<\/?([a-z][a-z0-9]*)\b[^>]*\/?>/gi, (_match, tag: string) => {
+      return ALLOWED_TAGS.has(tag.toLowerCase()) ? _match : '';
+    })
     .replace(/\n{3,}/g, '\n\n')
-    .trim() || undefined;
+    .trim();
+  return cleaned || undefined;
 }
 
 /** Clean title — remove Audible-appended suffixes like ", Book 2" and "(Narrated by ...)". */
