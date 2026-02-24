@@ -23,20 +23,19 @@ import { createServices, registerRoutes } from './routes';
 import { startJobs } from './jobs';
 import authPlugin from './plugins/auth.js';
 
-function hasPinoPretty(): boolean {
-  try { import.meta.resolve('pino-pretty'); return true; } catch { return false; }
+function buildLoggerConfig(): boolean | { transport: { target: string; options: Record<string, unknown> } } {
+  if (!config.isDev) return true;
+  try {
+    import.meta.resolve('pino-pretty');
+    return { transport: { target: 'pino-pretty', options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname' } } };
+  } catch {
+    return true;
+  }
 }
 
 async function main() {
   const app = Fastify({
-    logger: config.isDev && hasPinoPretty()
-      ? {
-          transport: {
-            target: 'pino-pretty',
-            options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname' },
-          },
-        }
-      : true,
+    logger: buildLoggerConfig(),
   }).withTypeProvider<ZodTypeProvider>();
 
   // Set up Zod validation
