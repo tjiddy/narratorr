@@ -113,6 +113,7 @@ export const createDownloadClientFormSchema = z.object({
     password: z.string().optional(),
     useSsl: z.boolean().optional(),
     apiKey: z.string().optional(),
+    category: z.string().optional(),
   }),
 }).superRefine((data, ctx) => {
   if (!data.settings.host) {

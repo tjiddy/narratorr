@@ -81,6 +81,26 @@ describe('DownloadClientFields', () => {
     expect(input).toHaveValue('192.168.1.10');
   });
 
+  it('renders category field for all client types', () => {
+    render(<FieldWrapper type="qbittorrent" />);
+    expect(screen.getByText('Category')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('audiobooks')).toBeInTheDocument();
+  });
+
+  it('allows typing in category field', async () => {
+    const user = userEvent.setup();
+    render(<FieldWrapper type="qbittorrent" />);
+
+    const input = screen.getByPlaceholderText('audiobooks');
+    await user.type(input, 'my-audiobooks');
+    expect(input).toHaveValue('my-audiobooks');
+  });
+
+  it('shows category field for sabnzbd', () => {
+    render(<FieldWrapper type="sabnzbd" />);
+    expect(screen.getByText('Category')).toBeInTheDocument();
+  });
+
   it('allows toggling SSL checkbox', async () => {
     const user = userEvent.setup();
     render(<FieldWrapper type="qbittorrent" />);

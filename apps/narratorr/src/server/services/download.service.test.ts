@@ -448,6 +448,85 @@ describe('DownloadService', () => {
       expect(result).toBeDefined();
     });
 
+    it('passes category from client settings to adapter', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+      };
+
+      const clientWithCategory = { id: 1, name: 'qBit', enabled: true, settings: { category: 'audiobooks' } };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue(clientWithCategory);
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        title: 'The Way of Kings',
+        bookId: 1,
+      });
+
+      expect(mockAdapter.addDownload).toHaveBeenCalledWith(
+        'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        { category: 'audiobooks' },
+      );
+    });
+
+    it('does not pass category when client has no category configured', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+      };
+
+      const clientNoCategory = { id: 1, name: 'qBit', enabled: true, settings: { host: 'localhost' } };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue(clientNoCategory);
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        title: 'The Way of Kings',
+      });
+
+      expect(mockAdapter.addDownload).toHaveBeenCalledWith(
+        'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        undefined,
+      );
+    });
+
+    it('treats whitespace-only category as empty', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+      };
+
+      const clientWhitespace = { id: 1, name: 'qBit', enabled: true, settings: { category: '   ' } };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue(clientWhitespace);
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+      });
+
+      expect(mockAdapter.addDownload).toHaveBeenCalledWith(
+        'magnet:?xt=urn:btih:abc',
+        undefined,
+      );
+    });
+
     it('does not update book status when bookId is not provided', async () => {
       const mockAdapter = {
         addDownload: vi.fn().mockResolvedValue('ext-123'),

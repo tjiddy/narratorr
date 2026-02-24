@@ -39,10 +39,10 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const defaultSettings: Record<string, CreateDownloadClientFormData['settings']> = {
-  qbittorrent: { host: '', port: 8080, username: '', password: '', useSsl: false },
-  transmission: { host: '', port: 9091, username: '', password: '' },
-  sabnzbd: { host: '', port: 8080, apiKey: '' },
-  nzbget: { host: '', port: 6789, username: '', password: '' },
+  qbittorrent: { host: '', port: 8080, username: '', password: '', useSsl: false, category: '' },
+  transmission: { host: '', port: 9091, username: '', password: '', category: '' },
+  sabnzbd: { host: '', port: 8080, apiKey: '', category: '' },
+  nzbget: { host: '', port: 6789, username: '', password: '', category: '' },
 };
 
 function settingsFromClient(client: DownloadClient): CreateDownloadClientFormData['settings'] {
@@ -54,6 +54,7 @@ function settingsFromClient(client: DownloadClient): CreateDownloadClientFormDat
     password: (s.password as string) || '',
     useSsl: (s.useSsl as boolean) || false,
     apiKey: (s.apiKey as string) || '',
+    category: (s.category as string) || '',
   };
 }
 
@@ -69,7 +70,7 @@ const defaultValues: CreateDownloadClientFormData = {
   type: 'qbittorrent',
   enabled: true,
   priority: 50,
-  settings: { host: '', port: 8080, username: '', password: '', useSsl: false },
+  settings: { host: '', port: 8080, username: '', password: '', useSsl: false, category: '' },
 };
 
 export function DownloadClientCard(props: DownloadClientCardProps) {

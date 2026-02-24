@@ -105,6 +105,18 @@ export function DownloadClientFields({ selectedType, register, errors }: Downloa
           </label>
         </div>
       )}
+
+      <div className="sm:col-span-2">
+        <label htmlFor="clientCategory" className="block text-sm font-medium mb-2">Category</label>
+        <input
+          id="clientCategory"
+          type="text"
+          {...register('settings.category')}
+          className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+          placeholder="audiobooks"
+        />
+        <p className="text-sm text-muted-foreground mt-1">Optional. Tags downloads so the client routes them to a dedicated folder.</p>
+      </div>
     </>
   );
 }

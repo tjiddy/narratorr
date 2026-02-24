@@ -215,6 +215,38 @@ describe('DownloadClientCard — edit mode', () => {
     expect(screen.getByPlaceholderText('localhost')).toHaveValue('localhost');
   });
 
+  it('pre-populates category from saved client settings', () => {
+    const clientWithCategory = createMockDownloadClient({
+      id: 2,
+      name: 'qBit with Cat',
+      settings: { host: 'localhost', port: 8080, username: 'admin', password: 'pass', useSsl: false, category: 'audiobooks' },
+    });
+
+    renderWithProviders(
+      <DownloadClientCard
+        client={clientWithCategory}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText('audiobooks')).toHaveValue('audiobooks');
+  });
+
+  it('shows empty category for client without category', () => {
+    renderWithProviders(
+      <DownloadClientCard
+        client={mockClient}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText('audiobooks')).toHaveValue('');
+  });
+
   it('shows enabled and priority fields', () => {
     renderWithProviders(
       <DownloadClientCard
