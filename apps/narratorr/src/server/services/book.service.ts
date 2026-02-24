@@ -1,3 +1,5 @@
+import { rm, readdir } from 'node:fs/promises';
+import { resolve, dirname, normalize, relative } from 'node:path';
 import { eq, and, like, desc, sql } from 'drizzle-orm';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
@@ -212,6 +214,46 @@ export class BookService {
     await this.db.delete(books).where(eq(books.id, id));
     this.log.info({ id }, 'Book removed');
     return true;
+  }
+
+  /**
+   * Delete a book's files from disk and clean up empty parent directories.
+   * Throws on failure so the caller can abort the deletion flow.
+   */
+  async deleteBookFiles(bookPath: string, libraryRoot: string): Promise<void> {
+    await rm(bookPath, { recursive: true, force: true });
+    this.log.info({ path: bookPath }, 'Book files deleted from disk');
+
+    await this.cleanEmptyParents(bookPath, libraryRoot);
+  }
+
+  /**
+   * Walk up from bookPath removing empty directories, stopping at libraryRoot.
+   * Only runs when bookPath is a normalized descendant of libraryRoot.
+   */
+  private async cleanEmptyParents(bookPath: string, libraryRoot: string): Promise<void> {
+    const normalizedRoot = normalize(resolve(libraryRoot));
+    const normalizedBook = normalize(resolve(bookPath));
+
+    // Use relative path to verify true ancestry — startsWith('/library') would match '/library2'
+    const rel = relative(normalizedRoot, normalizedBook);
+    if (!rel || rel.startsWith('..') || resolve(rel) === resolve(normalizedBook)) {
+      this.log.debug({ bookPath, libraryRoot }, 'Book path not under library root, skipping parent cleanup');
+      return;
+    }
+
+    let current = dirname(normalizedBook);
+    while (current !== normalizedRoot && current.length > normalizedRoot.length) {
+      try {
+        const entries = await readdir(current);
+        if (entries.length > 0) break;
+        await rm(current);
+        this.log.debug({ path: current }, 'Removed empty parent directory');
+        current = dirname(current);
+      } catch {
+        break;
+      }
+    }
   }
 
   async search(query: string): Promise<BookWithAuthor[]> {

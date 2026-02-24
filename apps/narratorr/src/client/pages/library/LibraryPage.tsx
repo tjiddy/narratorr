@@ -25,13 +25,15 @@ export function LibraryPage() {
   const filters = useLibraryFilters(books);
 
   const deleteConfirm = useDeleteConfirmation<BookWithAuthor>();
+  const [deleteFiles, setDeleteFiles] = useState(false);
   const [searchBook, setSearchBook] = useState<BookWithAuthor | null>(null);
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
 
   const deleteMutation = useMutation({
-    mutationFn: api.deleteBook,
-    onSuccess: () => {
-      toast.success('Removed book from library');
+    mutationFn: ({ id, deleteFiles: df }: { id: number; deleteFiles: boolean }) =>
+      api.deleteBook(id, df ? { deleteFiles: true } : undefined),
+    onSuccess: (_data, variables) => {
+      toast.success(variables.deleteFiles ? 'Removed book and deleted files from disk' : 'Removed book from library');
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (error: Error) => {
@@ -132,9 +134,21 @@ export function LibraryPage() {
         message={`Are you sure you want to remove "${deleteConfirm.target?.title}" from your library? This will cancel any active downloads.`}
         confirmLabel="Remove"
         cancelLabel="Cancel"
-        onConfirm={() => { const item = deleteConfirm.confirm(); if (item) deleteMutation.mutate(item.id); }}
-        onCancel={deleteConfirm.cancel}
-      />
+        onConfirm={() => { const item = deleteConfirm.confirm(); if (item) deleteMutation.mutate({ id: item.id, deleteFiles }); setDeleteFiles(false); }}
+        onCancel={() => { deleteConfirm.cancel(); setDeleteFiles(false); }}
+      >
+        {deleteConfirm.target?.path && (
+          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={deleteFiles}
+              onChange={(e) => setDeleteFiles(e.target.checked)}
+              className="rounded border-border text-destructive focus:ring-destructive"
+            />
+            Delete files from disk
+          </label>
+        )}
+      </ConfirmModal>
 
       {searchBook && (
         <SearchReleasesModal

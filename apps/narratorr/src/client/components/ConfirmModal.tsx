@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 interface ConfirmModalProps {
@@ -9,6 +9,7 @@ interface ConfirmModalProps {
   cancelLabel?: string;
   onConfirm: () => void;
   onCancel: () => void;
+  children?: ReactNode;
 }
 
 function AlertTriangleIcon({ className = '' }: { className?: string }) {
@@ -38,6 +39,7 @@ export function ConfirmModal({
   cancelLabel = 'Cancel',
   onConfirm,
   onCancel,
+  children,
 }: ConfirmModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   useEscapeKey(isOpen, onCancel, modalRef);
@@ -73,6 +75,12 @@ export function ConfirmModal({
           <h3 id="confirm-modal-title" className="font-display text-xl font-semibold mb-2">{title}</h3>
           <p id="confirm-modal-description" className="text-muted-foreground">{message}</p>
         </div>
+
+        {children && (
+          <div className="mb-6 flex justify-center">
+            {children}
+          </div>
+        )}
 
         {/* Actions */}
         <div className="flex flex-col-reverse sm:flex-row gap-3">
