@@ -5,7 +5,7 @@ import { RenameService, RenameError } from './rename.service.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { rename, readdir, mkdir, rmdir, stat, rm, cp } from 'node:fs/promises';
+import { rename, readdir, mkdir, stat, rm, cp } from 'node:fs/promises';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
