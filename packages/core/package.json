@@ -38,6 +38,10 @@
       "import": "./dist/utils/audio-processor.js",
       "types": "./dist/utils/audio-processor.d.ts"
     },
+    "./utils/path-mapping": {
+      "import": "./dist/utils/path-mapping.js",
+      "types": "./dist/utils/path-mapping.d.ts"
+    },
     "./metadata": {
       "import": "./dist/metadata/index.js",
       "types": "./dist/metadata/index.d.ts"

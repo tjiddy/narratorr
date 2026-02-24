@@ -85,6 +85,18 @@ export function createMockDbDownloadClient(overrides?: Record<string, unknown>) 
   };
 }
 
+export function createMockDbRemotePathMapping(overrides?: Record<string, unknown>) {
+  return {
+    id: 1,
+    downloadClientId: 1,
+    remotePath: '/downloads/complete/',
+    localPath: 'C:\\downloads\\',
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
 export function createMockDbNotifier(overrides?: Record<string, unknown>) {
   return {
     id: 1,

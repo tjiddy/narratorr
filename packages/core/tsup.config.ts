@@ -10,6 +10,7 @@ export default defineConfig({
     'src/utils/book-discovery.ts',
     'src/utils/chapter-resolver.ts',
     'src/utils/audio-processor.ts',
+    'src/utils/path-mapping.ts',
     'src/metadata/index.ts',
     'src/prowlarr/index.ts',
   ],

@@ -101,6 +101,23 @@ export const downloadClients = sqliteTable('download_clients', {
   index('idx_download_clients_enabled').on(table.enabled),
 ]);
 
+export const remotePathMappings = sqliteTable('remote_path_mappings', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  downloadClientId: integer('download_client_id')
+    .notNull()
+    .references(() => downloadClients.id, { onDelete: 'cascade' }),
+  remotePath: text('remote_path').notNull(),
+  localPath: text('local_path').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+}, (table) => [
+  index('idx_remote_path_mappings_client').on(table.downloadClientId),
+]);
+
 export const notifiers = sqliteTable('notifiers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),

@@ -10,6 +10,7 @@ import {
 } from '@/components/icons';
 import { useCrudSettings } from '@/hooks/useCrudSettings';
 import { type CreateDownloadClientFormData } from '../../../shared/schemas.js';
+import { RemotePathMappingsSection } from './RemotePathMappingsSection';
 
 export function DownloadClientsSettings() {
   const {
@@ -104,6 +105,9 @@ export function DownloadClientsSettings() {
           ))}
         </div>
       )}
+
+      {/* Remote Path Mappings */}
+      <RemotePathMappingsSection />
 
       <ConfirmModal
         isOpen={deleteTarget !== null}

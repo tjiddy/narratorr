@@ -4,6 +4,7 @@ import type { DownloadClient } from '../lib/api/download-clients.js';
 import type { Indexer } from '../lib/api/indexers.js';
 import type { Notifier } from '../lib/api/notifiers.js';
 import type { Settings } from '../lib/api/settings.js';
+import type { RemotePathMapping } from '../lib/api/remote-path-mappings.js';
 
 let nextId = 1;
 
@@ -89,6 +90,19 @@ export function createMockDownloadClient(overrides?: Partial<DownloadClient>): D
     priority: 50,
     settings: { host: 'localhost', port: 8080, username: 'admin', password: 'pass', useSsl: false },
     createdAt: '2024-01-01T00:00:00Z',
+    ...overrides,
+  };
+}
+
+export function createMockRemotePathMapping(overrides?: Partial<RemotePathMapping>): RemotePathMapping {
+  const id = overrides?.id ?? nextId++;
+  return {
+    id,
+    downloadClientId: 1,
+    remotePath: '/downloads/complete/',
+    localPath: 'C:\\downloads\\',
+    createdAt: '2024-01-01T00:00:00Z',
+    updatedAt: '2024-01-01T00:00:00Z',
     ...overrides,
   };
 }

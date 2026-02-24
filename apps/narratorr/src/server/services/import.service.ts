@@ -7,9 +7,11 @@ import { downloads, books, authors } from '@narratorr/db/schema';
 import { renderTemplate, AUDIO_EXTENSIONS } from '@narratorr/core/utils';
 import { processAudioFiles } from '@narratorr/core/utils/audio-processor';
 import { enrichBookFromAudio } from './enrichment-utils.js';
+import { applyPathMapping } from '@narratorr/core/utils/path-mapping';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
+import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 
 type DownloadRow = typeof downloads.$inferSelect;
 type BookRow = typeof books.$inferSelect;
@@ -96,6 +98,7 @@ export class ImportService {
     private settingsService: SettingsService,
     private log: FastifyBaseLogger,
     private notifierService?: NotifierService,
+    private remotePathMappingService?: RemotePathMappingService,
   ) {}
 
   /**
@@ -136,7 +139,22 @@ export class ImportService {
       );
 
       // 5. Determine source: could be a single file or a directory
-      const sourceStats = await stat(savePath);
+      let sourceStats;
+      try {
+        sourceStats = await stat(savePath);
+      } catch (statError) {
+        if ((statError as NodeJS.ErrnoException).code === 'ENOENT') {
+          const hasMapping = this.remotePathMappingService
+            ? (await this.remotePathMappingService.getByClientId(download.downloadClientId!)).length > 0
+            : false;
+          if (hasMapping) {
+            throw new Error(`Path not found: ${savePath} (mapped from download client). Check your remote path mapping configuration.`);
+          } else {
+            throw new Error(`Path not found: ${savePath}. If the download client runs in Docker or on a remote machine, add a Remote Path Mapping in Settings > Download Clients.`);
+          }
+        }
+        throw statError;
+      }
       let sourcePath = savePath;
       let fileCount = 0;
 
@@ -335,7 +353,21 @@ export class ImportService {
 
     // savePath from the client is the directory; the actual content may be inside it
     // For qBittorrent, savePath is the parent and name is the folder/file inside
-    return join(item.savePath, item.name);
+    let fullPath = join(item.savePath, item.name);
+
+    // Apply remote path mapping if configured
+    if (this.remotePathMappingService && download.downloadClientId) {
+      const mappings = await this.remotePathMappingService.getByClientId(download.downloadClientId);
+      if (mappings.length > 0) {
+        const mapped = applyPathMapping(fullPath, mappings);
+        if (mapped !== fullPath) {
+          this.log.info({ original: fullPath, mapped }, 'Applied remote path mapping');
+          fullPath = mapped;
+        }
+      }
+    }
+
+    return fullPath;
   }
 
   private async countAudioFiles(dirPath: string): Promise<number> {

@@ -12,6 +12,7 @@ import {
   NotifierService,
   BlacklistService,
   ProwlarrSyncService,
+  RemotePathMappingService,
 } from '../services';
 import { ImportService } from '../services/import.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
@@ -31,6 +32,7 @@ import { blacklistRoutes } from './blacklist.js';
 import { prowlarrRoutes } from './prowlarr.js';
 import { authRoutes } from './auth.js';
 import { filesystemRoutes } from './filesystem.js';
+import { remotePathMappingRoutes } from './remote-path-mappings.js';
 
 export interface Services {
   settings: SettingsService;
@@ -46,6 +48,7 @@ export interface Services {
   notifier: NotifierService;
   blacklist: BlacklistService;
   prowlarrSync: ProwlarrSyncService;
+  remotePathMapping: RemotePathMappingService;
 }
 
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
@@ -63,13 +66,14 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const book = new BookService(db, log, metadata);
   const notifier = new NotifierService(db, log);
   const download = new DownloadService(db, downloadClient, log, notifier);
-  const importService = new ImportService(db, downloadClient, settings, log, notifier);
+  const remotePathMapping = new RemotePathMappingService(db, log);
+  const importService = new ImportService(db, downloadClient, settings, log, notifier, remotePathMapping);
   const libraryScan = new LibraryScanService(db, book, metadata, settings, log);
   const matchJob = new MatchJobService(metadata, log);
   const blacklistService = new BlacklistService(db, log);
   const prowlarrSync = new ProwlarrSyncService(db, log);
 
-  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync };
+  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping };
 }
 
 export async function registerRoutes(
@@ -91,5 +95,6 @@ export async function registerRoutes(
   await blacklistRoutes(app, services.blacklist);
   await prowlarrRoutes(app, services.prowlarrSync);
   await authRoutes(app, services.auth);
+  await remotePathMappingRoutes(app, services.remotePathMapping);
   await filesystemRoutes(app);
 }

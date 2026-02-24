@@ -5,6 +5,7 @@ import { sanitizePath } from '@narratorr/core/utils';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
+import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 
@@ -645,6 +646,99 @@ describe('ImportService', () => {
       expect(result.downloadId).toBe(1);
       // scanAudioDirectory is called during enrichment
       expect(scanAudioDirectory).toHaveBeenCalled();
+    });
+  });
+
+  describe('remote path mapping integration', () => {
+    let mockMappingService: RemotePathMappingService;
+    let serviceWithMappings: ImportService;
+
+    beforeEach(() => {
+      mockMappingService = inject<RemotePathMappingService>({
+        getByClientId: vi.fn().mockResolvedValue([]),
+      });
+      serviceWithMappings = new ImportService(
+        inject<Db>(db), clientService, settingsService,
+        inject<FastifyBaseLogger>(createMockLogger()),
+        undefined,
+        mockMappingService,
+      );
+    });
+
+    it('applies path mapping when a matching mapping exists', async () => {
+      (mockMappingService.getByClientId as Mock).mockResolvedValue([
+        { id: 1, downloadClientId: 1, remotePath: '/downloads/', localPath: 'C:\\library\\' },
+      ]);
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const statMock = vi.mocked(stat);
+      statMock.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
+
+      const result = await serviceWithMappings.importDownload(1);
+
+      // stat should receive the mapped path, not the original /downloads/ path
+      const statPath = statMock.mock.calls[0][0] as string;
+      expect(statPath).toMatch(/^C:[/\\]library[/\\]/);
+      expect(statPath).not.toMatch(/^\/downloads\//);
+
+      // cp should also receive the mapped source path
+      const cpMock = vi.mocked(cp);
+      const cpSource = cpMock.mock.calls[0][0] as string;
+      expect(cpSource).toMatch(/^C:[/\\]library[/\\]/);
+
+      expect(result.downloadId).toBe(1);
+    });
+
+    it('skips mapping when no mappings match the path', async () => {
+      (mockMappingService.getByClientId as Mock).mockResolvedValue([
+        { id: 1, downloadClientId: 1, remotePath: '/other/', localPath: 'D:\\other\\' },
+      ]);
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const result = await serviceWithMappings.importDownload(1);
+
+      // Should still work — original path used
+      expect(result.downloadId).toBe(1);
+    });
+
+    it('includes ENOENT guidance suggesting path mapping when none configured', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const statMock = vi.mocked(stat);
+      const enoent = new Error('ENOENT') as NodeJS.ErrnoException;
+      enoent.code = 'ENOENT';
+      statMock.mockRejectedValueOnce(enoent);
+
+      await expect(serviceWithMappings.importDownload(1)).rejects.toThrow(
+        /add a Remote Path Mapping/,
+      );
+    });
+
+    it('includes ENOENT guidance about mapping config when mapping exists but path wrong', async () => {
+      (mockMappingService.getByClientId as Mock).mockResolvedValue([
+        { id: 1, downloadClientId: 1, remotePath: '/downloads/', localPath: 'C:\\library\\' },
+      ]);
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const statMock = vi.mocked(stat);
+      const enoent = new Error('ENOENT') as NodeJS.ErrnoException;
+      enoent.code = 'ENOENT';
+      statMock.mockRejectedValueOnce(enoent);
+
+      await expect(serviceWithMappings.importDownload(1)).rejects.toThrow(
+        /Check your remote path mapping configuration/,
+      );
     });
   });
 });

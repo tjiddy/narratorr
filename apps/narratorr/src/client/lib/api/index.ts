@@ -12,6 +12,7 @@ export type { AuthStatus, AuthConfig } from './auth.js';
 export type { DiscoveredBook, ScanResult, SingleBookResult, ImportConfirmItem, ImportSingleResult, ImportResult, ImportMode, Confidence, MatchCandidate, MatchResult, MatchJobStatus } from './library-scan.js';
 export type { ProwlarrConfig, SyncPreviewItem, SyncResult } from './prowlarr.js';
 export type { BrowseResult } from './filesystem.js';
+export type { RemotePathMapping } from './remote-path-mappings.js';
 
 export { formatBytes, formatProgress } from './utils.js';
 
@@ -28,6 +29,7 @@ import { prowlarrApi } from './prowlarr.js';
 import { systemApi } from './system.js';
 import { authApi } from './auth.js';
 import { filesystemApi } from './filesystem.js';
+import { remotePathMappingsApi } from './remote-path-mappings.js';
 
 export const api = {
   ...booksApi,
@@ -43,4 +45,5 @@ export const api = {
   ...systemApi,
   ...authApi,
   ...filesystemApi,
+  ...remotePathMappingsApi,
 };

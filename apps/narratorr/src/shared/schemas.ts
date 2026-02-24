@@ -130,6 +130,25 @@ export const createDownloadClientFormSchema = z.object({
 export type CreateDownloadClientFormData = z.infer<typeof createDownloadClientFormSchema>;
 
 // ============================================================================
+// Remote Path Mapping schemas
+// ============================================================================
+
+export const createRemotePathMappingSchema = z.object({
+  downloadClientId: z.number().int().positive('Download client is required'),
+  remotePath: z.string().min(1, 'Remote path is required').max(500),
+  localPath: z.string().min(1, 'Local path is required').max(500),
+});
+
+export const updateRemotePathMappingSchema = z.object({
+  downloadClientId: z.number().int().positive().optional(),
+  remotePath: z.string().min(1).max(500).optional(),
+  localPath: z.string().min(1).max(500).optional(),
+});
+
+export type CreateRemotePathMappingInput = z.infer<typeof createRemotePathMappingSchema>;
+export type UpdateRemotePathMappingInput = z.infer<typeof updateRemotePathMappingSchema>;
+
+// ============================================================================
 // Search schemas
 // ============================================================================
 
