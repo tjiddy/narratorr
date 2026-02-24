@@ -20,7 +20,10 @@ export const queryKeys = {
     config: () => ['prowlarr', 'config'] as const,
     preview: () => ['prowlarr', 'preview'] as const,
   },
-  remotePathMappings: () => ['remotePathMappings'] as const,
+  remotePathMappings: (clientId?: number) =>
+    clientId !== undefined
+      ? (['remotePathMappings', clientId] as const)
+      : (['remotePathMappings'] as const),
   auth: {
     status: () => ['auth', 'status'] as const,
     config: () => ['auth', 'config'] as const,

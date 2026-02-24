@@ -7,6 +7,17 @@ import { DownloadClientCard } from './DownloadClientCard';
 import type { DownloadClient, TestResult } from '@/lib/api';
 import type { IdTestResult } from './SettingsCardShell';
 
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    api: {
+      ...(actual.api as Record<string, unknown>),
+      getMappingsByClientId: vi.fn().mockResolvedValue([]),
+    },
+  };
+});
+
 const mockClient: DownloadClient = createMockDownloadClient({ id: 1, name: 'My qBit' });
 
 beforeEach(() => {
@@ -304,5 +315,32 @@ describe('DownloadClientCard — edit mode', () => {
     );
 
     expect(screen.getByText('Saving...')).toBeInTheDocument();
+  });
+
+  it('shows Remote Path Mappings subsection in edit mode', () => {
+    renderWithProviders(
+      <DownloadClientCard
+        client={mockClient}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Remote Path Mappings')).toBeInTheDocument();
+  });
+});
+
+describe('DownloadClientCard — create mode does not show mappings', () => {
+  it('does not show Remote Path Mappings subsection', () => {
+    renderWithProviders(
+      <DownloadClientCard
+        mode="create"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText('Remote Path Mappings')).not.toBeInTheDocument();
   });
 });

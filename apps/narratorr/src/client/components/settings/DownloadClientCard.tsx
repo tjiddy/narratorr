@@ -6,6 +6,7 @@ import { TestResultMessage } from '@/components/TestResultMessage';
 import { SettingsCardShell, type IdTestResult } from './SettingsCardShell';
 import { SettingsFormActions } from './SettingsFormActions';
 import { DownloadClientFields } from './DownloadClientFields';
+import { RemotePathMappingsSubsection } from './RemotePathMappingsSubsection';
 import {
   createDownloadClientFormSchema,
   downloadClientTypeSchema,
@@ -221,6 +222,10 @@ export function DownloadClientCard(props: DownloadClientCardProps) {
         testDisabled={!isImplemented}
         testDisabledTitle={!isImplemented ? 'Testing available for implemented adapter types' : undefined}
       />
+
+      {isEdit && client && (
+        <RemotePathMappingsSubsection clientId={client.id} />
+      )}
     </form>
   );
 }
