@@ -483,10 +483,9 @@ describe('ProwlarrImport', () => {
 
     await waitFor(() => {
       expect(screen.getByPlaceholderText('http://localhost:9696')).toHaveValue('http://saved:9696');
+      expect(screen.getByPlaceholderText('Your Prowlarr API key')).toHaveValue('saved-key');
+      expect(screen.getByPlaceholderText('3030')).toHaveValue('3030, 3040');
     });
-
-    expect(screen.getByPlaceholderText('Your Prowlarr API key')).toHaveValue('saved-key');
-    expect(screen.getByPlaceholderText('3030')).toHaveValue('3030, 3040');
     expect(screen.getByText('Add, update, and remove to match Prowlarr')).toBeInTheDocument();
   });
 

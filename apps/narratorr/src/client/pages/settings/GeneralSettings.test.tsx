@@ -54,8 +54,8 @@ describe('GeneralSettings', () => {
     // Verify form is populated from API (wait for async form reset after query resolves)
     await waitFor(() => {
       expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
+      expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
     });
-    expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
 
     // Save button disabled when clean
     const saveButton = screen.getByText('Save Changes').closest('button')!;
