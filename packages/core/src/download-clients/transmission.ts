@@ -55,6 +55,7 @@ export class TransmissionClient implements DownloadClientAdapter {
   readonly type = 'transmission';
   readonly name = 'Transmission';
   readonly protocol: DownloadProtocol = 'torrent';
+  readonly supportsCategories = false;
 
   private baseUrl: string;
   private sessionId = '';
@@ -129,6 +130,10 @@ export class TransmissionClient implements DownloadClientAdapter {
       ids: [id],
       'delete-local-data': deleteFiles,
     });
+  }
+
+  async getCategories(): Promise<string[]> {
+    return [];
   }
 
   async test(): Promise<{ success: boolean; message?: string }> {

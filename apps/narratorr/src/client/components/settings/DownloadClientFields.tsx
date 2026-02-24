@@ -1,5 +1,7 @@
-import type { UseFormRegister, FieldErrors } from 'react-hook-form';
+import type { UseFormRegister, FieldErrors, UseFormSetValue, UseFormGetValues } from 'react-hook-form';
 import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
+import { RefreshIcon } from '../icons';
+import { useFetchCategories } from './useFetchCategories';
 
 const TYPE_FIELDS: Record<string, { username: boolean; password: boolean; useSsl: boolean; apiKey: boolean }> = {
   qbittorrent: { username: true, password: true, useSsl: true, apiKey: false },
@@ -8,29 +10,43 @@ const TYPE_FIELDS: Record<string, { username: boolean; password: boolean; useSsl
   nzbget: { username: true, password: true, useSsl: true, apiKey: false },
 };
 
+const SUPPORTS_CATEGORIES: Record<string, boolean> = {
+  qbittorrent: true,
+  sabnzbd: true,
+  nzbget: true,
+  transmission: false,
+};
+
 interface DownloadClientFieldsProps {
   selectedType: string;
   register: UseFormRegister<CreateDownloadClientFormData>;
   errors: FieldErrors<CreateDownloadClientFormData>;
+  clientId?: number;
+  setValue: UseFormSetValue<CreateDownloadClientFormData>;
+  getValues: UseFormGetValues<CreateDownloadClientFormData>;
+  isDirty?: boolean;
 }
 
 // eslint-disable-next-line complexity -- conditional fields per client type are inherently branchy
-export function DownloadClientFields({ selectedType, register, errors }: DownloadClientFieldsProps) {
+export function DownloadClientFields({ selectedType, register, errors, clientId, setValue, getValues, isDirty }: DownloadClientFieldsProps) {
   const fields = TYPE_FIELDS[selectedType] || TYPE_FIELDS.qbittorrent;
+  const supportsCategories = SUPPORTS_CATEGORIES[selectedType] ?? false;
+  const { fetching, categories, error: categoryError, showDropdown, setShowDropdown, dropdownRef, fetchCategories } =
+    useFetchCategories({ selectedType, clientId, isDirty, getValues });
+
+  function handleSelectCategory(category: string) {
+    setValue('settings.category', category, { shouldDirty: true });
+    setShowDropdown(false);
+  }
+
+  const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all';
+  const errorInputClass = 'w-full px-4 py-3 bg-background border border-destructive rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all';
 
   return (
     <>
       <div>
         <label htmlFor="clientHost" className="block text-sm font-medium mb-2">Host</label>
-        <input
-          id="clientHost"
-          type="text"
-          {...register('settings.host')}
-          className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-            errors.settings?.host ? 'border-destructive' : 'border-border'
-          }`}
-          placeholder="localhost"
-        />
+        <input id="clientHost" type="text" {...register('settings.host')} className={errors.settings?.host ? errorInputClass : inputClass} placeholder="localhost" />
         {errors.settings?.host ? (
           <p className="text-sm text-destructive mt-1">{errors.settings.host.message}</p>
         ) : (
@@ -39,83 +55,77 @@ export function DownloadClientFields({ selectedType, register, errors }: Downloa
       </div>
       <div>
         <label htmlFor="clientPort" className="block text-sm font-medium mb-2">Port</label>
-        <input
-          id="clientPort"
-          type="number"
-          {...register('settings.port', { valueAsNumber: true })}
-          className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-            errors.settings?.port ? 'border-destructive' : 'border-border'
-          }`}
-        />
-        {errors.settings?.port && (
-          <p className="text-sm text-destructive mt-1">{errors.settings.port.message}</p>
-        )}
+        <input id="clientPort" type="number" {...register('settings.port', { valueAsNumber: true })} className={errors.settings?.port ? errorInputClass : inputClass} />
+        {errors.settings?.port && <p className="text-sm text-destructive mt-1">{errors.settings.port.message}</p>}
       </div>
 
       {fields.username && (
         <div>
           <label htmlFor="clientUsername" className="block text-sm font-medium mb-2">Username</label>
-          <input
-            id="clientUsername"
-            type="text"
-            {...register('settings.username')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-            placeholder="admin"
-          />
+          <input id="clientUsername" type="text" {...register('settings.username')} className={inputClass} placeholder="admin" />
         </div>
       )}
       {fields.password && (
         <div>
           <label htmlFor="clientPassword" className="block text-sm font-medium mb-2">Password</label>
-          <input
-            id="clientPassword"
-            type="password"
-            {...register('settings.password')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-          />
+          <input id="clientPassword" type="password" {...register('settings.password')} className={inputClass} />
         </div>
       )}
 
       {fields.apiKey && (
         <div className="sm:col-span-2">
           <label htmlFor="clientApiKey" className="block text-sm font-medium mb-2">API Key</label>
-          <input
-            id="clientApiKey"
-            type="password"
-            {...register('settings.apiKey')}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-              errors.settings?.apiKey ? 'border-destructive' : 'border-border'
-            }`}
-          />
-          {errors.settings?.apiKey && (
-            <p className="text-sm text-destructive mt-1">{errors.settings.apiKey.message}</p>
-          )}
+          <input id="clientApiKey" type="password" {...register('settings.apiKey')} className={errors.settings?.apiKey ? errorInputClass : inputClass} />
+          {errors.settings?.apiKey && <p className="text-sm text-destructive mt-1">{errors.settings.apiKey.message}</p>}
         </div>
       )}
 
       {fields.useSsl && (
         <div className="sm:col-span-2">
           <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              {...register('settings.useSsl')}
-              className="w-5 h-5 rounded border-border text-primary focus:ring-primary focus:ring-offset-0"
-            />
+            <input type="checkbox" {...register('settings.useSsl')} className="w-5 h-5 rounded border-border text-primary focus:ring-primary focus:ring-offset-0" />
             <span className="text-sm font-medium">Use SSL/HTTPS</span>
           </label>
         </div>
       )}
 
-      <div className="sm:col-span-2">
-        <label htmlFor="clientCategory" className="block text-sm font-medium mb-2">Category</label>
-        <input
-          id="clientCategory"
-          type="text"
-          {...register('settings.category')}
-          className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-          placeholder="audiobooks"
-        />
-        <p className="text-sm text-muted-foreground mt-1">Optional. Tags downloads so the client routes them to a dedicated folder.</p>
+      <div className="sm:col-span-2" ref={dropdownRef}>
+        <div className="flex items-center gap-2 mb-2">
+          <label htmlFor="clientCategory" className="block text-sm font-medium">Category</label>
+          {supportsCategories && (
+            <button
+              type="button"
+              onClick={fetchCategories}
+              disabled={fetching}
+              className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-muted-foreground hover:text-foreground border border-border rounded-lg hover:bg-accent transition-all disabled:opacity-50"
+              title="Fetch categories from client"
+            >
+              <RefreshIcon className={`w-3 h-3 ${fetching ? 'animate-spin' : ''}`} />
+              Fetch
+            </button>
+          )}
+        </div>
+        <div className="relative">
+          <input id="clientCategory" type="text" {...register('settings.category')} className={inputClass} placeholder="audiobooks" />
+          {showDropdown && (
+            <div className="absolute z-10 mt-1 w-full bg-background border border-border rounded-xl shadow-lg max-h-48 overflow-y-auto">
+              {categories.length > 0 ? (
+                categories.map((cat) => (
+                  <button key={cat} type="button" onClick={() => handleSelectCategory(cat)} className="w-full px-4 py-2.5 text-left text-sm hover:bg-accent transition-colors first:rounded-t-xl last:rounded-b-xl">
+                    {cat}
+                  </button>
+                ))
+              ) : (
+                <div className="px-4 py-2.5 text-sm text-muted-foreground">No categories found</div>
+              )}
+            </div>
+          )}
+        </div>
+        {categoryError ? (
+          <p className="text-sm text-destructive mt-1">{categoryError}</p>
+        ) : (
+          <p className="text-sm text-muted-foreground mt-1">Optional. Tags downloads so the client routes them to a dedicated folder.</p>
+        )}
       </div>
     </>
   );

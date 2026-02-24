@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { http, HttpResponse } from 'msw';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { NZBGetClient } from './nzbget.js';
 
@@ -408,6 +408,118 @@ describe('NZBGetClient', () => {
 
       const item = await client.getDownload('456');
       expect(item!.status).toBe('error');
+    });
+  });
+
+  describe('getCategories', () => {
+    it('returns category names from config RPC response', async () => {
+      server.use(
+        rpcHandler({
+          config: () => [
+            { Name: 'Category1.Name', Value: 'audiobooks' },
+            { Name: 'Category1.DestDir', Value: '/downloads/audiobooks' },
+            { Name: 'Category2.Name', Value: 'movies' },
+            { Name: 'Category2.DestDir', Value: '/downloads/movies' },
+            { Name: 'MainDir', Value: '/downloads' },
+          ],
+        }),
+      );
+
+      const categories = await client.getCategories();
+      expect(categories).toEqual(['audiobooks', 'movies']);
+    });
+
+    it('returns empty array when no categories in config', async () => {
+      server.use(
+        rpcHandler({
+          config: () => [
+            { Name: 'MainDir', Value: '/downloads' },
+            { Name: 'TempDir', Value: '/tmp' },
+          ],
+        }),
+      );
+
+      const categories = await client.getCategories();
+      expect(categories).toEqual([]);
+    });
+
+    it('filters out empty category name values', async () => {
+      server.use(
+        rpcHandler({
+          config: () => [
+            { Name: 'Category1.Name', Value: 'audiobooks' },
+            { Name: 'Category2.Name', Value: '' },
+          ],
+        }),
+      );
+
+      const categories = await client.getCategories();
+      expect(categories).toEqual(['audiobooks']);
+    });
+
+    it('returns empty array when config returns null', async () => {
+      server.use(
+        rpcHandler({
+          config: () => null,
+        }),
+      );
+
+      const categories = await client.getCategories();
+      expect(categories).toEqual([]);
+    });
+
+    it('throws on auth failure (HTTP 401)', async () => {
+      server.use(
+        http.post(RPC_URL, () => {
+          return new HttpResponse(null, { status: 401 });
+        }),
+      );
+
+      await expect(client.getCategories()).rejects.toThrow('401');
+    });
+
+    it('throws on network error', async () => {
+      server.use(
+        http.post(RPC_URL, () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      await expect(client.getCategories()).rejects.toThrow();
+    });
+
+    it('throws on malformed response (HTML instead of JSON)', async () => {
+      server.use(
+        http.post(RPC_URL, () => {
+          return new HttpResponse('<html>Not JSON</html>', {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      await expect(client.getCategories()).rejects.toThrow('didn\'t respond as expected');
+    });
+
+    it('throws on request timeout', async () => {
+      vi.useFakeTimers();
+
+      server.use(
+        http.post(RPC_URL, async () => {
+          await delay('infinite');
+          return HttpResponse.json({ result: [] });
+        }),
+      );
+
+      const promise = client.getCategories();
+      const assertion = expect(promise).rejects.toThrow();
+      await vi.advanceTimersByTimeAsync(16000);
+      await assertion;
+
+      vi.useRealTimers();
+    });
+
+    it('has supportsCategories = true', () => {
+      expect(client.supportsCategories).toBe(true);
     });
   });
 

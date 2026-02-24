@@ -29,10 +29,12 @@ export interface DownloadClientAdapter {
   readonly type: string;
   readonly name: string;
   readonly protocol: DownloadProtocol;
+  readonly supportsCategories: boolean;
 
   addDownload(url: string, options?: AddDownloadOptions): Promise<string>;
   getDownload(id: string): Promise<DownloadItemInfo | null>;
   getAllDownloads(category?: string): Promise<DownloadItemInfo[]>;
+  getCategories(): Promise<string[]>;
   pauseDownload(id: string): Promise<void>;
   resumeDownload(id: string): Promise<void>;
   removeDownload(id: string, deleteFiles?: boolean): Promise<void>;

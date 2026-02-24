@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { http, HttpResponse } from 'msw';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { QBittorrentClient } from './qbittorrent.js';
 
@@ -407,6 +407,100 @@ describe('QBittorrentClient', () => {
       const result = await client.test();
       expect(result.success).toBe(false);
       expect(result.message).toContain('didn\'t respond as expected');
+    });
+  });
+
+  describe('getCategories', () => {
+    it('returns category names from API response', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/categories`, () => {
+          return HttpResponse.json({
+            audiobooks: { name: 'audiobooks', savePath: '/downloads/audiobooks' },
+            music: { name: 'music', savePath: '/downloads/music' },
+          });
+        }),
+      );
+
+      const categories = await client.getCategories();
+      expect(categories).toEqual(['audiobooks', 'music']);
+    });
+
+    it('returns empty array when no categories exist', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/categories`, () => {
+          return HttpResponse.json({});
+        }),
+      );
+
+      const categories = await client.getCategories();
+      expect(categories).toEqual([]);
+    });
+
+    it('returns empty array when API returns null', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/categories`, () => {
+          return new HttpResponse('', {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }),
+      );
+
+      const categories = await client.getCategories();
+      expect(categories).toEqual([]);
+    });
+
+    it('throws on auth failure (403 after retry)', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/categories`, () => {
+          return new HttpResponse(null, { status: 403 });
+        }),
+      );
+
+      await expect(client.getCategories()).rejects.toThrow('403');
+    });
+
+    it('throws on network error', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/categories`, () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      await expect(client.getCategories()).rejects.toThrow();
+    });
+
+    it('throws on malformed response (HTML instead of JSON)', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/categories`, () => {
+          return new HttpResponse('<html>Not JSON</html>', {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      await expect(client.getCategories()).rejects.toThrow('didn\'t respond as expected');
+    });
+
+    it('throws on request timeout', async () => {
+      vi.useFakeTimers();
+
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/categories`, async () => {
+          await delay('infinite');
+          return HttpResponse.json({});
+        }),
+      );
+
+      const promise = client.getCategories();
+      const assertion = expect(promise).rejects.toThrow();
+      await vi.advanceTimersByTimeAsync(16000);
+      await assertion;
+
+      vi.useRealTimers();
+    });
+
+    it('has supportsCategories = true', () => {
+      expect(client.supportsCategories).toBe(true);
     });
   });
 

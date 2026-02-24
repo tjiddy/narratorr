@@ -31,6 +31,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
   readonly type = 'qbittorrent';
   readonly name = 'qBittorrent';
   readonly protocol: DownloadProtocol = 'torrent';
+  readonly supportsCategories = true;
 
   private baseUrl: string;
   private cookie?: string;
@@ -225,6 +226,11 @@ export class QBittorrentClient implements DownloadClientAdapter {
         deleteFiles: deleteFiles.toString(),
       }),
     });
+  }
+
+  async getCategories(): Promise<string[]> {
+    const categories = await this.request<Record<string, { name: string; savePath: string }>>('/api/v2/torrents/categories');
+    return Object.keys(categories || {});
   }
 
   async test(): Promise<{ success: boolean; message?: string }> {

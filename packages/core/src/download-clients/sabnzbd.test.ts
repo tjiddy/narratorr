@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { http, HttpResponse } from 'msw';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { SABnzbdClient } from './sabnzbd.js';
 
@@ -481,6 +481,122 @@ describe('SABnzbdClient', () => {
 
       const item = await client.getDownload('SABnzbd_nzo_abc123');
       expect(item!.eta).toBeUndefined();
+    });
+  });
+
+  describe('getCategories', () => {
+    it('returns category names from get_cats response', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'get_cats') {
+            return HttpResponse.json({ categories: ['audiobooks', 'movies', '*'] });
+          }
+          return HttpResponse.json({});
+        }),
+      );
+
+      const categories = await client.getCategories();
+      expect(categories).toEqual(['audiobooks', 'movies']);
+    });
+
+    it('filters out the * wildcard category', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'get_cats') {
+            return HttpResponse.json({ categories: ['*'] });
+          }
+          return HttpResponse.json({});
+        }),
+      );
+
+      const categories = await client.getCategories();
+      expect(categories).toEqual([]);
+    });
+
+    it('returns empty array when no categories exist', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'get_cats') {
+            return HttpResponse.json({ categories: [] });
+          }
+          return HttpResponse.json({});
+        }),
+      );
+
+      const categories = await client.getCategories();
+      expect(categories).toEqual([]);
+    });
+
+    it('returns empty array when categories field is missing', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'get_cats') {
+            return HttpResponse.json({});
+          }
+          return HttpResponse.json({});
+        }),
+      );
+
+      const categories = await client.getCategories();
+      expect(categories).toEqual([]);
+    });
+
+    it('throws on auth failure (HTTP 401)', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(null, { status: 401 });
+        }),
+      );
+
+      await expect(client.getCategories()).rejects.toThrow('401');
+    });
+
+    it('throws on network error', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      await expect(client.getCategories()).rejects.toThrow();
+    });
+
+    it('throws on malformed response (HTML instead of JSON)', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse('<html>Not JSON</html>', {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      await expect(client.getCategories()).rejects.toThrow('didn\'t respond as expected');
+    });
+
+    it('throws on request timeout', async () => {
+      vi.useFakeTimers();
+
+      server.use(
+        http.get(`${API_BASE}/api`, async () => {
+          await delay('infinite');
+          return HttpResponse.json({});
+        }),
+      );
+
+      const promise = client.getCategories();
+      const assertion = expect(promise).rejects.toThrow();
+      await vi.advanceTimersByTimeAsync(16000);
+      await assertion;
+
+      vi.useRealTimers();
+    });
+
+    it('has supportsCategories = true', () => {
+      expect(client.supportsCategories).toBe(true);
     });
   });
 

@@ -1,18 +1,41 @@
-import { describe, it, expect } from 'vitest';
-import { screen, render } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { screen, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useForm } from 'react-hook-form';
 import { DownloadClientFields } from './DownloadClientFields';
 import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
 
-function FieldWrapper({ type }: { type: string }) {
-  const { register, formState: { errors } } = useForm<CreateDownloadClientFormData>({
-    defaultValues: { name: '', type: 'qbittorrent', settings: {} },
+vi.mock('@/lib/api/download-clients', () => ({
+  downloadClientsApi: {
+    getClientCategories: vi.fn(),
+    getClientCategoriesFromConfig: vi.fn(),
+  },
+}));
+
+import { downloadClientsApi } from '@/lib/api/download-clients';
+
+function FieldWrapper({ type, clientId, dirty }: { type: string; clientId?: number; dirty?: boolean }) {
+  const { register, formState: { errors }, setValue, getValues } = useForm<CreateDownloadClientFormData>({
+    defaultValues: { name: 'Test', type: 'qbittorrent', enabled: true, priority: 50, settings: { host: '', port: 8080 } },
   });
-  return <DownloadClientFields selectedType={type} register={register} errors={errors} />;
+  return (
+    <DownloadClientFields
+      selectedType={type}
+      register={register}
+      errors={errors}
+      clientId={clientId}
+      setValue={setValue}
+      getValues={getValues}
+      isDirty={dirty}
+    />
+  );
 }
 
 describe('DownloadClientFields', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('renders qbittorrent fields and accepts host input', async () => {
     const user = userEvent.setup();
     render(<FieldWrapper type="qbittorrent" />);
@@ -109,5 +132,167 @@ describe('DownloadClientFields', () => {
     expect(checkbox).not.toBeChecked();
     await user.click(checkbox);
     expect(checkbox).toBeChecked();
+  });
+
+  describe('fetch categories button', () => {
+    it('shows fetch button for qbittorrent', () => {
+      render(<FieldWrapper type="qbittorrent" />);
+      expect(screen.getByRole('button', { name: /fetch/i })).toBeInTheDocument();
+    });
+
+    it('shows fetch button for sabnzbd', () => {
+      render(<FieldWrapper type="sabnzbd" />);
+      expect(screen.getByRole('button', { name: /fetch/i })).toBeInTheDocument();
+    });
+
+    it('shows fetch button for nzbget', () => {
+      render(<FieldWrapper type="nzbget" />);
+      expect(screen.getByRole('button', { name: /fetch/i })).toBeInTheDocument();
+    });
+
+    it('hides fetch button for transmission', () => {
+      render(<FieldWrapper type="transmission" />);
+      expect(screen.queryByRole('button', { name: /fetch/i })).not.toBeInTheDocument();
+    });
+
+    it('uses by-id route when clientId is set and form is clean', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategories as ReturnType<typeof vi.fn>).mockResolvedValue({ categories: ['audiobooks'] });
+
+      render(<FieldWrapper type="qbittorrent" clientId={1} dirty={false} />);
+
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+
+      await waitFor(() => {
+        expect(downloadClientsApi.getClientCategories).toHaveBeenCalledWith(1);
+      });
+    });
+
+    it('uses by-config route when form is dirty', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ categories: ['audiobooks'] });
+
+      render(<FieldWrapper type="qbittorrent" clientId={1} dirty={true} />);
+
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+
+      await waitFor(() => {
+        expect(downloadClientsApi.getClientCategoriesFromConfig).toHaveBeenCalled();
+      });
+    });
+
+    it('uses by-config route in create mode (no clientId)', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ categories: ['audiobooks'] });
+
+      render(<FieldWrapper type="qbittorrent" />);
+
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+
+      await waitFor(() => {
+        expect(downloadClientsApi.getClientCategoriesFromConfig).toHaveBeenCalled();
+      });
+    });
+
+    it('shows category dropdown after successful fetch', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        categories: ['audiobooks', 'movies'],
+      });
+
+      render(<FieldWrapper type="qbittorrent" />);
+
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('audiobooks')).toBeInTheDocument();
+        expect(screen.getByText('movies')).toBeInTheDocument();
+      });
+    });
+
+    it('populates category input when selecting from dropdown', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        categories: ['audiobooks', 'movies'],
+      });
+
+      render(<FieldWrapper type="qbittorrent" />);
+
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('audiobooks')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('audiobooks'));
+
+      expect(screen.getByPlaceholderText('audiobooks')).toHaveValue('audiobooks');
+    });
+
+    it('shows inline error on fetch failure', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        categories: [],
+        error: 'Connection refused',
+      });
+
+      render(<FieldWrapper type="qbittorrent" />);
+
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Connection refused')).toBeInTheDocument();
+      });
+    });
+
+    it('clears error on successful fetch after previous error', async () => {
+      const user = userEvent.setup();
+      const mockFn = downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>;
+      mockFn.mockResolvedValueOnce({ categories: [], error: 'Connection refused' });
+      mockFn.mockResolvedValueOnce({ categories: ['audiobooks'] });
+
+      render(<FieldWrapper type="qbittorrent" />);
+
+      // First fetch fails
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+      await waitFor(() => {
+        expect(screen.getByText('Connection refused')).toBeInTheDocument();
+      });
+
+      // Second fetch succeeds
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+      await waitFor(() => {
+        expect(screen.queryByText('Connection refused')).not.toBeInTheDocument();
+        expect(screen.getByText('audiobooks')).toBeInTheDocument();
+      });
+    });
+
+    it('shows "No categories found" when fetch returns empty array', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        categories: [],
+      });
+
+      render(<FieldWrapper type="qbittorrent" />);
+
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('No categories found')).toBeInTheDocument();
+      });
+    });
+
+    it('shows inline error when API call throws', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network error'));
+
+      render(<FieldWrapper type="qbittorrent" />);
+
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Network error')).toBeInTheDocument();
+      });
+    });
   });
 });

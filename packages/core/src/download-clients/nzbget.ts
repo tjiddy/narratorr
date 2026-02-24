@@ -44,6 +44,7 @@ export class NZBGetClient implements DownloadClientAdapter {
   readonly type = 'nzbget';
   readonly name = 'NZBGet';
   readonly protocol: DownloadProtocol = 'usenet';
+  readonly supportsCategories = true;
 
   private rpcUrl: string;
   private authHeader: string;
@@ -132,6 +133,14 @@ export class NZBGetClient implements DownloadClientAdapter {
   async removeDownload(id: string, deleteFiles = false): Promise<void> {
     const command = deleteFiles ? 'GroupFinalDelete' : 'GroupDelete';
     await this.rpc('editqueue', [command, '', [parseInt(id, 10)]]);
+  }
+
+  async getCategories(): Promise<string[]> {
+    const config = await this.rpc<Array<{ Name: string; Value: string }>>('config');
+    return (config ?? [])
+      .filter((item) => /^Category\d+\.Name$/.test(item.Name))
+      .map((item) => item.Value)
+      .filter(Boolean);
   }
 
   async test(): Promise<{ success: boolean; message?: string }> {

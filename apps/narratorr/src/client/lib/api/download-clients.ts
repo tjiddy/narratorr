@@ -11,6 +11,11 @@ export interface DownloadClient {
   createdAt: string;
 }
 
+export interface CategoriesResult {
+  categories: string[];
+  error?: string;
+}
+
 export const downloadClientsApi = {
   getClients: () => fetchApi<DownloadClient[]>('/download-clients'),
   createClient: (data: Omit<DownloadClient, 'id' | 'createdAt'>) =>
@@ -29,6 +34,13 @@ export const downloadClientsApi = {
     fetchApi<TestResult>(`/download-clients/${id}/test`, { method: 'POST' }),
   testClientConfig: (data: Omit<DownloadClient, 'id' | 'createdAt'>) =>
     fetchApi<TestResult>('/download-clients/test', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  getClientCategories: (id: number) =>
+    fetchApi<CategoriesResult>(`/download-clients/${id}/categories`, { method: 'POST' }),
+  getClientCategoriesFromConfig: (data: Omit<DownloadClient, 'id' | 'createdAt'>) =>
+    fetchApi<CategoriesResult>('/download-clients/categories', {
       method: 'POST',
       body: JSON.stringify(data),
     }),

@@ -261,6 +261,110 @@ describe('DownloadClientService', () => {
     });
   });
 
+  describe('getCategories', () => {
+    it('returns categories from adapter', async () => {
+      db.select.mockReturnValue(mockDbChain([mockClient]));
+      const mockAdapter = {
+        supportsCategories: true,
+        getCategories: vi.fn().mockResolvedValue(['audiobooks', 'movies']),
+      };
+      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+
+      const result = await service.getCategories(1);
+      expect(result.categories).toEqual(['audiobooks', 'movies']);
+      expect(result.error).toBeUndefined();
+    });
+
+    it('returns empty with error when client not found', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.getCategories(999);
+      expect(result.categories).toEqual([]);
+      expect(result.error).toBe('Download client not found');
+    });
+
+    it('skips adapter call when supportsCategories is false', async () => {
+      db.select.mockReturnValue(mockDbChain([{ ...mockClient, type: 'transmission' }]));
+      const mockAdapter = {
+        supportsCategories: false,
+        getCategories: vi.fn(),
+      };
+      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+
+      const result = await service.getCategories(1);
+      expect(result.categories).toEqual([]);
+      expect(mockAdapter.getCategories).not.toHaveBeenCalled();
+    });
+
+    it('returns empty with error when adapter throws', async () => {
+      db.select.mockReturnValue(mockDbChain([mockClient]));
+      const mockAdapter = {
+        supportsCategories: true,
+        getCategories: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')),
+      };
+      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+
+      const result = await service.getCategories(1);
+      expect(result.categories).toEqual([]);
+      expect(result.error).toBe('ECONNREFUSED');
+    });
+  });
+
+  describe('getCategoriesFromConfig', () => {
+    it('creates adapter from config and returns categories', async () => {
+      const mockAdapter = {
+        supportsCategories: true,
+        getCategories: vi.fn().mockResolvedValue(['audiobooks']),
+      };
+      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+
+      const result = await service.getCategoriesFromConfig({
+        type: 'qbittorrent',
+        settings: { host: 'localhost', port: 8080, username: 'admin', password: 'pass', useSsl: false },
+      });
+      expect(result.categories).toEqual(['audiobooks']);
+    });
+
+    it('returns empty when adapter does not support categories', async () => {
+      const mockAdapter = {
+        supportsCategories: false,
+        getCategories: vi.fn(),
+      };
+      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+
+      const result = await service.getCategoriesFromConfig({
+        type: 'transmission',
+        settings: { host: 'localhost', port: 9091 },
+      });
+      expect(result.categories).toEqual([]);
+      expect(mockAdapter.getCategories).not.toHaveBeenCalled();
+    });
+
+    it('returns failure for unknown type', async () => {
+      const result = await service.getCategoriesFromConfig({
+        type: 'unknown',
+        settings: {},
+      });
+      expect(result.categories).toEqual([]);
+      expect(result.error).toContain('Unknown download client type');
+    });
+
+    it('catches adapter error and returns failure', async () => {
+      const mockAdapter = {
+        supportsCategories: true,
+        getCategories: vi.fn().mockRejectedValue(new Error('Network unreachable')),
+      };
+      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+
+      const result = await service.getCategoriesFromConfig({
+        type: 'qbittorrent',
+        settings: { host: '192.168.1.999', port: 8080 },
+      });
+      expect(result.categories).toEqual([]);
+      expect(result.error).toBe('Network unreachable');
+    });
+  });
+
   describe('testConfig edge cases', () => {
     it('catches adapter.test() network error and returns failure', async () => {
       const mockAdapter = { test: vi.fn().mockRejectedValue(new Error('Network unreachable')) };

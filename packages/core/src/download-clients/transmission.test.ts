@@ -384,6 +384,17 @@ describe('TransmissionClient', () => {
     });
   });
 
+  describe('getCategories', () => {
+    it('returns empty array (no native category support)', async () => {
+      const categories = await client.getCategories();
+      expect(categories).toEqual([]);
+    });
+
+    it('has supportsCategories = false', () => {
+      expect(client.supportsCategories).toBe(false);
+    });
+  });
+
   describe('edge cases — null/malformed responses', () => {
     it('handles null torrents in response', async () => {
       server.use(rpcHandler('torrent-get', { torrents: null }));

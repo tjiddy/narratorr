@@ -190,6 +190,46 @@ export class DownloadClientService {
     }
   }
 
+  async getCategories(id: number): Promise<{ categories: string[]; error?: string }> {
+    const adapter = await this.getAdapter(id);
+    if (!adapter) {
+      return { categories: [], error: 'Download client not found' };
+    }
+
+    if (!adapter.supportsCategories) {
+      return { categories: [] };
+    }
+
+    try {
+      const categories = await adapter.getCategories();
+      this.log.debug({ id, count: categories.length }, 'Fetched download client categories');
+      return { categories };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.log.warn({ id, error }, 'Failed to fetch categories from download client');
+      return { categories: [], error: message };
+    }
+  }
+
+  async getCategoriesFromConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ categories: string[]; error?: string }> {
+    try {
+      this.log.debug({ type: data.type }, 'Fetching categories from download client config');
+      const fakeRow = { id: 0, name: '', type: data.type, enabled: true, priority: 0, settings: data.settings, createdAt: new Date() } as DownloadClientRow;
+      const adapter = this.createAdapter(fakeRow);
+
+      if (!adapter.supportsCategories) {
+        return { categories: [] };
+      }
+
+      const categories = await adapter.getCategories();
+      return { categories };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.log.warn({ type: data.type, error }, 'Failed to fetch categories from download client config');
+      return { categories: [], error: message };
+    }
+  }
+
   async test(id: number): Promise<{ success: boolean; message?: string }> {
     const client = await this.getById(id);
     if (!client) {

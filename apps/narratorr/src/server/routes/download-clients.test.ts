@@ -171,6 +171,88 @@ describe('download-clients routes', () => {
     });
   });
 
+  describe('POST /api/download-clients/categories', () => {
+    it('returns categories from config', async () => {
+      (services.downloadClient.getCategoriesFromConfig as Mock).mockResolvedValue({ categories: ['audiobooks', 'movies'] });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients/categories',
+        payload: {
+          name: 'qBittorrent',
+          type: 'qbittorrent',
+          enabled: true,
+          priority: 50,
+          settings: { host: 'localhost', port: 8080 },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).categories).toEqual(['audiobooks', 'movies']);
+    });
+
+    it('returns 400 for invalid body', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients/categories',
+        payload: { name: '' },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns error from service when fetch fails', async () => {
+      (services.downloadClient.getCategoriesFromConfig as Mock).mockResolvedValue({ categories: [], error: 'Connection refused' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients/categories',
+        payload: {
+          name: 'qBittorrent',
+          type: 'qbittorrent',
+          enabled: true,
+          priority: 50,
+          settings: { host: 'localhost', port: 8080 },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.categories).toEqual([]);
+      expect(body.error).toBe('Connection refused');
+    });
+  });
+
+  describe('POST /api/download-clients/:id/categories', () => {
+    it('returns categories for saved client', async () => {
+      (services.downloadClient.getCategories as Mock).mockResolvedValue({ categories: ['audiobooks'] });
+
+      const res = await app.inject({ method: 'POST', url: '/api/download-clients/1/categories' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).categories).toEqual(['audiobooks']);
+    });
+
+    it('returns empty categories with error when client not found', async () => {
+      (services.downloadClient.getCategories as Mock).mockResolvedValue({ categories: [], error: 'Download client not found' });
+
+      const res = await app.inject({ method: 'POST', url: '/api/download-clients/999/categories' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.categories).toEqual([]);
+      expect(body.error).toBe('Download client not found');
+    });
+
+    it('returns 500 when service throws', async () => {
+      (services.downloadClient.getCategories as Mock).mockRejectedValue(new Error('Unexpected'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/download-clients/1/categories' });
+
+      expect(res.statusCode).toBe(500);
+    });
+  });
+
   describe('POST /api/download-clients/:id/test', () => {
     it('returns test result', async () => {
       (services.downloadClient.test as Mock).mockResolvedValue({ success: true });

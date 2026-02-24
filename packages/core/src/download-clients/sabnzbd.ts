@@ -65,6 +65,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
   readonly type = 'sabnzbd';
   readonly name = 'SABnzbd';
   readonly protocol: DownloadProtocol = 'usenet';
+  readonly supportsCategories = true;
 
   private baseUrl: string;
   private apiKey: string;
@@ -191,6 +192,13 @@ export class SABnzbdClient implements DownloadClientAdapter {
       value: id,
       del_files: deleteFiles ? '1' : '0',
     });
+  }
+
+  async getCategories(): Promise<string[]> {
+    const response = await this.request<{ categories: string[] }>({
+      mode: 'get_cats',
+    });
+    return (response.categories ?? []).filter((c) => c !== '*');
   }
 
   async test(): Promise<{ success: boolean; message?: string }> {
