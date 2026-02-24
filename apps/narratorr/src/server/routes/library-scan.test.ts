@@ -543,4 +543,91 @@ describe('library-scan routes', () => {
       expect(body.error).toBe('Scan failed');
     });
   });
+
+  describe('POST /api/library/rescan', () => {
+    it('returns 200 with rescan summary', async () => {
+      const mockResult = { scanned: 10, missing: 2, restored: 1 };
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockResolvedValue(mockResult);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/rescan',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({ scanned: 10, missing: 2, restored: 1 });
+    });
+
+    it('returns 409 when scan is already in progress', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockRejectedValue(new Error('Scan already in progress'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/rescan',
+      });
+
+      expect(res.statusCode).toBe(409);
+      const body = JSON.parse(res.payload);
+      expect(body.error).toBe('Scan already in progress');
+    });
+
+    it('returns 400 when library path is not configured', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockRejectedValue(new Error('Library path is not configured'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/rescan',
+      });
+
+      expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.payload);
+      expect(body.error).toBe('Library path is not configured');
+    });
+
+    it('returns 400 when library path is not accessible', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockRejectedValue(new Error('Library path is not accessible: /audiobooks'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/rescan',
+      });
+
+      expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.payload);
+      expect(body.error).toBe('Library path is not accessible: /audiobooks');
+    });
+
+    it('returns 500 on unexpected error', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockRejectedValue(new Error('Unexpected DB failure'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/rescan',
+      });
+
+      expect(res.statusCode).toBe(500);
+      const body = JSON.parse(res.payload);
+      expect(body.error).toBe('Unexpected DB failure');
+    });
+
+    it('returns generic message when non-Error is thrown', async () => {
+      (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
+        .mockRejectedValue('unknown');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/rescan',
+      });
+
+      expect(res.statusCode).toBe(500);
+      const body = JSON.parse(res.payload);
+      expect(body.error).toBe('Rescan failed');
+    });
+  });
 });

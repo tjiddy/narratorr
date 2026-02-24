@@ -29,6 +29,17 @@ export function LibraryPage() {
   const [searchBook, setSearchBook] = useState<BookWithAuthor | null>(null);
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
 
+  const rescanMutation = useMutation({
+    mutationFn: () => api.rescanLibrary(),
+    onSuccess: (data) => {
+      toast.success(`Scanned: ${data.scanned} books. Missing: ${data.missing} books. Restored: ${data.restored} books.`);
+      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
+    },
+    onError: (error: Error) => {
+      toast.error(`Rescan failed: ${error.message}`);
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: ({ id, deleteFiles: df }: { id: number; deleteFiles: boolean }) =>
       api.deleteBook(id, df ? { deleteFiles: true } : undefined),
@@ -106,6 +117,8 @@ export function LibraryPage() {
         onSortFieldChange={filters.setSortField}
         sortDirection={filters.sortDirection}
         onSortDirectionChange={filters.setSortDirection}
+        onRescan={() => rescanMutation.mutate()}
+        isRescanning={rescanMutation.isPending}
       />
 
       {filters.filteredBooks.length === 0 ? (

@@ -51,6 +51,26 @@ export async function libraryScanRoutes(
     }
   });
 
+  // Rescan library — verify book paths exist on disk
+  app.post('/api/library/rescan', async (request, reply) => {
+    request.log.info('Starting library rescan');
+    try {
+      const result = await libraryScan.rescanLibrary();
+      return result;
+    } catch (error) {
+      if (error instanceof Error && error.message === 'Scan already in progress') {
+        return reply.status(409).send({ error: error.message });
+      }
+      if (error instanceof Error && (error.message.startsWith('Library path is not') || error.message === 'Library path is not configured')) {
+        return reply.status(400).send({ error: error.message });
+      }
+      request.log.error(error, 'Library rescan failed');
+      return reply.status(500).send({
+        error: error instanceof Error ? error.message : 'Rescan failed',
+      });
+    }
+  });
+
   // Bulk scan directory (kept for Library Import #125)
   app.post<{ Body: { path: string } }>('/api/library/import/scan', async (request, reply) => {
     const { path } = request.body;

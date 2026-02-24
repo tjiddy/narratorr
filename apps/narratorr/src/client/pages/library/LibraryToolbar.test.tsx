@@ -26,6 +26,8 @@ function defaultProps(overrides = {}) {
     onSortFieldChange: vi.fn(),
     sortDirection: 'desc' as const,
     onSortDirectionChange: vi.fn(),
+    onRescan: vi.fn(),
+    isRescanning: false,
     ...overrides,
   };
 }
@@ -121,6 +123,39 @@ describe('LibraryToolbar', () => {
     it('hides FilterRow when filtersOpen is false', () => {
       renderWithProviders(<LibraryToolbar {...defaultProps()} />);
       expect(screen.queryByText('All Authors')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('rescan button', () => {
+    it('renders Rescan button', () => {
+      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
+      expect(screen.getByText('Rescan')).toBeInTheDocument();
+    });
+
+    it('calls onRescan when clicked', async () => {
+      const user = userEvent.setup();
+      const props = defaultProps();
+      renderWithProviders(<LibraryToolbar {...props} />);
+
+      await user.click(screen.getByText('Rescan'));
+      expect(props.onRescan).toHaveBeenCalledTimes(1);
+    });
+
+    it('disables button while rescanning', () => {
+      renderWithProviders(
+        <LibraryToolbar {...defaultProps({ isRescanning: true })} />,
+      );
+      const button = screen.getByText('Rescan').closest('button');
+      expect(button).toBeDisabled();
+    });
+
+    it('does not call onRescan when disabled', async () => {
+      const user = userEvent.setup();
+      const props = defaultProps({ isRescanning: true });
+      renderWithProviders(<LibraryToolbar {...props} />);
+
+      await user.click(screen.getByText('Rescan'));
+      expect(props.onRescan).not.toHaveBeenCalled();
     });
   });
 

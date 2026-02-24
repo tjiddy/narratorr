@@ -1,10 +1,10 @@
 /* eslint-disable max-lines -- service covers scan, import, and enrichment pipelines */
-import { readdir, stat, mkdir, cp, rm } from 'node:fs/promises';
-import { join, extname, relative } from 'node:path';
+import { access, readdir, stat, mkdir, cp, rm } from 'node:fs/promises';
+import { join, extname, relative, resolve, isAbsolute } from 'node:path';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { books } from '@narratorr/db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { AUDIO_EXTENSIONS } from '@narratorr/core/utils';
 import { discoverBooks } from '@narratorr/core/utils/book-discovery';
 import type { BookService } from './book.service.js';
@@ -53,7 +53,15 @@ export interface ScanResult {
   skippedDuplicates: number;
 }
 
+export interface RescanResult {
+  scanned: number;
+  missing: number;
+  restored: number;
+}
+
 export class LibraryScanService {
+  private scanning = false;
+
   constructor(
     private db: Db,
     private bookService: BookService,
@@ -61,6 +69,75 @@ export class LibraryScanService {
     private settingsService: SettingsService,
     private log: FastifyBaseLogger,
   ) {}
+
+  /**
+   * Rescan library — verify each book's path exists on disk, mark missing/restored.
+   */
+  async rescanLibrary(): Promise<RescanResult> {
+    if (this.scanning) {
+      throw new Error('Scan already in progress');
+    }
+    this.scanning = true;
+
+    try {
+      const librarySettings = await this.settingsService.get('library');
+      const libraryRoot = librarySettings?.path;
+      if (!libraryRoot) {
+        throw new Error('Library path is not configured');
+      }
+
+      // Verify the library root is accessible
+      try {
+        await access(libraryRoot);
+      } catch {
+        throw new Error(`Library path is not accessible: ${libraryRoot}`);
+      }
+      const resolvedRoot = resolve(libraryRoot);
+
+      const rows = await this.db
+        .select({ id: books.id, path: books.path, status: books.status })
+        .from(books)
+        .where(inArray(books.status, ['imported', 'missing']));
+
+      let scanned = 0;
+      let missing = 0;
+      let restored = 0;
+
+      for (const row of rows) {
+        if (!row.path) continue;
+
+        // Path ancestry check — skip books outside library root
+        const resolvedPath = resolve(row.path);
+        const rel = relative(resolvedRoot, resolvedPath);
+        if (rel.startsWith('..') || isAbsolute(rel)) continue;
+
+        scanned++;
+
+        let exists = false;
+        try {
+          await access(row.path);
+          exists = true;
+        } catch {
+          // path does not exist
+        }
+
+        if (row.status === 'imported' && !exists) {
+          await this.db.update(books).set({ status: 'missing', updatedAt: new Date() }).where(eq(books.id, row.id));
+          this.log.warn({ bookId: row.id, path: row.path }, 'Book path missing from disk');
+          missing++;
+        } else if (row.status === 'missing' && exists) {
+          await this.db.update(books).set({ status: 'imported', updatedAt: new Date() }).where(eq(books.id, row.id));
+          this.log.info({ bookId: row.id, path: row.path }, 'Book path restored on disk');
+          restored++;
+        }
+      }
+
+      this.log.info({ scanned, missing, restored }, 'Library rescan complete');
+      return { scanned, missing, restored };
+    } finally {
+      this.scanning = false;
+    }
+  }
 
   /**
    * Scan a directory tree for audiobook folders.

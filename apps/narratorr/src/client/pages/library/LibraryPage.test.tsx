@@ -10,6 +10,7 @@ vi.mock('@/lib/api', () => ({
   api: {
     getBooks: vi.fn(),
     deleteBook: vi.fn(),
+    rescanLibrary: vi.fn(),
     search: vi.fn(),
     grab: vi.fn(),
   },
@@ -630,5 +631,65 @@ describe('LibraryPage', () => {
 
     const importLink = screen.getByText('Import');
     expect(importLink.closest('a')).toHaveAttribute('href', '/import');
+  });
+
+  describe('rescan', () => {
+    it('calls rescanLibrary API when Rescan button is clicked', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+      vi.mocked(api.rescanLibrary).mockResolvedValue({ scanned: 10, missing: 2, restored: 1 });
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Rescan'));
+
+      await waitFor(() => {
+        expect(api.rescanLibrary).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it('shows success toast with summary after rescan completes', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+      vi.mocked(api.rescanLibrary).mockResolvedValue({ scanned: 10, missing: 2, restored: 1 });
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Rescan'));
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+          'Scanned: 10 books. Missing: 2 books. Restored: 1 books.',
+        );
+      });
+    });
+
+    it('shows error toast when rescan fails', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+      vi.mocked(api.rescanLibrary).mockRejectedValue(new Error('Library path is not configured'));
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Rescan'));
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+          'Rescan failed: Library path is not configured',
+        );
+      });
+    });
   });
 });

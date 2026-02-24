@@ -44,6 +44,12 @@ export interface ImportResult {
   accepted: number;
 }
 
+export interface RescanResult {
+  scanned: number;
+  missing: number;
+  restored: number;
+}
+
 export type Confidence = 'high' | 'medium' | 'none';
 
 export interface MatchCandidate {
@@ -69,6 +75,8 @@ export interface MatchJobStatus {
 }
 
 export const libraryScanApi = {
+  rescanLibrary: () =>
+    fetchApi<RescanResult>('/library/rescan', { method: 'POST' }),
   scanSingleBook: (path: string) =>
     fetchApi<SingleBookResult>('/library/import/scan-single', {
       method: 'POST',

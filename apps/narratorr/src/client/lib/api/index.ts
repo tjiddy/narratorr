@@ -9,7 +9,7 @@ export type { Notifier } from './notifiers.js';
 export type { BlacklistEntry } from './blacklist.js';
 export type { Settings, TestResult, FfmpegProbeResult } from './settings.js';
 export type { AuthStatus, AuthConfig } from './auth.js';
-export type { DiscoveredBook, ScanResult, SingleBookResult, ImportConfirmItem, ImportSingleResult, ImportResult, ImportMode, Confidence, MatchCandidate, MatchResult, MatchJobStatus } from './library-scan.js';
+export type { DiscoveredBook, ScanResult, SingleBookResult, ImportConfirmItem, ImportSingleResult, ImportResult, ImportMode, Confidence, MatchCandidate, MatchResult, MatchJobStatus, RescanResult } from './library-scan.js';
 export type { ProwlarrConfig, SyncPreviewItem, SyncResult } from './prowlarr.js';
 export type { BrowseResult } from './filesystem.js';
 export type { RemotePathMapping } from './remote-path-mappings.js';

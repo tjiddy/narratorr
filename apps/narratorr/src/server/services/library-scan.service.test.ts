@@ -16,6 +16,7 @@ vi.mock('@narratorr/core/utils/book-discovery', () => ({
 }));
 
 vi.mock('node:fs/promises', () => ({
+  access: vi.fn().mockResolvedValue(undefined),
   readdir: vi.fn().mockResolvedValue([]),
   stat: vi.fn().mockResolvedValue({ size: 0 }),
   mkdir: vi.fn().mockResolvedValue(undefined),
@@ -30,7 +31,7 @@ vi.mock('./import.service.js', () => ({
 
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { discoverBooks } from '@narratorr/core/utils/book-discovery';
-import { readdir, stat, mkdir, cp, rm } from 'node:fs/promises';
+import { access, readdir, stat, mkdir, cp, rm } from 'node:fs/promises';
 import { buildTargetPath, getPathSize } from './import.service.js';
 
 // ============================================================================
@@ -1246,6 +1247,177 @@ describe('LibraryScanService', () => {
         );
         expect(importedCalls).toHaveLength(2);
       });
+    });
+  });
+
+  // ============================================================================
+  // rescanLibrary
+  // ============================================================================
+
+  describe('rescanLibrary', () => {
+    beforeEach(() => {
+      // Default: access succeeds (library root exists)
+      vi.mocked(access).mockResolvedValue(undefined);
+    });
+
+    it('returns zero counts for empty library', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where.mockResolvedValueOnce([]);
+
+      const result = await service.rescanLibrary();
+
+      expect(result).toEqual({ scanned: 0, missing: 0, restored: 0 });
+    });
+
+    it('marks imported book with missing path as missing', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where.mockResolvedValueOnce([
+        { id: 1, path: '/library/Author/Book', status: 'imported' },
+      ]);
+      vi.mocked(access)
+        .mockResolvedValueOnce(undefined) // library root check
+        .mockRejectedValueOnce(new Error('ENOENT'));
+
+      const result = await service.rescanLibrary();
+
+      expect(result).toEqual({ scanned: 1, missing: 1, restored: 0 });
+      expect((mockDb as Record<string, ReturnType<typeof vi.fn>>).set).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'missing' }),
+      );
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1 }),
+        expect.stringContaining('missing from disk'),
+      );
+    });
+
+    it('restores missing book whose path reappears', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where.mockResolvedValueOnce([
+        { id: 2, path: '/library/Author/Book', status: 'missing' },
+      ]);
+      vi.mocked(access).mockResolvedValue(undefined);
+
+      const result = await service.rescanLibrary();
+
+      expect(result).toEqual({ scanned: 1, missing: 0, restored: 1 });
+      expect((mockDb as Record<string, ReturnType<typeof vi.fn>>).set).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'imported' }),
+      );
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 2 }),
+        expect.stringContaining('restored on disk'),
+      );
+    });
+
+    it('skips books with null paths', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where.mockResolvedValueOnce([
+        { id: 3, path: null, status: 'imported' },
+      ]);
+
+      const result = await service.rescanLibrary();
+
+      expect(result).toEqual({ scanned: 0, missing: 0, restored: 0 });
+    });
+
+    it('skips books with paths outside library root', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where.mockResolvedValueOnce([
+        { id: 4, path: '/other/location/Book', status: 'imported' },
+      ]);
+
+      const result = await service.rescanLibrary();
+
+      expect(result).toEqual({ scanned: 0, missing: 0, restored: 0 });
+    });
+
+    it('leaves imported book with existing path unchanged', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where.mockResolvedValueOnce([
+        { id: 5, path: '/library/Author/Book', status: 'imported' },
+      ]);
+      vi.mocked(access).mockResolvedValue(undefined);
+
+      const result = await service.rescanLibrary();
+
+      expect(result).toEqual({ scanned: 1, missing: 0, restored: 0 });
+      expect((mockDb as Record<string, ReturnType<typeof vi.fn>>).update).not.toHaveBeenCalled();
+    });
+
+    it('handles mixed statuses correctly', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where.mockResolvedValueOnce([
+        { id: 1, path: '/library/Book1', status: 'imported' },
+        { id: 2, path: '/library/Book2', status: 'missing' },
+        { id: 3, path: '/library/Book3', status: 'imported' },
+      ]);
+      vi.mocked(access)
+        .mockResolvedValueOnce(undefined) // library root
+        .mockRejectedValueOnce(new Error('ENOENT')) // Book1 missing
+        .mockResolvedValueOnce(undefined) // Book2 restored
+        .mockResolvedValueOnce(undefined); // Book3 exists
+
+      const result = await service.rescanLibrary();
+
+      expect(result).toEqual({ scanned: 3, missing: 1, restored: 1 });
+    });
+
+    it('throws when scan is already in progress', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where.mockResolvedValueOnce([]);
+
+      // Lock is set synchronously, so second call throws before any async work
+      const first = service.rescanLibrary();
+      await expect(service.rescanLibrary()).rejects.toThrow('Scan already in progress');
+      await first;
+    });
+
+    it('releases lock after scan completes', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where.mockResolvedValueOnce([]);
+      await service.rescanLibrary();
+
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where.mockResolvedValueOnce([]);
+      const result = await service.rescanLibrary();
+      expect(result).toEqual({ scanned: 0, missing: 0, restored: 0 });
+    });
+
+    it('releases lock even when scan throws', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where.mockRejectedValueOnce(new Error('DB down'));
+      await expect(service.rescanLibrary()).rejects.toThrow('DB down');
+
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where.mockResolvedValueOnce([]);
+      const result = await service.rescanLibrary();
+      expect(result).toEqual({ scanned: 0, missing: 0, restored: 0 });
+    });
+
+    it('throws when library path is not configured', async () => {
+      const mockSettingsService = { get: vi.fn().mockResolvedValue({ path: '' }) };
+      const svc = new LibraryScanService(
+        inject<Db>(mockDb),
+        inject<BookService>(mockBookService),
+        inject<MetadataService>(mockMetadataService),
+        inject<SettingsService>(mockSettingsService),
+        log,
+      );
+
+      await expect(svc.rescanLibrary()).rejects.toThrow('Library path is not configured');
+    });
+
+    it('throws when library path is not accessible', async () => {
+      vi.mocked(access).mockRejectedValueOnce(new Error('ENOENT'));
+
+      await expect(service.rescanLibrary()).rejects.toThrow('Library path is not accessible');
+    });
+
+    it('returns accurate summary counts with skipped entries', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).where.mockResolvedValueOnce([
+        { id: 1, path: '/library/A', status: 'imported' },
+        { id: 2, path: '/library/B', status: 'imported' },
+        { id: 3, path: '/library/C', status: 'missing' },
+        { id: 4, path: null, status: 'imported' },
+        { id: 5, path: '/other/D', status: 'imported' },
+      ]);
+      vi.mocked(access)
+        .mockResolvedValueOnce(undefined) // library root
+        .mockResolvedValueOnce(undefined) // A exists
+        .mockRejectedValueOnce(new Error('ENOENT')) // B missing
+        .mockResolvedValueOnce(undefined); // C restored
+
+      const result = await service.rescanLibrary();
+
+      expect(result).toEqual({ scanned: 3, missing: 1, restored: 1 });
     });
   });
 });
