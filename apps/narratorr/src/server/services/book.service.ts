@@ -207,6 +207,12 @@ export class BookService {
     return this.update(id, { status });
   }
 
+  async deleteByStatus(status: BookRow['status']): Promise<number> {
+    const result = await this.db.delete(books).where(eq(books.status, status)).returning();
+    this.log.info({ status, count: result.length }, 'Deleted books by status');
+    return result.length;
+  }
+
   async delete(id: number): Promise<boolean> {
     const existing = await this.getById(id);
     if (!existing) return false;

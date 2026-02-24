@@ -10,6 +10,7 @@ vi.mock('@/lib/api', () => ({
   api: {
     getBooks: vi.fn(),
     deleteBook: vi.fn(),
+    deleteMissingBooks: vi.fn(),
     rescanLibrary: vi.fn(),
     search: vi.fn(),
     grab: vi.fn(),
@@ -631,6 +632,123 @@ describe('LibraryPage', () => {
 
     const importLink = screen.getByText('Import');
     expect(importLink.closest('a')).toHaveAttribute('href', '/import');
+  });
+
+  describe('remove missing', () => {
+    const booksWithMissing = [
+      ...mockBooks,
+      createMockBook({
+        id: 10,
+        title: 'Missing Book 1',
+        status: 'missing',
+        createdAt: '2024-01-10T00:00:00Z',
+        updatedAt: '2024-01-10T00:00:00Z',
+      }),
+      createMockBook({
+        id: 11,
+        title: 'Missing Book 2',
+        status: 'missing',
+        createdAt: '2024-01-11T00:00:00Z',
+        updatedAt: '2024-01-11T00:00:00Z',
+      }),
+    ];
+
+    it('shows Remove Missing button when missing books exist', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(booksWithMissing);
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Remove Missing')).toBeInTheDocument();
+      });
+    });
+
+    it('hides Remove Missing button when no missing books', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByText('Remove Missing')).not.toBeInTheDocument();
+    });
+
+    it('shows confirmation modal with count when Remove Missing is clicked', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(booksWithMissing);
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Remove Missing')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Remove Missing'));
+
+      expect(screen.getByText('Remove 2 missing books from library?')).toBeInTheDocument();
+    });
+
+    it('calls deleteMissingBooks and shows success toast on confirm', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(booksWithMissing);
+      vi.mocked(api.deleteMissingBooks).mockResolvedValue({ deleted: 2 });
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Remove Missing')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Remove Missing'));
+
+      const modal = screen.getByText('Remove 2 missing books from library?').closest('div[class*="relative w-full"]') as HTMLElement;
+      await user.click(within(modal).getByRole('button', { name: 'Remove' }));
+
+      await waitFor(() => {
+        expect(api.deleteMissingBooks).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Removed 2 missing books');
+      });
+    });
+
+    it('cancels removal without API call', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(booksWithMissing);
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Remove Missing')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Remove Missing'));
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+      expect(api.deleteMissingBooks).not.toHaveBeenCalled();
+      expect(screen.queryByText('Remove 2 missing books from library?')).not.toBeInTheDocument();
+    });
+
+    it('shows error toast when batch delete fails', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(booksWithMissing);
+      vi.mocked(api.deleteMissingBooks).mockRejectedValue(new Error('DB connection lost'));
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Remove Missing')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Remove Missing'));
+
+      const modal = screen.getByText('Remove 2 missing books from library?').closest('div[class*="relative w-full"]') as HTMLElement;
+      await user.click(within(modal).getByRole('button', { name: 'Remove' }));
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to remove missing books: DB connection lost');
+      });
+    });
   });
 
   describe('rescan', () => {

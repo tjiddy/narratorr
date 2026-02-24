@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { SearchIcon, XIcon, ChevronDownIcon, FolderIcon, RefreshIcon, LoadingSpinner } from '@/components/icons';
+import { SearchIcon, XIcon, ChevronDownIcon, FolderIcon, RefreshIcon, LoadingSpinner, TrashIcon } from '@/components/icons';
 import { type StatusFilter, type SortField, type SortDirection } from './helpers.js';
 import { StatusPills } from './StatusPills';
 import { FilterRow } from './FilterRow';
@@ -12,6 +12,7 @@ export function LibraryToolbar({
   seriesFilter, onSeriesFilterChange, uniqueSeries,
   sortField, onSortFieldChange, sortDirection, onSortDirectionChange,
   onRescan, isRescanning,
+  missingCount, onRemoveMissing,
 }: {
   searchQuery: string;
   onSearchChange: (q: string) => void;
@@ -34,6 +35,8 @@ export function LibraryToolbar({
   onSortDirectionChange: (d: SortDirection) => void;
   onRescan: () => void;
   isRescanning: boolean;
+  missingCount: number;
+  onRemoveMissing: () => void;
 }) {
   return (
     <div className="space-y-3 animate-fade-in-up stagger-1">
@@ -83,6 +86,16 @@ export function LibraryToolbar({
             </span>
           )}
         </button>
+
+        {missingCount > 0 && (
+          <button
+            onClick={onRemoveMissing}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-all duration-200 focus-ring"
+          >
+            <TrashIcon className="w-3 h-3" />
+            Remove Missing
+          </button>
+        )}
 
         <button
           onClick={onRescan}

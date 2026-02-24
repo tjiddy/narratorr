@@ -1,16 +1,14 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
 import { useLibrary } from '@/hooks/useLibrary';
-import { api, type BookWithAuthor } from '@/lib/api';
+import { type BookWithAuthor } from '@/lib/api';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { useDeleteConfirmation } from '@/hooks/useDeleteConfirmation';
-import { queryKeys } from '@/lib/queryKeys';
 import { LoadingSpinner } from '@/components/icons';
 import { useImportPolling } from './useImportPolling.js';
 import { useLibraryFilters } from './useLibraryFilters.js';
+import { useLibraryMutations } from './useLibraryMutations.js';
 import { LibraryToolbar } from './LibraryToolbar.js';
 import { LibraryBookCard } from './LibraryBookCard.js';
 import { EmptyLibraryState } from './EmptyLibraryState.js';
@@ -18,39 +16,19 @@ import { NoMatchState } from './NoMatchState.js';
 
 export function LibraryPage() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const { data: books = [], isLoading } = useLibrary();
 
   useImportPolling(books);
   const filters = useLibraryFilters(books);
+  const { rescanMutation, deleteMutation, deleteMissingMutation } = useLibraryMutations();
 
   const deleteConfirm = useDeleteConfirmation<BookWithAuthor>();
   const [deleteFiles, setDeleteFiles] = useState(false);
   const [searchBook, setSearchBook] = useState<BookWithAuthor | null>(null);
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
+  const [showRemoveMissingModal, setShowRemoveMissingModal] = useState(false);
 
-  const rescanMutation = useMutation({
-    mutationFn: () => api.rescanLibrary(),
-    onSuccess: (data) => {
-      toast.success(`Scanned: ${data.scanned} books. Missing: ${data.missing} books. Restored: ${data.restored} books.`);
-      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
-    },
-    onError: (error: Error) => {
-      toast.error(`Rescan failed: ${error.message}`);
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: ({ id, deleteFiles: df }: { id: number; deleteFiles: boolean }) =>
-      api.deleteBook(id, df ? { deleteFiles: true } : undefined),
-    onSuccess: (_data, variables) => {
-      toast.success(variables.deleteFiles ? 'Removed book and deleted files from disk' : 'Removed book from library');
-      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
-    },
-    onError: (error: Error) => {
-      toast.error(`Failed to remove book: ${error.message}`);
-    },
-  });
+  const missingCount = books.filter((b) => b.status === 'missing').length;
 
   const closeMenu = useCallback(() => setOpenMenuId(null), []);
   useEffect(() => {
@@ -119,6 +97,8 @@ export function LibraryPage() {
         onSortDirectionChange={filters.setSortDirection}
         onRescan={() => rescanMutation.mutate()}
         isRescanning={rescanMutation.isPending}
+        missingCount={missingCount}
+        onRemoveMissing={() => setShowRemoveMissingModal(true)}
       />
 
       {filters.filteredBooks.length === 0 ? (
@@ -162,6 +142,16 @@ export function LibraryPage() {
           </label>
         )}
       </ConfirmModal>
+
+      <ConfirmModal
+        isOpen={showRemoveMissingModal}
+        title="Remove Missing Books"
+        message={`Remove ${missingCount} missing book${missingCount !== 1 ? 's' : ''} from library?`}
+        confirmLabel="Remove"
+        cancelLabel="Cancel"
+        onConfirm={() => { setShowRemoveMissingModal(false); deleteMissingMutation.mutate(); }}
+        onCancel={() => setShowRemoveMissingModal(false)}
+      />
 
       {searchBook && (
         <SearchReleasesModal

@@ -1,8 +1,7 @@
 import { useImageError } from '@/hooks/useImageError';
 import type { BookWithAuthor } from '@/lib/api';
-import { BookOpenIcon, MoreVerticalIcon } from '@/components/icons';
+import { BookOpenIcon, MoreVerticalIcon, BrokenLinkIcon } from '@/components/icons';
 import { BookContextMenu } from './BookContextMenu.js';
-import { statusBorderClass } from './helpers.js';
 
 export function LibraryBookCard({
   book,
@@ -24,7 +23,7 @@ export function LibraryBookCard({
   onRemove: () => void;
 }) {
   const { hasError: imageError, onError: onImageError } = useImageError();
-  const borderClass = statusBorderClass[book.status] ?? '';
+  const isMissing = book.status === 'missing' || book.status === 'failed';
 
   return (
     <div
@@ -32,7 +31,7 @@ export function LibraryBookCard({
       tabIndex={0}
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter') onClick(); }}
-      className={`group relative rounded-2xl overflow-hidden cursor-pointer shadow-card hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300 ease-out animate-fade-in-up ${borderClass}`}
+      className="group relative rounded-2xl overflow-hidden cursor-pointer shadow-card hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300 ease-out animate-fade-in-up"
       style={{ animationDelay: `${Math.min(index, 9) * 50}ms` }}
     >
       {/* Cover — square */}
@@ -48,6 +47,16 @@ export function LibraryBookCard({
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-muted to-muted/40">
             <BookOpenIcon className="w-12 h-12 text-muted-foreground/20" />
+          </div>
+        )}
+
+        {/* Missing/failed indicator chip */}
+        {isMissing && (
+          <div
+            className="absolute top-2 left-2 z-10 w-7 h-7 flex items-center justify-center rounded-lg backdrop-blur-md bg-black/40 ring-1 ring-red-500/20 shadow-[0_0_8px_-2px_rgba(239,68,68,0.3)]"
+            title="Files missing from disk"
+          >
+            <BrokenLinkIcon className="w-3.5 h-3.5 text-red-400 drop-shadow-[0_0_3px_rgba(239,68,68,0.4)]" />
           </div>
         )}
 

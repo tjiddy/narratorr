@@ -28,6 +28,8 @@ function defaultProps(overrides = {}) {
     onSortDirectionChange: vi.fn(),
     onRescan: vi.fn(),
     isRescanning: false,
+    missingCount: 0,
+    onRemoveMissing: vi.fn(),
     ...overrides,
   };
 }
@@ -156,6 +158,27 @@ describe('LibraryToolbar', () => {
 
       await user.click(screen.getByText('Rescan'));
       expect(props.onRescan).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('remove missing button', () => {
+    it('shows Remove Missing button when missingCount > 0', () => {
+      renderWithProviders(<LibraryToolbar {...defaultProps({ missingCount: 3 })} />);
+      expect(screen.getByText('Remove Missing')).toBeInTheDocument();
+    });
+
+    it('hides Remove Missing button when missingCount is 0', () => {
+      renderWithProviders(<LibraryToolbar {...defaultProps({ missingCount: 0 })} />);
+      expect(screen.queryByText('Remove Missing')).not.toBeInTheDocument();
+    });
+
+    it('calls onRemoveMissing when clicked', async () => {
+      const user = userEvent.setup();
+      const props = defaultProps({ missingCount: 5 });
+      renderWithProviders(<LibraryToolbar {...props} />);
+
+      await user.click(screen.getByText('Remove Missing'));
+      expect(props.onRemoveMissing).toHaveBeenCalledTimes(1);
     });
   });
 

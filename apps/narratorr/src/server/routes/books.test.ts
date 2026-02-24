@@ -293,6 +293,36 @@ describe('books routes', () => {
     });
   });
 
+  describe('DELETE /api/books/missing', () => {
+    it('deletes all missing books and returns count', async () => {
+      (services.book.deleteByStatus as Mock).mockResolvedValue(3);
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/missing' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ deleted: 3 });
+      expect(services.book.deleteByStatus).toHaveBeenCalledWith('missing');
+    });
+
+    it('returns deleted: 0 when no missing books exist', async () => {
+      (services.book.deleteByStatus as Mock).mockResolvedValue(0);
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/missing' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ deleted: 0 });
+    });
+
+    it('returns 500 when service throws', async () => {
+      (services.book.deleteByStatus as Mock).mockRejectedValue(new Error('DB error'));
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/missing' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+  });
+
   describe('DELETE /api/books/:id', () => {
     it('deletes book and returns success', async () => {
       (services.download.getActiveByBookId as Mock).mockResolvedValue([]);

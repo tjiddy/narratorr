@@ -11,13 +11,6 @@ export const filterTabs: { key: StatusFilter; label: string }[] = [
   { key: 'imported', label: 'Imported' },
 ];
 
-// Status border classes for card left-accent
-export const statusBorderClass: Record<string, string> = {
-  wanted: 'border-l-[3px] border-l-amber-500',
-  searching: 'border-l-[3px] border-l-blue-500 animate-border-pulse',
-  downloading: 'border-l-[3px] border-l-blue-500 animate-border-pulse',
-  importing: 'border-l-[3px] border-l-blue-500 animate-border-pulse',
-};
 
 export function matchesStatusFilter(status: string, filter: StatusFilter): boolean {
   if (filter === 'all') return true;
