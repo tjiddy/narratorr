@@ -61,26 +61,55 @@ describe('LibraryBookCard', () => {
     });
   });
 
-  describe('status border', () => {
-    it('applies border class for wanted status', () => {
-      const book = createMockBook({ status: 'wanted' });
-      const { container } = render(<LibraryBookCard {...defaultProps({ book })} />);
-      const card = container.firstElementChild as HTMLElement;
-      expect(card.className).toContain('border-l-amber-500');
+  describe('missing indicator', () => {
+    it('renders frosted chip with broken-link icon for missing status', () => {
+      const book = createMockBook({ status: 'missing' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTitle('Files missing from disk')).toBeInTheDocument();
     });
 
-    it('applies border class for downloading status', () => {
-      const book = createMockBook({ status: 'downloading' });
-      const { container } = render(<LibraryBookCard {...defaultProps({ book })} />);
-      const card = container.firstElementChild as HTMLElement;
-      expect(card.className).toContain('border-l-blue-500');
+    it('renders frosted chip with broken-link icon for failed status', () => {
+      const book = createMockBook({ status: 'failed' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTitle('Files missing from disk')).toBeInTheDocument();
     });
 
-    it('does not apply border class for imported status', () => {
+    it('does not render chip for imported status', () => {
       const book = createMockBook({ status: 'imported' });
-      const { container } = render(<LibraryBookCard {...defaultProps({ book })} />);
-      const card = container.firstElementChild as HTMLElement;
-      expect(card.className).not.toContain('border-l-');
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
+    });
+
+    it('does not render chip for wanted status', () => {
+      const book = createMockBook({ status: 'wanted' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
+    });
+
+    it('does not render chip for downloading status', () => {
+      const book = createMockBook({ status: 'downloading' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.queryByTitle('Files missing from disk')).not.toBeInTheDocument();
+    });
+
+    it('has tooltip text on the chip', () => {
+      const book = createMockBook({ status: 'missing' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      const chip = screen.getByTitle('Files missing from disk');
+      expect(chip).toBeInTheDocument();
+    });
+  });
+
+  describe('no left-border accent', () => {
+    it('does not apply left-border accent class for any status', () => {
+      const statuses = ['wanted', 'downloading', 'imported', 'missing', 'failed', 'searching', 'importing'];
+      for (const status of statuses) {
+        const book = createMockBook({ status });
+        const { container, unmount } = render(<LibraryBookCard {...defaultProps({ book })} />);
+        const card = container.firstElementChild as HTMLElement;
+        expect(card.className).not.toContain('border-l-');
+        unmount();
+      }
     });
   });
 

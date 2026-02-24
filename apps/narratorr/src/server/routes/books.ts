@@ -89,6 +89,19 @@ app.delete<{ Params: { id: string }; Querystring: { deleteFiles?: string } }>('/
 });
 }
 
+async function registerDeleteMissingRoute(app: FastifyInstance, bookService: BookService) {
+  app.delete('/api/books/missing', async (request, reply) => {
+    try {
+      const deleted = await bookService.deleteByStatus('missing');
+      request.log.info({ deleted }, 'Batch deleted missing books');
+      return { deleted };
+    } catch (error) {
+      request.log.error(error, 'Failed to batch delete missing books');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+}
+
 export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, renameService: RenameService) {
   // GET /api/books
   app.get('/api/books', async (request, reply) => {
@@ -195,6 +208,7 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
     }
   );
 
+  await registerDeleteMissingRoute(app, bookService);
   await registerDeleteBookRoute(app, bookService, downloadService, settingsService);
   // POST /api/books/:id/rename
   app.post<{ Params: { id: string } }>('/api/books/:id/rename', async (request, reply) => {

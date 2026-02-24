@@ -392,6 +392,23 @@ describe('BookService', () => {
     });
   });
 
+  describe('deleteByStatus', () => {
+    it('deletes all matching books and returns count', async () => {
+      db.delete.mockReturnValue(mockDbChain([{ id: 1 }, { id: 2 }, { id: 3 }]));
+
+      const result = await service.deleteByStatus('missing');
+      expect(result).toBe(3);
+      expect(db.delete).toHaveBeenCalled();
+    });
+
+    it('returns 0 when no books match status', async () => {
+      db.delete.mockReturnValue(mockDbChain([]));
+
+      const result = await service.deleteByStatus('missing');
+      expect(result).toBe(0);
+    });
+  });
+
   describe('delete', () => {
     it('returns true when book exists', async () => {
       db.select.mockReturnValue(
