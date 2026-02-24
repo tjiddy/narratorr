@@ -17,6 +17,7 @@ vi.mock('node:fs/promises', () => ({
   readdir: vi.fn().mockResolvedValue([]),
   writeFile: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
+  rm: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock audio scanner
@@ -29,7 +30,7 @@ vi.mock('@narratorr/core/utils/audio-processor', () => ({
   processAudioFiles: vi.fn().mockResolvedValue({ success: true, outputFiles: [] }),
 }));
 
-import { mkdir, cp, stat, readdir, writeFile, rename } from 'node:fs/promises';
+import { mkdir, cp, stat, readdir, writeFile, rename, rm } from 'node:fs/promises';
 import { scanAudioDirectory } from '@narratorr/core/utils/audio-scanner';
 import { processAudioFiles } from '@narratorr/core/utils/audio-processor';
 
@@ -594,6 +595,221 @@ describe('ImportService', () => {
       db.update.mockReturnValue(mockDbChain());
 
       await expect(service.importDownload(1)).rejects.toThrow('not found');
+    });
+  });
+
+  describe('upgrade flow — book already imported', () => {
+    const importedBook = createMockDbBook({
+      status: 'downloading' as const,
+      path: '/audiobooks/Old Author/Old Book',
+      size: 400_000_000,
+    });
+
+    it('deletes old files when book has existing path at different location', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      const rmMock = vi.mocked(rm);
+      expect(rmMock).toHaveBeenCalledWith('/audiobooks/Old Author/Old Book', { recursive: true, force: true });
+    });
+
+    it('logs old path at info level during upgrade', async () => {
+      const log = createMockLogger();
+      const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log));
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await svc.importDownload(1);
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ oldPath: '/audiobooks/Old Author/Old Book' }),
+        'Deleted old book files during upgrade',
+      );
+    });
+
+    it('skips deletion when target path equals existing book path (same-path upgrade)', async () => {
+      // Book with path that matches what buildTargetPath will generate
+      const samePathBook = createMockDbBook({
+        status: 'downloading' as const,
+        // buildTargetPath generates: /audiobooks/{author}/{title} — mock it to match
+        path: '/audiobooks/Brandon Sanderson/The Way of Kings',
+      });
+
+      // Override settings to produce a known target path
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
+        if (key === 'processing') return Promise.resolve({ enabled: false });
+        return Promise.resolve({});
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: samePathBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      const rmMock = vi.mocked(rm);
+      expect(rmMock).not.toHaveBeenCalled();
+    });
+
+    it('continues when old file deletion fails (EACCES)', async () => {
+      const rmMock = vi.mocked(rm);
+      rmMock.mockRejectedValueOnce(new Error('EACCES: permission denied'));
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // Should NOT throw — import still succeeds
+      const result = await service.importDownload(1);
+      expect(result.downloadId).toBe(1);
+    });
+
+    it('does not roll back new files when old file deletion fails', async () => {
+      const rmMock = vi.mocked(rm);
+      rmMock.mockRejectedValueOnce(new Error('EACCES'));
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      // cp was called (new files exist) and import completed
+      expect(cp).toHaveBeenCalled();
+      expect(mkdir).toHaveBeenCalled();
+    });
+
+    it('does not attempt deletion when book has no path', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      const rmMock = vi.mocked(rm);
+      expect(rmMock).not.toHaveBeenCalled();
+    });
+
+    it('preserves old download record during upgrade (history)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      // Old download record should NOT be deleted — only status updated
+      expect(db.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('book status recovery on import failure', () => {
+    it('reverts book to imported when import fails and book has a path', async () => {
+      const importedBook = createMockDbBook({
+        status: 'downloading' as const,
+        path: '/audiobooks/existing',
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // Make stat throw to trigger failure
+      const statMock = vi.mocked(stat);
+      statMock.mockRejectedValueOnce(new Error('ENOENT'));
+
+      await expect(service.importDownload(1)).rejects.toThrow();
+
+      // Check that one of the update calls set book status to 'imported'
+      const updateCalls = db.update.mock.results;
+      const setCalls = updateCalls
+        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .filter(Boolean);
+      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'imported' }));
+    });
+
+    it('reverts book to wanted when import fails and book has no path', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const statMock = vi.mocked(stat);
+      statMock.mockRejectedValueOnce(new Error('ENOENT'));
+
+      await expect(service.importDownload(1)).rejects.toThrow();
+
+      const updateCalls = db.update.mock.results;
+      const setCalls = updateCalls
+        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .filter(Boolean);
+      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'wanted' }));
+    });
+
+    it('reverts book to imported on copy failure when book has path', async () => {
+      const importedBook = createMockDbBook({
+        status: 'downloading' as const,
+        path: '/audiobooks/existing',
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const cpMock = vi.mocked(cp);
+      cpMock.mockRejectedValueOnce(new Error('ENOSPC'));
+
+      await expect(service.importDownload(1)).rejects.toThrow('ENOSPC');
+
+      const updateCalls = db.update.mock.results;
+      const setCalls = updateCalls
+        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .filter(Boolean);
+      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'imported' }));
+    });
+
+    it('reverts book to imported on audio processing failure when book has path', async () => {
+      const importedBook = createMockDbBook({
+        status: 'downloading' as const,
+        path: '/audiobooks/existing',
+      });
+
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
+        if (key === 'processing') return Promise.resolve({
+          enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b',
+          keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only',
+        });
+        return Promise.resolve({});
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const mockProcess = vi.mocked(processAudioFiles);
+      mockProcess.mockResolvedValue({ success: false, error: 'ffmpeg crashed' });
+
+      await expect(service.importDownload(1)).rejects.toThrow('Audio processing failed');
+
+      const updateCalls = db.update.mock.results;
+      const setCalls = updateCalls
+        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .filter(Boolean);
+      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      // Should have both the 'failed' status from processing error AND 'imported' from recovery
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'imported' }));
     });
   });
 

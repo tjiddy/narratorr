@@ -118,7 +118,7 @@ describe('Error recovery E2E', () => {
 
   // ── Import failure: unreachable download client ─────────────────────────
 
-  it('import fails gracefully when download client is unreachable — download status failed, book stays downloading', async () => {
+  it('import fails gracefully when download client is unreachable — download failed, book recovered to wanted', async () => {
     const { bookId, downloadId } = await seedBookAndDownload(e2e, downloadClientId, 'Unreachable Client Book', 'Test Author');
 
     // Make qBittorrent auth fail (unreachable)
@@ -131,9 +131,9 @@ describe('Error recovery E2E', () => {
     expect(dl.status).toBe('failed');
     expect(dl.errorMessage).toBeTruthy();
 
-    // Book status unchanged — stays 'downloading'
+    // Book status recovered — no path so reverts to 'wanted'
     const bookRes = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });
-    expect(bookRes.json().status).toBe('downloading');
+    expect(bookRes.json().status).toBe('wanted');
   });
 
   // ── Search: indexer returns malformed/empty results ────────────────────

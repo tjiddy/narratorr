@@ -87,6 +87,77 @@ describe('AudioInfo', () => {
     expect(screen.getByText(/1 file(?!s)/)).toBeInTheDocument();
   });
 
+  describe('quality tier display', () => {
+    it('displays MB/hr and quality tier when audioTotalSize and audioDuration are present', () => {
+      render(<AudioInfo book={makeBook({
+        audioCodec: 'AAC',
+        audioTotalSize: 500 * 1024 * 1024, // 500 MB
+        audioDuration: 36000, // 10 hours → 50 MB/hr → Fair
+      })} />);
+
+      expect(screen.getByText('Fair')).toBeInTheDocument();
+      expect(screen.getByText('50 MB/hr')).toBeInTheDocument();
+    });
+
+    it('uses size fallback when audioTotalSize is null', () => {
+      render(<AudioInfo book={makeBook({
+        audioCodec: 'AAC',
+        audioTotalSize: null,
+        size: 500 * 1024 * 1024,
+        audioDuration: 36000,
+      })} />);
+
+      expect(screen.getByText('Fair')).toBeInTheDocument();
+      expect(screen.getByText('50 MB/hr')).toBeInTheDocument();
+    });
+
+    it('uses duration fallback when audioDuration is null', () => {
+      render(<AudioInfo book={makeBook({
+        audioCodec: 'AAC',
+        audioTotalSize: 500 * 1024 * 1024,
+        audioDuration: null,
+        duration: 600, // 600 minutes = 36000 seconds → 50 MB/hr
+      })} />);
+
+      expect(screen.getByText('Fair')).toBeInTheDocument();
+      expect(screen.getByText('50 MB/hr')).toBeInTheDocument();
+    });
+
+    it('does not display quality when size is not resolvable', () => {
+      render(<AudioInfo book={makeBook({
+        audioCodec: 'AAC',
+        audioTotalSize: null,
+        size: null,
+        audioDuration: 36000,
+      })} />);
+
+      expect(screen.queryByText(/MB\/hr/)).not.toBeInTheDocument();
+    });
+
+    it('does not display quality when duration is not resolvable', () => {
+      render(<AudioInfo book={makeBook({
+        audioCodec: 'AAC',
+        audioTotalSize: 500 * 1024 * 1024,
+        audioDuration: null,
+        duration: null,
+      })} />);
+
+      expect(screen.queryByText(/MB\/hr/)).not.toBeInTheDocument();
+    });
+
+    it('shows correct tier label matching calculateQuality output', () => {
+      // 300 MB over 1 hour = 300 MB/hr → High tier
+      render(<AudioInfo book={makeBook({
+        audioCodec: 'AAC',
+        audioTotalSize: 300 * 1024 * 1024,
+        audioDuration: 3600,
+      })} />);
+
+      expect(screen.getByText('High')).toBeInTheDocument();
+      expect(screen.getByText('300 MB/hr')).toBeInTheDocument();
+    });
+  });
+
   describe('compact mode', () => {
     it('renders heading and content in compact mode', () => {
       render(<AudioInfo book={makeBook({

@@ -291,6 +291,132 @@ describe('SearchReleasesModal', () => {
     expect(screen.getByTitle(longRawTitle)).toBeInTheDocument();
   });
 
+  describe('quality comparison for imported books', () => {
+    const importedBook = createMockBook({
+      status: 'imported',
+      path: '/audiobooks/existing',
+      audioTotalSize: 500 * 1024 * 1024, // 500 MB
+      audioDuration: 36000, // 10 hours
+      // Quality: 500 MB / 10hr = 50 MB/hr (Fair)
+    });
+
+    const lowerQualityResult: SearchResult = {
+      title: 'Low Quality Release',
+      author: 'Author',
+      protocol: 'torrent',
+      infoHash: 'low123',
+      downloadUrl: 'magnet:?xt=urn:btih:low123',
+      size: 100 * 1024 * 1024, // 100 MB → 10 MB/hr (much lower than 50)
+      seeders: 5,
+      indexer: 'TestIndexer',
+    };
+
+    const higherQualityResult: SearchResult = {
+      title: 'High Quality Release',
+      author: 'Author',
+      protocol: 'torrent',
+      infoHash: 'high456',
+      downloadUrl: 'magnet:?xt=urn:btih:high456',
+      size: 2000 * 1024 * 1024, // 2000 MB → 200 MB/hr (much higher than 50)
+      seeders: 10,
+      indexer: 'TestIndexer',
+    };
+
+    it('shows warning indicator for lower quality release on imported book', async () => {
+      vi.mocked(api.search).mockResolvedValue([lowerQualityResult]);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={importedBook} onClose={vi.fn()} />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Lower quality')).toBeInTheDocument();
+      });
+    });
+
+    it('does not show warning for higher quality release on imported book', async () => {
+      vi.mocked(api.search).mockResolvedValue([higherQualityResult]);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={importedBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('High Quality Release');
+      expect(screen.queryByText('Lower quality')).not.toBeInTheDocument();
+    });
+
+    it('does not show quality comparison for non-imported book', async () => {
+      vi.mocked(api.search).mockResolvedValue([lowerQualityResult]);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Low Quality Release');
+      expect(screen.queryByText('Lower quality')).not.toBeInTheDocument();
+    });
+
+    it('warning tooltip explains existing quality is better', async () => {
+      vi.mocked(api.search).mockResolvedValue([lowerQualityResult]);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={importedBook} onClose={vi.fn()} />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTitle('Your copy is likely better quality')).toBeInTheDocument();
+      });
+    });
+
+    it('warning does not disable grab button', async () => {
+      vi.mocked(api.search).mockResolvedValue([lowerQualityResult]);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={importedBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Lower quality');
+      const grabButton = screen.getByText('Grab').closest('button');
+      expect(grabButton).not.toBeDisabled();
+    });
+
+    it('skips comparison when book has no size data', async () => {
+      const importedNoSize = createMockBook({
+        status: 'imported',
+        path: '/audiobooks/existing',
+        audioTotalSize: null,
+        size: null,
+        audioDuration: 36000,
+      });
+      vi.mocked(api.search).mockResolvedValue([lowerQualityResult]);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={importedNoSize} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Low Quality Release');
+      expect(screen.queryByText('Lower quality')).not.toBeInTheDocument();
+    });
+
+    it('skips comparison when book has no duration data', async () => {
+      const importedNoDuration = createMockBook({
+        status: 'imported',
+        path: '/audiobooks/existing',
+        audioTotalSize: 500 * 1024 * 1024,
+        audioDuration: null,
+        duration: null,
+      });
+      vi.mocked(api.search).mockResolvedValue([lowerQualityResult]);
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={importedNoDuration} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('Low Quality Release');
+      expect(screen.queryByText('Lower quality')).not.toBeInTheDocument();
+    });
+  });
+
   it('shows error toast when blacklist fails', async () => {
     vi.mocked(api.search).mockResolvedValue(mockResults);
     vi.mocked(api.addToBlacklist).mockRejectedValue(new Error('Server error'));

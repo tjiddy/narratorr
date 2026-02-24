@@ -264,16 +264,41 @@ export class DownloadService {
       .set({ status: 'failed', errorMessage: 'Cancelled by user' })
       .where(eq(downloads.id, id));
 
-    // Reset book status if linked
+    // Reset book status if linked — revert to imported if book has a path, else wanted
     if (download.bookId) {
+      const revertStatus = download.book?.path ? 'imported' : 'wanted';
       await this.db
         .update(books)
-        .set({ status: 'wanted', updatedAt: new Date() })
+        .set({ status: revertStatus, updatedAt: new Date() })
         .where(eq(books.id, download.bookId));
     }
 
     this.log.info({ id }, 'Download cancelled');
     return true;
+  }
+
+  async retry(id: number): Promise<DownloadWithBook> {
+    const download = await this.getById(id);
+    if (!download) throw new Error(`Download ${id} not found`);
+    if (download.status !== 'failed') throw new Error(`Download ${id} is not in failed state`);
+    if (!download.downloadUrl) throw new Error(`Download ${id} has no download URL for retry`);
+
+    // Re-grab with original params
+    const newDownload = await this.grab({
+      downloadUrl: download.downloadUrl,
+      title: download.title,
+      protocol: download.protocol,
+      bookId: download.bookId ?? undefined,
+      indexerId: download.indexerId ?? undefined,
+      size: download.size ?? undefined,
+      seeders: download.seeders ?? undefined,
+    });
+
+    // Delete the old failed download record
+    await this.db.delete(downloads).where(eq(downloads.id, id));
+
+    this.log.info({ oldId: id, newId: newDownload.id }, 'Download retried');
+    return newDownload;
   }
 
   async delete(id: number): Promise<boolean> {

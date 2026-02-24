@@ -85,36 +85,16 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
       return reply.status(400).send({ error: 'Invalid ID' });
     }
 
-    const download = await downloadService.getById(id);
-
-    if (!download) {
-      return reply.status(404).send({ error: 'Download not found' });
-    }
-
-    if (!download.downloadUrl) {
-      return reply.status(400).send({ error: 'Cannot retry: no download URL' });
-    }
-
-    // Re-grab the download
     try {
       request.log.info({ id }, 'Download retry');
-      const newDownload = await downloadService.grab({
-        downloadUrl: download.downloadUrl,
-        title: download.title,
-        protocol: download.protocol,
-        bookId: download.bookId ?? undefined,
-        indexerId: download.indexerId ?? undefined,
-        size: download.size ?? undefined,
-        seeders: download.seeders ?? undefined,
-      });
-
-      // Delete the old failed download
-      await downloadService.delete(id);
-
+      const newDownload = await downloadService.retry(id);
       return newDownload;
     } catch (error) {
       request.log.error({ id, error }, 'Retry failed');
       const message = error instanceof Error ? error.message : 'Unknown error';
+      // Map service-level validation errors to appropriate HTTP status
+      if (message.includes('not found')) return reply.status(404).send({ error: message });
+      if (message.includes('not in failed state') || message.includes('no download URL')) return reply.status(400).send({ error: message });
       return reply.status(500).send({ error: message });
     }
   });

@@ -2,7 +2,7 @@ import { useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, formatBytes, type BookWithAuthor, type SearchResult } from '@/lib/api';
-import { calculateQuality, qualityTierBg } from '@narratorr/core/utils';
+import { calculateQuality, compareQuality, resolveBookQualityInputs, qualityTierBg } from '@narratorr/core/utils';
 import { queryKeys } from '@/lib/queryKeys';
 import {
   SearchIcon,
@@ -13,6 +13,7 @@ import {
   XIcon,
   RefreshIcon,
   ShieldBanIcon,
+  AlertTriangleIcon,
 } from '@/components/icons';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { CoverImage } from '@/components/CoverImage';
@@ -183,17 +184,21 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
                 Found {results.length} release{results.length !== 1 ? 's' : ''}
               </p>
               <div className="grid gap-3">
-                {results.map((result, index) => (
-                  <ReleaseCard
-                    key={result.infoHash || index}
-                    result={result}
-                    bookDurationSeconds={book.audioDuration ?? (book.duration ? book.duration * 60 : undefined)}
-                    onGrab={() => handleGrab(result)}
-                    onBlacklist={() => handleBlacklist(result)}
-                    isGrabbing={grabMutation.isPending}
-                    isBlacklisting={blacklistMutation.isPending}
-                  />
-                ))}
+                {results.map((result, index) => {
+                  const { sizeBytes: bookSize, durationSeconds: bookDuration } = resolveBookQualityInputs(book);
+                  return (
+                    <ReleaseCard
+                      key={result.infoHash || index}
+                      result={result}
+                      bookDurationSeconds={bookDuration ?? undefined}
+                      existingBookSizeBytes={book.status === 'imported' ? (bookSize ?? undefined) : undefined}
+                      onGrab={() => handleGrab(result)}
+                      onBlacklist={() => handleBlacklist(result)}
+                      isGrabbing={grabMutation.isPending}
+                      isBlacklisting={blacklistMutation.isPending}
+                    />
+                  );
+                })}
               </div>
             </>
           )}
@@ -207,9 +212,11 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
 // Release Card
 // ============================================================================
 
+// eslint-disable-next-line complexity -- conditional quality display + action buttons
 function ReleaseCard({
   result,
   bookDurationSeconds,
+  existingBookSizeBytes,
   onGrab,
   onBlacklist,
   isGrabbing,
@@ -217,6 +224,7 @@ function ReleaseCard({
 }: {
   result: SearchResult;
   bookDurationSeconds?: number;
+  existingBookSizeBytes?: number;
   onGrab: () => void;
   onBlacklist: () => void;
   isGrabbing: boolean;
@@ -224,6 +232,9 @@ function ReleaseCard({
 }) {
   const quality = result.size && bookDurationSeconds
     ? calculateQuality(result.size, bookDurationSeconds)
+    : null;
+  const comparison = existingBookSizeBytes
+    ? compareQuality(existingBookSizeBytes, result.size, bookDurationSeconds)
     : null;
   return (
     <div className="glass-card rounded-xl p-4 hover:border-primary/30 transition-all duration-200">
@@ -272,6 +283,15 @@ function ReleaseCard({
             {quality && (
               <span className={`text-xs px-1.5 py-0.5 rounded-md font-medium ${qualityTierBg(quality.tier)}`}>
                 {quality.tier} · {quality.mbPerHour} MB/hr
+              </span>
+            )}
+            {comparison === 'lower' && (
+              <span
+                className="flex items-center gap-1 text-xs text-yellow-400"
+                title="Your copy is likely better quality"
+              >
+                <AlertTriangleIcon className="w-3 h-3" />
+                Lower quality
               </span>
             )}
           </div>

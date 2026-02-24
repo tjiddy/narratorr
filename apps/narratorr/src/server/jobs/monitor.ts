@@ -1,8 +1,8 @@
 import cron from 'node-cron';
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, and, ne } from 'drizzle-orm';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads } from '@narratorr/db/schema';
+import { downloads, books } from '@narratorr/db/schema';
 import type { DownloadClientService } from '../services';
 import type { NotifierService } from '../services';
 
@@ -19,6 +19,7 @@ export function startMonitorJob(db: Db, downloadClientService: DownloadClientSer
   log.info('Download monitor job started (every 30 seconds)');
 }
 
+// eslint-disable-next-line complexity -- linear download monitoring loop with per-item error handling and status recovery
 export async function monitorDownloads(db: Db, downloadClientService: DownloadClientService, notifierService: NotifierService, log: FastifyBaseLogger) {
   // Get all active downloads
   const activeStatuses = ['downloading', 'queued', 'paused'] as const;
@@ -59,6 +60,11 @@ export async function monitorDownloads(db: Db, downloadClientService: DownloadCl
           })
           .where(eq(downloads.id, download.id));
 
+        // Recover book status
+        if (download.bookId) {
+          await recoverBookStatus(db, download.bookId, download.id, log);
+        }
+
         // Notify on failure
         Promise.resolve(notifierService.notify('on_failure', {
           event: 'on_failure',
@@ -91,6 +97,11 @@ export async function monitorDownloads(db: Db, downloadClientService: DownloadCl
         })
         .where(eq(downloads.id, download.id));
 
+      // Recover book status when download transitions to failed
+      if (newStatus === 'failed' && download.status !== 'failed' && download.bookId) {
+        await recoverBookStatus(db, download.bookId, download.id, log);
+      }
+
       // Log completion — import job will handle copying files to library
       if (isCompleted && download.status !== 'completed') {
         log.info({ bookId: download.bookId, downloadId: download.id }, 'Download completed, queued for import');
@@ -109,6 +120,38 @@ export async function monitorDownloads(db: Db, downloadClientService: DownloadCl
       log.error({ error, id: download.id }, 'Error monitoring download');
     }
   }
+}
+
+/**
+ * Recover book status after a download fails.
+ * If other active downloads exist for the same book, don't revert.
+ * Otherwise: book has path → imported, no path → wanted.
+ */
+async function recoverBookStatus(db: Db, bookId: number, failedDownloadId: number, log: FastifyBaseLogger): Promise<void> {
+  const activeStatuses = ['downloading', 'queued', 'paused', 'completed'] as const;
+
+  // Check for other active downloads for the same book
+  const otherActive = await db
+    .select()
+    .from(downloads)
+    .where(and(
+      eq(downloads.bookId, bookId),
+      inArray(downloads.status, [...activeStatuses]),
+      ne(downloads.id, failedDownloadId),
+    ));
+
+  if (otherActive.length > 0) {
+    log.debug({ bookId, otherActiveCount: otherActive.length }, 'Skipping book status recovery — other active downloads exist');
+    return;
+  }
+
+  // Get the book to check if it has a path (was previously imported)
+  const [book] = await db.select().from(books).where(eq(books.id, bookId)).limit(1);
+  if (!book) return;
+
+  const newStatus = book.path ? 'imported' : 'wanted';
+  await db.update(books).set({ status: newStatus, updatedAt: new Date() }).where(eq(books.id, bookId));
+  log.info({ bookId, status: newStatus, hadPath: !!book.path }, 'Book status recovered after download failure');
 }
 
 function mapDownloadStatus(

@@ -1,5 +1,6 @@
 import type { BookWithAuthor } from '@/lib/api';
 import { formatBytes } from '@narratorr/core/utils';
+import { calculateQuality, resolveBookQualityInputs, qualityTierBg } from '@narratorr/core/utils';
 
 function formatDurationLong(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -53,6 +54,10 @@ export function AudioInfo({ book, compact }: AudioInfoProps) {
   if (!book.audioCodec) return null;
 
   const { techParts, fileParts } = buildAudioParts(book);
+  const { sizeBytes, durationSeconds } = resolveBookQualityInputs(book);
+  const quality = sizeBytes && durationSeconds
+    ? calculateQuality(sizeBytes, durationSeconds)
+    : null;
 
   return (
     <div className={compact ? '' : 'animate-fade-in-up stagger-6'}>
@@ -60,6 +65,14 @@ export function AudioInfo({ book, compact }: AudioInfoProps) {
         Audio Quality
       </h2>
       <div className={`glass-card rounded-2xl ${compact ? 'p-4' : 'p-6'} space-y-2`}>
+        {quality && (
+          <p className="text-sm flex items-center gap-2">
+            <span className={`px-1.5 py-0.5 rounded-md text-xs font-medium ${qualityTierBg(quality.tier)}`}>
+              {quality.tier}
+            </span>
+            <span className="text-muted-foreground">{quality.mbPerHour} MB/hr</span>
+          </p>
+        )}
         {techParts.length > 0 && (
           <p className="text-sm">
             <span className="text-muted-foreground mr-2">🎧</span>

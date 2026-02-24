@@ -4,6 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 import type { DownloadClientService } from '../services/download-client.service.js';
 import type { NotifierService } from '../services/notifier.service.js';
+import { createMockDbBook } from '../__tests__/factories.js';
 
 let cronCallback: (() => Promise<void>) | null = null;
 
@@ -336,5 +337,191 @@ describe('monitor job', () => {
 
     // Status unchanged (paused → paused), so debug log
     expect(log.debug).toHaveBeenCalledWith({ id: 1, progress: 0.6 }, 'Download progress');
+  });
+
+  describe('book status recovery', () => {
+    it('sets book to wanted when download fails and book has no path', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book' },
+        ]))
+        // Other active downloads check: none
+        .mockReturnValueOnce(mockDbChain([]))
+        // Get book: no path
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      await runMonitor();
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, status: 'wanted' }),
+        'Book status recovered after download failure',
+      );
+    });
+
+    it('sets book to imported when download fails and book has a path', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book' },
+        ]))
+        // Other active downloads check: none
+        .mockReturnValueOnce(mockDbChain([]))
+        // Get book: has path
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: '/audiobooks/test', status: 'downloading' })]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      await runMonitor();
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, status: 'imported' }),
+        'Book status recovered after download failure',
+      );
+    });
+
+    it('sets book to wanted when download not found and book has no path', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book' },
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      await runMonitor();
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, status: 'wanted' }),
+        'Book status recovered after download failure',
+      );
+    });
+
+    it('sets book to imported when adapter reports error and book has path', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42 },
+        ]))
+        // update for status transition
+        // Other active downloads check: none
+        .mockReturnValueOnce(mockDbChain([]))
+        // Get book: has path
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: '/audiobooks/test', status: 'downloading' })]));
+      adapter.getDownload.mockResolvedValueOnce({
+        progress: 30,
+        status: 'error',
+      });
+      db.update.mockReturnValue(mockDbChain());
+
+      await runMonitor();
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, status: 'imported' }),
+        'Book status recovered after download failure',
+      );
+    });
+
+    it('does not revert book status when other active downloads exist', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book' },
+        ]))
+        // Other active downloads check: one other active
+        .mockReturnValueOnce(mockDbChain([{ id: 2, bookId: 42, status: 'queued' }]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      await runMonitor();
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, otherActiveCount: 1 }),
+        'Skipping book status recovery — other active downloads exist',
+      );
+    });
+
+    it('stays downloading when one of multiple active downloads fails', async () => {
+      // Two downloads for same book, both active
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book' },
+          { id: 2, externalId: 'ext-2', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42 },
+        ]))
+        // Recovery for download 1: check other active — download 2 still active
+        .mockReturnValueOnce(mockDbChain([{ id: 2, bookId: 42, status: 'downloading' }]));
+      adapter.getDownload
+        .mockResolvedValueOnce(null)  // download 1 not found
+        .mockResolvedValueOnce({ progress: 50, status: 'downloading' }); // download 2 ok
+      db.update.mockReturnValue(mockDbChain());
+
+      await runMonitor();
+
+      // Should NOT have logged book status recovery
+      expect(log.info).not.toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'wanted' }),
+        'Book status recovered after download failure',
+      );
+      expect(log.info).not.toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'imported' }),
+        'Book status recovered after download failure',
+      );
+    });
+
+    it('recovers when download fails but book has another download in queued status', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book' },
+        ]))
+        // Other active downloads check: one in queued status
+        .mockReturnValueOnce(mockDbChain([{ id: 3, bookId: 42, status: 'queued' }]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      await runMonitor();
+
+      // Should skip recovery because another active download exists
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, otherActiveCount: 1 }),
+        'Skipping book status recovery — other active downloads exist',
+      );
+    });
+
+    it('recovers when download fails but book has another download in paused status', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book' },
+        ]))
+        // Other active downloads check: one in paused status
+        .mockReturnValueOnce(mockDbChain([{ id: 3, bookId: 42, status: 'paused' }]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      await runMonitor();
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, otherActiveCount: 1 }),
+        'Skipping book status recovery — other active downloads exist',
+      );
+    });
+
+    it('recovers when last active download fails (other downloads already failed)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 3, externalId: 'ext-3', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book' },
+        ]))
+        // Other active downloads: none (others already failed)
+        .mockReturnValueOnce(mockDbChain([]))
+        // Get book: no path
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      await runMonitor();
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, status: 'wanted' }),
+        'Book status recovered after download failure',
+      );
+    });
   });
 });

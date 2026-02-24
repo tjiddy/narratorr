@@ -551,6 +551,174 @@ describe('DownloadService', () => {
     });
   });
 
+  describe('cancel — path-aware book status recovery', () => {
+    it('reverts book to wanted when book has no path', async () => {
+      const bookNoPath = createMockDbBook({ id: 1, path: null, status: 'downloading' });
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, downloadClientId: null, externalId: null }, book: bookNoPath }]),
+      );
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await service.cancel(1);
+
+      const setCalls = (chain.set as Mock).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ status: 'wanted' }));
+    });
+
+    it('reverts book to imported when book has a path', async () => {
+      const bookWithPath = createMockDbBook({ id: 1, path: '/audiobooks/existing', status: 'downloading' });
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, downloadClientId: null, externalId: null }, book: bookWithPath }]),
+      );
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await service.cancel(1);
+
+      const setCalls = (chain.set as Mock).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ status: 'imported' }));
+    });
+
+    it('does not touch existing files when cancelling upgrade download', async () => {
+      const bookWithPath = createMockDbBook({ id: 1, path: '/audiobooks/existing', status: 'downloading' });
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, downloadClientId: null, externalId: null }, book: bookWithPath }]),
+      );
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.cancel(1);
+
+      // No file operations should happen during cancel
+      // (cancel only updates DB, doesn't touch filesystem)
+      expect(db.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('retry', () => {
+    it('re-adds failed download to client with original params', async () => {
+      const failedDownload = {
+        ...mockDownload,
+        status: 'failed' as const,
+        errorMessage: 'Connection refused',
+      };
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-new'),
+      };
+
+      // getById for retry
+      db.select.mockReturnValueOnce(
+        mockDbChain([{ download: failedDownload, book: mockBook }]),
+      );
+      // grab: getFirstEnabledForProtocol
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+      // grab: insert new download
+      db.insert.mockReturnValue(mockDbChain([{ id: 99 }]));
+      db.update.mockReturnValue(mockDbChain());
+      // grab: getById for return
+      db.select.mockReturnValueOnce(
+        mockDbChain([{ download: { ...mockDownload, id: 99 }, book: mockBook }]),
+      );
+      // delete old download
+      db.delete.mockReturnValue(mockDbChain());
+
+      const result = await service.retry(1);
+
+      expect(mockAdapter.addDownload).toHaveBeenCalled();
+      expect(result.id).toBe(99);
+    });
+
+    it('resets book status to downloading on retry', async () => {
+      const failedDownload = { ...mockDownload, status: 'failed' as const };
+      const mockAdapter = { addDownload: vi.fn().mockResolvedValue('ext-new') };
+
+      db.select.mockReturnValueOnce(
+        mockDbChain([{ download: failedDownload, book: mockBook }]),
+      );
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1 });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+      db.insert.mockReturnValue(mockDbChain([{ id: 99 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValueOnce(
+        mockDbChain([{ download: { ...mockDownload, id: 99 }, book: mockBook }]),
+      );
+      db.delete.mockReturnValue(mockDbChain());
+
+      await service.retry(1);
+
+      // grab() updates book to downloading
+      expect(db.update).toHaveBeenCalled();
+    });
+
+    it('preserves book path when retrying for imported book', async () => {
+      const importedBook = createMockDbBook({ id: 1, path: '/audiobooks/existing', status: 'wanted' });
+      const failedDownload = { ...mockDownload, status: 'failed' as const };
+      const mockAdapter = { addDownload: vi.fn().mockResolvedValue('ext-new') };
+
+      db.select.mockReturnValueOnce(
+        mockDbChain([{ download: failedDownload, book: importedBook }]),
+      );
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1 });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+      db.insert.mockReturnValue(mockDbChain([{ id: 99 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValueOnce(
+        mockDbChain([{ download: { ...mockDownload, id: 99 }, book: importedBook }]),
+      );
+      db.delete.mockReturnValue(mockDbChain());
+
+      await service.retry(1);
+
+      // book.path should NOT be cleared — grab only updates status
+      const updateCalls = db.update.mock.results;
+      const setCalls = updateCalls
+        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .filter(Boolean);
+      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      const pathUpdates = allSetArgs.filter(a => 'path' in a);
+      expect(pathUpdates).toHaveLength(0); // path should never be set
+    });
+
+    it('throws when download is not in failed state', async () => {
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      await expect(service.retry(1)).rejects.toThrow('not in failed state');
+    });
+
+    it('throws when download has no downloadUrl', async () => {
+      const failedNoUrl = { ...mockDownload, status: 'failed' as const, downloadUrl: null };
+      db.select.mockReturnValue(
+        mockDbChain([{ download: failedNoUrl, book: mockBook }]),
+      );
+
+      await expect(service.retry(1)).rejects.toThrow('no download URL');
+    });
+
+    it('deletes old failed download record after successful retry', async () => {
+      const failedDownload = { ...mockDownload, status: 'failed' as const };
+      const mockAdapter = { addDownload: vi.fn().mockResolvedValue('ext-new') };
+
+      db.select.mockReturnValueOnce(
+        mockDbChain([{ download: failedDownload, book: mockBook }]),
+      );
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1 });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+      db.insert.mockReturnValue(mockDbChain([{ id: 99 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValueOnce(
+        mockDbChain([{ download: { ...mockDownload, id: 99 }, book: mockBook }]),
+      );
+      db.delete.mockReturnValue(mockDbChain());
+
+      await service.retry(1);
+
+      expect(db.delete).toHaveBeenCalled();
+    });
+  });
+
   describe('cancel edge cases', () => {
     it('skips adapter removal when externalId is null', async () => {
       const downloadNoExtId = { ...mockDownload, externalId: null };

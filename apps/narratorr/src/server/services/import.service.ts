@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
-import { mkdir, cp, stat, readdir, rename } from 'node:fs/promises';
-import { join, extname, basename } from 'node:path';
+import { mkdir, cp, stat, readdir, rename, rm } from 'node:fs/promises';
+import { join, extname, basename, normalize } from 'node:path';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, authors } from '@narratorr/db/schema';
@@ -109,7 +109,7 @@ export class ImportService {
    * Import a single completed download into the library.
    * Copies files, updates DB records, optionally removes torrent.
    */
-  // eslint-disable-next-line complexity -- linear 10-step import pipeline with error recovery
+  // eslint-disable-next-line complexity, max-lines-per-function -- linear 10-step import pipeline with error recovery and upgrade flow
   async importDownload(downloadId: number): Promise<ImportResult> {
     // 1. Get the download + linked book
     const download = await this.getDownload(downloadId);
@@ -254,6 +254,16 @@ export class ImportService {
         }
       }
 
+      // 7b. Upgrade: delete old files if book already had a path
+      if (book.path && normalize(targetPath) !== normalize(book.path)) {
+        try {
+          await rm(book.path, { recursive: true, force: true });
+          this.log.info({ oldPath: book.path, newPath: targetPath }, 'Deleted old book files during upgrade');
+        } catch (rmError) {
+          this.log.warn({ error: rmError, oldPath: book.path }, 'Failed to delete old book files during upgrade — continuing');
+        }
+      }
+
       // 8. Update book: status='imported', path=targetPath
       await this.db.update(books).set({
         status: 'imported',
@@ -287,13 +297,20 @@ export class ImportService {
 
       return { downloadId, bookId: book.id, targetPath, fileCount, totalSize: targetSize };
     } catch (error) {
-      // Revert to completed on failure so import can be retried
+      // Revert download to failed so import can be retried
       await this.db.update(downloads).set({
         status: 'failed',
         errorMessage: error instanceof Error ? error.message : 'Import failed',
       }).where(eq(downloads.id, downloadId));
 
-      this.log.error({ error, downloadId }, 'Import failed');
+      // Recover book status based on whether it was previously imported
+      const revertStatus = book.path ? 'imported' : 'wanted';
+      await this.db.update(books).set({
+        status: revertStatus,
+        updatedAt: new Date(),
+      }).where(eq(books.id, book.id));
+
+      this.log.error({ error, downloadId, bookStatus: revertStatus }, 'Import failed');
 
       // Notify on failure
       this.notifierService?.notify('on_failure', {

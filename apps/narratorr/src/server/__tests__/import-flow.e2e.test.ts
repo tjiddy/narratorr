@@ -219,9 +219,9 @@ describe('Import flow E2E', () => {
     expect(dl.status).toBe('failed');
     expect(dl.errorMessage).toBeTruthy();
 
-    // Book status unchanged (failure happens before book update)
+    // Book status recovered — no path so reverts to 'wanted'
     const bookRes = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });
-    expect(bookRes.json().status).toBe('downloading');
+    expect(bookRes.json().status).toBe('wanted');
 
     // on_failure notification fired
     await waitForRequests(captured, 1);
