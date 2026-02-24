@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { createHmac } from 'node:crypto';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { AuthService } from './auth.service.js';
@@ -212,6 +213,21 @@ describe('AuthService', () => {
 
       const result = service.verifySessionCookie(cookie, secret);
       expect(result).toBeNull();
+    });
+
+    it('verifySessionCookie returns null for malformed cookie (wrong segment count)', () => {
+      expect(service.verifySessionCookie('no-dots-here', secret)).toBeNull();
+      expect(service.verifySessionCookie('one.two.three', secret)).toBeNull();
+      expect(service.verifySessionCookie('', secret)).toBeNull();
+    });
+
+    it('verifySessionCookie returns null for corrupted base64 payload (valid sig, bad JSON)', () => {
+      // Build a cookie with valid HMAC signature but non-JSON payload
+      const corruptedB64 = Buffer.from('not-valid-json!!!').toString('base64url');
+      const sig = createHmac('sha256', secret).update(corruptedB64).digest('base64url');
+      const cookie = `${corruptedB64}.${sig}`;
+
+      expect(service.verifySessionCookie(cookie, secret)).toBeNull();
     });
 
     it('sliding expiry: cookie >50% through TTL flagged for renewal', () => {

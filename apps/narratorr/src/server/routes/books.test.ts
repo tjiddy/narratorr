@@ -3,13 +3,14 @@ import { createTestApp, createMockServices, resetMockServices } from '../__tests
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { Services } from './index.js';
 import { RenameError } from '../services/rename.service.js';
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return {
     ...actual,
     readdir: vi.fn(),
+    readFile: vi.fn(),
     stat: vi.fn(),
   };
 });
@@ -539,6 +540,39 @@ describe('books routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/books/1/cover' });
 
       expect(res.statusCode).toBe(404);
+    });
+
+    it('GET /api/books/:id/cover returns correct MIME for png', async () => {
+      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, path: '/library/book1' });
+      (readdir as Mock).mockResolvedValue(['cover.png']);
+      (readFile as Mock).mockResolvedValue(Buffer.from('fake-png'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/cover' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toBe('image/png');
+    });
+
+    it('GET /api/books/:id/cover returns correct MIME for webp', async () => {
+      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, path: '/library/book1' });
+      (readdir as Mock).mockResolvedValue(['cover.webp']);
+      (readFile as Mock).mockResolvedValue(Buffer.from('fake-webp'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/cover' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toBe('image/webp');
+    });
+
+    it('GET /api/books/:id/cover returns correct MIME for jpg', async () => {
+      (services.book.getById as Mock).mockResolvedValue({ ...mockBook, path: '/library/book1' });
+      (readdir as Mock).mockResolvedValue(['cover.jpg']);
+      (readFile as Mock).mockResolvedValue(Buffer.from('fake-jpg'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1/cover' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toBe('image/jpeg');
     });
 
     it('GET /api/books/:id returns 500 when service throws', async () => {

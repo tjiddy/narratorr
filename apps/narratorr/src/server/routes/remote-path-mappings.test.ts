@@ -101,6 +101,19 @@ describe('remote-path-mappings routes', () => {
 
       expect(res.statusCode).toBe(404);
     });
+
+    it('returns 500 when service throws', async () => {
+      (services.remotePathMapping.update as Mock).mockRejectedValue(new Error('DB write failed'));
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/remote-path-mappings/1',
+        payload: { remotePath: '/new/path/' },
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
   });
 
   describe('DELETE /api/remote-path-mappings/:id', () => {
@@ -119,6 +132,15 @@ describe('remote-path-mappings routes', () => {
       const res = await app.inject({ method: 'DELETE', url: '/api/remote-path-mappings/999' });
 
       expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 500 when service throws', async () => {
+      (services.remotePathMapping.delete as Mock).mockRejectedValue(new Error('Connection lost'));
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/remote-path-mappings/1' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Connection lost');
     });
   });
 });

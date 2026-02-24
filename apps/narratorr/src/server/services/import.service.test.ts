@@ -290,6 +290,27 @@ describe('ImportService', () => {
       expect(mockAdapter.removeDownload).toHaveBeenCalledWith('ext-1', true);
     });
 
+    it('swallows adapter error during torrent removal (import still succeeds)', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0 });
+        return Promise.resolve({});
+      });
+
+      mockAdapter.removeDownload.mockRejectedValueOnce(new Error('Connection refused'));
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // Should NOT throw — error is logged but swallowed
+      const result = await service.importDownload(1);
+
+      expect(result.downloadId).toBe(1);
+      expect(mockAdapter.removeDownload).toHaveBeenCalled();
+    });
+
     it('skips torrent removal when minSeedTime not elapsed', async () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {

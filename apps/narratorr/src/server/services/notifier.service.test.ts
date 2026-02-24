@@ -209,6 +209,20 @@ describe('NotifierService', () => {
       expect(result.success).toBe(false);
       expect(result.message).toBe('Notifier not found');
     });
+
+    it('returns failure with message when adapter throws', async () => {
+      db.select.mockReturnValue(mockDbChain([mockWebhookNotifier]));
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        new Error('Network timeout'),
+      );
+
+      const result = await service.test(1);
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('Network timeout');
+
+      fetchSpy.mockRestore();
+    });
   });
 
   describe('testConfig', () => {
@@ -233,6 +247,22 @@ describe('NotifierService', () => {
       });
       expect(result.success).toBe(false);
       expect(result.message).toContain('Unknown notifier type');
+    });
+
+    it('returns failure with message when adapter throws during send', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        new Error('DNS resolution failed'),
+      );
+
+      const result = await service.testConfig({
+        type: 'webhook',
+        settings: { url: 'https://unreachable.example.com/hook' },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('DNS resolution failed');
+
+      fetchSpy.mockRestore();
     });
   });
 });

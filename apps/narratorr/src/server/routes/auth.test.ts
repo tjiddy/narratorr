@@ -245,6 +245,21 @@ describe('auth routes', () => {
       expect(res.statusCode).toBe(400);
       expect(JSON.parse(res.payload).error).toBe('Current password is incorrect');
     });
+
+    it('returns 500 for generic service error', async () => {
+      (services.auth.changePassword as Mock).mockRejectedValue(
+        new Error('DB connection lost'),
+      );
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/auth/password',
+        payload: { currentPassword: 'old', newPassword: 'newpassword1' },
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
   });
 
   describe('POST /api/auth/api-key/regenerate', () => {
@@ -258,6 +273,20 @@ describe('auth routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({ apiKey: 'new-api-key-456' });
+    });
+
+    it('returns 500 when regenerateApiKey throws', async () => {
+      (services.auth.regenerateApiKey as Mock).mockRejectedValue(
+        new Error('DB error'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/api-key/regenerate',
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
     });
   });
 

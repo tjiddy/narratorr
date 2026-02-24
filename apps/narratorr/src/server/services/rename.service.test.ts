@@ -255,6 +255,28 @@ describe('RenameService', () => {
       expect(rename).toHaveBeenCalledTimes(3); // 2 attempts + 1 rollback
     });
 
+    it('continues rollback when one rollback fails', async () => {
+      const { service } = createService();
+      (readdir as Mock).mockResolvedValue([
+        { name: 'file1.m4b', isFile: () => true },
+        { name: 'file2.m4b', isFile: () => true },
+        { name: 'file3.m4b', isFile: () => true },
+      ]);
+      (rename as Mock)
+        .mockResolvedValueOnce(undefined)  // file1 rename succeeds
+        .mockResolvedValueOnce(undefined)  // file2 rename succeeds
+        .mockRejectedValueOnce(new Error('EACCES'))  // file3 rename fails → triggers rollback
+        .mockRejectedValueOnce(new Error('EACCES'))  // rollback file2 fails
+        .mockResolvedValueOnce(undefined);  // rollback file1 still attempted and succeeds
+
+      await expect(
+        service.renameFilesWithTemplate('/library/test', '{title}', mockBook, 'Brandon Sanderson'),
+      ).rejects.toThrow('EACCES');
+
+      // 3 forward attempts + 2 rollback attempts (file2 reverse + file1 reverse)
+      expect(rename).toHaveBeenCalledTimes(5);
+    });
+
     it('deduplicates colliding filenames', async () => {
       const { service } = createService();
       // Two files, template produces same name for both
