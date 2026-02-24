@@ -5,9 +5,9 @@ import { join } from 'node:path';
 import { mkdtemp, mkdir, writeFile, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { eq } from 'drizzle-orm';
-import { downloads, books } from '@narratorr/db/schema';
+import { downloads } from '@narratorr/db/schema';
 import { scanAudioDirectory } from '@narratorr/core/utils/audio-scanner';
-import { createE2EApp, type E2EApp } from './e2e-helpers.js';
+import { createE2EApp, seedBookAndDownload, type E2EApp } from './e2e-helpers.js';
 import {
   QB_BASE,
   WEBHOOK_URL,
@@ -128,41 +128,8 @@ describe('Import flow E2E', () => {
     await rm(libraryDir, { recursive: true, force: true });
   });
 
-  /**
-   * Seed a book (status 'downloading') + completed download record.
-   * Returns IDs for use in importDownload().
-   */
-  async function seedBookAndDownload(
-    title: string,
-    authorName: string,
-    opts: { completedAt?: Date; externalId?: string } = {},
-  ) {
-    const bookRes = await e2e.app.inject({
-      method: 'POST',
-      url: '/api/books',
-      payload: { title, authorName },
-    });
-    expect(bookRes.statusCode).toBe(201);
-    const bookId = bookRes.json().id;
-
-    // Set book to 'downloading' (realistic pre-import state after grab)
-    await e2e.db.update(books).set({ status: 'downloading' }).where(eq(books.id, bookId));
-
-    const [download] = await e2e.db.insert(downloads).values({
-      bookId,
-      downloadClientId,
-      title,
-      protocol: 'torrent' as const,
-      externalId: opts.externalId ?? TORRENT_HASH,
-      status: 'completed' as const,
-      completedAt: opts.completedAt ?? new Date(Date.now() - 2 * 60 * 60 * 1000),
-    }).returning();
-
-    return { bookId, downloadId: download.id };
-  }
-
   it('imports completed download: files copied to library, book status imported, enrichment fields populated', async () => {
-    const { bookId, downloadId } = await seedBookAndDownload('The Way of Kings', 'Brandon Sanderson');
+    const { bookId, downloadId } = await seedBookAndDownload(e2e, downloadClientId,'The Way of Kings', 'Brandon Sanderson');
 
     vi.mocked(scanAudioDirectory).mockResolvedValueOnce(MOCK_SCAN_RESULT);
 
@@ -208,7 +175,7 @@ describe('Import flow E2E', () => {
   });
 
   it('fires on_import webhook notification with correct payload', async () => {
-    const { downloadId } = await seedBookAndDownload('Notification Test Book', 'Test Author');
+    const { downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Notification Test Book', 'Test Author');
 
     vi.mocked(scanAudioDirectory).mockResolvedValueOnce(MOCK_SCAN_RESULT);
 
@@ -235,7 +202,7 @@ describe('Import flow E2E', () => {
   });
 
   it('sets download to failed and fires on_failure notification when save path is invalid', async () => {
-    const { bookId, downloadId } = await seedBookAndDownload('Failure Test Book', 'Test Author');
+    const { bookId, downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Failure Test Book', 'Test Author');
     const badSavePath = join(tmpdir(), `narratorr-nonexistent-${Date.now()}`);
 
     const { handler: webhookHandler, captured } = webhookCaptureHandler();
@@ -267,7 +234,7 @@ describe('Import flow E2E', () => {
     await e2e.services.settings.set('import', { deleteAfterImport: true, minSeedTime: 60 });
 
     // completedAt 2 hours ago — well past the 60-min seed time
-    const { downloadId } = await seedBookAndDownload('Delete After Import Book', 'Test Author', {
+    const { downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Delete After Import Book', 'Test Author', {
       completedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
     });
 
@@ -292,7 +259,7 @@ describe('Import flow E2E', () => {
     await e2e.services.settings.set('import', { deleteAfterImport: true, minSeedTime: 60 });
 
     // completedAt 1 minute ago — seed time NOT met (needs 60 min)
-    const { downloadId } = await seedBookAndDownload('No Delete Book', 'Test Author', {
+    const { downloadId } = await seedBookAndDownload(e2e, downloadClientId,'No Delete Book', 'Test Author', {
       completedAt: new Date(Date.now() - 1 * 60 * 1000),
     });
 

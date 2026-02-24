@@ -4,10 +4,8 @@ import { http, HttpResponse } from 'msw';
 import { join } from 'node:path';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { eq } from 'drizzle-orm';
-import { downloads, books } from '@narratorr/db/schema';
 import { scanAudioDirectory } from '@narratorr/core/utils/audio-scanner';
-import { createE2EApp, type E2EApp } from './e2e-helpers.js';
+import { createE2EApp, seedBookAndDownload, type E2EApp } from './e2e-helpers.js';
 import {
   INDEXER_BASE,
   WEBHOOK_URL,
@@ -171,31 +169,6 @@ describe('Notifier event triggers E2E', () => {
     await rm(libraryDir, { recursive: true, force: true });
   });
 
-  /** Seed a book (status 'downloading') + completed download record for import tests. */
-  async function seedBookAndDownload(title: string, authorName: string) {
-    const bookRes = await e2e.app.inject({
-      method: 'POST',
-      url: '/api/books',
-      payload: { title, authorName },
-    });
-    expect(bookRes.statusCode).toBe(201);
-    const bookId = bookRes.json().id;
-
-    await e2e.db.update(books).set({ status: 'downloading' }).where(eq(books.id, bookId));
-
-    const [download] = await e2e.db.insert(downloads).values({
-      bookId,
-      downloadClientId,
-      title,
-      protocol: 'torrent' as const,
-      externalId: TORRENT_HASH,
-      status: 'completed' as const,
-      completedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
-    }).returning();
-
-    return { bookId, downloadId: download.id };
-  }
-
   /** Trigger a grab via API. Returns the grab response. */
   async function triggerGrab(title: string) {
     const bookRes = await e2e.app.inject({
@@ -240,7 +213,7 @@ describe('Notifier event triggers E2E', () => {
         qbGetTorrentHandler(TORRENT_HASH, downloadParent),
       );
 
-      const { downloadId } = await seedBookAndDownload('Routing Test Book', 'Routing Author');
+      const { downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Routing Test Book', 'Routing Author');
       await e2e.services.import.importDownload(downloadId);
 
       // Wait for all-events webhook + discord to confirm notification cycle completed
@@ -319,7 +292,7 @@ describe('Notifier event triggers E2E', () => {
         qbGetTorrentHandler(TORRENT_HASH, downloadParent),
       );
 
-      const { downloadId } = await seedBookAndDownload('Import Payload Test', 'Import Author');
+      const { downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Import Payload Test', 'Import Author');
       await e2e.services.import.importDownload(downloadId);
 
       await waitForRequests(captured, 1);
@@ -348,7 +321,7 @@ describe('Notifier event triggers E2E', () => {
         qbGetTorrentHandler(TORRENT_HASH, badSavePath),
       );
 
-      const { downloadId } = await seedBookAndDownload('Failure Payload Test', 'Failure Author');
+      const { downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Failure Payload Test', 'Failure Author');
       await expect(e2e.services.import.importDownload(downloadId)).rejects.toThrow();
 
       await waitForRequests(captured, 1);
@@ -437,7 +410,7 @@ describe('Notifier event triggers E2E', () => {
         qbGetTorrentHandler(TORRENT_HASH, downloadParent),
       );
 
-      const { bookId, downloadId } = await seedBookAndDownload('Resilience Import 500 Test', 'Test Author');
+      const { bookId, downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Resilience Import 500 Test', 'Test Author');
       const result = await e2e.services.import.importDownload(downloadId);
 
       expect(result.downloadId).toBe(downloadId);
@@ -459,7 +432,7 @@ describe('Notifier event triggers E2E', () => {
         qbGetTorrentHandler(TORRENT_HASH, downloadParent),
       );
 
-      const { bookId, downloadId } = await seedBookAndDownload('Resilience Network Test', 'Test Author');
+      const { bookId, downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Resilience Network Test', 'Test Author');
       const result = await e2e.services.import.importDownload(downloadId);
 
       expect(result.downloadId).toBe(downloadId);

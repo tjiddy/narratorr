@@ -540,5 +540,36 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(404);
     });
+
+    it('GET /api/books/:id returns 500 when service throws', async () => {
+      (services.book.getById as Mock).mockRejectedValue(new Error('DB connection lost'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/1' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+
+    it('PUT /api/books/:id returns 500 when service throws', async () => {
+      (services.book.update as Mock).mockRejectedValue(new Error('DB write failed'));
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/books/1',
+        payload: { title: 'Updated' },
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+
+    it('DELETE /api/books/:id returns 500 when service throws', async () => {
+      (services.download.getActiveByBookId as Mock).mockRejectedValue(new Error('DB error'));
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
   });
 });

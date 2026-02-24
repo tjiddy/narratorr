@@ -19,7 +19,7 @@ export function startMonitorJob(db: Db, downloadClientService: DownloadClientSer
   log.info('Download monitor job started (every 30 seconds)');
 }
 
-async function monitorDownloads(db: Db, downloadClientService: DownloadClientService, notifierService: NotifierService, log: FastifyBaseLogger) {
+export async function monitorDownloads(db: Db, downloadClientService: DownloadClientService, notifierService: NotifierService, log: FastifyBaseLogger) {
   // Get all active downloads
   const activeStatuses = ['downloading', 'queued', 'paused'] as const;
   const activeDownloads = await db

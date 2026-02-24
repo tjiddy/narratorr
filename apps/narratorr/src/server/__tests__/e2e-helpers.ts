@@ -5,11 +5,14 @@ import {
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
 import { createDb, runMigrations, type Db } from '@narratorr/db';
+import { eq } from 'drizzle-orm';
+import { downloads, books } from '@narratorr/db/schema';
 import { createServices, registerRoutes, type Services } from '../routes/index.js';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomBytes } from 'crypto';
 import { unlink } from 'fs/promises';
+import { expect } from 'vitest';
 
 export interface E2EApp {
   app: ReturnType<typeof Fastify> & { withTypeProvider: () => unknown };
@@ -55,4 +58,42 @@ export async function createE2EApp(): Promise<E2EApp> {
   };
 
   return { app: app as unknown as E2EApp['app'], db, services, cleanup };
+}
+
+/**
+ * Seed a book (status 'downloading') + completed download record.
+ * Returns IDs for use in importDownload() and other E2E assertions.
+ *
+ * Shared helper — consolidates identical logic from import-flow, search-grab-flow,
+ * and notifier-events E2E tests.
+ */
+export async function seedBookAndDownload(
+  e2e: E2EApp,
+  downloadClientId: number,
+  title: string,
+  authorName: string,
+  opts: { completedAt?: Date; externalId?: string } = {},
+) {
+  const bookRes = await e2e.app.inject({
+    method: 'POST',
+    url: '/api/books',
+    payload: { title, authorName },
+  });
+  expect(bookRes.statusCode).toBe(201);
+  const bookId = bookRes.json().id;
+
+  // Set book to 'downloading' (realistic pre-import state after grab)
+  await e2e.db.update(books).set({ status: 'downloading' }).where(eq(books.id, bookId));
+
+  const [download] = await e2e.db.insert(downloads).values({
+    bookId,
+    downloadClientId,
+    title,
+    protocol: 'torrent' as const,
+    externalId: opts.externalId ?? 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+    status: 'completed' as const,
+    completedAt: opts.completedAt ?? new Date(Date.now() - 2 * 60 * 60 * 1000),
+  }).returning();
+
+  return { bookId, downloadId: download.id };
 }
