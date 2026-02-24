@@ -75,22 +75,7 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
             {downloadClientTypeSchema.options.map((t) => <option key={t} value={t}>{TYPE_LABELS[t] || t}</option>)}
           </select>
         </div>
-        {isEdit && (
-          <>
-            <div>
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input type="checkbox" {...register('enabled')} className="w-5 h-5 rounded border-border text-primary focus:ring-primary focus:ring-offset-0" />
-                <span className="text-sm font-medium">Enabled</span>
-              </label>
-            </div>
-            <div>
-              <label htmlFor="clientPriority" className="block text-sm font-medium mb-2">Priority</label>
-              <input id="clientPriority" type="number" {...register('priority', { valueAsNumber: true })} className={inputClass} />
-              <p className="text-sm text-muted-foreground mt-1">Lower values are preferred first (1-100)</p>
-            </div>
-          </>
-        )}
-        <DownloadClientFields selectedType={selectedType} register={register} errors={errors} clientId={client?.id} setValue={setValue} getValues={getValues} isDirty={isDirty} />
+        <DownloadClientFields selectedType={selectedType} register={register} errors={errors} clientId={client?.id} setValue={setValue} getValues={getValues} isDirty={isDirty} isEdit={isEdit} />
       </div>
       {!isImplemented && <p className="text-sm text-amber-500">Adapter not yet implemented. Config will be saved for when the adapter is available.</p>}
       {formTestResult && <TestResultMessage success={formTestResult.success} message={formTestResult.message} />}

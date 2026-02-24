@@ -25,10 +25,11 @@ interface DownloadClientFieldsProps {
   setValue: UseFormSetValue<CreateDownloadClientFormData>;
   getValues: UseFormGetValues<CreateDownloadClientFormData>;
   isDirty?: boolean;
+  isEdit?: boolean;
 }
 
 // eslint-disable-next-line complexity -- conditional fields per client type are inherently branchy
-export function DownloadClientFields({ selectedType, register, errors, clientId, setValue, getValues, isDirty }: DownloadClientFieldsProps) {
+export function DownloadClientFields({ selectedType, register, errors, clientId, setValue, getValues, isDirty, isEdit }: DownloadClientFieldsProps) {
   const fields = TYPE_FIELDS[selectedType] || TYPE_FIELDS.qbittorrent;
   const supportsCategories = SUPPORTS_CATEGORIES[selectedType] ?? false;
   const { fetching, categories, error: categoryError, showDropdown, setShowDropdown, dropdownRef, fetchCategories } =
@@ -44,19 +45,27 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
 
   return (
     <>
-      <div>
-        <label htmlFor="clientHost" className="block text-sm font-medium mb-2">Host</label>
-        <input id="clientHost" type="text" {...register('settings.host')} className={errors.settings?.host ? errorInputClass : inputClass} placeholder="localhost" />
-        {errors.settings?.host ? (
-          <p className="text-sm text-destructive mt-1">{errors.settings.host.message}</p>
-        ) : (
-          <p className="text-sm text-muted-foreground mt-1">Hostname or IP without protocol</p>
+      <div className="sm:col-span-2 grid gap-5 sm:grid-cols-[2fr_1fr_auto]" data-testid="connection-row">
+        <div>
+          <label htmlFor="clientHost" className="block text-sm font-medium mb-2">Host</label>
+          <input id="clientHost" type="text" {...register('settings.host')} className={errors.settings?.host ? errorInputClass : inputClass} placeholder="localhost" />
+          {errors.settings?.host ? (
+            <p className="text-sm text-destructive mt-1">{errors.settings.host.message}</p>
+          ) : (
+            <p className="text-sm text-muted-foreground mt-1">Hostname or IP without protocol</p>
+          )}
+        </div>
+        <div>
+          <label htmlFor="clientPort" className="block text-sm font-medium mb-2">Port</label>
+          <input id="clientPort" type="number" {...register('settings.port', { valueAsNumber: true })} className={errors.settings?.port ? errorInputClass : inputClass} />
+          {errors.settings?.port && <p className="text-sm text-destructive mt-1">{errors.settings.port.message}</p>}
+        </div>
+        {fields.useSsl && (
+          <label className="flex items-center gap-3 cursor-pointer pt-8">
+            <input type="checkbox" {...register('settings.useSsl')} className="w-5 h-5 rounded border-border text-primary focus:ring-primary focus:ring-offset-0" />
+            <span className="text-sm font-medium">SSL</span>
+          </label>
         )}
-      </div>
-      <div>
-        <label htmlFor="clientPort" className="block text-sm font-medium mb-2">Port</label>
-        <input id="clientPort" type="number" {...register('settings.port', { valueAsNumber: true })} className={errors.settings?.port ? errorInputClass : inputClass} />
-        {errors.settings?.port && <p className="text-sm text-destructive mt-1">{errors.settings.port.message}</p>}
       </div>
 
       {fields.username && (
@@ -80,52 +89,58 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
         </div>
       )}
 
-      {fields.useSsl && (
-        <div className="sm:col-span-2">
+      <div className={`sm:col-span-2 grid gap-5 ${isEdit ? 'sm:grid-cols-3' : ''}`} data-testid="behavior-row">
+        {isEdit && (
           <label className="flex items-center gap-3 cursor-pointer">
-            <input type="checkbox" {...register('settings.useSsl')} className="w-5 h-5 rounded border-border text-primary focus:ring-primary focus:ring-offset-0" />
-            <span className="text-sm font-medium">Use SSL/HTTPS</span>
+            <input type="checkbox" {...register('enabled')} className="w-5 h-5 rounded border-border text-primary focus:ring-primary focus:ring-offset-0" />
+            <span className="text-sm font-medium">Enabled</span>
           </label>
-        </div>
-      )}
-
-      <div className="sm:col-span-2" ref={dropdownRef}>
-        <div className="flex items-center gap-2 mb-2">
-          <label htmlFor="clientCategory" className="block text-sm font-medium">Category</label>
-          {supportsCategories && (
-            <button
-              type="button"
-              onClick={fetchCategories}
-              disabled={fetching}
-              className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-muted-foreground hover:text-foreground border border-border rounded-lg hover:bg-accent transition-all disabled:opacity-50"
-              title="Fetch categories from client"
-            >
-              <RefreshIcon className={`w-3 h-3 ${fetching ? 'animate-spin' : ''}`} />
-              Fetch
-            </button>
-          )}
-        </div>
-        <div className="relative">
-          <input id="clientCategory" type="text" {...register('settings.category')} className={inputClass} placeholder="audiobooks" />
-          {showDropdown && (
-            <div className="absolute z-10 mt-1 w-full bg-background border border-border rounded-xl shadow-lg max-h-48 overflow-y-auto">
-              {categories.length > 0 ? (
-                categories.map((cat) => (
-                  <button key={cat} type="button" onClick={() => handleSelectCategory(cat)} className="w-full px-4 py-2.5 text-left text-sm hover:bg-accent transition-colors first:rounded-t-xl last:rounded-b-xl">
-                    {cat}
-                  </button>
-                ))
-              ) : (
-                <div className="px-4 py-2.5 text-sm text-muted-foreground">No categories found</div>
-              )}
-            </div>
-          )}
-        </div>
-        {categoryError ? (
-          <p className="text-sm text-destructive mt-1">{categoryError}</p>
-        ) : (
-          <p className="text-sm text-muted-foreground mt-1">Optional. Tags downloads so the client routes them to a dedicated folder.</p>
         )}
+        {isEdit && (
+          <div>
+            <label htmlFor="clientPriority" className="block text-sm font-medium mb-2">Priority</label>
+            <input id="clientPriority" type="number" {...register('priority', { valueAsNumber: true })} className={inputClass} />
+            <p className="text-sm text-muted-foreground mt-1">Lower = preferred (1-100)</p>
+          </div>
+        )}
+        <div ref={dropdownRef}>
+          <div className="flex items-center gap-2 mb-2">
+            <label htmlFor="clientCategory" className="block text-sm font-medium">Category</label>
+            {supportsCategories && (
+              <button
+                type="button"
+                onClick={fetchCategories}
+                disabled={fetching}
+                className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-muted-foreground hover:text-foreground border border-border rounded-lg hover:bg-accent transition-all disabled:opacity-50"
+                title="Fetch categories from client"
+              >
+                <RefreshIcon className={`w-3 h-3 ${fetching ? 'animate-spin' : ''}`} />
+                Fetch
+              </button>
+            )}
+          </div>
+          <div className="relative">
+            <input id="clientCategory" type="text" {...register('settings.category')} className={inputClass} placeholder="audiobooks" />
+            {showDropdown && (
+              <div className="absolute z-10 mt-1 w-full bg-background border border-border rounded-xl shadow-lg max-h-48 overflow-y-auto">
+                {categories.length > 0 ? (
+                  categories.map((cat) => (
+                    <button key={cat} type="button" onClick={() => handleSelectCategory(cat)} className="w-full px-4 py-2.5 text-left text-sm hover:bg-accent transition-colors first:rounded-t-xl last:rounded-b-xl">
+                      {cat}
+                    </button>
+                  ))
+                ) : (
+                  <div className="px-4 py-2.5 text-sm text-muted-foreground">No categories found</div>
+                )}
+              </div>
+            )}
+          </div>
+          {categoryError ? (
+            <p className="text-sm text-destructive mt-1">{categoryError}</p>
+          ) : (
+            <p className="text-sm text-muted-foreground mt-1">Optional. Tags downloads so the client routes them to a dedicated folder.</p>
+          )}
+        </div>
       </div>
     </>
   );

@@ -14,7 +14,7 @@ vi.mock('@/lib/api/download-clients', () => ({
 
 import { downloadClientsApi } from '@/lib/api/download-clients';
 
-function FieldWrapper({ type, clientId, dirty }: { type: string; clientId?: number; dirty?: boolean }) {
+function FieldWrapper({ type, clientId, dirty, isEdit }: { type: string; clientId?: number; dirty?: boolean; isEdit?: boolean }) {
   const { register, formState: { errors }, setValue, getValues } = useForm<CreateDownloadClientFormData>({
     defaultValues: { name: 'Test', type: 'qbittorrent', enabled: true, priority: 50, settings: { host: '', port: 8080 } },
   });
@@ -27,6 +27,7 @@ function FieldWrapper({ type, clientId, dirty }: { type: string; clientId?: numb
       setValue={setValue}
       getValues={getValues}
       isDirty={dirty}
+      isEdit={isEdit}
     />
   );
 }
@@ -44,7 +45,7 @@ describe('DownloadClientFields', () => {
     expect(screen.getByText('Port')).toBeInTheDocument();
     expect(screen.getByText('Username')).toBeInTheDocument();
     expect(screen.getByText('Password')).toBeInTheDocument();
-    expect(screen.getByText('Use SSL/HTTPS')).toBeInTheDocument();
+    expect(screen.getByText('SSL')).toBeInTheDocument();
     expect(screen.queryByText('API Key')).not.toBeInTheDocument();
 
     const host = screen.getByPlaceholderText('localhost');
@@ -59,7 +60,7 @@ describe('DownloadClientFields', () => {
     expect(screen.getByText('Host')).toBeInTheDocument();
     expect(screen.getByText('Username')).toBeInTheDocument();
     expect(screen.getByText('Password')).toBeInTheDocument();
-    expect(screen.getByText('Use SSL/HTTPS')).toBeInTheDocument();
+    expect(screen.getByText('SSL')).toBeInTheDocument();
 
     const username = screen.getByPlaceholderText('admin');
     await user.type(username, 'user1');
@@ -73,7 +74,7 @@ describe('DownloadClientFields', () => {
     expect(screen.getByText('Host')).toBeInTheDocument();
     expect(screen.getByText('Port')).toBeInTheDocument();
     expect(screen.getByText('API Key')).toBeInTheDocument();
-    expect(screen.getByText('Use SSL/HTTPS')).toBeInTheDocument();
+    expect(screen.getByText('SSL')).toBeInTheDocument();
     expect(screen.queryByText('Username')).not.toBeInTheDocument();
     expect(screen.queryByText('Password')).not.toBeInTheDocument();
 
@@ -128,10 +129,42 @@ describe('DownloadClientFields', () => {
     const user = userEvent.setup();
     render(<FieldWrapper type="qbittorrent" />);
 
-    const checkbox = screen.getByRole('checkbox', { name: /Use SSL/i });
+    const checkbox = screen.getByRole('checkbox', { name: /SSL/i });
     expect(checkbox).not.toBeChecked();
     await user.click(checkbox);
     expect(checkbox).toBeChecked();
+  });
+
+  describe('layout grouping', () => {
+    it('renders SSL checkbox in the same container as Host and Port fields', () => {
+      render(<FieldWrapper type="qbittorrent" />);
+      const connectionRow = screen.getByTestId('connection-row');
+      expect(connectionRow.querySelector('#clientHost')).toBeInTheDocument();
+      expect(connectionRow.querySelector('#clientPort')).toBeInTheDocument();
+      expect(connectionRow.querySelector('input[type="checkbox"]')).toBeInTheDocument();
+    });
+
+    it('renders API Key with full-width span', () => {
+      render(<FieldWrapper type="sabnzbd" />);
+      const apiKeyContainer = screen.getByText('API Key').closest('div[class*="col-span"]');
+      expect(apiKeyContainer?.className).toContain('sm:col-span-2');
+    });
+
+    it('renders Enabled, Priority, and Category in the same behavior row in edit mode', () => {
+      render(<FieldWrapper type="qbittorrent" isEdit />);
+      const behaviorRow = screen.getByTestId('behavior-row');
+      expect(behaviorRow.querySelector('#clientPriority')).toBeInTheDocument();
+      expect(behaviorRow.querySelector('#clientCategory')).toBeInTheDocument();
+      expect(screen.getByRole('checkbox', { name: /Enabled/i })).toBeInTheDocument();
+    });
+
+    it('renders only Category in behavior row when not in edit mode', () => {
+      render(<FieldWrapper type="qbittorrent" />);
+      const behaviorRow = screen.getByTestId('behavior-row');
+      expect(behaviorRow.querySelector('#clientCategory')).toBeInTheDocument();
+      expect(behaviorRow.querySelector('#clientPriority')).not.toBeInTheDocument();
+      expect(screen.queryByRole('checkbox', { name: /Enabled/i })).not.toBeInTheDocument();
+    });
   });
 
   describe('fetch categories button', () => {

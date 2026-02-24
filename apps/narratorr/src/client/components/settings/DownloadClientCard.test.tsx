@@ -136,7 +136,7 @@ describe('DownloadClientCard — create mode', () => {
     expect(screen.getByText('Port')).toBeInTheDocument();
     expect(screen.getByText('Username')).toBeInTheDocument();
     expect(screen.getByText('Password')).toBeInTheDocument();
-    expect(screen.getByText('Use SSL/HTTPS')).toBeInTheDocument();
+    expect(screen.getByText('SSL')).toBeInTheDocument();
   });
 
   it('shows API Key field for sabnzbd type', async () => {
