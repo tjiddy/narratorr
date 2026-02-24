@@ -95,6 +95,20 @@ export interface BookFile {
   size: number;
 }
 
+export interface UpdateBookPayload {
+  title?: string;
+  narrator?: string;
+  seriesName?: string | null;
+  seriesPosition?: number | null;
+}
+
+export interface RenameResult {
+  oldPath: string;
+  newPath: string;
+  message: string;
+  filesRenamed: number;
+}
+
 export const booksApi = {
   getBooks: (status?: string) =>
     fetchApi<BookWithAuthor[]>(status ? `/books?status=${encodeURIComponent(status)}` : '/books'),
@@ -118,4 +132,11 @@ export const booksApi = {
     fetchApi<BookMetadata[]>(`/metadata/authors/${encodeURIComponent(id)}/books`),
   getBook: (id: string) =>
     fetchApi<BookMetadata>(`/metadata/books/${encodeURIComponent(id)}`),
+  updateBook: (id: number, data: UpdateBookPayload) =>
+    fetchApi<BookWithAuthor>(`/books/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  renameBook: (id: number) =>
+    fetchApi<RenameResult>(`/books/${id}/rename`, { method: 'POST' }),
 };

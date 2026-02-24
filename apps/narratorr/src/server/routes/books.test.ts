@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } 
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { Services } from './index.js';
+import { RenameError } from '../services/rename.service.js';
 import { readdir, stat } from 'node:fs/promises';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -191,6 +192,32 @@ describe('books routes', () => {
       expect(JSON.parse(res.payload).title).toBe('Updated Title');
     });
 
+    it('accepts and persists seriesName and seriesPosition', async () => {
+      const updated = { ...mockBook, seriesName: 'Stormlight', seriesPosition: 1 };
+      (services.book.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/books/1',
+        payload: { seriesName: 'Stormlight', seriesPosition: 1 },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.book.update).toHaveBeenCalledWith(1, { seriesName: 'Stormlight', seriesPosition: 1 });
+    });
+
+    it('rejects empty title', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/books/1',
+        payload: { title: '  ' },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error).toBe('Title cannot be empty');
+      expect(services.book.update).not.toHaveBeenCalled();
+    });
+
     it('returns 404 when not found', async () => {
       (services.book.update as Mock).mockResolvedValue(null);
 
@@ -201,6 +228,67 @@ describe('books routes', () => {
       });
 
       expect(res.statusCode).toBe(404);
+    });
+  });
+
+  describe('POST /api/books/:id/rename', () => {
+    it('returns rename result on success', async () => {
+      (services.rename.renameBook as Mock).mockResolvedValue({
+        oldPath: '/library/old',
+        newPath: '/library/new',
+        message: 'Moved from /library/old to /library/new',
+        filesRenamed: 2,
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.oldPath).toBe('/library/old');
+      expect(body.newPath).toBe('/library/new');
+    });
+
+    it('returns 404 when book not found', async () => {
+      (services.rename.renameBook as Mock).mockRejectedValue(
+        new RenameError('Book not found', 'NOT_FOUND'),
+      );
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/999/rename' });
+
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 400 when book has no path', async () => {
+      (services.rename.renameBook as Mock).mockRejectedValue(
+        new RenameError('Book has no path', 'NO_PATH'),
+      );
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 409 on conflict with different book', async () => {
+      (services.rename.renameBook as Mock).mockRejectedValue(
+        new RenameError('Target path belongs to another book', 'CONFLICT'),
+      );
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+      expect(res.statusCode).toBe(409);
+    });
+
+    it('returns 400 for NaN id', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/books/abc/rename' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 500 on unexpected error', async () => {
+      (services.rename.renameBook as Mock).mockRejectedValue(new Error('Unexpected'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
+
+      expect(res.statusCode).toBe(500);
     });
   });
 

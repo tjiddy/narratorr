@@ -11,8 +11,12 @@ const defaultProps = {
   metaDots: ['45h 0m', 'Fantasy', 'The Stormlight Archive #1'],
   statusLabel: 'Wanted',
   statusDotClass: 'bg-yellow-500',
+  hasPath: true,
   onBackClick: vi.fn(),
   onSearchClick: vi.fn(),
+  onEditClick: vi.fn(),
+  onRenameClick: vi.fn(),
+  isRenaming: false,
 };
 
 function renderHero(overrides = {}) {
@@ -87,5 +91,34 @@ describe('BookHero', () => {
 
     await user.click(screen.getByText('Search Releases'));
     expect(onSearchClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onEditClick when Edit button is clicked', async () => {
+    const onEditClick = vi.fn();
+    const user = userEvent.setup();
+    renderHero({ onEditClick });
+
+    await user.click(screen.getByText('Edit'));
+    expect(onEditClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onRenameClick when Rename button is clicked', async () => {
+    const onRenameClick = vi.fn();
+    const user = userEvent.setup();
+    renderHero({ onRenameClick });
+
+    await user.click(screen.getByText('Rename'));
+    expect(onRenameClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides Rename button when book has no path', () => {
+    renderHero({ hasPath: false });
+    expect(screen.queryByText('Rename')).not.toBeInTheDocument();
+  });
+
+  it('disables Rename button when renaming is in progress', () => {
+    renderHero({ isRenaming: true });
+    expect(screen.getByText('Renaming...')).toBeInTheDocument();
+    expect(screen.getByText('Renaming...').closest('button')).toBeDisabled();
   });
 });

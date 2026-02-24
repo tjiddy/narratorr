@@ -1,7 +1,8 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import type { BookService, DownloadService, SettingsService } from '../services';
+import type { BookService, DownloadService, SettingsService, RenameService } from '../services';
+import { RenameError } from '../services/rename.service.js';
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.m4a', '.m4b', '.flac', '.ogg', '.opus', '.wma', '.aac']);
 
@@ -28,9 +29,67 @@ interface UpdateBookBody {
   description?: string;
   coverUrl?: string;
   status?: 'wanted' | 'searching' | 'downloading' | 'imported' | 'missing';
+  seriesName?: string | null;
+  seriesPosition?: number | null;
 }
 
-export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService) {
+async function registerDeleteBookRoute(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService) {
+app.delete<{ Params: { id: string }; Querystring: { deleteFiles?: string } }>('/api/books/:id', async (request, reply) => {
+  try {
+    const id = parseInt(request.params.id, 10);
+    if (isNaN(id)) {
+      return reply.status(400).send({ error: 'Invalid ID' });
+    }
+
+    const deleteFiles = request.query.deleteFiles === 'true';
+
+    // If deleteFiles requested, attempt file deletion BEFORE cancelling downloads or removing DB record
+    if (deleteFiles) {
+      const book = await bookService.getById(id);
+      if (!book) {
+        return reply.status(404).send({ error: 'Book not found' });
+      }
+
+      if (book.path) {
+        try {
+          const librarySettings = await settingsService.get('library');
+          await bookService.deleteBookFiles(book.path, librarySettings.path);
+        } catch (error) {
+          request.log.error({ bookId: id, error }, 'Failed to delete book files');
+          return reply.status(500).send({ error: 'Failed to delete book files from disk' });
+        }
+      }
+    }
+
+    // Cancel any active downloads for this book
+    const activeDownloads = await downloadService.getActiveByBookId(id);
+    for (const download of activeDownloads) {
+      try {
+        await downloadService.cancel(download.id);
+      } catch (error) {
+        request.log.warn({ downloadId: download.id, error }, 'Failed to cancel download during book deletion');
+      }
+    }
+    if (activeDownloads.length > 0) {
+      request.log.info({ bookId: id, count: activeDownloads.length }, 'Cancelled active downloads for book');
+    }
+
+    const deleted = await bookService.delete(id);
+
+    if (!deleted) {
+      return reply.status(404).send({ error: 'Book not found' });
+    }
+
+    request.log.info({ id, deleteFiles }, 'Book deleted');
+    return { success: true };
+  } catch (error) {
+    request.log.error(error, 'Failed to delete book');
+    return reply.status(500).send({ error: 'Internal server error' });
+  }
+});
+}
+
+export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, renameService: RenameService) {
   // GET /api/books
   app.get('/api/books', async (request, reply) => {
     try {
@@ -116,6 +175,11 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
           return reply.status(400).send({ error: 'Invalid ID' });
         }
 
+        // Reject empty title
+        if ('title' in request.body && (!request.body.title || !request.body.title.trim())) {
+          return reply.status(400).send({ error: 'Title cannot be empty' });
+        }
+
         const book = await bookService.update(id, request.body);
 
         if (!book) {
@@ -131,57 +195,28 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
     }
   );
 
-  // DELETE /api/books/:id
-  app.delete<{ Params: { id: string }; Querystring: { deleteFiles?: string } }>('/api/books/:id', async (request, reply) => {
+  await registerDeleteBookRoute(app, bookService, downloadService, settingsService);
+  // POST /api/books/:id/rename
+  app.post<{ Params: { id: string } }>('/api/books/:id/rename', async (request, reply) => {
     try {
       const id = parseInt(request.params.id, 10);
       if (isNaN(id)) {
         return reply.status(400).send({ error: 'Invalid ID' });
       }
 
-      const deleteFiles = request.query.deleteFiles === 'true';
-
-      // If deleteFiles requested, attempt file deletion BEFORE cancelling downloads or removing DB record
-      if (deleteFiles) {
-        const book = await bookService.getById(id);
-        if (!book) {
-          return reply.status(404).send({ error: 'Book not found' });
-        }
-
-        if (book.path) {
-          try {
-            const librarySettings = await settingsService.get('library');
-            await bookService.deleteBookFiles(book.path, librarySettings.path);
-          } catch (error) {
-            request.log.error({ bookId: id, error }, 'Failed to delete book files');
-            return reply.status(500).send({ error: 'Failed to delete book files from disk' });
-          }
-        }
-      }
-
-      // Cancel any active downloads for this book
-      const activeDownloads = await downloadService.getActiveByBookId(id);
-      for (const download of activeDownloads) {
-        try {
-          await downloadService.cancel(download.id);
-        } catch (error) {
-          request.log.warn({ downloadId: download.id, error }, 'Failed to cancel download during book deletion');
-        }
-      }
-      if (activeDownloads.length > 0) {
-        request.log.info({ bookId: id, count: activeDownloads.length }, 'Cancelled active downloads for book');
-      }
-
-      const deleted = await bookService.delete(id);
-
-      if (!deleted) {
-        return reply.status(404).send({ error: 'Book not found' });
-      }
-
-      request.log.info({ id, deleteFiles }, 'Book deleted');
-      return { success: true };
+      const result = await renameService.renameBook(id);
+      request.log.info({ id, oldPath: result.oldPath, newPath: result.newPath }, 'Book renamed');
+      return result;
     } catch (error) {
-      request.log.error(error, 'Failed to delete book');
+      if (error instanceof RenameError) {
+        const statusCode = error.code === 'NOT_FOUND' ? 404
+          : error.code === 'NO_PATH' ? 400
+          : error.code === 'CONFLICT' ? 409
+          : 500;
+        request.log.warn({ bookId: request.params.id, code: error.code }, `Rename rejected: ${error.message}`);
+        return reply.status(statusCode).send({ error: error.message });
+      }
+      request.log.error(error, 'Failed to rename book');
       return reply.status(500).send({ error: 'Internal server error' });
     }
   });

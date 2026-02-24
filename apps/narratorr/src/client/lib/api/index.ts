@@ -1,6 +1,6 @@
 export { ApiError } from './client.js';
 
-export type { Author, BookWithAuthor, CreateBookPayload, BookMetadata, AuthorMetadata, MetadataSearchResults, BookFile } from './books.js';
+export type { Author, BookWithAuthor, CreateBookPayload, UpdateBookPayload, RenameResult, BookMetadata, AuthorMetadata, MetadataSearchResults, BookFile } from './books.js';
 export type { SearchResult } from './search.js';
 export type { Download, ActivityCounts } from './activity.js';
 export type { Indexer } from './indexers.js';

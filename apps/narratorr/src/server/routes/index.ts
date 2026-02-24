@@ -13,6 +13,7 @@ import {
   BlacklistService,
   ProwlarrSyncService,
   RemotePathMappingService,
+  RenameService,
 } from '../services';
 import { ImportService } from '../services/import.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
@@ -49,6 +50,7 @@ export interface Services {
   blacklist: BlacklistService;
   prowlarrSync: ProwlarrSyncService;
   remotePathMapping: RemotePathMappingService;
+  rename: RenameService;
 }
 
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
@@ -73,7 +75,9 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const blacklistService = new BlacklistService(db, log);
   const prowlarrSync = new ProwlarrSyncService(db, log);
 
-  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping };
+  const renameService = new RenameService(book, settings, log);
+
+  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService };
 }
 
 export async function registerRoutes(
@@ -81,7 +85,7 @@ export async function registerRoutes(
   services: Services,
   db: Db,
 ): Promise<void> {
-  await booksRoutes(app, services.book, services.download, services.settings);
+  await booksRoutes(app, services.book, services.download, services.settings, services.rename);
   await bookFilesRoute(app, services.book);
   await searchRoutes(app, services.indexer, services.download, services.blacklist);
   await activityRoutes(app, services.download);

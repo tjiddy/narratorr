@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, type Mock } from 'vitest';
-import { screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockBook } from '@/__tests__/factories';
@@ -21,6 +21,8 @@ vi.mock('@/lib/api', async (importOriginal) => {
     api: {
       ...actualApi,
       getBookFiles: vi.fn(),
+      updateBook: vi.fn(),
+      renameBook: vi.fn(),
     },
   };
 });
@@ -61,6 +63,10 @@ function renderBookDetails(
 }
 
 describe('BookDetails', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   describe('full data layout', () => {
     it('renders description and sidebar in two-column grid', () => {
       renderBookDetails({}, fullMetadata);
@@ -223,6 +229,116 @@ describe('BookDetails', () => {
 
       await user.click(screen.getByText('Show less'));
       expect(screen.getByText('Show more')).toBeInTheDocument();
+    });
+
+    it('opens edit modal when Edit button is clicked', async () => {
+      const user = userEvent.setup();
+      renderBookDetails();
+
+      await user.click(screen.getByText('Edit'));
+
+      expect(screen.getByRole('dialog', { name: /edit book metadata/i })).toBeInTheDocument();
+    });
+
+    it('shows Rename button when book has path', () => {
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      expect(screen.getByText('Rename')).toBeInTheDocument();
+    });
+
+    it('hides Rename button when book has no path', () => {
+      renderBookDetails({ path: null });
+
+      expect(screen.queryByText('Rename')).not.toBeInTheDocument();
+    });
+
+    it('calls renameBook API when Rename button is clicked', async () => {
+      const user = userEvent.setup();
+      (api.renameBook as Mock).mockResolvedValue({
+        oldPath: '/library/old',
+        newPath: '/library/new',
+        message: 'Moved',
+        filesRenamed: 1,
+      });
+
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await user.click(screen.getByText('Rename'));
+
+      expect(api.renameBook).toHaveBeenCalledWith(1);
+    });
+
+    it('saves metadata and renames when rename checkbox is checked', async () => {
+      const user = userEvent.setup();
+      (api.updateBook as Mock).mockResolvedValue({});
+      (api.renameBook as Mock).mockResolvedValue({
+        oldPath: '/library/old',
+        newPath: '/library/new',
+        message: 'Moved to new path',
+        filesRenamed: 1,
+      });
+
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await user.click(screen.getByText('Edit'));
+
+      const dialog = screen.getByRole('dialog', { name: /edit book metadata/i });
+      const titleInput = dialog.querySelector('#edit-title') as HTMLInputElement;
+      await user.clear(titleInput);
+      await user.type(titleInput, 'New Title');
+
+      const renameCheckbox = screen.getByRole('checkbox');
+      await user.click(renameCheckbox);
+
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        expect(api.renameBook).toHaveBeenCalledWith(1);
+      });
+      expect(api.updateBook).toHaveBeenCalledWith(1, expect.objectContaining({ title: 'New Title' }));
+    });
+
+    it('shows rename error independently when metadata update succeeds but rename fails', async () => {
+      const user = userEvent.setup();
+      (api.updateBook as Mock).mockResolvedValue({});
+      (api.renameBook as Mock).mockRejectedValue(new Error('Conflict with another book'));
+
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await user.click(screen.getByText('Edit'));
+
+      const renameCheckbox = screen.getByRole('checkbox');
+      await user.click(renameCheckbox);
+
+      await user.click(screen.getByText('Save'));
+
+      // Metadata update should have succeeded — modal should close
+      await waitFor(() => {
+        expect(api.updateBook).toHaveBeenCalled();
+      });
+      // Rename was attempted despite being a separate operation
+      expect(api.renameBook).toHaveBeenCalledWith(1);
+    });
+
+    it('does not call renameBook when rename checkbox is unchecked', async () => {
+      const user = userEvent.setup();
+      (api.updateBook as Mock).mockResolvedValue({});
+
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await user.click(screen.getByText('Edit'));
+
+      const dialog = screen.getByRole('dialog', { name: /edit book metadata/i });
+      const titleInput = dialog.querySelector('#edit-title') as HTMLInputElement;
+      await user.clear(titleInput);
+      await user.type(titleInput, 'New Title');
+
+      await user.click(screen.getByText('Save'));
+
+      await waitFor(() => {
+        expect(api.updateBook).toHaveBeenCalled();
+      });
+      expect(api.renameBook).not.toHaveBeenCalled();
     });
   });
 });
