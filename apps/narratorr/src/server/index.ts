@@ -23,9 +23,13 @@ import { createServices, registerRoutes } from './routes';
 import { startJobs } from './jobs';
 import authPlugin from './plugins/auth.js';
 
+function hasPinoPretty(): boolean {
+  try { import.meta.resolve('pino-pretty'); return true; } catch { return false; }
+}
+
 async function main() {
   const app = Fastify({
-    logger: config.isDev
+    logger: config.isDev && hasPinoPretty()
       ? {
           transport: {
             target: 'pino-pretty',
