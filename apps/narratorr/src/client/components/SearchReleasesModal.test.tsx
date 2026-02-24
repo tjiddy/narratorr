@@ -259,6 +259,38 @@ describe('SearchReleasesModal', () => {
     expect(grabButton).toBeDisabled();
   });
 
+  it('renders grab button for results with long unbroken rawTitle', async () => {
+    const longRawTitle = 'A'.repeat(150);
+    const resultsWithLongTitle: SearchResult[] = [
+      {
+        title: 'Some Book Title',
+        author: 'Author Name',
+        rawTitle: longRawTitle,
+        protocol: 'torrent',
+        infoHash: 'long123',
+        downloadUrl: 'magnet:?xt=urn:btih:long123',
+        size: 2 * 1024 * 1024 * 1024,
+        seeders: 10,
+        indexer: 'TestIndexer',
+      },
+    ];
+    vi.mocked(api.search).mockResolvedValue(resultsWithLongTitle);
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('Some Book Title');
+
+    // Grab button is rendered and enabled despite long rawTitle
+    const grabButton = screen.getByText('Grab').closest('button');
+    expect(grabButton).toBeInTheDocument();
+    expect(grabButton).not.toBeDisabled();
+
+    // rawTitle is rendered (truncated visually via CSS, but present in DOM)
+    expect(screen.getByTitle(longRawTitle)).toBeInTheDocument();
+  });
+
   it('shows error toast when blacklist fails', async () => {
     vi.mocked(api.search).mockResolvedValue(mockResults);
     vi.mocked(api.addToBlacklist).mockRejectedValue(new Error('Server error'));

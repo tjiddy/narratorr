@@ -152,7 +152,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 space-y-4">
           {/* Loading */}
           {isLoading && (
             <div className="flex flex-col items-center justify-center py-12">
@@ -239,7 +239,7 @@ function ReleaseCard({
         </div>
 
         {/* Content */}
-        <div className="flex-1 min-w-0 flex flex-col">
+        <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
           <h4 className="font-medium text-sm leading-tight line-clamp-2">
             {result.author && <span className="text-muted-foreground">{result.author} — </span>}
             {result.title}
