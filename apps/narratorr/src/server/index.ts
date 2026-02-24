@@ -25,7 +25,14 @@ import authPlugin from './plugins/auth.js';
 
 async function main() {
   const app = Fastify({
-    logger: true,
+    logger: config.isDev
+      ? {
+          transport: {
+            target: 'pino-pretty',
+            options: { translateTime: 'HH:MM:ss', ignore: 'pid,hostname' },
+          },
+        }
+      : true,
   }).withTypeProvider<ZodTypeProvider>();
 
   // Set up Zod validation

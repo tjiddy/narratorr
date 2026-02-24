@@ -1,4 +1,4 @@
-import { mkdir, readdir, rename, cp, rm, stat } from 'node:fs/promises';
+import { mkdir, readdir, rename, rmdir, cp, rm, stat } from 'node:fs/promises';
 import { join, extname, basename, dirname, normalize, resolve, relative } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '@narratorr/core/utils';
@@ -244,7 +244,7 @@ export class RenameService {
       try {
         const entries = await readdir(current);
         if (entries.length > 0) break;
-        await rm(current);
+        await rmdir(current);
         this.log.debug({ path: current }, 'Removed empty parent directory');
         current = dirname(current);
       } catch {

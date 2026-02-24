@@ -11,11 +11,12 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return {
     ...actual,
     rm: vi.fn(),
+    rmdir: vi.fn(),
     readdir: vi.fn(),
   };
 });
 
-import { rm, readdir } from 'node:fs/promises';
+import { rm, rmdir, readdir } from 'node:fs/promises';
 import type { Mock } from 'vitest';
 
 const mockAuthor = createMockDbAuthor();
@@ -429,16 +430,18 @@ describe('BookService', () => {
 
     it('cleans up empty parent directories up to library root', async () => {
       (rm as Mock).mockResolvedValue(undefined);
+      (rmdir as Mock).mockResolvedValue(undefined);
       (readdir as Mock)
         .mockResolvedValueOnce([])   // /audiobooks/Author is empty
         .mockResolvedValueOnce([]);  // shouldn't be called — /audiobooks is library root
 
       await service.deleteBookFiles('/audiobooks/Author/Book', '/audiobooks');
 
-      // rm called for: book dir + empty Author dir
-      expect(rm).toHaveBeenCalledTimes(2);
-      expect(rm).toHaveBeenNthCalledWith(1, '/audiobooks/Author/Book', { recursive: true, force: true });
-      expect(rm).toHaveBeenNthCalledWith(2, expect.stringContaining('Author'));
+      // rm called once for book dir, rmdir called once for empty Author dir
+      expect(rm).toHaveBeenCalledTimes(1);
+      expect(rm).toHaveBeenCalledWith('/audiobooks/Author/Book', { recursive: true, force: true });
+      expect(rmdir).toHaveBeenCalledTimes(1);
+      expect(rmdir).toHaveBeenCalledWith(expect.stringContaining('Author'));
     });
 
     it('stops cleaning parents at non-empty directory', async () => {

@@ -1,4 +1,4 @@
-import { rm, readdir } from 'node:fs/promises';
+import { rm, rmdir, readdir } from 'node:fs/promises';
 import { resolve, dirname, normalize, relative } from 'node:path';
 import { eq, and, like, desc, sql } from 'drizzle-orm';
 import type { Db } from '@narratorr/db';
@@ -247,7 +247,7 @@ export class BookService {
       try {
         const entries = await readdir(current);
         if (entries.length > 0) break;
-        await rm(current);
+        await rmdir(current);
         this.log.debug({ path: current }, 'Removed empty parent directory');
         current = dirname(current);
       } catch {
