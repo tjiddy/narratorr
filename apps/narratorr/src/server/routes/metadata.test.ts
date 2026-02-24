@@ -126,6 +126,7 @@ describe('metadata routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/metadata/search?q=sanderson' });
 
       expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
     });
 
     it('GET /api/metadata/authors/:id returns 500 when service throws', async () => {
@@ -134,6 +135,7 @@ describe('metadata routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/metadata/authors/B001H6UJO8' });
 
       expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
     });
 
     it('GET /api/metadata/authors/:id/books returns 500 when service throws', async () => {
@@ -142,6 +144,7 @@ describe('metadata routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/metadata/authors/B001H6UJO8/books' });
 
       expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
     });
 
     it('GET /api/metadata/books/:id returns 500 when service throws', async () => {
@@ -150,6 +153,7 @@ describe('metadata routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/metadata/books/B0030DL4GK' });
 
       expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
     });
 
     it('GET /api/metadata/test returns 500 when service throws', async () => {
@@ -158,6 +162,16 @@ describe('metadata routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/metadata/test' });
 
       expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+
+    it('GET /api/metadata/providers returns 500 when service throws', async () => {
+      (services.metadata.getProviders as Mock).mockRejectedValue(new Error('Config error'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/metadata/providers' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
     });
   });
 });

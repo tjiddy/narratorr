@@ -95,7 +95,7 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
     try {
       const { status } = request.query as { status?: string };
       request.log.debug({ status }, 'Fetching books');
-      return bookService.getAll(status);
+      return await bookService.getAll(status);
     } catch (error) {
       request.log.error(error, 'Failed to fetch books');
       return reply.status(500).send({ error: 'Internal server error' });

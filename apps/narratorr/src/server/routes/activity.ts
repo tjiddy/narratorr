@@ -7,7 +7,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     try {
       const { status } = request.query as { status?: string };
       request.log.debug({ status }, 'Fetching activity');
-      return downloadService.getAll(status);
+      return await downloadService.getAll(status);
     } catch (error) {
       request.log.error(error, 'Failed to fetch activity');
       return reply.status(500).send({ error: 'Internal server error' });
@@ -17,7 +17,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
   // GET /api/activity/active
   app.get('/api/activity/active', async (request, reply) => {
     try {
-      return downloadService.getActive();
+      return await downloadService.getActive();
     } catch (error) {
       request.log.error(error, 'Failed to fetch active downloads');
       return reply.status(500).send({ error: 'Internal server error' });
@@ -28,7 +28,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
   app.get('/api/activity/counts', async (request, reply) => {
     try {
       request.log.debug('Fetching activity counts');
-      return downloadService.getCounts();
+      return await downloadService.getCounts();
     } catch (error) {
       request.log.error(error, 'Failed to fetch activity counts');
       return reply.status(500).send({ error: 'Internal server error' });

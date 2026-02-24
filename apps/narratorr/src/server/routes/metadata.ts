@@ -15,7 +15,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
       try {
         const { q } = request.query as { q: string };
         request.log.debug({ q }, 'Metadata search');
-        return metadataService.search(q);
+        return await metadataService.search(q);
       } catch (error) {
         request.log.error(error, 'Metadata search failed');
         return reply.status(500).send({ error: 'Internal server error' });
@@ -61,7 +61,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
       try {
         const { id } = request.params as { id: string };
         request.log.debug({ id }, 'Fetching author books');
-        return metadataService.getAuthorBooks(id);
+        return await metadataService.getAuthorBooks(id);
       } catch (error) {
         request.log.error(error, 'Failed to fetch author books');
         return reply.status(500).send({ error: 'Internal server error' });
@@ -98,7 +98,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
   // GET /api/metadata/test
   app.get('/api/metadata/test', async (request, reply) => {
     try {
-      return metadataService.testProviders();
+      return await metadataService.testProviders();
     } catch (error) {
       request.log.error(error, 'Metadata provider test failed');
       return reply.status(500).send({ error: 'Internal server error' });
@@ -108,7 +108,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
   // GET /api/metadata/providers
   app.get('/api/metadata/providers', async (request, reply) => {
     try {
-      return metadataService.getProviders();
+      return await metadataService.getProviders();
     } catch (error) {
       request.log.error(error, 'Failed to fetch metadata providers');
       return reply.status(500).send({ error: 'Internal server error' });

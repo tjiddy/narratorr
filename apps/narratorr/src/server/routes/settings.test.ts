@@ -149,6 +149,7 @@ describe('settings routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/settings' });
 
       expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
     });
 
     it('PUT /api/settings returns 500 when service throws', async () => {
@@ -161,6 +162,7 @@ describe('settings routes', () => {
       });
 
       expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
     });
   });
 });

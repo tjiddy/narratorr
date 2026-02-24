@@ -510,6 +510,7 @@ describe('books routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/books' });
 
       expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
     });
 
     it('DELETE still succeeds when cancel() throws for one download', async () => {

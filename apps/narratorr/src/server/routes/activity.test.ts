@@ -186,6 +186,34 @@ describe('activity routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/activity' });
 
       expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+
+    it('GET /api/activity/active returns 500 when service throws', async () => {
+      (services.download.getActive as Mock).mockRejectedValue(new Error('DB error'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity/active' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+
+    it('GET /api/activity/counts returns 500 when service throws', async () => {
+      (services.download.getCounts as Mock).mockRejectedValue(new Error('DB error'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity/counts' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+
+    it('GET /api/activity/:id returns 500 when getById throws', async () => {
+      (services.download.getById as Mock).mockRejectedValue(new Error('DB error'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity/1' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
     });
 
     it('GET /api/activity/:id returns 400 for NaN id', async () => {

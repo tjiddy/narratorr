@@ -12,7 +12,7 @@ export async function settingsRoutes(app: FastifyInstance, settingsService: Sett
   // GET /api/settings
   app.get('/api/settings', async (request, reply) => {
     try {
-      return settingsService.getAll();
+      return await settingsService.getAll();
     } catch (error) {
       request.log.error(error, 'Failed to fetch settings');
       return reply.status(500).send({ error: 'Internal server error' });
