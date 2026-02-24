@@ -26,14 +26,13 @@ function MappingForm({
     initial ?? { remotePath: '', localPath: '' },
   );
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSave = () => {
     if (!form.remotePath.trim() || !form.localPath.trim()) return;
     onSubmit(form);
   };
 
   return (
-    <form onSubmit={handleSubmit} className="glass-card rounded-2xl p-5 space-y-4 animate-fade-in">
+    <div className="glass-card rounded-2xl p-5 space-y-4 animate-fade-in">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label htmlFor="mapping-remote" className="block text-sm font-medium mb-2">Remote Path</label>
@@ -67,7 +66,8 @@ function MappingForm({
           Cancel
         </button>
         <button
-          type="submit"
+          type="button"
+          onClick={handleSave}
           disabled={isPending || !form.remotePath.trim() || !form.localPath.trim()}
           className="flex items-center gap-2 px-5 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring"
         >
@@ -75,7 +75,7 @@ function MappingForm({
           {isPending ? 'Saving...' : 'Save'}
         </button>
       </div>
-    </form>
+    </div>
   );
 }
 

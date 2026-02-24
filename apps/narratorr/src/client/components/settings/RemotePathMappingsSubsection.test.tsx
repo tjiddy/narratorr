@@ -211,4 +211,44 @@ describe('RemotePathMappingsSubsection', () => {
 
     expect(api.getMappingsByClientId).toHaveBeenCalledWith(5);
   });
+
+  it('Save button does not submit a parent form (regression #225)', async () => {
+    const user = userEvent.setup();
+    const parentSubmit = vi.fn((e: React.FormEvent) => e.preventDefault());
+    (api.createMapping as Mock).mockResolvedValue(mockMapping);
+
+    renderWithProviders(
+      <form onSubmit={parentSubmit}>
+        <RemotePathMappingsSubsection clientId={5} />
+      </form>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Remote Path Mappings')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Add Mapping'));
+    await user.type(screen.getByLabelText('Remote Path'), '/remote/');
+    await user.type(screen.getByLabelText('Local Path'), '/local/');
+    await user.click(screen.getByText('Save'));
+
+    await waitFor(() => {
+      expect(api.createMapping).toHaveBeenCalled();
+    });
+    expect(parentSubmit).not.toHaveBeenCalled();
+  });
+
+  it('Save button is disabled when fields are empty', async () => {
+    const user = userEvent.setup();
+
+    renderWithProviders(<RemotePathMappingsSubsection clientId={5} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Remote Path Mappings')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Add Mapping'));
+
+    expect(screen.getByText('Save')).toBeDisabled();
+  });
 });
