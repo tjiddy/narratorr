@@ -48,7 +48,25 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      - <file>: "<stub description>"
      ```
      These stubs were created from spec interactions during `/claim`. Each one must be implemented as a real test before handoff.
-   - If none remain (or no test files changed), continue to step 3.
+   - If none remain (or no test files changed), continue to step 2c.
+
+2c. **Test coverage review (HARD GATE).**
+   Review every new or significantly changed source file on this branch:
+   ```bash
+   git diff main --name-only -- '*.ts' '*.tsx' | grep -v '\.test\.'
+   ```
+   For each file, identify the behaviors, branches, and error paths it introduces. Then verify each one has explicit test coverage — either in a co-located test file or in a parent component/integration test that exercises it directly (name the test).
+
+   Format the review as a checklist:
+   ```
+   COVERAGE REVIEW:
+   - <file>:
+     - <behavior 1> → tested in <test file>: "<test name>" ✓
+     - <behavior 2> → tested in <test file>: "<test name>" ✓
+     - <behavior 3> → UNTESTED ✗
+   ```
+
+   If any behavior is marked UNTESTED, STOP — write the missing tests, re-run quality gates, then restart from step 2c. Do NOT proceed to push with untested behavior.
 
 3. **Push the branch:**
    ```bash
