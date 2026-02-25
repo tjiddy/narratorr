@@ -424,6 +424,31 @@ describe('SearchReleasesModal', () => {
     });
   });
 
+  it('disables blacklist button when infoHash is falsy', async () => {
+    const resultsWithoutHash: SearchResult[] = [
+      {
+        title: 'No Hash Release',
+        author: 'Author',
+        protocol: 'usenet',
+        infoHash: '',
+        downloadUrl: 'https://indexer.example/nzb/123',
+        size: 1024,
+        seeders: 0,
+        indexer: 'TestIndexer',
+      },
+    ];
+    vi.mocked(api.search).mockResolvedValue(searchResponse(resultsWithoutHash));
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('No Hash Release');
+
+    const blacklistButton = screen.getByText('Blacklist').closest('button');
+    expect(blacklistButton).toBeDisabled();
+  });
+
   it('shows error toast when blacklist fails', async () => {
     vi.mocked(api.search).mockResolvedValue(searchResponse(mockResults));
     vi.mocked(api.addToBlacklist).mockRejectedValue(new Error('Server error'));

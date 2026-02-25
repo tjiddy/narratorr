@@ -277,6 +277,60 @@ describe('RenameService', () => {
       expect(rename).toHaveBeenCalledTimes(5);
     });
 
+    it('logs error for each failed rollback when multiple rollbacks fail', async () => {
+      const { service, log } = createService();
+      (readdir as Mock).mockResolvedValue([
+        { name: 'file1.m4b', isFile: () => true },
+        { name: 'file2.m4b', isFile: () => true },
+        { name: 'file3.m4b', isFile: () => true },
+      ]);
+      (rename as Mock)
+        .mockResolvedValueOnce(undefined)       // file1 rename succeeds
+        .mockResolvedValueOnce(undefined)       // file2 rename succeeds
+        .mockRejectedValueOnce(new Error('EACCES'))  // file3 rename fails → triggers rollback
+        .mockRejectedValueOnce(new Error('EBUSY'))   // rollback file2 fails
+        .mockRejectedValueOnce(new Error('EPERM'));   // rollback file1 also fails
+
+      await expect(
+        service.renameFilesWithTemplate('/library/test', '{title}', mockBook, 'Brandon Sanderson'),
+      ).rejects.toThrow('EACCES');
+
+      // 3 forward attempts + 2 rollback attempts = 5 total
+      expect(rename).toHaveBeenCalledTimes(5);
+      // log.error called for EACH failed rollback file
+      const errorCalls = (log.error as ReturnType<typeof vi.fn>).mock.calls;
+      const rollbackErrors = errorCalls.filter(
+        (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('Rollback failed'),
+      );
+      expect(rollbackErrors).toHaveLength(2);
+      // Original error is re-thrown (not a rollback error)
+    });
+
+    it('does not log rollback error when single rollback succeeds', async () => {
+      const { service, log } = createService();
+      (readdir as Mock).mockResolvedValue([
+        { name: 'file1.m4b', isFile: () => true },
+        { name: 'file2.m4b', isFile: () => true },
+      ]);
+      (rename as Mock)
+        .mockResolvedValueOnce(undefined)       // file1 rename succeeds
+        .mockRejectedValueOnce(new Error('EACCES'))  // file2 rename fails → triggers rollback
+        .mockResolvedValueOnce(undefined);       // rollback file1 succeeds
+
+      await expect(
+        service.renameFilesWithTemplate('/library/test', '{title}', mockBook, 'Brandon Sanderson'),
+      ).rejects.toThrow('EACCES');
+
+      // 2 forward + 1 rollback = 3 total
+      expect(rename).toHaveBeenCalledTimes(3);
+      // No rollback errors logged — the single rollback succeeded
+      const errorCalls = (log.error as ReturnType<typeof vi.fn>).mock.calls;
+      const rollbackErrors = errorCalls.filter(
+        (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('Rollback failed'),
+      );
+      expect(rollbackErrors).toHaveLength(0);
+    });
+
     it('deduplicates colliding filenames', async () => {
       const { service } = createService();
       // Two files, template produces same name for both

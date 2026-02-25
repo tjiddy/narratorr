@@ -227,6 +227,40 @@ describe('DownloadService', () => {
 
       expect(db.update).toHaveBeenCalled();
     });
+
+    it('allows duplicate downloads for the same bookId — BUG: see #240', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1 });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      // Both calls create separate download records
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      const grabParams = {
+        downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        title: 'The Way of Kings',
+        bookId: 1,
+      };
+
+      // BUG: see #240 — no unique constraint or dedup check prevents duplicate records
+      // when auto-grab and manual grab race for the same book
+      const [result1, result2] = await Promise.all([
+        service.grab(grabParams),
+        service.grab(grabParams),
+      ]);
+
+      expect(result1).toBeDefined();
+      expect(result2).toBeDefined();
+      // Two insert calls = two download records created
+      expect(db.insert).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('updateProgress', () => {
@@ -695,6 +729,80 @@ describe('DownloadService', () => {
       );
 
       await expect(service.retry(1)).rejects.toThrow('no download URL');
+    });
+
+    it('propagates error when grab() throws during retry — db.delete() never called', async () => {
+      const failedDownload = { ...mockDownload, status: 'failed' as const };
+
+      // getById for retry
+      db.select.mockReturnValueOnce(
+        mockDbChain([{ download: failedDownload, book: mockBook }]),
+      );
+      // grab: getFirstEnabledForProtocol throws
+      (clientService.getFirstEnabledForProtocol as Mock).mockRejectedValue(
+        new Error('No client available'),
+      );
+
+      await expect(service.retry(1)).rejects.toThrow('No client available');
+
+      // db.delete should never have been called
+      expect(db.delete).not.toHaveBeenCalled();
+    });
+
+    it('propagates error when db.delete() throws after successful grab — BUG: see #239', async () => {
+      const failedDownload = { ...mockDownload, status: 'failed' as const };
+      const mockAdapter = { addDownload: vi.fn().mockResolvedValue('ext-new') };
+
+      // getById for retry
+      db.select.mockReturnValueOnce(
+        mockDbChain([{ download: failedDownload, book: mockBook }]),
+      );
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1 });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+      // grab: insert new download
+      db.insert.mockReturnValue(mockDbChain([{ id: 99 }]));
+      db.update.mockReturnValue(mockDbChain());
+      // grab: getById for return
+      db.select.mockReturnValueOnce(
+        mockDbChain([{ download: { ...mockDownload, id: 99 }, book: mockBook }]),
+      );
+      // delete throws
+      db.delete.mockImplementation(() => { throw new Error('SQLITE_BUSY'); });
+
+      // BUG: see #239 — error propagates, leaving duplicate records (old + new)
+      await expect(service.retry(1)).rejects.toThrow('SQLITE_BUSY');
+
+      // New download was already created (grab succeeded)
+      expect(mockAdapter.addDownload).toHaveBeenCalled();
+      expect(db.insert).toHaveBeenCalled();
+    });
+
+    it('succeeds with null externalId — old record deleted, log.info with both IDs', async () => {
+      const failedDownload = { ...mockDownload, status: 'failed' as const };
+      const mockAdapter = { addDownload: vi.fn().mockResolvedValue(null) };
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+
+      db.select.mockReturnValueOnce(
+        mockDbChain([{ download: failedDownload, book: mockBook }]),
+      );
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+      db.insert.mockReturnValue(mockDbChain([{ id: 99 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValueOnce(
+        mockDbChain([{ download: { ...mockDownload, id: 99, externalId: null, status: 'downloading' }, book: mockBook }]),
+      );
+      db.delete.mockReturnValue(mockDbChain());
+
+      const result = await svc.retry(1);
+
+      expect(result.id).toBe(99);
+      expect(db.delete).toHaveBeenCalled();
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ oldId: 1, newId: 99 }),
+        'Download retried',
+      );
     });
 
     it('deletes old failed download record after successful retry', async () => {

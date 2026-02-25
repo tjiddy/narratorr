@@ -521,6 +521,32 @@ describe('ManualImportPage', () => {
       await userEvent.type(input, '/new');
       expect(screen.queryByText(/Not found/)).not.toBeInTheDocument();
     });
+
+    it('clears stale error when subsequent scan succeeds', async () => {
+      // First scan fails
+      mockScanDirectory.mockRejectedValueOnce(new Error('Permission denied'));
+
+      renderPage();
+      const input = screen.getByPlaceholderText('/path/to/audiobooks');
+      await userEvent.type(input, '/bad/path');
+      await userEvent.click(screen.getByText('Scan'));
+
+      await screen.findByText(/Permission denied/);
+
+      // User changes path and scans again — succeeds
+      await userEvent.clear(input);
+      mockScanDirectory.mockResolvedValueOnce({
+        discoveries: [makeDiscoveredBook()],
+        totalFolders: 1,
+        skippedDuplicates: 0,
+      });
+      await userEvent.type(input, '/good/path');
+      await userEvent.click(screen.getByText('Scan'));
+
+      // Error should be cleared, review step visible
+      await screen.findByText(/selected/);
+      expect(screen.queryByText(/Permission denied/)).not.toBeInTheDocument();
+    });
   });
 
   describe('back resets state', () => {

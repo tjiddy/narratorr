@@ -165,6 +165,41 @@ describe('BookMetadataModal', () => {
       renderModal();
       expect(screen.getByText('Search Audnexus for metadata')).toBeInTheDocument();
     });
+
+    it('sends NaN seriesPosition when user types non-numeric value — BUG: see #238', async () => {
+      const onSave = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ onSave });
+
+      const posInput = screen.getByLabelText(/position/i);
+      await user.clear(posInput);
+      await user.type(posInput, 'abc');
+      await user.click(screen.getByText('Save'));
+
+      // BUG: see #238 — parseFloat("abc") returns NaN, which passes change detection
+      // (NaN !== 1 is always true) and gets sent to API
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({ seriesPosition: NaN }),
+        false,
+      );
+    });
+
+    it('sends partial parse result for "1.2.3" — parseFloat returns 1.2', async () => {
+      const onSave = vi.fn();
+      const user = userEvent.setup();
+      renderModal({ onSave });
+
+      const posInput = screen.getByLabelText(/position/i);
+      await user.clear(posInput);
+      await user.type(posInput, '1.2.3');
+      await user.click(screen.getByText('Save'));
+
+      // parseFloat("1.2.3") returns 1.2 (stops at second dot)
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({ seriesPosition: 1.2 }),
+        false,
+      );
+    });
   });
 
   describe('search view', () => {

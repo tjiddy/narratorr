@@ -277,5 +277,42 @@ describe('useAddBooksToLibrary', () => {
         expect(api.addBook).toHaveBeenCalledTimes(2);
       });
     });
+
+    it('continues adding remaining books when one mutation fails — no rollback', async () => {
+      // Second call fails, first and third should still succeed
+      vi.mocked(api.addBook)
+        .mockResolvedValueOnce({} as BookWithAuthor)   // Book 1 succeeds
+        .mockRejectedValueOnce(new Error('DB error'))  // Book 2 fails
+        .mockResolvedValueOnce({} as BookWithAuthor);  // Book 3 succeeds
+
+      const books = [
+        makeBook({ asin: 'B010', title: 'Series Book 1' }),
+        makeBook({ asin: 'B011', title: 'Series Book 2' }),
+        makeBook({ asin: 'B012', title: 'Series Book 3' }),
+      ];
+
+      const { result } = renderHook(
+        () => useAddBooksToLibrary([]),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      act(() => {
+        result.current.addAllInSeries(books);
+      });
+
+      // All three mutations fired — no early exit on failure
+      await waitFor(() => {
+        expect(api.addBook).toHaveBeenCalledTimes(3);
+      });
+
+      // First and third succeed
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith("Added 'Series Book 1' to library");
+        expect(toast.success).toHaveBeenCalledWith("Added 'Series Book 3' to library");
+      });
+
+      // Second shows error toast
+      expect(toast.error).toHaveBeenCalledWith("Failed to add 'Series Book 2': DB error");
+    });
   });
 });

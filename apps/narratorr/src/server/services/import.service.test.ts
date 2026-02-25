@@ -20,6 +20,23 @@ vi.mock('node:fs/promises', () => ({
   rm: vi.fn().mockResolvedValue(undefined),
 }));
 
+// Mock enrichment-utils — delegates to real impl by default, override per-test for throw scenarios
+const realEnrichBookFromAudio = vi.hoisted(() => {
+  let realFn: ((...args: unknown[]) => Promise<unknown>) | null = null;
+  return {
+    setReal: (fn: (...args: unknown[]) => Promise<unknown>) => { realFn = fn; },
+    call: (...args: unknown[]) => realFn ? realFn(...args) : Promise.resolve({ enriched: false }),
+  };
+});
+
+vi.mock('./enrichment-utils.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, (...args: unknown[]) => Promise<unknown>>;
+  realEnrichBookFromAudio.setReal(actual.enrichBookFromAudio);
+  return {
+    enrichBookFromAudio: vi.fn().mockImplementation((...args: unknown[]) => realEnrichBookFromAudio.call(...args)),
+  };
+});
+
 // Mock audio scanner
 vi.mock('@narratorr/core/utils/audio-scanner', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
@@ -33,6 +50,7 @@ vi.mock('@narratorr/core/utils/audio-processor', () => ({
 import { mkdir, cp, stat, readdir, writeFile, rename, rm } from 'node:fs/promises';
 import { scanAudioDirectory } from '@narratorr/core/utils/audio-scanner';
 import { processAudioFiles } from '@narratorr/core/utils/audio-processor';
+import { enrichBookFromAudio } from './enrichment-utils.js';
 
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 
@@ -1048,6 +1066,105 @@ describe('ImportService', () => {
 
       await expect(serviceWithMappings.importDownload(1)).rejects.toThrow(
         /Check your remote path mapping configuration/,
+      );
+    });
+  });
+
+  describe('import atomicity failures (#235 Tier 1)', () => {
+    it('does not clean up copied files when DB update throws after copy — BUG: see #237', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+
+      // First update (set importing) succeeds, then book update at step 8 throws
+      let updateCallCount = 0;
+      db.update.mockImplementation(() => {
+        updateCallCount++;
+        const chain = mockDbChain();
+        // The 3rd update call is step 8 (update book to imported) — make it throw
+        if (updateCallCount === 3) {
+          (chain.where as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('DB constraint violation'));
+        }
+        return chain;
+      });
+
+      await expect(service.importDownload(1)).rejects.toThrow('DB constraint violation');
+
+      // Verify cp was called (files were copied)
+      expect(cp).toHaveBeenCalled();
+
+      // BUG: see #237 — rm is NOT called on targetPath, leaving orphaned files on disk
+      const rmMock = vi.mocked(rm);
+      expect(rmMock).not.toHaveBeenCalled();
+
+      // Verify catch block still reverts download to 'failed'
+      const updateCalls = db.update.mock.results;
+      const setCalls = updateCalls
+        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .filter(Boolean);
+      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
+    });
+
+    it('logs warn (not error) when upgrade rm() fails on old path', async () => {
+      const importedBook = createMockDbBook({
+        status: 'downloading' as const,
+        path: '/audiobooks/Old Author/Old Book',
+      });
+
+      const log = createMockLogger();
+      const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log));
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // rm rejects for old path cleanup
+      const rmMock = vi.mocked(rm);
+      rmMock.mockRejectedValueOnce(new Error('EACCES: permission denied'));
+
+      const result = await svc.importDownload(1);
+
+      // Import still succeeds
+      expect(result.downloadId).toBe(1);
+
+      // Logged at warn level, not error
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ oldPath: '/audiobooks/Old Author/Old Book' }),
+        expect.stringContaining('Failed to delete old book files'),
+      );
+      expect(log.error).not.toHaveBeenCalledWith(
+        expect.objectContaining({ oldPath: '/audiobooks/Old Author/Old Book' }),
+        expect.any(String),
+      );
+    });
+
+    it('reverts download and book status when enrichBookFromAudio throws', async () => {
+      const log = createMockLogger();
+      const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log));
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // Make enrichBookFromAudio throw (simulating a scenario where internal catch is absent)
+      const enrichMock = vi.mocked(enrichBookFromAudio);
+      enrichMock.mockRejectedValueOnce(new Error('Enrichment exploded'));
+
+      await expect(svc.importDownload(1)).rejects.toThrow('Enrichment exploded');
+
+      // Verify download reverted to 'failed'
+      const updateCalls = db.update.mock.results;
+      const setCalls = updateCalls
+        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .filter(Boolean);
+      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
+      // Book reverted to 'wanted' (no path)
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'wanted' }));
+      // Error logged
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 1 }),
+        'Import failed',
       );
     });
   });

@@ -251,4 +251,36 @@ describe('RemotePathMappingsSubsection', () => {
 
     expect(screen.getByText('Save')).toBeDisabled();
   });
+
+  it('does not submit when remote path is whitespace-only', async () => {
+    const user = userEvent.setup();
+
+    renderWithProviders(<RemotePathMappingsSubsection clientId={5} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Remote Path Mappings')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Add Mapping'));
+    await user.type(screen.getByLabelText('Remote Path'), '   ');
+    await user.type(screen.getByLabelText('Local Path'), '/valid/path');
+
+    expect(screen.getByText('Save')).toBeDisabled();
+  });
+
+  it('does not submit when local path is whitespace-only', async () => {
+    const user = userEvent.setup();
+
+    renderWithProviders(<RemotePathMappingsSubsection clientId={5} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Remote Path Mappings')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Add Mapping'));
+    await user.type(screen.getByLabelText('Remote Path'), '/valid/path');
+    await user.type(screen.getByLabelText('Local Path'), '   ');
+
+    expect(screen.getByText('Save')).toBeDisabled();
+  });
 });

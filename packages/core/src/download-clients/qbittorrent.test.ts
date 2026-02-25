@@ -161,6 +161,19 @@ describe('QBittorrentClient', () => {
         'Could not extract info hash from magnet URI',
       );
     });
+
+    it('throws when btih contains invalid characters', async () => {
+      server.use(
+        http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
+          return new HttpResponse('');
+        }),
+      );
+
+      // Invalid chars prevent regex match entirely — neither hex [a-f0-9]{40} nor base32 [a-z2-7]{32} matches
+      await expect(
+        client.addDownload('magnet:?xt=urn:btih:INVALID!@%23%24CHARS&dn=Test'),
+      ).rejects.toThrow('Could not extract info hash from magnet URI');
+    });
   });
 
   describe('getDownload', () => {
