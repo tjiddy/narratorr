@@ -42,6 +42,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
   const {
     data,
     isLoading,
+    isFetching,
     error,
     refetch,
   } = useQuery({
@@ -139,11 +140,11 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
           <div className="flex items-center gap-2 shrink-0 ml-4">
             <button
               onClick={() => refetch()}
-              disabled={isLoading}
+              disabled={isFetching}
               className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors focus-ring"
               aria-label="Refresh results"
             >
-              <RefreshIcon className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+              <RefreshIcon className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
             </button>
             <button
               onClick={onClose}
@@ -273,8 +274,8 @@ function ReleaseCard({
     ? compareQuality(existingBookSizeBytes, result.size, bookDurationSeconds)
     : null;
   return (
-    <div className="glass-card rounded-xl p-4 hover:border-primary/30 transition-all duration-200">
-      <div className="flex gap-4">
+    <div className="glass-card rounded-xl p-4 hover:border-primary/30 transition-all duration-200 overflow-hidden">
+      <div className="flex gap-4 overflow-hidden">
         {/* Cover */}
         <div className="shrink-0">
           <CoverImage
@@ -287,7 +288,7 @@ function ReleaseCard({
 
         {/* Content */}
         <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
-          <h4 className="font-medium text-sm leading-tight line-clamp-2">
+          <h4 className="font-medium text-sm leading-tight truncate">
             {result.author && <span className="text-muted-foreground">{result.author} — </span>}
             {result.title}
           </h4>
@@ -297,9 +298,9 @@ function ReleaseCard({
             </p>
           )}
           {result.narrator && (
-            <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-              <UsersIcon className="w-3 h-3" />
-              {result.narrator}
+            <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1 truncate">
+              <UsersIcon className="w-3 h-3 shrink-0" />
+              <span className="truncate">{result.narrator}</span>
             </p>
           )}
           <div className="flex flex-wrap items-center gap-2.5 mt-auto pt-2">
