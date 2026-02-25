@@ -294,8 +294,13 @@ export class DownloadService {
       seeders: download.seeders ?? undefined,
     });
 
-    // Delete the old failed download record
-    await this.db.delete(downloads).where(eq(downloads.id, id));
+    // Delete the old failed download record — if this fails, the old record
+    // is harmless (already 'failed' status), so log and return the new one
+    try {
+      await this.db.delete(downloads).where(eq(downloads.id, id));
+    } catch (error) {
+      this.log.warn({ oldId: id, newId: newDownload.id, error }, 'Failed to delete old download record after retry');
+    }
 
     this.log.info({ oldId: id, newId: newDownload.id }, 'Download retried');
     return newDownload;

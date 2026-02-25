@@ -749,9 +749,11 @@ describe('DownloadService', () => {
       expect(db.delete).not.toHaveBeenCalled();
     });
 
-    it('propagates error when db.delete() throws after successful grab — BUG: see #239', async () => {
+    it('returns new download and logs warning when db.delete() throws after successful grab', async () => {
       const failedDownload = { ...mockDownload, status: 'failed' as const };
       const mockAdapter = { addDownload: vi.fn().mockResolvedValue('ext-new') };
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
 
       // getById for retry
       db.select.mockReturnValueOnce(
@@ -769,12 +771,15 @@ describe('DownloadService', () => {
       // delete throws
       db.delete.mockImplementation(() => { throw new Error('SQLITE_BUSY'); });
 
-      // BUG: see #239 — error propagates, leaving duplicate records (old + new)
-      await expect(service.retry(1)).rejects.toThrow('SQLITE_BUSY');
+      const result = await svc.retry(1);
 
-      // New download was already created (grab succeeded)
-      expect(mockAdapter.addDownload).toHaveBeenCalled();
-      expect(db.insert).toHaveBeenCalled();
+      // New download returned despite delete failure
+      expect(result.id).toBe(99);
+      // Warning logged with both IDs and error
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ oldId: 1, newId: 99, error: expect.any(Error) }),
+        'Failed to delete old download record after retry',
+      );
     });
 
     it('succeeds with null externalId — old record deleted, log.info with both IDs', async () => {
