@@ -162,7 +162,7 @@ describe('Multi-entity E2E', () => {
     });
 
     expect(searchRes.statusCode).toBe(200);
-    const results = searchRes.json();
+    const results = searchRes.json().results;
     // Should have results from both indexers
     expect(results.length).toBeGreaterThanOrEqual(2);
 

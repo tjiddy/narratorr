@@ -187,7 +187,7 @@ describe('Error recovery E2E', () => {
 
     // Search completes with results from the working indexer
     expect(searchRes.statusCode).toBe(200);
-    const results = searchRes.json();
+    const results = searchRes.json().results;
     expect(results.length).toBeGreaterThan(0);
   });
 

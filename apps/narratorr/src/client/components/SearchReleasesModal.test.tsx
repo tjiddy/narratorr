@@ -3,7 +3,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
-import type { SearchResult } from '@/lib/api';
+import type { SearchResult, SearchResponse } from '@/lib/api';
 import { createMockBook } from '@/__tests__/factories';
 
 vi.mock('@/lib/api', () => ({
@@ -54,6 +54,13 @@ const mockResults: SearchResult[] = [
   },
 ];
 
+function searchResponse(results: SearchResult[], unsupported?: { count: number; titles: string[] }): SearchResponse {
+  return {
+    results,
+    unsupportedResults: unsupported ?? { count: 0, titles: [] },
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -68,7 +75,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('shows book title and author in header', async () => {
-    vi.mocked(api.search).mockResolvedValue(mockResults);
+    vi.mocked(api.search).mockResolvedValue(searchResponse(mockResults));
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -79,7 +86,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('auto-searches with book title and author name', async () => {
-    vi.mocked(api.search).mockResolvedValue(mockResults);
+    vi.mocked(api.search).mockResolvedValue(searchResponse(mockResults));
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -94,7 +101,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('shows loading state then results', async () => {
-    vi.mocked(api.search).mockResolvedValue(mockResults);
+    vi.mocked(api.search).mockResolvedValue(searchResponse(mockResults));
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -110,7 +117,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('shows empty state when no results', async () => {
-    vi.mocked(api.search).mockResolvedValue([]);
+    vi.mocked(api.search).mockResolvedValue(searchResponse([]));
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -122,7 +129,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('grab passes bookId and calls onClose on success', async () => {
-    vi.mocked(api.search).mockResolvedValue(mockResults);
+    vi.mocked(api.search).mockResolvedValue(searchResponse(mockResults));
     vi.mocked(api.grab).mockResolvedValue({
       id: 1,
       title: 'The Way of Kings [Unabridged]',
@@ -165,7 +172,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('calls onClose when backdrop is clicked', async () => {
-    vi.mocked(api.search).mockResolvedValue([]);
+    vi.mocked(api.search).mockResolvedValue(searchResponse([]));
     const onClose = vi.fn();
     const user = userEvent.setup();
 
@@ -185,7 +192,7 @@ describe('SearchReleasesModal', () => {
       { ...mockResults[0], protocol: 'torrent' },
       { ...mockResults[1], protocol: 'usenet' },
     ];
-    vi.mocked(api.search).mockResolvedValue(mixedResults);
+    vi.mocked(api.search).mockResolvedValue(searchResponse(mixedResults));
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -202,7 +209,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('calls onClose when X button is clicked', async () => {
-    vi.mocked(api.search).mockResolvedValue([]);
+    vi.mocked(api.search).mockResolvedValue(searchResponse([]));
     const onClose = vi.fn();
     const user = userEvent.setup();
 
@@ -216,7 +223,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('shows error toast when grab fails', async () => {
-    vi.mocked(api.search).mockResolvedValue(mockResults);
+    vi.mocked(api.search).mockResolvedValue(searchResponse(mockResults));
     vi.mocked(api.grab).mockRejectedValue(new Error('Download client unavailable'));
     const user = userEvent.setup();
 
@@ -247,7 +254,7 @@ describe('SearchReleasesModal', () => {
         indexer: 'TestIndexer',
       },
     ];
-    vi.mocked(api.search).mockResolvedValue(resultsWithoutUrl);
+    vi.mocked(api.search).mockResolvedValue(searchResponse(resultsWithoutUrl));
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -274,7 +281,7 @@ describe('SearchReleasesModal', () => {
         indexer: 'TestIndexer',
       },
     ];
-    vi.mocked(api.search).mockResolvedValue(resultsWithLongTitle);
+    vi.mocked(api.search).mockResolvedValue(searchResponse(resultsWithLongTitle));
 
     renderWithProviders(
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -323,7 +330,7 @@ describe('SearchReleasesModal', () => {
     };
 
     it('shows warning indicator for lower quality release on imported book', async () => {
-      vi.mocked(api.search).mockResolvedValue([lowerQualityResult]);
+      vi.mocked(api.search).mockResolvedValue(searchResponse([lowerQualityResult]));
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={importedBook} onClose={vi.fn()} />,
@@ -335,7 +342,7 @@ describe('SearchReleasesModal', () => {
     });
 
     it('does not show warning for higher quality release on imported book', async () => {
-      vi.mocked(api.search).mockResolvedValue([higherQualityResult]);
+      vi.mocked(api.search).mockResolvedValue(searchResponse([higherQualityResult]));
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={importedBook} onClose={vi.fn()} />,
@@ -346,7 +353,7 @@ describe('SearchReleasesModal', () => {
     });
 
     it('does not show quality comparison for non-imported book', async () => {
-      vi.mocked(api.search).mockResolvedValue([lowerQualityResult]);
+      vi.mocked(api.search).mockResolvedValue(searchResponse([lowerQualityResult]));
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
@@ -357,7 +364,7 @@ describe('SearchReleasesModal', () => {
     });
 
     it('warning tooltip explains existing quality is better', async () => {
-      vi.mocked(api.search).mockResolvedValue([lowerQualityResult]);
+      vi.mocked(api.search).mockResolvedValue(searchResponse([lowerQualityResult]));
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={importedBook} onClose={vi.fn()} />,
@@ -369,7 +376,7 @@ describe('SearchReleasesModal', () => {
     });
 
     it('warning does not disable grab button', async () => {
-      vi.mocked(api.search).mockResolvedValue([lowerQualityResult]);
+      vi.mocked(api.search).mockResolvedValue(searchResponse([lowerQualityResult]));
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={importedBook} onClose={vi.fn()} />,
@@ -388,7 +395,7 @@ describe('SearchReleasesModal', () => {
         size: null,
         audioDuration: 36000,
       });
-      vi.mocked(api.search).mockResolvedValue([lowerQualityResult]);
+      vi.mocked(api.search).mockResolvedValue(searchResponse([lowerQualityResult]));
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={importedNoSize} onClose={vi.fn()} />,
@@ -406,7 +413,7 @@ describe('SearchReleasesModal', () => {
         audioDuration: null,
         duration: null,
       });
-      vi.mocked(api.search).mockResolvedValue([lowerQualityResult]);
+      vi.mocked(api.search).mockResolvedValue(searchResponse([lowerQualityResult]));
 
       renderWithProviders(
         <SearchReleasesModal isOpen={true} book={importedNoDuration} onClose={vi.fn()} />,
@@ -418,7 +425,7 @@ describe('SearchReleasesModal', () => {
   });
 
   it('shows error toast when blacklist fails', async () => {
-    vi.mocked(api.search).mockResolvedValue(mockResults);
+    vi.mocked(api.search).mockResolvedValue(searchResponse(mockResults));
     vi.mocked(api.addToBlacklist).mockRejectedValue(new Error('Server error'));
     const user = userEvent.setup();
 
@@ -434,5 +441,80 @@ describe('SearchReleasesModal', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to blacklist: Server error');
     });
+  });
+});
+
+describe('SearchReleasesModal unsupported results', () => {
+  it('shows collapsed unsupported section when count > 0', async () => {
+    vi.mocked(api.search).mockResolvedValue(searchResponse(mockResults, {
+      count: 3,
+      titles: ['Book "1" of "3"', 'Book "2" of "3"', 'Book "3" of "3"'],
+    }));
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Found, but unsupported format (3)')).toBeInTheDocument();
+    });
+
+    // Titles should not be visible before expanding
+    expect(screen.queryByText('Book "1" of "3"')).not.toBeInTheDocument();
+  });
+
+  it('does not render unsupported section when count is 0', async () => {
+    vi.mocked(api.search).mockResolvedValue(searchResponse(mockResults));
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings [Unabridged]')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/unsupported format/i)).not.toBeInTheDocument();
+  });
+
+  it('expands to show raw titles when clicked', async () => {
+    const unsupportedTitles = ['hp02.Harry Potter "28" of "30" yEnc', 'hp02.Harry Potter "29" of "30" yEnc'];
+    vi.mocked(api.search).mockResolvedValue(searchResponse([], {
+      count: 2,
+      titles: unsupportedTitles,
+    }));
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Found, but unsupported format (2)')).toBeInTheDocument();
+    });
+
+    // Click to expand
+    await user.click(screen.getByText('Found, but unsupported format (2)'));
+
+    // Titles should now be visible
+    expect(screen.getByText(unsupportedTitles[0])).toBeInTheDocument();
+    expect(screen.getByText(unsupportedTitles[1])).toBeInTheDocument();
+  });
+
+  it('shows unsupported section alongside normal results', async () => {
+    vi.mocked(api.search).mockResolvedValue(searchResponse(mockResults, {
+      count: 5,
+      titles: ['Ch1', 'Ch2', 'Ch3', 'Ch4', 'Ch5'],
+    }));
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Found 2 releases')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Found, but unsupported format (5)')).toBeInTheDocument();
   });
 });

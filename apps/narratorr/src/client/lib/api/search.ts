@@ -24,12 +24,20 @@ export interface SearchContext {
   title?: string;
 }
 
+export interface SearchResponse {
+  results: SearchResult[];
+  unsupportedResults: {
+    count: number;
+    titles: string[];
+  };
+}
+
 export const searchApi = {
   search: (query: string, context?: SearchContext) => {
     const params = new URLSearchParams({ q: query });
     if (context?.author) params.set('author', context.author);
     if (context?.title) params.set('title', context.title);
-    return fetchApi<SearchResult[]>(`/search?${params.toString()}`);
+    return fetchApi<SearchResponse>(`/search?${params.toString()}`);
   },
 
   grab: (params: {

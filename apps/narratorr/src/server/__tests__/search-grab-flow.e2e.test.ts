@@ -129,7 +129,7 @@ describe('Search → Grab flow E2E', () => {
       url: '/api/search?q=Brandon+Sanderson',
     });
     expect(searchRes.statusCode).toBe(200);
-    const results = searchRes.json();
+    const results = searchRes.json().results;
     expect(results.length).toBeGreaterThan(0);
 
     const firstResult = results[0];

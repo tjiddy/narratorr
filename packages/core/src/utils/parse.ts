@@ -277,6 +277,32 @@ function finalClean(result: ParsedTitle): ParsedTitle {
   return result;
 }
 
+export interface MultiPartResult {
+  match: boolean;
+  part?: number;
+  total?: number;
+}
+
+const MULTI_PART_PATTERNS = [
+  // Quoted: "28" of "30"
+  /"(\d{1,3})"\s*of\s*"(\d{1,3})"/i,
+  // Unquoted word-bounded: 08 of 30
+  /\b(\d{1,3})\s+of\s+(\d{1,3})\b/i,
+  // Parenthesized slash: (8/30)
+  /\((\d{1,3})\s*\/\s*(\d{1,3})\)/,
+] as const;
+
+/** Detect multi-part Usenet posts (e.g., "28" of "30", 08 of 30, (8/30)) */
+export function isMultiPartUsenetPost(title: string): MultiPartResult {
+  for (const pattern of MULTI_PART_PATTERNS) {
+    const match = title.match(pattern);
+    if (match) {
+      return { match: true, part: parseInt(match[1], 10), total: parseInt(match[2], 10) };
+    }
+  }
+  return { match: false };
+}
+
 export function slugify(text: string): string {
   return text
     .toLowerCase()

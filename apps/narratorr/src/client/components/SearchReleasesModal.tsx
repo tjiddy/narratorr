@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, formatBytes, type BookWithAuthor, type SearchResult } from '@/lib/api';
@@ -14,6 +14,7 @@ import {
   RefreshIcon,
   ShieldBanIcon,
   AlertTriangleIcon,
+  ChevronDownIcon,
 } from '@/components/icons';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { CoverImage } from '@/components/CoverImage';
@@ -39,7 +40,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
   const searchQuery = `${book.title} ${book.author?.name ?? ''}`.trim();
 
   const {
-    data: results,
+    data,
     isLoading,
     error,
     refetch,
@@ -48,6 +49,8 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
     queryFn: () => api.search(searchQuery, { title: book.title, author: book.author?.name }),
     enabled: isOpen && searchQuery.length >= 2,
   });
+  const results = data?.results;
+  const unsupportedResults = data?.unsupportedResults;
 
   const blacklistMutation = useMutation({
     mutationFn: api.addToBlacklist,
@@ -202,8 +205,41 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
               </div>
             </>
           )}
+
+          {/* Unsupported results */}
+          {!isLoading && unsupportedResults && unsupportedResults.count > 0 && (
+            <UnsupportedSection titles={unsupportedResults.titles} count={unsupportedResults.count} />
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Unsupported Section
+// ============================================================================
+
+function UnsupportedSection({ titles, count }: { titles: string[]; count: number }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="border border-dashed border-border/40 rounded-xl bg-muted/20 overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 w-full px-4 py-2.5 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-muted/30 transition-colors duration-200"
+      >
+        <ChevronDownIcon className={`w-3 h-3 shrink-0 transition-transform duration-200 ${expanded ? '' : '-rotate-90'}`} />
+        <span>Found, but unsupported format ({count})</span>
+      </button>
+      {expanded && (
+        <div className="px-4 pb-3 pt-0 space-y-0.5 border-t border-border/20">
+          {titles.map((title, i) => (
+            <p key={i} className="text-xs text-muted-foreground/50 font-mono truncate" title={title}>
+              {title}
+            </p>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
