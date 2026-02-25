@@ -227,6 +227,7 @@ describe('buildTargetPath', () => {
 
 describe('ImportService', () => {
   let db: ReturnType<typeof createMockDb>;
+  let log: ReturnType<typeof createMockLogger>;
   let clientService: ReturnType<typeof createMockDownloadClientService>;
   let settingsService: ReturnType<typeof createMockSettingsService>;
   let service: ImportService;
@@ -234,9 +235,10 @@ describe('ImportService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     db = createMockDb();
+    log = createMockLogger();
     clientService = createMockDownloadClientService();
     settingsService = createMockSettingsService();
-    service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(createMockLogger()));
+    service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log));
 
     // Default: stat returns a directory for source, then directory for target (size verification)
     const statMock = vi.mocked(stat);
@@ -831,6 +833,89 @@ describe('ImportService', () => {
     });
   });
 
+  describe('target path cleanup on import failure', () => {
+    it('removes targetPath when DB update throws after copy', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+
+      // First two updates succeed (book status='importing', download status='importing')
+      // Then fail on the book update (status='imported', path=targetPath)
+      let updateCallCount = 0;
+      db.update.mockImplementation(() => {
+        updateCallCount++;
+        if (updateCallCount === 3) {
+          // 3rd update: book status='imported' — this is the one that should fail
+          return { set: vi.fn().mockReturnValue({ where: vi.fn().mockRejectedValue(new Error('DB write failed')) }) } as never;
+        }
+        return mockDbChain() as never;
+      });
+
+      const rmMock = vi.mocked(rm);
+
+      await expect(service.importDownload(1)).rejects.toThrow('DB write failed');
+
+      // Verify rm was called on the target path
+      expect(rmMock).toHaveBeenCalledWith(
+        expect.stringContaining('audiobooks'),
+        { recursive: true, force: true },
+      );
+
+      // Verify DB revert still happened (download set to failed, book set to wanted)
+      const updateCalls = db.update.mock.results;
+      const setCalls = updateCalls
+        .map(r => {
+          try { return (r.value as { set: ReturnType<typeof vi.fn> }).set; } catch { return null; }
+        })
+        .filter(Boolean);
+      const allSetArgs = setCalls!.flatMap(s => s!.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'wanted' }));
+    });
+
+    it('logs warning and continues DB revert when rm(targetPath) throws', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+
+      let updateCallCount = 0;
+      db.update.mockImplementation(() => {
+        updateCallCount++;
+        if (updateCallCount === 3) {
+          return { set: vi.fn().mockReturnValue({ where: vi.fn().mockRejectedValue(new Error('DB write failed')) }) } as never;
+        }
+        return mockDbChain() as never;
+      });
+
+      // Make rm throw
+      const rmMock = vi.mocked(rm);
+      rmMock.mockRejectedValueOnce(new Error('EPERM: permission denied'));
+
+      await expect(service.importDownload(1)).rejects.toThrow('DB write failed');
+
+      // Verify cleanup was attempted
+      expect(rmMock).toHaveBeenCalledWith(
+        expect.stringContaining('audiobooks'),
+        { recursive: true, force: true },
+      );
+
+      // Verify cleanup failure was logged at warn level
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ targetPath: expect.stringContaining('audiobooks') }),
+        expect.stringContaining('Failed to clean up target path'),
+      );
+
+      // Verify DB revert still proceeded despite rm failure
+      const updateCalls = db.update.mock.results;
+      const setCalls = updateCalls
+        .map(r => {
+          try { return (r.value as { set: ReturnType<typeof vi.fn> }).set; } catch { return null; }
+        })
+        .filter(Boolean);
+      const allSetArgs = setCalls!.flatMap(s => s!.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
+      expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'wanted' }));
+    });
+  });
+
   describe('file renaming with template (non-processing path)', () => {
     it('renames audio files using fileFormat template after import', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
@@ -1071,7 +1156,7 @@ describe('ImportService', () => {
   });
 
   describe('import atomicity failures (#235 Tier 1)', () => {
-    it('does not clean up copied files when DB update throws after copy — BUG: see #237', async () => {
+    it('cleans up copied files when DB update throws after copy (#237)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
 
@@ -1080,7 +1165,6 @@ describe('ImportService', () => {
       db.update.mockImplementation(() => {
         updateCallCount++;
         const chain = mockDbChain();
-        // The 3rd update call is step 8 (update book to imported) — make it throw
         if (updateCallCount === 3) {
           (chain.where as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('DB constraint violation'));
         }
@@ -1092,9 +1176,12 @@ describe('ImportService', () => {
       // Verify cp was called (files were copied)
       expect(cp).toHaveBeenCalled();
 
-      // BUG: see #237 — rm is NOT called on targetPath, leaving orphaned files on disk
+      // Fixed in #237 — rm IS now called on targetPath to clean up orphaned files
       const rmMock = vi.mocked(rm);
-      expect(rmMock).not.toHaveBeenCalled();
+      expect(rmMock).toHaveBeenCalledWith(
+        expect.stringContaining('audiobooks'),
+        { recursive: true, force: true },
+      );
 
       // Verify catch block still reverts download to 'failed'
       const updateCalls = db.update.mock.results;

@@ -124,6 +124,7 @@ export class ImportService {
     // 2. Mark as importing
     await this.db.update(downloads).set({ status: 'importing' }).where(eq(downloads.id, downloadId));
 
+    let targetPath: string | undefined;
     try {
       // 3. Get save path from download client
       const savePath = await this.resolveSavePath(download);
@@ -135,7 +136,7 @@ export class ImportService {
         this.settingsService.get('processing'),
       ]);
 
-      const targetPath = buildTargetPath(
+      targetPath = buildTargetPath(
         librarySettings.path,
         librarySettings.folderFormat,
         book,
@@ -163,12 +164,9 @@ export class ImportService {
       let fileCount = 0;
 
       if (sourceStats.isDirectory()) {
-        // Check for audio files
         if (!(await containsAudioFiles(savePath))) {
           throw new Error(`No audio files found in ${savePath}`);
         }
-
-        // Count audio files
         fileCount = await this.countAudioFiles(savePath);
         sourcePath = savePath;
       } else if (sourceStats.isFile()) {
@@ -236,15 +234,12 @@ export class ImportService {
         );
       }
 
-      // 6c. Rename files using file format template
-      // Runs after processing so it applies to final output files.
-      // If processing already named files via template, this is a no-op.
+      // 6c. Rename files using file format template (after processing, so it applies to final output)
       if (librarySettings.fileFormat) {
         await this.renameFilesWithTemplate(targetPath, librarySettings.fileFormat, book, author?.name ?? null);
       }
 
-      // 7. Verify copy (compare total size) — skip when processing ran
-      // because merge/convert changes the files in the target directory
+      // 7. Verify copy (skip when processing ran — merge/convert changes file sizes)
       const targetSize = await getPathSize(targetPath);
       if (!processingSettings?.enabled) {
         const sourceSize = await getPathSize(sourcePath);
@@ -271,13 +266,10 @@ export class ImportService {
         size: targetSize,
         updatedAt: new Date(),
       }).where(eq(books.id, book.id));
-
       // 8b. File-based audio enrichment
       await enrichBookFromAudio(book.id, targetPath, book, this.db, this.log);
-
       // 9. Update download: status='imported'
       await this.db.update(downloads).set({ status: 'imported' }).where(eq(downloads.id, downloadId));
-
       this.log.info(
         { downloadId, bookId: book.id, targetPath, fileCount, totalSize: targetSize },
         'Import completed successfully',
@@ -294,9 +286,14 @@ export class ImportService {
       if (importSettings.deleteAfterImport) {
         await this.handleTorrentRemoval(download, importSettings.minSeedTime);
       }
-
       return { downloadId, bookId: book.id, targetPath, fileCount, totalSize: targetSize };
     } catch (error) {
+      // Clean up copied files to avoid orphaned data on disk
+      if (targetPath) {
+        await rm(targetPath, { recursive: true, force: true })
+          .catch((rmError) => this.log.warn({ error: rmError, targetPath }, 'Failed to clean up target path after import failure'));
+      }
+
       // Revert download to failed so import can be retried
       await this.db.update(downloads).set({
         status: 'failed',
@@ -390,8 +387,6 @@ export class ImportService {
       throw new Error(`Download ${download.externalId} not found in client`);
     }
 
-    // savePath from the client is the directory; the actual content may be inside it
-    // For qBittorrent, savePath is the parent and name is the folder/file inside
     let fullPath = join(item.savePath, item.name);
 
     // Apply remote path mapping if configured
@@ -488,13 +483,9 @@ export class ImportService {
     // Check if min seed time has elapsed
     if (download.completedAt && minSeedTimeMinutes > 0) {
       const elapsedMs = Date.now() - download.completedAt.getTime();
-      const minSeedMs = minSeedTimeMinutes * 60 * 1000;
-
+      const minSeedMs = minSeedTimeMinutes * 60_000;
       if (elapsedMs < minSeedMs) {
-        this.log.info(
-          { downloadId: download.id, remainingMinutes: Math.ceil((minSeedMs - elapsedMs) / 60_000) },
-          'Skipping torrent removal — min seed time not elapsed',
-        );
+        this.log.info({ downloadId: download.id, remainingMinutes: Math.ceil((minSeedMs - elapsedMs) / 60_000) }, 'Skipping torrent removal — min seed time not elapsed');
         return;
       }
     }
