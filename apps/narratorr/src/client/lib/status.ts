@@ -1,33 +1,52 @@
-export const bookStatusConfig: Record<string, { label: string; dotClass: string; textClass: string }> = {
+export interface BookStatusStyle {
+  label: string;
+  dotClass: string;
+  textClass: string;
+  barClass: string;
+}
+
+export const bookStatusConfig: Record<string, BookStatusStyle> = {
   wanted: {
     label: 'Wanted',
-    dotClass: 'bg-amber-500',
-    textClass: 'text-amber-600 dark:text-amber-400',
+    dotClass: 'bg-stone-400/70',
+    textClass: 'text-stone-500 dark:text-stone-400',
+    barClass: 'bg-stone-400/70',
   },
   searching: {
     label: 'Searching',
-    dotClass: 'bg-blue-500 animate-pulse',
-    textClass: 'text-blue-600 dark:text-blue-400',
+    dotClass: 'bg-sky-400 animate-pulse',
+    textClass: 'text-sky-600 dark:text-sky-400',
+    barClass: 'bg-sky-400 status-bar-shimmer',
   },
   downloading: {
     label: 'Downloading',
-    dotClass: 'bg-blue-500 animate-pulse',
-    textClass: 'text-blue-600 dark:text-blue-400',
+    dotClass: 'bg-violet-500 animate-pulse',
+    textClass: 'text-violet-600 dark:text-violet-400',
+    barClass: 'bg-violet-500 status-bar-shimmer',
+  },
+  importing: {
+    label: 'Importing',
+    dotClass: 'bg-amber-500 animate-pulse',
+    textClass: 'text-amber-600 dark:text-amber-400',
+    barClass: 'bg-amber-500 status-bar-shimmer',
   },
   imported: {
     label: 'Imported',
-    dotClass: 'bg-success',
-    textClass: 'text-success',
+    dotClass: 'bg-emerald-500',
+    textClass: 'text-emerald-600 dark:text-emerald-400',
+    barClass: 'bg-emerald-500',
   },
   missing: {
     label: 'Missing',
-    dotClass: 'bg-destructive',
-    textClass: 'text-destructive',
+    dotClass: 'bg-rose-500',
+    textClass: 'text-rose-600 dark:text-rose-400',
+    barClass: 'bg-rose-500',
   },
   failed: {
     label: 'Failed',
-    dotClass: 'bg-destructive',
-    textClass: 'text-destructive',
+    dotClass: 'bg-rose-500',
+    textClass: 'text-rose-600 dark:text-rose-400',
+    barClass: 'bg-rose-500',
   },
 };
 

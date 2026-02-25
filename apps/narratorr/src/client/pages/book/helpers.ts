@@ -40,6 +40,7 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
     metaDots,
     statusLabel: status.label,
     statusDotClass: status.dotClass,
+    statusBarClass: status.barClass,
     subtitle: metadataBook?.subtitle,
     authorName: libraryBook.author?.name,
     authorAsin: libraryBook.author?.asin,

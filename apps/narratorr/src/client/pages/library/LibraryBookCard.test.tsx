@@ -100,6 +100,97 @@ describe('LibraryBookCard', () => {
     });
   });
 
+  describe('status bar', () => {
+    it('renders a status bar element', () => {
+      render(<LibraryBookCard {...defaultProps()} />);
+      expect(screen.getByTestId('status-bar')).toBeInTheDocument();
+    });
+
+    it('has correct color class for wanted status (stone)', () => {
+      const book = createMockBook({ status: 'wanted' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('status-bar').className).toContain('bg-stone');
+    });
+
+    it('has correct color class for searching status (sky)', () => {
+      const book = createMockBook({ status: 'searching' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('status-bar').className).toContain('bg-sky');
+    });
+
+    it('has correct color class for downloading status (violet)', () => {
+      const book = createMockBook({ status: 'downloading' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('status-bar').className).toContain('bg-violet');
+    });
+
+    it('has correct color class for importing status (amber)', () => {
+      const book = createMockBook({ status: 'importing' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('status-bar').className).toContain('bg-amber');
+    });
+
+    it('has correct color class for imported status (emerald)', () => {
+      const book = createMockBook({ status: 'imported' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('status-bar').className).toContain('bg-emerald');
+    });
+
+    it('has correct color class for missing status (rose)', () => {
+      const book = createMockBook({ status: 'missing' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('status-bar').className).toContain('bg-rose');
+    });
+
+    it('has correct color class for failed status (rose)', () => {
+      const book = createMockBook({ status: 'failed' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('status-bar').className).toContain('bg-rose');
+    });
+
+    it('has shimmer class for searching status', () => {
+      const book = createMockBook({ status: 'searching' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('status-bar').className).toContain('status-bar-shimmer');
+    });
+
+    it('has shimmer class for downloading status', () => {
+      const book = createMockBook({ status: 'downloading' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('status-bar').className).toContain('status-bar-shimmer');
+    });
+
+    it('has shimmer class for importing status', () => {
+      const book = createMockBook({ status: 'importing' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('status-bar').className).toContain('status-bar-shimmer');
+    });
+
+    it('does NOT have shimmer class for wanted status', () => {
+      const book = createMockBook({ status: 'wanted' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('status-bar').className).not.toContain('status-bar-shimmer');
+    });
+
+    it('does NOT have shimmer class for imported status', () => {
+      const book = createMockBook({ status: 'imported' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('status-bar').className).not.toContain('status-bar-shimmer');
+    });
+
+    it('does NOT have shimmer class for failed status', () => {
+      const book = createMockBook({ status: 'failed' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('status-bar').className).not.toContain('status-bar-shimmer');
+    });
+
+    it('falls back to wanted style for unknown status', () => {
+      const book = createMockBook({ status: 'bogus_status' as string });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+      expect(screen.getByTestId('status-bar').className).toContain('bg-stone');
+    });
+  });
+
   describe('no left-border accent', () => {
     it('does not apply left-border accent class for any status', () => {
       const statuses = ['wanted', 'downloading', 'imported', 'missing', 'failed', 'searching', 'importing'];

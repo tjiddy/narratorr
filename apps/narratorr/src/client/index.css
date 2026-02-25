@@ -223,6 +223,27 @@
     animation: shimmer 1.5s infinite;
   }
 
+  /* Status bar shimmer for active statuses */
+  .status-bar-shimmer {
+    @apply relative overflow-hidden;
+  }
+
+  .status-bar-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.3) 40%,
+      rgba(255, 255, 255, 0.5) 50%,
+      rgba(255, 255, 255, 0.3) 60%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 3s ease-in-out infinite;
+  }
+
   /* Focus visible ring */
   .focus-ring {
     @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-foreground focus-visible:ring-offset-2 focus-visible:ring-offset-background;

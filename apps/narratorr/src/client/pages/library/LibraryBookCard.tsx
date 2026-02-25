@@ -1,5 +1,6 @@
 import { useImageError } from '@/hooks/useImageError';
 import type { BookWithAuthor } from '@/lib/api';
+import { bookStatusConfig } from '@/lib/status';
 import { BookOpenIcon, MoreVerticalIcon, BrokenLinkIcon } from '@/components/icons';
 import { BookContextMenu } from './BookContextMenu.js';
 
@@ -87,6 +88,8 @@ export function LibraryBookCard({
 
         {/* Frosted info strip — always visible at bottom */}
         <div className="absolute inset-x-0 bottom-0 backdrop-blur-md bg-black/30 border-t border-white/5 transition-all duration-300 ease-out">
+          {/* Status bar */}
+          <div className={`h-0.5 ${(bookStatusConfig[book.status] ?? bookStatusConfig.wanted).barClass}`} data-testid="status-bar" />
           {/* Default: title + author */}
           <div className="px-3 py-2">
             <h3 className="text-sm font-semibold text-white leading-tight truncate drop-shadow-sm">{book.title}</h3>
