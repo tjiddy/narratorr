@@ -88,6 +88,21 @@ async function containsAudioFiles(dirPath: string): Promise<boolean> {
   return false;
 }
 
+/** Recursively copy only audio files from source to target, preserving directory structure. */
+async function copyAudioFiles(source: string, target: string): Promise<void> {
+  const entries = await readdir(source, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = join(source, entry.name);
+    const destPath = join(target, entry.name);
+    if (entry.isDirectory()) {
+      await copyAudioFiles(srcPath, destPath);
+    } else if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
+      await mkdir(target, { recursive: true });
+      await cp(srcPath, destPath, { errorOnExist: false });
+    }
+  }
+}
+
 export interface ImportResult {
   downloadId: number;
   bookId: number;
@@ -179,9 +194,12 @@ export class ImportService {
       this.log.info({ source: sourcePath, target: targetPath }, 'Copying files to library');
 
       if (sourceStats.isDirectory()) {
-        await cp(sourcePath, targetPath, { recursive: true, errorOnExist: false });
+        await copyAudioFiles(sourcePath, targetPath);
       } else {
-        // Single file — copy into the target directory
+        // Single file — only copy if it's an audio file
+        if (!AUDIO_EXTENSIONS.has(extname(sourcePath).toLowerCase())) {
+          throw new Error(`Source file is not a supported audio format: ${basename(sourcePath)}`);
+        }
         const targetFile = join(targetPath, basename(sourcePath));
         await cp(sourcePath, targetFile, { errorOnExist: false });
       }

@@ -1255,4 +1255,65 @@ describe('ImportService', () => {
       );
     });
   });
+
+  describe('audio-only copy filtering', () => {
+    it('directory import only copies audio files, skips .nzb/.sfv/.nfo', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const readdirMock = vi.mocked(readdir);
+      readdirMock.mockResolvedValue([
+        { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
+        { name: 'chapter2.m4b', isFile: () => true, isDirectory: () => false },
+        { name: 'release.nzb', isFile: () => true, isDirectory: () => false },
+        { name: 'checksum.sfv', isFile: () => true, isDirectory: () => false },
+        { name: 'info.nfo', isFile: () => true, isDirectory: () => false },
+        { name: 'cover.jpg', isFile: () => true, isDirectory: () => false },
+      ] as never);
+
+      await service.importDownload(1);
+
+      const cpMock = vi.mocked(cp);
+      const copiedFiles = cpMock.mock.calls.map(call => call[0] as string);
+
+      // Should have copied only the two audio files
+      expect(copiedFiles.some(p => p.endsWith('chapter1.mp3'))).toBe(true);
+      expect(copiedFiles.some(p => p.endsWith('chapter2.m4b'))).toBe(true);
+      // Should NOT have copied non-audio files
+      expect(copiedFiles.some(p => p.endsWith('.nzb'))).toBe(false);
+      expect(copiedFiles.some(p => p.endsWith('.sfv'))).toBe(false);
+      expect(copiedFiles.some(p => p.endsWith('.nfo'))).toBe(false);
+      expect(copiedFiles.some(p => p.endsWith('.jpg'))).toBe(false);
+    });
+
+    it('single non-audio file import throws', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // stat returns a file (not directory)
+      const statMock = vi.mocked(stat);
+      statMock.mockResolvedValue({ isFile: () => true, isDirectory: () => false, size: 1024 } as never);
+
+      // Adapter returns a single .nzb file
+      mockAdapter.getDownload.mockResolvedValueOnce({
+        id: 'ext-1',
+        name: 'release.nzb',
+        progress: 100,
+        status: 'completed',
+        savePath: '/downloads',
+        size: 1024,
+        downloaded: 1024,
+        uploaded: 0,
+        ratio: 0,
+        seeders: 0,
+        leechers: 0,
+        addedAt: now,
+        completedAt: now,
+      });
+
+      await expect(service.importDownload(1)).rejects.toThrow('not a supported audio format');
+    });
+  });
 });
