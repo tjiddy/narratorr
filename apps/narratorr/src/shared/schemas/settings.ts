@@ -56,7 +56,6 @@ export const librarySettingsSchema = z.object({
 export const searchSettingsSchema = z.object({
   intervalMinutes: z.number().int().min(5).max(1440).default(60),
   enabled: z.boolean().default(false),
-  autoGrab: z.boolean().default(false),
 });
 
 export const importSettingsSchema = z.object({
@@ -158,7 +157,6 @@ export const updateSettingsFormSchema = z.object({
   search: z.object({
     enabled: z.boolean(),
     intervalMinutes: z.number().int().min(5).max(1440),
-    autoGrab: z.boolean(),
   }),
   import: z.object({
     deleteAfterImport: z.boolean(),

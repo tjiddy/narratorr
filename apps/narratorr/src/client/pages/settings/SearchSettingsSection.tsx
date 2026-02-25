@@ -19,7 +19,7 @@ export function SearchSettingsSection({ register, errors }: SearchSettingsSectio
         <div>
           <label htmlFor="searchEnabled" className="block text-sm font-medium">Enable Scheduled Search</label>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Periodically search indexers for books in your wanted list
+            Periodically search indexers and grab the best result for wanted books
           </p>
         </div>
         <label className="relative inline-flex items-center cursor-pointer">
@@ -49,18 +49,6 @@ export function SearchSettingsSection({ register, errors }: SearchSettingsSectio
         </p>
       </div>
 
-      <div className="flex items-center justify-between">
-        <div>
-          <label htmlFor="searchAutoGrab" className="block text-sm font-medium">Auto-Grab Best Result</label>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Automatically grab the best result (most seeders) when a match is found
-          </p>
-        </div>
-        <label className="relative inline-flex items-center cursor-pointer">
-          <input id="searchAutoGrab" type="checkbox" {...register('search.autoGrab')} className="sr-only peer" />
-          <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
-        </label>
-      </div>
     </SettingsSection>
   );
 }

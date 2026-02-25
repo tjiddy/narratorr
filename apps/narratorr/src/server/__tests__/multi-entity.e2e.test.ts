@@ -293,7 +293,6 @@ describe('Job lifecycle E2E', () => {
     });
     await e2e.services.settings.set('search', {
       enabled: true,
-      autoGrab: true,
       intervalMinutes: 60,
     });
   });
@@ -340,7 +339,7 @@ describe('Job lifecycle E2E', () => {
     );
 
     expect(result.searched).toBeGreaterThanOrEqual(1);
-    // autoGrab is enabled — grab should succeed since qBit mock accepts any add
+    // Search always grabs — qBit mock accepts any add
     expect(result.grabbed).toBeGreaterThanOrEqual(1);
 
     // Verify download was created

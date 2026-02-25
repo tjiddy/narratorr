@@ -57,7 +57,7 @@ export function createMockBook(overrides?: Partial<BookWithAuthor>): BookWithAut
 export function createMockSettings(overrides?: Partial<Settings>): Settings {
   return {
     library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
-    search: { enabled: true, intervalMinutes: 360, autoGrab: false },
+    search: { enabled: true, intervalMinutes: 360 },
     import: { deleteAfterImport: false, minSeedTime: 60 },
     general: { logLevel: 'info' },
     metadata: { audibleRegion: 'us' },

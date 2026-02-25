@@ -8,7 +8,7 @@ import type { UpdateSettingsFormData } from '../../../shared/schemas.js';
 function Wrapper({ children }: { children: (props: ReturnType<typeof useForm<UpdateSettingsFormData>>) => React.ReactNode }) {
   const methods = useForm<UpdateSettingsFormData>({
     defaultValues: {
-      search: { enabled: false, intervalMinutes: 360, autoGrab: false },
+      search: { enabled: false, intervalMinutes: 360 },
       library: { path: '', folderFormat: '' },
       import: { deleteAfterImport: false, minSeedTime: 60 },
       general: { logLevel: 'info' },
@@ -19,7 +19,7 @@ function Wrapper({ children }: { children: (props: ReturnType<typeof useForm<Upd
 }
 
 describe('SearchSettingsSection', () => {
-  it('renders all search fields and toggles enable checkbox', async () => {
+  it('renders search fields without auto-grab toggle', async () => {
     const user = userEvent.setup();
 
     render(
@@ -32,7 +32,8 @@ describe('SearchSettingsSection', () => {
 
     expect(screen.getByText('Enable Scheduled Search')).toBeInTheDocument();
     expect(screen.getByText('Search Interval (minutes)')).toBeInTheDocument();
-    expect(screen.getByText('Auto-Grab Best Result')).toBeInTheDocument();
+    // Auto-grab toggle should not exist — grabbing is always part of searching
+    expect(screen.queryByText('Auto-Grab Best Result')).not.toBeInTheDocument();
 
     const checkbox = screen.getByText('Enable Scheduled Search')
       .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
@@ -59,9 +60,7 @@ describe('SearchSettingsSection', () => {
     expect(intervalInput).toHaveValue(120);
   });
 
-  it('toggles the auto-grab checkbox', async () => {
-    const user = userEvent.setup();
-
+  it('describes that search includes grabbing', () => {
     render(
       <Wrapper>
         {({ register, formState: { errors } }) => (
@@ -70,11 +69,6 @@ describe('SearchSettingsSection', () => {
       </Wrapper>,
     );
 
-    const checkbox = screen.getByText('Auto-Grab Best Result')
-      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
-
-    expect(checkbox.checked).toBe(false);
-    await user.click(checkbox);
-    expect(checkbox.checked).toBe(true);
+    expect(screen.getByText(/grab the best result/)).toBeInTheDocument();
   });
 });

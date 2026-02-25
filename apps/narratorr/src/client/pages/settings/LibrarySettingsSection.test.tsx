@@ -23,7 +23,7 @@ function Wrapper({
 }) {
   const methods = useForm<UpdateSettingsFormData>({
     defaultValues: {
-      search: { enabled: false, intervalMinutes: 360, autoGrab: false },
+      search: { enabled: false, intervalMinutes: 360 },
       library: { path: '/audiobooks', folderFormat: defaultFolderFormat, fileFormat: '{author} - {title}' },
       import: { deleteAfterImport: false, minSeedTime: 60 },
       general: { logLevel: 'info' },
@@ -80,7 +80,7 @@ describe('LibrarySettingsSection', () => {
     function WrapperWithSpy({ children }: { children: (props: ReturnType<typeof useForm<UpdateSettingsFormData>>) => React.ReactNode }) {
       const methods = useForm<UpdateSettingsFormData>({
         defaultValues: {
-          search: { enabled: false, intervalMinutes: 360, autoGrab: false },
+          search: { enabled: false, intervalMinutes: 360 },
           library: { path: '/audiobooks', folderFormat: '{author}/{title}' },
           import: { deleteAfterImport: false, minSeedTime: 60 },
           general: { logLevel: 'info' },

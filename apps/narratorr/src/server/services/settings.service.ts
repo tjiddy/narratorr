@@ -15,7 +15,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   search: {
     intervalMinutes: 360,
     enabled: true,
-    autoGrab: false,
   },
   import: {
     deleteAfterImport: false,

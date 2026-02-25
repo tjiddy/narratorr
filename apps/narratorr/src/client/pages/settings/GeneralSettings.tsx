@@ -38,7 +38,7 @@ const AUDIBLE_REGION_LABELS: Record<string, string> = {
 
 const defaultValues: UpdateSettingsFormData = {
   library: { path: '', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
-  search: { enabled: false, intervalMinutes: 360, autoGrab: false },
+  search: { enabled: false, intervalMinutes: 360 },
   import: { deleteAfterImport: false, minSeedTime: 60 },
   general: { logLevel: 'info' as const },
   metadata: { audibleRegion: 'us' as const },
@@ -52,7 +52,6 @@ function settingsToFormData(settings: NonNullable<ReturnType<typeof api.getSetti
     search: {
       enabled: settings.search?.enabled ?? false,
       intervalMinutes: settings.search?.intervalMinutes ?? 360,
-      autoGrab: settings.search?.autoGrab ?? false,
     },
     import: {
       deleteAfterImport: settings.import?.deleteAfterImport ?? false,

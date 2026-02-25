@@ -33,7 +33,7 @@ describe('SettingsService', () => {
       db.select.mockReturnValue(mockDbChain([]));
 
       const result = await service.get('search');
-      expect(result).toEqual({ intervalMinutes: 360, enabled: true, autoGrab: false });
+      expect(result).toEqual({ intervalMinutes: 360, enabled: true });
     });
   });
 
@@ -47,7 +47,7 @@ describe('SettingsService', () => {
       const result = await service.getAll();
       expect(result.library).toEqual(customLibrary);
       // Other sections fall back to defaults
-      expect(result.search).toEqual({ intervalMinutes: 360, enabled: true, autoGrab: false });
+      expect(result.search).toEqual({ intervalMinutes: 360, enabled: true });
       expect(result.import).toEqual({ deleteAfterImport: false, minSeedTime: 60 });
       expect(result.general).toEqual({ logLevel: 'info' });
     });

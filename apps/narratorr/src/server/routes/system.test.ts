@@ -74,7 +74,7 @@ describe('system routes', () => {
 
   describe('POST /api/system/tasks/search', () => {
     it('returns 200 with search summary', async () => {
-      (services.settings.get as Mock).mockResolvedValue({ enabled: false, intervalMinutes: 360, autoGrab: false });
+      (services.settings.get as Mock).mockResolvedValue({ enabled: false, intervalMinutes: 360 });
       (services.book.getAll as Mock).mockResolvedValue([]);
 
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search' });

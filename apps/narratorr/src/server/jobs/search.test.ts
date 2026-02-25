@@ -8,7 +8,7 @@ import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadService } from '../services/download.service.js';
 import type { SearchResult } from '@narratorr/core';
 
-function createMockSettingsService(searchSettings = { enabled: true, intervalMinutes: 60, autoGrab: false }): SettingsService {
+function createMockSettingsService(searchSettings = { enabled: true, intervalMinutes: 60 }): SettingsService {
   return inject<SettingsService>({
     get: vi.fn().mockResolvedValue(searchSettings),
     getAll: vi.fn(),
@@ -149,7 +149,7 @@ describe('runSearchJob', () => {
   });
 
   it('returns zeros when search is disabled', async () => {
-    const settings = createMockSettingsService({ enabled: false, intervalMinutes: 60, autoGrab: false });
+    const settings = createMockSettingsService({ enabled: false, intervalMinutes: 60 });
     const books = createMockBookService();
     const indexer = createMockIndexerService();
     const download = createMockDownloadService();
@@ -165,7 +165,7 @@ describe('runSearchJob', () => {
       { id: 1, title: 'Book One', author: { name: 'Author A' } },
       { id: 2, title: 'Book Two', author: { name: 'Author B' } },
     ];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60, autoGrab: false });
+    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const download = createMockDownloadService();
@@ -178,10 +178,10 @@ describe('runSearchJob', () => {
     expect(vi.mocked(indexer.searchAll).mock.calls[1][0]).toBe('Book Two Author B');
   });
 
-  it('auto-grabs when enabled and results found', async () => {
+  it('grabs best result when search finds matches', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
     const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60, autoGrab: true });
+    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadService();
@@ -197,27 +197,12 @@ describe('runSearchJob', () => {
     );
   });
 
-  it('does not grab when autoGrab is disabled', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
-    const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60, autoGrab: false });
-    const books = createMockBookService(wantedBooks);
-    const indexer = createMockIndexerService(searchResults);
-    const download = createMockDownloadService();
-
-    const result = await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
-
-    expect(result.searched).toBe(1);
-    expect(result.grabbed).toBe(0);
-    expect(download.grab).not.toHaveBeenCalled();
-  });
-
   it('returns searched count but zero grabbed when no indexer returns results', async () => {
     const wantedBooks = [
       { id: 1, title: 'Obscure Book', author: { name: 'Unknown Author' } },
       { id: 2, title: 'Another Rare Book', author: { name: 'Nobody' } },
     ];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60, autoGrab: true });
+    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService([]); // no results for any search
     const download = createMockDownloadService();
@@ -244,7 +229,7 @@ describe('runSearchJob', () => {
       { id: 2, title: 'Book B', author: { name: 'Author' } },
       { id: 3, title: 'Book C', author: { name: 'Author' } },
     ];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60, autoGrab: true });
+    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const results = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
@@ -271,7 +256,7 @@ describe('runSearchJob', () => {
     const wantedBooks = [
       { id: 1, title: 'Anonymous Work', author: null },
     ];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60, autoGrab: false });
+    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const download = createMockDownloadService();
@@ -283,10 +268,10 @@ describe('runSearchJob', () => {
     expect(vi.mocked(indexer.searchAll).mock.calls[0][0]).toBe('Anonymous Work');
   });
 
-  it('skips auto-grab when book already has active download', async () => {
+  it('skips grab when book already has active download', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
     const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60, autoGrab: true });
+    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadService();
@@ -302,14 +287,14 @@ describe('runSearchJob', () => {
     expect(result.grabbed).toBe(0);
     expect(log.debug).toHaveBeenCalledWith(
       expect.objectContaining({ bookId: 1 }),
-      'Skipping auto-grab — book already has active download',
+      'Skipping grab — book already has active download',
     );
   });
 
   it('re-throws non-duplicate grab errors to outer catch', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
     const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60, autoGrab: true });
+    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadService();
@@ -335,7 +320,7 @@ describe('runSearchJob', () => {
       { id: 1, title: 'Failing Book', author: { name: 'Author' } },
       { id: 2, title: 'Good Book', author: { name: 'Author' } },
     ];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60, autoGrab: false });
+    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService([]);
     vi.mocked(indexer.searchAll)

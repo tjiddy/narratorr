@@ -10,7 +10,6 @@ export interface Settings {
   search: {
     intervalMinutes: number;
     enabled: boolean;
-    autoGrab: boolean;
   };
   import: {
     deleteAfterImport: boolean;
