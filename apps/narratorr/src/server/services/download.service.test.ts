@@ -167,7 +167,10 @@ describe('DownloadService', () => {
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
-      db.select.mockReturnValue(
+      // First select: getActiveByBookId (no active downloads)
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // Second select: getById for return
+      db.select.mockReturnValueOnce(
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
 
@@ -215,7 +218,10 @@ describe('DownloadService', () => {
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
-      db.select.mockReturnValue(
+      // First select: getActiveByBookId (no active downloads)
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // Second select: getById for return
+      db.select.mockReturnValueOnce(
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
 
@@ -228,38 +234,74 @@ describe('DownloadService', () => {
       expect(db.update).toHaveBeenCalled();
     });
 
-    it('allows duplicate downloads for the same bookId — BUG: see #240', async () => {
+    it('throws when bookId already has an active download', async () => {
+      // getActiveByBookId returns an existing active download
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      await expect(
+        service.grab({
+          downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+          title: 'The Way of Kings',
+          bookId: 1,
+        }),
+      ).rejects.toThrow('already has an active download');
+
+      // No insert should have been called
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('skips duplicate check when bookId is not provided', async () => {
       const mockAdapter = {
         addDownload: vi.fn().mockResolvedValue('ext-123'),
       };
 
-      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1 });
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
       (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
-      // Both calls create separate download records
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, bookId: null }, book: null }]),
+      );
+
+      const result = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+      });
+
+      expect(result).toBeDefined();
+      expect(db.insert).toHaveBeenCalledTimes(1);
+      // Only one db.select call — the final getById, NOT getActiveByBookId
+      expect(db.select).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips duplicate check when skipDuplicateCheck is true', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
       db.select.mockReturnValue(
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
 
-      const grabParams = {
-        downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
-        title: 'The Way of Kings',
+      // Even though bookId is provided, skipDuplicateCheck bypasses the guard
+      const result = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
         bookId: 1,
-      };
+        skipDuplicateCheck: true,
+      });
 
-      // BUG: see #240 — no unique constraint or dedup check prevents duplicate records
-      // when auto-grab and manual grab race for the same book
-      const [result1, result2] = await Promise.all([
-        service.grab(grabParams),
-        service.grab(grabParams),
-      ]);
-
-      expect(result1).toBeDefined();
-      expect(result2).toBeDefined();
-      // Two insert calls = two download records created
-      expect(db.insert).toHaveBeenCalledTimes(2);
+      expect(result).toBeDefined();
+      expect(db.insert).toHaveBeenCalledTimes(1);
+      // Only one db.select call — the final getById, NOT getActiveByBookId
+      expect(db.select).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -493,7 +535,10 @@ describe('DownloadService', () => {
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
-      db.select.mockReturnValue(
+      // First select: getActiveByBookId (no active downloads)
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // Second select: getById for return
+      db.select.mockReturnValueOnce(
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
 

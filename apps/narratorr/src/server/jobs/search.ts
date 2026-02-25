@@ -80,16 +80,25 @@ export async function runSearchJob(
       if (searchSettings.autoGrab) {
         const best = selectBestResult(results);
         if (best && best.downloadUrl) {
-          await downloadService.grab({
-            downloadUrl: best.downloadUrl,
-            title: best.title,
-            protocol: best.protocol,
-            bookId: book.id,
-            size: best.size,
-            seeders: best.seeders,
-          });
-          grabbed++;
-          log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
+          try {
+            await downloadService.grab({
+              downloadUrl: best.downloadUrl,
+              title: best.title,
+              protocol: best.protocol,
+              bookId: book.id,
+              size: best.size,
+              seeders: best.seeders,
+            });
+            grabbed++;
+            log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
+          } catch (grabError) {
+            const message = grabError instanceof Error ? grabError.message : String(grabError);
+            if (message.includes('already has an active download')) {
+              log.debug({ bookId: book.id, title: book.title }, 'Skipping auto-grab — book already has active download');
+            } else {
+              throw grabError;
+            }
+          }
         }
       }
     } catch (error) {

@@ -283,6 +283,53 @@ describe('runSearchJob', () => {
     expect(vi.mocked(indexer.searchAll).mock.calls[0][0]).toBe('Anonymous Work');
   });
 
+  it('skips auto-grab when book already has active download', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
+    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60, autoGrab: true });
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService(searchResults);
+    const download = createMockDownloadService();
+
+    // grab throws duplicate error
+    vi.mocked(download.grab).mockRejectedValueOnce(
+      new Error('Book 1 already has an active download (id: 5)'),
+    );
+
+    const result = await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(1);
+    expect(result.grabbed).toBe(0);
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1 }),
+      'Skipping auto-grab — book already has active download',
+    );
+  });
+
+  it('re-throws non-duplicate grab errors to outer catch', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
+    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60, autoGrab: true });
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService(searchResults);
+    const download = createMockDownloadService();
+
+    // grab throws a non-duplicate error
+    vi.mocked(download.grab).mockRejectedValueOnce(
+      new Error('No download client configured'),
+    );
+
+    const result = await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    // Outer catch handles it — search succeeded but grab failed, so searched is counted
+    expect(result.searched).toBe(1);
+    expect(result.grabbed).toBe(0);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1 }),
+      'Search failed for book',
+    );
+  });
+
   it('continues on per-book failure', async () => {
     const wantedBooks = [
       { id: 1, title: 'Failing Book', author: { name: 'Author' } },

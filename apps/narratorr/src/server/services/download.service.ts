@@ -150,7 +150,16 @@ export class DownloadService {
     indexerId?: number;
     size?: number;
     seeders?: number;
+    skipDuplicateCheck?: boolean;
   }): Promise<DownloadWithBook> {
+    // Check for existing active downloads for this book
+    if (params.bookId && !params.skipDuplicateCheck) {
+      const active = await this.getActiveByBookId(params.bookId);
+      if (active.length > 0) {
+        throw new Error(`Book ${params.bookId} already has an active download (id: ${active[0].id})`);
+      }
+    }
+
     const protocol = params.protocol ?? 'torrent';
     const infoHash = protocol === 'torrent' ? parseInfoHash(params.downloadUrl) : null;
 
@@ -283,7 +292,7 @@ export class DownloadService {
     if (download.status !== 'failed') throw new Error(`Download ${id} is not in failed state`);
     if (!download.downloadUrl) throw new Error(`Download ${id} has no download URL for retry`);
 
-    // Re-grab with original params
+    // Re-grab with original params — skip duplicate check since we're replacing a failed download
     const newDownload = await this.grab({
       downloadUrl: download.downloadUrl,
       title: download.title,
@@ -292,6 +301,7 @@ export class DownloadService {
       indexerId: download.indexerId ?? undefined,
       size: download.size ?? undefined,
       seeders: download.seeders ?? undefined,
+      skipDuplicateCheck: true,
     });
 
     // Delete the old failed download record — if this fails, the old record
