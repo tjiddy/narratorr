@@ -33,6 +33,9 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
 
   const canSave = title.trim().length > 0 && !isSaving;
   const hasPath = !!book.path;
+  const positionError = seriesPosition.trim() !== '' && isNaN(Number(seriesPosition.trim()))
+    ? 'Must be a number'
+    : null;
 
   const searchMutation = useMutation({
     mutationFn: (query: string) => api.searchMetadata(query),
@@ -89,8 +92,11 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
       data.seriesName = seriesName.trim() || null;
     }
 
-    const newPos = seriesPosition.trim() ? parseFloat(seriesPosition.trim()) : null;
-    if (newPos !== (book.seriesPosition ?? null)) {
+    const trimmedPos = seriesPosition.trim();
+    const newPos = trimmedPos ? Number(trimmedPos) : null;
+    if (newPos !== null && isNaN(newPos)) {
+      // Invalid input — exclude seriesPosition from payload
+    } else if (newPos !== (book.seriesPosition ?? null)) {
       data.seriesPosition = newPos;
     }
 
@@ -182,8 +188,11 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
                   value={seriesPosition}
                   onChange={(e) => setSeriesPosition(e.target.value)}
                   placeholder="e.g. 1"
-                  className="w-full px-3 py-2 glass-card rounded-xl text-sm focus-ring"
+                  className={`w-full px-3 py-2 glass-card rounded-xl text-sm focus-ring${positionError ? ' border-red-400/50' : ''}`}
                 />
+                {positionError && (
+                  <p className="text-xs text-red-400 mt-1">{positionError}</p>
+                )}
               </div>
             </div>
 

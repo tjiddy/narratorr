@@ -166,7 +166,7 @@ describe('BookMetadataModal', () => {
       expect(screen.getByText('Search Audnexus for metadata')).toBeInTheDocument();
     });
 
-    it('sends NaN seriesPosition when user types non-numeric value — BUG: see #238', async () => {
+    it('excludes seriesPosition from payload when user types non-numeric value', async () => {
       const onSave = vi.fn();
       const user = userEvent.setup();
       renderModal({ onSave });
@@ -174,31 +174,78 @@ describe('BookMetadataModal', () => {
       const posInput = screen.getByLabelText(/position/i);
       await user.clear(posInput);
       await user.type(posInput, 'abc');
+
+      // Change title so onSave gets called with some data
+      const titleInput = screen.getByLabelText(/title/i);
+      await user.clear(titleInput);
+      await user.type(titleInput, 'Changed Title');
+
       await user.click(screen.getByText('Save'));
 
-      // BUG: see #238 — parseFloat("abc") returns NaN, which passes change detection
-      // (NaN !== 1 is always true) and gets sent to API
-      expect(onSave).toHaveBeenCalledWith(
-        expect.objectContaining({ seriesPosition: NaN }),
-        false,
-      );
+      expect(onSave).toHaveBeenCalledTimes(1);
+      const payload = onSave.mock.calls[0][0];
+      expect(payload.title).toBe('Changed Title');
+      expect(payload).not.toHaveProperty('seriesPosition');
     });
 
-    it('sends partial parse result for "1.2.3" — parseFloat returns 1.2', async () => {
-      const onSave = vi.fn();
+    it('shows inline error when series position is non-numeric', async () => {
       const user = userEvent.setup();
-      renderModal({ onSave });
+      renderModal();
+
+      const posInput = screen.getByLabelText(/position/i);
+      await user.clear(posInput);
+      await user.type(posInput, 'abc');
+
+      expect(screen.getByText('Must be a number')).toBeInTheDocument();
+    });
+
+    it('clears error when series position is corrected to valid number', async () => {
+      const user = userEvent.setup();
+      renderModal();
+
+      const posInput = screen.getByLabelText(/position/i);
+      await user.clear(posInput);
+      await user.type(posInput, 'abc');
+      expect(screen.getByText('Must be a number')).toBeInTheDocument();
+
+      await user.clear(posInput);
+      await user.type(posInput, '3');
+      expect(screen.queryByText('Must be a number')).not.toBeInTheDocument();
+    });
+
+    it('clears error when series position is cleared', async () => {
+      const user = userEvent.setup();
+      renderModal();
+
+      const posInput = screen.getByLabelText(/position/i);
+      await user.clear(posInput);
+      await user.type(posInput, 'abc');
+      expect(screen.getByText('Must be a number')).toBeInTheDocument();
+
+      await user.clear(posInput);
+      expect(screen.queryByText('Must be a number')).not.toBeInTheDocument();
+    });
+
+    it('shows inline error for partial parse like "1.2.3"', async () => {
+      const user = userEvent.setup();
+      renderModal();
 
       const posInput = screen.getByLabelText(/position/i);
       await user.clear(posInput);
       await user.type(posInput, '1.2.3');
-      await user.click(screen.getByText('Save'));
 
-      // parseFloat("1.2.3") returns 1.2 (stops at second dot)
-      expect(onSave).toHaveBeenCalledWith(
-        expect.objectContaining({ seriesPosition: 1.2 }),
-        false,
-      );
+      expect(screen.getByText('Must be a number')).toBeInTheDocument();
+    });
+
+    it('does not disable Save when series position is invalid', async () => {
+      const user = userEvent.setup();
+      renderModal();
+
+      const posInput = screen.getByLabelText(/position/i);
+      await user.clear(posInput);
+      await user.type(posInput, 'abc');
+
+      expect(screen.getByText('Save')).not.toBeDisabled();
     });
   });
 
