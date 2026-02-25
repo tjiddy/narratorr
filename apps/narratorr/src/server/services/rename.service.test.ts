@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { RenameService, RenameError } from './rename.service.js';
+import { renameFilesWithTemplate } from '../utils/paths.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -205,16 +206,17 @@ describe('RenameService', () => {
 
   describe('renameFilesWithTemplate', () => {
     it('renames files using file format template', async () => {
-      const { service } = createService();
+      const { log } = createService();
       (readdir as Mock).mockResolvedValue([
         { name: 'old-name.m4b', isFile: () => true },
       ]);
 
-      const count = await service.renameFilesWithTemplate(
+      const count = await renameFilesWithTemplate(
         '/library/test',
         '{author} - {title}',
         mockBook,
         'Brandon Sanderson',
+        inject<FastifyBaseLogger>(log),
       );
 
       expect(count).toBe(1);
@@ -222,23 +224,24 @@ describe('RenameService', () => {
     });
 
     it('returns 0 when no files need renaming', async () => {
-      const { service } = createService();
+      const { log } = createService();
       (readdir as Mock).mockResolvedValue([
         { name: 'Brandon Sanderson - The Way of Kings.m4b', isFile: () => true },
       ]);
 
-      const count = await service.renameFilesWithTemplate(
+      const count = await renameFilesWithTemplate(
         '/library/test',
         '{author} - {title}',
         mockBook,
         'Brandon Sanderson',
+        inject<FastifyBaseLogger>(log),
       );
 
       expect(count).toBe(0);
     });
 
     it('attempts rollback when rename fails mid-operation', async () => {
-      const { service } = createService();
+      const { log } = createService();
       (readdir as Mock).mockResolvedValue([
         { name: 'file1.m4b', isFile: () => true },
         { name: 'file2.m4b', isFile: () => true },
@@ -248,7 +251,7 @@ describe('RenameService', () => {
         .mockRejectedValueOnce(new Error('EACCES'));  // second file fails
 
       await expect(
-        service.renameFilesWithTemplate('/library/test', '{title}', mockBook, 'Brandon Sanderson'),
+        renameFilesWithTemplate('/library/test', '{title}', mockBook, 'Brandon Sanderson', inject<FastifyBaseLogger>(log)),
       ).rejects.toThrow('EACCES');
 
       // Rollback: rename should be called to undo the first successful rename
@@ -256,7 +259,7 @@ describe('RenameService', () => {
     });
 
     it('continues rollback when one rollback fails', async () => {
-      const { service } = createService();
+      const { log } = createService();
       (readdir as Mock).mockResolvedValue([
         { name: 'file1.m4b', isFile: () => true },
         { name: 'file2.m4b', isFile: () => true },
@@ -270,7 +273,7 @@ describe('RenameService', () => {
         .mockResolvedValueOnce(undefined);  // rollback file1 still attempted and succeeds
 
       await expect(
-        service.renameFilesWithTemplate('/library/test', '{title}', mockBook, 'Brandon Sanderson'),
+        renameFilesWithTemplate('/library/test', '{title}', mockBook, 'Brandon Sanderson', inject<FastifyBaseLogger>(log)),
       ).rejects.toThrow('EACCES');
 
       // 3 forward attempts + 2 rollback attempts (file2 reverse + file1 reverse)
@@ -278,7 +281,7 @@ describe('RenameService', () => {
     });
 
     it('logs error for each failed rollback when multiple rollbacks fail', async () => {
-      const { service, log } = createService();
+      const { log } = createService();
       (readdir as Mock).mockResolvedValue([
         { name: 'file1.m4b', isFile: () => true },
         { name: 'file2.m4b', isFile: () => true },
@@ -292,7 +295,7 @@ describe('RenameService', () => {
         .mockRejectedValueOnce(new Error('EPERM'));   // rollback file1 also fails
 
       await expect(
-        service.renameFilesWithTemplate('/library/test', '{title}', mockBook, 'Brandon Sanderson'),
+        renameFilesWithTemplate('/library/test', '{title}', mockBook, 'Brandon Sanderson', inject<FastifyBaseLogger>(log)),
       ).rejects.toThrow('EACCES');
 
       // 3 forward attempts + 2 rollback attempts = 5 total
@@ -307,7 +310,7 @@ describe('RenameService', () => {
     });
 
     it('does not log rollback error when single rollback succeeds', async () => {
-      const { service, log } = createService();
+      const { log } = createService();
       (readdir as Mock).mockResolvedValue([
         { name: 'file1.m4b', isFile: () => true },
         { name: 'file2.m4b', isFile: () => true },
@@ -318,7 +321,7 @@ describe('RenameService', () => {
         .mockResolvedValueOnce(undefined);       // rollback file1 succeeds
 
       await expect(
-        service.renameFilesWithTemplate('/library/test', '{title}', mockBook, 'Brandon Sanderson'),
+        renameFilesWithTemplate('/library/test', '{title}', mockBook, 'Brandon Sanderson', inject<FastifyBaseLogger>(log)),
       ).rejects.toThrow('EACCES');
 
       // 2 forward + 1 rollback = 3 total
@@ -332,18 +335,19 @@ describe('RenameService', () => {
     });
 
     it('deduplicates colliding filenames', async () => {
-      const { service } = createService();
+      const { log } = createService();
       // Two files, template produces same name for both
       (readdir as Mock).mockResolvedValue([
         { name: 'a.m4b', isFile: () => true },
         { name: 'b.m4b', isFile: () => true },
       ]);
 
-      await service.renameFilesWithTemplate(
+      await renameFilesWithTemplate(
         '/library/test',
         '{title}',
         mockBook,
         'Brandon Sanderson',
+        inject<FastifyBaseLogger>(log),
       );
 
       // Should have renamed both files, second gets (2) suffix

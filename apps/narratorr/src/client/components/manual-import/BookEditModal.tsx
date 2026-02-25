@@ -1,8 +1,8 @@
 import { useState, useRef } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { api, type BookMetadata, type DiscoveredBook } from '@/lib/api';
+import { type BookMetadata, type DiscoveredBook } from '@/lib/api';
 import { formatBytes } from '@/lib/api';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { useAudnexusSearch } from '@/hooks/useAudnexusSearch';
 import { isBookInLibrary } from '@/lib/helpers';
 import { useLibrary } from '@/hooks/useLibrary';
 import {
@@ -41,25 +41,19 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
   const [author, setAuthor] = useState(initial.author);
   const [series, setSeries] = useState(initial.series);
   const [selectedMetadata, setSelectedMetadata] = useState<BookMetadata | null>(initial.metadata ?? null);
-  const [searchResults, setSearchResults] = useState<BookMetadata[]>(() => {
+
+  const initialResults = (() => {
     if (initial.metadata && alternatives?.length) {
       return [initial.metadata, ...alternatives];
     }
     if (initial.metadata) return [initial.metadata];
     if (alternatives?.length) return alternatives;
     return [];
-  });
-  const [hasSearched, setHasSearched] = useState(false);
+  })();
+
+  const { searchResults, hasSearched, isPending, search } = useAudnexusSearch({ initialResults });
 
   useEscapeKey(true, onClose, modalRef);
-
-  const searchMutation = useMutation({
-    mutationFn: (query: string) => api.searchMetadata(query),
-    onSuccess: (result) => {
-      setSearchResults(result.books);
-      setHasSearched(true);
-    },
-  });
 
   const applyMetadata = (meta: BookMetadata) => {
     setSelectedMetadata(meta);
@@ -72,9 +66,7 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
 
   const handleSearch = () => {
     const query = [title, author].filter(Boolean).join(' ');
-    if (query) {
-      searchMutation.mutate(query);
-    }
+    search(query);
   };
 
   const handleSave = () => {
@@ -204,14 +196,14 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
             </span>
             <button
               onClick={handleSearch}
-              disabled={searchMutation.isPending || (!title.trim() && !author.trim())}
+              disabled={isPending || (!title.trim() && !author.trim())}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-all disabled:opacity-40 focus-ring ${
                 confidence === 'none'
                   ? 'bg-primary text-primary-foreground hover:opacity-90'
                   : 'glass-card hover:border-primary/30 hover:text-primary'
               }`}
             >
-              {searchMutation.isPending ? (
+              {isPending ? (
                 <LoadingSpinner className="w-3 h-3" />
               ) : (
                 <SearchIcon className="w-3 h-3" />

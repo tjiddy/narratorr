@@ -1,23 +1,16 @@
-import { mkdir, readdir, rename, rmdir, cp, rm, stat } from 'node:fs/promises';
-import { join, extname, basename, dirname, normalize, resolve, relative } from 'node:path';
+import { mkdir, rename, cp, rm, stat } from 'node:fs/promises';
+import { dirname, normalize, resolve } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '@narratorr/core/utils';
-import type { BookService, BookWithAuthor } from './book.service.js';
+import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import { buildTargetPath } from './import.service.js';
+import { cleanEmptyParents, renameFilesWithTemplate } from '../utils/paths.js';
 
 export interface RenameResult {
   oldPath: string;
   newPath: string;
   message: string;
   filesRenamed: number;
-}
-
-/** Extract a 4-digit year from a date string. */
-function extractYear(publishedDate: string | null | undefined): string | undefined {
-  if (!publishedDate) return undefined;
-  const match = publishedDate.match(/(\d{4})/);
-  return match ? match[1] : undefined;
 }
 
 export class RenameService {
@@ -75,11 +68,12 @@ export class RenameService {
     // Rename files using file format template
     let filesRenamed = 0;
     if (librarySettings.fileFormat) {
-      filesRenamed = await this.renameFilesWithTemplate(
+      filesRenamed = await renameFilesWithTemplate(
         currentPath,
         librarySettings.fileFormat,
         book,
         authorName,
+        this.log,
       );
     }
 
@@ -90,7 +84,7 @@ export class RenameService {
 
     // Clean up empty parent directories after successful move
     if (pathChanged) {
-      await this.cleanEmptyParents(oldPath, librarySettings.path);
+      await cleanEmptyParents(oldPath, librarySettings.path, this.log);
     }
 
     this.log.info({ bookId, oldPath, newPath: currentPath, filesRenamed }, 'Book renamed');
@@ -148,110 +142,6 @@ export class RenameService {
     }
   }
 
-  /** Rename audio files in a directory using the file format template. Returns count of files renamed. */
-  async renameFilesWithTemplate(
-    targetPath: string,
-    fileFormat: string,
-    book: BookWithAuthor,
-    authorName: string | null,
-  ): Promise<number> {
-    const entries = await readdir(targetPath, { withFileTypes: true });
-    const audioFiles = entries
-      .filter(e => e.isFile() && AUDIO_EXTENSIONS.has(extname(e.name).toLowerCase()))
-      .map(e => e.name)
-      .sort();
-
-    if (audioFiles.length === 0) return 0;
-
-    const author = authorName || 'Unknown Author';
-    const baseTokens: Record<string, string | number | undefined | null> = {
-      author,
-      authorLastFirst: toLastFirst(author),
-      title: book.title,
-      titleSort: toSortTitle(book.title),
-      series: book.seriesName || undefined,
-      seriesPosition: book.seriesPosition ?? undefined,
-      narrator: book.narrator || undefined,
-      narratorLastFirst: book.narrator ? toLastFirst(book.narrator) : undefined,
-      year: extractYear(book.publishedDate),
-    };
-
-    const renames: { from: string; to: string }[] = [];
-    const seen = new Set<string>();
-
-    for (let i = 0; i < audioFiles.length; i++) {
-      const fileName = audioFiles[i];
-      const ext = extname(fileName);
-      const tokens = {
-        ...baseTokens,
-        trackNumber: i + 1,
-        trackTotal: audioFiles.length,
-        partName: basename(fileName, ext),
-      };
-      let newStem = renderFilename(fileFormat, tokens);
-
-      if (seen.has(newStem.toLowerCase())) {
-        newStem = `${newStem} (${i + 1})`;
-      }
-      seen.add(newStem.toLowerCase());
-
-      const newName = `${newStem}${ext}`;
-      if (newName !== fileName) {
-        renames.push({ from: fileName, to: newName });
-      }
-    }
-
-    // Perform renames with rollback tracking
-    const completed: { from: string; to: string }[] = [];
-    try {
-      for (const { from, to } of renames) {
-        await rename(join(targetPath, from), join(targetPath, to));
-        completed.push({ from, to });
-        this.log.debug({ from, to }, 'Renamed file using template');
-      }
-    } catch (error) {
-      // Attempt rollback
-      this.log.error({ error, completed: completed.length, total: renames.length }, 'Rename failed mid-operation, attempting rollback');
-      for (const { from, to } of completed.reverse()) {
-        try {
-          await rename(join(targetPath, to), join(targetPath, from));
-        } catch (rollbackError) {
-          this.log.error({ rollbackError, file: to }, 'Rollback failed for file');
-        }
-      }
-      throw error;
-    }
-
-    return renames.length;
-  }
-
-  /**
-   * Walk up from bookPath removing empty directories, stopping at libraryRoot.
-   * Only runs when bookPath is a normalized descendant of libraryRoot.
-   */
-  private async cleanEmptyParents(bookPath: string, libraryRoot: string): Promise<void> {
-    const normalizedRoot = normalize(resolve(libraryRoot));
-    const normalizedBook = normalize(resolve(bookPath));
-
-    const rel = relative(normalizedRoot, normalizedBook);
-    if (!rel || rel.startsWith('..') || resolve(rel) === resolve(normalizedBook)) {
-      this.log.debug({ bookPath, libraryRoot }, 'Book path not under library root, skipping parent cleanup');
-      return;
-    }
-
-    let current = dirname(normalizedBook);
-    while (current !== normalizedRoot && current.length > normalizedRoot.length) {
-      try {
-        const entries = await readdir(current);
-        if (entries.length > 0) break;
-        await rmdir(current);
-        this.log.debug({ path: current }, 'Removed empty parent directory');
-        current = dirname(current);
-      } catch {
-        break;
-      }
-    }
-  }
 }
 
 export class RenameError extends Error {

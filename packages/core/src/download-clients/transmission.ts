@@ -173,7 +173,7 @@ export class TransmissionClient implements DownloadClientAdapter {
         if (newSessionId) {
           this.sessionId = newSessionId;
         }
-        return this.rpc(method, args, true);
+        return await this.rpc(method, args, true);
       }
 
       if (response.status === 409) {

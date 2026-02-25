@@ -38,7 +38,7 @@ app.delete<{ Params: { id: string }; Querystring: { deleteFiles?: string } }>('/
   try {
     const id = parseInt(request.params.id, 10);
     if (isNaN(id)) {
-      return reply.status(400).send({ error: 'Invalid ID' });
+      return await reply.status(400).send({ error: 'Invalid ID' });
     }
 
     const deleteFiles = request.query.deleteFiles === 'true';
@@ -47,7 +47,7 @@ app.delete<{ Params: { id: string }; Querystring: { deleteFiles?: string } }>('/
     if (deleteFiles) {
       const book = await bookService.getById(id);
       if (!book) {
-        return reply.status(404).send({ error: 'Book not found' });
+        return await reply.status(404).send({ error: 'Book not found' });
       }
 
       if (book.path) {
@@ -56,7 +56,7 @@ app.delete<{ Params: { id: string }; Querystring: { deleteFiles?: string } }>('/
           await bookService.deleteBookFiles(book.path, librarySettings.path);
         } catch (error) {
           request.log.error({ bookId: id, error }, 'Failed to delete book files');
-          return reply.status(500).send({ error: 'Failed to delete book files from disk' });
+          return await reply.status(500).send({ error: 'Failed to delete book files from disk' });
         }
       }
     }
@@ -77,7 +77,7 @@ app.delete<{ Params: { id: string }; Querystring: { deleteFiles?: string } }>('/
     const deleted = await bookService.delete(id);
 
     if (!deleted) {
-      return reply.status(404).send({ error: 'Book not found' });
+      return await reply.status(404).send({ error: 'Book not found' });
     }
 
     request.log.info({ id, deleteFiles }, 'Book deleted');
@@ -120,13 +120,13 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
     try {
       const id = parseInt(request.params.id, 10);
       if (isNaN(id)) {
-        return reply.status(400).send({ error: 'Invalid ID' });
+        return await reply.status(400).send({ error: 'Invalid ID' });
       }
 
       const book = await bookService.getById(id);
 
       if (!book) {
-        return reply.status(404).send({ error: 'Book not found' });
+        return await reply.status(404).send({ error: 'Book not found' });
       }
 
       return book;
@@ -143,14 +143,14 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
               asin, isbn, seriesName, seriesPosition, duration, publishedDate, genres, providerId } = request.body;
 
       if (!title) {
-        return reply.status(400).send({ error: 'Title is required' });
+        return await reply.status(400).send({ error: 'Title is required' });
       }
 
       // Check for duplicates
       const existing = await bookService.findDuplicate(title, authorName, asin);
       if (existing) {
         request.log.info({ title, existingId: existing.id }, 'Duplicate book detected');
-        return reply.status(409).send(existing);
+        return await reply.status(409).send(existing);
       }
 
       const book = await bookService.create({
@@ -171,7 +171,7 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
       });
 
       request.log.info({ title }, 'Book added');
-      return reply.status(201).send(book);
+      return await reply.status(201).send(book);
     } catch (error) {
       request.log.error(error, 'Failed to create book');
       return reply.status(500).send({ error: 'Internal server error' });
@@ -185,18 +185,18 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
       try {
         const id = parseInt(request.params.id, 10);
         if (isNaN(id)) {
-          return reply.status(400).send({ error: 'Invalid ID' });
+          return await reply.status(400).send({ error: 'Invalid ID' });
         }
 
         // Reject empty title
         if ('title' in request.body && (!request.body.title || !request.body.title.trim())) {
-          return reply.status(400).send({ error: 'Title cannot be empty' });
+          return await reply.status(400).send({ error: 'Title cannot be empty' });
         }
 
         const book = await bookService.update(id, request.body);
 
         if (!book) {
-          return reply.status(404).send({ error: 'Book not found' });
+          return await reply.status(404).send({ error: 'Book not found' });
         }
 
         request.log.info({ id }, 'Book updated');
@@ -215,7 +215,7 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
     try {
       const id = parseInt(request.params.id, 10);
       if (isNaN(id)) {
-        return reply.status(400).send({ error: 'Invalid ID' });
+        return await reply.status(400).send({ error: 'Invalid ID' });
       }
 
       const result = await renameService.renameBook(id);
@@ -242,19 +242,19 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
     try {
       const id = parseInt(request.params.id, 10);
       if (isNaN(id)) {
-        return reply.status(400).send({ error: 'Invalid ID' });
+        return await reply.status(400).send({ error: 'Invalid ID' });
       }
 
       const book = await bookService.getById(id);
       if (!book || !book.path) {
-        return reply.status(404).send({ error: 'Book not found' });
+        return await reply.status(404).send({ error: 'Book not found' });
       }
 
       // Find cover file in book directory
       const entries = await readdir(book.path);
       const coverFile = entries.find(f => /^cover\.(jpg|jpeg|png|webp)$/i.test(f));
       if (!coverFile) {
-        return reply.status(404).send({ error: 'No cover image' });
+        return await reply.status(404).send({ error: 'No cover image' });
       }
 
       const mime = coverFile.endsWith('.png') ? 'image/png'
@@ -262,7 +262,7 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
         : 'image/jpeg';
 
       const data = await readFile(join(book.path, coverFile));
-      return reply
+      return await reply
         .header('Content-Type', mime)
         .header('Cache-Control', 'public, max-age=86400')
         .send(data);
@@ -276,12 +276,12 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
     try {
       const id = parseInt(request.params.id, 10);
       if (isNaN(id)) {
-        return reply.status(400).send({ error: 'Invalid ID' });
+        return await reply.status(400).send({ error: 'Invalid ID' });
       }
 
       const book = await bookService.getById(id);
       if (!book || !book.path) {
-        return reply.status(404).send({ error: 'Book not found' });
+        return await reply.status(404).send({ error: 'Book not found' });
       }
 
       let entries: string[];

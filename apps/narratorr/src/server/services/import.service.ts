@@ -1,10 +1,11 @@
 import { eq } from 'drizzle-orm';
-import { mkdir, cp, stat, readdir, rename, rm } from 'node:fs/promises';
+import { mkdir, cp, stat, readdir, rm } from 'node:fs/promises';
 import { join, extname, basename, normalize } from 'node:path';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, authors } from '@narratorr/db/schema';
-import { renderTemplate, renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '@narratorr/core/utils';
+import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '@narratorr/core/utils';
+import { renameFilesWithTemplate } from '../utils/paths.js';
 import { processAudioFiles } from '@narratorr/core/utils/audio-processor';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { applyPathMapping } from '@narratorr/core/utils/path-mapping';
@@ -236,7 +237,7 @@ export class ImportService {
 
       // 6c. Rename files using file format template (after processing, so it applies to final output)
       if (librarySettings.fileFormat) {
-        await this.renameFilesWithTemplate(targetPath, librarySettings.fileFormat, book, author?.name ?? null);
+        await renameFilesWithTemplate(targetPath, librarySettings.fileFormat, book, author?.name ?? null, this.log);
       }
 
       // 7. Verify copy (skip when processing ran — merge/convert changes file sizes)
@@ -415,66 +416,6 @@ export class ImportService {
       }
     }
     return count;
-  }
-
-  private async renameFilesWithTemplate(
-    targetPath: string,
-    fileFormat: string,
-    book: BookRow,
-    authorName: string | null,
-  ): Promise<void> {
-    const entries = await readdir(targetPath, { withFileTypes: true });
-    const audioFiles = entries
-      .filter(e => e.isFile() && AUDIO_EXTENSIONS.has(extname(e.name).toLowerCase()))
-      .map(e => e.name)
-      .sort();
-
-    if (audioFiles.length === 0) return;
-
-    const author = authorName || 'Unknown Author';
-    const baseTokens: Record<string, string | number | undefined | null> = {
-      author,
-      authorLastFirst: toLastFirst(author),
-      title: book.title,
-      titleSort: toSortTitle(book.title),
-      series: book.seriesName || undefined,
-      seriesPosition: book.seriesPosition ?? undefined,
-      narrator: book.narrator || undefined,
-      narratorLastFirst: book.narrator ? toLastFirst(book.narrator) : undefined,
-      year: extractYear(book.publishedDate),
-    };
-
-    // Build new names first to detect collisions
-    const renames: { from: string; to: string }[] = [];
-    const seen = new Set<string>();
-
-    for (let i = 0; i < audioFiles.length; i++) {
-      const fileName = audioFiles[i];
-      const ext = extname(fileName);
-      const tokens = {
-        ...baseTokens,
-        trackNumber: i + 1,
-        trackTotal: audioFiles.length,
-        partName: basename(fileName, ext),
-      };
-      let newStem = renderFilename(fileFormat, tokens);
-
-      // Deduplicate: if this name was already used, append track number
-      if (seen.has(newStem.toLowerCase())) {
-        newStem = `${newStem} (${i + 1})`;
-      }
-      seen.add(newStem.toLowerCase());
-
-      const newName = `${newStem}${ext}`;
-      if (newName !== fileName) {
-        renames.push({ from: fileName, to: newName });
-      }
-    }
-
-    for (const { from, to } of renames) {
-      await rename(join(targetPath, from), join(targetPath, to));
-      this.log.debug({ from, to }, 'Renamed file using template');
-    }
   }
 
   private async handleTorrentRemoval(download: DownloadRow, minSeedTimeMinutes: number): Promise<void> {

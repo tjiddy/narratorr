@@ -38,7 +38,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
         const author = await metadataService.getAuthor(id);
 
         if (!author) {
-          return reply.status(404).send({ error: 'Author not found' });
+          return await reply.status(404).send({ error: 'Author not found' });
         }
 
         return author;
@@ -84,7 +84,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
         const book = await metadataService.getBook(id);
 
         if (!book) {
-          return reply.status(404).send({ error: 'Book not found' });
+          return await reply.status(404).send({ error: 'Book not found' });
         }
 
         return book;
@@ -108,7 +108,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
   // GET /api/metadata/providers
   app.get('/api/metadata/providers', async (request, reply) => {
     try {
-      return await metadataService.getProviders();
+      return metadataService.getProviders();
     } catch (error) {
       request.log.error(error, 'Failed to fetch metadata providers');
       return reply.status(500).send({ error: 'Internal server error' });

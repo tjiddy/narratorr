@@ -162,6 +162,13 @@ describe('QBittorrentClient', () => {
       );
     });
 
+    it('throws for .torrent URLs before sending request', async () => {
+      // No MSW handler needed — the error should fire before any HTTP request
+      await expect(
+        client.addDownload('https://example.com/file.torrent'),
+      ).rejects.toThrow('qBittorrent adapter only supports magnet URIs');
+    });
+
     it('throws when btih contains invalid characters', async () => {
       server.use(
         http.post(`${BASE_URL}/api/v2/torrents/add`, () => {

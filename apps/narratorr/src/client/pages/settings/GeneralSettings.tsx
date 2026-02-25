@@ -96,7 +96,7 @@ export function GeneralSettings() {
       if (data.processing.enabled && data.processing.ffmpegPath.trim()) {
         await api.probeFfmpeg(data.processing.ffmpegPath);
       }
-      return await api.updateSettings(data);
+      return api.updateSettings(data);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });

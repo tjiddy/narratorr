@@ -41,7 +41,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
 
         if (!verified) {
           request.log.info({ username }, 'Failed login attempt');
-          return reply.status(401).send({ error: 'Invalid credentials' });
+          return await reply.status(401).send({ error: 'Invalid credentials' });
         }
 
         // Set session cookie
@@ -131,7 +131,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
         const user = (request as unknown as Record<string, unknown>).user as { username: string } | null;
 
         if (!user) {
-          return reply.status(401).send({ error: 'Authentication required' });
+          return await reply.status(401).send({ error: 'Authentication required' });
         }
 
         await authService.changePassword(user.username, currentPassword, newPassword);

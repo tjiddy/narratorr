@@ -100,7 +100,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      return response.text();
+      return await response.text();
     } finally {
       clearTimeout(timeoutId);
     }

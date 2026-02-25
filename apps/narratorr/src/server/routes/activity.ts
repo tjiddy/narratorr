@@ -40,13 +40,13 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     try {
       const id = parseInt(request.params.id, 10);
       if (isNaN(id)) {
-        return reply.status(400).send({ error: 'Invalid ID' });
+        return await reply.status(400).send({ error: 'Invalid ID' });
       }
 
       const download = await downloadService.getById(id);
 
       if (!download) {
-        return reply.status(404).send({ error: 'Download not found' });
+        return await reply.status(404).send({ error: 'Download not found' });
       }
 
       return download;
@@ -61,13 +61,13 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     try {
       const id = parseInt(request.params.id, 10);
       if (isNaN(id)) {
-        return reply.status(400).send({ error: 'Invalid ID' });
+        return await reply.status(400).send({ error: 'Invalid ID' });
       }
 
       const cancelled = await downloadService.cancel(id);
 
       if (!cancelled) {
-        return reply.status(404).send({ error: 'Download not found' });
+        return await reply.status(404).send({ error: 'Download not found' });
       }
 
       request.log.info({ id }, 'Download cancelled');

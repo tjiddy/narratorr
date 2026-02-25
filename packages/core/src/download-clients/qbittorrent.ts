@@ -122,7 +122,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
         // Session expired, re-login and retry once
         this.cookie = undefined;
         await this.login();
-        return this.request(path, options, true);
+        return await this.request(path, options, true);
       }
 
       if (!response.ok) {
@@ -145,6 +145,13 @@ export class QBittorrentClient implements DownloadClientAdapter {
   }
 
   async addDownload(url: string, options?: AddDownloadOptions): Promise<string> {
+    // Validate magnet URI before sending to qBittorrent — .torrent URLs are not supported
+    if (!url.startsWith('magnet:')) {
+      throw new Error(
+        `qBittorrent adapter only supports magnet URIs. Received: ${url.slice(0, 80)}${url.length > 80 ? '...' : ''}`,
+      );
+    }
+
     const formData = new URLSearchParams();
     formData.set('urls', url);
 

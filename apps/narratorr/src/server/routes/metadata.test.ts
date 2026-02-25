@@ -166,7 +166,7 @@ describe('metadata routes', () => {
     });
 
     it('GET /api/metadata/providers returns 500 when service throws', async () => {
-      (services.metadata.getProviders as Mock).mockRejectedValue(new Error('Config error'));
+      (services.metadata.getProviders as Mock).mockImplementation(() => { throw new Error('Config error'); });
 
       const res = await app.inject({ method: 'GET', url: '/api/metadata/providers' });
 

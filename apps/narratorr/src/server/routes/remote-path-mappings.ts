@@ -35,7 +35,7 @@ export async function remotePathMappingRoutes(
         const { id } = request.params as { id: number };
         const item = await remotePathMappingService.getById(id);
         if (!item) {
-          return reply.status(404).send({ error: 'Remote path mapping not found' });
+          return await reply.status(404).send({ error: 'Remote path mapping not found' });
         }
         return item;
       } catch (error) {
@@ -54,7 +54,7 @@ export async function remotePathMappingRoutes(
         const data = request.body as { downloadClientId: number; remotePath: string; localPath: string };
         const item = await remotePathMappingService.create(data);
         request.log.info({ downloadClientId: data.downloadClientId }, 'Remote path mapping created');
-        return reply.status(201).send(item);
+        return await reply.status(201).send(item);
       } catch (error) {
         request.log.error(error, 'Failed to create remote path mapping');
         return reply.status(500).send({ error: 'Internal server error' });
@@ -71,7 +71,7 @@ export async function remotePathMappingRoutes(
         const { id } = request.params as { id: number };
         const item = await remotePathMappingService.update(id, request.body as Record<string, unknown>);
         if (!item) {
-          return reply.status(404).send({ error: 'Remote path mapping not found' });
+          return await reply.status(404).send({ error: 'Remote path mapping not found' });
         }
         request.log.info({ id }, 'Remote path mapping updated');
         return item;
@@ -91,7 +91,7 @@ export async function remotePathMappingRoutes(
       try {
         const deleted = await remotePathMappingService.delete(id);
         if (!deleted) {
-          return reply.status(404).send({ error: 'Remote path mapping not found' });
+          return await reply.status(404).send({ error: 'Remote path mapping not found' });
         }
         request.log.info({ id }, 'Remote path mapping deleted');
         return { success: true };

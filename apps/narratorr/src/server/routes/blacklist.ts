@@ -23,7 +23,7 @@ export async function blacklistRoutes(app: FastifyInstance, blacklistService: Bl
       const data = request.body as CreateBlacklistInput;
       try {
         const entry = await blacklistService.create(data);
-        return reply.status(201).send(entry);
+        return await reply.status(201).send(entry);
       } catch (error) {
         request.log.error(error, 'Failed to add to blacklist');
         const message = error instanceof Error ? error.message : 'Unknown error';

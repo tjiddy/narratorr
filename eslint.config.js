@@ -19,7 +19,7 @@ export default tseslint.config(
   // Base config for all files
   js.configs.recommended,
 
-  // TypeScript config
+  // TypeScript config (recommended + type-checked for return-await)
   ...tseslint.configs.recommended,
 
   // Global settings
@@ -36,6 +36,8 @@ export default tseslint.config(
         ecmaFeatures: {
           jsx: true,
         },
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
       },
     },
   },
@@ -83,6 +85,9 @@ export default tseslint.config(
         'error',
         { prefer: 'type-imports', fixStyle: 'inline-type-imports' },
       ],
+
+      // Async safety — catch blocks are dead code without `await` on returned promises
+      '@typescript-eslint/return-await': ['error', 'in-try-catch'],
 
       // File hygiene
       'max-lines': ['error', { max: 400, skipBlankLines: true, skipComments: true }],

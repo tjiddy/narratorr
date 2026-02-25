@@ -1,8 +1,7 @@
 import { useState, useRef } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { api } from '@/lib/api';
 import type { BookWithAuthor, UpdateBookPayload, BookMetadata } from '@/lib/api';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { useAudnexusSearch } from '@/hooks/useAudnexusSearch';
 import { XIcon, SearchIcon, LoadingSpinner, HeadphonesIcon, AlertCircleIcon, ArrowLeftIcon } from '@/components/icons';
 
 type SearchView = 'edit' | 'search';
@@ -25,9 +24,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
 
   const [view, setView] = useState<SearchView>('edit');
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<BookMetadata[]>([]);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
+  const { searchResults, hasSearched, searchError, isPending, search } = useAudnexusSearch();
 
   useEscapeKey(true, onClose, modalRef);
 
@@ -37,20 +34,6 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
     ? 'Must be a number'
     : null;
 
-  const searchMutation = useMutation({
-    mutationFn: (query: string) => api.searchMetadata(query),
-    onSuccess: (result) => {
-      setSearchResults(result.books);
-      setHasSearched(true);
-      setSearchError(null);
-    },
-    onError: () => {
-      setSearchError('Search failed. Please try again.');
-      setSearchResults([]);
-      setHasSearched(true);
-    },
-  });
-
   const handleOpenSearch = () => {
     const prefill = [book.title, book.author?.name ?? ''].filter(Boolean).join(' ').trim();
     setSearchQuery(prefill);
@@ -58,9 +41,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
   };
 
   const handleSearch = () => {
-    if (searchQuery.trim()) {
-      searchMutation.mutate(searchQuery.trim());
-    }
+    search(searchQuery);
   };
 
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
@@ -263,10 +244,10 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
               <button
                 type="button"
                 onClick={handleSearch}
-                disabled={!searchQuery.trim() || searchMutation.isPending}
+                disabled={!searchQuery.trim() || isPending}
                 className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
               >
-                {searchMutation.isPending ? (
+                {isPending ? (
                   <LoadingSpinner className="w-3.5 h-3.5" />
                 ) : (
                   <SearchIcon className="w-3.5 h-3.5" />
@@ -335,7 +316,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
             )}
 
             {/* Initial state — before first search */}
-            {!hasSearched && !searchMutation.isPending && !searchError && (
+            {!hasSearched && !isPending && !searchError && (
               <p className="text-xs text-muted-foreground/40 text-center py-4">
                 Search to find metadata and auto-fill fields.
               </p>

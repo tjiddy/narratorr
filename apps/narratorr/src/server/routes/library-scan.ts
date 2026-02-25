@@ -104,7 +104,7 @@ export async function libraryScanRoutes(
 
     try {
       const result = await libraryScan.confirmImport(items, mode);
-      return reply.status(202).send(result);
+      return await reply.status(202).send(result);
     } catch (error) {
       request.log.error(error, 'Import confirmation failed');
       return reply.status(500).send({

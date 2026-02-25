@@ -45,7 +45,7 @@ export async function registerCrudRoutes(
         const { id } = request.params as { id: number };
         const item = await service.getById(id);
         if (!item) {
-          return reply.status(404).send({ error: `${entityName} not found` });
+          return await reply.status(404).send({ error: `${entityName} not found` });
         }
         return item;
       } catch (error) {
@@ -64,7 +64,7 @@ export async function registerCrudRoutes(
         const data = request.body as Record<string, unknown>;
         const item = await service.create(data);
         request.log.info({ name: data.name }, `${entityName} created`);
-        return reply.status(201).send(item);
+        return await reply.status(201).send(item);
       } catch (error) {
         request.log.error(error, `Failed to create ${lower}`);
         return reply.status(500).send({ error: 'Internal server error' });
@@ -81,7 +81,7 @@ export async function registerCrudRoutes(
         const { id } = request.params as { id: number };
         const item = await service.update(id, request.body);
         if (!item) {
-          return reply.status(404).send({ error: `${entityName} not found` });
+          return await reply.status(404).send({ error: `${entityName} not found` });
         }
         request.log.info({ id }, `${entityName} updated`);
         return item;
@@ -101,7 +101,7 @@ export async function registerCrudRoutes(
       try {
         const deleted = await service.delete(id);
         if (!deleted) {
-          return reply.status(404).send({ error: `${entityName} not found` });
+          return await reply.status(404).send({ error: `${entityName} not found` });
         }
         request.log.info({ id }, `${entityName} deleted`);
         return { success: true };
