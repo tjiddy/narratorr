@@ -1,8 +1,9 @@
 import { Link } from 'react-router-dom';
-import { SearchIcon, XIcon, ChevronDownIcon, FolderIcon, RefreshIcon, LoadingSpinner, TrashIcon } from '@/components/icons';
+import { SearchIcon, XIcon, ChevronDownIcon, FolderIcon, RefreshIcon, LoadingSpinner, TrashIcon, LibraryIcon } from '@/components/icons';
 import { type StatusFilter, type SortField, type SortDirection } from './helpers.js';
 import { StatusPills } from './StatusPills';
 import { FilterRow } from './FilterRow';
+import { SortControls } from './SortControls';
 
 export function LibraryToolbar({
   searchQuery, onSearchChange, onSearchClear,
@@ -11,6 +12,7 @@ export function LibraryToolbar({
   authorFilter, onAuthorFilterChange, uniqueAuthors,
   seriesFilter, onSeriesFilterChange, uniqueSeries,
   sortField, onSortFieldChange, sortDirection, onSortDirectionChange,
+  collapseSeriesEnabled, onCollapseSeriesToggle,
   onRescan, isRescanning,
   missingCount, onRemoveMissing,
 }: {
@@ -33,6 +35,8 @@ export function LibraryToolbar({
   onSortFieldChange: (f: SortField) => void;
   sortDirection: SortDirection;
   onSortDirectionChange: (d: SortDirection) => void;
+  collapseSeriesEnabled: boolean;
+  onCollapseSeriesToggle: () => void;
   onRescan: () => void;
   isRescanning: boolean;
   missingCount: number;
@@ -87,6 +91,29 @@ export function LibraryToolbar({
           )}
         </button>
 
+        <SortControls
+          sortField={sortField}
+          onSortFieldChange={onSortFieldChange}
+          sortDirection={sortDirection}
+          onSortDirectionChange={onSortDirectionChange}
+        />
+
+        <button
+          onClick={onCollapseSeriesToggle}
+          className={`
+            flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 focus-ring
+            ${collapseSeriesEnabled
+              ? 'bg-muted/80 text-foreground'
+              : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+            }
+          `}
+          aria-label="Collapse series"
+          aria-pressed={collapseSeriesEnabled}
+        >
+          <LibraryIcon className="w-3 h-3" />
+          Series
+        </button>
+
         {missingCount > 0 && (
           <button
             onClick={onRemoveMissing}
@@ -125,10 +152,6 @@ export function LibraryToolbar({
           seriesFilter={seriesFilter}
           onSeriesFilterChange={onSeriesFilterChange}
           uniqueSeries={uniqueSeries}
-          sortField={sortField}
-          onSortFieldChange={onSortFieldChange}
-          sortDirection={sortDirection}
-          onSortDirectionChange={onSortDirectionChange}
         />
       )}
     </div>

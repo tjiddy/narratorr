@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import type { BookWithAuthor } from '@/lib/api';
 import { useLibrarySearch } from '@/hooks/useLibrarySearch';
-import { type StatusFilter, type SortField, type SortDirection, filterTabs, matchesStatusFilter, getStatusCount, sortBooks } from './helpers.js';
+import { type StatusFilter, type SortField, type SortDirection, type DisplayBook, filterTabs, matchesStatusFilter, getStatusCount, sortBooks, collapseSeries } from './helpers.js';
 
 export function useLibraryFilters(books: BookWithAuthor[]) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -10,6 +10,7 @@ export function useLibraryFilters(books: BookWithAuthor[]) {
   const [sortField, setSortField] = useState<SortField>('createdAt');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [collapseSeriesEnabled, setCollapseSeriesEnabled] = useState(false);
 
   const { query: searchQuery, setQuery: setSearchQuery, clearQuery: clearSearch, results: searchResults, isSearching } = useLibrarySearch(books);
 
@@ -29,16 +30,19 @@ export function useLibraryFilters(books: BookWithAuthor[]) {
     return Array.from(names).sort();
   }, [books]);
 
-  const filteredBooks = useMemo(() => {
-    let result = searchResults.filter((b) => matchesStatusFilter(b.status, statusFilter));
+  const filteredBooks = useMemo((): DisplayBook[] => {
+    let result: BookWithAuthor[] = searchResults.filter((b) => matchesStatusFilter(b.status, statusFilter));
     if (authorFilter) {
       result = result.filter((b) => b.author?.name === authorFilter);
     }
     if (seriesFilter) {
       result = result.filter((b) => b.seriesName === seriesFilter);
     }
-    return sortBooks(result, sortField, sortDirection);
-  }, [searchResults, statusFilter, authorFilter, seriesFilter, sortField, sortDirection]);
+    const toSort = collapseSeriesEnabled
+      ? collapseSeries(result, sortField, sortDirection)
+      : result;
+    return sortBooks(toSort, sortField, sortDirection);
+  }, [searchResults, statusFilter, authorFilter, seriesFilter, sortField, sortDirection, collapseSeriesEnabled]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<StatusFilter, number> = { all: books.length, wanted: 0, downloading: 0, imported: 0 };
@@ -64,6 +68,7 @@ export function useLibraryFilters(books: BookWithAuthor[]) {
     sortField, setSortField,
     sortDirection, setSortDirection,
     filtersOpen, setFiltersOpen,
+    collapseSeriesEnabled, setCollapseSeriesEnabled,
     searchQuery, setSearchQuery, clearSearch,
     isSearching,
     uniqueAuthors, uniqueSeries,

@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLibrary } from '@/hooks/useLibrary';
 import { type BookWithAuthor } from '@/lib/api';
+import type { DisplayBook } from './helpers.js';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { useDeleteConfirmation } from '@/hooks/useDeleteConfirmation';
@@ -95,6 +96,8 @@ export function LibraryPage() {
         onSortFieldChange={filters.setSortField}
         sortDirection={filters.sortDirection}
         onSortDirectionChange={filters.setSortDirection}
+        collapseSeriesEnabled={filters.collapseSeriesEnabled}
+        onCollapseSeriesToggle={() => filters.setCollapseSeriesEnabled(!filters.collapseSeriesEnabled)}
         onRescan={() => rescanMutation.mutate()}
         isRescanning={rescanMutation.isPending}
         missingCount={missingCount}
@@ -105,11 +108,12 @@ export function LibraryPage() {
         <NoMatchState onClearFilters={filters.clearAllFilters} />
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
-          {filters.filteredBooks.map((book, index) => (
+          {filters.filteredBooks.map((book: DisplayBook, index) => (
             <LibraryBookCard
               key={book.id}
               book={book}
               index={index}
+              collapsedCount={book.collapsedCount}
               isMenuOpen={openMenuId === book.id}
               onMenuToggle={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === book.id ? null : book.id); }}
               onMenuClose={() => setOpenMenuId(null)}

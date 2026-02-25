@@ -11,10 +11,6 @@ function defaultProps(overrides = {}) {
     seriesFilter: '',
     onSeriesFilterChange: vi.fn(),
     uniqueSeries: ['The Stormlight Archive'],
-    sortField: 'createdAt' as const,
-    onSortFieldChange: vi.fn(),
-    sortDirection: 'desc' as const,
-    onSortDirectionChange: vi.fn(),
     ...overrides,
   };
 }
@@ -83,35 +79,11 @@ describe('FilterRow', () => {
     });
   });
 
-  describe('sort controls', () => {
-    it('renders sort field dropdown with all options', () => {
+  describe('sort controls removed', () => {
+    it('does not render sort dropdown (moved to toolbar)', () => {
       render(<FilterRow {...defaultProps()} />);
-      expect(screen.getByText('Date Added')).toBeInTheDocument();
-      expect(screen.getByText('Title')).toBeInTheDocument();
-      expect(screen.getByText('Author')).toBeInTheDocument();
-    });
-
-    it('calls onSortFieldChange when sort field is changed', async () => {
-      const user = userEvent.setup();
-      const props = defaultProps();
-      render(<FilterRow {...props} />);
-
-      await user.selectOptions(screen.getByDisplayValue('Date Added'), 'title');
-      expect(props.onSortFieldChange).toHaveBeenCalledWith('title');
-    });
-
-    it('calls onSortDirectionChange with opposite direction when toggle is clicked', async () => {
-      const user = userEvent.setup();
-      const props = defaultProps({ sortDirection: 'desc' as const });
-      render(<FilterRow {...props} />);
-
-      await user.click(screen.getByTitle('Sort descending'));
-      expect(props.onSortDirectionChange).toHaveBeenCalledWith('asc');
-    });
-
-    it('shows Sort ascending title when direction is asc', () => {
-      render(<FilterRow {...defaultProps({ sortDirection: 'asc' as const })} />);
-      expect(screen.getByTitle('Sort ascending')).toBeInTheDocument();
+      expect(screen.queryByText('Date Added')).not.toBeInTheDocument();
+      expect(screen.queryByText('Title')).not.toBeInTheDocument();
     });
   });
 });

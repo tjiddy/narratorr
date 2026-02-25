@@ -4,9 +4,11 @@ import { bookStatusConfig } from '@/lib/status';
 import { BookOpenIcon, MoreVerticalIcon, BrokenLinkIcon } from '@/components/icons';
 import { BookContextMenu } from './BookContextMenu.js';
 
+// eslint-disable-next-line complexity -- card has inherent conditional rendering: cover, missing chip, collapsed badge, status bar, menu, hover expand
 export function LibraryBookCard({
   book,
   index,
+  collapsedCount,
   isMenuOpen,
   onMenuToggle,
   onMenuClose,
@@ -16,6 +18,7 @@ export function LibraryBookCard({
 }: {
   book: BookWithAuthor;
   index: number;
+  collapsedCount?: number;
   isMenuOpen: boolean;
   onMenuToggle: (e: React.MouseEvent) => void;
   onMenuClose: () => void;
@@ -51,13 +54,25 @@ export function LibraryBookCard({
           </div>
         )}
 
-        {/* Missing/failed indicator chip */}
-        {isMissing && (
-          <div
-            className="absolute top-2 left-2 z-10 w-7 h-7 flex items-center justify-center rounded-lg backdrop-blur-md bg-black/40 ring-1 ring-red-500/20 shadow-[0_0_8px_-2px_rgba(239,68,68,0.3)]"
-            title="Files missing from disk"
-          >
-            <BrokenLinkIcon className="w-3.5 h-3.5 text-red-400 drop-shadow-[0_0_3px_rgba(239,68,68,0.4)]" />
+        {/* Top-left chip stack — missing indicator + collapsed badge */}
+        {(isMissing || (collapsedCount != null && collapsedCount > 0)) && (
+          <div className="absolute top-2 left-2 z-10 flex flex-col gap-1.5">
+            {isMissing && (
+              <div
+                className="w-7 h-7 flex items-center justify-center rounded-lg backdrop-blur-md bg-black/40 ring-1 ring-red-500/20 shadow-[0_0_8px_-2px_rgba(239,68,68,0.3)]"
+                title="Files missing from disk"
+              >
+                <BrokenLinkIcon className="w-3.5 h-3.5 text-red-400 drop-shadow-[0_0_3px_rgba(239,68,68,0.4)]" />
+              </div>
+            )}
+            {collapsedCount != null && collapsedCount > 0 && (
+              <div
+                className="px-1.5 py-0.5 rounded-md backdrop-blur-md bg-black/40 ring-1 ring-amber-500/20 shadow-[0_0_8px_-2px_rgba(245,158,11,0.3)] text-[10px] font-bold text-amber-400/90"
+                data-testid="collapsed-badge"
+              >
+                +{collapsedCount} more
+              </div>
+            )}
           </div>
         )}
 

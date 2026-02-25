@@ -26,6 +26,8 @@ function defaultProps(overrides = {}) {
     onSortFieldChange: vi.fn(),
     sortDirection: 'desc' as const,
     onSortDirectionChange: vi.fn(),
+    collapseSeriesEnabled: false,
+    onCollapseSeriesToggle: vi.fn(),
     onRescan: vi.fn(),
     isRescanning: false,
     missingCount: 0,
@@ -179,6 +181,57 @@ describe('LibraryToolbar', () => {
 
       await user.click(screen.getByText('Remove Missing'));
       expect(props.onRemoveMissing).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('sort controls', () => {
+    it('renders sort dropdown in main toolbar', () => {
+      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
+      expect(screen.getByText('Date Added')).toBeInTheDocument();
+      expect(screen.getByText('Title')).toBeInTheDocument();
+      expect(screen.getByText('Author')).toBeInTheDocument();
+    });
+
+    it('fires onSortFieldChange when sort field is changed', async () => {
+      const user = userEvent.setup();
+      const props = defaultProps();
+      renderWithProviders(<LibraryToolbar {...props} />);
+
+      await user.selectOptions(screen.getByDisplayValue('Date Added'), 'title');
+      expect(props.onSortFieldChange).toHaveBeenCalledWith('title');
+    });
+
+    it('fires onSortDirectionChange when direction toggle is clicked', async () => {
+      const user = userEvent.setup();
+      const props = defaultProps({ sortDirection: 'desc' as const });
+      renderWithProviders(<LibraryToolbar {...props} />);
+
+      await user.click(screen.getByTitle('Sort descending'));
+      expect(props.onSortDirectionChange).toHaveBeenCalledWith('asc');
+    });
+  });
+
+  describe('collapse series toggle', () => {
+    it('renders Series toggle button', () => {
+      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
+      expect(screen.getByLabelText('Collapse series')).toBeInTheDocument();
+      expect(screen.getByText('Series')).toBeInTheDocument();
+    });
+
+    it('fires onCollapseSeriesToggle when clicked', async () => {
+      const user = userEvent.setup();
+      const props = defaultProps();
+      renderWithProviders(<LibraryToolbar {...props} />);
+
+      await user.click(screen.getByLabelText('Collapse series'));
+      expect(props.onCollapseSeriesToggle).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows pressed state when enabled', () => {
+      renderWithProviders(
+        <LibraryToolbar {...defaultProps({ collapseSeriesEnabled: true })} />,
+      );
+      expect(screen.getByLabelText('Collapse series')).toHaveAttribute('aria-pressed', 'true');
     });
   });
 

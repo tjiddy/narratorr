@@ -247,6 +247,24 @@ describe('LibraryBookCard', () => {
     });
   });
 
+  describe('collapsed series badge', () => {
+    it('renders +N more badge when collapsedCount is provided and > 0', () => {
+      render(<LibraryBookCard {...defaultProps({ collapsedCount: 4 })} />);
+      expect(screen.getByTestId('collapsed-badge')).toBeInTheDocument();
+      expect(screen.getByText('+4 more')).toBeInTheDocument();
+    });
+
+    it('does not render badge when collapsedCount is 0', () => {
+      render(<LibraryBookCard {...defaultProps({ collapsedCount: 0 })} />);
+      expect(screen.queryByTestId('collapsed-badge')).not.toBeInTheDocument();
+    });
+
+    it('does not render badge when collapsedCount is undefined', () => {
+      render(<LibraryBookCard {...defaultProps()} />);
+      expect(screen.queryByTestId('collapsed-badge')).not.toBeInTheDocument();
+    });
+  });
+
   describe('series and narrator info', () => {
     it('renders narrator text when present', () => {
       render(<LibraryBookCard {...defaultProps()} />);
