@@ -164,9 +164,16 @@ describe('QBittorrentClient', () => {
 
     it('throws for .torrent URLs before sending request', async () => {
       // No MSW handler needed — the error should fire before any HTTP request
-      await expect(
-        client.addDownload('https://example.com/file.torrent'),
-      ).rejects.toThrow('qBittorrent adapter only supports magnet URIs');
+      const url = 'https://example.com/file.torrent?passkey=SECRET123';
+      await expect(client.addDownload(url)).rejects.toThrow(
+        'qBittorrent adapter only supports magnet URIs',
+      );
+      // Verify the URL (which may contain passkeys/tokens) is NOT leaked in the error message
+      await expect(client.addDownload(url)).rejects.toThrow(
+        expect.objectContaining({
+          message: expect.not.stringContaining('SECRET123'),
+        }),
+      );
     });
 
     it('throws when btih contains invalid characters', async () => {

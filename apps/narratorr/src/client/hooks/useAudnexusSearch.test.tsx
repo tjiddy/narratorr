@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { useAudnexusSearch } from './useAudnexusSearch';
@@ -54,27 +54,46 @@ describe('useAudnexusSearch', () => {
 
     const { result } = renderHook(() => useAudnexusSearch(), { wrapper: createWrapper() });
 
-    await act(async () => {
+    act(() => {
       result.current.search('test query');
+    });
+
+    await waitFor(() => {
+      expect(result.current.hasSearched).toBe(true);
     });
 
     expect(mockApi.searchMetadata).toHaveBeenCalledWith('test query');
     expect(result.current.searchResults).toEqual(books);
-    expect(result.current.hasSearched).toBe(true);
     expect(result.current.searchError).toBeNull();
   });
 
-  it('sets searchError on failure', async () => {
-    mockApi.searchMetadata.mockRejectedValue(new Error('API error'));
+  it('sets searchError on failure and preserves prior results', async () => {
+    const books = [{ title: 'Prior Book', authors: [{ name: 'Author' }] }];
+    mockApi.searchMetadata.mockResolvedValueOnce({ books, authors: [], series: [] });
 
     const { result } = renderHook(() => useAudnexusSearch(), { wrapper: createWrapper() });
 
-    await act(async () => {
+    // First search succeeds
+    act(() => {
+      result.current.search('good query');
+    });
+
+    await waitFor(() => {
+      expect(result.current.searchResults).toEqual(books);
+    });
+
+    // Second search fails — prior results preserved
+    mockApi.searchMetadata.mockRejectedValueOnce(new Error('API error'));
+
+    act(() => {
       result.current.search('bad query');
     });
 
-    expect(result.current.searchError).toBe('Search failed. Please try again.');
-    expect(result.current.searchResults).toEqual([]);
+    await waitFor(() => {
+      expect(result.current.searchError).toBe('Search failed. Please try again.');
+    });
+
+    expect(result.current.searchResults).toEqual(books);
     expect(result.current.hasSearched).toBe(true);
   });
 
@@ -93,8 +112,12 @@ describe('useAudnexusSearch', () => {
 
     const { result } = renderHook(() => useAudnexusSearch(), { wrapper: createWrapper() });
 
-    await act(async () => {
+    act(() => {
       result.current.search('  padded query  ');
+    });
+
+    await waitFor(() => {
+      expect(result.current.hasSearched).toBe(true);
     });
 
     expect(mockApi.searchMetadata).toHaveBeenCalledWith('padded query');

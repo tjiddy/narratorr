@@ -148,7 +148,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
     // Validate magnet URI before sending to qBittorrent — .torrent URLs are not supported
     if (!url.startsWith('magnet:')) {
       throw new Error(
-        `qBittorrent adapter only supports magnet URIs. Received: ${url.slice(0, 80)}${url.length > 80 ? '...' : ''}`,
+        'qBittorrent adapter only supports magnet URIs. Received a non-magnet URL (possibly a .torrent link — URL omitted to avoid leaking passkeys/tokens in logs).',
       );
     }
 

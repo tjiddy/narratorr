@@ -35,7 +35,6 @@ export function useAudnexusSearch(options?: UseAudnexusSearchOptions): UseAudnex
     },
     onError: () => {
       setSearchError('Search failed. Please try again.');
-      setSearchResults([]);
       setHasSearched(true);
     },
   });
