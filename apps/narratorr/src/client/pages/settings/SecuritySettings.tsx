@@ -43,6 +43,10 @@ export function SecuritySettings() {
 
   return (
     <div className="space-y-8">
+      <CredentialsSection
+        hasUser={authStatus?.hasUser ?? false}
+        queryClient={queryClient}
+      />
       <AuthModeSection
         mode={authConfig.mode}
         hasUser={authStatus?.hasUser ?? false}
@@ -50,10 +54,6 @@ export function SecuritySettings() {
       />
       <LocalBypassSection
         localBypass={authConfig.localBypass}
-        queryClient={queryClient}
-      />
-      <CredentialsSection
-        hasUser={authStatus?.hasUser ?? false}
         queryClient={queryClient}
       />
       <ApiKeySection
@@ -105,12 +105,6 @@ function AuthModeSection({
       return;
     }
 
-    // Switching to forms/basic without credentials
-    if ((newMode === 'forms' || newMode === 'basic') && !hasUser) {
-      toast.error('Create credentials before enabling authentication');
-      return;
-    }
-
     mutation.mutate(newMode);
   }
 
@@ -121,28 +115,39 @@ function AuthModeSection({
       description="Control how users authenticate with Narratorr"
     >
       <div className="space-y-3">
-        {(['none', 'basic', 'forms'] as AuthMode[]).map((m) => (
-          <label
-            key={m}
-            className={`
-              flex items-center gap-3.5 p-4 rounded-xl border cursor-pointer transition-all duration-200
-              ${mode === m
-                ? 'border-primary/60 bg-primary/5 shadow-sm shadow-primary/10'
-                : 'border-border hover:border-primary/30 hover:bg-muted/30'
-              }
-            `}
-          >
-            <input
-              type="radio"
-              name="authMode"
-              value={m}
-              checked={mode === m}
-              onChange={() => handleModeChange(m)}
-              className="accent-primary"
-            />
-            <span className="font-medium">{MODE_LABELS[m]}</span>
-          </label>
-        ))}
+        {(['none', 'basic', 'forms'] as AuthMode[]).map((m) => {
+          const needsCredentials = m !== 'none' && !hasUser;
+          return (
+            <label
+              key={m}
+              className={`
+                flex items-center gap-3.5 p-4 rounded-xl border transition-all duration-200
+                ${needsCredentials
+                  ? 'cursor-not-allowed opacity-50'
+                  : 'cursor-pointer'
+                }
+                ${mode === m
+                  ? 'border-primary/60 bg-primary/5 shadow-sm shadow-primary/10'
+                  : needsCredentials
+                    ? 'border-border'
+                    : 'border-border hover:border-primary/30 hover:bg-muted/30'
+                }
+              `}
+              title={needsCredentials ? 'Create credentials above first' : undefined}
+            >
+              <input
+                type="radio"
+                name="authMode"
+                value={m}
+                checked={mode === m}
+                disabled={needsCredentials}
+                onChange={() => handleModeChange(m)}
+                className="accent-primary"
+              />
+              <span className="font-medium">{MODE_LABELS[m]}</span>
+            </label>
+          );
+        })}
       </div>
 
       {/* Confirmation dialog for disabling auth */}

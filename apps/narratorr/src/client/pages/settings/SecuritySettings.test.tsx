@@ -65,19 +65,22 @@ describe('SecuritySettings', () => {
     expect(screen.getByText('test-api-key-12345')).toBeInTheDocument();
   });
 
-  it('mode change to forms/basic without credentials shows error', async () => {
-    const user = userEvent.setup();
+  it('forms/basic radio buttons disabled when no credentials exist', async () => {
     renderWithProviders(<SecuritySettings />);
 
     await waitFor(() => {
       expect(screen.getByText('Authentication Mode')).toBeInTheDocument();
     });
 
-    // Click the forms radio button — should show toast error since hasUser=false
+    // Forms and Basic radios should be disabled since hasUser=false
     const formsRadio = screen.getByLabelText('Forms (Login Page)');
-    await user.click(formsRadio);
+    const basicRadio = screen.getByLabelText('Basic (Browser Prompt)');
+    expect(formsRadio).toBeDisabled();
+    expect(basicRadio).toBeDisabled();
 
-    expect(toast.error).toHaveBeenCalledWith('Create credentials before enabling authentication');
+    // None should still be enabled
+    const noneRadio = screen.getByLabelText('None (No Authentication)');
+    expect(noneRadio).not.toBeDisabled();
   });
 
   it('mode change to "none" shows confirmation warning', async () => {
