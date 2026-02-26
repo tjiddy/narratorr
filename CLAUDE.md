@@ -59,6 +59,14 @@ All issues with `scope/frontend` must include a UI/UX design pass during impleme
 - `/implement` runs the design pass proactively after quality gates pass
 - `/review-pr` checks that frontend components meet the app's design standard and flags unpolished UI as a blocking finding
 
+## Security
+
+See `docs/SECURITY.md` for the full security model. Key architectural decisions:
+
+- **Filesystem browsing is intentionally unrestricted** for authenticated users. Narratorr is a single-user self-hosted app — the authenticated user is the server operator. Restricting browse to a preconfigured root would break setup workflows. This matches Sonarr/Radarr/Lidarr behavior.
+- **All `/api/*` routes require auth** (when enabled) except: `/health`, `/system/status`, `/auth/status`, `/auth/login`, `/auth/logout`, and `/auth/setup` (only when no user exists).
+- **Passwords use scrypt** with random salts and timing-safe comparison. Session cookies are HMAC-SHA256 signed.
+
 ## Code Style
 
 TypeScript strict, ESM (`.js` extensions), functional React components, TanStack Query for server state, Tailwind CSS (no CSS files), `@/` path alias for client imports. Always use `return await` (not bare `return`) for async calls inside try/catch blocks — without `await`, the catch block is dead code for rejected promises.
