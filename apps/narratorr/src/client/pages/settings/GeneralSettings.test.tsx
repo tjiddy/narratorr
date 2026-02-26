@@ -199,10 +199,11 @@ describe('GeneralSettings', () => {
     renderWithProviders(<GeneralSettings />);
 
     await waitFor(() => {
-      expect(screen.getByText('Preview')).toBeInTheDocument();
+      expect(screen.getByText('With series')).toBeInTheDocument();
+      expect(screen.getByText('Without series')).toBeInTheDocument();
     });
-    // Unified preview — folder path is dimmed, filename is highlighted; text split across spans
-    expect(screen.getByText(/Brandon Sanderson\/The Way of Kings\//)).toBeInTheDocument();
+    // Preview — folder path is dimmed, filename is highlighted; both previews render sample data
+    expect(screen.getAllByText(/Brandon Sanderson\/The Way of Kings\//).length).toBeGreaterThanOrEqual(1);
 
     // Expand token panel, then click a token button
     const toggles = screen.getAllByText('Insert token');

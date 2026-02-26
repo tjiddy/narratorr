@@ -490,9 +490,10 @@ describe('SettingsPage - Folder format token chips and preview', () => {
       expect(screen.getByRole('heading', { name: 'Library' })).toBeInTheDocument();
     });
 
-    // Unified preview combines folder path + filename
+    // Preview shows both with-series and without-series examples
     await waitFor(() => {
-      expect(screen.getByText('Preview')).toBeInTheDocument();
+      expect(screen.getByText('With series')).toBeInTheDocument();
+      expect(screen.getByText('Without series')).toBeInTheDocument();
     });
   });
 

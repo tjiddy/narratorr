@@ -59,8 +59,9 @@ describe('LibrarySettingsSection', () => {
     const toggles = screen.getAllByText('Insert token');
     expect(toggles).toHaveLength(2);
 
-    // Unified preview present
-    expect(screen.getByText('Preview')).toBeInTheDocument();
+    // Both preview lines present
+    expect(screen.getByText('With series')).toBeInTheDocument();
+    expect(screen.getByText('Without series')).toBeInTheDocument();
 
     // Interact with path input
     const pathInput = screen.getByPlaceholderText('/audiobooks');
@@ -151,8 +152,9 @@ describe('LibrarySettingsSection', () => {
     expect(screen.getAllByText('{trackTotal}').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('{partName}').length).toBeGreaterThanOrEqual(1);
 
-    // Single unified preview
-    expect(screen.getByText('Preview')).toBeInTheDocument();
+    // Both preview lines present
+    expect(screen.getByText('With series')).toBeInTheDocument();
+    expect(screen.getByText('Without series')).toBeInTheDocument();
   });
 
   it('shows author suggestion when title is present but author is missing', () => {

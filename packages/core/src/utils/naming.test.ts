@@ -107,6 +107,21 @@ describe('renderTemplate', () => {
       const result = renderTemplate('{title:00}', { title: 'Book' });
       expect(result).toBe('Book');
     });
+
+    it('applies zero-padding with conditional suffix {seriesPosition:00? - }', () => {
+      const result = renderTemplate('{seriesPosition:00? - }{title}', {
+        title: 'Book',
+        seriesPosition: 3,
+      });
+      expect(result).toBe('03 - Book');
+    });
+
+    it('omits both pad and conditional when token is missing', () => {
+      const result = renderTemplate('{seriesPosition:00? - }{title}', {
+        title: 'Book',
+      });
+      expect(result).toBe('Book');
+    });
   });
 
   describe('sanitization', () => {
@@ -247,6 +262,23 @@ describe('renderFilename', () => {
       title: 'Chapter One',
     });
     expect(result).toBe('01 - Chapter One');
+  });
+
+  it('applies zero-padding with conditional suffix {seriesPosition:00? - }', () => {
+    const result = renderFilename('{author} - {seriesPosition:00? - }{title}', {
+      author: 'Author',
+      seriesPosition: 3,
+      title: 'Book',
+    });
+    expect(result).toBe('Author - 03 - Book');
+  });
+
+  it('omits both pad and conditional when token is missing in filename', () => {
+    const result = renderFilename('{author} - {seriesPosition:00? - }{title}', {
+      author: 'Author',
+      title: 'Book',
+    });
+    expect(result).toBe('Author - Book');
   });
 
   it('handles missing tokens gracefully', () => {

@@ -106,12 +106,9 @@ export function renderTemplate(
       const raw = tokens[name];
       const hasValue = raw !== undefined && raw !== null && raw !== '';
 
-      // Conditional block: {token?text} — render value + text only if token has value
-      if (conditional !== undefined) {
-        return hasValue ? String(raw) + conditional : '';
+      if (!hasValue) {
+        return conditional !== undefined ? '' : '';
       }
-
-      if (!hasValue) return '';
 
       let value = String(raw);
 
@@ -121,6 +118,11 @@ export function renderTemplate(
         if (!isNaN(num)) {
           value = String(num).padStart(padSpec.length, '0');
         }
+      }
+
+      // Conditional block: {token:00?text} or {token?text} — append text only if token has value
+      if (conditional !== undefined) {
+        return value + conditional;
       }
 
       return value;
@@ -153,11 +155,9 @@ export function renderFilename(
       const raw = tokens[name];
       const hasValue = raw !== undefined && raw !== null && raw !== '';
 
-      if (conditional !== undefined) {
-        return hasValue ? String(raw) + conditional : '';
+      if (!hasValue) {
+        return conditional !== undefined ? '' : '';
       }
-
-      if (!hasValue) return '';
 
       let value = String(raw);
 
@@ -166,6 +166,10 @@ export function renderFilename(
         if (!isNaN(num)) {
           value = String(num).padStart(padSpec.length, '0');
         }
+      }
+
+      if (conditional !== undefined) {
+        return value + conditional;
       }
 
       return value;

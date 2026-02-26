@@ -27,6 +27,16 @@ const SAMPLE_TOKENS = {
   narratorLastFirst: toLastFirst(SAMPLE_NARRATOR),
 };
 
+const SAMPLE_TOKENS_NO_SERIES = {
+  author: 'Andy Weir',
+  authorLastFirst: toLastFirst('Andy Weir'),
+  title: 'Project Hail Mary',
+  titleSort: toSortTitle('Project Hail Mary'),
+  year: '2021',
+  narrator: 'Ray Porter',
+  narratorLastFirst: toLastFirst('Ray Porter'),
+};
+
 /** File-only tokens that don't appear in folder format */
 const FILE_ONLY_TOKENS = FILE_ALLOWED_TOKENS.filter(t => !(ALLOWED_TOKENS as readonly string[]).includes(t));
 
@@ -112,6 +122,21 @@ export function LibrarySettingsSection({ register, errors, setValue, watch }: Li
       trackNumber: 1,
       trackTotal: 12,
       partName: 'The Way of Kings',
+    });
+  }, [fileFormat]);
+
+  const previewPathNoSeries = useMemo(() => {
+    if (!folderFormat) return '';
+    return renderTemplate(folderFormat, SAMPLE_TOKENS_NO_SERIES);
+  }, [folderFormat]);
+
+  const previewFilenameNoSeries = useMemo(() => {
+    if (!fileFormat) return '';
+    return renderFilename(fileFormat, {
+      ...SAMPLE_TOKENS_NO_SERIES,
+      trackNumber: 1,
+      trackTotal: 8,
+      partName: 'Project Hail Mary',
     });
   }, [fileFormat]);
 
@@ -261,18 +286,33 @@ export function LibrarySettingsSection({ register, errors, setValue, watch }: Li
       </p>
 
       {(folderFormat || fileFormat) && (
-        <div className="p-3 bg-muted/50 rounded-lg border border-border">
-          <p className="text-xs text-muted-foreground mb-1">Preview</p>
-          <p className="text-sm font-mono break-all">
-            {previewPath ? (
-              <>
-                <span className="text-muted-foreground">{previewPath}/</span>
-                <span>{previewFilename ? `${previewFilename}.m4b` : ''}</span>
-              </>
-            ) : (
-              <span className="text-muted-foreground italic">Empty path</span>
-            )}
-          </p>
+        <div className="p-3 bg-muted/50 rounded-lg border border-border space-y-2">
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">With series</p>
+            <p className="text-sm font-mono break-all">
+              {previewPath ? (
+                <>
+                  <span className="text-muted-foreground">{previewPath}/</span>
+                  <span>{previewFilename ? `${previewFilename}.m4b` : ''}</span>
+                </>
+              ) : (
+                <span className="text-muted-foreground italic">Empty path</span>
+              )}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">Without series</p>
+            <p className="text-sm font-mono break-all">
+              {previewPathNoSeries ? (
+                <>
+                  <span className="text-muted-foreground">{previewPathNoSeries}/</span>
+                  <span>{previewFilenameNoSeries ? `${previewFilenameNoSeries}.m4b` : ''}</span>
+                </>
+              ) : (
+                <span className="text-muted-foreground italic">Empty path</span>
+              )}
+            </p>
+          </div>
         </div>
       )}
     </SettingsSection>
