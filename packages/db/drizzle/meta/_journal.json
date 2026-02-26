@@ -5,22 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1771450206422,
-      "tag": "0000_even_boomerang",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1771834801967,
-      "tag": "0001_panoramic_multiple_man",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1771896266959,
-      "tag": "0002_useful_redwing",
+      "when": 1772068158968,
+      "tag": "0000_superb_toro",
       "breakpoints": true
     }
   ]
