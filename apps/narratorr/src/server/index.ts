@@ -11,6 +11,7 @@ dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
+import helmet from '@fastify/helmet';
 import fastifyStatic from '@fastify/static';
 import {
   serializerCompiler,
@@ -46,6 +47,25 @@ async function main() {
   await app.register(cors, {
     origin: config.isDev ? true : config.corsOrigin,
     credentials: true,
+  });
+
+  // Security headers
+  await app.register(helmet, {
+    contentSecurityPolicy: config.isDev
+      ? false
+      : {
+          directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'"],
+            styleSrc: ["'self'", 'https://fonts.googleapis.com'],
+            fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+            imgSrc: ["'self'", 'data:', 'https:'],
+            connectSrc: ["'self'"],
+          },
+        },
+    crossOriginEmbedderPolicy: false,
+    frameguard: { action: 'deny' as const },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' as const },
   });
 
   // Ensure config directory exists
