@@ -33,7 +33,6 @@ vi.mock('sonner', () => ({
 }));
 
 import { api } from '@/lib/api';
-import { toast } from 'sonner';
 
 const mockConfig = {
   mode: 'none' as const,
@@ -175,6 +174,7 @@ describe('SecuritySettings', () => {
     (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
       hasUser: true,
+      username: 'admin',
     });
     (api.changePassword as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
     const user = userEvent.setup();
@@ -184,7 +184,8 @@ describe('SecuritySettings', () => {
       expect(screen.getByText('Credentials')).toBeInTheDocument();
     });
 
-    // Should show change password form since hasUser=true
+    // Should show username field pre-populated, plus password fields
+    expect(screen.getByLabelText('Username')).toHaveValue('admin');
     expect(screen.getByLabelText('Current Password')).toBeInTheDocument();
     expect(screen.getByLabelText('New Password')).toBeInTheDocument();
 
@@ -192,8 +193,9 @@ describe('SecuritySettings', () => {
     await user.type(screen.getByLabelText('New Password'), 'newpassword1');
     await user.click(screen.getByRole('button', { name: /change password/i }));
 
+    // Username unchanged → third arg is undefined
     await waitFor(() => {
-      expect(api.changePassword).toHaveBeenCalledWith('oldpass', 'newpassword1');
+      expect(api.changePassword).toHaveBeenCalledWith('oldpass', 'newpassword1', undefined);
     });
   });
 });

@@ -127,15 +127,15 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
     { schema: { body: changePasswordSchema } },
     async (request, reply) => {
       try {
-        const { currentPassword, newPassword } = request.body as { currentPassword: string; newPassword: string };
+        const { currentPassword, newPassword, newUsername } = request.body as { currentPassword: string; newPassword: string; newUsername?: string };
         const user = (request as unknown as Record<string, unknown>).user as { username: string } | null;
 
         if (!user) {
           return await reply.status(401).send({ error: 'Authentication required' });
         }
 
-        await authService.changePassword(user.username, currentPassword, newPassword);
-        request.log.info({ username: user.username }, 'Password changed');
+        await authService.changePassword(user.username, currentPassword, newPassword, newUsername);
+        request.log.info({ username: user.username, newUsername }, 'Credentials updated');
         return { success: true };
       } catch (error) {
         if (error instanceof Error && error.message === 'Current password is incorrect') {

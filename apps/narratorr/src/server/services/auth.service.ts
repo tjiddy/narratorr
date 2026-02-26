@@ -15,6 +15,7 @@ export interface AuthConfig {
 export interface AuthStatus {
   mode: AuthMode;
   hasUser: boolean;
+  username?: string;
   localBypass: boolean;
 }
 
@@ -109,10 +110,11 @@ export class AuthService {
   /** Public status — no secrets exposed. */
   async getStatus(): Promise<AuthStatus> {
     const config = await this.getAuthConfig();
-    const userCount = await this.db.select().from(users).limit(1);
+    const userRows = await this.db.select().from(users).limit(1);
     return {
       mode: config.mode,
-      hasUser: userCount.length > 0,
+      hasUser: userRows.length > 0,
+      username: userRows[0]?.username,
       localBypass: config.localBypass,
     };
   }
@@ -214,7 +216,7 @@ export class AuthService {
     return { username: user.username };
   }
 
-  async changePassword(username: string, currentPassword: string, newPassword: string): Promise<void> {
+  async changePassword(username: string, currentPassword: string, newPassword: string, newUsername?: string): Promise<void> {
     const verified = await this.verifyCredentials(username, currentPassword);
     if (!verified) {
       throw new Error('Current password is incorrect');
@@ -224,11 +226,16 @@ export class AuthService {
     const hash = await hashPassword(newPassword, salt);
     const passwordHash = `${salt.toString('hex')}:${hash.toString('hex')}`;
 
+    const updates: Record<string, string> = { passwordHash };
+    if (newUsername && newUsername !== username) {
+      updates.username = newUsername;
+    }
+
     await this.db
       .update(users)
-      .set({ passwordHash })
+      .set(updates)
       .where(eq(users.username, username));
-    this.log.info({ username }, 'Password changed');
+    this.log.info({ username, newUsername: newUsername || username }, 'Credentials updated');
   }
 
   // ─── API Key ───────────────────────────────────────────────────────

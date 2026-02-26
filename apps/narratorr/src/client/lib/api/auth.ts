@@ -4,6 +4,7 @@ import { fetchApi } from './client.js';
 export interface AuthStatus {
   mode: AuthMode;
   hasUser: boolean;
+  username?: string;
   localBypass: boolean;
   authenticated: boolean;
 }
@@ -42,10 +43,10 @@ export const authApi = {
       body: JSON.stringify(data),
     }),
 
-  changePassword: (currentPassword: string, newPassword: string) =>
+  changePassword: (currentPassword: string, newPassword: string, newUsername?: string) =>
     fetchApi<{ success: boolean }>('/auth/password', {
       method: 'PUT',
-      body: JSON.stringify({ currentPassword, newPassword }),
+      body: JSON.stringify({ currentPassword, newPassword, ...(newUsername ? { newUsername } : {}) }),
     }),
 
   regenerateApiKey: () =>

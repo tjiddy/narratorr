@@ -45,6 +45,7 @@ export function SecuritySettings() {
     <div className="space-y-8">
       <CredentialsSection
         hasUser={authStatus?.hasUser ?? false}
+        currentUsername={authStatus?.username}
         queryClient={queryClient}
       />
       <AuthModeSection
@@ -224,13 +225,16 @@ function LocalBypassSection({
 
 function CredentialsSection({
   hasUser,
+  currentUsername,
   queryClient,
 }: {
   hasUser: boolean;
+  currentUsername?: string;
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [editUsername, setEditUsername] = useState(currentUsername ?? '');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
 
@@ -249,9 +253,10 @@ function CredentialsSection({
   });
 
   const passwordMutation = useMutation({
-    mutationFn: () => api.changePassword(currentPassword, newPassword),
+    mutationFn: () => api.changePassword(currentPassword, newPassword, editUsername !== currentUsername ? editUsername : undefined),
     onSuccess: () => {
-      toast.success('Password changed');
+      queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
+      toast.success('Credentials updated');
       setCurrentPassword('');
       setNewPassword('');
     },
@@ -315,6 +320,18 @@ function CredentialsSection({
         </form>
       ) : (
         <form onSubmit={handleChangePassword} className="space-y-4">
+          <div>
+            <label htmlFor="edit-username" className="block text-sm font-medium mb-1.5">Username</label>
+            <input
+              id="edit-username"
+              type="text"
+              value={editUsername}
+              onChange={(e) => setEditUsername(e.target.value)}
+              required
+              minLength={1}
+              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+            />
+          </div>
           <div>
             <label htmlFor="current-password" className="block text-sm font-medium mb-1.5">Current Password</label>
             <input
