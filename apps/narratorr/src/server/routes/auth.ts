@@ -33,7 +33,10 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
   // POST /api/auth/login — public, sets session cookie
   app.post(
     '/api/auth/login',
-    { schema: { body: loginSchema } },
+    {
+      schema: { body: loginSchema },
+      config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },
+    },
     async (request, reply) => {
       try {
         const { username, password } = request.body as { username: string; password: string };
@@ -74,7 +77,10 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
   // POST /api/auth/setup — public if no user exists, else protected (handled by middleware)
   app.post(
     '/api/auth/setup',
-    { schema: { body: setupCredentialsSchema } },
+    {
+      schema: { body: setupCredentialsSchema },
+      config: { rateLimit: { max: 3, timeWindow: '15 minutes' } },
+    },
     async (request, reply) => {
       try {
         const { username, password } = request.body as { username: string; password: string };
@@ -148,7 +154,9 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
   );
 
   // POST /api/auth/api-key/regenerate — protected
-  app.post('/api/auth/api-key/regenerate', async (request, reply) => {
+  app.post('/api/auth/api-key/regenerate', {
+    config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
+  }, async (request, reply) => {
     try {
       const newKey = await authService.regenerateApiKey();
       request.log.info('API key regenerated');

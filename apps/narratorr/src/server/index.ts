@@ -12,6 +12,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
+import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import {
   serializerCompiler,
@@ -67,6 +68,9 @@ async function main() {
     frameguard: { action: 'deny' as const },
     referrerPolicy: { policy: 'strict-origin-when-cross-origin' as const },
   });
+
+  // Rate limiting (per-route only — global: false prevents auto-applying to all routes)
+  await app.register(rateLimit, { global: false });
 
   // Ensure config directory exists
   const configDir = path.dirname(config.dbPath);
