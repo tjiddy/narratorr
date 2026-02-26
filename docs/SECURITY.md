@@ -49,6 +49,10 @@ Dependency vulnerabilities are tracked via `pnpm audit`. Known findings as of 20
 
 None of these affect runtime application security. They are tracked for resolution as upstream packages release patches.
 
+## Error Message Exposure
+
+Connection test endpoints (e.g., Prowlarr) return upstream API error messages to the authenticated user. These messages may contain internal hostnames, paths, or network details from the connected service. This is intentional — the user configuring the connection is the server operator and already knows these details. Sanitizing errors would hinder debugging without meaningful security benefit, since the endpoints are behind authentication.
+
 ## What's Not Implemented (Yet)
 
 - **Rate limiting** on authentication endpoints. Brute-force protection is not yet in place. (#172)
