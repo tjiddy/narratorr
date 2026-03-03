@@ -164,7 +164,7 @@ export class ProwlarrSyncService {
           type: proxy.type,
           enabled: true,
           priority: 50,
-          settings: { apiUrl: proxy.apiUrl, apiKey: proxy.apiKey },
+          settings: { apiUrl: proxy.apiUrl, apiKey: proxy.apiKey } as Record<string, unknown>,
           source: 'prowlarr',
           sourceIndexerId: proxy.prowlarrId,
         });
@@ -188,12 +188,15 @@ export class ProwlarrSyncService {
           .limit(1);
 
         if (local[0]) {
+          // Merge Prowlarr-managed fields into existing settings to preserve
+          // local-only fields (e.g., flareSolverrUrl) that Prowlarr doesn't manage
+          const existingSettings = (local[0].settings as Record<string, unknown>) || {};
           await this.db
             .update(indexers)
             .set({
               name: proxy.name,
               type: proxy.type,
-              settings: { apiUrl: proxy.apiUrl, apiKey: proxy.apiKey },
+              settings: { ...existingSettings, apiUrl: proxy.apiUrl, apiKey: proxy.apiKey },
             })
             .where(eq(indexers.id, local[0].id));
           result.updated++;

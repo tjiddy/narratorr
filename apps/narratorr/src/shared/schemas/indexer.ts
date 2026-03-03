@@ -37,6 +37,7 @@ export const createIndexerFormSchema = z.object({
     pageLimit: z.number().int().min(1).max(10).optional(),
     apiUrl: z.string().optional(),
     apiKey: z.string().optional(),
+    flareSolverrUrl: z.string().optional(),
   }),
 }).superRefine((data, ctx) => {
   if (data.type === 'abb') {
@@ -50,6 +51,21 @@ export const createIndexerFormSchema = z.object({
     if (!data.settings.apiKey) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'apiKey'], message: 'API key is required' });
     }
+  }
+
+  // Validate FlareSolverr URL if provided (applies to all types)
+  const proxyUrl = data.settings.flareSolverrUrl?.replace(/\/+$/, '').trim();
+  if (proxyUrl) {
+    try {
+      new URL(proxyUrl);
+    } catch {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'flareSolverrUrl'], message: 'Must be a valid URL' });
+    }
+    // Normalize: store the trimmed/stripped version
+    data.settings.flareSolverrUrl = proxyUrl;
+  } else {
+    // Normalize empty strings to undefined
+    data.settings.flareSolverrUrl = undefined;
   }
 });
 

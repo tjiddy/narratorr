@@ -1,12 +1,13 @@
 import * as cheerio from 'cheerio';
 import type { IndexerAdapter, SearchResult, SearchOptions } from './types.js';
+import { fetchWithProxy } from './fetch.js';
 
 export interface NewznabConfig {
   apiUrl: string; // e.g., 'https://nzbgeek.info'
   apiKey: string;
+  flareSolverrUrl?: string;
 }
 
-const REQUEST_TIMEOUT_MS = 30000;
 const AUDIOBOOK_CATEGORY = '3030';
 
 export class NewznabIndexer implements IndexerAdapter {
@@ -15,11 +16,13 @@ export class NewznabIndexer implements IndexerAdapter {
 
   private apiUrl: string;
   private apiKey: string;
+  private flareSolverrUrl?: string;
 
   constructor(config: NewznabConfig, name?: string) {
     // Normalize: strip trailing slash
     this.apiUrl = config.apiUrl.replace(/\/+$/, '');
     this.apiKey = config.apiKey;
+    this.flareSolverrUrl = config.flareSolverrUrl?.replace(/\/+$/, '');
     this.name = name || new URL(config.apiUrl).hostname;
   }
 
@@ -42,7 +45,11 @@ export class NewznabIndexer implements IndexerAdapter {
     try {
       const xml = await this.fetchXml(url);
       return this.parseSearchResults(xml, limit);
-    } catch {
+    } catch (error) {
+      // Proxy errors bubble up to IndexerService.searchAll() for warn logging
+      if (this.flareSolverrUrl && error instanceof Error && error.message.startsWith('FlareSolverr')) {
+        throw error;
+      }
       return [];
     }
   }
@@ -74,25 +81,11 @@ export class NewznabIndexer implements IndexerAdapter {
   }
 
   private async fetchXml(url: string): Promise<string> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-    try {
-      const response = await fetch(url, {
-        headers: {
-          Accept: 'application/rss+xml, application/xml, text/xml',
-        },
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      return await response.text();
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    return fetchWithProxy({
+      url,
+      headers: { Accept: 'application/rss+xml, application/xml, text/xml' },
+      proxyUrl: this.flareSolverrUrl,
+    });
   }
 
   private parseSearchResults(xml: string, limit: number): SearchResult[] {

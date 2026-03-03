@@ -82,24 +82,27 @@ export class IndexerService {
         const config: ABBConfig = {
           hostname: (settings.hostname as string) || 'audiobookbay.lu',
           pageLimit: (settings.pageLimit as number) || 2,
+          flareSolverrUrl: (settings.flareSolverrUrl as string) || undefined,
         };
-        this.log.debug({ indexer: indexer.name, type: indexer.type, hostname: config.hostname, pageLimit: config.pageLimit }, 'Creating indexer adapter');
+        this.log.debug({ indexer: indexer.name, type: indexer.type, hostname: config.hostname, pageLimit: config.pageLimit, proxy: !!config.flareSolverrUrl }, 'Creating indexer adapter');
         return new AudioBookBayIndexer(config);
       }
       case 'newznab': {
         const config: NewznabConfig = {
           apiUrl: settings.apiUrl as string,
           apiKey: settings.apiKey as string,
+          flareSolverrUrl: (settings.flareSolverrUrl as string) || undefined,
         };
-        this.log.debug({ indexer: indexer.name, type: indexer.type, apiUrl: config.apiUrl }, 'Creating indexer adapter');
+        this.log.debug({ indexer: indexer.name, type: indexer.type, apiUrl: config.apiUrl, proxy: !!config.flareSolverrUrl }, 'Creating indexer adapter');
         return new NewznabIndexer(config, indexer.name);
       }
       case 'torznab': {
         const config: TorznabConfig = {
           apiUrl: settings.apiUrl as string,
           apiKey: settings.apiKey as string,
+          flareSolverrUrl: (settings.flareSolverrUrl as string) || undefined,
         };
-        this.log.debug({ indexer: indexer.name, type: indexer.type, apiUrl: config.apiUrl }, 'Creating indexer adapter');
+        this.log.debug({ indexer: indexer.name, type: indexer.type, apiUrl: config.apiUrl, proxy: !!config.flareSolverrUrl }, 'Creating indexer adapter');
         return new TorznabIndexer(config, indexer.name);
       }
       default:

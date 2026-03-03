@@ -309,6 +309,75 @@ describe('TorznabIndexer', () => {
     });
   });
 
+  describe('FlareSolverr proxy', () => {
+    const PROXY_URL = 'http://flaresolverr.test:8191';
+    let proxiedIndexer: TorznabIndexer;
+
+    beforeEach(() => {
+      proxiedIndexer = new TorznabIndexer({
+        apiUrl: API_BASE,
+        apiKey: 'testapikey',
+        flareSolverrUrl: PROXY_URL,
+      });
+    });
+
+    it('routes search through proxy when flareSolverrUrl configured', async () => {
+      let capturedBody: Record<string, unknown> = {};
+      server.use(
+        http.post(`${PROXY_URL}/v1`, async ({ request }) => {
+          capturedBody = await request.json() as Record<string, unknown>;
+          return HttpResponse.json({
+            status: 'ok',
+            solution: { response: searchXml, status: 200 },
+          });
+        }),
+      );
+
+      const results = await proxiedIndexer.search('Brandon Sanderson');
+
+      expect(capturedBody.cmd).toBe('request.get');
+      expect(capturedBody.url).toContain(`${API_BASE}/api`);
+      expect(results).toHaveLength(3);
+    });
+
+    it('routes test through proxy when flareSolverrUrl configured', async () => {
+      server.use(
+        http.post(`${PROXY_URL}/v1`, () => {
+          return HttpResponse.json({
+            status: 'ok',
+            solution: { response: capsXml, status: 200 },
+          });
+        }),
+      );
+
+      const result = await proxiedIndexer.test();
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('Test Torznab Indexer');
+    });
+
+    it('throws proxy errors from search (not swallowed)', async () => {
+      server.use(
+        http.post(`${PROXY_URL}/v1`, () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      await expect(proxiedIndexer.search('test')).rejects.toThrow('FlareSolverr');
+    });
+
+    it('returns failure on proxy error during test', async () => {
+      server.use(
+        http.post(`${PROXY_URL}/v1`, () => {
+          return HttpResponse.json({ status: 'error', message: 'Challenge failed' });
+        }),
+      );
+
+      const result = await proxiedIndexer.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('FlareSolverr');
+    });
+  });
+
   describe('edge cases — NaN parsing', () => {
     it('handles NaN size from invalid attr value', async () => {
       const xml = `<?xml version="1.0"?>

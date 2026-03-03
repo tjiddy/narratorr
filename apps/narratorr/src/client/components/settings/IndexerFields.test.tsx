@@ -48,4 +48,36 @@ describe('IndexerFields', () => {
     const { container } = render(<FieldWrapper type="unknown" />);
     expect(container.innerHTML).toBe('');
   });
+
+  describe('FlareSolverr URL field', () => {
+    it('shows FlareSolverr URL field for abb type', () => {
+      render(<FieldWrapper type="abb" />);
+      expect(screen.getByText(/FlareSolverr URL/)).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('http://flaresolverr:8191')).toBeInTheDocument();
+    });
+
+    it('shows FlareSolverr URL field for torznab type', () => {
+      render(<FieldWrapper type="torznab" />);
+      expect(screen.getByText(/FlareSolverr URL/)).toBeInTheDocument();
+    });
+
+    it('shows FlareSolverr URL field for newznab type', () => {
+      render(<FieldWrapper type="newznab" />);
+      expect(screen.getByText(/FlareSolverr URL/)).toBeInTheDocument();
+    });
+
+    it('accepts proxy URL input', async () => {
+      const user = userEvent.setup();
+      render(<FieldWrapper type="abb" />);
+
+      const input = screen.getByPlaceholderText('http://flaresolverr:8191');
+      await user.type(input, 'http://localhost:8191');
+      expect(input).toHaveValue('http://localhost:8191');
+    });
+
+    it('shows helper text about Cloudflare bypass', () => {
+      render(<FieldWrapper type="torznab" />);
+      expect(screen.getByText(/bypass Cloudflare/)).toBeInTheDocument();
+    });
+  });
 });

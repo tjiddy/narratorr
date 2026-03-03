@@ -227,6 +227,119 @@ describe('AudioBookBayIndexer', () => {
     });
   });
 
+  describe('FlareSolverr proxy', () => {
+    const PROXY_URL = 'http://flaresolverr.test:8191';
+    let proxiedIndexer: AudioBookBayIndexer;
+
+    beforeEach(() => {
+      proxiedIndexer = new AudioBookBayIndexer({
+        hostname: ABB_HOST,
+        pageLimit: 1,
+        flareSolverrUrl: PROXY_URL,
+      });
+      vi.spyOn(proxiedIndexer as never, 'delay').mockResolvedValue(undefined);
+    });
+
+    it('routes search through proxy when flareSolverrUrl configured', async () => {
+      let searchCaptured = false;
+      server.use(
+        http.post(`${PROXY_URL}/v1`, async ({ request }) => {
+          const body = await request.json() as Record<string, unknown>;
+          if ((body.url as string).includes('?s=')) {
+            searchCaptured = true;
+            return HttpResponse.json({
+              status: 'ok',
+              solution: { response: searchHtml, status: 200 },
+            });
+          }
+          // Detail page
+          return HttpResponse.json({
+            status: 'ok',
+            solution: { response: detailHtml, status: 200 },
+          });
+        }),
+      );
+
+      const results = await proxiedIndexer.search('Brandon Sanderson');
+
+      expect(searchCaptured).toBe(true);
+      expect(results.length).toBeGreaterThan(0);
+    });
+
+    it('uses GET (request.get) for proxied test, not HEAD', async () => {
+      let capturedBody: Record<string, unknown> = {};
+      server.use(
+        http.post(`${PROXY_URL}/v1`, async ({ request }) => {
+          capturedBody = await request.json() as Record<string, unknown>;
+          return HttpResponse.json({
+            status: 'ok',
+            solution: { response: '<html>ok</html>', status: 200 },
+          });
+        }),
+      );
+
+      const result = await proxiedIndexer.test();
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('via FlareSolverr');
+      expect(capturedBody.cmd).toBe('request.get');
+    });
+
+    it('direct test still uses HEAD/405', async () => {
+      // Non-proxied indexer should still use HEAD
+      server.use(
+        http.head(`${ABB_BASE}/`, () => {
+          return new HttpResponse(null, { status: 405 });
+        }),
+      );
+
+      const result = await indexer.test();
+      expect(result.success).toBe(true);
+      expect(result.message).not.toContain('FlareSolverr');
+    });
+
+    it('throws proxy errors from search page fetch (not swallowed)', async () => {
+      server.use(
+        http.post(`${PROXY_URL}/v1`, () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      await expect(proxiedIndexer.search('test')).rejects.toThrow('FlareSolverr');
+    });
+
+    it('throws proxy errors from detail page fetch (not swallowed)', async () => {
+      let callCount = 0;
+      server.use(
+        http.post(`${PROXY_URL}/v1`, () => {
+          callCount++;
+          if (callCount === 1) {
+            // Search page succeeds
+            return HttpResponse.json({
+              status: 'ok',
+              solution: { response: searchHtml, status: 200 },
+            });
+          }
+          // Detail page proxy fails
+          return HttpResponse.error();
+        }),
+      );
+
+      await expect(proxiedIndexer.search('Brandon Sanderson')).rejects.toThrow('FlareSolverr');
+    });
+
+    it('returns failure on proxy error during test', async () => {
+      server.use(
+        http.post(`${PROXY_URL}/v1`, () => {
+          return HttpResponse.json({ status: 'error', message: 'Challenge failed' });
+        }),
+      );
+
+      const result = await proxiedIndexer.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('FlareSolverr');
+    });
+  });
+
   describe('edge cases — NaN parsing and malformed HTML', () => {
     it('handles NaN seeders from non-numeric text', async () => {
       const detailWithBadSeeders = `

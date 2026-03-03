@@ -32,9 +32,9 @@ interface IndexerCardProps {
 const IMPLEMENTED_TYPES = ['abb', 'newznab', 'torznab'];
 
 const defaultSettings: Record<string, CreateIndexerFormData['settings']> = {
-  abb: { hostname: '', pageLimit: 2 },
-  torznab: { apiUrl: '', apiKey: '' },
-  newznab: { apiUrl: '', apiKey: '' },
+  abb: { hostname: '', pageLimit: 2, flareSolverrUrl: '' },
+  torznab: { apiUrl: '', apiKey: '', flareSolverrUrl: '' },
+  newznab: { apiUrl: '', apiKey: '', flareSolverrUrl: '' },
 };
 
 function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'] {
@@ -44,6 +44,7 @@ function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'
     pageLimit: (s.pageLimit as number) || 2,
     apiUrl: (s.apiUrl as string) || '',
     apiKey: (s.apiKey as string) || '',
+    flareSolverrUrl: (s.flareSolverrUrl as string) || '',
   };
 }
 

@@ -416,6 +416,94 @@ describe('IndexerService', () => {
     });
   });
 
+  describe('FlareSolverr proxy support', () => {
+    it('passes flareSolverrUrl to ABB adapter config', async () => {
+      const createSpy = vi.spyOn(service as never, 'createAdapter' as never);
+      const proxyIndexer = createMockDbIndexer({
+        type: 'abb',
+        settings: { hostname: 'audiobookbay.lu', pageLimit: 2, flareSolverrUrl: 'http://proxy:8191' },
+      });
+
+      const adapter = await service.getAdapter(proxyIndexer);
+      expect(adapter.type).toBe('abb');
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          settings: expect.objectContaining({ flareSolverrUrl: 'http://proxy:8191' }),
+        }),
+      );
+    });
+
+    it('passes flareSolverrUrl to torznab adapter config', async () => {
+      const createSpy = vi.spyOn(service as never, 'createAdapter' as never);
+      const proxyIndexer = createMockDbIndexer({
+        type: 'torznab',
+        settings: { apiUrl: 'https://tracker.test', apiKey: 'key', flareSolverrUrl: 'http://proxy:8191' },
+      });
+
+      const adapter = await service.getAdapter(proxyIndexer);
+      expect(adapter.type).toBe('torznab');
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          settings: expect.objectContaining({ flareSolverrUrl: 'http://proxy:8191' }),
+        }),
+      );
+    });
+
+    it('passes flareSolverrUrl to newznab adapter config', async () => {
+      const createSpy = vi.spyOn(service as never, 'createAdapter' as never);
+      const proxyIndexer = createMockDbIndexer({
+        type: 'newznab',
+        settings: { apiUrl: 'https://nzb.test', apiKey: 'key', flareSolverrUrl: 'http://proxy:8191' },
+      });
+
+      const adapter = await service.getAdapter(proxyIndexer);
+      expect(adapter.type).toBe('newznab');
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          settings: expect.objectContaining({ flareSolverrUrl: 'http://proxy:8191' }),
+        }),
+      );
+    });
+
+    it('searchAll catches thrown proxy errors and continues to next indexer', async () => {
+      const indexer2 = { ...mockIndexer, id: 2, name: 'Indexer2' };
+      db.select.mockReturnValue(mockDbChain([mockIndexer, indexer2]));
+
+      const proxyErrorAdapter = {
+        search: vi.fn().mockRejectedValue(new Error('FlareSolverr proxy unreachable at http://proxy:8191')),
+        test: vi.fn(),
+      };
+      const goodAdapter = {
+        search: vi.fn().mockResolvedValue([{ title: 'Found Book', indexer: 'Indexer2', protocol: 'torrent' }]),
+        test: vi.fn(),
+      };
+
+      vi.spyOn(service, 'getAdapter')
+        .mockResolvedValueOnce(proxyErrorAdapter as never)
+        .mockResolvedValueOnce(goodAdapter as never);
+
+      const results = await service.searchAll('test');
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('Found Book');
+    });
+
+    it('testConfig passes flareSolverrUrl through settings', async () => {
+      const mockAdapter = { test: vi.fn().mockResolvedValue({ success: true, message: 'OK' }), search: vi.fn() };
+      const createSpy = vi.spyOn(service as never, 'createAdapter' as never).mockReturnValue(mockAdapter as never);
+
+      const result = await service.testConfig({
+        type: 'abb',
+        settings: { hostname: 'audiobookbay.lu', pageLimit: 2, flareSolverrUrl: 'http://proxy:8191' },
+      });
+      expect(result.success).toBe(true);
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          settings: expect.objectContaining({ flareSolverrUrl: 'http://proxy:8191' }),
+        }),
+      );
+    });
+  });
+
   describe('test edge cases', () => {
     it('catches adapter.test() throwing and returns failure', async () => {
       db.select.mockReturnValue(mockDbChain([mockIndexer]));

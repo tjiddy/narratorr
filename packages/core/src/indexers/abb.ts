@@ -1,10 +1,12 @@
 import * as cheerio from 'cheerio';
 import type { IndexerAdapter, SearchResult, SearchOptions } from './types.js';
 import { buildMagnetUri } from '../utils';
+import { fetchWithProxy } from './fetch.js';
 
 export interface ABBConfig {
   hostname: string; // e.g., 'audiobookbay.lu'
   pageLimit: number; // Max pages to scrape per search
+  flareSolverrUrl?: string;
 }
 
 const REQUEST_TIMEOUT_MS = 30000;
@@ -22,11 +24,14 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
   private baseUrl: string;
   private userAgentIndex = 0;
+  private flareSolverrUrl?: string;
 
   constructor(private config: ABBConfig) {
     this.baseUrl = `https://${config.hostname}`;
+    this.flareSolverrUrl = config.flareSolverrUrl?.replace(/\/+$/, '');
   }
 
+  // eslint-disable-next-line complexity -- HTML scraping with pagination, rate limiting, and proxy error branching
   async search(query: string, options?: SearchOptions): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
     const encodedQuery = encodeURIComponent(query.toLowerCase()).replace(/%20/g, '+');
@@ -56,8 +61,12 @@ export class AudioBookBayIndexer implements IndexerAdapter {
               const detailHtml = await this.fetchPage(result.detailsUrl);
               const details = this.parseDetailPage(detailHtml);
               Object.assign(result, details);
-            } catch {
-              // Skip detail page failures — result won't have download URL and will be filtered out
+            } catch (error) {
+              // Proxy errors bubble up — consistent with outer catch behavior
+              if (this.flareSolverrUrl && error instanceof Error && error.message.startsWith('FlareSolverr')) {
+                throw error;
+              }
+              // Skip non-proxy detail page failures — result won't have download URL and will be filtered out
             }
           }
 
@@ -70,7 +79,11 @@ export class AudioBookBayIndexer implements IndexerAdapter {
             return results;
           }
         }
-      } catch {
+      } catch (error) {
+        // Proxy errors bubble up to IndexerService.searchAll() for warn logging
+        if (this.flareSolverrUrl && error instanceof Error && error.message.startsWith('FlareSolverr')) {
+          throw error;
+        }
         break; // Stop pagination on fetch failure
       }
     }
@@ -79,31 +92,18 @@ export class AudioBookBayIndexer implements IndexerAdapter {
   }
 
   private async fetchPage(url: string): Promise<string> {
-    const userAgent = this.getNextUserAgent();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-    try {
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': userAgent,
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Accept-Encoding': 'gzip, deflate, br',
-          Connection: 'keep-alive',
-          'Upgrade-Insecure-Requests': '1',
-        },
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      return await response.text();
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    return fetchWithProxy({
+      url,
+      headers: {
+        'User-Agent': this.getNextUserAgent(),
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        Connection: 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+      },
+      proxyUrl: this.flareSolverrUrl,
+    });
   }
 
   private parseSearchPage(html: string): SearchResult[] {
@@ -307,6 +307,13 @@ export class AudioBookBayIndexer implements IndexerAdapter {
   }
 
   async test(): Promise<{ success: boolean; message?: string }> {
+    if (this.flareSolverrUrl) {
+      return this.testViaProxy();
+    }
+    return this.testDirect();
+  }
+
+  private async testDirect(): Promise<{ success: boolean; message?: string }> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -335,6 +342,23 @@ export class AudioBookBayIndexer implements IndexerAdapter {
       };
     } finally {
       clearTimeout(timeoutId);
+    }
+  }
+
+  private async testViaProxy(): Promise<{ success: boolean; message?: string }> {
+    try {
+      // FlareSolverr has no request.head — use GET via request.get
+      await fetchWithProxy({
+        url: this.baseUrl,
+        headers: { 'User-Agent': this.getNextUserAgent() },
+        proxyUrl: this.flareSolverrUrl,
+      });
+      return { success: true, message: `Connected to ${this.config.hostname} via FlareSolverr` };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Connection failed',
+      };
     }
   }
 }

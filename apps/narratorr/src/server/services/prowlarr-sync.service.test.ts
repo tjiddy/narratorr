@@ -239,6 +239,51 @@ describe('ProwlarrSyncService', () => {
       ).rejects.toThrow('SQLITE_FULL');
     });
 
+    it('preserves local-only settings (flareSolverrUrl) on update', async () => {
+      const localRow = {
+        id: 10,
+        name: 'NZBGeek',
+        type: 'newznab',
+        source: 'prowlarr',
+        sourceIndexerId: 1,
+        settings: { apiUrl: 'https://old/', apiKey: 'old-key', flareSolverrUrl: 'http://proxy:8191' },
+      };
+      db.select.mockReturnValue(mockDbChain([localRow]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.apply(prowlarrConfig, {
+        items: [
+          { prowlarrId: 1, action: 'updated', selected: true },
+        ],
+      });
+
+      expect(db.update).toHaveBeenCalled();
+      const updateChain = db.update.mock.results[0]?.value;
+      expect(updateChain?.set?.mock?.calls?.[0]?.[0]).toBeDefined();
+      const setArg = updateChain.set.mock.calls[0][0];
+      expect(setArg.settings).toEqual({
+        apiUrl: 'https://prowlarr.test/1/',
+        apiKey: 'test-key',
+        flareSolverrUrl: 'http://proxy:8191',
+      });
+    });
+
+    it('does not include flareSolverrUrl on new insert (clean settings)', async () => {
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.apply(prowlarrConfig, {
+        items: [
+          { prowlarrId: 1, action: 'new', selected: true },
+        ],
+      });
+
+      expect(db.insert).toHaveBeenCalled();
+      const insertChain = db.insert.mock.results[0]?.value;
+      expect(insertChain?.values?.mock?.calls?.[0]?.[0]).toBeDefined();
+      const valuesArg = insertChain.values.mock.calls[0][0];
+      expect(valuesArg.settings).not.toHaveProperty('flareSolverrUrl');
+    });
+
     it('skips update when local indexer not found in DB', async () => {
       db.select.mockReturnValue(mockDbChain([]));  // local not found
       db.update.mockReturnValue(mockDbChain());

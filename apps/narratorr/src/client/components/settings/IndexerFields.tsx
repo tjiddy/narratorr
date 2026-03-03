@@ -7,6 +7,31 @@ interface IndexerFieldsProps {
   errors: FieldErrors<CreateIndexerFormData>;
 }
 
+function FlareSolverrField({ register, errors }: Pick<IndexerFieldsProps, 'register' | 'errors'>) {
+  return (
+    <div className="sm:col-span-2">
+      <label htmlFor="indexerFlareSolverrUrl" className="block text-sm font-medium mb-2">
+        FlareSolverr URL
+        <span className="text-muted-foreground font-normal ml-1">(optional)</span>
+      </label>
+      <input
+        id="indexerFlareSolverrUrl"
+        type="text"
+        {...register('settings.flareSolverrUrl')}
+        className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+          errors.settings?.flareSolverrUrl ? 'border-destructive' : 'border-border'
+        }`}
+        placeholder="http://flaresolverr:8191"
+      />
+      {errors.settings?.flareSolverrUrl ? (
+        <p className="text-sm text-destructive mt-1">{errors.settings.flareSolverrUrl.message}</p>
+      ) : (
+        <p className="text-sm text-muted-foreground mt-1">Route requests through FlareSolverr/Byparr to bypass Cloudflare</p>
+      )}
+    </div>
+  );
+}
+
 // eslint-disable-next-line complexity -- error display branches per field type are inherently branchy
 export function IndexerFields({ selectedType, register, errors }: IndexerFieldsProps) {
   if (selectedType === 'abb') {
@@ -45,6 +70,7 @@ export function IndexerFields({ selectedType, register, errors }: IndexerFieldsP
             <p className="text-sm text-destructive mt-1">{errors.settings.pageLimit.message}</p>
           )}
         </div>
+        <FlareSolverrField register={register} errors={errors} />
       </>
     );
   }
@@ -83,6 +109,7 @@ export function IndexerFields({ selectedType, register, errors }: IndexerFieldsP
             <p className="text-sm text-destructive mt-1">{errors.settings.apiKey.message}</p>
           )}
         </div>
+        <FlareSolverrField register={register} errors={errors} />
       </>
     );
   }
