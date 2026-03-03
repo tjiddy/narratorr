@@ -4,6 +4,8 @@
 
 Narratorr is a self-hosted audiobook management and automation application. It allows you to search for audiobooks, add them to a wanted list, automatically search indexers, send downloads to a torrent client, and import completed downloads into a folder structure compatible with Audiobookshelf.
 
+**[Read the documentation](https://docs.narratorr.dev)** for installation guides, configuration reference, and troubleshooting.
+
 ## Features
 
 - **Search** - Search AudioBookBay (and future indexers) for audiobooks
