@@ -76,6 +76,7 @@ const MAX_SEGMENT_LENGTH = 255;
 export function sanitizePath(segment: string): string {
   let result = segment
     .replace(ILLEGAL_CHARS, '')
+    .replace(/\s{2,}/g, ' ') // collapse consecutive spaces
     .replace(/\.+$/, '') // trailing dots (Windows)
     .trim();
 

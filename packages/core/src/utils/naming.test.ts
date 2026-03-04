@@ -24,6 +24,16 @@ describe('sanitizePath', () => {
     expect(sanitizePath('   ')).toBe('Unknown');
   });
 
+  it('collapses consecutive spaces', () => {
+    expect(sanitizePath('Author  Name')).toBe('Author Name');
+    expect(sanitizePath('Too   Many    Spaces')).toBe('Too Many Spaces');
+  });
+
+  it('collapses spaces left by stripped characters', () => {
+    // Colon removal leaves double space: "Author: Name" → "Author  Name" → "Author Name"
+    expect(sanitizePath('Author: Name')).toBe('Author Name');
+  });
+
   it('preserves normal characters', () => {
     expect(sanitizePath('Brandon Sanderson')).toBe('Brandon Sanderson');
     expect(sanitizePath("The Hitchhiker's Guide")).toBe("The Hitchhiker's Guide");
