@@ -3,6 +3,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { SecuritySettings } from './SecuritySettings';
+import { toast } from 'sonner';
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -196,6 +197,175 @@ describe('SecuritySettings', () => {
     // Username unchanged → third arg is undefined
     await waitFor(() => {
       expect(api.changePassword).toHaveBeenCalledWith('oldpass', 'newpassword1', undefined);
+    });
+  });
+
+  it('setup failure shows error toast', async () => {
+    const { ApiError } = await import('@/lib/api');
+    (api.setup as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(409, { error: 'User already exists' }));
+    const user = userEvent.setup();
+    renderWithProviders(<SecuritySettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Credentials')).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText('Username'), 'admin');
+    await user.type(screen.getByLabelText('Password'), 'password1234');
+    await user.click(screen.getByRole('button', { name: /create credentials/i }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('User already exists');
+    });
+  });
+
+  it('setup success resets form fields', async () => {
+    (api.setup as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+    const user = userEvent.setup();
+    renderWithProviders(<SecuritySettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Credentials')).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText('Username'), 'admin');
+    await user.type(screen.getByLabelText('Password'), 'password1234');
+    await user.click(screen.getByRole('button', { name: /create credentials/i }));
+
+    await waitFor(() => {
+      expect(api.setup).toHaveBeenCalled();
+    });
+
+    // Fields should be cleared after success
+    await waitFor(() => {
+      expect(screen.getByLabelText('Username')).toHaveValue('');
+      expect(screen.getByLabelText('Password')).toHaveValue('');
+    });
+  });
+
+  it('password change failure shows error toast', async () => {
+    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockStatus,
+      hasUser: true,
+      username: 'admin',
+    });
+    const { ApiError } = await import('@/lib/api');
+    (api.changePassword as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(401, { error: 'Current password is incorrect' }));
+    const user = userEvent.setup();
+    renderWithProviders(<SecuritySettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Credentials')).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText('Current Password'), 'wrongpass');
+    await user.type(screen.getByLabelText('New Password'), 'newpassword1');
+    await user.click(screen.getByRole('button', { name: /change password/i }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Current password is incorrect');
+    });
+  });
+
+  it('password change with changed username passes new username', async () => {
+    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockStatus,
+      hasUser: true,
+      username: 'admin',
+    });
+    (api.changePassword as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+    const user = userEvent.setup();
+    renderWithProviders(<SecuritySettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Credentials')).toBeInTheDocument();
+    });
+
+    // Clear and change username
+    const usernameField = screen.getByLabelText('Username');
+    await user.clear(usernameField);
+    await user.type(usernameField, 'newadmin');
+    await user.type(screen.getByLabelText('Current Password'), 'oldpass');
+    await user.type(screen.getByLabelText('New Password'), 'newpassword1');
+    await user.click(screen.getByRole('button', { name: /change password/i }));
+
+    await waitFor(() => {
+      expect(api.changePassword).toHaveBeenCalledWith('oldpass', 'newpassword1', 'newadmin');
+    });
+  });
+
+  it('setup success shows success toast and invalidates auth queries', async () => {
+    (api.setup as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+    const user = userEvent.setup();
+    renderWithProviders(<SecuritySettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Credentials')).toBeInTheDocument();
+    });
+
+    // Clear call counts after initial data load
+    (api.getStatus as ReturnType<typeof vi.fn>).mockClear();
+    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockClear();
+    // Re-apply resolved values for refetch after invalidation
+    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue(mockStatus);
+    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
+
+    await user.type(screen.getByLabelText('Username'), 'admin');
+    await user.type(screen.getByLabelText('Password'), 'password1234');
+    await user.click(screen.getByRole('button', { name: /create credentials/i }));
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Credentials created');
+    });
+
+    // Auth status should be refetched due to query invalidation
+    await waitFor(() => {
+      expect(api.getStatus).toHaveBeenCalled();
+    });
+  });
+
+  it('password change success shows success toast, clears fields, and invalidates auth queries', async () => {
+    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockStatus,
+      hasUser: true,
+      username: 'admin',
+    });
+    (api.changePassword as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+    const user = userEvent.setup();
+    renderWithProviders(<SecuritySettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Credentials')).toBeInTheDocument();
+    });
+
+    // Clear call counts after initial data load
+    (api.getStatus as ReturnType<typeof vi.fn>).mockClear();
+    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockClear();
+    // Re-apply resolved values for refetch after invalidation
+    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockStatus,
+      hasUser: true,
+      username: 'admin',
+    });
+    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
+
+    await user.type(screen.getByLabelText('Current Password'), 'oldpass');
+    await user.type(screen.getByLabelText('New Password'), 'newpassword1');
+    await user.click(screen.getByRole('button', { name: /change password/i }));
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Credentials updated');
+    });
+
+    // Password fields should be cleared after success
+    await waitFor(() => {
+      expect(screen.getByLabelText('Current Password')).toHaveValue('');
+      expect(screen.getByLabelText('New Password')).toHaveValue('');
+    });
+
+    // Auth status should be refetched due to query invalidation
+    await waitFor(() => {
+      expect(api.getStatus).toHaveBeenCalled();
     });
   });
 });

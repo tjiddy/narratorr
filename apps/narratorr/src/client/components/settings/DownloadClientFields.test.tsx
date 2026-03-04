@@ -147,7 +147,7 @@ describe('DownloadClientFields', () => {
     it('renders API Key with full-width span', () => {
       render(<FieldWrapper type="sabnzbd" />);
       const apiKeyContainer = screen.getByText('API Key').closest('div[class*="col-span"]');
-      expect(apiKeyContainer?.className).toContain('sm:col-span-2');
+      expect(apiKeyContainer).toHaveClass('sm:col-span-2');
     });
 
     it('renders Enabled, Priority, and Category in the same behavior row in edit mode', () => {
@@ -210,7 +210,14 @@ describe('DownloadClientFields', () => {
       await user.click(screen.getByRole('button', { name: /fetch/i }));
 
       await waitFor(() => {
-        expect(downloadClientsApi.getClientCategoriesFromConfig).toHaveBeenCalled();
+        const payload = (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mock.calls[0][0];
+        // Verify exact top-level keys — no extra fields leak into the payload
+        expect(Object.keys(payload).sort()).toEqual(['enabled', 'name', 'priority', 'settings', 'type']);
+        expect(payload.name).toBe('Test');
+        expect(payload.type).toBe('qbittorrent');
+        expect(payload.enabled).toBe(true);
+        expect(payload.priority).toBe(50);
+        expect(payload.settings).toMatchObject({ host: '', port: 8080 });
       });
     });
 
@@ -223,7 +230,14 @@ describe('DownloadClientFields', () => {
       await user.click(screen.getByRole('button', { name: /fetch/i }));
 
       await waitFor(() => {
-        expect(downloadClientsApi.getClientCategoriesFromConfig).toHaveBeenCalled();
+        const payload = (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mock.calls[0][0];
+        // Verify exact top-level keys — no extra fields leak into the payload
+        expect(Object.keys(payload).sort()).toEqual(['enabled', 'name', 'priority', 'settings', 'type']);
+        expect(payload.name).toBe('Test');
+        expect(payload.type).toBe('qbittorrent');
+        expect(payload.enabled).toBe(true);
+        expect(payload.priority).toBe(50);
+        expect(payload.settings).toMatchObject({ host: '', port: 8080 });
       });
     });
 

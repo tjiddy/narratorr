@@ -96,7 +96,7 @@ describe('prowlarr routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(services.prowlarrSync.saveConfig).toHaveBeenCalled();
+      expect(services.prowlarrSync.saveConfig).toHaveBeenCalledWith(mockConfig);
     });
 
     it('returns 400 on invalid config', async () => {

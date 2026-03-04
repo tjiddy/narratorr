@@ -127,7 +127,13 @@ describe('SettingsPage - Indexer form test button', () => {
     await user.click(screen.getByText('Test'));
 
     await waitFor(() => {
-      expect(api.testIndexerConfig).toHaveBeenCalled();
+      expect(api.testIndexerConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'My Indexer',
+          type: 'abb',
+          settings: expect.objectContaining({ hostname: 'abb.example.com' }),
+        }),
+      );
       expect(toast.success).toHaveBeenCalledWith('Connection successful');
     });
 
@@ -157,7 +163,13 @@ describe('SettingsPage - Indexer form test button', () => {
     await user.click(screen.getByText('Test'));
 
     await waitFor(() => {
-      expect(api.testIndexerConfig).toHaveBeenCalled();
+      expect(api.testIndexerConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'My Indexer',
+          type: 'abb',
+          settings: expect.objectContaining({ hostname: 'bad-host' }),
+        }),
+      );
       expect(toast.error).toHaveBeenCalledWith('Connection refused');
     });
 
@@ -236,7 +248,13 @@ describe('SettingsPage - Download client form test button', () => {
     await user.click(screen.getByText('Test'));
 
     await waitFor(() => {
-      expect(api.testClientConfig).toHaveBeenCalled();
+      expect(api.testClientConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'My Client',
+          type: 'qbittorrent',
+          settings: expect.objectContaining({ host: '192.168.1.100' }),
+        }),
+      );
       expect(toast.success).toHaveBeenCalledWith('Connection successful');
     });
 
