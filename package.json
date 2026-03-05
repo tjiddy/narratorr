@@ -14,16 +14,19 @@
     "db:generate": "pnpm --filter @narratorr/db generate",
     "db:migrate": "pnpm --filter @narratorr/db migrate",
     "docker:build": "docker build -t narratorr .",
-    "docker:up": "docker-compose up -d"
+    "docker:up": "docker-compose up -d",
+    "lighthouse": "node --import tsx e2e/lighthouse/run.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
+    "@lhci/cli": "^0.15.1",
     "@vitest/coverage-v8": "^2.1.9",
     "drizzle-zod": "^0.8.3",
     "eslint": "^9.39.2",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.0",
     "globals": "^17.3.0",
+    "tsx": "^4.19.0",
     "turbo": "^2.3.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.54.0"

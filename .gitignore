@@ -29,6 +29,9 @@ pnpm-debug.log*
 
 # Testing
 coverage/
+lighthouse-reports/
+.lighthouseci/
+.lighthouserc.json
 
 # Turbo
 .turbo/
