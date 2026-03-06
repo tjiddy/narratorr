@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon } from '@/components/icons';
+import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon } from '@/components/icons';
 
 interface BookHeroProps {
   title: string;
@@ -17,12 +17,18 @@ interface BookHeroProps {
   onEditClick: () => void;
   onRenameClick: () => void;
   isRenaming: boolean;
+  onRetagClick: () => void;
+  isRetagging: boolean;
+  retagDisabled: boolean;
+  retagTooltip?: string;
 }
 
+// eslint-disable-next-line complexity -- flat JSX conditionals for optional props, no branching logic
 export function BookHero({
   title, subtitle, authorName, authorAsin, narratorNames,
   coverUrl, metaDots, statusLabel, statusDotClass,
   hasPath, onBackClick, onSearchClick, onEditClick, onRenameClick, isRenaming,
+  onRetagClick, isRetagging, retagDisabled, retagTooltip,
 }: BookHeroProps) {
   return (
     <div className="relative -mx-4 sm:-mx-6 lg:-mx-8 -mt-4 sm:-mt-6 px-4 sm:px-6 lg:px-8 pt-6 pb-6 overflow-hidden">
@@ -110,6 +116,17 @@ export function BookHero({
               >
                 <RefreshIcon className={`w-3.5 h-3.5 ${isRenaming ? 'animate-spin' : ''}`} />
                 {isRenaming ? 'Renaming...' : 'Rename'}
+              </button>
+            )}
+            {hasPath && (
+              <button
+                onClick={onRetagClick}
+                disabled={isRetagging || retagDisabled}
+                title={retagDisabled ? retagTooltip : undefined}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground glass-card hover:border-primary/30 transition-all duration-200 focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <TagIcon className={`w-3.5 h-3.5 ${isRetagging ? 'animate-spin' : ''}`} />
+                {isRetagging ? 'Re-tagging...' : 'Re-tag files'}
               </button>
             )}
           </div>

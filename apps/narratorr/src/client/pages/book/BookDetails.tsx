@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { AudioInfo } from '@/components/AudioInfo';
@@ -12,6 +12,7 @@ import { BookDescription } from './BookDescription.js';
 import { FileList } from './FileList.js';
 import { mergeBookData, type MetadataBook } from './helpers.js';
 
+// eslint-disable-next-line complexity -- page orchestrator wiring mutations and conditional sections
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
   metadataBook?: MetadataBook | null;
@@ -40,6 +41,28 @@ export function BookDetails({ libraryBook, metadataBook }: {
       toast.error(`Rename failed: ${error.message}`);
     },
   });
+
+  const retagMutation = useMutation({
+    mutationFn: () => api.retagBook(libraryBook.id),
+    onSuccess: (result) => {
+      const msg = `Tagged ${result.tagged} file${result.tagged !== 1 ? 's' : ''}`;
+      if (result.failed > 0) {
+        toast.warning(`${msg}, ${result.failed} failed`);
+      } else {
+        toast.success(msg);
+      }
+    },
+    onError: (error: Error) => {
+      toast.error(`Re-tag failed: ${error.message}`);
+    },
+  });
+
+  const { data: settings } = useQuery({
+    queryKey: queryKeys.settings(),
+    queryFn: api.getSettings,
+  });
+
+  const ffmpegConfigured = !!settings?.processing?.ffmpegPath?.trim();
 
   const handleSave = async (data: UpdateBookPayload, renameFiles: boolean) => {
     setIsSaving(true);
@@ -88,6 +111,10 @@ export function BookDetails({ libraryBook, metadataBook }: {
         onEditClick={() => setEditModalOpen(true)}
         onRenameClick={() => renameMutation.mutate()}
         isRenaming={renameMutation.isPending}
+        onRetagClick={() => retagMutation.mutate()}
+        isRetagging={retagMutation.isPending}
+        retagDisabled={!ffmpegConfigured}
+        retagTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
       />
 
       {(hasDescription || hasSidebar) && (

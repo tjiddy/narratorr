@@ -151,6 +151,43 @@ describe('ProcessingSettingsSection', () => {
     });
   });
 
+  it('renders tag embedding controls', async () => {
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Tag Embedding')).toBeInTheDocument();
+    });
+
+    expect(screen.getByLabelText('Tag Mode')).toBeInTheDocument();
+    expect(screen.getByLabelText('Embed Cover Art')).toBeInTheDocument();
+  });
+
+  it('disables tag mode and cover when tagging is disabled', async () => {
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Tag Mode')).toBeInTheDocument();
+    });
+
+    // Tagging is disabled by default
+    expect(screen.getByLabelText('Tag Mode')).toBeDisabled();
+  });
+
+  it('enables tag controls when tagging toggle is turned on', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Tag Embedding')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByLabelText('Tag Embedding'));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Tag Mode')).not.toBeDisabled();
+    });
+  });
+
   it('shows mp3 chapter warning when mp3 format selected', async () => {
     const user = userEvent.setup();
     const settingsWithProcessing: Settings = createMockSettings({

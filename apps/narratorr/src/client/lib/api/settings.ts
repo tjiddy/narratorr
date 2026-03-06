@@ -1,4 +1,4 @@
-import type { AudibleRegion, OutputFormat, MergeBehavior } from '../../../shared/schemas.js';
+import type { AudibleRegion, OutputFormat, MergeBehavior, TagMode } from '../../../shared/schemas.js';
 import { fetchApi } from './client.js';
 
 export interface Settings {
@@ -28,6 +28,11 @@ export interface Settings {
     keepOriginalBitrate: boolean;
     bitrate: number;
     mergeBehavior: MergeBehavior;
+  };
+  tagging: {
+    enabled: boolean;
+    mode: TagMode;
+    embedCover: boolean;
   };
 }
 

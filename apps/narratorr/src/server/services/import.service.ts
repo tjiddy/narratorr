@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- linear import pipeline with copy, process, rename, tag, enrich steps */
 import { eq } from 'drizzle-orm';
 import { mkdir, cp, stat, readdir, rm } from 'node:fs/promises';
 import { join, extname, basename, normalize } from 'node:path';
@@ -13,6 +14,7 @@ import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
+import type { TaggingService } from './tagging.service.js';
 
 type DownloadRow = typeof downloads.$inferSelect;
 type BookRow = typeof books.$inferSelect;
@@ -119,6 +121,7 @@ export class ImportService {
     private log: FastifyBaseLogger,
     private notifierService?: NotifierService,
     private remotePathMappingService?: RemotePathMappingService,
+    private taggingService?: TaggingService,
   ) {}
 
   /**
@@ -287,6 +290,43 @@ export class ImportService {
       }).where(eq(books.id, book.id));
       // 8b. File-based audio enrichment
       await enrichBookFromAudio(book.id, targetPath, book, this.db, this.log);
+
+      // 8c. Tag embedding (after enrichment, before notification)
+      if (this.taggingService) {
+        const taggingSettings = await this.settingsService.get('tagging');
+        if (taggingSettings.enabled) {
+          const processingSettings = await this.settingsService.get('processing');
+          const ffmpegPath = processingSettings.ffmpegPath;
+          if (ffmpegPath?.trim()) {
+            try {
+              const tagResult = await this.taggingService.tagBook(
+                book.id,
+                targetPath,
+                {
+                  title: book.title,
+                  authorName: author?.name ?? null,
+                  narrator: book.narrator,
+                  seriesName: book.seriesName,
+                  seriesPosition: book.seriesPosition,
+                  coverUrl: book.coverUrl,
+                },
+                ffmpegPath,
+                taggingSettings.mode,
+                taggingSettings.embedCover,
+              );
+              this.log.info(
+                { bookId: book.id, tagged: tagResult.tagged, skipped: tagResult.skipped, failed: tagResult.failed },
+                'Tag embedding during import',
+              );
+            } catch (tagError) {
+              this.log.warn({ error: tagError, bookId: book.id }, 'Tag embedding failed during import — continuing');
+            }
+          } else {
+            this.log.debug({ bookId: book.id }, 'Tag embedding enabled but ffmpeg path not configured — skipping');
+          }
+        }
+      }
+
       // 9. Update download: status='imported'
       await this.db.update(downloads).set({ status: 'imported' }).where(eq(downloads.id, downloadId));
       this.log.info(

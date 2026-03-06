@@ -43,6 +43,7 @@ const defaultValues: UpdateSettingsFormData = {
   general: { logLevel: 'info' as const },
   metadata: { audibleRegion: 'us' as const },
   processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b' as const, keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' as const },
+  tagging: { enabled: false, mode: 'populate_missing' as const, embedCover: false },
 };
 
 // eslint-disable-next-line complexity -- flat null-coalescing map, no branching logic
@@ -66,6 +67,11 @@ function settingsToFormData(settings: NonNullable<ReturnType<typeof api.getSetti
       keepOriginalBitrate: settings.processing?.keepOriginalBitrate ?? false,
       bitrate: settings.processing?.bitrate ?? 128,
       mergeBehavior: settings.processing?.mergeBehavior ?? 'multi-file-only',
+    },
+    tagging: {
+      enabled: settings.tagging?.enabled ?? false,
+      mode: settings.tagging?.mode ?? 'populate_missing',
+      embedCover: settings.tagging?.embedCover ?? false,
     },
   };
 }

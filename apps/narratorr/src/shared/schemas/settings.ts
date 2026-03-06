@@ -92,6 +92,15 @@ export const metadataSettingsSchema = z.object({
   audibleRegion: audibleRegionSchema.default('us'),
 });
 
+export const tagModeSchema = z.enum(['populate_missing', 'overwrite']);
+export type TagMode = z.infer<typeof tagModeSchema>;
+
+export const taggingSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  mode: tagModeSchema.default('populate_missing'),
+  embedCover: z.boolean().default(false),
+});
+
 export const appSettingsSchema = z.object({
   library: librarySettingsSchema,
   search: searchSettingsSchema,
@@ -99,6 +108,7 @@ export const appSettingsSchema = z.object({
   general: generalSettingsSchema,
   metadata: metadataSettingsSchema,
   processing: processingSettingsSchema,
+  tagging: taggingSettingsSchema,
 });
 
 export const updateSettingsSchema = z.object({
@@ -108,6 +118,7 @@ export const updateSettingsSchema = z.object({
   general: generalSettingsSchema.partial().optional(),
   metadata: metadataSettingsSchema.partial().optional(),
   processing: processingSettingsSchema.partial().optional(),
+  tagging: taggingSettingsSchema.partial().optional(),
 }).superRefine((data, ctx) => {
   if (data.processing?.enabled && !data.processing.ffmpegPath?.trim()) {
     ctx.addIssue({
@@ -175,6 +186,11 @@ export const updateSettingsFormSchema = z.object({
     keepOriginalBitrate: z.boolean(),
     bitrate: z.number().int().min(32).max(512),
     mergeBehavior: mergeBehaviorSchema,
+  }),
+  tagging: z.object({
+    enabled: z.boolean(),
+    mode: tagModeSchema,
+    embedCover: z.boolean(),
   }),
 }).superRefine((data, ctx) => {
   if (data.processing.enabled && !data.processing.ffmpegPath.trim()) {

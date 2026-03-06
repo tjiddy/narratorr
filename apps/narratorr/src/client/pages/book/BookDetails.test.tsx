@@ -2,11 +2,17 @@ import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
-import { createMockBook } from '@/__tests__/factories';
+import { createMockBook, createMockSettings } from '@/__tests__/factories';
 import { api } from '@/lib/api';
 import { BookDetails } from './BookDetails';
 import type { BookWithAuthor } from '@/lib/api';
 import type { MetadataBook } from './helpers';
+
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+}));
+
+import { toast } from 'sonner';
 
 vi.mock('@/components/SearchReleasesModal', () => ({
   SearchReleasesModal: ({ isOpen }: { isOpen: boolean }) =>
@@ -23,6 +29,8 @@ vi.mock('@/lib/api', async (importOriginal) => {
       getBookFiles: vi.fn(),
       updateBook: vi.fn(),
       renameBook: vi.fn(),
+      retagBook: vi.fn(),
+      getSettings: vi.fn(),
     },
   };
 });
@@ -339,6 +347,137 @@ describe('BookDetails', () => {
         expect(api.updateBook).toHaveBeenCalled();
       });
       expect(api.renameBook).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('retag', () => {
+    it('calls retagBook API and shows success toast with plural', async () => {
+      const user = userEvent.setup();
+      (api.getSettings as Mock).mockResolvedValue(createMockSettings({
+        processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
+      }));
+      (api.retagBook as Mock).mockResolvedValue({
+        bookId: 1, tagged: 3, skipped: 0, failed: 0, warnings: [],
+      });
+
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => {
+        expect(screen.getByText('Re-tag files')).not.toBeDisabled();
+      });
+
+      await user.click(screen.getByText('Re-tag files'));
+
+      await waitFor(() => {
+        expect(api.retagBook).toHaveBeenCalledWith(1);
+      });
+      expect(toast.success).toHaveBeenCalledWith('Tagged 3 files');
+    });
+
+    it('shows singular "file" when only one file tagged', async () => {
+      const user = userEvent.setup();
+      (api.getSettings as Mock).mockResolvedValue(createMockSettings({
+        processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
+      }));
+      (api.retagBook as Mock).mockResolvedValue({
+        bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [],
+      });
+
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => {
+        expect(screen.getByText('Re-tag files')).not.toBeDisabled();
+      });
+
+      await user.click(screen.getByText('Re-tag files'));
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Tagged 1 file');
+      });
+    });
+
+    it('shows warning toast when some files failed', async () => {
+      const user = userEvent.setup();
+      (api.getSettings as Mock).mockResolvedValue(createMockSettings({
+        processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
+      }));
+      (api.retagBook as Mock).mockResolvedValue({
+        bookId: 1, tagged: 2, skipped: 0, failed: 1, warnings: ['ch03.ogg: Unsupported'],
+      });
+
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => {
+        expect(screen.getByText('Re-tag files')).not.toBeDisabled();
+      });
+
+      await user.click(screen.getByText('Re-tag files'));
+
+      await waitFor(() => {
+        expect(toast.warning).toHaveBeenCalledWith('Tagged 2 files, 1 failed');
+      });
+    });
+
+    it('shows error toast when retag API fails', async () => {
+      const user = userEvent.setup();
+      (api.getSettings as Mock).mockResolvedValue(createMockSettings({
+        processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
+      }));
+      (api.retagBook as Mock).mockRejectedValue(new Error('ffmpeg is not configured'));
+
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => {
+        expect(screen.getByText('Re-tag files')).not.toBeDisabled();
+      });
+
+      await user.click(screen.getByText('Re-tag files'));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Re-tag failed: ffmpeg is not configured');
+      });
+    });
+
+    it('disables Re-tag button when ffmpeg is not configured', async () => {
+      (api.getSettings as Mock).mockResolvedValue(createMockSettings({
+        processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
+      }));
+
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => {
+        expect(screen.getByText('Re-tag files')).toBeInTheDocument();
+      });
+
+      const button = screen.getByText('Re-tag files').closest('button');
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute('title', 'Requires ffmpeg — configure in Settings > Post Processing');
+    });
+
+    it('enables Re-tag button when ffmpeg path is configured', async () => {
+      (api.getSettings as Mock).mockResolvedValue(createMockSettings({
+        processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
+      }));
+
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => {
+        const button = screen.getByText('Re-tag files').closest('button');
+        expect(button).not.toBeDisabled();
+      });
+    });
+
+    it('hides Re-tag button when book has no path', async () => {
+      (api.getSettings as Mock).mockResolvedValue(createMockSettings({
+        processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
+      }));
+
+      renderBookDetails({ path: null });
+
+      // Wait for settings to load, then check button is absent
+      await waitFor(() => {
+        expect(screen.queryByText('Re-tag files')).not.toBeInTheDocument();
+      });
     });
   });
 });

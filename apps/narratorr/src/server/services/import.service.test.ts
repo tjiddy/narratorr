@@ -6,6 +6,7 @@ import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
+import type { TaggingService } from './tagging.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 
@@ -1314,6 +1315,103 @@ describe('ImportService', () => {
       });
 
       await expect(service.importDownload(1)).rejects.toThrow('not a supported audio format');
+    });
+  });
+
+  describe('tag embedding during import', () => {
+    function createServiceWithTagging(taggingService: TaggingService, overrideSettings?: SettingsService) {
+      return new ImportService(
+        inject<Db>(db),
+        clientService,
+        overrideSettings ?? settingsService,
+        inject<FastifyBaseLogger>(log),
+        undefined,
+        undefined,
+        taggingService,
+      );
+    }
+
+    function setupSuccessfulImport() {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+    }
+
+    it('calls tagging service when enabled and ffmpeg configured', async () => {
+      const mockTagging = inject<TaggingService>({
+        tagBook: vi.fn().mockResolvedValue({ bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [] }),
+      });
+      const tagSettings = inject<SettingsService>({
+        get: vi.fn().mockImplementation((key: string) => {
+          if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+          if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
+          if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '/usr/bin/ffmpeg' });
+          if (key === 'tagging') return Promise.resolve({ enabled: true, mode: 'overwrite', embedCover: false });
+          return Promise.resolve({});
+        }),
+      });
+
+      const svc = createServiceWithTagging(mockTagging, tagSettings);
+      setupSuccessfulImport();
+
+      await svc.importDownload(1);
+
+      expect(mockTagging.tagBook).toHaveBeenCalledWith(
+        1,
+        expect.any(String),
+        expect.objectContaining({ title: mockBook.title }),
+        '/usr/bin/ffmpeg',
+        'overwrite',
+        false,
+      );
+    });
+
+    it('skips tagging when disabled in settings', async () => {
+      const mockTagging = inject<TaggingService>({
+        tagBook: vi.fn().mockResolvedValue({ bookId: 1, tagged: 0, skipped: 0, failed: 0, warnings: [] }),
+      });
+      const tagSettings = inject<SettingsService>({
+        get: vi.fn().mockImplementation((key: string) => {
+          if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+          if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
+          if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '/usr/bin/ffmpeg' });
+          if (key === 'tagging') return Promise.resolve({ enabled: false, mode: 'overwrite', embedCover: false });
+          return Promise.resolve({});
+        }),
+      });
+
+      const svc = createServiceWithTagging(mockTagging, tagSettings);
+      setupSuccessfulImport();
+
+      await svc.importDownload(1);
+
+      expect(mockTagging.tagBook).not.toHaveBeenCalled();
+    });
+
+    it('continues import when tagging fails', async () => {
+      const mockTagging = inject<TaggingService>({
+        tagBook: vi.fn().mockRejectedValue(new Error('ffmpeg crashed')),
+      });
+      const tagSettings = inject<SettingsService>({
+        get: vi.fn().mockImplementation((key: string) => {
+          if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+          if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
+          if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '/usr/bin/ffmpeg' });
+          if (key === 'tagging') return Promise.resolve({ enabled: true, mode: 'overwrite', embedCover: false });
+          return Promise.resolve({});
+        }),
+      });
+
+      const svc = createServiceWithTagging(mockTagging, tagSettings);
+      setupSuccessfulImport();
+
+      // Should not throw — tagging failure is non-blocking
+      const result = await svc.importDownload(1);
+      expect(result.downloadId).toBe(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1 }),
+        expect.stringContaining('Tag embedding failed'),
+      );
     });
   });
 });

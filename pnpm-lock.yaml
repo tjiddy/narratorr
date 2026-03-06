@@ -102,6 +102,9 @@ importers:
       fuse.js:
         specifier: ^7.1.0
         version: 7.1.0
+      music-metadata:
+        specifier: ^11.12.0
+        version: 11.12.0
       node-cron:
         specifier: ^3.0.3
         version: 3.0.3

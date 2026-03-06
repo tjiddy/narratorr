@@ -3,7 +3,7 @@ import type { UseFormRegister, FieldErrors, UseFormWatch } from 'react-hook-form
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { ZapIcon, CheckCircleIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';
-import { outputFormatSchema, mergeBehaviorSchema, type UpdateSettingsFormData } from '../../../shared/schemas.js';
+import { outputFormatSchema, mergeBehaviorSchema, tagModeSchema, type UpdateSettingsFormData } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 interface ProcessingSettingsSectionProps {
@@ -21,6 +21,11 @@ const MERGE_LABELS: Record<string, string> = {
   always: 'Always merge',
   'multi-file-only': 'Only when multiple files',
   never: 'Never (convert only)',
+};
+
+const TAG_MODE_LABELS: Record<string, string> = {
+  populate_missing: 'Populate missing (only write blank fields)',
+  overwrite: 'Overwrite (write all fields)',
 };
 
 function ProbeResultFeedback({ result, error }: { result: { version: string } | null; error: string | null }) {
@@ -139,6 +144,7 @@ export function ProcessingSettingsSection({ register, errors, watch }: Processin
   const enabled = watch('processing.enabled');
   const ffmpegPath = watch('processing.ffmpegPath');
   const keepOriginalBitrate = watch('processing.keepOriginalBitrate');
+  const taggingEnabled = watch('tagging.enabled');
 
   async function handleProbe() {
     if (!ffmpegPath?.trim()) return;
@@ -235,6 +241,55 @@ export function ProcessingSettingsSection({ register, errors, watch }: Processin
           <p className="text-sm text-muted-foreground mt-2">
             Controls when multiple audio files are merged into a single output file with chapter markers
           </p>
+        </div>
+      </div>
+
+      <div className="pt-6 mt-6 border-t border-border">
+        <div className="flex items-center justify-between">
+          <div>
+            <label htmlFor="taggingEnabled" className="block text-sm font-medium">Tag Embedding</label>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Write book metadata (author, title, series, narrator) into audio file tags on import. Requires ffmpeg.
+            </p>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input id="taggingEnabled" type="checkbox" {...register('tagging.enabled')} className="sr-only peer" />
+            <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+          </label>
+        </div>
+
+        <div className={`space-y-5 mt-5 transition-opacity duration-200 ${taggingEnabled ? 'opacity-100' : 'opacity-40'}`}>
+          <div>
+            <label htmlFor="tagMode" className="block text-sm font-medium mb-2">Tag Mode</label>
+            <select
+              id="tagMode"
+              {...register('tagging.mode')}
+              disabled={!taggingEnabled}
+              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed"
+            >
+              {tagModeSchema.options.map((mode) => (
+                <option key={mode} value={mode}>
+                  {TAG_MODE_LABELS[mode] ?? mode}
+                </option>
+              ))}
+            </select>
+            <p className="text-sm text-muted-foreground mt-2">
+              &ldquo;Populate missing&rdquo; only writes tags to fields that are currently empty. &ldquo;Overwrite&rdquo; replaces all tag fields.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <label htmlFor="embedCover" className="block text-sm font-medium">Embed Cover Art</label>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Embed the book&rsquo;s cover image into audio file tags
+              </p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input id="embedCover" type="checkbox" {...register('tagging.embedCover')} disabled={!taggingEnabled} className="sr-only peer" />
+              <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full disabled:cursor-not-allowed" />
+            </label>
+          </div>
         </div>
       </div>
     </SettingsSection>

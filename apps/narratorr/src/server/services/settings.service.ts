@@ -10,6 +10,7 @@ import {
   generalSettingsSchema,
   metadataSettingsSchema,
   processingSettingsSchema,
+  taggingSettingsSchema,
 } from '../../shared/schemas.js';
 
 export type { AppSettings };
@@ -42,6 +43,11 @@ const DEFAULT_SETTINGS: AppSettings = {
     bitrate: 128,
     mergeBehavior: 'multi-file-only',
   },
+  tagging: {
+    enabled: false,
+    mode: 'populate_missing',
+    embedCover: false,
+  },
 };
 
 const CATEGORY_SCHEMAS = {
@@ -51,6 +57,7 @@ const CATEGORY_SCHEMAS = {
   general: generalSettingsSchema,
   metadata: metadataSettingsSchema,
   processing: processingSettingsSchema,
+  tagging: taggingSettingsSchema,
 } as const;
 
 /**
@@ -100,6 +107,7 @@ export class SettingsService {
       general: parseCategory('general', settingsMap.get('general'), this.log) ?? DEFAULT_SETTINGS.general,
       metadata: parseCategory('metadata', settingsMap.get('metadata'), this.log) ?? DEFAULT_SETTINGS.metadata,
       processing: parseCategory('processing', settingsMap.get('processing'), this.log) ?? DEFAULT_SETTINGS.processing,
+      tagging: parseCategory('tagging', settingsMap.get('tagging'), this.log) ?? DEFAULT_SETTINGS.tagging,
     };
   }
 

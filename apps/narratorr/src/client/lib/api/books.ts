@@ -109,6 +109,14 @@ export interface RenameResult {
   filesRenamed: number;
 }
 
+export interface RetagResult {
+  bookId: number;
+  tagged: number;
+  skipped: number;
+  failed: number;
+  warnings: string[];
+}
+
 export const booksApi = {
   getBooks: (status?: string) =>
     fetchApi<BookWithAuthor[]>(status ? `/books?status=${encodeURIComponent(status)}` : '/books'),
@@ -141,4 +149,6 @@ export const booksApi = {
     }),
   renameBook: (id: number) =>
     fetchApi<RenameResult>(`/books/${id}/rename`, { method: 'POST' }),
+  retagBook: (id: number) =>
+    fetchApi<RetagResult>(`/books/${id}/retag`, { method: 'POST' }),
 };

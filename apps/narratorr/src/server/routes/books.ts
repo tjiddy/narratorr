@@ -1,8 +1,9 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import type { BookService, DownloadService, SettingsService, RenameService } from '../services';
+import type { BookService, DownloadService, SettingsService, RenameService, TaggingService } from '../services';
 import { RenameError } from '../services/rename.service.js';
+import { RetagError } from '../services/tagging.service.js';
 import { type z } from 'zod';
 import {
   idParamSchema,
@@ -88,7 +89,7 @@ async function registerDeleteMissingRoute(app: FastifyInstance, bookService: Boo
   });
 }
 
-export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, renameService: RenameService) {
+export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, renameService: RenameService, taggingService: TaggingService) {
   // GET /api/books
   app.get<{ Querystring: BookListQuery }>(
     '/api/books',
@@ -199,6 +200,32 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
           return reply.status(statusCode).send({ error: error.message });
         }
         request.log.error(error, 'Failed to rename book');
+        return reply.status(500).send({ error: 'Internal server error' });
+      }
+    },
+  );
+
+  // POST /api/books/:id/retag
+  app.post<{ Params: IdParam }>(
+    '/api/books/:id/retag',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params;
+        const result = await taggingService.retagBook(id);
+        request.log.info({ id, tagged: result.tagged, skipped: result.skipped, failed: result.failed }, 'Book re-tagged');
+        return result;
+      } catch (error) {
+        if (error instanceof RetagError) {
+          const statusCode = error.code === 'NOT_FOUND' ? 404
+            : error.code === 'FFMPEG_NOT_CONFIGURED' ? 400
+            : error.code === 'NO_PATH' ? 400
+            : error.code === 'PATH_MISSING' ? 400
+            : 500;
+          request.log.warn({ bookId: request.params.id, code: error.code }, `Retag rejected: ${error.message}`);
+          return reply.status(statusCode).send({ error: error.message });
+        }
+        request.log.error(error, 'Failed to retag book');
         return reply.status(500).send({ error: 'Internal server error' });
       }
     },

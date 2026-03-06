@@ -17,6 +17,9 @@ const defaultProps = {
   onEditClick: vi.fn(),
   onRenameClick: vi.fn(),
   isRenaming: false,
+  onRetagClick: vi.fn(),
+  isRetagging: false,
+  retagDisabled: false,
 };
 
 function renderHero(overrides = {}) {
@@ -120,5 +123,32 @@ describe('BookHero', () => {
     renderHero({ isRenaming: true });
     expect(screen.getByText('Renaming...')).toBeInTheDocument();
     expect(screen.getByText('Renaming...').closest('button')).toBeDisabled();
+  });
+
+  it('calls onRetagClick when Re-tag button is clicked', async () => {
+    const onRetagClick = vi.fn();
+    const user = userEvent.setup();
+    renderHero({ onRetagClick });
+
+    await user.click(screen.getByText('Re-tag files'));
+    expect(onRetagClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides Re-tag button when book has no path', () => {
+    renderHero({ hasPath: false });
+    expect(screen.queryByText('Re-tag files')).not.toBeInTheDocument();
+  });
+
+  it('disables Re-tag button when re-tagging is in progress', () => {
+    renderHero({ isRetagging: true });
+    expect(screen.getByText('Re-tagging...')).toBeInTheDocument();
+    expect(screen.getByText('Re-tagging...').closest('button')).toBeDisabled();
+  });
+
+  it('disables Re-tag button when retagDisabled is true', () => {
+    renderHero({ retagDisabled: true, retagTooltip: 'Requires ffmpeg' });
+    const button = screen.getByText('Re-tag files').closest('button');
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', 'Requires ffmpeg');
   });
 });

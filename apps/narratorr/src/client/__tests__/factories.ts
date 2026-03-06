@@ -62,6 +62,7 @@ export function createMockSettings(overrides?: Partial<Settings>): Settings {
     general: { logLevel: 'info' },
     metadata: { audibleRegion: 'us' },
     processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
+    tagging: { enabled: false, mode: 'populate_missing', embedCover: false },
     ...overrides,
   };
 }

@@ -3,6 +3,7 @@ import { createTestApp, createMockServices, resetMockServices } from '../__tests
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { Services } from './index.js';
 import { RenameError } from '../services/rename.service.js';
+import { RetagError } from '../services/tagging.service.js';
 import { readdir, readFile, stat } from 'node:fs/promises';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -289,6 +290,86 @@ describe('books routes', () => {
       const res = await app.inject({ method: 'POST', url: '/api/books/1/rename' });
 
       expect(res.statusCode).toBe(500);
+    });
+  });
+
+  describe('POST /api/books/:id/retag', () => {
+    it('returns retag result on success', async () => {
+      (services.tagging.retagBook as Mock).mockResolvedValue({
+        bookId: 1,
+        tagged: 3,
+        skipped: 0,
+        failed: 0,
+        warnings: [],
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/retag' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.tagged).toBe(3);
+      expect(body.failed).toBe(0);
+    });
+
+    it('returns partial success with warnings', async () => {
+      (services.tagging.retagBook as Mock).mockResolvedValue({
+        bookId: 1,
+        tagged: 2,
+        skipped: 1,
+        failed: 1,
+        warnings: ['ch03.ogg: Unsupported format: .ogg'],
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/retag' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.tagged).toBe(2);
+      expect(body.failed).toBe(1);
+      expect(body.warnings).toHaveLength(1);
+    });
+
+    it('returns 400 when ffmpeg not configured', async () => {
+      (services.tagging.retagBook as Mock).mockRejectedValue(
+        new RetagError('FFMPEG_NOT_CONFIGURED', 'ffmpeg is not configured'),
+      );
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/retag' });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 404 when book not found', async () => {
+      (services.tagging.retagBook as Mock).mockRejectedValue(
+        new RetagError('NOT_FOUND', 'Book 999 not found'),
+      );
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/999/retag' });
+
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 400 when book has no path', async () => {
+      (services.tagging.retagBook as Mock).mockRejectedValue(
+        new RetagError('NO_PATH', 'Book has no library path'),
+      );
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/retag' });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 500 on unexpected error', async () => {
+      (services.tagging.retagBook as Mock).mockRejectedValue(new Error('Unexpected'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/retag' });
+
+      expect(res.statusCode).toBe(500);
+    });
+
+    it('returns 400 for NaN id', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/books/abc/retag' });
+      expect(res.statusCode).toBe(400);
     });
   });
 

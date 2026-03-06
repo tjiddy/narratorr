@@ -14,6 +14,7 @@ import {
   ProwlarrSyncService,
   RemotePathMappingService,
   RenameService,
+  TaggingService,
 } from '../services';
 import { ImportService } from '../services/import.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
@@ -51,6 +52,7 @@ export interface Services {
   prowlarrSync: ProwlarrSyncService;
   remotePathMapping: RemotePathMappingService;
   rename: RenameService;
+  tagging: TaggingService;
 }
 
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
@@ -69,7 +71,8 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const notifier = new NotifierService(db, log);
   const download = new DownloadService(db, downloadClient, log, notifier);
   const remotePathMapping = new RemotePathMappingService(db, log);
-  const importService = new ImportService(db, downloadClient, settings, log, notifier, remotePathMapping);
+  const taggingService = new TaggingService(db, settings, log);
+  const importService = new ImportService(db, downloadClient, settings, log, notifier, remotePathMapping, taggingService);
   const libraryScan = new LibraryScanService(db, book, metadata, settings, log);
   const matchJob = new MatchJobService(metadata, log);
   const blacklistService = new BlacklistService(db, log);
@@ -77,7 +80,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
 
   const renameService = new RenameService(book, settings, log);
 
-  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService };
+  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, tagging: taggingService };
 }
 
 export async function registerRoutes(
@@ -85,7 +88,7 @@ export async function registerRoutes(
   services: Services,
   db: Db,
 ): Promise<void> {
-  await booksRoutes(app, services.book, services.download, services.settings, services.rename);
+  await booksRoutes(app, services.book, services.download, services.settings, services.rename, services.tagging);
   await bookFilesRoute(app, services.book);
   await searchRoutes(app, services.indexer, services.download, services.blacklist);
   await activityRoutes(app, services.download);

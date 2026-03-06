@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { folderFormatSchema, fileFormatSchema, updateSettingsSchema } from './settings.js';
+import { folderFormatSchema, fileFormatSchema, updateSettingsSchema, taggingSettingsSchema } from './settings.js';
 
 describe('folderFormatSchema', () => {
   it('accepts format with {title}', () => {
@@ -74,6 +74,36 @@ describe('fileFormatSchema', () => {
 
   it('rejects unknown token', () => {
     const result = fileFormatSchema.safeParse('{title} - {bogus}');
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('taggingSettingsSchema', () => {
+  it('parses with correct defaults when undefined', () => {
+    const result = taggingSettingsSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.enabled).toBe(false);
+      expect(result.data.mode).toBe('populate_missing');
+      expect(result.data.embedCover).toBe(false);
+    }
+  });
+
+  it('accepts valid overwrite mode', () => {
+    const result = taggingSettingsSchema.safeParse({
+      enabled: true,
+      mode: 'overwrite',
+      embedCover: true,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects invalid mode', () => {
+    const result = taggingSettingsSchema.safeParse({
+      enabled: true,
+      mode: 'invalid_mode',
+      embedCover: false,
+    });
     expect(result.success).toBe(false);
   });
 });
