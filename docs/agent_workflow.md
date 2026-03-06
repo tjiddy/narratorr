@@ -9,14 +9,14 @@ This document defines the **implementor workflow** for working Gitea issues in t
 **Goal:** Take a `status/ready` issue → implement on a branch → open a PR → update the issue for downstream agents (review/QA/merge).
 **Do NOT merge** unless explicitly instructed.
 
-> **Skills available:** `/implement <id>`, `/claim <id>`, `/handoff <id>`, `/block <id>`, `/elaborate <id>`, `/review-pr <pr>`, `/respond-to-pr-review <pr>`, `/respond-to-spec-review <id>` automate the steps below. Use these for the standard workflow; refer to this doc for edge cases and templates.
+> **Skills available:** `/implement <id>`, `/claim <id>`, `/plan <id>`, `/handoff <id>`, `/block <id>`, `/elaborate <id>`, `/review-pr <pr>`, `/respond-to-pr-review <pr>`, `/respond-to-spec-review <id>` automate the steps below. Use these for the standard workflow; refer to this doc for edge cases and templates.
 
 ---
 
 ## TL;DR (do this every time)
 
 **Full auto (preferred):**
-1. `/implement <id>` — validates spec, explores codebase, claims, implements, and hands off
+1. `/implement <id>` — claims, plans (explores codebase, extracts test stubs), implements, and hands off
 
 **Manual control:**
 1. Read issue: `pnpm gitea issue <id>`
@@ -104,7 +104,7 @@ Must include the sections in the PR template below and **must include**: `Refs #
 
 ## 0) Pre-flight: Validation (before you change anything)
 
-> This phase is automated by `/claim` (inline) and available standalone via `/elaborate`.
+> Validation is automated by `/claim`. Codebase exploration and planning is automated by `/plan`. Both are available standalone via `/elaborate` (read-only).
 
 1. Read issue:
     - `pnpm gitea issue <id>`

@@ -261,8 +261,9 @@ If you're using Claude Code, workflow skills automate the steps above:
 
 | Skill | What it does |
 |-------|-------------|
-| `/implement <id>` | Full lifecycle: validate → claim → implement → verify → handoff |
-| `/claim <id>` | Validate spec + claim issue |
+| `/implement <id>` | Full lifecycle: claim → plan → implement → verify → handoff |
+| `/claim <id>` | Validate status, create branch, update labels |
+| `/plan <id>` | JIT elaboration: explore codebase, extract test stubs, post plan |
 | `/handoff <id>` | Verify, push, create PR, update labels |
 | `/block <id>` | Post blocked comment, set labels, stop |
 | `/elaborate <id>` | Groom/validate issue spec (read-only) |

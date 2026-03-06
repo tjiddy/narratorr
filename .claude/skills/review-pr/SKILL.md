@@ -65,11 +65,21 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Note specific files/lines that address each criterion
 
 7. **Check common issues:**
-   - Missing tests for new functionality
    - Missing error handling / logging in catch blocks
    - Scope creep (changes not related to the issue)
    - Missing logging on CRUD operations or external API calls
    - Security concerns (injection, unsanitized input)
+
+7a. **Behavioral test gap analysis** — For every changed source file in the diff, verify that each new behavior has a corresponding test assertion (not just a test file):
+   - **Route handlers:** Every new endpoint, query param, body field, status code, and error path must have a route-level integration test (`app.inject()`)
+   - **Service methods:** Every new method, query filter, and business logic branch must have a service-level test
+   - **Fire-and-forget paths:** Async `.then().catch()` chains must have tests for both success and failure
+   - **UI components:** Every new prop, callback, toggle state, and user interaction (click, submit, toggle) must have an interaction test with `userEvent`
+   - **Mutations:** Success toast, error toast, and query invalidation must each be tested
+   - **Settings/config:** Fetch failure fallback behavior must be tested (what happens when settings API fails?)
+   - **DB persistence:** New columns passed through create/update must be tested at the route level (not just "service was called" — verify the field is in the call args)
+
+   Flag any behavior that exists in source but has no test as a **blocking** finding with category `"tests"`. The finding must name the specific untested behavior and explain what bug it could catch.
 
 7b. **Test quality review** — Go beyond "do tests exist" and evaluate whether they actually catch defects:
    - **Mock realism:** Does mock data actually exercise the code path? Watch for mocks that return perfect happy-path objects when the test should verify handling of missing/optional fields.

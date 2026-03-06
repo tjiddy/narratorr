@@ -37,20 +37,34 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    Launch an **Explore subagent** (Agent tool, `subagent_type: "Explore"`, thoroughness: "very thorough") with this prompt:
 
-   > Review test coverage for all source files changed on this branch.
+   > Do an exhaustive behavioral test gap analysis for all source files changed on this branch.
    >
    > 1. Run: `git diff main --name-only -- '*.ts' '*.tsx' | grep -v '\.test\.'` to get changed source files.
-   > 2. For each source file, read it and identify the behaviors, branches, and error paths it introduces.
-   > 3. Find the co-located test file (e.g., `foo.ts` → `foo.test.ts`) or parent component/integration test files. Read each test file.
-   > 4. Cross-reference: verify each behavior has explicit test coverage. Name the specific test.
+   > 2. For each source file, **read the actual source code** and identify every:
+   >    - New function, method, or API endpoint
+   >    - Conditional branch (if/else, switch, ternary) — especially error paths and edge cases
+   >    - User interaction (button click, form submit, toggle, popover open/close)
+   >    - API call with success/error handling
+   >    - Fire-and-forget or async side effects
+   >    - State transitions (enabled→disabled, open→closed, etc.)
+   >    - DB persistence (new columns, new queries, create/update with new fields)
+   > 3. Find the co-located test file (e.g., `foo.ts` → `foo.test.ts`) or parent component/integration test files. **Read each test file thoroughly** — don't just check it exists, read the actual assertions.
+   > 4. Cross-reference: verify each behavior has an explicit test that asserts the specific outcome. Name the test. A test file existing is NOT sufficient — the specific behavior must be exercised and asserted.
+   >
+   > **Common gaps to watch for:**
+   > - Route handlers with new fields passed through to services but never tested at the route level
+   > - Fire-and-forget async operations (`.then().catch()`) — both success and failure paths
+   > - UI components with new props/callbacks that have no interaction tests
+   > - Toggle/mutation success and error toast messages
+   > - Settings fetch failure fallback behavior
+   > - Wiring files that pass new data through — verify parent integration tests cover the flow
    >
    > Return ONLY this structured checklist:
    > ```
    > COVERAGE REVIEW:
    > - <file>:
    >   - <behavior 1> → tested in <test file>: "<test name>" ✓
-   >   - <behavior 2> → tested in <test file>: "<test name>" ✓
-   >   - <behavior 3> → UNTESTED ✗
+   >   - <behavior 2> → UNTESTED ✗ — <what bug this could catch>
    >
    > RESULT: pass | fail (N untested behaviors)
    > ```
@@ -151,7 +165,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    Entry format:
    ```
    ## #<id> <issue title> — <YYYY-MM-DD>
-   **Skill path:** /implement → /claim (with elaborate subagent) → /handoff
+   **Skill path:** /implement → /claim → /plan → /handoff
    **Outcome:** success — PR #<number>
 
    ### Metrics

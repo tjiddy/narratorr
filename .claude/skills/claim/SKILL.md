@@ -1,14 +1,14 @@
 ---
 name: claim
-description: Claim a spec-approved Gitea issue for implementation. Creates the feature
-  branch, extracts test stubs, and posts a claim comment. Use when user says "claim
-  issue", "start working on", or invokes /claim.
+description: Claim a spec-approved Gitea issue for implementation. Validates status,
+  creates the feature branch, updates labels, and posts a claim comment. Use when
+  user says "claim issue", "start working on", or invokes /claim.
 argument-hint: <issue-id>
 ---
 
-# /claim <id> — Claim a spec-approved Gitea issue for implementation
+# /claim <id> — Claim a Gitea issue
 
-Claims an issue that has passed spec review (`status/ready`). Creates the feature branch, extracts test stubs, and posts a claim comment with the implementation plan.
+Mechanical claiming action: validates the issue is ready, creates the feature branch, updates labels, and posts a claim comment. No codebase exploration or planning — that's `/plan`'s job.
 
 **Prerequisite:** The issue must have `status/ready` (set by `/review-spec` on approval). Issues still in `status/backlog` must go through `/review-spec` first.
 
@@ -16,12 +16,12 @@ Claims an issue that has passed spec review (`status/ready`). Creates the featur
 
 All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
-## Phase 1 — Gate on spec approval
+## Steps
 
 1. **Read the issue:** Run `gitea issue <id>`. Extract title, labels, body, and comments.
 
 2. **Check status label:**
-   - **`status/ready`** → proceed to Phase 2
+   - **`status/ready`** → proceed to step 3
    - **`status/backlog`** →
      - Check if the issue has any `## Spec Review` comments (from `/review-spec`)
      - If it has spec review comments with `needs-work` verdict: STOP — "Issue #<id> has unresolved spec review findings. Update the spec to address findings, then re-run `/review-spec <id>`."
@@ -29,79 +29,11 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **`status/in-progress`** → STOP — "Issue #<id> is already in progress."
    - **`status/blocked`** → STOP — "Issue #<id> is blocked. Check issue comments for details, or run `/resume <id>`."
 
-3. **Extract reviewer suggestions from approval:**
-   - From the issue comments (step 1), find the most recent `## Spec Review` comment with `## Verdict: approve`
-   - If it has a `## Findings` JSON block with `suggestion` severity findings, extract them — these are refinements the reviewer identified that should be incorporated during implementation
-   - Carry these forward to include in the claim comment (step 5)
-   - If no approval comment or no suggestions, skip this step
-
-4. **Check for existing PRs:**
+3. **Check for existing PRs:**
    - Run `gitea prs` and check if any open PR title contains `#<id>`.
    - If one exists, STOP: "PR already open for #<id>: <PR link>"
 
-5. **Explore the codebase** via an Explore subagent (keeps file reads out of main context — critical since `/claim` runs inside `/implement`):
-
-   Launch an **Explore subagent** (Agent tool, `subagent_type: "Explore"`) with this prompt:
-
-   > Explore the codebase for implementation planning of issue #<id>: "<issue title>".
-   > Scope labels: <labels>. Key areas from spec: <summarize relevant AC and implementation hints>.
-   >
-   > Do the following and return a structured summary:
-   > 1. Read `CLAUDE.md` for design principles and conventions
-   > 2. Find files/modules relevant to the issue scope — existing patterns, interfaces, wiring points
-   > 3. Check for overlapping work: run `node scripts/gitea.ts prs` and look for PRs touching the same area
-   > 4. Check dependencies: run `node scripts/gitea.ts issue <dep-id>` for any referenced issues to verify status
-   > 5. Scan `.claude/learnings/` for files whose `scope` or `files` frontmatter matches this issue's labels or target files
-   > 6. Check `.claude/debt.md` for items in the target area
-   >
-   > Return this structure:
-   > ```
-   > PATTERNS: <relevant existing patterns and interfaces found>
-   > WIRING POINTS: <files that need modification to wire the feature>
-   > OVERLAPPING WORK: <open PRs in the same area, or "none">
-   > DEPENDENCIES: <dep status, or "none">
-   > KNOWN LEARNINGS: <relevant learnings from .claude/learnings/ and debt items, or "none">
-   > DESIGN CONCERNS: <any SRP/DRY/Open-Closed issues the implementation should watch for>
-   > ```
-
-   Use the subagent's structured output directly in the claim comment (step 6).
-
-## Phase 2 — Claim
-
-6. **Post a claim comment** on the issue:
-   - Write the comment to a temp file, then post it:
-   ```bash
-   gitea issue-comment <id> --body-file <temp-file-path>
-   ```
-   Comment template (write this to the temp file):
-   ```
-   **Claiming #<id>**
-   - Plan:
-       1. ...
-       2. ...
-       3. ...
-   - Expected changes: `<files/modules>`
-   - Verification: `<tests to run>`
-   - Codebase findings: <relevant patterns, interfaces, wiring points>
-   - Known learnings: <relevant learnings from `.claude/learnings/` and `.claude/debt.md`, or "none">
-   - Reviewer suggestions: <suggestion findings from the approval comment (step 3), or "none">
-   - Design checklist:
-       - [ ] Each new file has a single responsibility
-       - [ ] No duplicated patterns — reuses existing hooks/components or extracts shared ones
-       - [ ] Wiring touches ≤3 existing files (new features extend, not modify)
-       - [ ] Types and components co-located with their domain
-   ```
-   If any design check fails, note the mitigation.
-   - Clean up the temp file after posting.
-
-7. **Set labels to `status/in-progress` + `stage/dev`** (keeping all other existing labels):
-   - From the issue output, extract the current label names.
-   - Replace any `status/*` label with `status/in-progress`.
-   - Replace any `stage/*` label with `stage/dev` (or add `stage/dev` if none exists).
-   - Run: `gitea issue-update <id> labels "<comma-separated label names>"`
-   - Verify the output shows `status/in-progress` and `stage/dev`. If it doesn't, STOP and report the error.
-
-8. **Create the feature branch:**
+4. **Create the feature branch:**
    ```bash
    git stash --include-untracked
    git checkout main
@@ -118,29 +50,22 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    Note: `git stash pop` may silently succeed with no stash if working directory was clean — that's fine.
 
-9. **Extract test stubs from spec (if present).**
-   Scan the issue body for `## User Interactions`, `## System Behaviors`, and `## Edge Cases (auto-generated)` sections (or equivalent interaction-style requirements like "user does X → Y" / "when X → Y" anywhere in the spec):
+5. **Set labels to `status/in-progress` + `stage/dev`** (keeping all other existing labels):
+   - From the issue output, extract the current label names.
+   - Replace any `status/*` label with `status/in-progress`.
+   - Replace any `stage/*` label with `stage/dev` (or add `stage/dev` if none exists).
+   - Run: `gitea issue-update <id> labels "<comma-separated label names>"`
+   - Verify the output shows `status/in-progress` and `stage/dev`. If it doesn't, STOP and report the error.
 
-   **For User Interactions** (frontend):
-   - Create `it.todo('description')` stubs in co-located test files next to the planned frontend files (e.g., `ManualImportPage.tsx` → `ManualImportPage.test.tsx`)
-
-   **For System Behaviors** (backend/core):
-   - Create `it.todo('description')` stubs in co-located test files next to the planned service/route/utility files (e.g., `match-job.service.ts` → `match-job.service.test.ts`)
-
-   **For both:**
-   - Group stubs by component/module using `describe()` blocks
-   - Each stub should map to one interaction or behavior from the spec
-   - If test files already exist, append new `describe`/`it.todo` blocks — don't overwrite existing tests
-   - If test files don't exist yet, create them with the standard imports (`describe`, `it`, `vi` from `vitest`) and leave the actual test setup (mocks, render helpers) for the implementer
-   - If neither spec section exists, skip this step (older issues won't have it)
-
-   Example — given a spec interaction "User clicks 'Cancel' → modal closes":
-   ```ts
-   describe('MyComponent', () => {
-     it.todo('closes modal when user clicks Cancel');
-   });
+6. **Post a claim comment** on the issue:
+   - Write the comment to a temp file, then post it:
+   ```bash
+   gitea issue-comment <id> --body-file <temp-file-path>
    ```
+   Comment template (write this to the temp file):
+   ```
+   **Claiming #<id>** — branch: `<branch-name>`
+   ```
+   - Clean up the temp file after posting.
 
-   These stubs are the **minimum test coverage** — every spec interaction and system behavior must have a corresponding test. The implementer should add additional tests beyond these stubs for edge cases, error states, and implementation details discovered during development. The stubs are a floor, not a ceiling.
-
-10. Tell the user the issue is claimed and show the plan, including codebase findings from step 5.
+7. Tell the user the issue is claimed: "**#<id> claimed** — on branch `<branch-name>`. Run `/plan <id>` for implementation planning, or start coding."
