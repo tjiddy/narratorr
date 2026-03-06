@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { DownloadService } from './download.service.js';
 import { type DownloadClientService } from './download-client.service.js';
+import { type EventHistoryService } from './event-history.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 
@@ -1021,6 +1022,101 @@ describe('DownloadService', () => {
       );
       const setArgs = (chain.set as Mock).mock.calls[0][0] as Record<string, unknown>;
       expect(setArgs.completedAt).toBeInstanceOf(Date);
+    });
+  });
+
+  describe('event history producers', () => {
+    let eventHistory: { create: ReturnType<typeof vi.fn> };
+    let svcWithEvents: DownloadService;
+
+    beforeEach(() => {
+      eventHistory = { create: vi.fn().mockResolvedValue({ id: 1 }) };
+      svcWithEvents = new DownloadService(
+        inject<Db>(db),
+        clientService,
+        inject<FastifyBaseLogger>(createMockLogger()),
+        undefined,
+        inject<EventHistoryService>(eventHistory),
+      );
+    });
+
+    it('records grabbed event on successful grab', async () => {
+      const mockAdapter = { addDownload: vi.fn().mockResolvedValue('ext-456') };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit', settings: {} });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+      db.insert.mockReturnValue(mockDbChain([{ ...mockDownload, id: 10 }]));
+      db.update.mockReturnValue(mockDbChain());
+      // First select: getActiveByBookId (no active downloads), second select: getById after insert
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([{ download: { ...mockDownload, id: 10 }, book: mockBook }]));
+
+      await svcWithEvents.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test Book',
+        bookId: 1,
+      });
+
+      expect(eventHistory.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookId: 1,
+          bookTitle: 'Test Book',
+          downloadId: 10,
+          eventType: 'grabbed',
+          source: 'auto',
+          reason: expect.objectContaining({ protocol: 'torrent' }),
+        }),
+      );
+    });
+
+    it('records download_completed event when progress reaches 1', async () => {
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(mockDbChain([{ download: mockDownload, book: mockBook }]));
+
+      await svcWithEvents.updateProgress(1, 1.0);
+
+      // Fire-and-forget — wait for microtask
+      await vi.waitFor(() => {
+        expect(eventHistory.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            bookId: 1,
+            bookTitle: 'The Way of Kings',
+            eventType: 'download_completed',
+            source: 'auto',
+            reason: { progress: 1 },
+          }),
+        );
+      });
+    });
+
+    it('records download_failed event on setError', async () => {
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(mockDbChain([{ download: mockDownload, book: mockBook }]));
+
+      await svcWithEvents.setError(1, 'Disk full');
+
+      await vi.waitFor(() => {
+        expect(eventHistory.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            bookId: 1,
+            bookTitle: 'The Way of Kings',
+            eventType: 'download_failed',
+            source: 'auto',
+            reason: { error: 'Disk full' },
+          }),
+        );
+      });
+    });
+
+    it('does not record event when no bookId on download', async () => {
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(mockDbChain([{ download: { ...mockDownload, bookId: null }, book: null }]));
+
+      await svcWithEvents.setError(1, 'Disk full');
+
+      // Wait a tick then verify no event was created
+      await new Promise((r) => setTimeout(r, 10));
+      expect(eventHistory.create).not.toHaveBeenCalled();
     });
   });
 });

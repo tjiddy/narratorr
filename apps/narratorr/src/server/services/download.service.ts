@@ -5,6 +5,7 @@ import { downloads, books } from '@narratorr/db/schema';
 import { parseInfoHash, type DownloadProtocol } from '@narratorr/core';
 import { type DownloadClientService } from './download-client.service.js';
 import { type NotifierService } from './notifier.service.js';
+import { type EventHistoryService, type CreateEventInput } from './event-history.service.js';
 
 type DownloadRow = typeof downloads.$inferSelect;
 type BookRow = typeof books.$inferSelect;
@@ -19,7 +20,31 @@ export class DownloadService {
     private downloadClientService: DownloadClientService,
     private log: FastifyBaseLogger,
     private notifierService?: NotifierService,
+    private eventHistory?: EventHistoryService,
   ) {}
+
+  /** Fire-and-forget event recording — silently skips if no eventHistory injected. */
+  private emitEvent(input: CreateEventInput): void {
+    this.eventHistory?.create(input)
+      .catch((err) => this.log.warn(err, `Failed to record ${input.eventType} event`));
+  }
+
+  /** Emit grabbed event if bookId is present (fire-and-forget). */
+  private emitEventForGrab(bookId: number | undefined, title: string, downloadId: number, reason?: Record<string, unknown>): void {
+    if (bookId) {
+      this.emitEvent({ bookId, bookTitle: title, downloadId, eventType: 'grabbed', source: 'auto', reason });
+    }
+  }
+
+  /** Look up a download and emit an event for it (fire-and-forget). */
+  private emitEventForDownload(downloadId: number, eventType: CreateEventInput['eventType'], reason?: Record<string, unknown>): void {
+    if (!this.eventHistory) return;
+    this.getById(downloadId).then((dl) => {
+      if (dl?.bookId) {
+        this.emitEvent({ bookId: dl.bookId, bookTitle: dl.title, downloadId: dl.id, eventType, source: 'auto', reason });
+      }
+    }).catch((err) => this.log.warn(err, 'Failed to look up download for event'));
+  }
 
   async getAll(status?: string): Promise<DownloadWithBook[]> {
     let query = this.db
@@ -230,6 +255,13 @@ export class DownloadService {
       })).catch((err) => this.log.warn(err, 'Failed to send grab notification'));
     }
 
+    // Record grabbed event (fire-and-forget)
+    this.emitEventForGrab(params.bookId, params.title, result[0].id, {
+      indexerId: params.indexerId,
+      size: params.size,
+      protocol,
+    });
+
     return this.getById(result[0].id) as Promise<DownloadWithBook>;
   }
 
@@ -244,6 +276,9 @@ export class DownloadService {
 
     if (progress >= 1) {
       this.log.info({ id }, 'Download completed');
+
+      // Record download_completed event (fire-and-forget)
+      this.emitEventForDownload(id, 'download_completed', { progress: 1 });
     }
   }
 
@@ -258,6 +293,9 @@ export class DownloadService {
       .set({ status: 'failed', errorMessage })
       .where(eq(downloads.id, id));
     this.log.warn({ id, error: errorMessage }, 'Download error recorded');
+
+    // Record download_failed event (fire-and-forget)
+    this.emitEventForDownload(id, 'download_failed', { error: errorMessage });
   }
 
   async cancel(id: number): Promise<boolean> {

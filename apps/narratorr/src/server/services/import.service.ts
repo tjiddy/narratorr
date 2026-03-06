@@ -15,6 +15,7 @@ import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import type { TaggingService } from './tagging.service.js';
+import type { EventHistoryService } from './event-history.service.js';
 
 type DownloadRow = typeof downloads.$inferSelect;
 type BookRow = typeof books.$inferSelect;
@@ -122,6 +123,7 @@ export class ImportService {
     private notifierService?: NotifierService,
     private remotePathMappingService?: RemotePathMappingService,
     private taggingService?: TaggingService,
+    private eventHistory?: EventHistoryService,
   ) {}
 
   /**
@@ -341,6 +343,18 @@ export class ImportService {
         import: { libraryPath: targetPath, fileCount },
       }).catch((err) => this.log.warn(err, 'Failed to send import notification'));
 
+      // 9c. Record imported/upgraded event (fire-and-forget)
+      const isUpgrade = !!book.path;
+      this.eventHistory?.create({
+        bookId: book.id,
+        bookTitle: book.title,
+        authorName: author?.name,
+        downloadId: downloadId,
+        eventType: isUpgrade ? 'upgraded' : 'imported',
+        source: 'auto',
+        reason: { targetPath, fileCount, totalSize: targetSize },
+      }).catch((err) => this.log.warn(err, 'Failed to record import event'));
+
       // 10. Handle torrent removal
       if (importSettings.deleteAfterImport) {
         await this.handleTorrentRemoval(download, importSettings.minSeedTime);
@@ -374,6 +388,17 @@ export class ImportService {
         book: { title: download.title },
         error: { message: error instanceof Error ? error.message : 'Import failed', stage: 'import' },
       }).catch((err) => this.log.warn(err, 'Failed to send failure notification'));
+
+      // Record import_failed event (fire-and-forget)
+      this.eventHistory?.create({
+        bookId: book.id,
+        bookTitle: book.title,
+        authorName: author?.name,
+        downloadId: downloadId,
+        eventType: 'import_failed',
+        source: 'auto',
+        reason: { error: error instanceof Error ? error.message : 'Import failed' },
+      }).catch((err) => this.log.warn(err, 'Failed to record import_failed event'));
 
       throw error;
     }

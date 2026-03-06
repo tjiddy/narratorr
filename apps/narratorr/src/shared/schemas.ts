@@ -12,3 +12,4 @@ export * from './schemas/book.js';
 export * from './schemas/library-scan.js';
 export * from './schemas/blacklist.js';
 export * from './schemas/prowlarr.js';
+export * from './schemas/event-history.js';

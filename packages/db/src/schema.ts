@@ -162,6 +162,35 @@ export const downloads = sqliteTable('downloads', {
   index('idx_downloads_book_id').on(table.bookId),
 ]);
 
+// ============ EVENT HISTORY ============
+
+export const bookEvents = sqliteTable('book_events', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  bookId: integer('book_id').references(() => books.id, { onDelete: 'set null' }),
+  downloadId: integer('download_id').references(() => downloads.id, { onDelete: 'set null' }),
+  bookTitle: text('book_title').notNull(),
+  authorName: text('author_name'),
+  eventType: text('event_type', {
+    enum: [
+      'grabbed', 'download_completed', 'download_failed',
+      'imported', 'import_failed', 'upgraded',
+      'deleted', 'renamed',
+      'file_tagged', 'held_for_review',
+    ],
+  }).notNull(),
+  source: text('source', {
+    enum: ['manual', 'rss', 'scheduled', 'auto'],
+  }).notNull().default('auto'),
+  reason: text('reason', { mode: 'json' }).$type<Record<string, unknown>>(),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+}, (table) => [
+  index('idx_book_events_book_id').on(table.bookId),
+  index('idx_book_events_event_type').on(table.eventType),
+  index('idx_book_events_created_at').on(table.createdAt),
+]);
+
 // ============ SEARCH & BLACKLIST ============
 
 export const searchHistory = sqliteTable('search_history', {

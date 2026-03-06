@@ -28,4 +28,8 @@ export const queryKeys = {
     status: () => ['auth', 'status'] as const,
     config: () => ['auth', 'config'] as const,
   },
+  eventHistory: {
+    all: (params?: { eventType?: string; search?: string }) => ['eventHistory', params] as const,
+    byBookId: (bookId: number) => ['eventHistory', 'book', bookId] as const,
+  },
 } as const;

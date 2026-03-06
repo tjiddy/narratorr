@@ -11,4 +11,5 @@ export { BlacklistService } from './blacklist.service.js';
 export { ProwlarrSyncService } from './prowlarr-sync.service.js';
 export { RemotePathMappingService } from './remote-path-mapping.service.js';
 export { RenameService, RenameError, type RenameResult } from './rename.service.js';
+export { EventHistoryService, type CreateEventInput } from './event-history.service.js';
 export { TaggingService, RetagError, type RetagResult } from './tagging.service.js';

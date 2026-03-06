@@ -14,6 +14,7 @@ import {
   ProwlarrSyncService,
   RemotePathMappingService,
   RenameService,
+  EventHistoryService,
   TaggingService,
 } from '../services';
 import { ImportService } from '../services/import.service.js';
@@ -35,6 +36,7 @@ import { prowlarrRoutes } from './prowlarr.js';
 import { authRoutes } from './auth.js';
 import { filesystemRoutes } from './filesystem.js';
 import { remotePathMappingRoutes } from './remote-path-mappings.js';
+import { eventHistoryRoutes } from './event-history.js';
 
 export interface Services {
   settings: SettingsService;
@@ -52,6 +54,7 @@ export interface Services {
   prowlarrSync: ProwlarrSyncService;
   remotePathMapping: RemotePathMappingService;
   rename: RenameService;
+  eventHistory: EventHistoryService;
   tagging: TaggingService;
 }
 
@@ -67,20 +70,24 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
     audibleRegion: metadataSettings?.audibleRegion,
   });
 
-  const book = new BookService(db, log, metadata);
   const notifier = new NotifierService(db, log);
-  const download = new DownloadService(db, downloadClient, log, notifier);
+  const blacklistService = new BlacklistService(db, log);
+
+  // EventHistoryService created early so it can be injected into lifecycle services
+  const book = new BookService(db, log, metadata);
+  const eventHistory = new EventHistoryService(db, log, blacklistService, book);
+
+  const download = new DownloadService(db, downloadClient, log, notifier, eventHistory);
   const remotePathMapping = new RemotePathMappingService(db, log);
   const taggingService = new TaggingService(db, settings, log);
-  const importService = new ImportService(db, downloadClient, settings, log, notifier, remotePathMapping, taggingService);
+  const importService = new ImportService(db, downloadClient, settings, log, notifier, remotePathMapping, taggingService, eventHistory);
   const libraryScan = new LibraryScanService(db, book, metadata, settings, log);
   const matchJob = new MatchJobService(metadata, log);
-  const blacklistService = new BlacklistService(db, log);
   const prowlarrSync = new ProwlarrSyncService(db, log);
 
-  const renameService = new RenameService(book, settings, log);
+  const renameService = new RenameService(book, settings, log, eventHistory);
 
-  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, tagging: taggingService };
+  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService };
 }
 
 export async function registerRoutes(
@@ -88,7 +95,7 @@ export async function registerRoutes(
   services: Services,
   db: Db,
 ): Promise<void> {
-  await booksRoutes(app, services.book, services.download, services.settings, services.rename, services.tagging);
+  await booksRoutes(app, services.book, services.download, services.settings, services.rename, services.tagging, services.eventHistory);
   await bookFilesRoute(app, services.book);
   await searchRoutes(app, services.indexer, services.download, services.blacklist);
   await activityRoutes(app, services.download);
@@ -104,4 +111,5 @@ export async function registerRoutes(
   await authRoutes(app, services.auth);
   await remotePathMappingRoutes(app, services.remotePathMapping);
   await filesystemRoutes(app);
+  await eventHistoryRoutes(app, services.eventHistory);
 }

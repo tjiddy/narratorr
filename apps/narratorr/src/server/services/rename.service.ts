@@ -3,6 +3,7 @@ import { dirname, normalize, resolve } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { EventHistoryService } from './event-history.service.js';
 import { buildTargetPath } from './import.service.js';
 import { cleanEmptyParents, renameFilesWithTemplate } from '../utils/paths.js';
 
@@ -18,7 +19,20 @@ export class RenameService {
     private bookService: BookService,
     private settingsService: SettingsService,
     private log: FastifyBaseLogger,
+    private eventHistory?: EventHistoryService,
   ) {}
+
+  /** Fire-and-forget event recording. */
+  private emitEvent(bookId: number, book: { title: string; author?: { name: string } }, oldPath: string, newPath: string, filesRenamed: number): void {
+    this.eventHistory?.create({
+      bookId,
+      bookTitle: book.title,
+      authorName: book.author?.name,
+      eventType: 'renamed',
+      source: 'manual',
+      reason: { oldPath, newPath, filesRenamed },
+    }).catch((err) => this.log.warn(err, 'Failed to record renamed event'));
+  }
 
   /**
    * Rename/reorganize a book's files to match current metadata + format templates.
@@ -88,6 +102,8 @@ export class RenameService {
     }
 
     this.log.info({ bookId, oldPath, newPath: currentPath, filesRenamed }, 'Book renamed');
+
+    this.emitEvent(bookId, book, oldPath, currentPath, filesRenamed);
 
     return {
       oldPath,

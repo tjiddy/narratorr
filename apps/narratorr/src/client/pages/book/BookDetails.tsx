@@ -3,16 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
-import { AudioInfo } from '@/components/AudioInfo';
 import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
+import { HistoryIcon, BookOpenIcon } from '@/components/icons';
 import { api, type BookWithAuthor, type UpdateBookPayload } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { BookHero } from './BookHero.js';
-import { BookDescription } from './BookDescription.js';
-import { FileList } from './FileList.js';
+import { BookDetailsContent } from './BookDetailsContent.js';
+import { BookEventHistory } from './BookEventHistory.js';
 import { mergeBookData, type MetadataBook } from './helpers.js';
 
-// eslint-disable-next-line complexity -- page orchestrator wiring mutations and conditional sections
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
   metadataBook?: MetadataBook | null;
@@ -22,6 +21,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [tab, setTab] = useState<'details' | 'history'>('details');
 
   const merged = mergeBookData(libraryBook, metadataBook);
 
@@ -88,11 +88,6 @@ export function BookDetails({ libraryBook, metadataBook }: {
     }
   };
 
-  const hasDescription = !!merged.description;
-  const hasGenres = merged.genres && merged.genres.length > 0;
-  const hasFiles = !!libraryBook.path;
-  const hasSidebar = libraryBook.audioCodec || hasGenres || hasFiles;
-
   return (
     <div className="space-y-6">
       <BookHero
@@ -117,41 +112,40 @@ export function BookDetails({ libraryBook, metadataBook }: {
         retagTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
       />
 
-      {(hasDescription || hasSidebar) && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in-up stagger-5">
-          {hasDescription && (
-            <div className={hasSidebar ? 'lg:col-span-2' : 'lg:col-span-3'}>
-              <BookDescription description={merged.description!} />
-            </div>
-          )}
+      {/* Tab buttons */}
+      <div className="flex justify-center animate-fade-in-up stagger-4">
+        <div className="inline-flex items-center glass-card rounded-xl p-1 gap-1">
+          <button
+            onClick={() => setTab('details')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              tab === 'details'
+                ? 'bg-primary text-primary-foreground shadow-glow'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <BookOpenIcon className="w-4 h-4" />
+            Details
+          </button>
+          <button
+            onClick={() => setTab('history')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              tab === 'history'
+                ? 'bg-primary text-primary-foreground shadow-glow'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <HistoryIcon className="w-4 h-4" />
+            History
+          </button>
+        </div>
+      </div>
 
-          {hasSidebar && (
-            <div className={`space-y-6 ${hasDescription ? '' : 'lg:col-span-3 lg:max-w-sm'}`}>
-              <AudioInfo book={libraryBook} compact />
+      {/* Tab content */}
+      {tab === 'details' && <BookDetailsContent libraryBook={libraryBook} merged={merged} />}
 
-              {hasGenres && (
-                <div>
-                  <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-                    Genres
-                  </h2>
-                  <div className="glass-card rounded-2xl p-4">
-                    <div className="flex flex-wrap gap-2">
-                      {merged.genres!.map((genre) => (
-                        <span
-                          key={genre}
-                          className="rounded-lg bg-muted px-3 py-1.5 text-xs font-medium text-muted-foreground"
-                        >
-                          {genre}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {hasFiles && <FileList bookId={libraryBook.id} />}
-            </div>
-          )}
+      {tab === 'history' && (
+        <div className="animate-fade-in-up">
+          <BookEventHistory bookId={libraryBook.id} />
         </div>
       )}
 

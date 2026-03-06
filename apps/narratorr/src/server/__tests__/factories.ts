@@ -97,6 +97,21 @@ export function createMockDbRemotePathMapping(overrides?: Record<string, unknown
   };
 }
 
+export function createMockDbBookEvent(overrides?: Record<string, unknown>) {
+  return {
+    id: 1,
+    bookId: 1 as number | null,
+    downloadId: null as number | null,
+    bookTitle: 'The Way of Kings',
+    authorName: 'Brandon Sanderson' as string | null,
+    eventType: 'grabbed' as const,
+    source: 'auto' as const,
+    reason: null as Record<string, unknown> | null,
+    createdAt: now,
+    ...overrides,
+  };
+}
+
 export function createMockDbNotifier(overrides?: Record<string, unknown>) {
   return {
     id: 1,

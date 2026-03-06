@@ -7,6 +7,7 @@ import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import type { TaggingService } from './tagging.service.js';
+import type { EventHistoryService } from './event-history.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '@narratorr/db';
 
@@ -1411,6 +1412,97 @@ describe('ImportService', () => {
       expect(log.warn).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 1 }),
         expect.stringContaining('Tag embedding failed'),
+      );
+    });
+  });
+
+  describe('event history producers', () => {
+    let eventHistory: { create: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+      eventHistory = { create: vi.fn().mockResolvedValue({ id: 1 }) };
+    });
+
+    it('records imported event on successful import', async () => {
+      const svc = new ImportService(
+        inject<Db>(db), clientService, settingsService,
+        inject<FastifyBaseLogger>(log), undefined, undefined,
+        undefined, inject<EventHistoryService>(eventHistory),
+      );
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await svc.importDownload(1);
+
+      expect(eventHistory.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookId: 1,
+          bookTitle: 'The Way of Kings',
+          authorName: 'Brandon Sanderson',
+          downloadId: 1,
+          eventType: 'imported',
+          source: 'auto',
+          reason: expect.objectContaining({ targetPath: expect.any(String), fileCount: expect.any(Number) }),
+        }),
+      );
+    });
+
+    it('records upgraded event when book already has a path', async () => {
+      const importedBook = createMockDbBook({
+        status: 'downloading' as const,
+        path: '/audiobooks/Brandon Sanderson/The Way of Kings',
+      });
+
+      const svc = new ImportService(
+        inject<Db>(db), clientService, settingsService,
+        inject<FastifyBaseLogger>(log), undefined, undefined,
+        undefined, inject<EventHistoryService>(eventHistory),
+      );
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await svc.importDownload(1);
+
+      expect(eventHistory.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookId: 1,
+          bookTitle: 'The Way of Kings',
+          eventType: 'upgraded',
+          source: 'auto',
+          reason: expect.objectContaining({ targetPath: expect.any(String) }),
+        }),
+      );
+    });
+
+    it('records import_failed event on import failure', async () => {
+      const svc = new ImportService(
+        inject<Db>(db), clientService, settingsService,
+        inject<FastifyBaseLogger>(log), undefined, undefined,
+        undefined, inject<EventHistoryService>(eventHistory),
+      );
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // Make stat throw to trigger import failure
+      const statMock = vi.mocked(stat);
+      statMock.mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+      await expect(svc.importDownload(1)).rejects.toThrow();
+
+      expect(eventHistory.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookId: 1,
+          bookTitle: 'The Way of Kings',
+          eventType: 'import_failed',
+          source: 'auto',
+          reason: expect.objectContaining({ error: expect.any(String) }),
+        }),
       );
     });
   });

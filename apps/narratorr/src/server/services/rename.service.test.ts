@@ -5,6 +5,7 @@ import { RenameService, RenameError } from './rename.service.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { EventHistoryService } from './event-history.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { rename, readdir, mkdir, stat, rm, cp } from 'node:fs/promises';
 
@@ -356,6 +357,49 @@ describe('RenameService', () => {
       expect(newNames).toHaveLength(2);
       // Check they're different
       expect(new Set(newNames).size).toBe(2);
+    });
+  });
+
+  describe('event history producers', () => {
+    it('records renamed event on successful rename', async () => {
+      const eventHistory = { create: vi.fn().mockResolvedValue({ id: 1 }) };
+      const bookService = {
+        getById: vi.fn().mockResolvedValue(mockBook),
+        getAll: vi.fn(),
+        update: vi.fn(),
+      };
+      // Use a different folder format so target path differs from current path
+      const settingsService = {
+        get: vi.fn().mockResolvedValue({
+          ...librarySettings,
+          folderFormat: '{author}/{series}/{title}',
+        }),
+      };
+      const log = createMockLogger();
+
+      const service = new RenameService(
+        inject<BookService>(bookService),
+        inject<SettingsService>(settingsService),
+        inject<FastifyBaseLogger>(log),
+        inject<EventHistoryService>(eventHistory),
+      );
+
+      // Target doesn't exist on disk (no conflict)
+      (stat as Mock).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      (rename as Mock).mockResolvedValue(undefined);
+      (readdir as Mock).mockResolvedValue([]);
+      (mkdir as Mock).mockResolvedValue(undefined);
+
+      await service.renameBook(1);
+
+      expect(eventHistory.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookId: 1,
+          bookTitle: 'The Way of Kings',
+          eventType: 'renamed',
+          source: 'manual',
+        }),
+      );
     });
   });
 });

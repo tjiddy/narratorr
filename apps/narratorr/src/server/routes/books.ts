@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import type { BookService, DownloadService, SettingsService, RenameService, TaggingService } from '../services';
+import type { BookService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService } from '../services';
 import { RenameError } from '../services/rename.service.js';
 import { RetagError } from '../services/tagging.service.js';
 import { type z } from 'zod';
@@ -21,7 +21,7 @@ type IdParam = z.infer<typeof idParamSchema>;
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.m4a', '.m4b', '.flac', '.ogg', '.opus', '.wma', '.aac']);
 
-async function registerDeleteBookRoute(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService) {
+async function registerDeleteBookRoute(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, eventHistory?: EventHistoryService) {
 app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
   '/api/books/:id',
   { schema: { params: idParamSchema, querystring: deleteBookQuerySchema } },
@@ -30,9 +30,11 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     const { id } = request.params;
     const { deleteFiles } = request.query;
 
+    // Fetch book once for file deletion + event snapshot
+    const book = await bookService.getById(id);
+
     // If deleteFiles requested, attempt file deletion BEFORE cancelling downloads or removing DB record
     if (deleteFiles === 'true') {
-      const book = await bookService.getById(id);
       if (!book) {
         return await reply.status(404).send({ error: 'Book not found' });
       }
@@ -59,6 +61,17 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     }
     if (activeDownloads.length > 0) {
       request.log.info({ bookId: id, count: activeDownloads.length }, 'Cancelled active downloads for book');
+    }
+
+    // Record deleted event before DB deletion (snapshot preserved via event fields)
+    if (book && eventHistory) {
+      eventHistory.create({
+        bookId: id,
+        bookTitle: book.title,
+        authorName: book.author?.name,
+        eventType: 'deleted',
+        source: 'manual',
+      }).catch((err) => request.log.warn(err, 'Failed to record deleted event'));
     }
 
     const deleted = await bookService.delete(id);
@@ -89,7 +102,7 @@ async function registerDeleteMissingRoute(app: FastifyInstance, bookService: Boo
   });
 }
 
-export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, renameService: RenameService, taggingService: TaggingService) {
+export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, renameService: RenameService, taggingService: TaggingService, eventHistory?: EventHistoryService) {
   // GET /api/books
   app.get<{ Querystring: BookListQuery }>(
     '/api/books',
@@ -178,7 +191,7 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
   );
 
   await registerDeleteMissingRoute(app, bookService);
-  await registerDeleteBookRoute(app, bookService, downloadService, settingsService);
+  await registerDeleteBookRoute(app, bookService, downloadService, settingsService, eventHistory);
   // POST /api/books/:id/rename
   app.post<{ Params: IdParam }>(
     '/api/books/:id/rename',

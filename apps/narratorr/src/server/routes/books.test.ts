@@ -485,13 +485,13 @@ describe('books routes', () => {
     });
 
     it('does not delete files when deleteFiles param is absent', async () => {
+      (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
       (services.book.delete as Mock).mockResolvedValue(true);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
 
       expect(res.statusCode).toBe(200);
-      expect(services.book.getById).not.toHaveBeenCalled();
       expect(services.book.deleteBookFiles).not.toHaveBeenCalled();
     });
 
