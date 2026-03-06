@@ -9,7 +9,10 @@ export function formatDuration(minutes?: number | null): string | null {
   return `${h}h ${m}m`;
 }
 
-export function mapBookMetadataToPayload(book: BookMetadata): CreateBookPayload {
+export function mapBookMetadataToPayload(
+  book: BookMetadata,
+  qualityDefaults?: { searchImmediately?: boolean; monitorForUpgrades?: boolean },
+): CreateBookPayload {
   const author = book.authors[0];
   return {
     title: book.title,
@@ -24,6 +27,8 @@ export function mapBookMetadataToPayload(book: BookMetadata): CreateBookPayload 
     duration: book.duration,
     genres: book.genres,
     providerId: book.providerId,
+    monitorForUpgrades: qualityDefaults?.monitorForUpgrades,
+    searchImmediately: qualityDefaults?.searchImmediately,
   };
 }
 

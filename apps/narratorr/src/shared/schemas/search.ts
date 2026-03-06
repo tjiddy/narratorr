@@ -9,6 +9,12 @@ export const searchQuerySchema = z.object({
   limit: z.string().optional().transform((val) => (val ? parseInt(val, 10) : 50)),
   author: z.string().max(200).optional(),
   title: z.string().max(500).optional(),
+  bookDuration: z.string().optional().transform((val) => {
+    if (!val) return undefined;
+    const num = Number(val);
+    if (Number.isNaN(num) || num <= 0) return null; // signal invalid
+    return num;
+  }),
 });
 
 export const grabSchema = z.object({

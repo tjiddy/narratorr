@@ -95,9 +95,9 @@ export async function registerRoutes(
   services: Services,
   db: Db,
 ): Promise<void> {
-  await booksRoutes(app, services.book, services.download, services.settings, services.rename, services.tagging, services.eventHistory);
+  await booksRoutes(app, services.book, services.download, services.settings, services.rename, services.tagging, services.eventHistory, services.indexer);
   await bookFilesRoute(app, services.book);
-  await searchRoutes(app, services.indexer, services.download, services.blacklist);
+  await searchRoutes(app, services.indexer, services.download, services.blacklist, services.settings);
   await activityRoutes(app, services.download);
   await indexersRoutes(app, services.indexer);
   await downloadClientsRoutes(app, services.downloadClient);

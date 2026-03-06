@@ -164,6 +164,119 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
+    it('triggers search when searchImmediately is true and status is wanted', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockResolvedValue({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
+      (services.indexer.searchAll as Mock).mockResolvedValue([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
+      ]);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson', searchImmediately: true },
+      });
+
+      expect(res.statusCode).toBe(201);
+
+      // Wait for fire-and-forget promise to resolve
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(services.settings.get).toHaveBeenCalledWith('quality');
+      expect(services.indexer.searchAll).toHaveBeenCalled();
+      expect(services.download.grab).toHaveBeenCalled();
+    });
+
+    it('does not trigger search when searchImmediately is false', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue(mockBook);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson', searchImmediately: false },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(services.indexer.searchAll).not.toHaveBeenCalled();
+    });
+
+    it('does not trigger search when searchImmediately is not provided', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue(mockBook);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson' },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(services.indexer.searchAll).not.toHaveBeenCalled();
+    });
+
+    it('search trigger failure does not fail book creation', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockResolvedValue({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
+      (services.indexer.searchAll as Mock).mockRejectedValue(new Error('Indexer down'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson', searchImmediately: true },
+      });
+
+      expect(res.statusCode).toBe(201);
+
+      // Wait for fire-and-forget to settle
+      await new Promise(r => setTimeout(r, 50));
+    });
+
+    it('does not trigger search when book status is not wanted', async () => {
+      const importedBook = { ...mockBook, status: 'imported' };
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue(importedBook);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson', searchImmediately: true },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(services.indexer.searchAll).not.toHaveBeenCalled();
+    });
+
+    it('passes monitorForUpgrades to create service', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue({ ...mockBook, monitorForUpgrades: true });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson', monitorForUpgrades: true },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({ monitorForUpgrades: true }));
+    });
+
+    it('defaults monitorForUpgrades to undefined when not provided', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue(mockBook);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson' },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(services.book.create).toHaveBeenCalled();
+    });
+
     it('passes providerId to service for ASIN enrichment', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue(null);
       (services.book.create as Mock).mockResolvedValue({ ...mockBook, asin: 'B003ZWFO7E' });
@@ -206,6 +319,36 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(services.book.update).toHaveBeenCalledWith(1, { seriesName: 'Stormlight', seriesPosition: 1 });
+    });
+
+    it('accepts and persists monitorForUpgrades', async () => {
+      const updated = { ...mockBook, monitorForUpgrades: true };
+      (services.book.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/books/1',
+        payload: { monitorForUpgrades: true },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.book.update).toHaveBeenCalledWith(1, { monitorForUpgrades: true });
+      expect(JSON.parse(res.payload).monitorForUpgrades).toBe(true);
+    });
+
+    it('can toggle monitorForUpgrades from true to false', async () => {
+      const updated = { ...mockBook, monitorForUpgrades: false };
+      (services.book.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/books/1',
+        payload: { monitorForUpgrades: false },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.book.update).toHaveBeenCalledWith(1, { monitorForUpgrades: false });
+      expect(JSON.parse(res.payload).monitorForUpgrades).toBe(false);
     });
 
     it('rejects empty title', async () => {

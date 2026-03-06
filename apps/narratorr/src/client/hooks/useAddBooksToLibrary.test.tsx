@@ -253,6 +253,57 @@ describe('useAddBooksToLibrary', () => {
     });
   });
 
+  describe('quality defaults', () => {
+    it('passes qualityDefaults overrides to api.addBook', async () => {
+      vi.mocked(api.addBook).mockResolvedValue({} as BookWithAuthor);
+      const book = makeBook({ asin: 'B099', title: 'Quality Book' });
+      const defaults = { searchImmediately: true, monitorForUpgrades: true };
+
+      const { result } = renderHook(
+        () => useAddBooksToLibrary([], defaults),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      act(() => {
+        result.current.addBook(book);
+      });
+
+      await waitFor(() => {
+        expect(api.addBook).toHaveBeenCalledWith(
+          expect.objectContaining({
+            searchImmediately: true,
+            monitorForUpgrades: true,
+          }),
+        );
+      });
+    });
+
+    it('allows per-book overrides to override hook defaults', async () => {
+      vi.mocked(api.addBook).mockResolvedValue({} as BookWithAuthor);
+      const book = makeBook({ asin: 'B100', title: 'Override Book' });
+      const hookDefaults = { searchImmediately: false, monitorForUpgrades: false };
+      const perBookOverrides = { searchImmediately: true, monitorForUpgrades: true };
+
+      const { result } = renderHook(
+        () => useAddBooksToLibrary([], hookDefaults),
+        { wrapper: createWrapper(queryClient) },
+      );
+
+      act(() => {
+        result.current.addBook(book, perBookOverrides);
+      });
+
+      await waitFor(() => {
+        expect(api.addBook).toHaveBeenCalledWith(
+          expect.objectContaining({
+            searchImmediately: true,
+            monitorForUpgrades: true,
+          }),
+        );
+      });
+    });
+  });
+
   describe('addAllInSeries', () => {
     it('filters out already-added books and adds the rest', async () => {
       vi.mocked(api.addBook).mockResolvedValue({} as BookWithAuthor);

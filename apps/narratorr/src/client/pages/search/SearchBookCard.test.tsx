@@ -12,6 +12,9 @@ vi.mock('@/lib/api', async (importOriginal) => {
     api: {
       ...(actual.api as Record<string, unknown>),
       addBook: vi.fn(),
+      getSettings: vi.fn().mockResolvedValue({
+        quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false },
+      }),
     },
   };
 });
@@ -83,12 +86,16 @@ describe('SearchBookCard', () => {
     expect(screen.getByText('In Library')).toBeInTheDocument();
   });
 
-  it('calls addBook on Add button click', async () => {
+  it('calls addBook via popover flow', async () => {
     vi.mocked(api.addBook).mockResolvedValue({ id: 1, title: 'The Way of Kings' } as never);
     const user = userEvent.setup();
     renderCard();
 
+    // Open popover
     await user.click(screen.getByRole('button'));
+    // Click Add to Library
+    const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
+    await user.click(addToLibrary);
 
     await waitFor(() => {
       expect(api.addBook).toHaveBeenCalledTimes(1);
@@ -101,6 +108,8 @@ describe('SearchBookCard', () => {
     renderCard();
 
     await user.click(screen.getByRole('button'));
+    const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
+    await user.click(addToLibrary);
 
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith("Added 'The Way of Kings' to library");
@@ -114,6 +123,8 @@ describe('SearchBookCard', () => {
     renderCard();
 
     await user.click(screen.getByRole('button'));
+    const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
+    await user.click(addToLibrary);
 
     await waitFor(() => {
       expect(toast.info).toHaveBeenCalledWith('Already in library');
@@ -127,6 +138,8 @@ describe('SearchBookCard', () => {
     renderCard();
 
     await user.click(screen.getByRole('button'));
+    const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
+    await user.click(addToLibrary);
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to add book: Network error');

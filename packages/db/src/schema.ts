@@ -58,6 +58,7 @@ export const books = sqliteTable('books', {
   audioFileCount: integer('audio_file_count'),
   audioTotalSize: integer('audio_total_size'),
   audioDuration: integer('audio_duration'),
+  monitorForUpgrades: integer('monitor_for_upgrades', { mode: 'boolean' }).notNull().default(false),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),

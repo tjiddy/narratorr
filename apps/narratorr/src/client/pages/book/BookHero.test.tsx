@@ -20,6 +20,9 @@ const defaultProps = {
   onRetagClick: vi.fn(),
   isRetagging: false,
   retagDisabled: false,
+  monitorForUpgrades: false,
+  onMonitorToggle: vi.fn(),
+  isMonitorToggling: false,
 };
 
 function renderHero(overrides = {}) {
@@ -150,5 +153,38 @@ describe('BookHero', () => {
     const button = screen.getByText('Re-tag files').closest('button');
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute('title', 'Requires ffmpeg');
+  });
+
+  describe('monitor toggle', () => {
+    it('renders "Monitor" when monitorForUpgrades is false', () => {
+      renderHero({ monitorForUpgrades: false });
+      expect(screen.getByText('Monitor')).toBeInTheDocument();
+    });
+
+    it('renders "Monitoring" when monitorForUpgrades is true', () => {
+      renderHero({ monitorForUpgrades: true });
+      expect(screen.getByText('Monitoring')).toBeInTheDocument();
+    });
+
+    it('calls onMonitorToggle when clicked', async () => {
+      const onMonitorToggle = vi.fn();
+      const user = userEvent.setup();
+      renderHero({ onMonitorToggle });
+
+      await user.click(screen.getByText('Monitor'));
+      expect(onMonitorToggle).toHaveBeenCalledTimes(1);
+    });
+
+    it('disables button when isMonitorToggling is true', () => {
+      renderHero({ isMonitorToggling: true });
+      const button = screen.getByText('Monitor').closest('button');
+      expect(button).toBeDisabled();
+    });
+
+    it('shows active styling when monitoring', () => {
+      renderHero({ monitorForUpgrades: true });
+      const button = screen.getByText('Monitoring').closest('button');
+      expect(button).toHaveAttribute('title', 'Monitoring for quality upgrades');
+    });
   });
 });

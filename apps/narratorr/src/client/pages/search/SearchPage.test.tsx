@@ -17,6 +17,9 @@ vi.mock('@/lib/api', async (importOriginal) => {
       searchMetadata: vi.fn(),
       getBooks: vi.fn(),
       addBook: vi.fn(),
+      getSettings: vi.fn().mockResolvedValue({
+        quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false },
+      }),
     },
   };
 });
@@ -112,7 +115,11 @@ describe('SearchPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
+    // Open popover
     await user.click(screen.getByRole('button', { name: /add/i }));
+    // Click Add to Library in popover
+    const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
+    await user.click(addToLibrary);
 
     await waitFor(() => {
       expect(api.addBook).toHaveBeenCalledWith(expect.objectContaining({
@@ -220,7 +227,11 @@ describe('SearchPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
+    // Open popover
     await user.click(screen.getByRole('button', { name: /add/i }));
+    // Click Add to Library in popover
+    const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
+    await user.click(addToLibrary);
 
     // After 409, should show "In Library"
     await waitFor(() => {

@@ -47,7 +47,14 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
     refetch,
   } = useQuery({
     queryKey: ['search-releases', book.id, searchQuery],
-    queryFn: () => api.search(searchQuery, { title: book.title, author: book.author?.name }),
+    queryFn: () => {
+      const { durationSeconds } = resolveBookQualityInputs(book);
+      return api.search(searchQuery, {
+        title: book.title,
+        author: book.author?.name,
+        bookDuration: durationSeconds ?? undefined,
+      });
+    },
     enabled: isOpen && searchQuery.length >= 2,
   });
   const results = data?.results;
@@ -178,6 +185,14 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
             <div className="flex flex-col items-center justify-center py-12">
               <SearchIcon className="w-10 h-10 text-muted-foreground/40 mb-4" />
               <p className="text-muted-foreground">No releases found</p>
+            </div>
+          )}
+
+          {/* Duration unknown banner */}
+          {!isLoading && data?.durationUnknown && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-sm text-yellow-300">
+              <AlertTriangleIcon className="w-4 h-4 shrink-0" />
+              Duration unknown — quality filtering is disabled for this book
             </div>
           )}
 

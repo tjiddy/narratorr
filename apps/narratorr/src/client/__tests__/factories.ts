@@ -47,6 +47,7 @@ export function createMockBook(overrides?: Partial<BookWithAuthor>): BookWithAut
     audioFileCount: null,
     audioTotalSize: null,
     audioDuration: null,
+    monitorForUpgrades: false,
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
     author: createMockAuthor({ id: 1 }),
@@ -63,6 +64,7 @@ export function createMockSettings(overrides?: Partial<Settings>): Settings {
     metadata: { audibleRegion: 'us' },
     processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
     tagging: { enabled: false, mode: 'populate_missing', embedCover: false },
+    quality: { grabFloor: 0, protocolPreference: 'none' as const, minSeeders: 0, searchImmediately: false, monitorForUpgrades: false },
     ...overrides,
   };
 }

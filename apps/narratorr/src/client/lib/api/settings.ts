@@ -1,4 +1,4 @@
-import type { AudibleRegion, OutputFormat, MergeBehavior, TagMode } from '../../../shared/schemas.js';
+import type { AudibleRegion, OutputFormat, MergeBehavior, TagMode, ProtocolPreference } from '../../../shared/schemas.js';
 import { fetchApi } from './client.js';
 
 export interface Settings {
@@ -33,6 +33,13 @@ export interface Settings {
     enabled: boolean;
     mode: TagMode;
     embedCover: boolean;
+  };
+  quality: {
+    grabFloor: number;
+    protocolPreference: ProtocolPreference;
+    minSeeders: number;
+    searchImmediately: boolean;
+    monitorForUpgrades: boolean;
   };
 }
 

@@ -1,8 +1,9 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import type { BookService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService } from '../services';
+import type { BookService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService } from '../services';
 import { RenameError } from '../services/rename.service.js';
+import { filterAndRankResults } from './search.js';
 import { RetagError } from '../services/tagging.service.js';
 import { type z } from 'zod';
 import {
@@ -20,6 +21,45 @@ import {
 type IdParam = z.infer<typeof idParamSchema>;
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.m4a', '.m4b', '.flac', '.ogg', '.opus', '.wma', '.aac']);
+
+/** Fire-and-forget: search indexers and grab the best result for a newly added book. */
+function triggerImmediateSearch(
+  book: { id: number; title: string; duration?: number | null; author?: { name: string } | null },
+  indexerService: IndexerService,
+  downloadService: DownloadService,
+  settingsService: SettingsService,
+  log: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void },
+) {
+  const query = [book.title, book.author?.name].filter(Boolean).join(' ');
+  settingsService.get('quality')
+    .then(async (qualitySettings) => {
+      const results = await indexerService.searchAll(query, { title: book.title, author: book.author?.name });
+      if (results.length === 0) return;
+      const { results: ranked } = filterAndRankResults(
+        results,
+        book.duration ?? undefined,
+        qualitySettings.grabFloor,
+        qualitySettings.minSeeders,
+        qualitySettings.protocolPreference,
+      );
+      // Take first downloadable result — already canonically ranked
+      const best = ranked.find((r) => r.downloadUrl);
+      if (best) {
+        await downloadService.grab({
+          downloadUrl: best.downloadUrl!,
+          title: best.title,
+          protocol: best.protocol,
+          bookId: book.id,
+          size: best.size,
+          seeders: best.seeders,
+        });
+        log.info({ bookId: book.id, title: best.title }, 'Search-immediately grab completed');
+      }
+    })
+    .catch((err) => {
+      log.warn({ error: err, bookId: book.id }, 'Search-immediately trigger failed');
+    });
+}
 
 async function registerDeleteBookRoute(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, eventHistory?: EventHistoryService) {
 app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
@@ -102,7 +142,7 @@ async function registerDeleteMissingRoute(app: FastifyInstance, bookService: Boo
   });
 }
 
-export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, renameService: RenameService, taggingService: TaggingService, eventHistory?: EventHistoryService) {
+export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, renameService: RenameService, taggingService: TaggingService, eventHistory?: EventHistoryService, indexerService?: IndexerService) {
   // GET /api/books
   app.get<{ Querystring: BookListQuery }>(
     '/api/books',
@@ -158,6 +198,12 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
         const book = await bookService.create(body);
 
         request.log.info({ title: body.title }, 'Book added');
+
+        // Fire-and-forget: trigger search if searchImmediately is set
+        if (body.searchImmediately && book.status === 'wanted' && indexerService) {
+          triggerImmediateSearch(book, indexerService, downloadService, settingsService, request.log);
+        }
+
         return await reply.status(201).send(book);
       } catch (error) {
         request.log.error(error, 'Failed to create book');

@@ -1,6 +1,7 @@
 import { type BookMetadata } from '@/lib/api';
 import { formatDuration } from '@/lib/helpers';
-import { BookOpenIcon, PlusIcon, CheckIcon, LoadingSpinner } from '@/components/icons';
+import { AddBookPopover } from '@/components/AddBookPopover';
+import { BookOpenIcon, CheckIcon } from '@/components/icons';
 
 export function BookRow({
   book,
@@ -10,7 +11,7 @@ export function BookRow({
 }: {
   book: BookMetadata;
   inLibrary: boolean;
-  onAdd: () => void;
+  onAdd: (overrides: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
   isAdding: boolean;
 }) {
   const seriesPos = book.series?.[0]?.position;
@@ -59,18 +60,7 @@ export function BookRow({
             <CheckIcon className="w-4 h-4" />
           </span>
         ) : (
-          <button
-            onClick={onAdd}
-            disabled={isAdding}
-            className="inline-flex items-center justify-center w-9 h-9 rounded-xl glass-card hover:border-primary/30 hover:text-primary transition-all focus-ring disabled:opacity-50"
-            title={`Add "${book.title}" to library`}
-          >
-            {isAdding ? (
-              <LoadingSpinner className="w-4 h-4" />
-            ) : (
-              <PlusIcon className="w-4 h-4" />
-            )}
-          </button>
+          <AddBookPopover onAdd={onAdd} isPending={isAdding} />
         )}
       </div>
     </div>

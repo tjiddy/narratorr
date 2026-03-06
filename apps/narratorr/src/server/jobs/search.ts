@@ -1,37 +1,14 @@
 import type { FastifyBaseLogger } from 'fastify';
-import type { SearchResult } from '@narratorr/core';
+import { calculateQuality, compareQuality, resolveBookQualityInputs } from '@narratorr/core/utils';
 import type { SettingsService } from '../services/settings.service.js';
 import type { BookService } from '../services/book.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadService } from '../services/download.service.js';
+import { filterAndRankResults } from '../routes/search.js';
 
 export interface SearchJobResult {
   searched: number;
   grabbed: number;
-}
-
-/**
- * Select the best result from a list of search results.
- * Filters out results without a downloadUrl, then ranks by:
- * 1. matchScore (when difference > 0.1 threshold — relevance matters more than seeders)
- * 2. seeders (fallback when scores are similar or absent)
- */
-export function selectBestResult(results: SearchResult[]): SearchResult | null {
-  const downloadable = results.filter((r) => r.downloadUrl);
-  if (downloadable.length === 0) return null;
-
-  downloadable.sort((a, b) => {
-    const scoreA = a.matchScore ?? 0;
-    const scoreB = b.matchScore ?? 0;
-    const scoreDiff = scoreB - scoreA;
-
-    // If score difference is significant, prefer higher score
-    if (Math.abs(scoreDiff) > 0.1) return scoreDiff;
-
-    // Otherwise, prefer more seeders
-    return (b.seeders ?? 0) - (a.seeders ?? 0);
-  });
-  return downloadable[0];
 }
 
 /**
@@ -50,6 +27,7 @@ export async function runSearchJob(
     return { searched: 0, grabbed: 0 };
   }
 
+  const qualitySettings = await settingsService.get('quality');
   const wantedBooks = await bookService.getAll('wanted');
   if (wantedBooks.length === 0) {
     log.debug('No wanted books to search for');
@@ -64,24 +42,33 @@ export async function runSearchJob(
   for (const book of wantedBooks) {
     const query = [book.title, book.author?.name].filter(Boolean).join(' ');
     try {
-      const results = await indexerService.searchAll(query, {
+      const rawResults = await indexerService.searchAll(query, {
         title: book.title,
         author: book.author?.name,
       });
       searched++;
 
-      if (results.length === 0) {
+      if (rawResults.length === 0) {
         log.debug({ bookId: book.id, title: book.title }, 'No results found');
         continue;
       }
 
-      log.info({ bookId: book.id, title: book.title, resultCount: results.length }, 'Search results found');
+      log.info({ bookId: book.id, title: book.title, resultCount: rawResults.length }, 'Search results found');
 
-      const best = selectBestResult(results);
-      if (best && best.downloadUrl) {
+      const { results } = filterAndRankResults(
+        rawResults,
+        book.duration ?? undefined,
+        qualitySettings.grabFloor,
+        qualitySettings.minSeeders,
+        qualitySettings.protocolPreference,
+      );
+
+      // Take first downloadable result — already canonically ranked
+      const best = results.find((r) => r.downloadUrl);
+      if (best) {
         try {
           await downloadService.grab({
-            downloadUrl: best.downloadUrl,
+            downloadUrl: best.downloadUrl!,
             title: best.title,
             protocol: best.protocol,
             bookId: book.id,
@@ -109,6 +96,107 @@ export async function runSearchJob(
 }
 
 /**
+ * Run a single upgrade search cycle: find monitored imported books,
+ * search indexers, and grab if a higher-quality release is found.
+ * Existing scheduled search for wanted books remains unchanged; this is additive.
+ */
+// eslint-disable-next-line complexity -- sequential early-return guards for book eligibility + quality comparison
+export async function runUpgradeSearchJob(
+  settingsService: SettingsService,
+  bookService: BookService,
+  indexerService: IndexerService,
+  downloadService: DownloadService,
+  log: FastifyBaseLogger,
+): Promise<SearchJobResult> {
+  const searchSettings = await settingsService.get('search');
+  if (!searchSettings.enabled) {
+    log.debug('Scheduled search is disabled, skipping upgrade search');
+    return { searched: 0, grabbed: 0 };
+  }
+
+  const qualitySettings = await settingsService.get('quality');
+  const monitoredBooks = await bookService.getMonitoredBooks();
+  if (monitoredBooks.length === 0) {
+    log.debug('No monitored books for upgrade search');
+    return { searched: 0, grabbed: 0 };
+  }
+
+  log.info({ count: monitoredBooks.length }, 'Starting upgrade search for monitored books');
+
+  let searched = 0;
+  let grabbed = 0;
+
+  for (const book of monitoredBooks) {
+    if (!book.path) continue;
+
+    const { sizeBytes: existingSize, durationSeconds: existingDuration } = resolveBookQualityInputs(book);
+    if (!existingDuration || existingDuration <= 0) {
+      log.debug({ bookId: book.id, title: book.title }, 'Skipping upgrade search — no duration');
+      continue;
+    }
+
+    const query = [book.title, book.author?.name].filter(Boolean).join(' ');
+    try {
+      const rawResults = await indexerService.searchAll(query, {
+        title: book.title,
+        author: book.author?.name,
+      });
+      searched++;
+
+      // Apply quality filtering and ranking
+      const { results } = filterAndRankResults(
+        rawResults,
+        existingDuration,
+        qualitySettings.grabFloor,
+        qualitySettings.minSeeders,
+        qualitySettings.protocolPreference,
+      );
+
+      if (results.length === 0) continue;
+
+      // Take first downloadable result with size — already canonically ranked
+      const best = results.find((r) => r.downloadUrl && r.size);
+      if (!best) continue;
+
+      // Compare quality: only grab if result is meaningfully better
+      const comparison = compareQuality(existingSize, best.size!, existingDuration);
+      if (comparison !== 'higher') continue;
+
+      // Double-check: result must also be above grab floor
+      if (qualitySettings.grabFloor > 0) {
+        const resultQuality = calculateQuality(best.size!, existingDuration);
+        if (!resultQuality || resultQuality.mbPerHour < qualitySettings.grabFloor) continue;
+      }
+
+      try {
+        await downloadService.grab({
+          downloadUrl: best.downloadUrl!,
+          title: best.title,
+          protocol: best.protocol,
+          bookId: book.id,
+          size: best.size!,
+          seeders: best.seeders,
+        });
+        grabbed++;
+        log.info({ bookId: book.id, title: best.title }, 'Upgrade grabbed');
+      } catch (grabError) {
+        const message = grabError instanceof Error ? grabError.message : String(grabError);
+        if (message.includes('already has an active download')) {
+          log.debug({ bookId: book.id }, 'Skipping upgrade grab — active download exists');
+        } else {
+          throw grabError;
+        }
+      }
+    } catch (error) {
+      log.warn({ error, bookId: book.id, title: book.title }, 'Upgrade search failed for book');
+    }
+  }
+
+  log.info({ searched, grabbed }, 'Upgrade search completed');
+  return { searched, grabbed };
+}
+
+/**
  * Start the scheduled search job with a dynamic interval.
  * Reads intervalMinutes from settings each cycle, so changes take effect without restart.
  */
@@ -129,6 +217,11 @@ export function startSearchJob(
           await runSearchJob(settingsService, bookService, indexerService, downloadService, log);
         } catch (error) {
           log.error(error, 'Search job error');
+        }
+        try {
+          await runUpgradeSearchJob(settingsService, bookService, indexerService, downloadService, log);
+        } catch (error) {
+          log.error(error, 'Upgrade search job error');
         }
         scheduleNext();
       }, intervalMs);

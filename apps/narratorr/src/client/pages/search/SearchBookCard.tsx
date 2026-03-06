@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { CoverImage } from '@/components/CoverImage';
+import { AddBookPopover } from '@/components/AddBookPopover';
 import { useMutation, type useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, type BookMetadata, type BookWithAuthor } from '@/lib/api';
 import { toast } from 'sonner';
@@ -9,8 +10,6 @@ import {
   BookOpenIcon,
   UsersIcon,
   CheckCircleIcon,
-  PlusIcon,
-  LoadingSpinner,
   ClockIcon,
 } from '@/components/icons';
 
@@ -31,7 +30,8 @@ export function SearchBookCard({
   const inLibrary = justAdded || isBookInLibrary(book, libraryBooks);
 
   const addMutation = useMutation({
-    mutationFn: () => api.addBook(mapBookMetadataToPayload(book)),
+    mutationFn: (overrides?: { searchImmediately: boolean; monitorForUpgrades: boolean }) =>
+      api.addBook(mapBookMetadataToPayload(book, overrides)),
     onSuccess: () => {
       setJustAdded(true);
       toast.success(`Added '${book.title}' to library`);
@@ -113,29 +113,10 @@ export function SearchBookCard({
               <span className="hidden sm:inline">In Library</span>
             </span>
           ) : (
-            <button
-              onClick={() => addMutation.mutate()}
-              disabled={addMutation.isPending}
-              className="
-                flex items-center gap-2 px-4 py-2.5
-                bg-primary text-primary-foreground font-medium rounded-xl
-                hover:opacity-90 hover:shadow-glow
-                disabled:opacity-50 disabled:cursor-not-allowed
-                transition-all duration-200 focus-ring
-              "
-            >
-              {addMutation.isPending ? (
-                <>
-                  <LoadingSpinner className="w-4 h-4" />
-                  <span className="hidden sm:inline">Adding...</span>
-                </>
-              ) : (
-                <>
-                  <PlusIcon className="w-4 h-4" />
-                  <span className="hidden sm:inline">Add</span>
-                </>
-              )}
-            </button>
+            <AddBookPopover
+              onAdd={(overrides) => addMutation.mutate(overrides)}
+              isPending={addMutation.isPending}
+            />
           )}
         </div>
       </div>

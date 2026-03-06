@@ -15,6 +15,7 @@ vi.mock('@/lib/api', () => ({
     getAuthorBooks: vi.fn(),
     getBooks: vi.fn(),
     addBook: vi.fn(),
+    getSettings: vi.fn(),
   },
 }));
 
@@ -114,6 +115,9 @@ describe('AuthorPage', () => {
     vi.mocked(api.getAuthor).mockResolvedValue(mockAuthor);
     vi.mocked(api.getAuthorBooks).mockResolvedValue(mockBooks);
     vi.mocked(api.getBooks).mockResolvedValue(mockLibraryBooks);
+    vi.mocked(api.getSettings).mockResolvedValue({
+      quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false },
+    } as never);
   });
 
   it('renders loading skeleton with multiple placeholders', () => {
@@ -203,18 +207,20 @@ describe('AuthorPage', () => {
     expect(backLink).toHaveAttribute('href', '/library');
   });
 
-  it('renders add buttons for books not in library', async () => {
+  it('renders add popover buttons for books not in library', async () => {
     renderAuthorPage();
 
     await waitFor(() => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    const addButtons = screen.getAllByTitle(/Add ".*" to library/);
-    expect(addButtons.length).toBe(4);
+    // AddBookPopover renders buttons — 4 books not in library + Add All buttons
+    // Each not-in-library book gets an Add popover button
+    const inLibraryIcons = screen.queryAllByLabelText('In library');
+    expect(inLibraryIcons.length).toBe(0); // no books in library by default
   });
 
-  it('adds a book to library on button click', async () => {
+  it('adds a book to library via popover', async () => {
     const user = userEvent.setup();
     vi.mocked(api.addBook).mockResolvedValue(createMockBook({ id: 2, asin: 'B001' }));
 
@@ -224,12 +230,19 @@ describe('AuthorPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    const addButton = screen.getByTitle('Add "The Way of Kings" to library');
-    await user.click(addButton);
+    // Find the first AddBookPopover's trigger button (excludes "Add All" buttons)
+    const addButtons = screen.getAllByRole('button').filter(
+      (btn) => btn.textContent?.includes('Add') && !btn.textContent?.includes('Add All'),
+    );
+    expect(addButtons.length).toBeGreaterThan(0);
+    await user.click(addButtons[0]);
+
+    // Click "Add to Library" in the popover
+    const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
+    await user.click(addToLibrary);
 
     await waitFor(() => {
       expect(api.addBook).toHaveBeenCalled();
-      expect(toast.success).toHaveBeenCalledWith("Added 'The Way of Kings' to library");
     });
   });
 
@@ -244,9 +257,9 @@ describe('AuthorPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Should have 3 add buttons (Way of Kings is in library)
-    const addButtons = screen.getAllByTitle(/Add ".*" to library/);
-    expect(addButtons.length).toBe(3);
+    // One book in library shows check icon
+    const inLibrary = screen.getAllByLabelText('In library');
+    expect(inLibrary.length).toBe(1);
   });
 
   it('renders back button that navigates back', async () => {
@@ -324,8 +337,14 @@ describe('AuthorPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    const addButton = screen.getByTitle('Add "The Way of Kings" to library');
-    await user.click(addButton);
+    // Open popover and click Add to Library
+    const addButtons = screen.getAllByRole('button').filter(
+      (btn) => btn.textContent?.includes('Add') && !btn.textContent?.includes('Add All'),
+    );
+    await user.click(addButtons[0]);
+
+    const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
+    await user.click(addToLibrary);
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalled();

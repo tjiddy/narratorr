@@ -52,6 +52,7 @@ function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
     audioFileCount: null,
     audioTotalSize: null,
     audioDuration: null,
+    monitorForUpgrades: false,
     ...overrides,
   };
 }

@@ -5,18 +5,23 @@ import { api, type BookMetadata, type BookWithAuthor } from '@/lib/api';
 import { mapBookMetadataToPayload, isBookInLibrary } from '@/lib/helpers';
 import { queryKeys } from '@/lib/queryKeys';
 
-export function useAddBooksToLibrary(libraryBooks?: BookWithAuthor[]) {
+export interface QualityDefaults {
+  searchImmediately: boolean;
+  monitorForUpgrades: boolean;
+}
+
+export function useAddBooksToLibrary(libraryBooks?: BookWithAuthor[], qualityDefaults?: QualityDefaults) {
   const queryClient = useQueryClient();
   const [addingAsins, setAddingAsins] = useState<Set<string>>(new Set());
   const [addedAsins, setAddedAsins] = useState<Set<string>>(new Set());
 
   const addBookMutation = useMutation({
-    mutationFn: (book: BookMetadata) => {
+    mutationFn: ({ book, overrides }: { book: BookMetadata; overrides?: QualityDefaults }) => {
       const key = book.asin ?? book.title;
       setAddingAsins((prev) => new Set(prev).add(key));
-      return api.addBook(mapBookMetadataToPayload(book));
+      return api.addBook(mapBookMetadataToPayload(book, overrides ?? qualityDefaults));
     },
-    onSuccess: (_data, book) => {
+    onSuccess: (_data, { book }) => {
       const key = book.asin ?? book.title;
       setAddingAsins((prev) => {
         const next = new Set(prev);
@@ -27,7 +32,7 @@ export function useAddBooksToLibrary(libraryBooks?: BookWithAuthor[]) {
       toast.success(`Added '${book.title}' to library`);
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
-    onError: (error: Error, book) => {
+    onError: (error: Error, { book }) => {
       const key = book.asin ?? book.title;
       setAddingAsins((prev) => {
         const next = new Set(prev);
@@ -43,16 +48,16 @@ export function useAddBooksToLibrary(libraryBooks?: BookWithAuthor[]) {
     return addedAsins.has(key) || isBookInLibrary(book, libraryBooks);
   }, [addedAsins, libraryBooks]);
 
-  const addBook = useCallback((book: BookMetadata) => {
+  const addBook = useCallback((book: BookMetadata, overrides?: QualityDefaults) => {
     if (!isBookAdded(book)) {
-      addBookMutation.mutate(book);
+      addBookMutation.mutate({ book, overrides });
     }
   }, [isBookAdded, addBookMutation]);
 
   const addAllInSeries = useCallback((books: BookMetadata[]) => {
     const toAdd = books.filter((b) => !isBookAdded(b));
     for (const book of toAdd) {
-      addBookMutation.mutate(book);
+      addBookMutation.mutate({ book });
     }
   }, [isBookAdded, addBookMutation]);
 

@@ -99,6 +99,20 @@ describe('mapBookMetadataToPayload', () => {
     expect(payload.seriesName).toBeUndefined();
     expect(payload.seriesPosition).toBeUndefined();
   });
+
+  it('includes monitorForUpgrades and searchImmediately from qualityDefaults', () => {
+    const book: BookMetadata = { title: 'Test', authors: [{ name: 'Author' }] };
+    const payload = mapBookMetadataToPayload(book, { searchImmediately: true, monitorForUpgrades: true });
+    expect(payload.monitorForUpgrades).toBe(true);
+    expect(payload.searchImmediately).toBe(true);
+  });
+
+  it('omits monitorForUpgrades and searchImmediately when no qualityDefaults', () => {
+    const book: BookMetadata = { title: 'Test', authors: [{ name: 'Author' }] };
+    const payload = mapBookMetadataToPayload(book);
+    expect(payload.monitorForUpgrades).toBeUndefined();
+    expect(payload.searchImmediately).toBeUndefined();
+  });
 });
 
 describe('isBookInLibrary', () => {

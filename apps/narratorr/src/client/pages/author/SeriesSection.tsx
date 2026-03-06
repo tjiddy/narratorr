@@ -15,7 +15,7 @@ export function SeriesSection({
   name: string;
   books: BookMetadata[];
   libraryBooks?: BookWithAuthor[];
-  onAddBook: (book: BookMetadata) => void;
+  onAddBook: (book: BookMetadata, overrides?: { searchImmediately: boolean; monitorForUpgrades: boolean }) => void;
   onAddAll: () => void;
   addingAsins: Set<string>;
   isAddingAll: boolean;
@@ -39,6 +39,7 @@ export function SeriesSection({
             onClick={onAddAll}
             disabled={isAddingAll}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium glass-card rounded-xl hover:border-primary/30 hover:text-primary transition-all focus-ring disabled:opacity-50"
+            title="Uses global quality defaults for Search immediately and Monitor for upgrades"
           >
             {isAddingAll ? (
               <LoadingSpinner className="w-3 h-3" />
@@ -57,7 +58,7 @@ export function SeriesSection({
             key={book.asin ?? book.title}
             book={book}
             inLibrary={isBookInLibrary(book, libraryBooks)}
-            onAdd={() => onAddBook(book)}
+            onAdd={(overrides) => onAddBook(book, overrides)}
             isAdding={addingAsins.has(book.asin ?? book.title)}
           />
         ))}

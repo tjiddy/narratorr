@@ -37,6 +37,7 @@ export interface BookWithAuthor {
   audioFileCount?: number | null;
   audioTotalSize?: number | null;
   audioDuration?: number | null;
+  monitorForUpgrades: boolean;
   createdAt: string;
   updatedAt: string;
   author?: Author;
@@ -57,6 +58,8 @@ export interface CreateBookPayload {
   publishedDate?: string;
   genres?: string[];
   providerId?: string;
+  monitorForUpgrades?: boolean;
+  searchImmediately?: boolean;
 }
 
 export interface BookMetadata {
@@ -100,6 +103,7 @@ export interface UpdateBookPayload {
   narrator?: string;
   seriesName?: string | null;
   seriesPosition?: number | null;
+  monitorForUpgrades?: boolean;
 }
 
 export interface RenameResult {

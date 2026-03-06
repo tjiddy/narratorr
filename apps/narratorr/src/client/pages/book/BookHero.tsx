@@ -21,6 +21,9 @@ interface BookHeroProps {
   isRetagging: boolean;
   retagDisabled: boolean;
   retagTooltip?: string;
+  monitorForUpgrades: boolean;
+  onMonitorToggle: () => void;
+  isMonitorToggling: boolean;
 }
 
 // eslint-disable-next-line complexity -- flat JSX conditionals for optional props, no branching logic
@@ -29,6 +32,7 @@ export function BookHero({
   coverUrl, metaDots, statusLabel, statusDotClass,
   hasPath, onBackClick, onSearchClick, onEditClick, onRenameClick, isRenaming,
   onRetagClick, isRetagging, retagDisabled, retagTooltip,
+  monitorForUpgrades, onMonitorToggle, isMonitorToggling,
 }: BookHeroProps) {
   return (
     <div className="relative -mx-4 sm:-mx-6 lg:-mx-8 -mt-4 sm:-mt-6 px-4 sm:px-6 lg:px-8 pt-6 pb-6 overflow-hidden">
@@ -94,6 +98,19 @@ export function BookHero({
               <span className={`w-2 h-2 rounded-full ${statusDotClass}`} />
               {statusLabel}
             </span>
+            <button
+              onClick={onMonitorToggle}
+              disabled={isMonitorToggling}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium transition-all duration-200 focus-ring disabled:opacity-40 disabled:cursor-not-allowed ${
+                monitorForUpgrades
+                  ? 'glass-card border-primary/30 text-primary'
+                  : 'glass-card text-muted-foreground hover:text-foreground hover:border-primary/30'
+              }`}
+              title={monitorForUpgrades ? 'Monitoring for quality upgrades' : 'Not monitoring for upgrades'}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${monitorForUpgrades ? 'bg-primary animate-pulse' : 'bg-muted-foreground/40'}`} />
+              {monitorForUpgrades ? 'Monitoring' : 'Monitor'}
+            </button>
             <button
               onClick={onSearchClick}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium glass-card hover:border-primary/30 hover:text-primary transition-all duration-200 focus-ring"

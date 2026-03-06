@@ -12,6 +12,7 @@ import { BookDetailsContent } from './BookDetailsContent.js';
 import { BookEventHistory } from './BookEventHistory.js';
 import { mergeBookData, type MetadataBook } from './helpers.js';
 
+// eslint-disable-next-line max-lines-per-function -- orchestrates multiple mutations + modal states for book detail page
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
   metadataBook?: MetadataBook | null;
@@ -64,6 +65,17 @@ export function BookDetails({ libraryBook, metadataBook }: {
 
   const ffmpegConfigured = !!settings?.processing?.ffmpegPath?.trim();
 
+  const monitorMutation = useMutation({
+    mutationFn: () => api.updateBook(libraryBook.id, { monitorForUpgrades: !libraryBook.monitorForUpgrades }),
+    onSuccess: () => {
+      invalidateBookQueries();
+      toast.success(libraryBook.monitorForUpgrades ? 'Upgrade monitoring disabled' : 'Upgrade monitoring enabled');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to update: ${error.message}`);
+    },
+  });
+
   const handleSave = async (data: UpdateBookPayload, renameFiles: boolean) => {
     setIsSaving(true);
     try {
@@ -110,6 +122,9 @@ export function BookDetails({ libraryBook, metadataBook }: {
         isRetagging={retagMutation.isPending}
         retagDisabled={!ffmpegConfigured}
         retagTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
+        monitorForUpgrades={libraryBook.monitorForUpgrades}
+        onMonitorToggle={() => monitorMutation.mutate()}
+        isMonitorToggling={monitorMutation.isPending}
       />
 
       {/* Tab buttons */}

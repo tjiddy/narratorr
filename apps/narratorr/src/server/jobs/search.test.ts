@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
-import { selectBestResult, runSearchJob } from './search.js';
+import { runSearchJob, runUpgradeSearchJob } from './search.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SettingsService } from '../services/settings.service.js';
 import type { BookService } from '../services/book.service.js';
@@ -8,18 +8,24 @@ import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadService } from '../services/download.service.js';
 import type { SearchResult } from '@narratorr/core';
 
-function createMockSettingsService(searchSettings = { enabled: true, intervalMinutes: 60 }): SettingsService {
+function createMockSettingsService(overrides?: { search?: unknown; quality?: unknown }): SettingsService {
+  const searchSettings = overrides?.search ?? { enabled: true, intervalMinutes: 60 };
+  const qualitySettings = overrides?.quality ?? { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' };
   return inject<SettingsService>({
-    get: vi.fn().mockResolvedValue(searchSettings),
+    get: vi.fn().mockImplementation((cat: string) => {
+      if (cat === 'quality') return Promise.resolve(qualitySettings);
+      return Promise.resolve(searchSettings);
+    }),
     getAll: vi.fn(),
     set: vi.fn(),
     update: vi.fn(),
   });
 }
 
-function createMockBookService(books: unknown[] = []): BookService {
+function createMockBookService(books: unknown[] = [], monitoredBooks: unknown[] = []): BookService {
   return inject<BookService>({
     getAll: vi.fn().mockResolvedValue(books),
+    getMonitoredBooks: vi.fn().mockResolvedValue(monitoredBooks),
     getById: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
@@ -67,80 +73,6 @@ const mockResult = (seeders: number, downloadUrl?: string): SearchResult => ({
   downloadUrl,
 });
 
-describe('selectBestResult', () => {
-  it('returns null for empty array', () => {
-    expect(selectBestResult([])).toBeNull();
-  });
-
-  it('returns result with highest seeders', () => {
-    const results = [
-      mockResult(5, 'magnet:?xt=urn:btih:aaa'),
-      mockResult(20, 'magnet:?xt=urn:btih:bbb'),
-      mockResult(10, 'magnet:?xt=urn:btih:ccc'),
-    ];
-    const best = selectBestResult(results);
-    expect(best).not.toBeNull();
-    expect(best!.seeders).toBe(20);
-  });
-
-  it('skips results without downloadUrl', () => {
-    const results = [
-      mockResult(100, undefined),
-      mockResult(5, 'magnet:?xt=urn:btih:aaa'),
-    ];
-    const best = selectBestResult(results);
-    expect(best).not.toBeNull();
-    expect(best!.seeders).toBe(5);
-  });
-
-  it('returns null when all results lack downloadUrl', () => {
-    const results = [mockResult(10, undefined), mockResult(20, undefined)];
-    expect(selectBestResult(results)).toBeNull();
-  });
-
-  it('prefers result with higher matchScore over higher seeders when score difference > 0.1', () => {
-    const results = [
-      mockResult(100, 'magnet:?xt=urn:btih:aaa'),
-      mockResult(5, 'magnet:?xt=urn:btih:bbb'),
-    ];
-    // Low seeders but high score
-    (results[1] as SearchResult & { matchScore: number }).matchScore = 0.9;
-    // High seeders but low score
-    (results[0] as SearchResult & { matchScore: number }).matchScore = 0.3;
-
-    const best = selectBestResult(results);
-    expect(best).not.toBeNull();
-    expect(best!.seeders).toBe(5); // Higher score wins despite fewer seeders
-  });
-
-  it('falls back to seeders when matchScore difference is insignificant', () => {
-    const results = [
-      mockResult(5, 'magnet:?xt=urn:btih:aaa'),
-      mockResult(50, 'magnet:?xt=urn:btih:bbb'),
-    ];
-    (results[0] as SearchResult & { matchScore: number }).matchScore = 0.85;
-    (results[1] as SearchResult & { matchScore: number }).matchScore = 0.80;
-
-    const best = selectBestResult(results);
-    expect(best).not.toBeNull();
-    expect(best!.seeders).toBe(50); // Score diff < 0.1, so seeders win
-  });
-
-  it('handles mix of scored and unscored results', () => {
-    const results = [
-      mockResult(100, 'magnet:?xt=urn:btih:aaa'),
-      mockResult(5, 'magnet:?xt=urn:btih:bbb'),
-    ];
-    // Only second has a score
-    (results[1] as SearchResult & { matchScore: number }).matchScore = 0.9;
-
-    const best = selectBestResult(results);
-    expect(best).not.toBeNull();
-    // Score 0.9 vs 0 — difference > 0.1, so scored result wins
-    expect(best!.seeders).toBe(5);
-  });
-});
-
 describe('runSearchJob', () => {
   let log: ReturnType<typeof createMockLogger>;
 
@@ -149,7 +81,7 @@ describe('runSearchJob', () => {
   });
 
   it('returns zeros when search is disabled', async () => {
-    const settings = createMockSettingsService({ enabled: false, intervalMinutes: 60 });
+    const settings = createMockSettingsService({ search: { enabled: false, intervalMinutes: 60 } });
     const books = createMockBookService();
     const indexer = createMockIndexerService();
     const download = createMockDownloadService();
@@ -165,7 +97,7 @@ describe('runSearchJob', () => {
       { id: 1, title: 'Book One', author: { name: 'Author A' } },
       { id: 2, title: 'Book Two', author: { name: 'Author B' } },
     ];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const download = createMockDownloadService();
@@ -181,7 +113,7 @@ describe('runSearchJob', () => {
   it('grabs best result when search finds matches', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
     const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadService();
@@ -202,7 +134,7 @@ describe('runSearchJob', () => {
       { id: 1, title: 'Obscure Book', author: { name: 'Unknown Author' } },
       { id: 2, title: 'Another Rare Book', author: { name: 'Nobody' } },
     ];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService([]); // no results for any search
     const download = createMockDownloadService();
@@ -229,7 +161,7 @@ describe('runSearchJob', () => {
       { id: 2, title: 'Book B', author: { name: 'Author' } },
       { id: 3, title: 'Book C', author: { name: 'Author' } },
     ];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const results = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
@@ -256,7 +188,7 @@ describe('runSearchJob', () => {
     const wantedBooks = [
       { id: 1, title: 'Anonymous Work', author: null },
     ];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const download = createMockDownloadService();
@@ -271,7 +203,7 @@ describe('runSearchJob', () => {
   it('skips grab when book already has active download', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
     const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadService();
@@ -294,7 +226,7 @@ describe('runSearchJob', () => {
   it('re-throws non-duplicate grab errors to outer catch', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
     const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
     const download = createMockDownloadService();
@@ -320,7 +252,7 @@ describe('runSearchJob', () => {
       { id: 1, title: 'Failing Book', author: { name: 'Author' } },
       { id: 2, title: 'Good Book', author: { name: 'Author' } },
     ];
-    const settings = createMockSettingsService({ enabled: true, intervalMinutes: 60 });
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService([]);
     vi.mocked(indexer.searchAll)
@@ -332,5 +264,241 @@ describe('runSearchJob', () => {
 
     expect(result.searched).toBe(1); // only second book counted
     expect(log.warn).toHaveBeenCalled();
+  });
+
+  it('applies quality filtering to search results (min seeders)', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' }, duration: 3600 }];
+    // minSeeders = 5 should filter out the low-seeder result
+    const settings = createMockSettingsService({
+      search: { enabled: true, intervalMinutes: 60 },
+      quality: { grabFloor: 0, minSeeders: 5, protocolPreference: 'none' },
+    });
+    const books = createMockBookService(wantedBooks);
+    // Only result has 2 seeders — below min
+    const indexer = createMockIndexerService([mockResult(2, 'magnet:?xt=urn:btih:aaa')]);
+    const download = createMockDownloadService();
+
+    const result = await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(1);
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+  });
+});
+
+describe('runUpgradeSearchJob', () => {
+  let log: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    log = createMockLogger();
+  });
+
+  // A monitored book with audio metadata for quality calculations
+  // audioDuration is in seconds, audioTotalSize in bytes
+  function makeMonitoredBook(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 1,
+      title: 'Monitored Book',
+      author: { name: 'Author' },
+      status: 'imported',
+      path: '/library/monitored-book',
+      monitorForUpgrades: true,
+      // ~100 MB/hr quality: 100MB over 1 hour (3600s)
+      audioTotalSize: 100 * 1024 * 1024,
+      audioDuration: 3600,
+      size: null,
+      duration: null,
+      ...overrides,
+    };
+  }
+
+  it('returns zeros when search is disabled', async () => {
+    const settings = createMockSettingsService({ search: { enabled: false, intervalMinutes: 60 } });
+    const books = createMockBookService([], [makeMonitoredBook()]);
+    const indexer = createMockIndexerService();
+    const download = createMockDownloadService();
+
+    const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result).toEqual({ searched: 0, grabbed: 0 });
+    expect(books.getMonitoredBooks).not.toHaveBeenCalled();
+  });
+
+  it('returns zeros when no monitored books', async () => {
+    const settings = createMockSettingsService();
+    const books = createMockBookService([], []);
+    const indexer = createMockIndexerService();
+    const download = createMockDownloadService();
+
+    const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result).toEqual({ searched: 0, grabbed: 0 });
+  });
+
+  it('skips books without path', async () => {
+    const book = makeMonitoredBook({ path: null });
+    const settings = createMockSettingsService();
+    const books = createMockBookService([], [book]);
+    const indexer = createMockIndexerService();
+    const download = createMockDownloadService();
+
+    const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result).toEqual({ searched: 0, grabbed: 0 });
+    expect(indexer.searchAll).not.toHaveBeenCalled();
+  });
+
+  it('skips books without duration', async () => {
+    const book = makeMonitoredBook({ audioDuration: null, duration: null });
+    const settings = createMockSettingsService();
+    const books = createMockBookService([], [book]);
+    const indexer = createMockIndexerService();
+    const download = createMockDownloadService();
+
+    const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result).toEqual({ searched: 0, grabbed: 0 });
+    expect(indexer.searchAll).not.toHaveBeenCalled();
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1 }),
+      'Skipping upgrade search — no duration',
+    );
+  });
+
+  it('grabs when result quality is higher than existing', async () => {
+    // Existing book: 100 MB/hr (100MB over 3600s)
+    const book = makeMonitoredBook();
+    const settings = createMockSettingsService();
+    const books = createMockBookService([], [book]);
+    // Search result: 500 MB over 3600s = 500 MB/hr — clearly higher
+    const higherResult: SearchResult = {
+      title: 'Better Quality',
+      protocol: 'torrent',
+      indexer: 'abb',
+      seeders: 10,
+      size: 500 * 1024 * 1024,
+      downloadUrl: 'magnet:?xt=urn:btih:upgrade',
+    };
+    const indexer = createMockIndexerService([higherResult]);
+    const download = createMockDownloadService();
+
+    const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(1);
+    expect(result.grabbed).toBe(1);
+    expect(download.grab).toHaveBeenCalledWith(
+      expect.objectContaining({
+        downloadUrl: 'magnet:?xt=urn:btih:upgrade',
+        bookId: 1,
+      }),
+    );
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1 }),
+      'Upgrade grabbed',
+    );
+  });
+
+  it('does NOT grab when result quality is lower or similar', async () => {
+    // Existing book: 100 MB/hr (100MB over 3600s)
+    const book = makeMonitoredBook();
+    const settings = createMockSettingsService();
+    const books = createMockBookService([], [book]);
+    // Search result: 90 MB over 3600s = 90 MB/hr — similar/lower quality
+    const similarResult: SearchResult = {
+      title: 'Similar Quality',
+      protocol: 'torrent',
+      indexer: 'abb',
+      seeders: 10,
+      size: 90 * 1024 * 1024,
+      downloadUrl: 'magnet:?xt=urn:btih:similar',
+    };
+    const indexer = createMockIndexerService([similarResult]);
+    const download = createMockDownloadService();
+
+    const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(1);
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+  });
+
+  it('does NOT grab when result is below grab floor', async () => {
+    // Existing book: 50 MB/hr (50MB over 3600s)
+    const book = makeMonitoredBook({ audioTotalSize: 50 * 1024 * 1024 });
+    // Grab floor at 200 MB/hr
+    const settings = createMockSettingsService({ quality: { grabFloor: 200, minSeeders: 0, protocolPreference: 'none' } });
+    const books = createMockBookService([], [book]);
+    // Search result: 100 MB over 3600s = 100 MB/hr — higher than existing but below floor
+    const result100: SearchResult = {
+      title: 'Above Existing But Below Floor',
+      protocol: 'torrent',
+      indexer: 'abb',
+      seeders: 10,
+      size: 100 * 1024 * 1024,
+      downloadUrl: 'magnet:?xt=urn:btih:belowfloor',
+    };
+    const indexer = createMockIndexerService([result100]);
+    const download = createMockDownloadService();
+
+    const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(1);
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+  });
+
+  it('continues on per-book failure', async () => {
+    const book1 = makeMonitoredBook({ id: 1, title: 'Book A' });
+    const book2 = makeMonitoredBook({ id: 2, title: 'Book B' });
+    const settings = createMockSettingsService();
+    const books = createMockBookService([], [book1, book2]);
+    const indexer = createMockIndexerService([]);
+    vi.mocked(indexer.searchAll)
+      .mockRejectedValueOnce(new Error('Indexer down'))
+      .mockResolvedValueOnce([]);
+    const download = createMockDownloadService();
+
+    const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    // First book failed, second succeeded
+    expect(result.searched).toBe(1);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1 }),
+      'Upgrade search failed for book',
+    );
+    expect(indexer.searchAll).toHaveBeenCalledTimes(2);
+  });
+
+  it('handles active download error silently', async () => {
+    // Existing book: 100 MB/hr
+    const book = makeMonitoredBook();
+    const settings = createMockSettingsService();
+    const books = createMockBookService([], [book]);
+    // Higher quality result
+    const higherResult: SearchResult = {
+      title: 'Better Quality',
+      protocol: 'torrent',
+      indexer: 'abb',
+      seeders: 10,
+      size: 500 * 1024 * 1024,
+      downloadUrl: 'magnet:?xt=urn:btih:upgrade',
+    };
+    const indexer = createMockIndexerService([higherResult]);
+    const download = createMockDownloadService();
+
+    vi.mocked(download.grab).mockRejectedValueOnce(
+      new Error('Book 1 already has an active download (id: 5)'),
+    );
+
+    const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(1);
+    expect(result.grabbed).toBe(0);
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1 }),
+      'Skipping upgrade grab — active download exists',
+    );
+    // Should NOT have logged a warning (it was handled silently)
+    expect(log.warn).not.toHaveBeenCalled();
   });
 });

@@ -57,6 +57,7 @@ const mockResults: SearchResult[] = [
 function searchResponse(results: SearchResult[], unsupported?: { count: number; titles: string[] }): SearchResponse {
   return {
     results,
+    durationUnknown: false,
     unsupportedResults: unsupported ?? { count: 0, titles: [] },
   };
 }
@@ -95,7 +96,7 @@ describe('SearchReleasesModal', () => {
     await waitFor(() => {
       expect(api.search).toHaveBeenCalledWith(
         'The Way of Kings Brandon Sanderson',
-        { title: 'The Way of Kings', author: 'Brandon Sanderson' },
+        { title: 'The Way of Kings', author: 'Brandon Sanderson', bookDuration: 3139200 },
       );
     });
   });
@@ -466,6 +467,39 @@ describe('SearchReleasesModal', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to blacklist: Server error');
     });
+  });
+});
+
+describe('SearchReleasesModal duration unknown', () => {
+  it('shows duration unknown banner when durationUnknown is true', async () => {
+    vi.mocked(api.search).mockResolvedValue({
+      results: mockResults,
+      durationUnknown: true,
+      unsupportedResults: { count: 0, titles: [] },
+    });
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/duration unknown/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/quality filtering is disabled/i)).toBeInTheDocument();
+  });
+
+  it('does not show duration unknown banner when durationUnknown is false', async () => {
+    vi.mocked(api.search).mockResolvedValue(searchResponse(mockResults));
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings [Unabridged]')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/duration unknown/i)).not.toBeInTheDocument();
   });
 });
 

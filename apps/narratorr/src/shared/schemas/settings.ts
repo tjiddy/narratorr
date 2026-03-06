@@ -101,6 +101,17 @@ export const taggingSettingsSchema = z.object({
   embedCover: z.boolean().default(false),
 });
 
+export const protocolPreferenceSchema = z.enum(['usenet', 'torrent', 'none']);
+export type ProtocolPreference = z.infer<typeof protocolPreferenceSchema>;
+
+export const qualitySettingsSchema = z.object({
+  grabFloor: z.number().nonnegative().default(0),
+  protocolPreference: protocolPreferenceSchema.default('none'),
+  minSeeders: z.number().int().nonnegative().default(0),
+  searchImmediately: z.boolean().default(false),
+  monitorForUpgrades: z.boolean().default(false),
+});
+
 export const appSettingsSchema = z.object({
   library: librarySettingsSchema,
   search: searchSettingsSchema,
@@ -109,6 +120,7 @@ export const appSettingsSchema = z.object({
   metadata: metadataSettingsSchema,
   processing: processingSettingsSchema,
   tagging: taggingSettingsSchema,
+  quality: qualitySettingsSchema,
 });
 
 export const updateSettingsSchema = z.object({
@@ -119,6 +131,7 @@ export const updateSettingsSchema = z.object({
   metadata: metadataSettingsSchema.partial().optional(),
   processing: processingSettingsSchema.partial().optional(),
   tagging: taggingSettingsSchema.partial().optional(),
+  quality: qualitySettingsSchema.partial().optional(),
 }).superRefine((data, ctx) => {
   if (data.processing?.enabled && !data.processing.ffmpegPath?.trim()) {
     ctx.addIssue({
@@ -191,6 +204,13 @@ export const updateSettingsFormSchema = z.object({
     enabled: z.boolean(),
     mode: tagModeSchema,
     embedCover: z.boolean(),
+  }),
+  quality: z.object({
+    grabFloor: z.number().nonnegative(),
+    protocolPreference: protocolPreferenceSchema,
+    minSeeders: z.number().int().nonnegative(),
+    searchImmediately: z.boolean(),
+    monitorForUpgrades: z.boolean(),
   }),
 }).superRefine((data, ctx) => {
   if (data.processing.enabled && !data.processing.ffmpegPath.trim()) {

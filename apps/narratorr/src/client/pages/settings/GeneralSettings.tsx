@@ -22,6 +22,7 @@ import { LibrarySettingsSection } from './LibrarySettingsSection';
 import { SearchSettingsSection } from './SearchSettingsSection';
 import { ImportSettingsSection } from './ImportSettingsSection';
 import { ProcessingSettingsSection } from './ProcessingSettingsSection';
+import { QualitySettingsSection } from './QualitySettingsSection';
 
 const AUDIBLE_REGION_LABELS: Record<string, string> = {
   us: 'Audible.com (US)',
@@ -44,6 +45,7 @@ const defaultValues: UpdateSettingsFormData = {
   metadata: { audibleRegion: 'us' as const },
   processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b' as const, keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' as const },
   tagging: { enabled: false, mode: 'populate_missing' as const, embedCover: false },
+  quality: { grabFloor: 0, protocolPreference: 'none' as const, minSeeders: 0, searchImmediately: false, monitorForUpgrades: false },
 };
 
 // eslint-disable-next-line complexity -- flat null-coalescing map, no branching logic
@@ -72,6 +74,13 @@ function settingsToFormData(settings: NonNullable<ReturnType<typeof api.getSetti
       enabled: settings.tagging?.enabled ?? false,
       mode: settings.tagging?.mode ?? 'populate_missing',
       embedCover: settings.tagging?.embedCover ?? false,
+    },
+    quality: {
+      grabFloor: settings.quality?.grabFloor ?? 0,
+      protocolPreference: settings.quality?.protocolPreference ?? 'none',
+      minSeeders: settings.quality?.minSeeders ?? 0,
+      searchImmediately: settings.quality?.searchImmediately ?? false,
+      monitorForUpgrades: settings.quality?.monitorForUpgrades ?? false,
     },
   };
 }
@@ -126,6 +135,7 @@ export function GeneralSettings() {
       <LibrarySettingsSection register={register} errors={errors} setValue={setValue} watch={watch} />
       <SearchSettingsSection register={register} errors={errors} />
       <ImportSettingsSection register={register} errors={errors} />
+      <QualitySettingsSection register={register} errors={errors} />
       <ProcessingSettingsSection register={register} errors={errors} watch={watch} />
 
       <SettingsSection

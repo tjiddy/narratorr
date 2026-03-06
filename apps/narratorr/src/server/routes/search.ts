@@ -2,7 +2,9 @@ import { type FastifyInstance } from 'fastify';
 import { type IndexerService } from '../services';
 import { type DownloadService } from '../services';
 import { type BlacklistService } from '../services';
-import { isMultiPartUsenetPost } from '@narratorr/core/utils';
+import { type SettingsService } from '../services';
+import { isMultiPartUsenetPost, calculateQuality } from '@narratorr/core/utils';
+import type { SearchResult } from '@narratorr/core';
 import {
   searchQuerySchema,
   grabSchema,
@@ -10,11 +12,86 @@ import {
   type GrabInput,
 } from '../../shared/schemas.js';
 
+/**
+ * Canonical ranking comparator: matchScore gate → MB/hr → protocol preference → seeders.
+ */
+// eslint-disable-next-line complexity -- 4-tier sort with null coalescing inflates counted branches
+function canonicalCompare(
+  a: SearchResult,
+  b: SearchResult,
+  bookDuration: number | undefined,
+  durationUnknown: boolean,
+  protocolPreference: string,
+): number {
+  const scoreA = a.matchScore ?? 0;
+  const scoreB = b.matchScore ?? 0;
+  const scoreDiff = scoreB - scoreA;
+
+  if (Math.abs(scoreDiff) > 0.1) return scoreDiff;
+
+  if (!durationUnknown) {
+    const qualA = (a.size && a.size > 0) ? calculateQuality(a.size, bookDuration!) : null;
+    const qualB = (b.size && b.size > 0) ? calculateQuality(b.size, bookDuration!) : null;
+    const mbhrA = qualA?.mbPerHour ?? -1;
+    const mbhrB = qualB?.mbPerHour ?? -1;
+    if (mbhrA !== mbhrB) return mbhrB - mbhrA;
+  }
+
+  if (protocolPreference !== 'none') {
+    const prefA = a.protocol === protocolPreference ? 1 : 0;
+    const prefB = b.protocol === protocolPreference ? 1 : 0;
+    if (prefA !== prefB) return prefB - prefA;
+  }
+
+  return (b.seeders ?? 0) - (a.seeders ?? 0);
+}
+
+/**
+ * Apply quality filtering and canonical ranking to search results.
+ * Filters by MB/hr grab floor and min seeders, then sorts by
+ * canonical order: matchScore gate → MB/hr → protocol preference → seeders.
+ */
+export function filterAndRankResults(
+  results: SearchResult[],
+  bookDuration: number | undefined,
+  grabFloor: number,
+  minSeeders: number,
+  protocolPreference: string,
+): { results: SearchResult[]; durationUnknown: boolean } {
+  const durationUnknown = !bookDuration || bookDuration <= 0;
+
+  let filtered = results;
+
+  // Apply min seeders filter (torrent only)
+  if (minSeeders > 0) {
+    filtered = filtered.filter((r) => {
+      if (r.protocol !== 'torrent') return true;
+      return (r.seeders ?? 0) >= minSeeders;
+    });
+  }
+
+  // Apply grab floor filter (only when duration is known)
+  if (!durationUnknown && grabFloor > 0) {
+    filtered = filtered.filter((r) => {
+      if (!r.size || r.size <= 0) return true; // can't calculate, pass through
+      const quality = calculateQuality(r.size, bookDuration!);
+      if (!quality) return true; // can't calculate, pass through
+      return quality.mbPerHour >= grabFloor;
+    });
+  }
+
+  // Canonical ranking
+  filtered.sort((a, b) => canonicalCompare(a, b, bookDuration, durationUnknown, protocolPreference));
+
+  return { results: filtered, durationUnknown };
+}
+
 export async function searchRoutes(
   app: FastifyInstance,
   indexerService: IndexerService,
   downloadService: DownloadService,
   blacklistService: BlacklistService,
+  settingsService: SettingsService,
 ) {
   // GET /api/search
   app.get<{ Querystring: SearchQuery }>(
@@ -24,9 +101,15 @@ export async function searchRoutes(
         querystring: searchQuerySchema,
       },
     },
-    async (request) => {
-      const { q, limit, author, title } = request.query;
-      request.log.debug({ q, author, title }, 'Search request');
+    async (request, reply) => {
+      const { q, limit, author, title, bookDuration } = request.query;
+
+      // Reject invalid bookDuration (transformed to null by schema)
+      if (bookDuration === null) {
+        return reply.status(400).send({ error: 'bookDuration must be a positive number' });
+      }
+
+      request.log.debug({ q, author, title, bookDuration }, 'Search request');
       const allResults = await indexerService.searchAll(q, { limit, author, title });
 
       // Filter multi-part Usenet posts
@@ -53,8 +136,19 @@ export async function searchRoutes(
         filteredResults = results.filter((r: { infoHash?: string }) => !r.infoHash || !blacklisted.has(r.infoHash));
       }
 
+      // Quality filtering and ranking
+      const qualitySettings = await settingsService.get('quality');
+      const ranked = filterAndRankResults(
+        filteredResults,
+        bookDuration,
+        qualitySettings.grabFloor,
+        qualitySettings.minSeeders,
+        qualitySettings.protocolPreference,
+      );
+
       return {
-        results: filteredResults,
+        results: ranked.results,
+        durationUnknown: ranked.durationUnknown,
         unsupportedResults: { count: unsupportedTitles.length, titles: unsupportedTitles },
       };
     }

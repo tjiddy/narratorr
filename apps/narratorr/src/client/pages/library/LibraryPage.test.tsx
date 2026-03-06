@@ -525,7 +525,7 @@ describe('LibraryPage', () => {
 
   it('opens search releases modal when Search Releases is clicked', async () => {
     vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
-    vi.mocked(api.search).mockResolvedValue({ results: [], unsupportedResults: { count: 0, titles: [] } });
+    vi.mocked(api.search).mockResolvedValue({ results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } });
     const user = userEvent.setup();
 
     renderWithProviders(<LibraryPage />);

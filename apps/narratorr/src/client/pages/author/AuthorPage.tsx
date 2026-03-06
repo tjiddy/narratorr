@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import DOMPurify from 'dompurify';
 import { useAuthor, useAuthorBooks } from '@/hooks/useMetadata';
 import { useLibrary } from '@/hooks/useLibrary';
 import { useAddBooksToLibrary } from '@/hooks/useAddBooksToLibrary';
+import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { BookOpenIcon, ArrowLeftIcon } from '@/components/icons';
 import { AuthorPageSkeleton } from './AuthorPageSkeleton.js';
 import { AuthorNotFound } from './AuthorNotFound.js';
@@ -18,7 +21,11 @@ export function AuthorPage() {
   const { data: author, isLoading: authorLoading, isError: authorError } = useAuthor(asin);
   const { data: books, isLoading: booksLoading } = useAuthorBooks(asin);
   const { data: libraryBooks } = useLibrary();
-  const { addingAsins, addBook, addAllInSeries } = useAddBooksToLibrary(libraryBooks);
+  const { data: settings } = useQuery({ queryKey: queryKeys.settings(), queryFn: api.getSettings });
+  const qualityDefaults = settings?.quality
+    ? { searchImmediately: settings.quality.searchImmediately, monitorForUpgrades: settings.quality.monitorForUpgrades }
+    : undefined;
+  const { addingAsins, addBook, addAllInSeries } = useAddBooksToLibrary(libraryBooks, qualityDefaults);
 
   const [bioExpanded, setBioExpanded] = useState(false);
 

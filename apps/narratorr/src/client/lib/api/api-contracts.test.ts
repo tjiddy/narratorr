@@ -636,7 +636,7 @@ describe('response pass-through', () => {
   });
 
   it('searchApi.search returns fetchApi response', async () => {
-    const data = { results: [], unsupportedResults: { count: 0, titles: [] } };
+    const data = { results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } };
     mockFetchApi.mockResolvedValue(data);
     const result = await searchApi.search('test');
     expect(result).toBe(data);

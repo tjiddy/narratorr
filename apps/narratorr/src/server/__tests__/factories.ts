@@ -51,6 +51,7 @@ export function createMockDbBook(overrides?: Record<string, unknown>) {
     audioFileCount: null as number | null,
     audioTotalSize: null as number | null,
     audioDuration: null as number | null,
+    monitorForUpgrades: false,
     createdAt: now,
     updatedAt: now,
     ...overrides,

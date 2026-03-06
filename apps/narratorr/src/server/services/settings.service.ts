@@ -11,6 +11,7 @@ import {
   metadataSettingsSchema,
   processingSettingsSchema,
   taggingSettingsSchema,
+  qualitySettingsSchema,
 } from '../../shared/schemas.js';
 
 export type { AppSettings };
@@ -48,6 +49,13 @@ const DEFAULT_SETTINGS: AppSettings = {
     mode: 'populate_missing',
     embedCover: false,
   },
+  quality: {
+    grabFloor: 0,
+    protocolPreference: 'none',
+    minSeeders: 0,
+    searchImmediately: false,
+    monitorForUpgrades: false,
+  },
 };
 
 const CATEGORY_SCHEMAS = {
@@ -58,6 +66,7 @@ const CATEGORY_SCHEMAS = {
   metadata: metadataSettingsSchema,
   processing: processingSettingsSchema,
   tagging: taggingSettingsSchema,
+  quality: qualitySettingsSchema,
 } as const;
 
 /**
@@ -108,6 +117,7 @@ export class SettingsService {
       metadata: parseCategory('metadata', settingsMap.get('metadata'), this.log) ?? DEFAULT_SETTINGS.metadata,
       processing: parseCategory('processing', settingsMap.get('processing'), this.log) ?? DEFAULT_SETTINGS.processing,
       tagging: parseCategory('tagging', settingsMap.get('tagging'), this.log) ?? DEFAULT_SETTINGS.tagging,
+      quality: parseCategory('quality', settingsMap.get('quality'), this.log) ?? DEFAULT_SETTINGS.quality,
     };
   }
 

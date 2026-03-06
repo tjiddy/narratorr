@@ -112,6 +112,7 @@ export class BookService {
     genres?: string[];
     status?: BookRow['status'];
     providerId?: string;
+    monitorForUpgrades?: boolean;
   }): Promise<BookWithAuthor> {
     // Enrich with ASIN from metadata provider if missing
     let enrichedAsin = data.asin;
@@ -179,6 +180,7 @@ export class BookService {
         publishedDate: data.publishedDate,
         genres: data.genres,
         status: data.status || 'wanted',
+        monitorForUpgrades: data.monitorForUpgrades ?? false,
       })
       .returning();
 
@@ -231,6 +233,19 @@ export class BookService {
     this.log.info({ path: bookPath }, 'Book files deleted from disk');
 
     await cleanEmptyParents(bookPath, libraryRoot, this.log);
+  }
+
+  async getMonitoredBooks(): Promise<BookWithAuthor[]> {
+    const results = await this.db
+      .select({ book: books, author: authors })
+      .from(books)
+      .leftJoin(authors, eq(books.authorId, authors.id))
+      .where(and(eq(books.monitorForUpgrades, true), eq(books.status, 'imported')));
+
+    return results.map((r) => ({
+      ...r.book,
+      author: r.author || undefined,
+    }));
   }
 
   async search(query: string): Promise<BookWithAuthor[]> {
