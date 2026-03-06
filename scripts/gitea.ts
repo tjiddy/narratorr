@@ -279,6 +279,17 @@ async function resolveLabels(input: string): Promise<number[]> {
   return ids;
 }
 
+async function resolveMilestone(input: string): Promise<number> {
+  if (/^\d+$/.test(input)) return Number(input);
+  const all = await api<GiteaMilestone[]>("/milestones");
+  const match = all.find((m) => m.title === input || m.title.startsWith(input));
+  if (!match) {
+    console.error(`ERROR: milestone "${input}" not found`);
+    process.exit(1);
+  }
+  return match.id;
+}
+
 // --- String helpers ---
 
 function unescapeBody(s: string): string {
@@ -346,7 +357,7 @@ switch (cmd) {
     const payload: Record<string, unknown> = { title };
     if (body) payload.body = body;
     if (labels) payload.labels = await resolveLabels(labels);
-    if (milestone) payload.milestone = Number(milestone);
+    if (milestone) payload.milestone = await resolveMilestone(milestone);
     const data = await api<GiteaIssue>("/issues", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -394,9 +405,10 @@ switch (cmd) {
       case "milestone": {
         const value = args[2];
         if (!value) { console.error("Usage: gitea issue-update <id> milestone <name|id>"); process.exit(1); }
+        const msId = await resolveMilestone(value);
         const data = await api<GiteaIssue>(`/issues/${id}`, {
           method: "PATCH",
-          body: JSON.stringify({ milestone: Number(value) }),
+          body: JSON.stringify({ milestone: msId }),
         });
         fmtIssue(data);
         break;
