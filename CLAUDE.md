@@ -132,8 +132,10 @@ Claude Code skills automate the agent workflow — use these instead of manual s
 - `/handoff <id>` — Verify, push, create PR, post handoff comment, update context cache
 - `/block <id>` — Post blocked comment, set blocked label, stop
 - `/elaborate <id>` — Groom/validate an issue spec (read-only, structured verdict)
+- `/spec` — Create a new Gitea issue from the spec template
 - `/verify` — Run quality gates (lint, test, typecheck, build) with structured summary
 - `/review-pr <pr>` — Review a PR against its linked issue's acceptance criteria; auto-merges on approve, stops on needs-work
+- `/review-spec <id>` — Review an issue spec against project standards; posts structured findings
 - `/respond-to-pr-review <pr>` — Address PR review findings: fix, accept, defer, or dispute each finding, push fixes, post structured response
 - `/respond-to-spec-review <id>` — Address spec review findings: update spec body, post structured response
 - `/merge <pr>` — Merge an approved PR (checks verdict, quality gates, updates issue labels, cleans up branch)
@@ -185,4 +187,4 @@ Other labels: Type: `type/feature` · `type/bug` · `type/chore` | Priority: `pr
 
 ### Milestones
 
-v0.1 MVP Foundation (done) → v0.2 Metadata & Library → v0.3 Automation → v0.4 Polish
+v0.1 MVP Foundation (done) → v0.2 Metadata & Library (done) → v0.3 Complete Pipeline → v0.4 Ready for Others → v1.1 Post Go-live

@@ -87,7 +87,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    Codebase Findings: <compact implementation hints — ephemeral>
    ```
 
-   Followed by a brief prose explanation (2-3 sentences max) of the verdict.
+   Preceded by: "**#<id> spec response complete**" and followed by a brief prose explanation (2-3 sentences max) of the verdict.
 
 ## Important
 

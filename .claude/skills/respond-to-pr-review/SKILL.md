@@ -89,7 +89,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      ```
    - Clean up temp file
 
-6. **Report to main agent:** Summary of resolutions and final status.
+6. **Report to main agent:** "**PR #<pr-number> (issue #<id>)** — <status: ready-for-re-review | needs-human-input> — <1-line summary of resolutions>"
 
 ## Important
 

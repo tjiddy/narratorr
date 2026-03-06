@@ -51,7 +51,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 6. **Invoke `/handoff <id>`** via the Skill tool.
    - This pushes, creates the PR, updates labels, posts the handoff comment, updates the context cache, and appends the workflow log.
 
-7. **Report completion** to the user with the PR link and a summary of what was built.
+7. **Report completion** to the user: "**#<id> complete** — <PR link> — <1-line summary of what was built>"
 
 ## Important
 
