@@ -2,14 +2,11 @@ import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { Notifier, TestResult } from '@/lib/api';
-import { TestResultMessage } from '@/components/TestResultMessage';
 import { SettingsCardShell, type IdTestResult } from './SettingsCardShell';
-import { SettingsFormActions } from './SettingsFormActions';
-import { NotifierFields } from './NotifierFields';
+import { NotifierCardForm } from './NotifierCardForm';
+import { NOTIFIER_REGISTRY, EVENT_LABELS } from '../../../shared/notifier-registry.js';
 import {
   createNotifierFormSchema,
-  notifierTypeSchema,
-  notificationEventSchema,
   type CreateNotifierFormData,
 } from '../../../shared/schemas.js';
 
@@ -30,52 +27,36 @@ interface NotifierCardProps {
   animationDelay?: string;
 }
 
-const TYPE_LABELS: Record<string, string> = {
-  webhook: 'Webhook',
-  discord: 'Discord',
-  script: 'Custom Script',
-};
-
-const EVENT_LABELS: Record<string, string> = {
-  on_grab: 'Grab',
-  on_download_complete: 'Download Complete',
-  on_import: 'Import',
-  on_failure: 'Failure',
-};
-
-const defaultSettings: Record<string, CreateNotifierFormData['settings']> = {
-  webhook: { url: '', method: 'POST' as const },
-  discord: { webhookUrl: '', includeCover: true },
-  script: { path: '', timeout: 30 },
+const SETTINGS_DEFAULTS: Record<string, string | number | boolean> = {
+  url: '', method: 'POST', headers: '', bodyTemplate: '',
+  webhookUrl: '', includeCover: true, path: '', timeout: 30,
+  smtpHost: '', smtpPort: 587, smtpUser: '', smtpPass: '',
+  smtpTls: false, fromAddress: '', toAddress: '', botToken: '',
+  chatId: '', pushoverToken: '', pushoverUser: '', ntfyTopic: '',
+  ntfyServer: '', gotifyUrl: '', gotifyToken: '',
 };
 
 function settingsFromNotifier(notifier: Notifier): CreateNotifierFormData['settings'] {
   const s = notifier.settings as Record<string, unknown>;
-  return {
-    url: (s.url as string) || '',
-    method: (s.method as 'POST' | 'PUT') || 'POST',
-    headers: (s.headers as string) || '',
-    bodyTemplate: (s.bodyTemplate as string) || '',
-    webhookUrl: (s.webhookUrl as string) || '',
-    includeCover: (s.includeCover as boolean) ?? true,
-    path: (s.path as string) || '',
-    timeout: (s.timeout as number) || 30,
-  };
+  const result: Record<string, unknown> = {};
+  for (const [key, fallback] of Object.entries(SETTINGS_DEFAULTS)) {
+    const val = s[key];
+    result[key] = val != null ? val : fallback;
+  }
+  return result as CreateNotifierFormData['settings'];
 }
 
 function viewSubtitle(notifier: Notifier): string {
-  const s = notifier.settings as Record<string, unknown>;
-  if (notifier.type === 'webhook') return (s.url as string) || 'webhook';
-  if (notifier.type === 'discord') return (s.webhookUrl as string)?.replace(/^https:\/\/discord\.com\/api\/webhooks\//, '...') || 'discord';
-  if (notifier.type === 'script') return (s.path as string) || 'script';
-  return notifier.type;
+  const meta = NOTIFIER_REGISTRY[notifier.type];
+  if (!meta) return notifier.type;
+  return meta.viewSubtitle(notifier.settings as Record<string, unknown>);
 }
 
 const defaultValues: CreateNotifierFormData = {
   name: '',
   type: 'webhook',
   enabled: true,
-  events: ['on_grab', 'on_download_complete', 'on_import', 'on_failure'],
+  events: ['on_grab', 'on_download_complete', 'on_import', 'on_failure', 'on_upgrade', 'on_health_issue'],
   settings: { url: '', method: 'POST' as const },
 };
 
@@ -84,10 +65,7 @@ export function NotifierCard(props: NotifierCardProps) {
     notifier, mode, onEdit, onCancel, onDelete, onSubmit, onFormTest,
     onTest, isPending, testingId, testResult, testingForm, formTestResult, animationDelay,
   } = props;
-  const {
-    register, handleSubmit, reset, watch, setValue, getValues,
-    formState: { errors },
-  } = useForm<CreateNotifierFormData>({
+  const form = useForm<CreateNotifierFormData>({
     resolver: zodResolver(createNotifierFormSchema),
     defaultValues: notifier
       ? {
@@ -99,9 +77,10 @@ export function NotifierCard(props: NotifierCardProps) {
         }
       : defaultValues,
   });
+  const { reset, setValue, getValues } = form;
 
   // eslint-disable-next-line react-hooks/incompatible-library
-  const selectedType = watch('type');
+  const selectedType = form.watch('type');
 
   useEffect(() => {
     if (mode === 'edit' && notifier) {
@@ -119,7 +98,8 @@ export function NotifierCard(props: NotifierCardProps) {
 
   useEffect(() => {
     if (mode === 'create') {
-      setValue('settings', defaultSettings[selectedType] || defaultSettings.webhook);
+      const meta = NOTIFIER_REGISTRY[selectedType];
+      setValue('settings', meta?.defaultSettings || NOTIFIER_REGISTRY.webhook.defaultSettings);
     }
   }, [selectedType, mode, setValue]);
 
@@ -132,13 +112,14 @@ export function NotifierCard(props: NotifierCardProps) {
     }
   };
 
-  const watchedEvents = watch('events') || [];
+  const watchedEvents = form.watch('events') || [];
 
   if (mode === 'view' && notifier) {
+    const typeLabel = NOTIFIER_REGISTRY[notifier.type]?.label || notifier.type;
     return (
       <SettingsCardShell
         name={notifier.name}
-        subtitle={`${TYPE_LABELS[notifier.type] || notifier.type} — ${viewSubtitle(notifier)}`}
+        subtitle={`${typeLabel} — ${viewSubtitle(notifier)}`}
         enabled={notifier.enabled}
         itemId={notifier.id}
         onEdit={onEdit}
@@ -156,89 +137,19 @@ export function NotifierCard(props: NotifierCardProps) {
     );
   }
 
-  const isEdit = mode === 'edit';
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="glass-card rounded-2xl p-6 animate-fade-in-up space-y-5">
-      <h3 className="font-display text-lg font-semibold">
-        {isEdit ? 'Edit Notifier' : 'Add New Notifier'}
-      </h3>
-
-      <div className="grid gap-5 sm:grid-cols-2">
-        <div>
-          <label htmlFor="notifierName" className="block text-sm font-medium mb-2">Name</label>
-          <input id="notifierName" type="text"
-            {...register('name')}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-              errors.name ? 'border-destructive' : 'border-border'
-            }`}
-            placeholder="My Webhook"
-          />
-          {errors.name && (
-            <p className="text-sm text-destructive mt-1">{errors.name.message}</p>
-          )}
-        </div>
-
-        <div>
-          <label htmlFor="notifierType" className="block text-sm font-medium mb-2">Type</label>
-          <select id="notifierType" {...register('type')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-          >
-            {notifierTypeSchema.options.map((t) => (
-              <option key={t} value={t}>
-                {TYPE_LABELS[t] || t}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {isEdit && (
-          <div>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                {...register('enabled')}
-                className="w-5 h-5 rounded border-border text-primary focus:ring-primary focus:ring-offset-0"
-              />
-              <span className="text-sm font-medium">Enabled</span>
-            </label>
-          </div>
-        )}
-
-        <div className={isEdit ? '' : 'sm:col-span-2'}>
-          <label className="block text-sm font-medium mb-2">Events</label>
-          <div className="flex flex-wrap gap-2">
-            {notificationEventSchema.options.map((event) => (
-              <label key={event} className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={watchedEvents.includes(event)}
-                  onChange={() => handleEventToggle(event)}
-                  className="w-4 h-4 rounded border-border text-primary focus:ring-primary focus:ring-offset-0"
-                />
-                <span className="text-sm">{EVENT_LABELS[event] || event}</span>
-              </label>
-            ))}
-          </div>
-          {errors.events && (
-            <p className="text-sm text-destructive mt-1">{errors.events.message}</p>
-          )}
-        </div>
-
-        <NotifierFields selectedType={selectedType} register={register} errors={errors} />
-      </div>
-
-      {formTestResult && (
-        <TestResultMessage success={formTestResult.success} message={formTestResult.message} />
-      )}
-
-      <SettingsFormActions
-        isEdit={isEdit}
-        isPending={isPending}
-        testingForm={testingForm}
-        onFormTest={handleSubmit(onFormTest)}
-        onCancel={onCancel}
-        entityLabel="Notifier"
-      />
-    </form>
+    <NotifierCardForm
+      form={form}
+      isEdit={mode === 'edit'}
+      selectedType={selectedType}
+      watchedEvents={watchedEvents}
+      onSubmit={onSubmit}
+      onFormTest={onFormTest}
+      onCancel={onCancel}
+      isPending={isPending}
+      testingForm={testingForm}
+      formTestResult={formTestResult}
+      onEventToggle={handleEventToggle}
+    />
   );
 }

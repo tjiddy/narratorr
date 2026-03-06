@@ -3,15 +3,10 @@ import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { notifiers } from '@narratorr/db/schema';
 import {
-  WebhookNotifier,
-  DiscordNotifier,
-  ScriptNotifier,
+  ADAPTER_FACTORIES,
   type NotifierAdapter,
   type NotificationEvent,
   type EventPayload,
-  type WebhookConfig,
-  type DiscordConfig,
-  type ScriptConfig,
 } from '@narratorr/core';
 
 type NotifierRow = typeof notifiers.$inferSelect;
@@ -128,42 +123,19 @@ export class NotifierService {
   }
 
   private createAdapter(notifier: NotifierRow): NotifierAdapter {
-    const settings = notifier.settings as Record<string, unknown>;
+    const factory = ADAPTER_FACTORIES[notifier.type];
+    if (!factory) throw new Error(`Unknown notifier type: ${notifier.type}`);
 
-    switch (notifier.type) {
-      case 'webhook': {
-        let parsedHeaders: Record<string, string> | undefined;
-        if (typeof settings.headers === 'string') {
-          try {
-            parsedHeaders = JSON.parse(settings.headers);
-          } catch {
-            this.log.warn({ notifierId: notifier.id }, 'Failed to parse webhook headers JSON, ignoring');
-          }
+    // Log warning for malformed webhook headers (factory silently ignores them)
+    if (notifier.type === 'webhook') {
+      const settings = notifier.settings as Record<string, unknown>;
+      if (typeof settings.headers === 'string') {
+        try { JSON.parse(settings.headers); } catch {
+          this.log.warn({ notifierId: notifier.id }, 'Failed to parse webhook headers JSON, ignoring');
         }
-        const config: WebhookConfig = {
-          url: settings.url as string,
-          method: (settings.method as 'POST' | 'PUT') || 'POST',
-          headers: parsedHeaders,
-          bodyTemplate: settings.bodyTemplate as string | undefined,
-        };
-        return new WebhookNotifier(config);
       }
-      case 'discord': {
-        const config: DiscordConfig = {
-          webhookUrl: settings.webhookUrl as string,
-          includeCover: (settings.includeCover as boolean) ?? true,
-        };
-        return new DiscordNotifier(config);
-      }
-      case 'script': {
-        const config: ScriptConfig = {
-          path: settings.path as string,
-          timeout: (settings.timeout as number) || 30,
-        };
-        return new ScriptNotifier(config);
-      }
-      default:
-        throw new Error(`Unknown notifier type: ${notifier.type}`);
     }
+
+    return factory(notifier.settings as Record<string, unknown>);
   }
 }

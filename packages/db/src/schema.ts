@@ -121,7 +121,7 @@ export const remotePathMappings = sqliteTable('remote_path_mappings', {
 export const notifiers = sqliteTable('notifiers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: ['webhook', 'discord', 'script'] }).notNull(),
+  type: text('type', { enum: ['webhook', 'discord', 'script', 'email', 'telegram', 'slack', 'pushover', 'ntfy', 'gotify'] }).notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   events: text('events', { mode: 'json' }).notNull().$type<string[]>(),
   settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),

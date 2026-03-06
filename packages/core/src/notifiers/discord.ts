@@ -10,6 +10,8 @@ const EVENT_COLORS: Record<NotificationEvent, number> = {
   on_download_complete: 0xf39c12, // orange
   on_import: 0x2ecc71,         // green
   on_failure: 0xe74c3c,        // red
+  on_upgrade: 0x9b59b6,       // purple
+  on_health_issue: 0xe67e22,   // dark orange
 };
 
 const EVENT_TITLES: Record<NotificationEvent, string> = {
@@ -17,6 +19,8 @@ const EVENT_TITLES: Record<NotificationEvent, string> = {
   on_download_complete: 'Download Complete',
   on_import: 'Import Complete',
   on_failure: 'Failure',
+  on_upgrade: 'Quality Upgrade',
+  on_health_issue: 'Health Issue',
 };
 
 // eslint-disable-next-line complexity -- event-specific embed field building
@@ -56,6 +60,21 @@ function buildEmbed(event: NotificationEvent, payload: EventPayload, includeCove
     fields.push({ name: 'Error', value: payload.error.message });
     if (payload.error.stage) {
       fields.push({ name: 'Stage', value: payload.error.stage, inline: true });
+    }
+  }
+
+  if (event === 'on_upgrade' && payload.upgrade) {
+    const prev = `${payload.upgrade.previousMbPerHour.toFixed(1)} MB/hr${payload.upgrade.previousCodec ? ` (${payload.upgrade.previousCodec.toUpperCase()})` : ''}`;
+    const next = `${payload.upgrade.newMbPerHour.toFixed(1)} MB/hr${payload.upgrade.newCodec ? ` (${payload.upgrade.newCodec.toUpperCase()})` : ''}`;
+    fields.push({ name: 'Previous', value: prev, inline: true });
+    fields.push({ name: 'New', value: next, inline: true });
+  }
+
+  if (event === 'on_health_issue' && payload.health) {
+    fields.push({ name: 'Check', value: payload.health.checkName, inline: true });
+    fields.push({ name: 'State', value: `${payload.health.previousState} → ${payload.health.currentState}`, inline: true });
+    if (payload.health.message) {
+      fields.push({ name: 'Detail', value: payload.health.message });
     }
   }
 

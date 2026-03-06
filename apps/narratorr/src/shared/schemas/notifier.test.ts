@@ -83,6 +83,102 @@ describe('createNotifierFormSchema', () => {
       });
       expect(result.success).toBe(true);
     });
+
+    it('rejects email without smtpHost', () => {
+      const result = createNotifierFormSchema.safeParse({
+        ...validBase, type: 'email', settings: { fromAddress: 'a@b.com', toAddress: 'c@d.com' },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(expect.objectContaining({ path: ['settings', 'smtpHost'] }));
+      }
+    });
+
+    it('accepts email with required fields', () => {
+      const result = createNotifierFormSchema.safeParse({
+        ...validBase, type: 'email',
+        settings: { smtpHost: 'smtp.test.com', fromAddress: 'a@b.com', toAddress: 'c@d.com' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects telegram without botToken', () => {
+      const result = createNotifierFormSchema.safeParse({
+        ...validBase, type: 'telegram', settings: { chatId: '123' },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(expect.objectContaining({ path: ['settings', 'botToken'] }));
+      }
+    });
+
+    it('accepts telegram with required fields', () => {
+      const result = createNotifierFormSchema.safeParse({
+        ...validBase, type: 'telegram', settings: { botToken: '123:ABC', chatId: '-100123' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects slack without webhookUrl', () => {
+      const result = createNotifierFormSchema.safeParse({
+        ...validBase, type: 'slack', settings: {},
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(expect.objectContaining({ path: ['settings', 'webhookUrl'] }));
+      }
+    });
+
+    it('rejects pushover without token', () => {
+      const result = createNotifierFormSchema.safeParse({
+        ...validBase, type: 'pushover', settings: { pushoverUser: 'u' },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(expect.objectContaining({ path: ['settings', 'pushoverToken'] }));
+      }
+    });
+
+    it('accepts pushover with required fields', () => {
+      const result = createNotifierFormSchema.safeParse({
+        ...validBase, type: 'pushover', settings: { pushoverToken: 't', pushoverUser: 'u' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects ntfy without topic', () => {
+      const result = createNotifierFormSchema.safeParse({
+        ...validBase, type: 'ntfy', settings: {},
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(expect.objectContaining({ path: ['settings', 'ntfyTopic'] }));
+      }
+    });
+
+    it('rejects gotify without serverUrl', () => {
+      const result = createNotifierFormSchema.safeParse({
+        ...validBase, type: 'gotify', settings: { gotifyToken: 't' },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(expect.objectContaining({ path: ['settings', 'gotifyUrl'] }));
+      }
+    });
+
+    it('accepts gotify with required fields', () => {
+      const result = createNotifierFormSchema.safeParse({
+        ...validBase, type: 'gotify', settings: { gotifyUrl: 'https://g.test', gotifyToken: 't' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts on_upgrade and on_health_issue events', () => {
+      const result = createNotifierFormSchema.safeParse({
+        ...validBase, events: ['on_upgrade' as const, 'on_health_issue' as const],
+      });
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('base field validation', () => {

@@ -24,6 +24,14 @@ function renderBody(template: string, event: NotificationEvent, payload: EventPa
     'import.fileCount': payload.import?.fileCount?.toString() ?? '',
     'error.message': payload.error?.message ?? '',
     'error.stage': payload.error?.stage ?? '',
+    'upgrade.previousMbPerHour': payload.upgrade?.previousMbPerHour?.toString() ?? '',
+    'upgrade.newMbPerHour': payload.upgrade?.newMbPerHour?.toString() ?? '',
+    'upgrade.previousCodec': payload.upgrade?.previousCodec ?? '',
+    'upgrade.newCodec': payload.upgrade?.newCodec ?? '',
+    'health.checkName': payload.health?.checkName ?? '',
+    'health.previousState': payload.health?.previousState ?? '',
+    'health.currentState': payload.health?.currentState ?? '',
+    'health.message': payload.health?.message ?? '',
   };
 
   return template.replace(/\{(\w+(?:\.\w+)*)\}/g, (match, key: string) => key in flat ? flat[key] : match);

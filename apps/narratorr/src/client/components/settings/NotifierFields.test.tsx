@@ -53,6 +53,47 @@ describe('NotifierFields', () => {
     expect(path).toHaveValue('/opt/notify.sh');
   });
 
+  it('renders email fields with SMTP inputs', () => {
+    render(<FieldWrapper type="email" />);
+    expect(screen.getByText('SMTP Host')).toBeInTheDocument();
+    expect(screen.getByText('SMTP Port')).toBeInTheDocument();
+    expect(screen.getByText('Username')).toBeInTheDocument();
+    expect(screen.getByText('Password')).toBeInTheDocument();
+    expect(screen.getByText('Use TLS/SSL')).toBeInTheDocument();
+    expect(screen.getByText('From Address')).toBeInTheDocument();
+    expect(screen.getByText('To Address')).toBeInTheDocument();
+  });
+
+  it('renders telegram fields with bot token and chat ID', () => {
+    render(<FieldWrapper type="telegram" />);
+    expect(screen.getByText('Bot Token')).toBeInTheDocument();
+    expect(screen.getByText('Chat ID')).toBeInTheDocument();
+  });
+
+  it('renders slack fields with webhook URL', () => {
+    render(<FieldWrapper type="slack" />);
+    expect(screen.getByText('Webhook URL')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('https://hooks.slack.com/services/...')).toBeInTheDocument();
+  });
+
+  it('renders pushover fields with token and user key', () => {
+    render(<FieldWrapper type="pushover" />);
+    expect(screen.getByText('API Token')).toBeInTheDocument();
+    expect(screen.getByText('User Key')).toBeInTheDocument();
+  });
+
+  it('renders ntfy fields with topic and optional server', () => {
+    render(<FieldWrapper type="ntfy" />);
+    expect(screen.getByText('Topic')).toBeInTheDocument();
+    expect(screen.getByText('Server URL')).toBeInTheDocument();
+  });
+
+  it('renders gotify fields with server URL and app token', () => {
+    render(<FieldWrapper type="gotify" />);
+    expect(screen.getByText('Server URL')).toBeInTheDocument();
+    expect(screen.getByText('App Token')).toBeInTheDocument();
+  });
+
   it('renders nothing for unknown type', () => {
     const { container } = render(<FieldWrapper type="unknown" />);
     expect(container.innerHTML).toBe('');

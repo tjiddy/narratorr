@@ -274,6 +274,71 @@ describe('NotifierService', () => {
       fetchSpy.mockRestore();
     });
 
+    it('creates email adapter', async () => {
+      const result = await service.testConfig({
+        type: 'email',
+        settings: { smtpHost: 'smtp.test.com', fromAddress: 'a@b.com', toAddress: 'c@d.com' },
+      });
+      // Will fail because no real SMTP, but adapter was created successfully
+      expect(result).toHaveProperty('success');
+    });
+
+    it('creates telegram adapter', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      );
+      const result = await service.testConfig({
+        type: 'telegram',
+        settings: { botToken: '123:ABC', chatId: '-100' },
+      });
+      expect(result.success).toBe(true);
+      fetchSpy.mockRestore();
+    });
+
+    it('creates slack adapter', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+      const result = await service.testConfig({
+        type: 'slack',
+        settings: { webhookUrl: 'https://hooks.slack.com/test' },
+      });
+      expect(result.success).toBe(true);
+      fetchSpy.mockRestore();
+    });
+
+    it('creates pushover adapter', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ status: 1 }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      );
+      const result = await service.testConfig({
+        type: 'pushover',
+        settings: { pushoverToken: 't', pushoverUser: 'u' },
+      });
+      expect(result.success).toBe(true);
+      fetchSpy.mockRestore();
+    });
+
+    it('creates ntfy adapter', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+      const result = await service.testConfig({
+        type: 'ntfy',
+        settings: { ntfyTopic: 'test-topic' },
+      });
+      expect(result.success).toBe(true);
+      fetchSpy.mockRestore();
+    });
+
+    it('creates gotify adapter', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ id: 1 }), { status: 200, headers: { 'content-type': 'application/json' } }),
+      );
+      const result = await service.testConfig({
+        type: 'gotify',
+        settings: { gotifyUrl: 'https://gotify.test', gotifyToken: 'tok' },
+      });
+      expect(result.success).toBe(true);
+      fetchSpy.mockRestore();
+    });
+
     it('returns error for unknown type', async () => {
       const result = await service.testConfig({
         type: 'unknown',

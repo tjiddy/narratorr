@@ -1,10 +1,13 @@
 import { fetchApi } from './client.js';
 import { type TestResult } from './settings.js';
+import type { notifierTypeSchema } from '../../../shared/schemas.js';
+
+type NotifierType = (typeof notifierTypeSchema)['options'][number];
 
 export interface Notifier {
   id: number;
   name: string;
-  type: 'webhook' | 'discord' | 'script';
+  type: NotifierType;
   enabled: boolean;
   events: string[];
   settings: Record<string, unknown>;

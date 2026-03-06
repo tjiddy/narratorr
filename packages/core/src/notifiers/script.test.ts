@@ -152,6 +152,63 @@ describe('ScriptNotifier', () => {
     );
   });
 
+  it('sets upgrade event environment variables', async () => {
+    mockExec.mockImplementation((_cmd, _opts, callback) => {
+      const cb = callback as (error: Error | null, stdout: string, stderr: string) => void;
+      cb(null, '', '');
+      return {} as ReturnType<typeof exec>;
+    });
+
+    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
+    await notifier.send('on_upgrade', {
+      event: 'on_upgrade',
+      book: { title: 'Dune' },
+      upgrade: { previousMbPerHour: 64, newMbPerHour: 128, previousCodec: 'mp3', newCodec: 'aac' },
+    });
+
+    expect(mockExec).toHaveBeenCalledWith(
+      '/scripts/notify.sh',
+      expect.objectContaining({
+        env: expect.objectContaining({
+          NARRATORR_EVENT: 'on_upgrade',
+          NARRATORR_UPGRADE_PREV_MBHR: '64',
+          NARRATORR_UPGRADE_NEW_MBHR: '128',
+          NARRATORR_UPGRADE_PREV_CODEC: 'mp3',
+          NARRATORR_UPGRADE_NEW_CODEC: 'aac',
+        }),
+      }),
+      expect.any(Function),
+    );
+  });
+
+  it('sets health event environment variables', async () => {
+    mockExec.mockImplementation((_cmd, _opts, callback) => {
+      const cb = callback as (error: Error | null, stdout: string, stderr: string) => void;
+      cb(null, '', '');
+      return {} as ReturnType<typeof exec>;
+    });
+
+    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
+    await notifier.send('on_health_issue', {
+      event: 'on_health_issue',
+      health: { checkName: 'Disk Space', previousState: 'healthy', currentState: 'warning', message: 'Low disk' },
+    });
+
+    expect(mockExec).toHaveBeenCalledWith(
+      '/scripts/notify.sh',
+      expect.objectContaining({
+        env: expect.objectContaining({
+          NARRATORR_EVENT: 'on_health_issue',
+          NARRATORR_HEALTH_CHECK: 'Disk Space',
+          NARRATORR_HEALTH_PREV_STATE: 'healthy',
+          NARRATORR_HEALTH_CURR_STATE: 'warning',
+          NARRATORR_HEALTH_MESSAGE: 'Low disk',
+        }),
+      }),
+      expect.any(Function),
+    );
+  });
+
   it('sets failure event environment variables', async () => {
     mockExec.mockImplementation((_cmd, _opts, callback) => {
       const cb = callback as (error: Error | null, stdout: string, stderr: string) => void;

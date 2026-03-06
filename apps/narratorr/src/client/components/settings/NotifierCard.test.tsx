@@ -119,6 +119,17 @@ describe('NotifierCard — view mode', () => {
     expect(screen.getByText('Sent!')).toBeInTheDocument();
   });
 
+  it('displays new adapter type labels in view mode', () => {
+    const telegramNotifier = createMockNotifier({
+      id: 3, name: 'My Telegram', type: 'telegram',
+      settings: { botToken: '123:ABC', chatId: '-100123' },
+    });
+    renderWithProviders(
+      <NotifierCard notifier={telegramNotifier} mode="view" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
+    );
+    expect(screen.getByText(/Telegram — Chat -100123/)).toBeInTheDocument();
+  });
+
   it('shows discord subtitle with truncated URL', () => {
     renderWithProviders(
       <NotifierCard
@@ -197,6 +208,20 @@ describe('NotifierCard — create mode', () => {
     expect(screen.getByText('Timeout (seconds)')).toBeInTheDocument();
   });
 
+  it('shows email fields when type is changed to email', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <NotifierCard mode="create" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
+    );
+
+    const typeSelect = screen.getAllByRole('combobox')[0];
+    await user.selectOptions(typeSelect, 'email');
+
+    expect(screen.getByPlaceholderText('smtp.gmail.com')).toBeInTheDocument();
+    expect(screen.getByText('From Address')).toBeInTheDocument();
+    expect(screen.getByText('To Address')).toBeInTheDocument();
+  });
+
   it('shows event checkboxes with all selected by default', () => {
     renderWithProviders(
       <NotifierCard
@@ -210,6 +235,8 @@ describe('NotifierCard — create mode', () => {
     expect(screen.getByText('Download Complete')).toBeInTheDocument();
     expect(screen.getByText('Import')).toBeInTheDocument();
     expect(screen.getByText('Failure')).toBeInTheDocument();
+    expect(screen.getByText('Upgrade')).toBeInTheDocument();
+    expect(screen.getByText('Health Issue')).toBeInTheDocument();
 
     const checkboxes = screen.getAllByRole('checkbox');
     checkboxes.forEach((cb) => expect(cb).toBeChecked());

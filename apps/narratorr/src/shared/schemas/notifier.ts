@@ -1,11 +1,12 @@
 import { z } from 'zod';
+import { NOTIFIER_REGISTRY } from '../notifier-registry.js';
 
 // ============================================================================
 // Notifier schemas
 // ============================================================================
 
-export const notifierTypeSchema = z.enum(['webhook', 'discord', 'script']);
-export const notificationEventSchema = z.enum(['on_grab', 'on_download_complete', 'on_import', 'on_failure']);
+export const notifierTypeSchema = z.enum(['webhook', 'discord', 'script', 'email', 'telegram', 'slack', 'pushover', 'ntfy', 'gotify']);
+export const notificationEventSchema = z.enum(['on_grab', 'on_download_complete', 'on_import', 'on_failure', 'on_upgrade', 'on_health_issue']);
 
 export const createNotifierSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100),
@@ -31,27 +32,45 @@ export const createNotifierFormSchema = z.object({
   enabled: z.boolean(),
   events: z.array(notificationEventSchema).min(1, 'Select at least one event'),
   settings: z.object({
+    // Webhook
     url: z.string().optional(),
     method: z.enum(['POST', 'PUT']).optional(),
     headers: z.string().optional(),
     bodyTemplate: z.string().optional(),
+    // Discord
     webhookUrl: z.string().optional(),
     includeCover: z.boolean().optional(),
+    // Script
     path: z.string().optional(),
     timeout: z.number().int().min(1).max(300).optional(),
+    // Email
+    smtpHost: z.string().optional(),
+    smtpPort: z.number().int().min(1).max(65535).optional(),
+    smtpUser: z.string().optional(),
+    smtpPass: z.string().optional(),
+    smtpTls: z.boolean().optional(),
+    fromAddress: z.string().optional(),
+    toAddress: z.string().optional(),
+    // Telegram
+    botToken: z.string().optional(),
+    chatId: z.string().optional(),
+    // Slack (uses webhookUrl)
+    // Pushover
+    pushoverToken: z.string().optional(),
+    pushoverUser: z.string().optional(),
+    // ntfy
+    ntfyTopic: z.string().optional(),
+    ntfyServer: z.string().optional(),
+    // Gotify
+    gotifyUrl: z.string().optional(),
+    gotifyToken: z.string().optional(),
   }),
 }).superRefine((data, ctx) => {
-  if (data.type === 'webhook') {
-    if (!data.settings.url) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'url'], message: 'URL is required' });
-    }
-  } else if (data.type === 'discord') {
-    if (!data.settings.webhookUrl) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'webhookUrl'], message: 'Webhook URL is required' });
-    }
-  } else if (data.type === 'script') {
-    if (!data.settings.path) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'path'], message: 'Script path is required' });
+  const meta = NOTIFIER_REGISTRY[data.type];
+  if (!meta) return;
+  for (const field of meta.requiredFields) {
+    if (!data.settings[field.path as keyof typeof data.settings]) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', field.path], message: field.message });
     }
   }
 });
