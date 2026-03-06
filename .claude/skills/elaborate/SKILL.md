@@ -48,10 +48,27 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > 7. Identify touch points — wiring files, registries, route registrations
    > 8. Note naming conventions, folder structure, and test patterns used by similar features
    >
+   > **Deep source analysis for test plan (CRITICAL — read actual source, not just signatures):**
+   > 9. For every service/util/route the issue will modify or call, READ THE FULL SOURCE and identify:
+   >    - Null/zero/undefined guards and what happens when they trigger (e.g., returns null, throws, skips)
+   >    - Division, ratio, or threshold calculations and their boundary behavior
+   >    - Optional fields on interfaces that callers may or may not provide
+   >    - Falsy coercion gotchas (e.g., `value || fallback` where `value=0` is valid but falsy)
+   >    - Protocol/type-specific logic (e.g., filters that apply to torrent but not usenet)
+   >    - Transient vs persisted fields (flags that trigger actions but aren't stored in DB)
+   >    - Fire-and-forget patterns where failure must not break the parent operation
+   >    - Race conditions: data read in one step, used in a later step where it may have changed
+   > 10. For each finding, note the specific file, line range, and the test scenario it implies
+   >
+   > Include a new section in the return structure:
+   > ```
+   > DEFECT VECTORS: <list of specific edge cases found by reading source, with file:line references and implied test scenarios>
+   > ```
+   >
    > **Overlap and dependencies:**
-   > 9. Run `node scripts/gitea.ts prs` — any open PR touching the same area?
-   > 10. Check for `status/in-progress` issues that overlap in scope
-   > 11. For any issues referenced as dependencies (e.g., "depends on #X"), run `node scripts/gitea.ts issue <dep-id>` to verify status
+   > 11. Run `node scripts/gitea.ts prs` — any open PR touching the same area?
+   > 12. Check for `status/in-progress` issues that overlap in scope
+   > 13. For any issues referenced as dependencies (e.g., "depends on #X"), run `node scripts/gitea.ts issue <dep-id>` to verify status
    >
    > Return this structure:
    > ```
@@ -70,6 +87,10 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Split findings into two channels:
      - **Durable** (written to issue body): Missing AC items, test plan items, scope boundaries inferred from codebase
      - **Ephemeral** (kept in verdict output only, NOT written to issue): File paths, interface signatures, wiring points, similar feature references
+   - **Test plan gap-fill is mandatory.** If the test plan is missing or incomplete, build one using:
+     - The DEFECT VECTORS from the subagent's source analysis (each vector → one or more test cases)
+     - The test plan completeness standard from CLAUDE.md (schema validation, boundary values, null/missing data, filter interactions, error isolation, transient vs persisted, race conditions, end-to-end flows)
+     - Test cases should be specific and actionable (e.g., "Results with estimated MB/hr at exactly the grab floor are included" not "test grab floor")
    - If durable content was found, update the issue body:
      - Preserve ALL existing content
      - Append new sections (e.g., `## Implementation Notes (auto-generated)`)

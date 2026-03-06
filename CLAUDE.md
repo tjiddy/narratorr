@@ -115,6 +115,18 @@ All new/changed code must include tests. Run `pnpm test` (Vitest via Turborepo) 
 - **Interaction chains over snapshots.** The highest-value tests exercise a full flow: action → state change → UI update → API call → response → UI update. These catch the integration bugs that unit tests miss.
 - **Read source before writing assertions.** When testing components that format or transform values, read the formatter/helper source first to understand edge cases (zero values, boundary conditions, format skipping). Most test assertion mismatches come from assuming output format without checking.
 
+**Test plan completeness standard:** Test plans in issue specs must cover these categories where applicable:
+- **Schema validation** — positive and negative cases (valid input accepted, invalid input rejected with correct error)
+- **Boundary values** — zero, exactly-at-threshold (inclusive/exclusive), null/undefined/missing fields, empty arrays/strings
+- **Null/missing data paths** — what happens when optional fields are absent, when calculations can't be performed, when external data is unavailable
+- **Filter/feature interactions** — when multiple filters combine, when features overlap (e.g., quality floor + protocol preference + min seeders all applied to same result set)
+- **Error isolation** — fire-and-forget failures don't break the parent operation, catch blocks are exercised, API rejections surface user-visible errors
+- **Transient vs persisted state** — flags that trigger actions but aren't stored, UI defaults that come from settings, values that change between request and processing
+- **Race conditions & stale data** — concurrent operations on the same resource, data changing between read and use
+- **End-to-end flows** — at least one integration test per user interaction that exercises the full path (UI action → API call → service logic → DB/external system → response → UI update)
+
+Not every category applies to every issue. The standard is: if a category is relevant and missing, the test plan has a gap.
+
 **Coverage gate:** `/verify` runs coverage on files changed in the branch. Any source file (non-test) at 0% coverage is a hard block on handoff. This catches entirely untested new code — not a substitute for behavioral tests, but a safety net against shipping with no tests at all.
 
 **Required before PR:** `pnpm lint`, `pnpm test` (zero failures), `pnpm typecheck`, `pnpm build`.
