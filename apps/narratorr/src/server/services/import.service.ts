@@ -1,5 +1,5 @@
 /* eslint-disable max-lines -- linear import pipeline with copy, process, rename, tag, enrich steps */
-import { eq } from 'drizzle-orm';
+import { eq, and, isNotNull } from 'drizzle-orm';
 import { mkdir, cp, stat, readdir, rm } from 'node:fs/promises';
 import { join, extname, basename, normalize } from 'node:path';
 import type { Db } from '@narratorr/db';
@@ -386,7 +386,7 @@ export class ImportService {
     const completedDownloads = await this.db
       .select()
       .from(downloads)
-      .where(eq(downloads.status, 'completed'));
+      .where(and(eq(downloads.status, 'completed'), isNotNull(downloads.externalId)));
 
     if (completedDownloads.length === 0) {
       this.log.debug('No completed downloads to import');

@@ -31,7 +31,7 @@ export interface DownloadClientAdapter {
   readonly protocol: DownloadProtocol;
   readonly supportsCategories: boolean;
 
-  addDownload(url: string, options?: AddDownloadOptions): Promise<string>;
+  addDownload(url: string, options?: AddDownloadOptions): Promise<string | null>;
   getDownload(id: string): Promise<DownloadItemInfo | null>;
   getAllDownloads(category?: string): Promise<DownloadItemInfo[]>;
   getCategories(): Promise<string[]>;

@@ -4,7 +4,7 @@ import { type TestResult } from './settings.js';
 export interface DownloadClient {
   id: number;
   name: string;
-  type: 'qbittorrent' | 'transmission' | 'sabnzbd' | 'nzbget';
+  type: 'qbittorrent' | 'transmission' | 'sabnzbd' | 'nzbget' | 'deluge' | 'blackhole';
   enabled: boolean;
   priority: number;
   settings: Record<string, unknown>;

@@ -206,6 +206,61 @@ describe('DownloadClientService', () => {
       expect(result).not.toBeNull();
       expect(result!.name).toBe('qBittorrent');
     });
+
+    const blackholeTorrent = {
+      ...mockClient,
+      id: 10,
+      name: 'Blackhole Torrent',
+      type: 'blackhole' as const,
+      priority: 50,
+      settings: { watchDir: '/watch', protocol: 'torrent' },
+    };
+    const blackholeUsenet = {
+      ...mockClient,
+      id: 11,
+      name: 'Blackhole Usenet',
+      type: 'blackhole' as const,
+      priority: 50,
+      settings: { watchDir: '/watch', protocol: 'usenet' },
+    };
+
+    it('selects Blackhole with settings.protocol matching torrent', async () => {
+      db.select.mockReturnValue(mockDbChain([blackholeTorrent]));
+
+      const result = await service.getFirstEnabledForProtocol('torrent');
+      expect(result).not.toBeNull();
+      expect(result!.name).toBe('Blackhole Torrent');
+    });
+
+    it('selects Blackhole with settings.protocol matching usenet', async () => {
+      db.select.mockReturnValue(mockDbChain([blackholeUsenet]));
+
+      const result = await service.getFirstEnabledForProtocol('usenet');
+      expect(result).not.toBeNull();
+      expect(result!.name).toBe('Blackhole Usenet');
+    });
+
+    it('does NOT select Blackhole torrent for usenet protocol', async () => {
+      db.select.mockReturnValue(mockDbChain([blackholeTorrent]));
+
+      const result = await service.getFirstEnabledForProtocol('usenet');
+      expect(result).toBeNull();
+    });
+
+    it('selects Deluge for torrent protocol', async () => {
+      const delugeClient = {
+        ...mockClient,
+        id: 12,
+        name: 'Deluge',
+        type: 'deluge' as const,
+        priority: 50,
+      };
+      db.select.mockReturnValue(mockDbChain([delugeClient]));
+
+      const result = await service.getFirstEnabledForProtocol('torrent');
+      expect(result).not.toBeNull();
+      expect(result!.name).toBe('Deluge');
+    });
   });
 
   describe('testConfig', () => {
@@ -447,16 +502,42 @@ describe('DownloadClientService', () => {
       expect(adapter).not.toBeNull();
     });
 
+    it('creates deluge adapter', async () => {
+      const delugeClient = {
+        ...mockClient,
+        id: 8,
+        type: 'deluge' as const,
+        settings: { host: 'localhost', port: 8112, password: 'deluge', useSsl: false },
+      };
+      db.select.mockReturnValue(mockDbChain([delugeClient]));
+
+      const adapter = await service.getAdapter(8);
+      expect(adapter).not.toBeNull();
+    });
+
+    it('creates blackhole adapter', async () => {
+      const blackholeClient = {
+        ...mockClient,
+        id: 9,
+        type: 'blackhole' as const,
+        settings: { watchDir: '/downloads/watch', protocol: 'torrent' },
+      };
+      db.select.mockReturnValue(mockDbChain([blackholeClient]));
+
+      const adapter = await service.getAdapter(9);
+      expect(adapter).not.toBeNull();
+    });
+
     it('throws for unknown client type', async () => {
       const unknownClient = {
         ...mockClient,
-        id: 8,
-        type: 'deluge' as never,
+        id: 10,
+        type: 'unknown' as never,
         settings: {},
       };
       db.select.mockReturnValue(mockDbChain([unknownClient]));
 
-      await expect(service.getAdapter(8)).rejects.toThrow('Unknown download client type');
+      await expect(service.getAdapter(10)).rejects.toThrow('Unknown download client type');
     });
   });
 });

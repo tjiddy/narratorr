@@ -8,6 +8,7 @@ const TYPE_FIELDS: Record<string, { username: boolean; password: boolean; useSsl
   transmission: { username: true, password: true, useSsl: true, apiKey: false },
   sabnzbd: { username: false, password: false, useSsl: true, apiKey: true },
   nzbget: { username: true, password: true, useSsl: true, apiKey: false },
+  deluge: { username: false, password: true, useSsl: true, apiKey: false },
 };
 
 const SUPPORTS_CATEGORIES: Record<string, boolean> = {
@@ -15,6 +16,7 @@ const SUPPORTS_CATEGORIES: Record<string, boolean> = {
   sabnzbd: true,
   nzbget: true,
   transmission: false,
+  deluge: true,
 };
 
 interface DownloadClientFieldsProps {

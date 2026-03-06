@@ -5,6 +5,7 @@ import type { DownloadClient, TestResult } from '@/lib/api';
 import { TestResultMessage } from '@/components/TestResultMessage';
 import { SettingsFormActions } from './SettingsFormActions';
 import { DownloadClientFields } from './DownloadClientFields';
+import { BlackholeFields } from './BlackholeFields';
 import { RemotePathMappingsSubsection } from './RemotePathMappingsSubsection';
 import {
   createDownloadClientFormSchema,
@@ -75,7 +76,10 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
             {downloadClientTypeSchema.options.map((t) => <option key={t} value={t}>{TYPE_LABELS[t] || t}</option>)}
           </select>
         </div>
-        <DownloadClientFields selectedType={selectedType} register={register} errors={errors} clientId={client?.id} setValue={setValue} getValues={getValues} isDirty={isDirty} isEdit={isEdit} />
+        {selectedType === 'blackhole'
+          ? <BlackholeFields register={register} errors={errors} isEdit={isEdit} />
+          : <DownloadClientFields selectedType={selectedType} register={register} errors={errors} clientId={client?.id} setValue={setValue} getValues={getValues} isDirty={isDirty} isEdit={isEdit} />
+        }
       </div>
       {!isImplemented && <p className="text-sm text-amber-500">Adapter not yet implemented. Config will be saved for when the adapter is available.</p>}
       {formTestResult && <TestResultMessage success={formTestResult.success} message={formTestResult.message} />}

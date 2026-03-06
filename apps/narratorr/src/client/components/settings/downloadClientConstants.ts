@@ -1,12 +1,14 @@
 import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
 
-export const IMPLEMENTED_TYPES = ['qbittorrent', 'transmission', 'sabnzbd', 'nzbget'];
+export const IMPLEMENTED_TYPES = ['qbittorrent', 'transmission', 'sabnzbd', 'nzbget', 'deluge', 'blackhole'];
 
 export const TYPE_LABELS: Record<string, string> = {
   qbittorrent: 'qBittorrent',
   transmission: 'Transmission',
   sabnzbd: 'SABnzbd',
   nzbget: 'NZBGet',
+  deluge: 'Deluge',
+  blackhole: 'Blackhole',
 };
 
 export const defaultSettings: Record<string, CreateDownloadClientFormData['settings']> = {
@@ -38,6 +40,17 @@ export const defaultSettings: Record<string, CreateDownloadClientFormData['setti
     password: '',
     category: '',
   },
+  deluge: {
+    host: '',
+    port: 8112,
+    password: '',
+    useSsl: false,
+    category: '',
+  },
+  blackhole: {
+    watchDir: '',
+    protocol: 'torrent',
+  },
 };
 
 export const defaultValues: CreateDownloadClientFormData = {
@@ -56,7 +69,7 @@ export const defaultValues: CreateDownloadClientFormData = {
 };
 
 export function settingsFromClient(
-  client: { settings: unknown },
+  client: { settings: unknown; type?: string },
 ): CreateDownloadClientFormData['settings'] {
   const s = client.settings as Record<string, unknown>;
   return {
@@ -67,5 +80,7 @@ export function settingsFromClient(
     useSsl: (s.useSsl as boolean) || false,
     apiKey: (s.apiKey as string) || '',
     category: (s.category as string) || '',
+    watchDir: (s.watchDir as string) || '',
+    protocol: (s.protocol as 'torrent' | 'usenet') || 'torrent',
   };
 }

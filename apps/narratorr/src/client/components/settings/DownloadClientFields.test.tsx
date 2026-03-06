@@ -83,6 +83,26 @@ describe('DownloadClientFields', () => {
     expect(apiKey).toHaveValue('abc123');
   });
 
+  it('renders deluge fields with password but no username', async () => {
+    const user = userEvent.setup();
+    render(<FieldWrapper type="deluge" />);
+
+    expect(screen.getByText('Host')).toBeInTheDocument();
+    expect(screen.getByText('Port')).toBeInTheDocument();
+    expect(screen.getByText('Password')).toBeInTheDocument();
+    expect(screen.getByText('SSL')).toBeInTheDocument();
+    expect(screen.queryByText('Username')).not.toBeInTheDocument();
+
+    const password = screen.getByLabelText('Password');
+    await user.type(password, 'deluge');
+    expect(password).toHaveValue('deluge');
+  });
+
+  it('shows fetch button for deluge (supports categories)', () => {
+    render(<FieldWrapper type="deluge" />);
+    expect(screen.getByRole('button', { name: /fetch/i })).toBeInTheDocument();
+  });
+
   it('defaults to qbittorrent fields for unknown type and accepts input', async () => {
     const user = userEvent.setup();
     render(<FieldWrapper type="unknown" />);

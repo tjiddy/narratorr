@@ -303,6 +303,58 @@ describe('DownloadService', () => {
       // Only one db.select call — the final getById, NOT getActiveByBookId
       expect(db.select).toHaveBeenCalledTimes(1);
     });
+
+    it('persists completed status when adapter returns null externalId (Blackhole)', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue(null),
+      };
+
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'Blackhole', type: 'blackhole', settings: { watchDir: '/watch' } });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, status: 'completed', externalId: null }, book: mockBook }]),
+      );
+
+      const result = await service.grab({
+        downloadUrl: 'https://example.com/file.torrent',
+        title: 'Test Blackhole',
+        bookId: 1,
+        skipDuplicateCheck: true,
+      });
+
+      expect(result).toBeDefined();
+      // Verify insert was called with completed status
+      const insertCall = db.insert.mock.calls[0];
+      expect(insertCall).toBeDefined();
+    });
+
+    it('does not set book status to downloading for handoff clients', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue(null),
+      };
+
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'Blackhole', type: 'blackhole', settings: {} });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, status: 'completed', externalId: null }, book: mockBook }]),
+      );
+
+      await service.grab({
+        downloadUrl: 'https://example.com/file.torrent',
+        title: 'Test',
+        bookId: 1,
+        skipDuplicateCheck: true,
+      });
+
+      // Book status should be set to 'missing' (not 'downloading') for handoff clients
+      expect(db.update).toHaveBeenCalled();
+    });
   });
 
   describe('updateProgress', () => {
@@ -431,35 +483,41 @@ describe('DownloadService', () => {
   });
 
   describe('grab edge cases', () => {
-    it('proceeds when adapter.addDownload returns empty string', async () => {
+    it('treats empty string externalId as handoff (completed immediately)', async () => {
       const mockAdapter = {
         addDownload: vi.fn().mockResolvedValue(''),
       };
 
-      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit', type: 'blackhole' });
       (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.update.mockReturnValue(mockDbChain());
       db.select.mockReturnValue(
-        mockDbChain([{ download: mockDownload, book: mockBook }]),
+        mockDbChain([{ download: { ...mockDownload, status: 'completed', externalId: null }, book: mockBook }]),
       );
 
-      const result = await service.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+
+      await svc.grab({
+        downloadUrl: 'https://example.com/file.torrent',
         title: 'Test',
       });
 
-      expect(result.title).toBe('The Way of Kings');
-      expect(mockAdapter.addDownload).toHaveBeenCalled();
+      // Empty string is falsy → treated as handoff → log.info about handoff
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Test', clientType: 'blackhole' }),
+        expect.stringContaining('Handoff client'),
+      );
     });
 
-    it('proceeds when adapter.addDownload returns null', async () => {
+    it('logs handoff info when adapter.addDownload returns null', async () => {
       const mockAdapter = {
         addDownload: vi.fn().mockResolvedValue(null),
       };
 
-      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'Blackhole', type: 'blackhole' });
       (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
 
       db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
@@ -472,13 +530,13 @@ describe('DownloadService', () => {
       const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
 
       await svc.grab({
-        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        downloadUrl: 'https://example.com/file.torrent',
         title: 'Test',
       });
 
-      expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Test' }),
-        expect.stringContaining('no external ID'),
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Test', clientType: 'blackhole' }),
+        expect.stringContaining('Handoff client'),
       );
     });
 

@@ -106,6 +106,95 @@ describe('createDownloadClientFormSchema', () => {
     });
   });
 
+  describe('superRefine — blackhole requires watchDir and protocol', () => {
+    it('accepts blackhole with watchDir and protocol', () => {
+      const result = createDownloadClientFormSchema.safeParse({
+        ...validBase,
+        type: 'blackhole',
+        settings: { watchDir: '/downloads/watch', protocol: 'torrent' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects blackhole without watchDir', () => {
+      const result = createDownloadClientFormSchema.safeParse({
+        ...validBase,
+        type: 'blackhole',
+        settings: { protocol: 'torrent' },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(
+          expect.objectContaining({
+            path: ['settings', 'watchDir'],
+            message: 'Watch directory is required',
+          }),
+        );
+      }
+    });
+
+    it('rejects blackhole without protocol', () => {
+      const result = createDownloadClientFormSchema.safeParse({
+        ...validBase,
+        type: 'blackhole',
+        settings: { watchDir: '/downloads/watch' },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(
+          expect.objectContaining({
+            path: ['settings', 'protocol'],
+            message: 'Protocol is required',
+          }),
+        );
+      }
+    });
+
+    it('does NOT require host/port for blackhole', () => {
+      const result = createDownloadClientFormSchema.safeParse({
+        ...validBase,
+        type: 'blackhole',
+        settings: { watchDir: '/downloads/watch', protocol: 'usenet' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts deluge type', () => {
+      const result = createDownloadClientFormSchema.safeParse({
+        ...validBase,
+        type: 'deluge',
+        settings: { host: 'localhost', port: 8112, password: 'deluge' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts blackhole with usenet protocol', () => {
+      const result = createDownloadClientFormSchema.safeParse({
+        ...validBase,
+        type: 'blackhole',
+        settings: { watchDir: '/watch', protocol: 'usenet' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects blackhole with empty watchDir', () => {
+      const result = createDownloadClientFormSchema.safeParse({
+        ...validBase,
+        type: 'blackhole',
+        settings: { watchDir: '', protocol: 'torrent' },
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(
+          expect.objectContaining({
+            path: ['settings', 'watchDir'],
+            message: 'Watch directory is required',
+          }),
+        );
+      }
+    });
+  });
+
   describe('base field validation', () => {
     it('rejects empty name', () => {
       const result = createDownloadClientFormSchema.safeParse({

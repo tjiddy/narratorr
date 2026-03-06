@@ -4,7 +4,7 @@ import { z } from 'zod';
 // Download Client schemas
 // ============================================================================
 
-export const downloadClientTypeSchema = z.enum(['qbittorrent', 'transmission', 'sabnzbd', 'nzbget']);
+export const downloadClientTypeSchema = z.enum(['qbittorrent', 'transmission', 'sabnzbd', 'nzbget', 'deluge', 'blackhole']);
 
 // Server-side: accepts any settings shape (type-specific validation is client-side only)
 export const createDownloadClientSchema = z.object({
@@ -40,8 +40,19 @@ export const createDownloadClientFormSchema = z.object({
     useSsl: z.boolean().optional(),
     apiKey: z.string().optional(),
     category: z.string().optional(),
+    watchDir: z.string().optional(),
+    protocol: z.enum(['torrent', 'usenet']).optional(),
   }),
 }).superRefine((data, ctx) => {
+  if (data.type === 'blackhole') {
+    if (!data.settings.watchDir) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'watchDir'], message: 'Watch directory is required' });
+    }
+    if (!data.settings.protocol) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'protocol'], message: 'Protocol is required' });
+    }
+    return; // Blackhole doesn't need host/port
+  }
   if (!data.settings.host) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'host'], message: 'Host is required' });
   }

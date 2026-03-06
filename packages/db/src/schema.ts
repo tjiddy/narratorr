@@ -90,7 +90,7 @@ export const indexers = sqliteTable('indexers', {
 export const downloadClients = sqliteTable('download_clients', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: ['qbittorrent', 'transmission', 'sabnzbd', 'nzbget'] }).notNull(),
+  type: text('type', { enum: ['qbittorrent', 'transmission', 'sabnzbd', 'nzbget', 'deluge', 'blackhole'] }).notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   priority: integer('priority').notNull().default(50),
   settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),

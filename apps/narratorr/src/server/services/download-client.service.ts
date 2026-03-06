@@ -7,12 +7,16 @@ import {
   SABnzbdClient,
   NZBGetClient,
   TransmissionClient,
+  DelugeClient,
+  BlackholeClient,
   type DownloadClientAdapter,
   type DownloadProtocol,
   type QBittorrentConfig,
   type SABnzbdConfig,
   type NZBGetConfig,
   type TransmissionConfig,
+  type DelugeConfig,
+  type BlackholeConfig,
 } from '@narratorr/core';
 
 type DownloadClientRow = typeof downloadClients.$inferSelect;
@@ -21,8 +25,10 @@ type NewDownloadClient = typeof downloadClients.$inferInsert;
 const CLIENT_PROTOCOL: Record<string, DownloadProtocol> = {
   qbittorrent: 'torrent',
   transmission: 'torrent',
+  deluge: 'torrent',
   sabnzbd: 'usenet',
   nzbget: 'usenet',
+  // blackhole uses per-instance settings.protocol — resolved in getFirstEnabledForProtocol
 };
 
 export class DownloadClientService {
@@ -63,7 +69,13 @@ export class DownloadClientService {
       .from(downloadClients)
       .where(eq(downloadClients.enabled, true))
       .orderBy(downloadClients.priority);
-    const match = results.find((c) => CLIENT_PROTOCOL[c.type] === protocol) || null;
+    const match = results.find((c) => {
+      if (c.type === 'blackhole') {
+        const settings = c.settings as Record<string, unknown>;
+        return (settings.protocol as string) === protocol;
+      }
+      return CLIENT_PROTOCOL[c.type] === protocol;
+    }) || null;
     this.log.debug({ protocol, found: match?.name ?? null, candidates: results.length }, 'Download client lookup for protocol');
     return match;
   }
@@ -121,7 +133,7 @@ export class DownloadClientService {
     return this.getAdapter(client.id);
   }
 
-  // eslint-disable-next-line complexity -- switch/case factory for 4 client types
+  // eslint-disable-next-line complexity -- switch/case factory for 6 client types
   private createAdapter(client: DownloadClientRow): DownloadClientAdapter {
     const settings = client.settings as Record<string, unknown>;
 
@@ -168,6 +180,25 @@ export class DownloadClientService {
         };
         this.log.debug({ client: client.name, type: client.type, host: config.host, port: config.port }, 'Creating download client adapter');
         return new TransmissionClient(config);
+      }
+      case 'deluge': {
+        const config: DelugeConfig = {
+          host: (settings.host as string) || 'localhost',
+          port: (settings.port as number) || 8112,
+          password: (settings.password as string) || '',
+          useSsl: (settings.useSsl as boolean) || false,
+          onWarn: (msg) => this.log.warn(msg),
+        };
+        this.log.debug({ client: client.name, type: client.type, host: config.host, port: config.port }, 'Creating download client adapter');
+        return new DelugeClient(config);
+      }
+      case 'blackhole': {
+        const config: BlackholeConfig = {
+          watchDir: (settings.watchDir as string) || '',
+          protocol: ((settings.protocol as string) || 'torrent') as 'torrent' | 'usenet',
+        };
+        this.log.debug({ client: client.name, type: client.type, watchDir: config.watchDir, protocol: config.protocol }, 'Creating download client adapter');
+        return new BlackholeClient(config);
       }
       default:
         throw new Error(`Unknown download client type: ${client.type}`);

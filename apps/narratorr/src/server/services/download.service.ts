@@ -142,6 +142,7 @@ export class DownloadService {
     }));
   }
 
+  // eslint-disable-next-line complexity -- linear grab flow with per-field conditionals for handoff vs tracked clients
   async grab(params: {
     downloadUrl: string;
     title: string;
@@ -180,8 +181,13 @@ export class DownloadService {
     this.log.debug({ protocol, downloadUrl: params.downloadUrl, infoHash, clientId: client.id, clientName: client.name, category }, 'Sending download to client');
     const externalId = await adapter.addDownload(params.downloadUrl, category ? { category } : undefined);
 
-    if (!externalId) {
-      this.log.warn({ title: params.title, downloadUrl: params.downloadUrl }, 'Download client returned no external ID');
+    // Handoff clients (e.g. Blackhole) return null externalId — mark as completed immediately
+    const isHandoff = !externalId;
+    const downloadStatus = isHandoff ? 'completed' as const : 'downloading' as const;
+    const downloadProgress = isHandoff ? 1 : 0;
+    const downloadCompletedAt = isHandoff ? new Date() : undefined;
+    if (isHandoff) {
+      this.log.info({ title: params.title, clientType: client.type }, 'Handoff client — download completed immediately (no progress tracking)');
     }
 
     // Create download record
@@ -197,16 +203,19 @@ export class DownloadService {
         downloadUrl: params.downloadUrl,
         size: params.size,
         seeders: params.seeders,
-        status: 'downloading',
-        externalId,
+        status: downloadStatus,
+        progress: downloadProgress,
+        completedAt: downloadCompletedAt,
+        externalId: externalId ?? undefined,
       })
       .returning();
 
     // Update book status if linked
     if (params.bookId) {
+      const bookStatus = isHandoff ? 'missing' as const : 'downloading' as const;
       await this.db
         .update(books)
-        .set({ status: 'downloading', updatedAt: new Date() })
+        .set({ status: bookStatus, updatedAt: new Date() })
         .where(eq(books.id, params.bookId));
     }
 
