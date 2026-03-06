@@ -3,6 +3,7 @@ name: changelog
 description: Generate a categorized changelog from git history and linked Gitea issues.
   Use when user says "changelog", "release notes", or invokes /changelog.
 argument-hint: "[since]"
+model: haiku
 ---
 
 # /changelog [since] — Generate a changelog from git history
@@ -19,41 +20,37 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Steps
 
-1. **Launch an Explore subagent** (via Task tool, subagent_type=Explore) with these instructions:
+1. **Determine the `since` ref:**
+   - If `$ARGUMENTS` is provided, use it as the start ref
+   - Otherwise, find the last tag: `git describe --tags --abbrev=0 2>/dev/null`
+   - If no tags exist, use `HEAD~20` as fallback
 
-   a. Determine the `since` ref:
-      - If `$ARGUMENTS` is provided, use it as the start ref
-      - Otherwise, find the last tag: `git describe --tags --abbrev=0 2>/dev/null`
-      - If no tags exist, use `HEAD~20` as fallback
+2. **Get commits:** `git log --oneline <since>..HEAD`
 
-   b. Get commits: `git log --oneline <since>..HEAD`
+3. **Extract issue references:** Find all `#<id>` patterns in commit messages, deduplicate.
 
-   c. Extract issue references: find all `#<id>` patterns in commit messages, deduplicate
+4. **Fetch issue details:** For each unique issue ID, run `gitea issue <id>` to get:
+   - Title
+   - Type label (`type/feature`, `type/bug`, `type/chore`)
 
-   d. For each unique issue ID, run `gitea issue <id>` to get:
-      - Title
-      - Type label (`type/feature`, `type/bug`, `type/chore`)
+5. **Generate changelog markdown:**
+   ```markdown
+   # Changelog
 
-   e. Group by type and generate markdown:
-      ```markdown
-      # Changelog
+   ## Features
+   - #<id> <title>
 
-      ## Features
-      - #<id> <title>
+   ## Bug Fixes
+   - #<id> <title>
 
-      ## Bug Fixes
-      - #<id> <title>
+   ## Chores
+   - #<id> <title>
 
-      ## Chores
-      - #<id> <title>
+   ## Other
+   - <commits without issue refs, one-line each>
+   ```
 
-      ## Other
-      - <commits without issue refs, one-line each>
-      ```
-
-   f. Return the markdown to main agent
-
-2. **Report the changelog** to the user.
+6. **Report the changelog** to the user.
 
 ## Important
 

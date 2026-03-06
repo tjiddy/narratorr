@@ -57,7 +57,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 4. **Determine flow:**
 
    **Clean flow** (no disputed blocking findings):
-   - Run `/verify` (lint, test, typecheck, build)
+   - Invoke `/verify` via the Skill tool (runs on haiku)
    - If verify fails, fix issues and re-run until clean
    - Push: `git push origin <head-branch>`
    - Post response comment (see template below)

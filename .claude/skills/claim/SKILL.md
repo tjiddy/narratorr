@@ -39,13 +39,32 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Run `gitea prs` and check if any open PR title contains `#<id>`.
    - If one exists, STOP: "PR already open for #<id>: <PR link>"
 
-5. **Explore the codebase** for implementation planning:
-   - Read CLAUDE.md for design principles and conventions
-   - Explore files/modules relevant to the issue scope
-   - Check for overlapping work: `gitea prs`
-   - Check dependencies: `gitea issue <dep-id>` for any referenced issues
-   - Identify relevant patterns, interfaces, wiring points
-   - **Surface past learnings:** Scan `.claude/learnings/` for files whose `scope` or `files` frontmatter matches this issue's labels or target files. Also check `.claude/debt.md` for items in the target area. Include relevant learnings in the claim comment under a **"Known Learnings"** heading — these are things that bit previous implementations in the same area.
+5. **Explore the codebase** via an Explore subagent (keeps file reads out of main context — critical since `/claim` runs inside `/implement`):
+
+   Launch an **Explore subagent** (Agent tool, `subagent_type: "Explore"`) with this prompt:
+
+   > Explore the codebase for implementation planning of issue #<id>: "<issue title>".
+   > Scope labels: <labels>. Key areas from spec: <summarize relevant AC and implementation hints>.
+   >
+   > Do the following and return a structured summary:
+   > 1. Read `CLAUDE.md` for design principles and conventions
+   > 2. Find files/modules relevant to the issue scope — existing patterns, interfaces, wiring points
+   > 3. Check for overlapping work: run `node scripts/gitea.ts prs` and look for PRs touching the same area
+   > 4. Check dependencies: run `node scripts/gitea.ts issue <dep-id>` for any referenced issues to verify status
+   > 5. Scan `.claude/learnings/` for files whose `scope` or `files` frontmatter matches this issue's labels or target files
+   > 6. Check `.claude/debt.md` for items in the target area
+   >
+   > Return this structure:
+   > ```
+   > PATTERNS: <relevant existing patterns and interfaces found>
+   > WIRING POINTS: <files that need modification to wire the feature>
+   > OVERLAPPING WORK: <open PRs in the same area, or "none">
+   > DEPENDENCIES: <dep status, or "none">
+   > KNOWN LEARNINGS: <relevant learnings from .claude/learnings/ and debt items, or "none">
+   > DESIGN CONCERNS: <any SRP/DRY/Open-Closed issues the implementation should watch for>
+   > ```
+
+   Use the subagent's structured output directly in the claim comment (step 6).
 
 ## Phase 2 — Claim
 

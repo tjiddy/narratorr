@@ -15,45 +15,39 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Steps
 
-1. **Launch a general-purpose subagent** (via Task tool, subagent_type=general-purpose) with these instructions:
+1. **Fetch all open issues:** Run `gitea issues` to get all open issues.
 
-   a. Run `gitea issues` to get all open issues.
+2. **Read each issue:** For each issue, run `gitea issue <id>` to get the full body. Parse from body text only (NO codebase exploration):
+   - Acceptance Criteria: present / missing
+   - Test Plan: present / missing
+   - Dependencies: list any `#<id>` references, note if those are open/closed
+   - Labels: extract status, priority, type, scope
 
-   b. For each issue, run `gitea issue <id>` to get the full body. Parse from body text only (NO codebase exploration):
-      - Acceptance Criteria: present / missing
-      - Test Plan: present / missing
-      - Dependencies: list any `#<id>` references, note if those are open/closed
-      - Labels: extract status, priority, type, scope
+3. **Categorize each issue** into one of:
+   - **Ready to Claim** — has `status/ready` label, AC and test plan present, no unmet deps
+   - **Needs Grooming** — missing AC, test plan, or implementation detail
+   - **Blocked on Deps** — references open issues that aren't `status/done`
+   - **Overlapping** — scope overlaps with any `status/in-progress` issue
 
-   c. Categorize each issue into one of:
-      - **Ready to Claim** — has `status/ready` label, AC and test plan present, no unmet deps
-      - **Needs Grooming** — missing AC, test plan, or implementation detail
-      - **Blocked on Deps** — references open issues that aren't `status/done`
-      - **Overlapping** — scope overlaps with any `status/in-progress` issue
+4. **Sort** within each group by priority label (high → medium → low → unlabeled).
 
-   d. Sort within each group by priority label (high → medium → low → unlabeled).
+5. **Report structured results:**
+   ```
+   ## Ready to Claim
+   - #<id> <title> [priority/<x>] — <1-line summary>
 
-   e. Return structured report:
-      ```
-      ## Ready to Claim
-      - #<id> <title> [priority/<x>] — <1-line summary>
+   ## Needs Grooming
+   - #<id> <title> — missing: <AC|test plan|detail>
 
-      ## Needs Grooming
-      - #<id> <title> — missing: <AC|test plan|detail>
+   ## Blocked on Deps
+   - #<id> <title> — waiting on: #<dep-id> (<dep status>)
 
-      ## Blocked on Deps
-      - #<id> <title> — waiting on: #<dep-id> (<dep status>)
+   ## Overlapping
+   - #<id> <title> — overlaps with: #<other-id> (in-progress)
 
-      ## Overlapping
-      - #<id> <title> — overlaps with: #<other-id> (in-progress)
-
-      ## Recommendation
-      Next issue to pick up: #<id> — <why>
-      ```
-
-   **Important:** Tell the subagent that the gitea CLI is `node scripts/gitea.ts` and provide the resolved value so it can run commands.
-
-2. **Report the subagent's output** to the user.
+   ## Recommendation
+   Next issue to pick up: #<id> — <why>
+   ```
 
 3. **Continuous Learning graduation** — after the issue triage, process accumulated learnings and debt:
 

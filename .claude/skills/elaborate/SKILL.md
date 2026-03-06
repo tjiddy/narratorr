@@ -27,28 +27,46 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **Dependencies** — references to other issues (check their status)
    - **Scope boundaries** — what's explicitly out of scope (recommended)
 
-3. **Read workflow history and observations:**
-   - Read `.claude/workflow-log.md` if it exists — scan for entries that touch the same area as this issue (matching file paths, service names, or feature names). Note any recurring workarounds, fix iterations, or infrastructure gaps.
-   - Read `.claude/observations.md` if it exists — look for known debt, gotchas, or patterns relevant to the issue's scope.
-   - Scan `.claude/learnings/` if it exists — grep learning files by scope tags and file paths matching the issue's area. Read any relevant learnings.
-   - Read `.claude/debt.md` if it exists — check for known debt items in the target area.
-   - Carry forward any relevant findings to include in the verdict output under a **"Implementation Hazards"** heading (e.g., "workflow log shows mock update churn in this area", "learning: useMutation passes extra args to mutationFn", "debt: missing mock factories for Book type").
+3. **Explore codebase, history, and dependencies** via an Explore subagent (keeps verbose file reads out of main context):
 
-4. **Explore the codebase for gaps:**
-   - Find similar existing features (e.g., if adding a new adapter, look at existing adapters)
-   - Check interfaces/types relevant to the issue
-   - Identify touch points — wiring files, registries, route registrations
-   - Note naming conventions, folder structure, and test patterns used by similar features
+   Launch an **Explore subagent** (Agent tool, `subagent_type: "Explore"`, thoroughness: "very thorough") with this prompt:
 
-5. **Check for overlapping work:**
-   - Run `gitea prs` — any open PR touching the same area?
-   - Any `status/in-progress` issues that overlap in scope?
+   > Explore the codebase to validate issue #<id>: "<issue title>".
+   > Issue scope: <labels>. Key areas from spec: <summarize AC and implementation hints>.
+   >
+   > Do ALL of the following and return a structured summary:
+   >
+   > **Workflow history:**
+   > 1. Read `.claude/workflow-log.md` — find entries touching the same area (matching file paths, service names, feature names). Note recurring workarounds, fix iterations, infrastructure gaps.
+   > 2. Read `.claude/observations.md` — look for known debt, gotchas, or patterns relevant to the scope.
+   > 3. Scan `.claude/learnings/` — grep learning files by scope tags and file paths matching the issue's area.
+   > 4. Read `.claude/debt.md` — check for known debt items in the target area.
+   >
+   > **Codebase exploration:**
+   > 5. Find similar existing features (e.g., if adding a new adapter, look at existing adapters)
+   > 6. Check interfaces/types relevant to the issue
+   > 7. Identify touch points — wiring files, registries, route registrations
+   > 8. Note naming conventions, folder structure, and test patterns used by similar features
+   >
+   > **Overlap and dependencies:**
+   > 9. Run `node scripts/gitea.ts prs` — any open PR touching the same area?
+   > 10. Check for `status/in-progress` issues that overlap in scope
+   > 11. For any issues referenced as dependencies (e.g., "depends on #X"), run `node scripts/gitea.ts issue <dep-id>` to verify status
+   >
+   > Return this structure:
+   > ```
+   > IMPLEMENTATION HAZARDS: <relevant workflow-log/learnings/debt findings, or "none">
+   > SIMILAR FEATURES: <existing patterns to follow>
+   > INTERFACES & TYPES: <relevant interfaces the implementation will use/extend>
+   > TOUCH POINTS: <wiring files, registries, route registrations>
+   > CONVENTIONS: <naming, folder structure, test patterns>
+   > OVERLAPPING WORK: <open PRs or in-progress issues in the same area, or "none">
+   > DEPENDENCIES: <dep status, or "none">
+   > ```
 
-6. **Check dependencies:**
-   - If the issue references other issues (e.g., "depends on #X"), verify those are `status/done`
-   - Run `gitea issue <dep-id>` for each dependency to check status
+   Use the subagent's structured output directly in the verdict (step 5) and gap-filling (step 4).
 
-7. **Fill gaps — durable content only:**
+4. **Fill gaps — durable content only:**
    - Split findings into two channels:
      - **Durable** (written to issue body): Missing AC items, test plan items, scope boundaries inferred from codebase
      - **Ephemeral** (kept in verdict output only, NOT written to issue): File paths, interface signatures, wiring points, similar feature references
@@ -59,7 +77,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      - Clean up the temp file
    - Only update the body if you're adding genuinely useful durable detail — don't pad it
 
-8. **Report structured readiness verdict.** Use this format:
+5. **Report structured readiness verdict.** Use this format:
 
    ```
    VERDICT: ready | filled | not-ready

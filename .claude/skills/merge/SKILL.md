@@ -5,6 +5,7 @@ description: Merge an approved pull request after verifying approval, quality ga
   or invokes /merge.
 argument-hint: <pr-number>
 disable-model-invocation: true
+model: sonnet
 ---
 
 # /merge <pr-number> — Merge an approved pull request

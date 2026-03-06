@@ -3,6 +3,7 @@ name: verify
 description: Run quality gates (lint, test, typecheck, build) via subagent and return
   a structured pass/fail summary. Use when user says "run checks", "verify", "quality
   gates", or invokes /verify.
+model: haiku
 ---
 
 # /verify — Run quality gates and report structured results

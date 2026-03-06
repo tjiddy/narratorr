@@ -18,24 +18,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 1. **Verify branch:** Run `git branch --show-current`. It must match `feature/issue-<id>-*`. If not, STOP: "Not on the expected feature branch for #<id>."
 
-2. **Run quality gates via subagent** (keeps verbose build output out of main context):
-   Launch a **haiku subagent** (Task tool, `subagent_type: "Bash"`, `model: "haiku"`) with these instructions:
-
-   > Run these commands sequentially from the repo root. Use `--no-color` flag where supported. For each command, capture the exit code and extract only failure details (first 3-5 actionable error lines). Stop on first failure — report remaining as `skipped`. Do NOT fix failures — just report them.
-   >
-   > 1. `pnpm lint` (or project equivalent from CLAUDE.md § Commands)
-   > 2. `pnpm test`
-   > 3. `pnpm typecheck`
-   > 4. `pnpm build`
-   >
-   > Return ONLY this structured summary (no other output):
-   > ```
-   > LINT: pass | fail (N errors: <first 3>)
-   > TEST: pass (N suites, M tests) | fail (N failed: <test names>)
-   > TYPECHECK: pass | fail (<first 5 errors>)
-   > BUILD: pass | fail (<error summary>)
-   > OVERALL: pass | fail
-   > ```
+2. **Run quality gates:** Invoke `/verify` via the Skill tool. It runs on haiku to keep cost down and verbose build output out of main context.
 
    If OVERALL: fail → STOP and report failures (do NOT fix — that's the caller's job). If pass → continue to step 2b.
 
@@ -50,23 +33,29 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      These stubs were created from spec interactions during `/claim`. Each one must be implemented as a real test before handoff.
    - If none remain (or no test files changed), continue to step 2c.
 
-2c. **Test coverage review (HARD GATE).**
-   Review every new or significantly changed source file on this branch:
-   ```bash
-   git diff main --name-only -- '*.ts' '*.tsx' | grep -v '\.test\.'
-   ```
-   For each file, identify the behaviors, branches, and error paths it introduces. Then verify each one has explicit test coverage — either in a co-located test file or in a parent component/integration test that exercises it directly (name the test).
+2c. **Test coverage review (HARD GATE)** via an Explore subagent (keeps file reads out of main context):
 
-   Format the review as a checklist:
-   ```
-   COVERAGE REVIEW:
-   - <file>:
-     - <behavior 1> → tested in <test file>: "<test name>" ✓
-     - <behavior 2> → tested in <test file>: "<test name>" ✓
-     - <behavior 3> → UNTESTED ✗
-   ```
+   Launch an **Explore subagent** (Agent tool, `subagent_type: "Explore"`, thoroughness: "very thorough") with this prompt:
 
-   If any behavior is marked UNTESTED, STOP — write the missing tests, re-run quality gates, then restart from step 2c. Do NOT proceed to push with untested behavior.
+   > Review test coverage for all source files changed on this branch.
+   >
+   > 1. Run: `git diff main --name-only -- '*.ts' '*.tsx' | grep -v '\.test\.'` to get changed source files.
+   > 2. For each source file, read it and identify the behaviors, branches, and error paths it introduces.
+   > 3. Find the co-located test file (e.g., `foo.ts` → `foo.test.ts`) or parent component/integration test files. Read each test file.
+   > 4. Cross-reference: verify each behavior has explicit test coverage. Name the specific test.
+   >
+   > Return ONLY this structured checklist:
+   > ```
+   > COVERAGE REVIEW:
+   > - <file>:
+   >   - <behavior 1> → tested in <test file>: "<test name>" ✓
+   >   - <behavior 2> → tested in <test file>: "<test name>" ✓
+   >   - <behavior 3> → UNTESTED ✗
+   >
+   > RESULT: pass | fail (N untested behaviors)
+   > ```
+
+   If RESULT is `fail` (any behavior marked UNTESTED) → STOP — write the missing tests in the main context, re-run `/verify`, then restart from step 2c. Do NOT proceed to push with untested behavior.
 
 3. **Push the branch:**
    ```bash

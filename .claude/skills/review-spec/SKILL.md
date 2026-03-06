@@ -43,12 +43,35 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 2. **Read project context:**
    - Read `CLAUDE.md` for design principles, testing standards, project philosophy, and architecture patterns
-3. **Explore the codebase** — Do a thorough exploration relevant to the issue scope. This is not a token-saving step — be exhaustive:
-   - Find existing code that the spec will touch or extend
-   - Understand current patterns, interfaces, and data flow in the affected areas
-   - Identify existing tests in the area to understand coverage patterns
-   - Check for related features that might interact or conflict
-   - Look for prior art — has something similar been built elsewhere in the codebase?
+
+3. **Explore the codebase** via an Explore subagent (keeps exhaustive file reads out of main context):
+
+   Launch an **Explore subagent** (Agent tool, `subagent_type: "Explore"`, thoroughness: "very thorough") with this prompt:
+
+   > Exhaustively explore the codebase relevant to issue #<id>: "<issue title>".
+   > Scope labels: <labels>. Key areas from spec: <summarize AC and implementation hints>.
+   >
+   > Be thorough — most high-value review findings come from discovering the spec's assumptions don't match reality.
+   >
+   > 1. Find existing code that the spec will touch or extend
+   > 2. Understand current patterns, interfaces, and data flow in the affected areas
+   > 3. Identify existing tests in the area to understand coverage patterns
+   > 4. Check for related features that might interact or conflict
+   > 5. Look for prior art — has something similar been built elsewhere in the codebase?
+   > 6. Run `node scripts/gitea.ts prs` to check for conflicting open PRs
+   >
+   > Return this structure:
+   > ```
+   > EXISTING CODE: <files/modules the spec will touch, with key interfaces and types>
+   > PATTERNS: <current patterns and data flow in the affected areas>
+   > TEST COVERAGE: <existing tests in the area, what's covered>
+   > RELATED FEATURES: <features that might interact or conflict>
+   > PRIOR ART: <similar implementations elsewhere in the codebase>
+   > CONFLICTING PRS: <open PRs in the same area, or "none">
+   > SPEC ASSUMPTION RISKS: <anything in the codebase that contradicts or complicates spec assumptions>
+   > ```
+
+   Use the subagent's output to inform the spec evaluation in step 4.
 
 4. **Evaluate the spec** against these checklists:
 

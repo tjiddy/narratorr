@@ -36,26 +36,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Commit incrementally with `#<id>` prefix (e.g., `#58 Add Newznab search adapter`)
    - **Stay in scope** — if requirements expand beyond the issue spec, invoke `/block <id>` via the Skill tool and STOP
 
-4. **Run quality gates via subagent** (keeps verbose build output out of main context):
-   Launch a **haiku subagent** (Task tool, `subagent_type: "Bash"`, `model: "haiku"`) with these instructions:
+4. **Run quality gates:** Invoke `/verify` via the Skill tool. It runs on haiku to keep cost down and verbose build output out of main context.
 
-   > Run these commands sequentially from the repo root. Use `--no-color` flag where supported. For each command, capture the exit code and extract only failure details (first 3-5 actionable error lines). Stop on first failure — report remaining as `skipped`.
-   >
-   > 1. `pnpm lint` (or project equivalent from CLAUDE.md § Commands)
-   > 2. `pnpm test`
-   > 3. `pnpm typecheck`
-   > 4. `pnpm build`
-   >
-   > Return ONLY this structured summary (no other output):
-   > ```
-   > LINT: pass | fail (N errors: <first 3>)
-   > TEST: pass (N suites, M tests) | fail (N failed: <test names>)
-   > TYPECHECK: pass | fail (<first 5 errors>)
-   > BUILD: pass | fail (<error summary>)
-   > OVERALL: pass | fail
-   > ```
-
-   - If OVERALL: fail → fix failures in the main context and re-launch the subagent (max 2 attempts)
+   - If OVERALL: fail → fix failures in the main context and re-invoke `/verify` (max 2 attempts)
    - If still failing after 2 fix attempts → invoke `/block <id>` via the Skill tool and STOP
 
 5. **Frontend design pass (if applicable):** Check the issue labels or spec for frontend scope (`scope/frontend`).
