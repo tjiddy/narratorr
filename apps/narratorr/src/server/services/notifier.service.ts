@@ -66,7 +66,7 @@ export class NotifierService {
       .where(eq(notifiers.enabled, true));
 
     const matching = enabledNotifiers.filter((n) => {
-      const events = n.events as string[];
+      const events = Array.isArray(n.events) ? n.events : [];
       return events.includes(event);
     });
 
@@ -132,10 +132,18 @@ export class NotifierService {
 
     switch (notifier.type) {
       case 'webhook': {
+        let parsedHeaders: Record<string, string> | undefined;
+        if (typeof settings.headers === 'string') {
+          try {
+            parsedHeaders = JSON.parse(settings.headers);
+          } catch {
+            this.log.warn({ notifierId: notifier.id }, 'Failed to parse webhook headers JSON, ignoring');
+          }
+        }
         const config: WebhookConfig = {
           url: settings.url as string,
           method: (settings.method as 'POST' | 'PUT') || 'POST',
-          headers: settings.headers ? JSON.parse(settings.headers as string) : undefined,
+          headers: parsedHeaders,
           bodyTemplate: settings.bodyTemplate as string | undefined,
         };
         return new WebhookNotifier(config);

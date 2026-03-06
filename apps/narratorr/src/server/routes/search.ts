@@ -17,7 +17,7 @@ export async function searchRoutes(
   blacklistService: BlacklistService,
 ) {
   // GET /api/search
-  app.get(
+  app.get<{ Querystring: SearchQuery }>(
     '/api/search',
     {
       schema: {
@@ -25,7 +25,7 @@ export async function searchRoutes(
       },
     },
     async (request) => {
-      const { q, limit, author, title } = request.query as SearchQuery;
+      const { q, limit, author, title } = request.query;
       request.log.debug({ q, author, title }, 'Search request');
       const allResults = await indexerService.searchAll(q, { limit, author, title });
 
@@ -61,7 +61,7 @@ export async function searchRoutes(
   );
 
   // POST /api/search/grab
-  app.post(
+  app.post<{ Body: GrabInput }>(
     '/api/search/grab',
     {
       schema: {
@@ -69,7 +69,7 @@ export async function searchRoutes(
       },
     },
     async (request, reply) => {
-      const data = request.body as GrabInput;
+      const data = request.body;
 
       try {
         request.log.info({ title: data.title }, 'Grab requested');

@@ -2,7 +2,15 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '@narratorr/db';
 import type { FastifyBaseLogger } from 'fastify';
 import { settings } from '@narratorr/db/schema';
-import type { AppSettings } from '../../shared/schemas.js';
+import {
+  type AppSettings,
+  librarySettingsSchema,
+  searchSettingsSchema,
+  importSettingsSchema,
+  generalSettingsSchema,
+  metadataSettingsSchema,
+  processingSettingsSchema,
+} from '../../shared/schemas.js';
 
 export type { AppSettings };
 
@@ -36,6 +44,37 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
 };
 
+const CATEGORY_SCHEMAS = {
+  library: librarySettingsSchema,
+  search: searchSettingsSchema,
+  import: importSettingsSchema,
+  general: generalSettingsSchema,
+  metadata: metadataSettingsSchema,
+  processing: processingSettingsSchema,
+} as const;
+
+/**
+ * Parse a raw DB JSON value through its category schema.
+ * Falls back to the default on parse failure (fail-soft for existing data).
+ */
+function parseCategory<K extends keyof AppSettings>(
+  key: K,
+  raw: unknown,
+  log: FastifyBaseLogger,
+): AppSettings[K] {
+  // undefined/null = not stored yet, just use defaults silently
+  if (raw === undefined || raw === null) {
+    return DEFAULT_SETTINGS[key];
+  }
+  const schema = CATEGORY_SCHEMAS[key];
+  const result = schema.safeParse(raw);
+  if (result.success) {
+    return result.data as AppSettings[K];
+  }
+  log.warn({ category: key, errors: result.error.issues }, 'Settings parse failed, using defaults');
+  return DEFAULT_SETTINGS[key];
+}
+
 export class SettingsService {
   constructor(private db: Db, private log: FastifyBaseLogger) {}
 
@@ -46,7 +85,7 @@ export class SettingsService {
       return DEFAULT_SETTINGS[key];
     }
 
-    return result[0].value as AppSettings[K];
+    return parseCategory(key, result[0].value, this.log);
   }
 
   async getAll(): Promise<AppSettings> {
@@ -55,12 +94,12 @@ export class SettingsService {
     const settingsMap = new Map(results.map((r) => [r.key, r.value]));
 
     return {
-      library: (settingsMap.get('library') as AppSettings['library']) || DEFAULT_SETTINGS.library,
-      search: (settingsMap.get('search') as AppSettings['search']) || DEFAULT_SETTINGS.search,
-      import: (settingsMap.get('import') as AppSettings['import']) || DEFAULT_SETTINGS.import,
-      general: (settingsMap.get('general') as AppSettings['general']) || DEFAULT_SETTINGS.general,
-      metadata: (settingsMap.get('metadata') as AppSettings['metadata']) || DEFAULT_SETTINGS.metadata,
-      processing: (settingsMap.get('processing') as AppSettings['processing']) || DEFAULT_SETTINGS.processing,
+      library: parseCategory('library', settingsMap.get('library'), this.log) ?? DEFAULT_SETTINGS.library,
+      search: parseCategory('search', settingsMap.get('search'), this.log) ?? DEFAULT_SETTINGS.search,
+      import: parseCategory('import', settingsMap.get('import'), this.log) ?? DEFAULT_SETTINGS.import,
+      general: parseCategory('general', settingsMap.get('general'), this.log) ?? DEFAULT_SETTINGS.general,
+      metadata: parseCategory('metadata', settingsMap.get('metadata'), this.log) ?? DEFAULT_SETTINGS.metadata,
+      processing: parseCategory('processing', settingsMap.get('processing'), this.log) ?? DEFAULT_SETTINGS.processing,
     };
   }
 

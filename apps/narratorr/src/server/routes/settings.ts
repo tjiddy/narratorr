@@ -20,7 +20,7 @@ export async function settingsRoutes(app: FastifyInstance, settingsService: Sett
   });
 
   // PUT /api/settings
-  app.put(
+  app.put<{ Body: Partial<AppSettings> }>(
     '/api/settings',
     {
       schema: {
@@ -29,7 +29,7 @@ export async function settingsRoutes(app: FastifyInstance, settingsService: Sett
     },
     async (request, reply) => {
       try {
-        const data = request.body as Partial<AppSettings>;
+        const data = request.body;
         const result = await settingsService.update(data);
 
         // Apply log level change at runtime
@@ -49,7 +49,7 @@ export async function settingsRoutes(app: FastifyInstance, settingsService: Sett
   );
 
   // POST /api/settings/ffmpeg-probe
-  app.post(
+  app.post<{ Body: z.infer<typeof ffmpegProbeSchema> }>(
     '/api/settings/ffmpeg-probe',
     {
       schema: {
@@ -58,7 +58,7 @@ export async function settingsRoutes(app: FastifyInstance, settingsService: Sett
     },
     async (request, reply) => {
       try {
-        const { path } = request.body as z.infer<typeof ffmpegProbeSchema>;
+        const { path } = request.body;
         const version = await probeFfmpeg(path);
         request.log.info({ version, path }, 'ffmpeg probe successful');
         return { version };

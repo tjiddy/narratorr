@@ -44,8 +44,10 @@ async function tryApiKey(
   reply: FastifyReply,
   authService: AuthService,
 ): Promise<boolean> {
-  const apiKeyHeader = request.headers['x-api-key'] as string | undefined;
-  const apiKeyQuery = (request.query as Record<string, string>)?.apikey;
+  const rawHeader = request.headers['x-api-key'];
+  const apiKeyHeader = typeof rawHeader === 'string' ? rawHeader : undefined;
+  const rawQuery = (request.query as Record<string, unknown>)?.apikey;
+  const apiKeyQuery = typeof rawQuery === 'string' ? rawQuery : undefined;
   const apiKey = apiKeyHeader || apiKeyQuery;
 
   if (!apiKey) return false;

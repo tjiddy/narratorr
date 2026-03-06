@@ -210,8 +210,6 @@ describe('library-scan routes', () => {
       });
 
       expect(res.statusCode).toBe(400);
-      const body = JSON.parse(res.payload);
-      expect(body.error).toBe('path is required');
     });
 
     it('returns 400 when path is not a string', async () => {
@@ -333,8 +331,6 @@ describe('library-scan routes', () => {
       });
 
       expect(res.statusCode).toBe(400);
-      const body = JSON.parse(res.payload);
-      expect(body.error).toBe('path and title are required');
     });
 
     it('returns 400 when title is missing', async () => {
@@ -345,8 +341,6 @@ describe('library-scan routes', () => {
       });
 
       expect(res.statusCode).toBe(400);
-      const body = JSON.parse(res.payload);
-      expect(body.error).toBe('path and title are required');
     });
 
     it('returns 500 on import error', async () => {
@@ -398,7 +392,7 @@ describe('library-scan routes', () => {
         url: '/api/library/import/match',
         payload: {
           books: [
-            { path: '/audiobooks/Book1', parsedTitle: 'Book 1', parsedAuthor: 'Author 1' },
+            { path: '/audiobooks/Book1', title: 'Book 1', author: 'Author 1' },
           ],
         },
       });
@@ -407,7 +401,7 @@ describe('library-scan routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.jobId).toBe('job-abc-123');
       expect(services.matchJob.createJob).toHaveBeenCalledWith([
-        { path: '/audiobooks/Book1', parsedTitle: 'Book 1', parsedAuthor: 'Author 1' },
+        { path: '/audiobooks/Book1', title: 'Book 1', author: 'Author 1' },
       ]);
     });
 
@@ -419,8 +413,6 @@ describe('library-scan routes', () => {
       });
 
       expect(res.statusCode).toBe(400);
-      const body = JSON.parse(res.payload);
-      expect(body.error).toBe('books array is required');
     });
 
     it('returns 400 when books array is empty', async () => {

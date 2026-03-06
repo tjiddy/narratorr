@@ -226,6 +226,16 @@ describe('QBittorrentClient', () => {
       const result = await client.getDownload('nonexistent');
       expect(result).toBeNull();
     });
+
+    it('throws on malformed torrent response', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return HttpResponse.json([{ unexpected: 'shape' }]);
+        }),
+      );
+
+      await expect(client.getDownload('abc123')).rejects.toThrow('unexpected torrent data');
+    });
   });
 
   describe('getAllDownloads', () => {

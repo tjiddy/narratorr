@@ -1,10 +1,13 @@
 import { type FastifyInstance } from 'fastify';
+import { type z } from 'zod';
 import { type MetadataService } from '../services/metadata.service.js';
-import { metadataSearchQuerySchema, providerIdParamSchema } from '../../shared/schemas.js';
+import { metadataSearchQuerySchema, providerIdParamSchema, type MetadataSearchQuery } from '../../shared/schemas.js';
+
+type ProviderIdParam = z.infer<typeof providerIdParamSchema>;
 
 export async function metadataRoutes(app: FastifyInstance, metadataService: MetadataService) {
   // GET /api/metadata/search?q=
-  app.get(
+  app.get<{ Querystring: MetadataSearchQuery }>(
     '/api/metadata/search',
     {
       schema: {
@@ -13,7 +16,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
     },
     async (request, reply) => {
       try {
-        const { q } = request.query as { q: string };
+        const { q } = request.query;
         request.log.debug({ q }, 'Metadata search');
         return await metadataService.search(q);
       } catch (error) {
@@ -24,7 +27,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
   );
 
   // GET /api/metadata/authors/:id
-  app.get(
+  app.get<{ Params: ProviderIdParam }>(
     '/api/metadata/authors/:id',
     {
       schema: {
@@ -33,7 +36,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
     },
     async (request, reply) => {
       try {
-        const { id } = request.params as { id: string };
+        const { id } = request.params;
         request.log.debug({ id }, 'Fetching author metadata');
         const author = await metadataService.getAuthor(id);
 
@@ -50,7 +53,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
   );
 
   // GET /api/metadata/authors/:id/books
-  app.get(
+  app.get<{ Params: ProviderIdParam }>(
     '/api/metadata/authors/:id/books',
     {
       schema: {
@@ -59,7 +62,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
     },
     async (request, reply) => {
       try {
-        const { id } = request.params as { id: string };
+        const { id } = request.params;
         request.log.debug({ id }, 'Fetching author books');
         return await metadataService.getAuthorBooks(id);
       } catch (error) {
@@ -70,7 +73,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
   );
 
   // GET /api/metadata/books/:id
-  app.get(
+  app.get<{ Params: ProviderIdParam }>(
     '/api/metadata/books/:id',
     {
       schema: {
@@ -79,7 +82,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
     },
     async (request, reply) => {
       try {
-        const { id } = request.params as { id: string };
+        const { id } = request.params;
         request.log.debug({ id }, 'Fetching book metadata');
         const book = await metadataService.getBook(id);
 

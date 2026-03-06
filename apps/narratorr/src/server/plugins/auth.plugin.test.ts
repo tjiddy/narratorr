@@ -107,6 +107,23 @@ describe('auth middleware', () => {
       expect(res.statusCode).toBe(200);
     });
 
+    it('array-valued ?apikey query param does not pass garbage to validateApiKey', async () => {
+      (authService.validateApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+
+      // Fastify parses ?apikey=a&apikey=b as an array — our narrowing should handle it
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/test?apikey=a&apikey=b',
+      });
+      // Should fall through to session auth (returns 401 since no session)
+      expect(res.statusCode).toBe(401);
+      // validateApiKey should NOT have been called with an array
+      const calls = (authService.validateApiKey as ReturnType<typeof vi.fn>).mock.calls;
+      if (calls.length > 0) {
+        expect(typeof calls[0][0]).toBe('string');
+      }
+    });
+
     it('invalid API key returns 401', async () => {
       (authService.validateApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 

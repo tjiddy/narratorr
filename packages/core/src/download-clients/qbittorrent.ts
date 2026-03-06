@@ -1,4 +1,5 @@
 import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadProtocol } from './types.js';
+import { qbTorrentsResponseSchema } from './schemas.js';
 
 export interface QBittorrentConfig {
   host: string;
@@ -186,26 +187,33 @@ export class QBittorrentClient implements DownloadClientAdapter {
   }
 
   async getDownload(hash: string): Promise<DownloadItemInfo | null> {
-    const torrents = await this.request<QBTorrent[]>(
+    const raw = await this.request<unknown>(
       `/api/v2/torrents/info?hashes=${hash.toLowerCase()}`
     );
 
-    if (!torrents || torrents.length === 0) {
-      return null;
+    if (!raw) return null;
+
+    const parsed = qbTorrentsResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error(`qBittorrent returned unexpected torrent data: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
     }
 
-    return this.mapItem(torrents[0]);
+    if (parsed.data.length === 0) return null;
+    return this.mapItem(parsed.data[0] as QBTorrent);
   }
 
   async getAllDownloads(category?: string): Promise<DownloadItemInfo[]> {
     const params = category ? `?category=${encodeURIComponent(category)}` : '';
-    const torrents = await this.request<QBTorrent[]>(`/api/v2/torrents/info${params}`);
+    const raw = await this.request<unknown>(`/api/v2/torrents/info${params}`);
 
-    if (!torrents) {
-      return [];
+    if (!raw) return [];
+
+    const parsed = qbTorrentsResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error(`qBittorrent returned unexpected torrent data: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
     }
 
-    return torrents.map((t) => this.mapItem(t));
+    return parsed.data.map((t) => this.mapItem(t as QBTorrent));
   }
 
   async pauseDownload(hash: string): Promise<void> {

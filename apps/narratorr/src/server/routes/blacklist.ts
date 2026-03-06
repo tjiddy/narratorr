@@ -1,10 +1,13 @@
 import type { FastifyInstance } from 'fastify';
+import type { z } from 'zod';
 import type { BlacklistService } from '../services';
 import {
   idParamSchema,
   createBlacklistSchema,
   type CreateBlacklistInput,
 } from '../../shared/schemas.js';
+
+type IdParam = z.infer<typeof idParamSchema>;
 
 export async function blacklistRoutes(app: FastifyInstance, blacklistService: BlacklistService) {
   // GET /api/blacklist
@@ -14,13 +17,13 @@ export async function blacklistRoutes(app: FastifyInstance, blacklistService: Bl
   });
 
   // POST /api/blacklist
-  app.post(
+  app.post<{ Body: CreateBlacklistInput }>(
     '/api/blacklist',
     {
       schema: { body: createBlacklistSchema },
     },
     async (request, reply) => {
-      const data = request.body as CreateBlacklistInput;
+      const data = request.body;
       try {
         const entry = await blacklistService.create(data);
         return await reply.status(201).send(entry);
@@ -33,13 +36,13 @@ export async function blacklistRoutes(app: FastifyInstance, blacklistService: Bl
   );
 
   // DELETE /api/blacklist/:id
-  app.delete(
+  app.delete<{ Params: IdParam }>(
     '/api/blacklist/:id',
     {
       schema: { params: idParamSchema },
     },
     async (request, reply) => {
-      const { id } = request.params as { id: number };
+      const { id } = request.params;
       const deleted = await blacklistService.delete(id);
       if (!deleted) {
         return reply.status(404).send({ error: 'Blacklist entry not found' });

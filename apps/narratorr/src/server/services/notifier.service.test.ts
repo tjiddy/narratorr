@@ -189,6 +189,40 @@ describe('NotifierService', () => {
     });
   });
 
+  describe('defensive parsing', () => {
+    it('treats non-array events as empty (no match)', async () => {
+      const badNotifier = createMockDbNotifier({ events: 'not-an-array' });
+      db.select.mockReturnValue(mockDbChain([badNotifier]));
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      await service.notify('on_grab', { event: 'on_grab' });
+
+      // Should not fire — non-array events fall back to []
+      expect(fetchSpy).not.toHaveBeenCalled();
+      fetchSpy.mockRestore();
+    });
+
+    it('ignores malformed webhook headers JSON', async () => {
+      const badHeadersNotifier = createMockDbNotifier({
+        settings: { url: 'https://example.com/hook', headers: '{invalid json' },
+      });
+      db.select.mockReturnValue(mockDbChain([badHeadersNotifier]));
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('ok', { status: 200 }),
+      );
+
+      const result = await service.test(1);
+      expect(result.success).toBe(true);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ notifierId: 1 }),
+        expect.stringContaining('headers'),
+      );
+
+      fetchSpy.mockRestore();
+    });
+  });
+
   describe('test', () => {
     it('returns success for valid notifier', async () => {
       db.select.mockReturnValue(mockDbChain([mockWebhookNotifier]));

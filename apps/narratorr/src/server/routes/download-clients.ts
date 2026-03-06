@@ -1,7 +1,10 @@
 import { type FastifyInstance } from 'fastify';
+import { type z } from 'zod';
 import { type DownloadClientService } from '../services';
-import { createDownloadClientSchema, updateDownloadClientSchema, idParamSchema } from '../../shared/schemas.js';
+import { createDownloadClientSchema, updateDownloadClientSchema, idParamSchema, type CreateDownloadClientInput } from '../../shared/schemas.js';
 import { registerCrudRoutes } from './crud-routes.js';
+
+type IdParam = z.infer<typeof idParamSchema>;
 
 export async function downloadClientsRoutes(
   app: FastifyInstance,
@@ -16,12 +19,12 @@ export async function downloadClientsRoutes(
   });
 
   // POST /api/download-clients/categories — fetch categories from unsaved config
-  app.post(
+  app.post<{ Body: CreateDownloadClientInput }>(
     '/api/download-clients/categories',
     { schema: { body: createDownloadClientSchema } },
     async (request, reply) => {
       try {
-        const data = request.body as { type: string; settings: Record<string, unknown> };
+        const data = request.body;
         const result = await downloadClientService.getCategoriesFromConfig({
           type: data.type,
           settings: data.settings,
@@ -40,12 +43,12 @@ export async function downloadClientsRoutes(
   );
 
   // POST /api/download-clients/:id/categories — fetch categories from saved client
-  app.post(
+  app.post<{ Params: IdParam }>(
     '/api/download-clients/:id/categories',
     { schema: { params: idParamSchema } },
     async (request, reply) => {
       try {
-        const { id } = request.params as { id: number };
+        const { id } = request.params;
         const result = await downloadClientService.getCategories(id);
         if (result.error) {
           request.log.warn({ id, error: result.error }, 'Category fetch failed');

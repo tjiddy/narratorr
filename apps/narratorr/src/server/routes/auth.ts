@@ -1,6 +1,6 @@
 import { type FastifyInstance } from 'fastify';
 import type { AuthService } from '../services/auth.service.js';
-import { loginSchema, setupCredentialsSchema, changePasswordSchema, updateAuthConfigSchema } from '../../shared/schemas.js';
+import { loginSchema, setupCredentialsSchema, changePasswordSchema, updateAuthConfigSchema, type LoginInput, type SetupCredentialsInput, type ChangePasswordInput, type UpdateAuthConfigInput } from '../../shared/schemas.js';
 import { config } from '../config.js';
 
 export async function authRoutes(app: FastifyInstance, authService: AuthService) {
@@ -31,7 +31,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
   });
 
   // POST /api/auth/login — public, sets session cookie
-  app.post(
+  app.post<{ Body: LoginInput }>(
     '/api/auth/login',
     {
       schema: { body: loginSchema },
@@ -39,7 +39,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
     },
     async (request, reply) => {
       try {
-        const { username, password } = request.body as { username: string; password: string };
+        const { username, password } = request.body;
         const verified = await authService.verifyCredentials(username, password);
 
         if (!verified) {
@@ -75,7 +75,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
   });
 
   // POST /api/auth/setup — public if no user exists, else protected (handled by middleware)
-  app.post(
+  app.post<{ Body: SetupCredentialsInput }>(
     '/api/auth/setup',
     {
       schema: { body: setupCredentialsSchema },
@@ -83,7 +83,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
     },
     async (request, reply) => {
       try {
-        const { username, password } = request.body as { username: string; password: string };
+        const { username, password } = request.body;
         await authService.createUser(username, password);
         request.log.info({ username }, 'User account created');
         return { success: true };
@@ -108,13 +108,13 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
   });
 
   // PUT /api/auth/config — protected, updates mode and/or localBypass
-  app.put(
+  app.put<{ Body: UpdateAuthConfigInput }>(
     '/api/auth/config',
     { schema: { body: updateAuthConfigSchema } },
     async (request, reply) => {
       try {
-        const updates = request.body as { mode?: string; localBypass?: boolean };
-        const result = await authService.updateConfig(updates as Parameters<typeof authService.updateConfig>[0]);
+        const updates = request.body;
+        const result = await authService.updateConfig(updates);
         request.log.info({ updates }, 'Auth config updated');
         return result;
       } catch (error) {
@@ -128,12 +128,12 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
   );
 
   // PUT /api/auth/password — protected, change password
-  app.put(
+  app.put<{ Body: ChangePasswordInput }>(
     '/api/auth/password',
     { schema: { body: changePasswordSchema } },
     async (request, reply) => {
       try {
-        const { currentPassword, newPassword, newUsername } = request.body as { currentPassword: string; newPassword: string; newUsername?: string };
+        const { currentPassword, newPassword, newUsername } = request.body;
         const user = (request as unknown as Record<string, unknown>).user as { username: string } | null;
 
         if (!user) {

@@ -118,6 +118,17 @@ describe('ProwlarrClient', () => {
 
       await expect(client.getIndexers()).rejects.toThrow('HTTP 500');
     });
+
+    it('throws on malformed response payload', async () => {
+      server.use(
+        http.get(`${PROWLARR_URL}/api/v1/indexer`, () => {
+          // Return an object instead of an array
+          return HttpResponse.json({ error: 'not an array' });
+        }),
+      );
+
+      await expect(client.getIndexers()).rejects.toThrow('unexpected data');
+    });
   });
 
   describe('buildProxyIndexers', () => {

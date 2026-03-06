@@ -259,6 +259,19 @@ describe('TransmissionClient', () => {
       expect(result).toBeNull();
     });
 
+    it('throws on malformed RPC response', async () => {
+      server.use(
+        http.post(RPC_URL, async () => {
+          return HttpResponse.json(
+            'not-an-object',
+            { headers: { 'X-Transmission-Session-Id': SESSION_ID, 'content-type': 'application/json' } },
+          );
+        }),
+      );
+
+      await expect(client.getDownload('abc123')).rejects.toThrow('unexpected response');
+    });
+
     it('handles completedAt when doneDate is set', async () => {
       const completedTorrent = { ...mockTorrent, doneDate: 1700003600, percentDone: 1.0, status: 6 };
       server.use(rpcHandler('torrent-get', { torrents: [completedTorrent] }));

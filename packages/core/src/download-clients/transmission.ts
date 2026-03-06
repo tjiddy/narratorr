@@ -1,4 +1,5 @@
 import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadProtocol } from './types.js';
+import { transmissionRpcResponseSchema } from './schemas.js';
 
 export interface TransmissionConfig {
   host: string;
@@ -193,7 +194,12 @@ export class TransmissionClient implements DownloadClientAdapter {
         throw new Error(`Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
       }
 
-      const data = (await response.json()) as RpcResponse;
+      const raw = await response.json();
+      const parsed = transmissionRpcResponseSchema.safeParse(raw);
+      if (!parsed.success) {
+        throw new Error(`Transmission returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
+      }
+      const data = parsed.data as RpcResponse;
 
       if (data.result !== 'success') {
         throw new Error(`RPC error: ${data.result}`);

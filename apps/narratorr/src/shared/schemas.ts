@@ -8,5 +8,7 @@ export * from './schemas/auth.js';
 export * from './schemas/notifier.js';
 export * from './schemas/metadata.js';
 export * from './schemas/activity.js';
+export * from './schemas/book.js';
+export * from './schemas/library-scan.js';
 export * from './schemas/blacklist.js';
 export * from './schemas/prowlarr.js';

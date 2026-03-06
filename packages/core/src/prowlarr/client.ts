@@ -1,4 +1,5 @@
 import type { ProwlarrIndexer, ProwlarrProxyIndexer } from './types.js';
+import { prowlarrIndexersResponseSchema } from './schemas.js';
 
 export class ProwlarrClient {
   constructor(
@@ -33,7 +34,12 @@ export class ProwlarrClient {
     if (!res.ok) {
       throw new Error(`Prowlarr API error: HTTP ${res.status}`);
     }
-    return res.json() as Promise<ProwlarrIndexer[]>;
+    const data = await res.json();
+    const parsed = prowlarrIndexersResponseSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new Error(`Prowlarr API returned unexpected data: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
+    }
+    return parsed.data as ProwlarrIndexer[];
   }
 
   buildProxyIndexers(indexers: ProwlarrIndexer[]): ProwlarrProxyIndexer[] {

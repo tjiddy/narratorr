@@ -1,6 +1,8 @@
 import { type FastifyInstance } from 'fastify';
-import { type ZodTypeAny } from 'zod';
+import { type z, type ZodTypeAny } from 'zod';
 import { idParamSchema } from '../../shared/schemas.js';
+
+type IdParam = z.infer<typeof idParamSchema>;
 
 interface CrudService {
   getAll(): Promise<unknown[]>;
@@ -37,12 +39,12 @@ export async function registerCrudRoutes(
   });
 
   // GET /api/<resource>/:id
-  app.get(
+  app.get<{ Params: IdParam }>(
     `${basePath}/:id`,
     { schema: { params: idParamSchema } },
     async (request, reply) => {
       try {
-        const { id } = request.params as { id: number };
+        const { id } = request.params;
         const item = await service.getById(id);
         if (!item) {
           return await reply.status(404).send({ error: `${entityName} not found` });
@@ -56,12 +58,12 @@ export async function registerCrudRoutes(
   );
 
   // POST /api/<resource>
-  app.post(
+  app.post<{ Body: Record<string, unknown> }>(
     basePath,
     { schema: { body: createSchema } },
     async (request, reply) => {
       try {
-        const data = request.body as Record<string, unknown>;
+        const data = request.body;
         const item = await service.create(data);
         request.log.info({ name: data.name }, `${entityName} created`);
         return await reply.status(201).send(item);
@@ -73,12 +75,12 @@ export async function registerCrudRoutes(
   );
 
   // PUT /api/<resource>/:id
-  app.put(
+  app.put<{ Params: IdParam }>(
     `${basePath}/:id`,
     { schema: { params: idParamSchema, body: updateSchema } },
     async (request, reply) => {
       try {
-        const { id } = request.params as { id: number };
+        const { id } = request.params;
         const item = await service.update(id, request.body);
         if (!item) {
           return await reply.status(404).send({ error: `${entityName} not found` });
@@ -93,11 +95,11 @@ export async function registerCrudRoutes(
   );
 
   // DELETE /api/<resource>/:id
-  app.delete(
+  app.delete<{ Params: IdParam }>(
     `${basePath}/:id`,
     { schema: { params: idParamSchema } },
     async (request, reply) => {
-      const { id } = request.params as { id: number };
+      const { id } = request.params;
       try {
         const deleted = await service.delete(id);
         if (!deleted) {
@@ -115,12 +117,12 @@ export async function registerCrudRoutes(
   );
 
   // POST /api/<resource>/test
-  app.post(
+  app.post<{ Body: { type: string; settings: Record<string, unknown> } }>(
     `${basePath}/test`,
     { schema: { body: createSchema } },
     async (request, reply) => {
       try {
-        const data = request.body as { type: string; settings: Record<string, unknown> };
+        const data = request.body;
         const result = await service.testConfig({
           type: data.type,
           settings: data.settings,
@@ -139,12 +141,12 @@ export async function registerCrudRoutes(
   );
 
   // POST /api/<resource>/:id/test
-  app.post(
+  app.post<{ Params: IdParam }>(
     `${basePath}/:id/test`,
     { schema: { params: idParamSchema } },
     async (request, reply) => {
       try {
-        const { id } = request.params as { id: number };
+        const { id } = request.params;
         const result = await service.test(id);
         if (result.success) {
           request.log.info({ id }, `${entityName} test passed`);

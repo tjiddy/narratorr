@@ -115,6 +115,30 @@ describe('config', () => {
       const config = await loadConfig();
       expect(config.dbPath).toBe('./config/narratorr.db');
     });
+
+    it('falls back to default CORS_ORIGIN when set to empty string', async () => {
+      process.env.CORS_ORIGIN = '';
+      const config = await loadConfig();
+      expect(config.corsOrigin).toBe('http://localhost:5173');
+    });
+
+    it('falls back to default configPath when set to empty string', async () => {
+      process.env.CONFIG_PATH = '';
+      const config = await loadConfig();
+      expect(config.configPath).toBe('./config');
+    });
+
+    it('falls back to default libraryPath when set to empty string', async () => {
+      process.env.LIBRARY_PATH = '';
+      const config = await loadConfig();
+      expect(config.libraryPath).toBe('./audiobooks');
+    });
+
+    it('falls back to default dbPath when set to empty string', async () => {
+      process.env.DATABASE_URL = '';
+      const config = await loadConfig();
+      expect(config.dbPath).toBe('./config/narratorr.db');
+    });
   });
 
   describe('authBypass', () => {
