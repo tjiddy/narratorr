@@ -89,12 +89,30 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **Flaky patterns:** Timing-dependent assertions without `waitFor`, non-deterministic test data (random IDs, `Date.now()`), assertions that depend on execution order rather than explicit state setup.
    - Consult the project's CLAUDE.md for test quality standards and the project philosophy on test value vs noise.
 
-8. **Architecture review** — Check the diff against project design principles. **Every violation found here MUST become a finding in step 11** — do not note violations in the table without generating corresponding findings.
-   - **SRP**: Does each new/modified file have one reason to change? Are concerns mixed?
-   - **DRY**: Is there duplicated logic that should be extracted?
-   - **Open/Closed**: Does adding this feature require modifying growing lists in existing files? Should there be a registry pattern?
+8. **Architecture review** — Check the diff against the mechanical checks in `.claude/docs/architecture-checks.md`. **Every violation found here MUST become a finding in step 11** — do not note violations in the table without generating corresponding findings.
+
+   **Always check (every PR):**
+   - **OCP-1 (Wiring Cost):** Does the PR add a new type variant? Count files touched just for type registration (enums, schemas, constants, factories). If >3 files, flag as `suggestion` with the registry pattern recommendation. If >5, flag as `blocking`.
+   - **OCP-2 (Growing Switch):** Does the PR add new cases to an existing switch/case or if/else chain on a type discriminator? Count total cases after the change. If >4 cases and the same discriminator is switched on in 2+ files, flag as `suggestion`.
+   - **LSP-1 (Interface Contract):** Does any new implementation return null/empty/no-op where sibling implementations return real data? Check if callers branch on the null to determine behavior. If yes, flag as `blocking` — the interface contract is broken.
+   - **DRY-1 (Parallel Types):** Does the PR add the same string literal (type name, enum value) to 4+ files? Flag as `suggestion`.
+
+   **Check when adding new types/adapters:**
+   - **OCP-3 (Conditional Rendering):** Does the PR add new if/else branches for type-specific UI rendering? Flag as `suggestion` if a component map pattern exists elsewhere in the codebase (e.g., `NotifierFields.tsx`).
+   - **LSP-2 (Error Contracts):** Do implementations of the same interface use different error strategies (one throws, another returns null)? Flag as `blocking` if callers only handle one pattern.
+
+   **Check when modifying services:**
+   - **SRP-1 (Side-Effect Breadth):** Does any new/modified function touch 3+ side-effect categories (DB write, HTTP call, file I/O, event emission, notification)? Flag as `suggestion`.
+   - **SRP-2 (God Service):** Does the modified service now exceed 15 public methods or 500 lines? Flag as `suggestion`.
+   - **ISP-1 (Fat Injection):** Does a function receive a large dependency object (e.g., full `Services`) but only use a subset? Flag as `suggestion` if <50% of deps are used.
+
+   **Check when modifying routes:**
+   - **SRP-3 (Route Logic):** Does a route handler contain business logic beyond parse/call/respond? Flag as `suggestion`.
+   - **ARCH-3 (Entity Leakage):** Does the route return raw DB rows without transformation? Flag as `suggestion`, or `blocking` if sensitive fields could leak.
+
+   **Additional design checks (not from the checks doc):**
    - **Co-location**: Are types next to their API methods? Components next to their hooks?
-   - **Consistency**: Does the new code follow existing patterns in the codebase? (naming, file structure, error handling style)
+   - **Consistency**: Does the new code follow existing patterns in the codebase?
    - **Over-engineering**: Are there unnecessary abstractions, premature generalizations, or feature flags for one-time operations?
 
    **Lint-level code smells** (`var`, explicit `any`, unused variables, unjustified `eslint-disable`): CI gates own this layer — `pnpm lint` and `pnpm typecheck` catch these as hard errors. The reviewer does NOT need to flag them unless CI is passing despite the issue (indicating a gap in the lint config).
@@ -144,14 +162,19 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
       - Scope: clean | creep (<what>)
       - Security: pass | concern (<what>)
 
-      ## Architecture Review
+      ## Architecture Review (checks from `.claude/docs/architecture-checks.md`)
 
-      - SRP: pass | violation (<what file mixes concerns>)
-      - DRY: pass | violation (<what's duplicated>)
-      - Open/Closed: pass | violation (<what requires modification>)
-      - Co-location: pass | violation (<what's misplaced>)
-      - Consistency: pass | inconsistent (<what pattern is broken>)
-      - Over-engineering: pass | concern (<what's unnecessary>)
+      | Check | Result | Detail |
+      |-------|--------|--------|
+      | OCP-1 Wiring Cost | pass / N files | <which files, registry suggestion> |
+      | OCP-2 Growing Switch | pass / N cases | <which switch, case count> |
+      | LSP-1 Interface Contract | pass / violation | <null/no-op return, caller branching> |
+      | DRY-1 Parallel Types | pass / N files | <which literals duplicated> |
+      | SRP-1 Side-Effect Breadth | pass / violation | <which function, which categories> |
+      | ISP-1 Fat Injection | pass / violation | <which function, % deps used> |
+      | Co-location | pass / violation | <what's misplaced> |
+      | Consistency | pass / inconsistent | <what pattern is broken> |
+      | Over-engineering | pass / concern | <what's unnecessary> |
 
       ## Prior Findings (omit on first review)
 

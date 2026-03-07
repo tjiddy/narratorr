@@ -41,6 +41,14 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > 5. Scan `.claude/learnings/` for files whose `scope` or `files` frontmatter matches this issue's labels or target files
    > 6. Check `.claude/debt.md` for items in the target area
    >
+   > 7. **Run architecture checks** from `.claude/docs/architecture-checks.md` against the files the plan will touch. Focus on the "Always check" and context-appropriate checks:
+   >    - **OCP-1 (Wiring Cost):** Count files that need type-registration edits (enums, schemas, constants, factories). If >3, flag it.
+   >    - **OCP-2 (Growing Switch):** Will the plan add a new case to an existing switch/factory? Count existing cases.
+   >    - **LSP-1 (Interface Contract):** If implementing an interface, do any methods return null/no-op where siblings return real data?
+   >    - **DRY-1 (Parallel Types):** Will the plan add the same string literal to multiple files?
+   >    - **SRP-1 (Side-Effect Breadth):** Will any new/modified function touch 3+ side-effect categories?
+   >    - **ISP-1 (Fat Injection):** Will the plan pass large dependency objects where only a subset is needed?
+   >
    > Return this structure:
    > ```
    > PATTERNS: <relevant existing patterns and interfaces found>
@@ -48,7 +56,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > OVERLAPPING WORK: <open PRs in the same area, or "none">
    > DEPENDENCIES: <dep status, or "none">
    > KNOWN LEARNINGS: <relevant learnings from .claude/learnings/ and debt items, or "none">
-   > DESIGN CONCERNS: <any SRP/DRY/Open-Closed issues the implementation should watch for>
+   > DESIGN CONCERNS: <any architecture check violations found, with check IDs (e.g., OCP-1, LSP-1), or "none">
    > ```
 
    Use the subagent's structured output directly in the plan comment (step 5).
@@ -95,13 +103,15 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Codebase findings: <relevant patterns, interfaces, wiring points>
    - Known learnings: <relevant learnings from `.claude/learnings/` and `.claude/debt.md`, or "none">
    - Reviewer suggestions: <suggestion findings from the approval comment (step 2), or "none">
-   - Design checklist:
-       - [ ] Each new file has a single responsibility
-       - [ ] No duplicated patterns — reuses existing hooks/components or extracts shared ones
-       - [ ] Wiring touches ≤3 existing files (new features extend, not modify)
-       - [ ] Types and components co-located with their domain
+   - Architecture checks (from `.claude/docs/architecture-checks.md`):
+       - [ ] SRP: Each new file has a single responsibility, no function touches 3+ side-effect categories
+       - [ ] OCP: Wiring touches ≤3 existing files for type registration (if >3, needs registry pattern)
+       - [ ] LSP: No implementation returns null/no-op where siblings return real data
+       - [ ] ISP: No fat dependency injection — functions receive only what they use
+       - [ ] DRY: No parallel type definitions — same literals not added to 4+ files
+       - [ ] Co-location: Types and components co-located with their domain
    ```
-   If any design check fails, note the mitigation.
+   If any check fails, note the specific check ID (e.g., OCP-1) and the mitigation plan. If the mitigation is "introduce a registry pattern first," note that as a prerequisite step in the plan.
    - Clean up the temp file after posting.
 
 6. Tell the user the plan is posted and show the summary, including codebase findings from step 3.

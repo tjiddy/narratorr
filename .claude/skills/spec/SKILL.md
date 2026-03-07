@@ -44,3 +44,15 @@ Before presenting the draft, verify:
 - No vague criteria like "works correctly" or "errors are handled"
 - Each acceptance criterion maps to at least one interaction or behavior
 - Interactions/behaviors cover error/edge states, not just happy path
+
+## Architecture Design Check
+
+**Reference:** `.claude/docs/architecture-checks.md`
+
+Before presenting the draft, evaluate the spec against these design-level checks:
+
+- **OCP-1 (Wiring Cost):** Does the spec describe adding a new variant to an existing type system (new adapter, new settings category, new notifier type)? If so, estimate how many files the implementation would touch just for type registration. If >3, flag it and suggest a registry pattern or note if one already exists.
+- **LSP-1 (Interface Contract):** Does the spec describe an implementation that would return null/no-op where siblings return real data? Flag the contract violation and suggest a separate interface or explicit discriminator property.
+- **OCP-2 (Growing Switch):** Does the spec describe adding a new case to an existing switch/factory? Note it and suggest checking if a registry pattern should be introduced.
+
+If any check triggers, add a **Design Notes** section to the spec body (before Technical Notes) calling out the concern and the recommended approach. This shifts the conversation left — the implementer knows about the architectural constraint before writing code.

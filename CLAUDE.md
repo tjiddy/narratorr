@@ -53,6 +53,8 @@ pnpm typecheck     # TypeScript checking
 - **Co-locate what changes together.** Types live alongside their API methods. Components live with their hooks. Tests live next to their source. Barrel `index.ts` at module boundaries, direct imports within.
 - **Extract components and hooks, not just functions.** When a component grows a second concern, extract it to its own file — don't just extract a helper function within the same file. React components and hooks are the unit of reuse.
 
+**Mechanical checks:** `.claude/docs/architecture-checks.md` defines greppable SOLID and DRY checks (wiring cost, growing switches, interface contract violations, parallel types, etc.). These are run by `/spec`, `/plan`, `/review-pr`, and `/review-spec` at appropriate stages.
+
 ## Frontend Design Quality
 
 All issues with `scope/frontend` must include a UI/UX design pass during implementation. New or significantly changed UI components should be refined using the `frontend-design` skill before handoff. The goal is production-grade polish — not just functional markup. This is enforced at two points:

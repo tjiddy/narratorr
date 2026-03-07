@@ -97,10 +97,13 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **Blast radius scan:** When the spec adds or modifies types, schema fields, or service interfaces, grep for existing test mocks that reference those types. List any test files that hardcode objects of the affected types — these will need mock updates during implementation. Flag in findings as `category: "blast-radius"` severity `suggestion` if more than 2 test files are affected.
    - **Error propagation check:** When the spec introduces a new error type or changes error handling, trace the call chain from where the error is thrown to where it's caught. Flag any catch-all blocks (`catch { return null }`, `catch (e) { return [] }`, etc.) that would silently swallow the new error. This is a `category: "error-propagation"` finding, severity `blocking` if the error would be silently swallowed.
 
-   **Design checks (from CLAUDE.md principles):**
+   **Design checks (from `.claude/docs/architecture-checks.md` + CLAUDE.md):**
+   - **OCP-1 (Wiring Cost):** Does the spec describe adding a new type variant? Based on codebase exploration, how many files would need type-registration edits? If >3, flag it and suggest a registry pattern.
+   - **OCP-2 (Growing Switch):** Does the spec implicitly require adding a case to an existing switch/factory? Note the current case count.
+   - **LSP-1 (Interface Contract):** Does the spec describe behavior that would violate an interface contract (e.g., returning null where siblings return data, no-op implementations)?
+   - **DRY-1 (Parallel Types):** Would the spec require adding the same type literal to 4+ files?
    - SRP: Does the plan keep single responsibility per file? Or does it add a second concern to existing files?
    - DRY: Does the plan duplicate a pattern that already exists? Should it reuse or extract a shared component/hook/service?
-   - Open/Closed: Does wiring the feature require modifying 4+ existing files? Should there be a registry/plugin pattern instead?
    - Co-location: Are new types/components landing next to the code that uses them?
 
    **Test plan checks:**
