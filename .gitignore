@@ -47,7 +47,8 @@ config/
 tmp/
 temp/
 
-# Claude Code — ignore everything except skills and templates
+# Claude Code — ignore everything except skills, templates, and settings
 .claude/*
 !.claude/skills/
 !.claude/templates/
+!.claude/settings.json
