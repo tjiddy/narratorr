@@ -5,6 +5,11 @@ description: Address review findings on a PR — fix, accept, defer, or dispute 
   to PR review", "address PR findings", or invokes /respond-to-pr-review.
 argument-hint: <pr-number>
 disable-model-invocation: true
+hooks:
+  Stop:
+    - hooks:
+        - type: prompt
+          prompt: "The agent is running /respond-to-pr-review (fix findings → verify → push → post response comment → update labels). Check its last message. It is DONE only if it contains 'ready-for-re-review' or 'needs-human-input' status report, or an explicit STOP/block condition. If the last message is a verify summary (OVERALL: pass/fail) or test output without a subsequent push, comment post, or label update, respond {\"ok\": false, \"reason\": \"Review response incomplete. Verify passed but you still need to: git push, post the Review Response comment on the PR, and update issue labels. Continue immediately.\"}. If complete or blocked, respond {\"ok\": true}."
 ---
 
 # /respond-to-pr-review <pr-number> — Address review findings on a PR
@@ -57,8 +62,22 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 4. **Determine flow:**
 
    **Clean flow** (no disputed blocking findings):
-   - Invoke `/verify` via the Skill tool (runs on haiku)
-   - **IMMEDIATELY when `/verify` returns** (do NOT stop or end your turn):
+   - Run quality gates via an **Agent subagent** (Agent tool — keeps verbose build/test output out of main context) with this prompt:
+     > Run quality gates for this project from the repo root. Read `CLAUDE.md` § Commands for the exact commands.
+     > Run sequentially: lint → test → typecheck → build.
+     > If all pass, run coverage on changed files vs main branch — flag any non-test source file at ≤5% line coverage.
+     > See `.claude/skills/verify/SKILL.md` for full coverage gate details.
+     >
+     > Return ONLY this structured summary (5-15 lines max):
+     > ```
+     > LINT: pass | fail (N errors: <first 3>)
+     > TEST: pass (N suites, M tests) | fail (N failed: <test names>)
+     > TYPECHECK: pass | fail (<first 5 errors>) | skipped
+     > BUILD: pass | fail (<error summary>)
+     > COVERAGE: pass | fail (N files at 0%: <file list>) | skipped
+     > OVERALL: pass | fail
+     > ```
+   - **IMMEDIATELY when the subagent returns** (do NOT stop or end your turn):
      - If verify fails → fix issues and re-run until clean
      - If verify passes → continue to push RIGHT NOW. You still need to push, post the response comment, and update labels.
    - Push: `git push origin <head-branch>`

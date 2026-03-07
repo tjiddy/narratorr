@@ -5,6 +5,11 @@ description: Review a PR against its linked issue's acceptance criteria. Posts s
   "review pull request", or invokes /review-pr.
 argument-hint: <pr-number>
 disable-model-invocation: true
+hooks:
+  Stop:
+    - hooks:
+        - type: prompt
+          prompt: "The agent is running /review-pr (explore code → evaluate → post verdict comment → set labels → merge or stop). Check its last message. It is DONE only if it contains '## Verdict:' AND confirms the comment was posted to Gitea AND labels were updated, or an explicit STOP/block condition. If the last message contains review findings or a verdict that hasn't been posted to Gitea yet (no gitea issue-comment or gitea pr-comment confirmation), respond {\"ok\": false, \"reason\": \"Review incomplete. You have findings but haven't posted them to Gitea or updated labels. Post the review comment and set labels before stopping.\"}. If complete or blocked, respond {\"ok\": true}."
 ---
 
 # /review-pr <pr-number> — Review a pull request against its linked issue
