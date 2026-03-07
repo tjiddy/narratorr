@@ -51,17 +51,17 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 3. **Continuous Learning graduation** — after the issue triage, process accumulated learnings and debt:
 
-   a. **Read learnings:** Scan all files in `.claude/learnings/`. Group by theme (same scope, same files, same type of problem).
+   a. **Read learnings:** Scan all files in `.claude/cl/learnings/`. Group by theme (same scope, same files, same type of problem).
 
-   b. **Read debt:** Read `.claude/debt.md` if it exists.
+   b. **Read debt:** Read `.claude/cl/debt.md` if it exists.
 
-   c. **Read "Wish I'd Known" entries:** Scan `.claude/workflow-log.md` for `### Wish I'd Known` sections. Note any items that recur across multiple issues.
+   c. **Read "Wish I'd Known" entries:** Scan `.claude/cl/workflow-log.md` for `### Wish I'd Known` sections. Note any items that recur across multiple issues.
 
    d. **Classify each cluster/item** into one of:
       - **Code fix** — a concrete change to the repo would eliminate this class of problem (e.g., "mock factories would prevent stale mock breakage"). → Suggest creating a Gitea issue. Include the proposed scope and rationale.
       - **Workflow change** — a change to a plugin skill would catch or prevent this (e.g., "review-spec should check for catch-all blocks"). → Suggest which skill to change and what to add.
       - **CLAUDE.md rule** — a convention or pattern that should be documented for all contributors (e.g., "always use FastifyBaseLogger, not BaseLogger from pino"). → Suggest the specific addition.
-      - **Inherent** — no action possible; this is a runtime/tooling reality that can't be fixed, only known (e.g., "jsdom doesn't support responsive breakpoints"). → No action. Learning stays in `.claude/learnings/` for `/claim` to surface.
+      - **Inherent** — no action possible; this is a runtime/tooling reality that can't be fixed, only known (e.g., "jsdom doesn't support responsive breakpoints"). → No action. Learning stays in `.claude/cl/learnings/` for `/claim` to surface.
 
    e. **Report graduation recommendations** in a structured section:
       ```
@@ -82,7 +82,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    f. **Do NOT auto-create issues or edit skills** — just recommend. The user decides what to act on. This step is advisory.
 
-   g. After the user approves actions, graduated learnings can be removed from `.claude/learnings/` and resolved debt items removed from `.claude/debt.md`.
+   g. After the user approves actions, graduated learnings can be removed from `.claude/cl/learnings/` and resolved debt items removed from `.claude/cl/debt.md`.
 
 ## Important
 

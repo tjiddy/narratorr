@@ -39,8 +39,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **`deferred`** — Create a chore issue in Gitea: `gitea issue-create "<title>" --body-file <path> "type/chore"`. Reference the new issue number in the response. Valid for `suggestion` severity only.
    - **`disputed`** — The finding is genuinely wrong. Provide a rebuttal with evidence (code references, docs, test results). Valid for `blocking` findings only — if you believe a blocking finding is incorrect, dispute it rather than silently accepting.
 
-   **Root cause capture:** For every finding resolved as `fixed`, write a learning file to `.claude/learnings/` capturing what gap let this slip through. Create the directory if it doesn't exist.
-   - Filename: `.claude/learnings/review-<issue-id>-<finding-id-lowercase>.md` (e.g., `review-158-f1.md`)
+   **Root cause capture:** For every finding resolved as `fixed`, write a learning file to `.claude/cl/learnings/` capturing what gap let this slip through. Create the directory if it doesn't exist.
+   - Filename: `.claude/cl/learnings/review-<issue-id>-<finding-id-lowercase>.md` (e.g., `review-158-f1.md`)
    - Format:
      ```yaml
      ---

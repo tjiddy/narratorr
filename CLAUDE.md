@@ -191,7 +191,7 @@ Skipping `/handoff` means no PR, no label update, no workflow log entry.
 - **Self-review guard.** `/review-pr` checks the current user against the PR author — if they match, it STOPs and suggests `/respond-to-pr-review` instead.
 - **Merge author validation.** `/merge` requires the most recent `approve` verdict to come from a different user than the PR author. Stale approvals (superseded by `needs-work`) are ignored.
 - **Dispute escalation.** If `/respond-to-pr-review` disputes a blocking finding, the issue goes `status/blocked` + `stage/review-pr` and STOPs for human input.
-- **Auto-maintained files.** `/handoff` prepends to `.claude/workflow-log.md`.
+- **Auto-maintained files.** `/handoff` prepends to `.claude/cl/workflow-log.md`.
 
 ### Labels (2-axis model)
 

@@ -40,8 +40,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > 2. Find files/modules relevant to the issue scope — existing patterns, interfaces, wiring points
    > 3. Check for overlapping work: run `node scripts/gitea.ts prs` and look for PRs touching the same area
    > 4. Check dependencies: run `node scripts/gitea.ts issue <dep-id>` for any referenced issues to verify status
-   > 5. Scan `.claude/learnings/` for files whose `scope` or `files` frontmatter matches this issue's labels or target files
-   > 6. Check `.claude/debt.md` for items in the target area
+   > 5. Scan `.claude/cl/learnings/` for files whose `scope` or `files` frontmatter matches this issue's labels or target files
+   > 6. Check `.claude/cl/debt.md` for items in the target area
    >
    > 7. **Run architecture checks** from `.claude/docs/architecture-checks.md` against the files the plan will touch. Focus on the "Always check" and context-appropriate checks:
    >    - **OCP-1 (Wiring Cost):** Count files that need type-registration edits (enums, schemas, constants, factories). If >3, flag it.
@@ -57,7 +57,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > WIRING POINTS: <files that need modification to wire the feature>
    > OVERLAPPING WORK: <open PRs in the same area, or "none">
    > DEPENDENCIES: <dep status, or "none">
-   > KNOWN LEARNINGS: <relevant learnings from .claude/learnings/ and debt items, or "none">
+   > KNOWN LEARNINGS: <relevant learnings from .claude/cl/learnings/ and debt items, or "none">
    > DESIGN CONCERNS: <any architecture check violations found, with check IDs (e.g., OCP-1, LSP-1), or "none">
    > ```
 
@@ -103,7 +103,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Expected changes: `<files/modules>`
    - Verification: `<tests to run>`
    - Codebase findings: <relevant patterns, interfaces, wiring points>
-   - Known learnings: <relevant learnings from `.claude/learnings/` and `.claude/debt.md`, or "none">
+   - Known learnings: <relevant learnings from `.claude/cl/learnings/` and `.claude/cl/debt.md`, or "none">
    - Reviewer suggestions: <suggestion findings from the approval comment (step 2), or "none">
    - Architecture checks (from `.claude/docs/architecture-checks.md`):
        - [ ] SRP: Each new file has a single responsibility, no function touches 3+ side-effect categories

@@ -39,8 +39,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    All `blocking` findings MUST be `fixed` or `disputed`. `suggestion` findings can be any disposition.
 
-   **Root cause capture:** For every finding resolved as `fixed`, write a learning file to `.claude/learnings/` capturing what gap let this slip through. Create the directory if it doesn't exist.
-   - Filename: `.claude/learnings/spec-review-<issue-id>-<finding-id-lowercase>.md` (e.g., `spec-review-158-f1.md`)
+   **Root cause capture:** For every finding resolved as `fixed`, write a learning file to `.claude/cl/learnings/` capturing what gap let this slip through. Create the directory if it doesn't exist.
+   - Filename: `.claude/cl/learnings/spec-review-<issue-id>-<finding-id-lowercase>.md` (e.g., `spec-review-158-f1.md`)
    - Format:
      ```yaml
      ---

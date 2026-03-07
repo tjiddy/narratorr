@@ -362,7 +362,7 @@ If the bug must be fixed to complete the story, either:
 
 ## 7) Retrospective (after every issue)
 
-After completing work on an issue (whether via handoff, block, or any other stopping point), append an entry to `.claude/workflow-log.md`. Create the file if it doesn't exist.
+After completing work on an issue (whether via handoff, block, or any other stopping point), append an entry to `.claude/cl/workflow-log.md`. Create the file if it doesn't exist.
 
 ### Template
 

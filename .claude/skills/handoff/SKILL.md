@@ -156,10 +156,10 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 9. **Continuous Learning retrospective** — before writing the workflow log, reflect on the implementation:
 
-   a. **Read scratch context:** If `.claude/scratch.md` exists, read it — this contains recent assistant context captured before compaction. Use it as supplementary memory for the retrospective steps below. (If the file doesn't exist, that's fine — proceed without it.)
+   a. **Read scratch context:** If `.claude/cl/scratch.md` exists, read it — this contains recent assistant context captured before compaction. Use it as supplementary memory for the retrospective steps below. (If the file doesn't exist, that's fine — proceed without it.)
 
-   b. **Write learning files:** Reflect on the full implementation. Write a learning file to `.claude/learnings/` for EVERY noteworthy item — things that surprised you, patterns that weren't obvious, gotchas you hit, constraints that aren't documented. No cap on count; capture everything worth knowing. Create the directory if it doesn't exist.
-      - Filename: `.claude/learnings/<short-slug>.md` (e.g., `fastify-inject-content-type.md`)
+   b. **Write learning files:** Reflect on the full implementation. Write a learning file to `.claude/cl/learnings/` for EVERY noteworthy item — things that surprised you, patterns that weren't obvious, gotchas you hit, constraints that aren't documented. No cap on count; capture everything worth knowing. Create the directory if it doesn't exist.
+      - Filename: `.claude/cl/learnings/<short-slug>.md` (e.g., `fastify-inject-content-type.md`)
       - Format:
         ```yaml
         ---
@@ -171,18 +171,18 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
         <One or two sentences: what you learned, why it matters, and what would have prevented the friction.>
         ```
 
-   c. **Log debt observations:** If you noticed anything out of scope that needs fixing (bad patterns, missing tests, poor abstractions, confusing naming), append one-liner bullets to `.claude/debt.md`. Create the file with a `# Technical Debt` heading if it doesn't exist. Format: `- **<file or area>**: <what's wrong and why it matters> (discovered in #<id>)`
+   c. **Log debt observations:** If you noticed anything out of scope that needs fixing (bad patterns, missing tests, poor abstractions, confusing naming), append one-liner bullets to `.claude/cl/debt.md`. Create the file with a `# Technical Debt` heading if it doesn't exist. Format: `- **<file or area>**: <what's wrong and why it matters> (discovered in #<id>)`
 
    d. **Rank top 3:** Ask yourself: "What are 3 things I wish I'd known before starting this issue?" Write these to a `### Wish I'd Known` section in the workflow log entry (step 10). Reference the full learning files from 9b where applicable.
 
-   e. **Delete scratch file:** If `.claude/scratch.md` exists, delete it — it's been consumed.
+   e. **Delete scratch file:** If `.claude/cl/scratch.md` exists, delete it — it's been consumed.
 
    f. **Verify capture (HARD GATE):** Before proceeding to step 10, verify:
-      - `.claude/learnings/` exists and contains at least one `.md` file with `issue: <id>` in its frontmatter — OR the workflow log entry (step 10) explicitly states under `### Wish I'd Known` why zero learnings were captured (e.g., "Trivial issue with no surprises — no learnings to capture").
-      - If debt was discovered during implementation (fix iterations, dead code, out-of-scope issues found while reading code), `.claude/debt.md` exists and contains at least one entry referencing `#<id>`.
+      - `.claude/cl/learnings/` exists and contains at least one `.md` file with `issue: <id>` in its frontmatter — OR the workflow log entry (step 10) explicitly states under `### Wish I'd Known` why zero learnings were captured (e.g., "Trivial issue with no surprises — no learnings to capture").
+      - If debt was discovered during implementation (fix iterations, dead code, out-of-scope issues found while reading code), `.claude/cl/debt.md` exists and contains at least one entry referencing `#<id>`.
       - If either check fails, STOP and complete the missing capture before continuing. Do NOT skip this step — it is the safety net for mid-implementation capture being skipped (which happens reliably).
 
-10. **Prepend to workflow log** (`.claude/workflow-log.md`) — add a new entry at the **top** of the file (below the `# Workflow Log` heading), so entries are reverse-chronological. If the file doesn't exist, create it with the heading first.
+10. **Prepend to workflow log** (`.claude/cl/workflow-log.md`) — add a new entry at the **top** of the file (below the `# Workflow Log` heading), so entries are reverse-chronological. If the file doesn't exist, create it with the heading first.
 
    Entry format:
    ```
