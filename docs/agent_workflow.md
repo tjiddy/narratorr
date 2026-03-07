@@ -6,7 +6,7 @@ This document defines the **implementor workflow** for working Gitea issues in t
 - **Token-efficient** (bounded reading on resume)
 
 **Role:** Implementor (Claude Code)
-**Goal:** Take a `status/ready` issue → implement on a branch → open a PR → update the issue for downstream agents (review/QA/merge).
+**Goal:** Take a `status/ready-for-dev` (or legacy `status/ready`) issue → implement on a branch → open a PR → update the issue for downstream agents (review/QA/merge).
 **Do NOT merge** unless explicitly instructed.
 
 > **Skills available:** `/implement <id>`, `/claim <id>`, `/plan <id>`, `/handoff <id>`, `/block <id>`, `/elaborate <id>`, `/review-pr <pr>`, `/respond-to-pr-review <pr>`, `/respond-to-spec-review <id>` automate the steps below. Use these for the standard workflow; refer to this doc for edge cases and templates.
@@ -20,13 +20,13 @@ This document defines the **implementor workflow** for working Gitea issues in t
 
 **Manual control:**
 1. Read issue: `pnpm gitea issue <id>`
-2. Verify: label contains `status/ready`, and spec has Acceptance Criteria + Test Plan.
+2. Verify: label contains `status/ready-for-dev` (or legacy `status/ready`), and spec has Acceptance Criteria + Test Plan.
 3. If missing info: comment `BLOCKED — need input` (template below), set `status/blocked`, stop.
 4. Comment `Claiming #<id>` with a short plan; set `status/in-progress` + `stage/dev` (remove other `status/*` and `stage/*` labels).
 5. Create branch: `feature/issue-<id>-<slug>`
 6. Implement; run tests per Test Plan.
 7. Push; create PR titled `#<id> <issue title>` with `Refs #<id>` and structured body.
-8. Update labels: replace `stage/dev` with `stage/review`. Comment on issue with PR link + what changed + how verified.
+8. Update labels: replace `stage/dev` with `stage/review-pr`. Comment on issue with PR link + what changed + how verified.
 
 **Standalone tools:**
 - `/elaborate <id>` — groom/triage without claiming (no side effects on labels/branches)
@@ -40,15 +40,23 @@ Labels use a **2-axis model**: `status/*` tracks lifecycle state, `stage/*` trac
 
 ### Status labels (lifecycle — exactly one at all times)
 - `status/backlog` — not ready for an agent
-- `status/ready` — spec is complete; agent may claim
+- `status/elaborating` — spec being elaborated by AI
+- `status/review-spec` — spec under AI review
+- `status/fixes-spec` — spec needs fixes from review
+- `status/ready-for-dev` — spec approved; agent may claim (legacy alias: `status/ready`)
 - `status/in-progress` — claimed / active work
 - `status/blocked` — needs human input or external dependency
 - `status/done` — work is complete
 
 ### Stage labels (pipeline ownership — exactly one when `status/in-progress`)
 - `stage/dev` — implementation in progress
-- `stage/review` — PR open, awaiting review
-- `stage/qa` — quality assurance / testing
+- `stage/review-pr` — PR open, awaiting review (legacy alias: `stage/review`)
+- `stage/fixes-pr` — PR needs fixes from review
+- `stage/approved` — PR approved, ready to merge
+- `stage/qa` — quality assurance / testing (reserved)
+
+### Gate label
+- `yolo` — enables autonomous orchestration (narrator-yolo). Without it, skills run manually.
 
 **Rule:** When `status/in-progress` is set, exactly ONE `stage/*` label must also be present. For all other statuses, `stage/*` labels should be absent (except `status/blocked`, which keeps its current `stage/*` to indicate where to resume).
 
@@ -56,11 +64,15 @@ Labels use a **2-axis model**: `status/*` tracks lifecycle state, `stage/*` trac
 
 | Event | status/* | stage/* |
 |---|---|---|
+| Elaborate issue | `status/elaborating` | — |
+| Elaborate complete | `status/review-spec` | — |
+| Spec approved | `status/ready-for-dev` | — |
+| Spec needs work | `status/fixes-spec` | — |
 | Claim issue | `status/in-progress` | `stage/dev` |
-| PR opened (handoff) | `status/in-progress` | `stage/review` |
-| Changes requested | `status/in-progress` | `stage/dev` |
-| QA starts | `status/in-progress` | `stage/qa` |
-| QA passed / done | `status/done` | _(clear)_ |
+| PR opened (handoff) | `status/in-progress` | `stage/review-pr` |
+| PR needs work | `status/in-progress` | `stage/fixes-pr` |
+| PR approved | `status/in-progress` | `stage/approved` |
+| PR merged | `status/done` | _(clear)_ |
 | Blocked | `status/blocked` | _(keep current)_ |
 | Unblocked | `status/in-progress` | _(restore previous)_ |
 
@@ -256,9 +268,9 @@ If you cannot make tests pass:
 
 After PR is opened:
 
-1. **Update labels** — replace `stage/dev` with `stage/review` (keep `status/in-progress` and all other labels):
+1. **Update labels** — replace `stage/dev` with `stage/review-pr` (keep `status/in-progress` and all other labels):
    ```bash
-   pnpm gitea issue-update <id> labels "<labels with stage/dev replaced by stage/review>"
+   pnpm gitea issue-update <id> labels "<labels with stage/dev replaced by stage/review-pr>"
    ```
 
 2. **Comment on the issue:**
@@ -273,7 +285,7 @@ After PR is opened:
 - Notes / follow-ups:
     - ...
 
-Leave issue labeled `status/in-progress` + `stage/review`.
+Leave issue labeled `status/in-progress` + `stage/review-pr`.
 Do not close the issue unless explicitly told to.
 
 ---
@@ -332,7 +344,7 @@ If you discover a defect while implementing/testing:
 1. Create a NEW issue:
     - Label: `type/bug`
     - Set appropriate `priority/*`
-    - Set `status/ready` only if it is immediately actionable; otherwise `status/backlog`
+    - Set `status/ready-for-dev` only if it is immediately actionable; otherwise `status/backlog`
 
 2. In the bug description, include:
     - “Found while working on #<storyId>”

@@ -37,11 +37,16 @@ All body arguments support `--body-file <path>` to read content from a file (avo
 Issues use two exclusive label groups:
 
 **Status** (lifecycle — exactly one):
-`status/backlog` → `status/ready` → `status/in-progress` → `status/done`
-↘ `status/blocked` (at any point)
+`status/backlog` → `status/elaborating` → `status/review-spec` → `status/ready-for-dev` → `status/in-progress` → `status/done`
+↘ `status/blocked` (at any point) · `status/fixes-spec` (spec review loop)
 
 **Stage** (pipeline — exactly one when in-progress):
-`stage/dev` → `stage/review` → `stage/qa`
+`stage/dev` → `stage/review-pr` → `stage/approved`
+↘ `stage/fixes-pr` (PR review loop) · `stage/qa` (reserved)
+
+**Gate**: `yolo` — enables autonomous orchestration (narrator-yolo). Without it, skills run manually.
+
+Legacy aliases (accepted on read, never written): `status/ready` → `status/ready-for-dev`, `stage/review` → `stage/review-pr`
 
 Other labels: `type/feature` · `type/bug` · `type/chore` | `priority/high` · `priority/medium` · `priority/low` | `scope/backend` · `scope/frontend` · `scope/core` · `scope/db`
 
@@ -142,7 +147,7 @@ Refs #<id>
 ### 8. Hand off
 
 After creating the PR:
-- Update labels: replace `stage/dev` with `stage/review`
+- Update labels: replace `stage/dev` with `stage/review-pr`
 - Comment on the issue with PR link + what changed + how verified
 - Switch back to main: `git checkout main`
 
@@ -159,19 +164,15 @@ apps/narratorr/src/
   client/
     pages/        — React page components
     components/   — Shared UI components
-    lib/api.ts    — API client
-  shared/
-    schemas.ts    — Zod schemas shared between client and server
-
-packages/
-  core/src/
+    lib/          — API client, utilities
+  shared/         — Zod schemas and registries shared between client and server
+  core/
     indexers/     — Search adapter implementations (IndexerAdapter interface)
     download-clients/  — Download client implementations (DownloadClientAdapter interface)
     metadata/     — Metadata provider implementations (MetadataProvider interface)
     utils/        — Shared utilities (parsing, naming, magnets)
-  db/src/
+  db/
     schema.ts     — Drizzle ORM schema (SQLite)
-  ui/             — Shared UI utilities (cn())
 ```
 
 ### Key patterns

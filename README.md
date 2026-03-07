@@ -126,18 +126,16 @@ narratorr/
 │       │       ├── components/ # Shared components
 │       │       └── lib/        # Utilities
 │       └── Dockerfile
-├── packages/
-│   ├── core/                   # Indexers, download clients, metadata
-│   │   ├── indexers/           # AudioBookBay, etc.
-│   │   ├── download-clients/   # qBittorrent, etc.
-│   │   ├── metadata/           # Audnexus, etc.
-│   │   └── utils/              # Magnet links, parsing
-│   ├── db/                     # Database schema
-│   └── ui/                     # Shared UI utilities
+│       ├── shared/          # Zod schemas, registries
+│       ├── core/            # Indexers, download clients, metadata
+│       │   ├── indexers/    # AudioBookBay, Torznab, Newznab
+│       │   ├── download-clients/  # qBittorrent, SABnzbd, etc.
+│       │   ├── metadata/   # Audnexus, etc.
+│       │   └── utils/      # Magnet links, parsing
+│       └── db/              # Drizzle ORM schema
 ├── scripts/
-│   └── gitea.ts                # Gitea API client (TypeScript CLI)
-├── docker-compose.yml
-└── turbo.json
+│   └── gitea.ts             # Gitea API client (TypeScript CLI)
+└── docker-compose.yml
 ```
 
 ## API Reference
