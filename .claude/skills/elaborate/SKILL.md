@@ -114,9 +114,18 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    Followed by a brief prose explanation (2-3 sentences max) of the verdict.
 
+6. **Update labels based on verdict** (for `yolo`-tagged issues):
+   - If the issue has the `yolo` label AND verdict is `ready` or `filled`:
+     - Replace any `status/*` label with `status/review-spec` (preserve `yolo` and all other labels)
+     - Run: `gitea issue-update <id> labels "<comma-separated label names>"`
+   - If the issue has the `yolo` label AND verdict is `not-ready`:
+     - Replace any `status/*` label with `status/blocked`
+     - Run: `gitea issue-update <id> labels "<comma-separated label names>"`
+   - If the issue does NOT have `yolo`: do not change labels (manual workflow — `/claim` handles labels)
+
 ## Important
 
-- This skill is read-only except for updating the issue body (step 7) with durable content
-- Do NOT change labels or create branches — that's `/claim`'s job
+- This skill is read-only except for updating the issue body (step 4) with durable content and labels (step 6) for yolo-tagged issues
+- Do NOT create branches — that's `/claim`'s job
 - Do NOT suggest claiming or starting implementation — just report readiness
 - Ephemeral codebase findings stay in the verdict output — they're consumed by `/claim` or the user, not persisted to the issue

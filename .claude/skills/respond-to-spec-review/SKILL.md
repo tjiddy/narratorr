@@ -73,7 +73,13 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    ```
    Write to temp file, then: `gitea issue-comment <id> --body-file <temp-file-path>`
 
-8. **Report readiness verdict** using this format:
+8. **Update labels** (for `yolo`-tagged issues):
+   - If the issue has the `yolo` label:
+     - Replace any `status/*` label with `status/review-spec` (preserve `yolo` and all other labels)
+     - Run: `gitea issue-update <id> labels "<comma-separated label names>"`
+   - If the issue does NOT have `yolo`: do not change labels (manual workflow)
+
+9. **Report readiness verdict** using this format:
 
    ```
    VERDICT: ready | filled | not-ready
@@ -91,7 +97,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Important
 
-- This skill writes to the issue body (step 6) and posts a response comment (step 7)
-- Do NOT change labels or create branches — that's `/claim`'s job (after spec is approved) or `/review-spec`'s job (setting status)
+- This skill writes to the issue body (step 6), posts a response comment (step 7), and updates labels (step 8) for yolo-tagged issues
+- Do NOT create branches — that's `/claim`'s job
 - Do NOT suggest claiming or starting implementation — just report readiness
 - Ephemeral codebase findings stay in the verdict output — they're consumed by `/claim` or the user, not persisted to the issue

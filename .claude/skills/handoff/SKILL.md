@@ -103,11 +103,11 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Rollback: revert PR
    ```
 
-6. **Update labels to `stage/review`** (keeping all other existing labels):
+6. **Update labels to `stage/review-pr`** (keeping all other existing labels):
    - Read the current labels from the issue output (step 4).
-   - Replace any `stage/*` label with `stage/review` (keep `status/in-progress` and all other labels).
+   - Replace any `stage/*` label with `stage/review-pr` (keep `status/in-progress` and all other labels).
    - Run: `gitea issue-update <id> labels "<comma-separated label names>"`
-   - Verify the output shows `stage/review`.
+   - Verify the output shows `stage/review-pr`.
 
 7. **Post a handoff comment** on the issue:
    - Write the comment to a temp file, then post it:

@@ -10,7 +10,7 @@ argument-hint: <issue-id>
 
 Mechanical claiming action: validates the issue is ready, creates the feature branch, updates labels, and posts a claim comment. No codebase exploration or planning — that's `/plan`'s job.
 
-**Prerequisite:** The issue must have `status/ready` (set by `/review-spec` on approval). Issues still in `status/backlog` must go through `/review-spec` first.
+**Prerequisite:** The issue must have `status/ready` or `status/ready-for-dev` (set by `/review-spec` on approval). Issues still in `status/backlog` must go through `/review-spec` first.
 
 ## Gitea CLI
 
@@ -21,7 +21,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 1. **Read the issue:** Run `gitea issue <id>`. Extract title, labels, body, and comments.
 
 2. **Check status label:**
-   - **`status/ready`** → proceed to step 3
+   - **`status/ready`** or **`status/ready-for-dev`** → proceed to step 3
    - **`status/backlog`** →
      - Check if the issue has any `## Spec Review` comments (from `/review-spec`)
      - If it has spec review comments with `needs-work` verdict: STOP — "Issue #<id> has unresolved spec review findings. Update the spec to address findings, then re-run `/review-spec <id>`."
