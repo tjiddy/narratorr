@@ -22,12 +22,14 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 1. **Invoke `/claim <id>`** via the Skill tool.
    - `/claim` validates the issue status, creates the feature branch, and updates labels.
    - If `/claim` STOPs (blocked, not ready, PR already exists) → the entire `/implement` STOPS. Do not continue.
+   - **If `/claim` succeeds → IMMEDIATELY continue to Phase 2.** Do not end your turn.
 
 ### Phase 2 — Plan
 
 2. **Invoke `/plan <id>`** via the Skill tool.
    - `/plan` explores the codebase, extracts test stubs from the spec, and posts a structured implementation plan on the issue.
    - The plan comment and test stubs feed directly into the implementation phase.
+   - **When `/plan` returns → IMMEDIATELY continue to Phase 3.** Do not end your turn.
 
 ### Phase 3 — Implement
 
@@ -44,8 +46,10 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 5. **Run quality gates:** Invoke `/verify` via the Skill tool. It runs on haiku to keep cost down and verbose build output out of main context.
 
+   **IMMEDIATELY when `/verify` returns** (do NOT stop or end your turn):
    - If OVERALL: fail → fix failures in the main context and re-invoke `/verify` (max 2 attempts)
    - If still failing after 2 fix attempts → invoke `/block <id>` via the Skill tool and STOP
+   - If OVERALL: pass → continue to step 6 RIGHT NOW. You have 4 more steps to complete.
 
 6. **Frontend design pass (if applicable):** Check the issue labels or spec for frontend scope (`scope/frontend`).
    - If the issue includes frontend work → invoke the `frontend-design` skill on each new or significantly changed UI component. The goal is production-grade polish, not just functional correctness.
@@ -56,6 +60,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 7. **Invoke `/handoff <id>`** via the Skill tool.
    - This pushes, creates the PR, updates labels, posts the handoff comment, updates the context cache, and appends the workflow log.
+   - **When `/handoff` returns → IMMEDIATELY continue to step 8.** Do not end your turn.
 
 8. **Verify label transition (safety net):** Run `gitea issue <id>` and check that the issue has `stage/review-pr`. If `/handoff` didn't set it (this happens with some agents):
    - Read the current labels from the issue output

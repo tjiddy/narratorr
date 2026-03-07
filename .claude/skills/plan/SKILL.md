@@ -118,6 +118,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 6. Tell the user the plan is posted and show the summary, including codebase findings from step 3.
 
+   **If called as a sub-skill** (e.g., from `/implement`): append `CALLER: Sub-skill complete. Continue to your next step immediately.` to your output.
+
 ## Important
 
 - This skill does NOT claim the issue or create branches — that's `/claim`'s job

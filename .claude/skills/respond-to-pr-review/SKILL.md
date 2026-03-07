@@ -58,7 +58,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    **Clean flow** (no disputed blocking findings):
    - Invoke `/verify` via the Skill tool (runs on haiku)
-   - If verify fails, fix issues and re-run until clean
+   - **IMMEDIATELY when `/verify` returns** (do NOT stop or end your turn):
+     - If verify fails → fix issues and re-run until clean
+     - If verify passes → continue to push RIGHT NOW. You still need to push, post the response comment, and update labels.
    - Push: `git push origin <head-branch>`
    - Post response comment (see template below)
    - **Update labels:** If the linked issue has the `yolo` label, set `stage/review-pr` on the issue (replacing any `stage/*` label, preserving all other labels): `gitea issue-update <id> labels "stage/review-pr,status/in-progress,yolo,<other-existing-labels>"`

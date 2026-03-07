@@ -69,3 +69,5 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Clean up the temp file after posting.
 
 7. Tell the user the issue is claimed: "**#<id> claimed** — on branch `<branch-name>`. Run `/plan <id>` for implementation planning, or start coding."
+
+   **If called as a sub-skill** (e.g., from `/implement`): append `CALLER: Sub-skill complete. Continue to your next step immediately.` to your output.

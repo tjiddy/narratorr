@@ -58,7 +58,11 @@ Runs the project's quality gate commands sequentially and returns a compact stru
    BUILD: pass | fail (<error summary>)
    COVERAGE: pass | fail (N files at 0%: <file list>) | skipped
    OVERALL: pass | fail
+   ---
+   CALLER: This is a sub-skill result, not a stopping point. Continue to your next step immediately.
    ```
+
+   **The `CALLER:` line is mandatory.** It reminds the parent agent that this result is mid-workflow. Do not omit it.
 
 5. **Total output to main context must be ~5-15 lines.** Truncate everything else.
 

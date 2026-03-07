@@ -20,7 +20,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 2. **Run quality gates:** Invoke `/verify` via the Skill tool. It runs on haiku to keep cost down and verbose build output out of main context.
 
-   If OVERALL: fail → STOP and report failures (do NOT fix — that's the caller's job). If pass → continue to step 2b.
+   **IMMEDIATELY when `/verify` returns** (do NOT stop or end your turn):
+   - If OVERALL: fail → STOP and report failures (do NOT fix — that's the caller's job).
+   - If OVERALL: pass → continue to step 2b RIGHT NOW. The verify result is a mid-flow value, not a stopping point. You have 9 more steps to complete.
 
 2b. **Check for remaining test stubs.**
    Search for `it.todo(` in all test files changed on this branch (use `git diff main --name-only -- '*.test.*'`).
@@ -195,3 +197,5 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    ```
 
 11. Tell the user the PR is created and show the link.
+
+   **If called as a sub-skill** (e.g., from `/implement`): append `CALLER: Sub-skill complete. Continue to your next step immediately.` to your output.
