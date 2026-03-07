@@ -136,6 +136,8 @@ Not every category applies to every issue. The standard is: if a category is rel
 
 All work is tracked as Gitea issues at `https://git.tjiddy.com/todd/narratorr`. Specs live in issue bodies — each issue is self-contained. The Gitea CLI is at `scripts/gitea.ts` — use `/issue <id>`, `/issues`, etc.
 
+**Gitea connectivity is intermittent.** The Gitea server occasionally refuses connections (ECONNREFUSED on :443). If a Gitea CLI command fails with a connectivity error, wait 3 seconds and retry up to 3 times before giving up. This applies to all `gitea` commands — comments, label updates, PR creation, etc.
+
 ### Workflow Skills
 
 Claude Code skills automate the agent workflow — use these instead of manual steps:
