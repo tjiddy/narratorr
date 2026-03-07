@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "eb139f03-276c-4663-a35c-2ff139fc84af",
+  "id": "379e1449-fad2-4438-9ba3-9f846429d70c",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "authors": {
@@ -157,6 +157,130 @@
           "tableTo": "books",
           "columnsFrom": [
             "book_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "book_events": {
+      "name": "book_events",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "book_id": {
+          "name": "book_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "download_id": {
+          "name": "download_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "book_title": {
+          "name": "book_title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "author_name": {
+          "name": "author_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'auto'"
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        }
+      },
+      "indexes": {
+        "idx_book_events_book_id": {
+          "name": "idx_book_events_book_id",
+          "columns": [
+            "book_id"
+          ],
+          "isUnique": false
+        },
+        "idx_book_events_event_type": {
+          "name": "idx_book_events_event_type",
+          "columns": [
+            "event_type"
+          ],
+          "isUnique": false
+        },
+        "idx_book_events_created_at": {
+          "name": "idx_book_events_created_at",
+          "columns": [
+            "created_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "book_events_book_id_books_id_fk": {
+          "name": "book_events_book_id_books_id_fk",
+          "tableFrom": "book_events",
+          "tableTo": "books",
+          "columnsFrom": [
+            "book_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "book_events_download_id_downloads_id_fk": {
+          "name": "book_events_download_id_downloads_id_fk",
+          "tableFrom": "book_events",
+          "tableTo": "downloads",
+          "columnsFrom": [
+            "download_id"
           ],
           "columnsTo": [
             "id"
@@ -369,6 +493,14 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "monitor_for_upgrades": {
+          "name": "monitor_for_upgrades",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
         },
         "created_at": {
           "name": "created_at",

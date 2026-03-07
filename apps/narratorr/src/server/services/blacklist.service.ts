@@ -1,7 +1,7 @@
 import { eq, inArray } from 'drizzle-orm';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { blacklist } from '@narratorr/db/schema';
+import { blacklist } from '../../db/schema.js';
 
 type BlacklistRow = typeof blacklist.$inferSelect;
 type NewBlacklist = typeof blacklist.$inferInsert;

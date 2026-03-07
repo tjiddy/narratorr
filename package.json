@@ -5,14 +5,14 @@
   "type": "module",
   "scripts": {
     "gitea": "node scripts/gitea.ts",
-    "dev": "turbo dev",
-    "build": "turbo build",
+    "dev": "pnpm --filter narratorr dev",
+    "build": "pnpm --filter narratorr build",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "turbo test",
-    "typecheck": "turbo typecheck",
-    "db:generate": "pnpm --filter @narratorr/db generate",
-    "db:migrate": "pnpm --filter @narratorr/db migrate",
+    "test": "pnpm --filter narratorr test",
+    "typecheck": "pnpm --filter narratorr typecheck",
+    "db:generate": "pnpm --filter narratorr db:generate",
+    "db:migrate": "pnpm --filter narratorr db:migrate",
     "docker:build": "docker build -t narratorr .",
     "docker:up": "docker-compose up -d",
     "lighthouse": "node --import tsx e2e/lighthouse/run.ts"
@@ -27,7 +27,6 @@
     "eslint-plugin-react-refresh": "^0.5.0",
     "globals": "^17.3.0",
     "tsx": "^4.19.0",
-    "turbo": "^2.3.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.54.0"
   },

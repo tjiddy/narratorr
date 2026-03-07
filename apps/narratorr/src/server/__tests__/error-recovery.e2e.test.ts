@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { eq } from 'drizzle-orm';
-import { downloads, books } from '@narratorr/db/schema';
-import { scanAudioDirectory } from '@narratorr/core/utils/audio-scanner';
+import { downloads, books } from '../../db/schema.js';
+import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { createE2EApp, seedBookAndDownload, type E2EApp } from './e2e-helpers.js';
 import {
   INDEXER_BASE,
@@ -21,7 +21,7 @@ import {
   waitForRequests,
 } from './msw-handlers.js';
 
-vi.mock('@narratorr/core/utils/audio-scanner', () => ({
+vi.mock('../../core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 

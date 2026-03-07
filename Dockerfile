@@ -8,23 +8,19 @@ WORKDIR /app
 
 # Copy workspace configuration
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
-COPY turbo.json tsconfig.json ./
+COPY tsconfig.json ./
 
-# Copy package.json files for all packages
+# Copy package.json files
 COPY apps/narratorr/package.json apps/narratorr/
-COPY packages/db/package.json packages/db/
-COPY packages/core/package.json packages/core/
-COPY packages/ui/package.json packages/ui/
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
 
 # Copy source code
 COPY apps/ apps/
-COPY packages/ packages/
 
-# Build all packages
-RUN pnpm turbo build --filter=narratorr...
+# Build application
+RUN pnpm --filter narratorr build
 
 # Production stage
 FROM node:20-alpine AS runner
@@ -42,19 +38,15 @@ RUN corepack enable
 # Copy workspace configuration for production install
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/narratorr/package.json apps/narratorr/
-COPY packages/db/package.json packages/db/
-COPY packages/core/package.json packages/core/
-COPY packages/ui/package.json packages/ui/
 
 # Install production dependencies only
 RUN pnpm install --prod --frozen-lockfile
 
 # Copy built application
 COPY --from=builder /app/apps/narratorr/dist ./apps/narratorr/dist
-COPY --from=builder /app/packages/db/dist ./packages/db/dist
-COPY --from=builder /app/packages/db/drizzle ./packages/db/drizzle
-COPY --from=builder /app/packages/core/dist ./packages/core/dist
-COPY --from=builder /app/packages/ui/dist ./packages/ui/dist
+
+# Copy migration files (not bundled, loaded at runtime)
+COPY --from=builder /app/apps/narratorr/drizzle ./apps/narratorr/drizzle
 
 # Create directories for config and data
 RUN mkdir -p /config /audiobooks /downloads

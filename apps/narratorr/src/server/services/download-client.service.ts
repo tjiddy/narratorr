@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloadClients } from '@narratorr/db/schema';
+import { downloadClients } from '../../db/schema.js';
 import {
   QBittorrentClient,
   SABnzbdClient,
@@ -17,7 +17,7 @@ import {
   type TransmissionConfig,
   type DelugeConfig,
   type BlackholeConfig,
-} from '@narratorr/core';
+} from '../../core/index.js';
 
 type DownloadClientRow = typeof downloadClients.$inferSelect;
 type NewDownloadClient = typeof downloadClients.$inferInsert;

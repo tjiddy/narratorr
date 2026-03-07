@@ -3,7 +3,7 @@ import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests_
 import { createMockDbIndexer } from '../__tests__/factories.js';
 import { IndexerService } from './indexer.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 
 const mockIndexer = createMockDbIndexer();
 

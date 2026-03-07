@@ -42,9 +42,6 @@ importers:
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
-      turbo:
-        specifier: ^2.3.0
-        version: 2.8.3
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -75,15 +72,18 @@ importers:
       '@libsql/client':
         specifier: ^0.14.0
         version: 0.14.0
-      '@narratorr/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      '@narratorr/db':
-        specifier: workspace:*
-        version: link:../../packages/db
       '@tanstack/react-query':
         specifier: ^5.62.0
         version: 5.90.20(react@18.3.1)
+      cheerio:
+        specifier: ^1.0.0
+        version: 1.2.0
+      class-variance-authority:
+        specifier: ^0.7.1
+        version: 0.7.1
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
       dompurify:
         specifier: ^3.3.1
         version: 3.3.1
@@ -108,6 +108,9 @@ importers:
       node-cron:
         specifier: ^3.0.3
         version: 3.0.3
+      nodemailer:
+        specifier: ^8.0.1
+        version: 8.0.1
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -123,6 +126,9 @@ importers:
       sonner:
         specifier: ^2.0.7
         version: 2.0.7(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      tailwind-merge:
+        specifier: ^2.6.0
+        version: 2.6.1
     devDependencies:
       '@testing-library/jest-dom':
         specifier: ^6.9.1
@@ -142,6 +148,9 @@ importers:
       '@types/node-cron':
         specifier: ^3.0.11
         version: 3.0.11
+      '@types/nodemailer':
+        specifier: ^7.0.11
+        version: 7.0.11
       '@types/react':
         specifier: ^18.3.0
         version: 18.3.27
@@ -157,6 +166,9 @@ importers:
       concurrently:
         specifier: ^9.1.0
         version: 9.2.1
+      drizzle-kit:
+        specifier: ^0.30.0
+        version: 0.30.6
       jsdom:
         specifier: ^28.0.0
         version: 28.0.0
@@ -187,105 +199,6 @@ importers:
 
   e2e:
     devDependencies:
-      vitest:
-        specifier: ^2.1.0
-        version: 2.1.9(@types/node@22.19.8)(jsdom@28.0.0)(msw@2.12.9(@types/node@22.19.8)(typescript@5.9.3))
-
-  packages/core:
-    dependencies:
-      cheerio:
-        specifier: ^1.0.0
-        version: 1.2.0
-      music-metadata:
-        specifier: ^11.12.0
-        version: 11.12.0
-      nodemailer:
-        specifier: ^8.0.1
-        version: 8.0.1
-      zod:
-        specifier: ^4.3.6
-        version: 4.3.6
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.19.8
-      '@types/nodemailer':
-        specifier: ^7.0.11
-        version: 7.0.11
-      msw:
-        specifier: ^2.12.9
-        version: 2.12.9(@types/node@22.19.8)(typescript@5.9.3)
-      tsup:
-        specifier: ^8.3.0
-        version: 8.5.1(jiti@1.21.7)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.0
-        version: 2.1.9(@types/node@22.19.8)(jsdom@28.0.0)(msw@2.12.9(@types/node@22.19.8)(typescript@5.9.3))
-
-  packages/db:
-    dependencies:
-      '@libsql/client':
-        specifier: ^0.14.0
-        version: 0.14.0
-      drizzle-orm:
-        specifier: ^0.38.0
-        version: 0.38.4(@libsql/client@0.14.0)(@types/react@18.3.27)(react@18.3.1)
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.19.8
-      drizzle-kit:
-        specifier: ^0.30.0
-        version: 0.30.6
-      tsup:
-        specifier: ^8.3.0
-        version: 8.5.1(jiti@1.21.7)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
-      tsx:
-        specifier: ^4.19.0
-        version: 4.21.0
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.0
-        version: 2.1.9(@types/node@22.19.8)(jsdom@28.0.0)(msw@2.12.9(@types/node@22.19.8)(typescript@5.9.3))
-
-  packages/ui:
-    dependencies:
-      class-variance-authority:
-        specifier: ^0.7.1
-        version: 0.7.1
-      clsx:
-        specifier: ^2.1.1
-        version: 2.1.1
-      tailwind-merge:
-        specifier: ^2.6.0
-        version: 2.6.1
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.19.8
-      '@types/react':
-        specifier: ^18.3.0
-        version: 18.3.27
-      '@types/react-dom':
-        specifier: ^18.3.0
-        version: 18.3.7(@types/react@18.3.27)
-      react:
-        specifier: ^18.3.0
-        version: 18.3.1
-      react-dom:
-        specifier: ^18.3.0
-        version: 18.3.1(react@18.3.1)
-      tsup:
-        specifier: ^8.3.0
-        version: 8.5.1(jiti@1.21.7)(postcss@8.5.6)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
       vitest:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.19.8)(jsdom@28.0.0)(msw@2.12.9(@types/node@22.19.8)(typescript@5.9.3))
@@ -3164,7 +3077,6 @@ packages:
 
   libsql@0.4.7:
     resolution: {integrity: sha512-T9eIRCs6b0J1SHKYIvD8+KCJMcWZ900iZyxdnSCdqxN12Z1ijzT+jY5nrk72Jw4B0HGzms2NgpryArlJqvc3Lw==}
-    cpu: [x64, arm64, wasm32]
     os: [darwin, linux, win32]
 
   lie@3.1.1:
@@ -4253,40 +4165,6 @@ packages:
   tsx@4.21.0:
     resolution: {integrity: sha512-5C1sg4USs1lfG0GFb2RLXsdpXqBSEhAaA/0kPL01wxzpMqLILNxIxIOKiILz+cdg/pLnOUxFYOR5yhHU666wbw==}
     engines: {node: '>=18.0.0'}
-    hasBin: true
-
-  turbo-darwin-64@2.8.3:
-    resolution: {integrity: sha512-4kXRLfcygLOeNcP6JquqRLmGB/ATjjfehiojL2dJkL7GFm3SPSXbq7oNj8UbD8XriYQ5hPaSuz59iF1ijPHkTw==}
-    cpu: [x64]
-    os: [darwin]
-
-  turbo-darwin-arm64@2.8.3:
-    resolution: {integrity: sha512-xF7uCeC0UY0Hrv/tqax0BMbFlVP1J/aRyeGQPZT4NjvIPj8gSPDgFhfkfz06DhUwDg5NgMo04uiSkAWE8WB/QQ==}
-    cpu: [arm64]
-    os: [darwin]
-
-  turbo-linux-64@2.8.3:
-    resolution: {integrity: sha512-vxMDXwaOjweW/4etY7BxrXCSkvtwh0PbwVafyfT1Ww659SedUxd5rM3V2ZCmbwG8NiCfY7d6VtxyHx3Wh1GoZA==}
-    cpu: [x64]
-    os: [linux]
-
-  turbo-linux-arm64@2.8.3:
-    resolution: {integrity: sha512-mQX7uYBZFkuPLLlKaNe9IjR1JIef4YvY8f21xFocvttXvdPebnq3PK1Zjzl9A1zun2BEuWNUwQIL8lgvN9Pm3Q==}
-    cpu: [arm64]
-    os: [linux]
-
-  turbo-windows-64@2.8.3:
-    resolution: {integrity: sha512-YLGEfppGxZj3VWcNOVa08h6ISsVKiG85aCAWosOKNUjb6yErWEuydv6/qImRJUI+tDLvDvW7BxopAkujRnWCrw==}
-    cpu: [x64]
-    os: [win32]
-
-  turbo-windows-arm64@2.8.3:
-    resolution: {integrity: sha512-afTUGKBRmOJU1smQSBnFGcbq0iabAPwh1uXu2BVk7BREg30/1gMnJh9DFEQTah+UD3n3ru8V55J83RQNFfqoyw==}
-    cpu: [arm64]
-    os: [win32]
-
-  turbo@2.8.3:
-    resolution: {integrity: sha512-8Osxz5Tu/Dw2kb31EAY+nhq/YZ3wzmQSmYa1nIArqxgCAldxv9TPlrAiaBUDVnKA4aiPn0OFBD1ACcpc5VFOAQ==}
     hasBin: true
 
   type-check@0.4.0:
@@ -7039,7 +6917,7 @@ snapshots:
       '@petamoriken/float16': 3.9.3
       debug: 4.4.3
       env-paths: 3.0.0
-      semver: 7.7.3
+      semver: 7.7.4
       shell-quote: 1.8.3
       which: 4.0.0
     transitivePeerDependencies:
@@ -8570,33 +8448,6 @@ snapshots:
       get-tsconfig: 4.13.1
     optionalDependencies:
       fsevents: 2.3.3
-
-  turbo-darwin-64@2.8.3:
-    optional: true
-
-  turbo-darwin-arm64@2.8.3:
-    optional: true
-
-  turbo-linux-64@2.8.3:
-    optional: true
-
-  turbo-linux-arm64@2.8.3:
-    optional: true
-
-  turbo-windows-64@2.8.3:
-    optional: true
-
-  turbo-windows-arm64@2.8.3:
-    optional: true
-
-  turbo@2.8.3:
-    optionalDependencies:
-      turbo-darwin-64: 2.8.3
-      turbo-darwin-arm64: 2.8.3
-      turbo-linux-64: 2.8.3
-      turbo-linux-arm64: 2.8.3
-      turbo-windows-64: 2.8.3
-      turbo-windows-arm64: 2.8.3
 
   type-check@0.4.0:
     dependencies:

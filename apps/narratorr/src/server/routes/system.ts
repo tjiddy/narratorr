@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import { sql } from 'drizzle-orm';
 import type { Services } from './index.js';
 import { runSearchJob } from '../jobs/search.js';

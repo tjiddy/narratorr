@@ -19,7 +19,7 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('@narratorr/core/utils', () => ({
+vi.mock('../../../core/utils/index.js', () => ({
   renderTemplate: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
   renderFilename: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
   toLastFirst: (name: string) => name,

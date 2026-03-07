@@ -63,7 +63,7 @@ export default tseslint.config(
 
   // Server-side code - allow console.log for logging
   {
-    files: ['**/src/server/**/*.ts', '**/packages/**/*.ts', 'e2e/**/*.ts'],
+    files: ['**/src/server/**/*.ts', '**/src/core/**/*.ts', '**/src/db/**/*.ts', 'e2e/**/*.ts'],
     rules: {
       'no-console': 'off',
     },

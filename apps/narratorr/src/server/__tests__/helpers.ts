@@ -5,7 +5,7 @@ import {
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
 import { vi } from 'vitest';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import { registerRoutes, type Services } from '../routes/index.js';
 
 /**

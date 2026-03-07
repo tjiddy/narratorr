@@ -1,8 +1,8 @@
 import cron from 'node-cron';
 import { eq, inArray, and, ne } from 'drizzle-orm';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books } from '@narratorr/db/schema';
+import { downloads, books } from '../../db/schema.js';
 import type { DownloadClientService } from '../services';
 import type { NotifierService } from '../services';
 

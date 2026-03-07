@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { settings } from '@narratorr/db/schema';
+import { settings } from '../../db/schema.js';
 import {
   type AppSettings,
   type SettingsCategory,

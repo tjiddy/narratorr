@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { ImportService, buildTargetPath } from './import.service.js';
-import { sanitizePath } from '@narratorr/core/utils';
+import { sanitizePath } from '../../core/utils/index.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
@@ -9,7 +9,7 @@ import type { RemotePathMappingService } from './remote-path-mapping.service.js'
 import type { TaggingService } from './tagging.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 
 // Mock node:fs/promises
 vi.mock('node:fs/promises', () => ({
@@ -40,18 +40,18 @@ vi.mock('./enrichment-utils.js', async (importOriginal) => {
 });
 
 // Mock audio scanner
-vi.mock('@narratorr/core/utils/audio-scanner', () => ({
+vi.mock('../../core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 
 // Mock audio processor
-vi.mock('@narratorr/core/utils/audio-processor', () => ({
+vi.mock('../../core/utils/audio-processor.js', () => ({
   processAudioFiles: vi.fn().mockResolvedValue({ success: true, outputFiles: [] }),
 }));
 
 import { mkdir, cp, stat, readdir, writeFile, rename, rm } from 'node:fs/promises';
-import { scanAudioDirectory } from '@narratorr/core/utils/audio-scanner';
-import { processAudioFiles } from '@narratorr/core/utils/audio-processor';
+import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';

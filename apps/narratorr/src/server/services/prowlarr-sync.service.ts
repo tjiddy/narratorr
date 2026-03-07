@@ -1,8 +1,8 @@
 import { eq, and } from 'drizzle-orm';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { indexers, settings } from '@narratorr/db/schema';
-import { ProwlarrClient, type ProwlarrConfig, type ProwlarrProxyIndexer } from '@narratorr/core';
+import { indexers, settings } from '../../db/schema.js';
+import { ProwlarrClient, type ProwlarrConfig, type ProwlarrProxyIndexer } from '../../core/index.js';
 
 type IndexerRow = typeof indexers.$inferSelect;
 

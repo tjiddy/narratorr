@@ -1,16 +1,16 @@
 /* eslint-disable max-lines -- service covers scan, import, and enrichment pipelines */
 import { access, readdir, stat, mkdir, cp, rm } from 'node:fs/promises';
 import { join, extname, relative, resolve, isAbsolute } from 'node:path';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books } from '@narratorr/db/schema';
+import { books } from '../../db/schema.js';
 import { eq, inArray } from 'drizzle-orm';
-import { AUDIO_EXTENSIONS } from '@narratorr/core/utils';
-import { discoverBooks } from '@narratorr/core/utils/book-discovery';
+import { AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import { discoverBooks } from '../../core/utils/book-discovery.js';
 import type { BookService } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
-import type { BookMetadata } from '@narratorr/core/metadata';
+import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getPathSize } from './import.service.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 

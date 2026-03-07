@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from 'fastify';
-import { calculateQuality, compareQuality, resolveBookQualityInputs } from '@narratorr/core/utils';
+import { calculateQuality, compareQuality, resolveBookQualityInputs } from '../../core/utils/index.js';
 import type { SettingsService } from '../services/settings.service.js';
 import type { BookService } from '../services/book.service.js';
 import type { IndexerService } from '../services/indexer.service.js';

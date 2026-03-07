@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 import { filterAndRankResults } from './search.js';
-import type { SearchResult } from '@narratorr/core';
+import type { SearchResult } from '../../core/index.js';
 
 const mockSearchResult = {
   title: 'The Way of Kings',

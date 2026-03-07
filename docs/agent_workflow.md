@@ -118,7 +118,7 @@ Must include the sections in the PR template below and **must include**: `Refs #
 
 3. **Explore codebase for relevant patterns:**
     - Find similar existing features (adapters, services, routes)
-    - Check interfaces/types in `packages/core/src/*/types.ts`, `shared/schemas.ts`, `packages/db/src/schema.ts`
+    - Check interfaces/types in `src/core/*/types.ts`, `shared/schemas.ts`, `src/db/schema.ts`
     - Identify wiring/touch points (`routes/index.ts`, `services/`, `App.tsx`, `Layout.tsx`)
 
 4. **Check for overlapping work:**
@@ -186,7 +186,7 @@ Rules:
 - **Write/update tests for all new/changed code.** Follow existing patterns:
     - Backend services: unit tests with mocked DB (`services/*.test.ts`)
     - API routes: integration tests with Fastify `inject()` (`routes/*.test.ts`)
-    - Core adapters: unit tests with MSW for HTTP mocking (`packages/core/**/*.test.ts`)
+    - Core adapters: unit tests with MSW for HTTP mocking (`src/core/**/*.test.ts`)
     - Frontend components/pages: render tests with Testing Library (`*.test.tsx`)
     - Frontend hooks: `renderHook` tests (`*.test.ts` or `*.test.tsx`)
     - Utilities: pure function unit tests (`*.test.ts`)

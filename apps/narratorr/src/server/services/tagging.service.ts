@@ -4,9 +4,9 @@ import { join, extname, basename, dirname } from 'node:path';
 import { promisify } from 'node:util';
 import { parseFile } from 'music-metadata';
 import { eq } from 'drizzle-orm';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, authors } from '@narratorr/db/schema';
+import { books, authors } from '../../db/schema.js';
 import type { TagMode } from '../../shared/schemas.js';
 import type { SettingsService } from './settings.service.js';
 

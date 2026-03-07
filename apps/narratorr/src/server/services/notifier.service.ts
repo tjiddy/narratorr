@@ -1,13 +1,13 @@
 import { eq } from 'drizzle-orm';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { notifiers } from '@narratorr/db/schema';
+import { notifiers } from '../../db/schema.js';
 import {
   ADAPTER_FACTORIES,
   type NotifierAdapter,
   type NotificationEvent,
   type EventPayload,
-} from '@narratorr/core';
+} from '../../core/index.js';
 
 type NotifierRow = typeof notifiers.$inferSelect;
 type NewNotifier = typeof notifiers.$inferInsert;

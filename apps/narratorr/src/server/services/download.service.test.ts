@@ -4,7 +4,7 @@ import { DownloadService } from './download.service.js';
 import { type DownloadClientService } from './download-client.service.js';
 import { type EventHistoryService } from './event-history.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 
 import { createMockDbBook } from '../__tests__/factories.js';
 

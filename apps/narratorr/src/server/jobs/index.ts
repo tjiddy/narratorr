@@ -1,4 +1,4 @@
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Services } from '../routes/index.js';
 import { startMonitorJob } from './monitor.js';

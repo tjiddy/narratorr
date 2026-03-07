@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
-import type { BookMetadata } from '@narratorr/core/metadata';
-import { scanAudioDirectory } from '@narratorr/core/utils/audio-scanner';
+import type { BookMetadata } from '../../core/metadata/index.js';
+import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 
 // ============ Types ============
 

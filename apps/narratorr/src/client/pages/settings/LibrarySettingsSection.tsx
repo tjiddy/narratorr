@@ -1,7 +1,7 @@
 import { useRef, useMemo, useState } from 'react';
 import type { UseFormRegister, UseFormSetValue, UseFormWatch, FieldErrors } from 'react-hook-form';
 import { FolderIcon } from '@/components/icons';
-import { renderTemplate, renderFilename, toLastFirst, toSortTitle, ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from '@narratorr/core/utils';
+import { renderTemplate, renderFilename, toLastFirst, toSortTitle, ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from '../../../core/utils/index.js';
 import type { UpdateSettingsFormData } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 

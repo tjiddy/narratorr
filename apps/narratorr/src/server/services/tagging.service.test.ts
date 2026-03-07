@@ -30,7 +30,7 @@ vi.mock('drizzle-orm', () => ({
 }));
 
 // Mock db schema
-vi.mock('@narratorr/db/schema', () => ({
+vi.mock('../../db/schema.js', () => ({
   books: { id: 'books.id', authorId: 'books.authorId' },
   authors: { id: 'authors.id' },
 }));

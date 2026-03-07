@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { RateLimitError } from '@narratorr/core';
+import { RateLimitError } from '../../core/index.js';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { runEnrichment } from './enrichment.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { MetadataService } from '../services/metadata.service.js';
 
 describe('enrichment job', () => {

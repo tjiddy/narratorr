@@ -6,7 +6,7 @@ import type { SettingsService } from '../services/settings.service.js';
 import type { BookService } from '../services/book.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadService } from '../services/download.service.js';
-import type { SearchResult } from '@narratorr/core';
+import type { SearchResult } from '../../core/index.js';
 
 function createMockSettingsService(overrides?: { search?: unknown; quality?: unknown }): SettingsService {
   const searchSettings = overrides?.search ?? { enabled: true, intervalMinutes: 60 };

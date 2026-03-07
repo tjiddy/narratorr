@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 
-vi.mock('@narratorr/core/utils/audio-scanner', () => ({
+vi.mock('../../core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn(),
 }));
 
@@ -11,7 +11,7 @@ vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { scanAudioDirectory } from '@narratorr/core/utils/audio-scanner';
+import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { writeFile } from 'node:fs/promises';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 

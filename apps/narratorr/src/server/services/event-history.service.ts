@@ -1,7 +1,7 @@
 import { eq, desc, like, and } from 'drizzle-orm';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { bookEvents, downloads } from '@narratorr/db/schema';
+import { bookEvents, downloads } from '../../db/schema.js';
 import { type BlacklistService } from './blacklist.service.js';
 import { type BookService } from './book.service.js';
 import { actionableEventTypes, type EventType, type EventSource } from '../../shared/schemas/event-history.js';

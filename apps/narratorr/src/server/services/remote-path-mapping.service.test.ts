@@ -3,7 +3,7 @@ import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests_
 import { createMockDbRemotePathMapping } from '../__tests__/factories.js';
 import { RemotePathMappingService } from './remote-path-mapping.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 
 const mockMapping = createMockDbRemotePathMapping();
 

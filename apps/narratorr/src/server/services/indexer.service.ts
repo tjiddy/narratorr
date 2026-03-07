@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { indexers } from '@narratorr/db/schema';
+import { indexers } from '../../db/schema.js';
 import {
   AudioBookBayIndexer,
   NewznabIndexer,
@@ -14,7 +14,7 @@ import {
   type ABBConfig,
   type NewznabConfig,
   type TorznabConfig,
-} from '@narratorr/core';
+} from '../../core/index.js';
 
 type IndexerRow = typeof indexers.$inferSelect;
 type NewIndexer = typeof indexers.$inferInsert;

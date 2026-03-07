@@ -5,7 +5,7 @@ import { createMockDb, createMockLogger, inject, mockDbChain } from './helpers.j
 import { DownloadService } from '../services/download.service.js';
 import { DownloadClientService } from '../services/download-client.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 
 const QB_BASE = 'http://localhost:8080';
 const MAGNET_HASH = 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d';

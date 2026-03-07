@@ -2,11 +2,11 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, type Mock } 
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
-vi.mock('@narratorr/core/utils/audio-processor', () => ({
+vi.mock('../../core/utils/audio-processor.js', () => ({
   probeFfmpeg: vi.fn(),
 }));
 
-import { probeFfmpeg } from '@narratorr/core/utils/audio-processor';
+import { probeFfmpeg } from '../../core/utils/audio-processor.js';
 
 const mockProbeFfmpeg = vi.mocked(probeFfmpeg);
 

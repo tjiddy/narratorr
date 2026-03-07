@@ -1,7 +1,7 @@
 import { readdir, rename, rmdir } from 'node:fs/promises';
 import { join, extname, basename, dirname, normalize, resolve, relative } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
-import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '@narratorr/core/utils';
+import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 
 /** Minimal book shape required by renameFilesWithTemplate. */
 export interface RenameableBook {

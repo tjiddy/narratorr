@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createHmac } from 'node:crypto';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { AuthService } from './auth.service.js';
 import { createMockDb, createMockLogger, mockDbChain, inject } from '../__tests__/helpers.js';

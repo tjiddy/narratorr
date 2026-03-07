@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { remotePathMappings } from '@narratorr/db/schema';
+import { remotePathMappings } from '../../db/schema.js';
 
 type RemotePathMappingRow = typeof remotePathMappings.$inferSelect;
 type NewRemotePathMapping = typeof remotePathMappings.$inferInsert;

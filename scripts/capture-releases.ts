@@ -50,7 +50,7 @@ const SEARCH_TERMS = [
   'discworld',
 ];
 
-const DEFAULT_OUTPUT = 'packages/core/src/__tests__/fixtures/release-corpus.json';
+const DEFAULT_OUTPUT = 'apps/narratorr/src/core/__tests__/fixtures/release-corpus.json';
 
 async function main() {
   const { values } = parseArgs({

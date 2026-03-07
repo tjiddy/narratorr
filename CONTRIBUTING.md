@@ -178,7 +178,7 @@ packages/
 
 **Services** use constructor injection with `(db: Db, log: FastifyBaseLogger)`. Some take additional service deps. All instantiated in `routes/index.ts:createServices()`.
 
-**Adapters** (indexers, download clients, metadata) implement interfaces from `packages/core/src/*/types.ts`. They do NOT use a logger — throw errors or return failures; the calling service logs.
+**Adapters** (indexers, download clients, metadata) implement interfaces from `src/core/*/types.ts`. They do NOT use a logger — throw errors or return failures; the calling service logs.
 
 **Routes** are registered in `routes/index.ts:registerRoutes()`. Each route file exports an async function taking `(app, ...services)`.
 
@@ -194,7 +194,7 @@ All new/changed code must include tests.
 |-------|----------|---------|---------|
 | Service (mock DB) | `services/*.test.ts` | Mock db + logger, test business logic | `book.service.test.ts` |
 | Route (integration) | `routes/*.test.ts` | Fastify `inject()`, mock services | `search.test.ts` |
-| Core adapter (HTTP mock) | `packages/core/**/*.test.ts` | MSW `setupServer()` | `abb.test.ts` |
+| Core adapter (HTTP mock) | `src/core/**/*.test.ts` | MSW `setupServer()` | `abb.test.ts` |
 | Frontend component | `**/*.test.tsx` | `renderWithProviders` helper | `SearchPage.test.tsx` |
 | Frontend hook | `hooks/*.test.tsx` | `renderHook` + wrapper | `useLibrary.test.tsx` |
 
@@ -221,7 +221,7 @@ Test helpers: `src/client/__tests__/helpers.tsx` (`renderWithProviders`)
 | `info` | Significant operations (CRUD, downloads, job lifecycle, settings changed) |
 | `debug` | Diagnostic detail (API payloads, query params, intermediate state) |
 
-Every catch block must log. Every create/update/delete should log at info. Core adapters (`packages/core/`) do NOT log — they throw or return failures.
+Every catch block must log. Every create/update/delete should log at info. Core adapters (`src/core/`) do NOT log — they throw or return failures.
 
 ---
 

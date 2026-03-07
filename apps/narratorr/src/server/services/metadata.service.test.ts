@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { RateLimitError } from '@narratorr/core';
+import { RateLimitError } from '../../core/index.js';
 import { createMockLogger } from '../__tests__/helpers.js';
 import { MetadataService } from './metadata.service.js';
 
@@ -24,9 +24,9 @@ const mockAudnexus = {
   getAuthor: vi.fn().mockResolvedValue(null),
 };
 
-vi.mock('@narratorr/core', async (importOriginal) => {
+vi.mock('../../core/index.js', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const actual = await importOriginal<typeof import('@narratorr/core')>();
+  const actual = await importOriginal<typeof import('../../core/index.js')>();
   return {
     ...actual,
     AudibleProvider: vi.fn().mockImplementation(() => mockAudibleProvider),

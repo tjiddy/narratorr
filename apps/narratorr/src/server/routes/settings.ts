@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { type FastifyInstance } from 'fastify';
-import { probeFfmpeg } from '@narratorr/core/utils/audio-processor';
+import { probeFfmpeg } from '../../core/utils/audio-processor.js';
 import { type SettingsService, type AppSettings } from '../services';
 import { updateSettingsSchema } from '../../shared/schemas.js';
 

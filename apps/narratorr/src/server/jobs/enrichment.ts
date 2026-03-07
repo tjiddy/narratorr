@@ -1,9 +1,9 @@
 import cron from 'node-cron';
 import { eq, and, isNotNull, or, sql } from 'drizzle-orm';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books } from '@narratorr/db/schema';
-import { RateLimitError } from '@narratorr/core';
+import { books } from '../../db/schema.js';
+import { RateLimitError } from '../../core/index.js';
 import type { MetadataService } from '../services/metadata.service.js';
 
 const BATCH_LIMIT = 5;

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import { createTestApp, createMockServices, resetMockServices, inject } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 

@@ -3,10 +3,10 @@ import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { MatchJobService, type MatchCandidate } from './match-job.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
-import type { BookMetadata } from '@narratorr/core/metadata';
+import type { BookMetadata } from '../../core/metadata/index.js';
 
 // Mock audio scanner
-vi.mock('@narratorr/core/utils/audio-scanner', () => ({
+vi.mock('../../core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn().mockResolvedValue(null),
 }));
 
@@ -15,7 +15,7 @@ vi.mock('node:crypto', () => ({
   randomUUID: vi.fn().mockReturnValue('test-job-id'),
 }));
 
-import { scanAudioDirectory } from '@narratorr/core/utils/audio-scanner';
+import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { randomUUID } from 'node:crypto';
 
 // -------- Helpers --------

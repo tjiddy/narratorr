@@ -1,6 +1,6 @@
 ---
 scope: [scope/core]
-files: [packages/core/src/download-clients/qbittorrent.test.ts, packages/core/src/download-clients/sabnzbd.test.ts, packages/core/src/download-clients/nzbget.test.ts]
+files: [apps/narratorr/src/core/download-clients/qbittorrent.test.ts, apps/narratorr/src/core/download-clients/sabnzbd.test.ts, apps/narratorr/src/core/download-clients/nzbget.test.ts]
 issue: 220
 source: review
 date: 2026-02-24

@@ -19,7 +19,7 @@ vi.mock('sonner', () => ({
 }));
 
 // Mock renderTemplate to avoid importing the core package
-vi.mock('@narratorr/core/utils', () => ({
+vi.mock('../../../core/utils/index.js', () => ({
   renderTemplate: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{authorLastFirst}', 'Sanderson, Brandon').replace('{title}', 'The Way of Kings').replace('{titleSort}', 'Way of Kings').replace('{narratorLastFirst}', 'Kramer, Michael & Reading, Kate'),
   renderFilename: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{title}', 'The Way of Kings'),
   toLastFirst: (name: string) => name,

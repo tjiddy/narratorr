@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Load .env from monorepo root (4 levels up: server/ → src/ → narratorr/ → apps/ → root)
+// Load .env from repo root (4 levels up: server/ → src/ → narratorr/ → apps/ → root)
 dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
 
 import Fastify from 'fastify';
@@ -19,7 +19,7 @@ import {
   validatorCompiler,
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
-import { createDb, runMigrations } from '@narratorr/db';
+import { createDb, runMigrations } from '../db/index.js';
 import { config } from './config.js';
 import { createServices, registerRoutes } from './routes';
 import { startJobs } from './jobs';

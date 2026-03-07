@@ -1,10 +1,10 @@
 import { rm } from 'node:fs/promises';
 import { cleanEmptyParents } from '../utils/paths.js';
 import { eq, and, like, desc, sql } from 'drizzle-orm';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, authors, unmatchedGenres } from '@narratorr/db/schema';
-import { slugify, findUnmatchedGenres } from '@narratorr/core';
+import { books, authors, unmatchedGenres } from '../../db/schema.js';
+import { slugify, findUnmatchedGenres } from '../../core/index.js';
 import { type MetadataService } from './metadata.service.js';
 
 type BookRow = typeof books.$inferSelect;

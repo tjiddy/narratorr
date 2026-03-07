@@ -8,7 +8,7 @@ import {
   type BookMetadata,
   type AuthorMetadata,
   type SeriesMetadata,
-} from '@narratorr/core';
+} from '../../core/index.js';
 
 const DEFAULT_THROTTLE_MS = 200;
 

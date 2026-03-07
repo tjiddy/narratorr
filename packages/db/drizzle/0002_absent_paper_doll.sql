@@ -1,1 +1,0 @@
-ALTER TABLE `books` ADD `monitor_for_upgrades` integer DEFAULT false NOT NULL;

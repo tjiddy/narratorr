@@ -12,8 +12,10 @@ export async function runMigrations(dbPath: string) {
   });
   const db = drizzle(client);
 
+  // In dev (tsx): __dirname = src/db/, migrations at ../../drizzle/
+  // In prod (bundled): __dirname = dist/server/, migrations at ../../drizzle/
   await migrate(db, {
-    migrationsFolder: path.join(__dirname, '../drizzle'),
+    migrationsFolder: path.join(__dirname, '../../drizzle'),
   });
 
   return db;

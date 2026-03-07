@@ -16,16 +16,15 @@ Narratorr uses AI-assisted development extensively — AI agents author PRs, rev
 
 ## Tech Stack
 
-Monorepo (Turborepo + pnpm) | Node.js 20+ | Fastify 5 | Drizzle ORM + libSQL | React 18 + Vite 6 | TanStack Query | Tailwind CSS | Docker
+pnpm workspace | Node.js 20+ | Fastify 5 | Drizzle ORM + libSQL | React 18 + Vite 6 | TanStack Query | Tailwind CSS | Docker
 
 ## Project Structure
 
 - `apps/narratorr/src/server/` — Fastify backend (routes/, services/, jobs/, config.ts, index.ts)
 - `apps/narratorr/src/client/` — React frontend (pages/, components/, lib/api/, App.tsx)
-- `apps/narratorr/src/shared/schemas.ts` — Shared Zod schemas
-- `packages/core/src/` — Indexer + download client adapters (indexers/, download-clients/, utils/)
-- `packages/db/src/` — Drizzle schema (schema.ts), client, migrations
-- `packages/ui/` — Shared UI utilities (cn())
+- `apps/narratorr/src/shared/` — Shared Zod schemas and registries
+- `apps/narratorr/src/core/` — Indexer + download client adapters (indexers/, download-clients/, utils/)
+- `apps/narratorr/src/db/` — Drizzle schema (schema.ts), client, migrations
 
 ## Commands
 
@@ -40,10 +39,10 @@ pnpm typecheck     # TypeScript checking
 ## Architecture
 
 - **Services**: Business logic classes in `services/`, instantiated in `routes/index.ts`. See existing services for pattern.
-- **Adapters**: Indexers and download clients implement interfaces in `packages/core/src/*/types.ts`.
+- **Adapters**: Indexers and download clients implement interfaces in `src/core/*/types.ts`.
 - **Routes**: Fastify route files export async functions taking app + services. Registered in `routes/index.ts`.
 - **Frontend pages**: Components in `pages/`, routes in `App.tsx`, nav in `components/layout/Layout.tsx`.
-- **Database**: Edit `packages/db/src/schema.ts` → run `pnpm db:generate` → migrations auto-run on start.
+- **Database**: Edit `apps/narratorr/src/db/schema.ts` → run `pnpm db:generate` → migrations auto-run on start.
 
 ## Design Principles
 
@@ -87,7 +86,7 @@ Uses Fastify's built-in Pino logger. Log level is configurable at Settings > Gen
 - Routes: use `request.log.info(...)` / `request.log.error(error, '...')`
 - Services: use `this.log.info(...)` (injected `FastifyBaseLogger` via constructor)
 - Jobs: use the `log` instance passed at initialization
-- Core adapters (`packages/core/`): do NOT use a logger — throw errors or return failures; the calling service logs, UNLESS it makes sense to do so.
+- Core adapters (`src/core/`): do NOT use a logger — throw errors or return failures; the calling service logs, UNLESS it makes sense to do so.
 
 **Important:** Use `FastifyBaseLogger` from `fastify` for logger types — NOT `BaseLogger` from `pino`. Pino is a transitive dependency (not directly installed), so importing from it causes TypeScript errors.
 
@@ -95,7 +94,7 @@ Uses Fastify's built-in Pino logger. Log level is configurable at Settings > Gen
 
 ## Testing
 
-All new/changed code must include tests. Run `pnpm test` (Vitest via Turborepo) to execute all suites.
+All new/changed code must include tests. Run `pnpm test` (Vitest) to execute all suites.
 
 **Test-first convention:** When implementing spec behaviors, write stub test cases _before_ the implementation. Each acceptance criterion or behavioral requirement from the spec becomes a failing test first, then code to make it pass. This applies to both backend logic and frontend component behavior. The goal isn't full TDD — it's ensuring spec requirements have explicit test coverage before the implementation is "done."
 
@@ -103,7 +102,7 @@ All new/changed code must include tests. Run `pnpm test` (Vitest via Turborepo) 
 - Co-located test files: `foo.ts` → `foo.test.ts` (or `.test.tsx` for JSX)
 - Backend services: mock DB, test business logic (`services/*.test.ts`)
 - API routes: Fastify `inject()` integration tests (`routes/*.test.ts`)
-- Core adapters: MSW for HTTP mocking (`packages/core/**/*.test.ts`)
+- Core adapters: MSW for HTTP mocking (`src/core/**/*.test.ts`)
 - Frontend components: Testing Library render tests (`*.test.tsx`)
 - Frontend hooks: `renderHook` from Testing Library (`*.test.ts(x)`)
 - Global setup (client): `src/client/__tests__/setup.ts` (matchMedia mock, auto-cleanup)

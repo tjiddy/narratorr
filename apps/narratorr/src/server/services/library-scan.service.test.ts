@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { BookService } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -11,7 +11,7 @@ vi.mock('./enrichment-utils.js', () => ({
   enrichBookFromAudio: vi.fn().mockResolvedValue({ enriched: true }),
 }));
 
-vi.mock('@narratorr/core/utils/book-discovery', () => ({
+vi.mock('../../core/utils/book-discovery.js', () => ({
   discoverBooks: vi.fn().mockResolvedValue([]),
 }));
 
@@ -30,7 +30,7 @@ vi.mock('./import.service.js', () => ({
 }));
 
 import { enrichBookFromAudio } from './enrichment-utils.js';
-import { discoverBooks } from '@narratorr/core/utils/book-discovery';
+import { discoverBooks } from '../../core/utils/book-discovery.js';
 import { access, readdir, stat, mkdir, cp, rm } from 'node:fs/promises';
 import { buildTargetPath, getPathSize } from './import.service.js';
 

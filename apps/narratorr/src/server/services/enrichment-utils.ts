@@ -1,10 +1,10 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books } from '@narratorr/db/schema';
-import { scanAudioDirectory } from '@narratorr/core/utils/audio-scanner';
+import { books } from '../../db/schema.js';
+import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 
 type BookRow = typeof books.$inferSelect;
 

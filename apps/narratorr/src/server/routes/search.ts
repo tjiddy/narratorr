@@ -3,8 +3,8 @@ import { type IndexerService } from '../services';
 import { type DownloadService } from '../services';
 import { type BlacklistService } from '../services';
 import { type SettingsService } from '../services';
-import { isMultiPartUsenetPost, calculateQuality } from '@narratorr/core/utils';
-import type { SearchResult } from '@narratorr/core';
+import { isMultiPartUsenetPost, calculateQuality } from '../../core/utils/index.js';
+import type { SearchResult } from '../../core/index.js';
 import {
   searchQuerySchema,
   grabSchema,

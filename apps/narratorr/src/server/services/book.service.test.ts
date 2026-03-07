@@ -3,7 +3,7 @@ import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests_
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { BookService } from './book.service.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { MetadataService } from './metadata.service.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {

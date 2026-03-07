@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, formatBytes, type BookWithAuthor, type SearchResult } from '@/lib/api';
-import { calculateQuality, compareQuality, resolveBookQualityInputs, qualityTierBg } from '@narratorr/core/utils';
+import { calculateQuality, compareQuality, resolveBookQualityInputs, qualityTierBg } from '../../core/utils/index.js';
 import { queryKeys } from '@/lib/queryKeys';
 import {
   SearchIcon,

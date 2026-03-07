@@ -1,8 +1,8 @@
 import { eq, desc, inArray, and, count, sql } from 'drizzle-orm';
-import { type Db } from '@narratorr/db';
+import { type Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books } from '@narratorr/db/schema';
-import { parseInfoHash, type DownloadProtocol } from '@narratorr/core';
+import { downloads, books } from '../../db/schema.js';
+import { parseInfoHash, type DownloadProtocol } from '../../core/index.js';
 import { type DownloadClientService } from './download-client.service.js';
 import { type NotifierService } from './notifier.service.js';
 import { type EventHistoryService, type CreateEventInput } from './event-history.service.js';

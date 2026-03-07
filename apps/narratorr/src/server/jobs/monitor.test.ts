@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '@narratorr/db';
+import type { Db } from '../../db/index.js';
 import type { DownloadClientService } from '../services/download-client.service.js';
 import type { NotifierService } from '../services/notifier.service.js';
 import { createMockDbBook } from '../__tests__/factories.js';
