@@ -114,27 +114,25 @@ Go to **Settings > General**:
 
 ```
 narratorr/
-├── apps/
-│   └── narratorr/              # Main application
-│       ├── src/
-│       │   ├── server/         # Fastify backend
-│       │   │   ├── routes/     # API endpoints
-│       │   │   ├── services/   # Business logic
-│       │   │   └── jobs/       # Background tasks
-│       │   └── client/         # React frontend
-│       │       ├── pages/      # Page components
-│       │       ├── components/ # Shared components
-│       │       └── lib/        # Utilities
-│       └── Dockerfile
-│       ├── shared/          # Zod schemas, registries
-│       ├── core/            # Indexers, download clients, metadata
-│       │   ├── indexers/    # AudioBookBay, Torznab, Newznab
-│       │   ├── download-clients/  # qBittorrent, SABnzbd, etc.
-│       │   ├── metadata/   # Audnexus, etc.
-│       │   └── utils/      # Magnet links, parsing
-│       └── db/              # Drizzle ORM schema
+├── src/
+│   ├── server/              # Fastify backend
+│   │   ├── routes/          # API endpoints
+│   │   ├── services/        # Business logic
+│   │   └── jobs/            # Background tasks
+│   ├── client/              # React frontend
+│   │   ├── pages/           # Page components
+│   │   ├── components/      # Shared components
+│   │   └── lib/             # Utilities
+│   ├── shared/              # Zod schemas, registries
+│   ├── core/                # Indexers, download clients, metadata
+│   │   ├── indexers/        # AudioBookBay, Torznab, Newznab
+│   │   ├── download-clients/  # qBittorrent, SABnzbd, etc.
+│   │   ├── metadata/        # Audnexus, etc.
+│   │   └── utils/           # Magnet links, parsing
+│   └── db/                  # Drizzle ORM schema
 ├── scripts/
 │   └── gitea.ts             # Gitea API client (TypeScript CLI)
+├── Dockerfile
 └── docker-compose.yml
 ```
 
@@ -213,20 +211,12 @@ pnpm gitea prs             # List open pull requests
 ## Development
 
 ```bash
-# Run all packages in dev mode
-pnpm dev
-
-# Build all packages
-pnpm build
-
-# Run only the main app
-pnpm dev --filter=narratorr
-
-# Generate new database migration
-pnpm db:generate
-
-# Type check
-pnpm typecheck
+pnpm dev            # Dev servers (API :3000, Vite :5173)
+pnpm build          # Build for production
+pnpm db:generate    # Generate new database migration
+pnpm typecheck      # Type check
+pnpm test           # Run tests
+pnpm lint           # Lint
 ```
 
 ## Roadmap
