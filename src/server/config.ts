@@ -10,7 +10,11 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default('http://localhost:5173').transform((v) => v || 'http://localhost:5173'),
   CONFIG_PATH: z.string().default('./config').transform((v) => v || './config'),
   LIBRARY_PATH: z.string().default('./audiobooks').transform((v) => v || './audiobooks'),
-  DATABASE_URL: z.string().default('./config/narratorr.db').transform((v) => v || './config/narratorr.db'),
+  DATABASE_URL: z
+    .string()
+    .default('./config/narratorr.db')
+    .transform((v) => v || './config/narratorr.db')
+    .transform((v) => (v.startsWith('file:') ? v.slice(5) : v)),
   AUTH_BYPASS: z
     .string()
     .default('false')

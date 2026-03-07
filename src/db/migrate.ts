@@ -21,8 +21,11 @@ export async function runMigrations(dbPath: string) {
   return db;
 }
 
-// CLI entry point
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+// CLI entry point — only when run directly via `tsx src/db/migrate.ts`,
+// not when bundled into the server (tsup inlines this file so argv[1]
+// would match the bundle and process.exit would kill the server).
+const isBundled = !import.meta.url.includes('/src/');
+if (!isBundled && process.argv[1] === fileURLToPath(import.meta.url)) {
   const dbPath = process.env.DATABASE_PATH || './narratorr.db';
   console.log(`Running migrations on ${dbPath}...`);
   runMigrations(dbPath)

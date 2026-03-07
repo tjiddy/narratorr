@@ -53,7 +53,7 @@ jobs:
 
       - name: Health smoke test
         run: |
-          DATABASE_URL=file:/tmp/ci-smoke-test.db PORT=3199 node dist/server/index.js &
+          NODE_ENV=production DATABASE_URL=file:/tmp/ci-smoke-test.db PORT=3199 node dist/server/index.js &
           SERVER_PID=$!
 
           # Wait for server to be ready (max 30s)
