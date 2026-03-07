@@ -18,13 +18,15 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Steps
 
-1. **Read the issue:** Run `gitea issue <id>`. Extract title, labels, body, and comments.
+1. **Read the issue:** Run `gitea issue <id>`. Extract title, labels, and body.
 
-2. **Extract reviewer suggestions from approval:**
-   - From the issue comments, find the most recent `## Spec Review` comment with `## Verdict: approve`
-   - If it has a `## Findings` JSON block with `suggestion` severity findings, extract them — these are refinements the reviewer identified that should be incorporated during implementation
-   - Carry these forward to include in the plan comment (step 5)
-   - If no approval comment or no suggestions, skip this step
+2. **Extract reviewer suggestions from approval (MANDATORY — do not skip):**
+   - Run `gitea issue-comments <id>` to fetch all comments (this is a separate call from step 1 — `gitea issue` does not return comments)
+   - Find the most recent comment containing `## Spec Review` with `## Verdict: approve`
+   - Parse the `## Findings` JSON block from that comment
+   - Extract all findings with `"severity": "suggestion"` — these are refinements the reviewer identified that must be incorporated during implementation
+   - Carry these forward to include in the plan comment (step 5) under "Reviewer suggestions"
+   - If no approval comment exists or the findings array is empty or has no suggestions, report "Reviewer suggestions: none"
 
 3. **Explore the codebase** via an Explore subagent (keeps file reads out of main context):
 
