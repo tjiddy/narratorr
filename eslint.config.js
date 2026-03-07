@@ -13,7 +13,7 @@ export default tseslint.config(
       '**/*.config.js',
       '**/*.config.ts',
       '**/drizzle/**',
-      'e2e/**/*.js',
+      'e2e/**',
     ],
   },
 
@@ -37,7 +37,9 @@ export default tseslint.config(
         ecmaFeatures: {
           jsx: true,
         },
-        projectService: true,
+        projectService: {
+          allowDefaultProject: ['scripts/*.ts'],
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },

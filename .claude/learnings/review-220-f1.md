@@ -1,6 +1,6 @@
 ---
 scope: [scope/frontend]
-files: [apps/narratorr/src/client/components/settings/DownloadClientFields.tsx, apps/narratorr/src/client/components/settings/useFetchCategories.ts]
+files: [src/client/components/settings/DownloadClientFields.tsx, src/client/components/settings/useFetchCategories.ts]
 issue: 220
 source: review
 date: 2026-02-24

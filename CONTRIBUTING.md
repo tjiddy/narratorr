@@ -156,7 +156,7 @@ After creating the PR:
 ## Architecture Overview
 
 ```
-apps/narratorr/src/
+src/
   server/
     routes/       — Fastify route handlers (export async function, take app + services)
     services/     — Business logic classes (constructor: db + logger)

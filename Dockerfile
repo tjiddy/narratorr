@@ -6,21 +6,18 @@ RUN corepack enable
 
 WORKDIR /app
 
-# Copy workspace configuration
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
-COPY tsconfig.json ./
-
-# Copy package.json files
-COPY apps/narratorr/package.json apps/narratorr/
+# Copy package files
+COPY pnpm-lock.yaml package.json ./
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
 
-# Copy source code
-COPY apps/ apps/
+# Copy source code and configs
+COPY src/ src/
+COPY tsconfig.json tsup.config.ts vite.config.ts postcss.config.js tailwind.config.js ./
 
 # Build application
-RUN pnpm --filter narratorr build
+RUN pnpm build
 
 # Production stage
 FROM node:20-alpine AS runner
@@ -35,18 +32,17 @@ RUN apk add --no-cache ffmpeg
 # Install pnpm for production dependencies
 RUN corepack enable
 
-# Copy workspace configuration for production install
-COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
-COPY apps/narratorr/package.json apps/narratorr/
+# Copy package files for production install
+COPY pnpm-lock.yaml package.json ./
 
 # Install production dependencies only
 RUN pnpm install --prod --frozen-lockfile
 
 # Copy built application
-COPY --from=builder /app/apps/narratorr/dist ./apps/narratorr/dist
+COPY --from=builder /app/dist ./dist
 
 # Copy migration files (not bundled, loaded at runtime)
-COPY --from=builder /app/apps/narratorr/drizzle ./apps/narratorr/drizzle
+COPY --from=builder /app/drizzle ./drizzle
 
 # Create directories for config and data
 RUN mkdir -p /config /audiobooks /downloads
@@ -58,8 +54,6 @@ VOLUME ["/config", "/audiobooks", "/downloads"]
 ENV CONFIG_PATH=/config
 ENV LIBRARY_PATH=/audiobooks
 ENV DATABASE_URL=file:/config/narratorr.db
-
-WORKDIR /app/apps/narratorr
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget --spider -q http://localhost:3000/api/health || exit 1

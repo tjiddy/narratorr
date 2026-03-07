@@ -1,6 +1,6 @@
 ---
 scope: [backend]
-files: [apps/narratorr/src/server/services/download.service.test.ts, apps/narratorr/src/server/services/import.service.test.ts, apps/narratorr/src/server/services/rename.service.test.ts]
+files: [src/server/services/download.service.test.ts, src/server/services/import.service.test.ts, src/server/services/rename.service.test.ts]
 issue: 274
 source: review
 date: 2026-03-06

@@ -16,15 +16,15 @@ Narratorr uses AI-assisted development extensively — AI agents author PRs, rev
 
 ## Tech Stack
 
-pnpm workspace | Node.js 20+ | Fastify 5 | Drizzle ORM + libSQL | React 18 + Vite 6 | TanStack Query | Tailwind CSS | Docker
+pnpm | Node.js 20+ | Fastify 5 | Drizzle ORM + libSQL | React 18 + Vite 6 | TanStack Query | Tailwind CSS | Docker
 
 ## Project Structure
 
-- `apps/narratorr/src/server/` — Fastify backend (routes/, services/, jobs/, config.ts, index.ts)
-- `apps/narratorr/src/client/` — React frontend (pages/, components/, lib/api/, App.tsx)
-- `apps/narratorr/src/shared/` — Shared Zod schemas and registries
-- `apps/narratorr/src/core/` — Indexer + download client adapters (indexers/, download-clients/, utils/)
-- `apps/narratorr/src/db/` — Drizzle schema (schema.ts), client, migrations
+- `src/server/` — Fastify backend (routes/, services/, jobs/, config.ts, index.ts)
+- `src/client/` — React frontend (pages/, components/, lib/api/, App.tsx)
+- `src/shared/` — Shared Zod schemas and registries
+- `src/core/` — Indexer + download client adapters (indexers/, download-clients/, utils/)
+- `src/db/` — Drizzle schema (schema.ts), client, migrations
 
 ## Commands
 
@@ -42,7 +42,7 @@ pnpm typecheck     # TypeScript checking
 - **Adapters**: Indexers and download clients implement interfaces in `src/core/*/types.ts`.
 - **Routes**: Fastify route files export async functions taking app + services. Registered in `routes/index.ts`.
 - **Frontend pages**: Components in `pages/`, routes in `App.tsx`, nav in `components/layout/Layout.tsx`.
-- **Database**: Edit `apps/narratorr/src/db/schema.ts` → run `pnpm db:generate` → migrations auto-run on start.
+- **Database**: Edit `src/db/schema.ts` → run `pnpm db:generate` → migrations auto-run on start.
 
 ## Design Principles
 

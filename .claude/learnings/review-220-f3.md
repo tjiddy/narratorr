@@ -1,6 +1,6 @@
 ---
 scope: [scope/backend]
-files: [apps/narratorr/src/server/services/download-client.service.ts]
+files: [src/server/services/download-client.service.ts]
 issue: 220
 source: review
 date: 2026-02-24

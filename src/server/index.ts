@@ -5,8 +5,8 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Load .env from repo root (4 levels up: server/ → src/ → narratorr/ → apps/ → root)
-dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
+// Load .env from repo root (2 levels up: server/ → src/ → root)
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 import Fastify from 'fastify';
 import cors from '@fastify/cors';

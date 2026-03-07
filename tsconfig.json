@@ -14,8 +14,15 @@
     "verbatimModuleSyntax": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "lib": ["ES2022"],
-    "types": ["node"]
+    "outDir": "./dist",
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/client/*"]
+    }
   },
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

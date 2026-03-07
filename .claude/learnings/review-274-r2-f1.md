@@ -1,6 +1,6 @@
 ---
 scope: [backend]
-files: [apps/narratorr/src/server/services/import.service.ts]
+files: [src/server/services/import.service.ts]
 issue: 274
 source: review
 date: 2026-03-06
