@@ -4,81 +4,19 @@ import type { FastifyBaseLogger } from 'fastify';
 import { settings } from '@narratorr/db/schema';
 import {
   type AppSettings,
-  librarySettingsSchema,
-  searchSettingsSchema,
-  importSettingsSchema,
-  generalSettingsSchema,
-  metadataSettingsSchema,
-  processingSettingsSchema,
-  taggingSettingsSchema,
-  qualitySettingsSchema,
+  type SettingsCategory,
+  SETTINGS_CATEGORIES,
+  DEFAULT_SETTINGS,
+  CATEGORY_SCHEMAS,
 } from '../../shared/schemas.js';
 
 export type { AppSettings };
 
-const DEFAULT_SETTINGS: AppSettings = {
-  library: {
-    path: '/audiobooks',
-    folderFormat: '{author}/{title}',
-    fileFormat: '{author} - {title}',
-  },
-  search: {
-    intervalMinutes: 360,
-    enabled: true,
-  },
-  import: {
-    deleteAfterImport: false,
-    minSeedTime: 60,
-  },
-  general: {
-    logLevel: 'info',
-  },
-  metadata: {
-    audibleRegion: 'us',
-  },
-  processing: {
-    enabled: false,
-    ffmpegPath: '',
-    outputFormat: 'm4b',
-    keepOriginalBitrate: false,
-    bitrate: 128,
-    mergeBehavior: 'multi-file-only',
-  },
-  tagging: {
-    enabled: false,
-    mode: 'populate_missing',
-    embedCover: false,
-  },
-  quality: {
-    grabFloor: 0,
-    protocolPreference: 'none',
-    minSeeders: 0,
-    searchImmediately: false,
-    monitorForUpgrades: false,
-  },
-};
-
-const CATEGORY_SCHEMAS = {
-  library: librarySettingsSchema,
-  search: searchSettingsSchema,
-  import: importSettingsSchema,
-  general: generalSettingsSchema,
-  metadata: metadataSettingsSchema,
-  processing: processingSettingsSchema,
-  tagging: taggingSettingsSchema,
-  quality: qualitySettingsSchema,
-} as const;
-
-/**
- * Parse a raw DB JSON value through its category schema.
- * Falls back to the default on parse failure (fail-soft for existing data).
- */
-function parseCategory<K extends keyof AppSettings>(
+function parseCategory<K extends SettingsCategory>(
   key: K,
   raw: unknown,
   log: FastifyBaseLogger,
 ): AppSettings[K] {
-  // undefined/null = not stored yet, just use defaults silently
   if (raw === undefined || raw === null) {
     return DEFAULT_SETTINGS[key];
   }
@@ -94,7 +32,7 @@ function parseCategory<K extends keyof AppSettings>(
 export class SettingsService {
   constructor(private db: Db, private log: FastifyBaseLogger) {}
 
-  async get<K extends keyof AppSettings>(key: K): Promise<AppSettings[K]> {
+  async get<K extends SettingsCategory>(key: K): Promise<AppSettings[K]> {
     const result = await this.db.select().from(settings).where(eq(settings.key, key)).limit(1);
 
     if (result.length === 0) {
@@ -109,19 +47,15 @@ export class SettingsService {
 
     const settingsMap = new Map(results.map((r) => [r.key, r.value]));
 
-    return {
-      library: parseCategory('library', settingsMap.get('library'), this.log) ?? DEFAULT_SETTINGS.library,
-      search: parseCategory('search', settingsMap.get('search'), this.log) ?? DEFAULT_SETTINGS.search,
-      import: parseCategory('import', settingsMap.get('import'), this.log) ?? DEFAULT_SETTINGS.import,
-      general: parseCategory('general', settingsMap.get('general'), this.log) ?? DEFAULT_SETTINGS.general,
-      metadata: parseCategory('metadata', settingsMap.get('metadata'), this.log) ?? DEFAULT_SETTINGS.metadata,
-      processing: parseCategory('processing', settingsMap.get('processing'), this.log) ?? DEFAULT_SETTINGS.processing,
-      tagging: parseCategory('tagging', settingsMap.get('tagging'), this.log) ?? DEFAULT_SETTINGS.tagging,
-      quality: parseCategory('quality', settingsMap.get('quality'), this.log) ?? DEFAULT_SETTINGS.quality,
-    };
+    return Object.fromEntries(
+      SETTINGS_CATEGORIES.map((key) => [
+        key,
+        parseCategory(key, settingsMap.get(key), this.log),
+      ]),
+    ) as AppSettings;
   }
 
-  async set<K extends keyof AppSettings>(key: K, value: AppSettings[K]): Promise<void> {
+  async set<K extends SettingsCategory>(key: K, value: AppSettings[K]): Promise<void> {
     await this.db
       .insert(settings)
       .values({ key, value: value as unknown })
@@ -135,7 +69,7 @@ export class SettingsService {
   async update(partial: Partial<AppSettings>): Promise<AppSettings> {
     for (const [key, value] of Object.entries(partial)) {
       if (value !== undefined) {
-        await this.set(key as keyof AppSettings, value);
+        await this.set(key as SettingsCategory, value);
       }
     }
     return this.getAll();

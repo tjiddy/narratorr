@@ -16,6 +16,8 @@ import {
   logLevelSchema,
   audibleRegionSchema,
   type UpdateSettingsFormData,
+  DEFAULT_SETTINGS,
+  settingsToFormData,
 } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 import { LibrarySettingsSection } from './LibrarySettingsSection';
@@ -38,52 +40,9 @@ const AUDIBLE_REGION_LABELS: Record<string, string> = {
 };
 
 const defaultValues: UpdateSettingsFormData = {
-  library: { path: '', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
-  search: { enabled: false, intervalMinutes: 360 },
-  import: { deleteAfterImport: false, minSeedTime: 60 },
-  general: { logLevel: 'info' as const },
-  metadata: { audibleRegion: 'us' as const },
-  processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b' as const, keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' as const },
-  tagging: { enabled: false, mode: 'populate_missing' as const, embedCover: false },
-  quality: { grabFloor: 0, protocolPreference: 'none' as const, minSeeders: 0, searchImmediately: false, monitorForUpgrades: false },
+  ...DEFAULT_SETTINGS,
+  library: { ...DEFAULT_SETTINGS.library, path: '' },
 };
-
-// eslint-disable-next-line complexity -- flat null-coalescing map, no branching logic
-function settingsToFormData(settings: NonNullable<ReturnType<typeof api.getSettings> extends Promise<infer T> ? T : never>): UpdateSettingsFormData {
-  return {
-    library: { path: settings.library.path, folderFormat: settings.library.folderFormat, fileFormat: settings.library.fileFormat ?? '{author} - {title}' },
-    search: {
-      enabled: settings.search?.enabled ?? false,
-      intervalMinutes: settings.search?.intervalMinutes ?? 360,
-    },
-    import: {
-      deleteAfterImport: settings.import?.deleteAfterImport ?? false,
-      minSeedTime: settings.import?.minSeedTime ?? 60,
-    },
-    general: { logLevel: settings.general?.logLevel || 'info' },
-    metadata: { audibleRegion: settings.metadata?.audibleRegion || 'us' },
-    processing: {
-      enabled: settings.processing?.enabled ?? false,
-      ffmpegPath: settings.processing?.ffmpegPath ?? '',
-      outputFormat: settings.processing?.outputFormat ?? 'm4b',
-      keepOriginalBitrate: settings.processing?.keepOriginalBitrate ?? false,
-      bitrate: settings.processing?.bitrate ?? 128,
-      mergeBehavior: settings.processing?.mergeBehavior ?? 'multi-file-only',
-    },
-    tagging: {
-      enabled: settings.tagging?.enabled ?? false,
-      mode: settings.tagging?.mode ?? 'populate_missing',
-      embedCover: settings.tagging?.embedCover ?? false,
-    },
-    quality: {
-      grabFloor: settings.quality?.grabFloor ?? 0,
-      protocolPreference: settings.quality?.protocolPreference ?? 'none',
-      minSeeders: settings.quality?.minSeeders ?? 0,
-      searchImmediately: settings.quality?.searchImmediately ?? false,
-      monitorForUpgrades: settings.quality?.monitorForUpgrades ?? false,
-    },
-  };
-}
 
 export function GeneralSettings() {
   const queryClient = useQueryClient();

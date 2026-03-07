@@ -9,6 +9,7 @@ export default defineConfig({
     include: [
       'src/server/**/*.test.ts',
       'src/client/**/*.test.{ts,tsx}',
+      'src/shared/**/*.test.ts',
     ],
     passWithNoTests: true,
     environmentMatchGlobs: [

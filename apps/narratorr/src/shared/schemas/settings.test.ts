@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { folderFormatSchema, fileFormatSchema, updateSettingsSchema, taggingSettingsSchema } from './settings.js';
+import { folderFormatSchema, fileFormatSchema, updateSettingsSchema, taggingSettingsSchema } from './settings/index.js';
 
 describe('folderFormatSchema', () => {
   it('accepts format with {title}', () => {

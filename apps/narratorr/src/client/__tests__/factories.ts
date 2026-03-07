@@ -4,6 +4,7 @@ import type { DownloadClient } from '../lib/api/download-clients.js';
 import type { Indexer } from '../lib/api/indexers.js';
 import type { Notifier } from '../lib/api/notifiers.js';
 import type { Settings } from '../lib/api/settings.js';
+import { DEFAULT_SETTINGS } from '../../shared/schemas.js';
 import type { RemotePathMapping } from '../lib/api/remote-path-mappings.js';
 
 let nextId = 1;
@@ -56,17 +57,7 @@ export function createMockBook(overrides?: Partial<BookWithAuthor>): BookWithAut
 }
 
 export function createMockSettings(overrides?: Partial<Settings>): Settings {
-  return {
-    library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
-    search: { enabled: true, intervalMinutes: 360 },
-    import: { deleteAfterImport: false, minSeedTime: 60 },
-    general: { logLevel: 'info' },
-    metadata: { audibleRegion: 'us' },
-    processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
-    tagging: { enabled: false, mode: 'populate_missing', embedCover: false },
-    quality: { grabFloor: 0, protocolPreference: 'none' as const, minSeeders: 0, searchImmediately: false, monitorForUpgrades: false },
-    ...overrides,
-  };
+  return { ...DEFAULT_SETTINGS, ...overrides };
 }
 
 export function createMockIndexer(overrides?: Partial<Indexer>): Indexer {
