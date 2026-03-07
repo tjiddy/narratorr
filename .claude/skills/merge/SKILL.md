@@ -43,7 +43,32 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 5. **Merge the PR:**
    - `gitea pr-merge <pr-number>` (defaults to squash — one clean commit on main)
-   - If merge fails (conflicts, etc.), report error and stop
+   - If merge succeeds → proceed to step 6
+   - If merge fails → inspect the error and route accordingly:
+
+     **Merge conflict** (error contains "conflict", "cannot be merged", "merge conflicts"):
+     - Find the linked issue from PR body (`Refs #<id>`)
+     - Read issue labels: `gitea issue <id>`
+     - Replace any `stage/*` label with `stage/fixes-pr` (keep all other labels)
+     - Run: `gitea issue-update <id> labels "<comma-separated>"`
+     - Post a comment on the issue: `gitea issue-comment <id> "Merge conflict on PR #<pr-number>. Needs rebase against main before merge."`
+     - **STOP**: "Merge conflict — issue set to `stage/fixes-pr` for rebase cycle."
+
+     **CI/pipeline failure** (error contains "status check", "CI", "check failed"):
+     - Find the linked issue from PR body (`Refs #<id>`)
+     - Read issue labels: `gitea issue <id>`
+     - Replace any `status/*` label with `status/blocked` (keep `stage/*` and all other labels)
+     - Run: `gitea issue-update <id> labels "<comma-separated>"`
+     - Post a comment on the issue: `gitea issue-comment <id> "Merge blocked — CI/pipeline failure on PR #<pr-number>. See PR for details."`
+     - **STOP**: "Merge blocked by CI failure — issue set to `status/blocked`."
+
+     **Other failure** (unknown error):
+     - Find the linked issue from PR body (`Refs #<id>`)
+     - Read issue labels: `gitea issue <id>`
+     - Replace any `status/*` label with `status/blocked` (keep `stage/*` and all other labels)
+     - Run: `gitea issue-update <id> labels "<comma-separated>"`
+     - Post a comment on the issue: `gitea issue-comment <id> "Merge failed on PR #<pr-number> — unknown error. Human intervention needed. Error: <error message>"`
+     - **STOP**: "Merge failed — issue set to `status/blocked`. Error: <message>"
 
 6. **Update local repository:**
    ```bash

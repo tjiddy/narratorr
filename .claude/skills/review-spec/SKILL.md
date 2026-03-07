@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 # /review-spec <id> — Review an issue spec for gaps and quality
 
-Reviews an elaborated issue spec with fresh eyes. Explores the codebase exhaustively to validate assumptions, find gaps, and suggest improvements. Posts structured findings as a comment. Moves to `ready` on approve, stays `backlog` on needs-work.
+Reviews an elaborated issue spec with fresh eyes. Explores the codebase exhaustively to validate assumptions, find gaps, and suggest improvements. Posts structured findings as a comment. Sets `status/ready-for-dev` on approve, `status/fixes-spec` on needs-work.
 
 **This skill must be run by a different agent than the one that wrote the spec.**
 
@@ -21,17 +21,21 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Steps
 
-1. **Read the issue:** Run `gitea issue <id>`. Extract:
+1. **Loop guard:** Run `gitea issue-comments <id>`. Count comments containing `## Spec Review` and `## Verdict:` that were posted in the last 24 hours (use the comment timestamps).
+   - If **5 or more** spec review verdicts in the last 24 hours → **STOP**: "Loop guard triggered: <N> spec review verdicts posted on issue #<id> in the last 24 hours. This suggests a review loop. Human intervention needed."
+   - If fewer than 5 → proceed.
+
+2. **Read the issue:** Run `gitea issue <id>`. Extract:
    - Title, labels, milestone
    - Full issue body (spec)
    - Existing comments (prior review findings, elaboration notes)
 
-1b. **Parse prior review history (re-reviews only):** From the comments extracted in step 1, find all comments containing `## Spec Review` (prior reviews) and `## Spec Review Response` (author responses). Build a map of prior findings and their resolutions:
+2b. **Parse prior review history (re-reviews only):** From the comments extracted in step 2, find all comments containing `## Spec Review` (prior reviews) and `## Spec Review Response` (author responses). Build a map of prior findings and their resolutions:
    - For each prior finding ID (F1, F2, etc.), note: the original finding, the author's resolution (`fixed`, `accepted`, `disputed`), and any rationale provided.
-   - If this is the first review (no prior `## Spec Review` comments), skip to step 2.
-   - **This does NOT reduce the scope of the review.** Steps 2-4 still run in full — you may find net-new issues that prior rounds missed. The prior history only affects how you handle findings that overlap with previously-disputed items (see dispute engagement rules below).
+   - If this is the first review (no prior `## Spec Review` comments), skip to step 3.
+   - **This does NOT reduce the scope of the review.** Steps 3-5 still run in full — you may find net-new issues that prior rounds missed. The prior history only affects how you handle findings that overlap with previously-disputed items (see dispute engagement rules below).
 
-   **Dispute engagement rules** — these apply in step 5 when classifying findings. After completing the full review (steps 2-4), check each finding against the prior history map:
+   **Dispute engagement rules** — these apply in step 6 when classifying findings. After completing the full review (steps 3-5), check each finding against the prior history map:
    - If a finding was previously raised and the author **fixed** it (updated the spec), verify the update addresses the issue. If it does, drop the finding. If the fix is incomplete, raise a NEW finding explaining what's still wrong.
    - If a finding overlaps with something the author previously **disputed** with rationale, you MUST engage with their specific argument before re-raising it:
      1. **Withdraw** — the author's rationale is correct. Drop the finding.
@@ -41,10 +45,10 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - If a finding was previously **accepted** or **deferred**, it's resolved — don't re-raise.
    - **Net-new findings are always welcome** regardless of prior history.
 
-2. **Read project context:**
+3. **Read project context:**
    - Read `CLAUDE.md` for design principles, testing standards, project philosophy, and architecture patterns
 
-3. **Explore the codebase** via an Explore subagent (keeps exhaustive file reads out of main context):
+4. **Explore the codebase** via an Explore subagent (keeps exhaustive file reads out of main context):
 
    Launch an **Explore subagent** (Agent tool, `subagent_type: "Explore"`, thoroughness: "very thorough") with this prompt:
 
@@ -71,9 +75,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > SPEC ASSUMPTION RISKS: <anything in the codebase that contradicts or complicates spec assumptions>
    > ```
 
-   Use the subagent's output to inform the spec evaluation in step 4.
+   Use the subagent's output to inform the spec evaluation in step 5.
 
-4. **Evaluate the spec** against these checklists:
+5. **Evaluate the spec** against these checklists:
 
    **Precision checks:**
    - Every AC item is testable — could you write a pass/fail test from the AC alone?
@@ -117,17 +121,20 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Flag any mismatch between described behavior and actual implementation as `category: "behavioral-accuracy"`, severity `blocking`. Example: spec says "hook implements optimistic updates" but the hook only invalidates queries on success.
    - Skip this check for feature/bug issues where the spec describes *new* behavior to implement.
 
-5. **Classify findings** — For every issue found, create a finding with severity. Do not cap the number of findings — report everything you find.
+6. **Classify findings** — For every issue found, create a finding with severity. Do not cap the number of findings — report everything you find.
    - **`"blocking"`**: Spec cannot be implemented correctly without addressing this. Missing AC, contradictions, wrong assumptions about existing code, untestable requirements. Blocking findings must be evidence-based — point to a specific spec line and a specific codebase fact that conflicts, or a concrete scenario that the spec fails to handle.
    - **`"suggestion"`**: Would improve the spec but not strictly required. Use liberally across these categories: edge case coverage, alternative approaches, pattern improvements, test-quality gaps, maintainability concerns, observability/logging gaps, naming clarity, and future regression risk.
    - Every finding MUST include a concrete "why" and ideally a proposed fix or question to resolve it.
 
-6. **Determine verdict:**
+7. **Determine verdict:**
    - **`approve`**: Zero blocking findings. Spec is ready for implementation.
    - **`needs-work`**: One or more blocking findings. Spec needs updates before claiming.
 
-7. **Post review comment on issue:**
+8. **Post review comment AND set labels (both are MANDATORY Gitea API calls — do not skip either):**
+
+   **8a. Post the review comment:**
    - Write comment to temp file, then: `gitea issue-comment <id> --body-file <temp-file-path>`
+   - **Verify the comment was posted** — the command should return the comment ID. If it fails, retry once.
    - Template:
      ```
      ## Spec Review
@@ -186,16 +193,21 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      ```
    - Clean up temp file
 
-8. **Update labels based on verdict:**
+   **8b. Set labels based on verdict (the orchestrator depends on these — skipping this breaks the pipeline):**
+
+   Read the issue's current labels from step 2. Then:
 
    **If `approve`:**
-   - Replace `status/backlog` with `status/ready` in the label set (keep all other labels)
+   - Replace any `status/*` label with `status/ready-for-dev` (keep all other labels including `yolo`, type, priority, scope)
    - Run: `gitea issue-update <id> labels "<comma-separated>"`
+   - Verify the output shows `status/ready-for-dev`. If it doesn't, STOP and report the error.
 
    **If `needs-work`:**
-   - Labels stay as-is (`status/backlog`)
-   - The spec author (human or elaborate agent) reads the findings, updates the spec, and leaves a "spec updated" comment
-   - Another `/review-spec` run is triggered manually after updates
+   - Replace any `status/*` label with `status/fixes-spec` (keep all other labels including `yolo`, type, priority, scope)
+   - Run: `gitea issue-update <id> labels "<comma-separated>"`
+   - Verify the output shows `status/fixes-spec`. If it doesn't, STOP and report the error.
+
+   **You are NOT done until BOTH 8a and 8b have executed.** Posting the comment without setting the label leaves the issue in a dead state — the orchestrator will never pick it up.
 
 9. **Report:** Summary of verdict and key findings.
 
@@ -203,11 +215,11 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 - This skill is for **reviewing** specs, not writing them. Never modify the issue body — only leave comments.
 - Findings should be actionable. "This could be better" is not a finding. "AC item 3 says 'handles errors' but doesn't specify what the user sees when the API returns 500" is a finding.
-- The codebase exploration in step 3 is critical — most high-value findings come from discovering that the spec's assumptions don't match reality. Don't skip or shortcut it.
+- The codebase exploration in step 4 is critical — most high-value findings come from discovering that the spec's assumptions don't match reality. Don't skip or shortcut it.
 - An `approve` verdict means zero blocking findings. Any blocking finding → `needs-work`.
 - Blocking findings require concrete evidence — a specific spec statement that conflicts with a specific codebase fact, or a concrete scenario that would fail. "This might cause issues" is not blocking; "AC 2 assumes `getBook()` returns narrators but it doesn't — see `services/book.ts:45`" is blocking.
 - Use suggestions liberally. When in doubt about severity, make it a suggestion — the spec author can promote it if they agree it matters.
 - If there are no findings at all, use an empty array: `[]`
 - Consult the project's CLAUDE.md philosophy section — optimize findings for defect prevention, not compliance.
-- **Re-reviews require prior comment reading.** On any issue that already has `## Spec Review` comments, step 1b is mandatory. Skipping it produces review loops where the same finding bounces back and forth.
+- **Re-reviews require prior comment reading.** On any issue that already has `## Spec Review` comments, step 2b is mandatory. Skipping it produces review loops where the same finding bounces back and forth.
 - **Stand your ground when you're right.** If the author disputes a finding and their rationale is wrong, rebut it with specific evidence. Don't withdraw just because they pushed back — withdraw because they proved you wrong. But if they DID prove you wrong, have the intellectual honesty to drop it.

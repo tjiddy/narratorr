@@ -34,14 +34,14 @@ Runs the project's quality gate commands sequentially and returns a compact stru
       ```
    b. Filter to source files only (exclude test files like `*.test.ts`, `*.test.tsx`, `*.spec.*`, config files, markdown, etc.)
    c. Run tests with coverage enabled. The exact command depends on the project's test runner:
-      - **Vitest (pnpm/npm/yarn):** Run vitest directly per package (turbo doesn't forward `--coverage`):
-        `npx vitest run --coverage --coverage.reporter=json-summary` in each package directory that has changed files.
-        Output: `<package>/coverage/coverage-summary.json`
+      - **Vitest:** Run from the repo root:
+        `pnpm exec vitest run --coverage --coverage.reporter=json-summary`
+        Output: `coverage/coverage-summary.json`
       - **Jest:** `npx jest --coverage --coverageReporters=json-summary`
       - **pytest:** `pytest --cov --cov-report=json` (writes `coverage.json`)
       - Adapt for other runners as needed. If unsure, check `CLAUDE.md` or package.json for hints.
       - **Requires** `@vitest/coverage-v8` (or equivalent) to be installed. If missing, report `skip (coverage provider not installed)`.
-   d. Read the coverage summary JSON and check each changed source file. The JSON format has file paths as keys with `{ lines: { pct: N } }`. Flag any file at **0% line coverage** (meaning zero test coverage at all). Files with tiny percentages like 1-3% from import evaluation should also be flagged — use a threshold of **≤5% line coverage** to catch these.
+   d. Read `coverage/coverage-summary.json` and check each changed source file. The JSON format has file paths as keys with `{ lines: { pct: N } }`. Flag any file at **0% line coverage** (meaning zero test coverage at all). Files with tiny percentages like 1-3% from import evaluation should also be flagged — use a threshold of **≤5% line coverage** to catch these.
    e. Report result:
       - `pass` if all changed source files have >0% coverage
       - `fail` with the list of 0%-coverage files if any exist
