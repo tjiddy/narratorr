@@ -3,17 +3,12 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { indexers } from '../../db/schema.js';
 import {
-  AudioBookBayIndexer,
-  NewznabIndexer,
-  TorznabIndexer,
+  INDEXER_ADAPTER_FACTORIES,
   parseAudiobookTitle,
   scoreResult,
   type IndexerAdapter,
   type SearchResult,
   type SearchOptions,
-  type ABBConfig,
-  type NewznabConfig,
-  type TorznabConfig,
 } from '../../core/index.js';
 
 type IndexerRow = typeof indexers.$inferSelect;
@@ -76,38 +71,12 @@ export class IndexerService {
 
   private createAdapter(indexer: IndexerRow): IndexerAdapter {
     const settings = indexer.settings as Record<string, unknown>;
-
-    switch (indexer.type) {
-      case 'abb': {
-        const config: ABBConfig = {
-          hostname: (settings.hostname as string) || 'audiobookbay.lu',
-          pageLimit: (settings.pageLimit as number) || 2,
-          flareSolverrUrl: (settings.flareSolverrUrl as string) || undefined,
-        };
-        this.log.debug({ indexer: indexer.name, type: indexer.type, hostname: config.hostname, pageLimit: config.pageLimit, proxy: !!config.flareSolverrUrl }, 'Creating indexer adapter');
-        return new AudioBookBayIndexer(config);
-      }
-      case 'newznab': {
-        const config: NewznabConfig = {
-          apiUrl: settings.apiUrl as string,
-          apiKey: settings.apiKey as string,
-          flareSolverrUrl: (settings.flareSolverrUrl as string) || undefined,
-        };
-        this.log.debug({ indexer: indexer.name, type: indexer.type, apiUrl: config.apiUrl, proxy: !!config.flareSolverrUrl }, 'Creating indexer adapter');
-        return new NewznabIndexer(config, indexer.name);
-      }
-      case 'torznab': {
-        const config: TorznabConfig = {
-          apiUrl: settings.apiUrl as string,
-          apiKey: settings.apiKey as string,
-          flareSolverrUrl: (settings.flareSolverrUrl as string) || undefined,
-        };
-        this.log.debug({ indexer: indexer.name, type: indexer.type, apiUrl: config.apiUrl, proxy: !!config.flareSolverrUrl }, 'Creating indexer adapter');
-        return new TorznabIndexer(config, indexer.name);
-      }
-      default:
-        throw new Error(`Unknown indexer type: ${indexer.type}`);
+    const factory = INDEXER_ADAPTER_FACTORIES[indexer.type];
+    if (!factory) {
+      throw new Error(`Unknown indexer type: ${indexer.type}`);
     }
+    this.log.debug({ indexer: indexer.name, type: indexer.type }, 'Creating indexer adapter');
+    return factory(settings, indexer.name);
   }
 
   async testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string }> {

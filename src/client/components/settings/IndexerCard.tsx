@@ -11,6 +11,9 @@ import {
   indexerTypeSchema,
   type CreateIndexerFormData,
 } from '../../../shared/schemas.js';
+import { INDEXER_REGISTRY } from '../../../shared/indexer-registry.js';
+
+const IMPLEMENTED_TYPES = Object.keys(INDEXER_REGISTRY);
 
 interface IndexerCardProps {
   indexer?: Indexer;
@@ -29,14 +32,6 @@ interface IndexerCardProps {
   animationDelay?: string;
 }
 
-const IMPLEMENTED_TYPES = ['abb', 'newznab', 'torznab'];
-
-const defaultSettings: Record<string, CreateIndexerFormData['settings']> = {
-  abb: { hostname: '', pageLimit: 2, flareSolverrUrl: '' },
-  torznab: { apiUrl: '', apiKey: '', flareSolverrUrl: '' },
-  newznab: { apiUrl: '', apiKey: '', flareSolverrUrl: '' },
-};
-
 function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'] {
   const s = indexer.settings as Record<string, unknown>;
   return {
@@ -48,19 +43,12 @@ function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'
   };
 }
 
-function viewSubtitle(indexer: Indexer): string {
-  const s = indexer.settings as Record<string, unknown>;
-  if (indexer.type === 'abb') return (s.hostname as string) || indexer.type;
-  if (indexer.type === 'torznab' || indexer.type === 'newznab') return (s.apiUrl as string) || indexer.type;
-  return indexer.type;
-}
-
 const defaultValues: CreateIndexerFormData = {
   name: '',
   type: 'abb',
   enabled: true,
   priority: 50,
-  settings: { hostname: '', pageLimit: 2 },
+  settings: INDEXER_REGISTRY.abb.defaultSettings,
 };
 
 export function IndexerCard(props: IndexerCardProps) {
@@ -103,7 +91,7 @@ export function IndexerCard(props: IndexerCardProps) {
 
   useEffect(() => {
     if (mode === 'create') {
-      setValue('settings', defaultSettings[selectedType] || defaultSettings.abb);
+      setValue('settings', INDEXER_REGISTRY[selectedType]?.defaultSettings || INDEXER_REGISTRY.abb.defaultSettings);
     }
   }, [selectedType, mode, setValue]);
 
@@ -113,7 +101,7 @@ export function IndexerCard(props: IndexerCardProps) {
     return (
       <SettingsCardShell
         name={indexer.name}
-        subtitle={viewSubtitle(indexer)}
+        subtitle={INDEXER_REGISTRY[indexer.type]?.viewSubtitle(indexer.settings as Record<string, unknown>) || indexer.type}
         enabled={indexer.enabled}
         itemId={indexer.id}
         onEdit={onEdit}
@@ -161,7 +149,7 @@ export function IndexerCard(props: IndexerCardProps) {
           >
             {indexerTypeSchema.options.map((t) => (
               <option key={t} value={t}>
-                {t === 'abb' ? 'AudioBookBay' : t.charAt(0).toUpperCase() + t.slice(1)}
+                {INDEXER_REGISTRY[t]?.label || t}
               </option>
             ))}
           </select>

@@ -1,23 +1,8 @@
 import type { UseFormRegister, FieldErrors, UseFormSetValue, UseFormGetValues } from 'react-hook-form';
 import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
+import { DOWNLOAD_CLIENT_REGISTRY } from '../../../shared/download-client-registry.js';
 import { RefreshIcon } from '../icons';
 import { useFetchCategories } from './useFetchCategories';
-
-const TYPE_FIELDS: Record<string, { username: boolean; password: boolean; useSsl: boolean; apiKey: boolean }> = {
-  qbittorrent: { username: true, password: true, useSsl: true, apiKey: false },
-  transmission: { username: true, password: true, useSsl: true, apiKey: false },
-  sabnzbd: { username: false, password: false, useSsl: true, apiKey: true },
-  nzbget: { username: true, password: true, useSsl: true, apiKey: false },
-  deluge: { username: false, password: true, useSsl: true, apiKey: false },
-};
-
-const SUPPORTS_CATEGORIES: Record<string, boolean> = {
-  qbittorrent: true,
-  sabnzbd: true,
-  nzbget: true,
-  transmission: false,
-  deluge: true,
-};
 
 interface DownloadClientFieldsProps {
   selectedType: string;
@@ -32,8 +17,9 @@ interface DownloadClientFieldsProps {
 
 // eslint-disable-next-line complexity -- conditional fields per client type are inherently branchy
 export function DownloadClientFields({ selectedType, register, errors, clientId, setValue, getValues, isDirty, isEdit }: DownloadClientFieldsProps) {
-  const fields = TYPE_FIELDS[selectedType] || TYPE_FIELDS.qbittorrent;
-  const supportsCategories = SUPPORTS_CATEGORIES[selectedType] ?? false;
+  const meta = DOWNLOAD_CLIENT_REGISTRY[selectedType] || DOWNLOAD_CLIENT_REGISTRY.qbittorrent;
+  const fields = meta.fieldConfig;
+  const supportsCategories = meta.supportsCategories;
   const { fetching, categories, error: categoryError, showDropdown, setShowDropdown, dropdownRef, fetchCategories } =
     useFetchCategories({ selectedType, clientId, isDirty, getValues });
 

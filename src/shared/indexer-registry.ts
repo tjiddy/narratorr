@@ -1,0 +1,40 @@
+import type { CreateIndexerFormData } from './schemas.js';
+
+interface RequiredField {
+  path: string;
+  message: string;
+}
+
+interface IndexerTypeMetadata {
+  label: string;
+  defaultSettings: CreateIndexerFormData['settings'];
+  requiredFields: RequiredField[];
+  viewSubtitle: (settings: Record<string, unknown>) => string;
+}
+
+export const INDEXER_REGISTRY: Record<string, IndexerTypeMetadata> = {
+  abb: {
+    label: 'AudioBookBay',
+    defaultSettings: { hostname: '', pageLimit: 2, flareSolverrUrl: '' },
+    requiredFields: [{ path: 'hostname', message: 'Hostname is required' }],
+    viewSubtitle: (s) => (s.hostname as string) || 'abb',
+  },
+  torznab: {
+    label: 'Torznab',
+    defaultSettings: { apiUrl: '', apiKey: '', flareSolverrUrl: '' },
+    requiredFields: [
+      { path: 'apiUrl', message: 'API URL is required' },
+      { path: 'apiKey', message: 'API key is required' },
+    ],
+    viewSubtitle: (s) => (s.apiUrl as string) || 'torznab',
+  },
+  newznab: {
+    label: 'Newznab',
+    defaultSettings: { apiUrl: '', apiKey: '', flareSolverrUrl: '' },
+    requiredFields: [
+      { path: 'apiUrl', message: 'API URL is required' },
+      { path: 'apiKey', message: 'API key is required' },
+    ],
+    viewSubtitle: (s) => (s.apiUrl as string) || 'newznab',
+  },
+};

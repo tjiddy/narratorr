@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { INDEXER_REGISTRY } from '../indexer-registry.js';
 
 // ============================================================================
 // Indexer schemas
@@ -40,16 +41,13 @@ export const createIndexerFormSchema = z.object({
     flareSolverrUrl: z.string().optional(),
   }),
 }).superRefine((data, ctx) => {
-  if (data.type === 'abb') {
-    if (!data.settings.hostname) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'hostname'], message: 'Hostname is required' });
-    }
-  } else {
-    if (!data.settings.apiUrl) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'apiUrl'], message: 'API URL is required' });
-    }
-    if (!data.settings.apiKey) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'apiKey'], message: 'API key is required' });
+  const meta = INDEXER_REGISTRY[data.type];
+  if (meta) {
+    for (const field of meta.requiredFields) {
+      const value = data.settings[field.path as keyof typeof data.settings];
+      if (!value) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', field.path], message: field.message });
+      }
     }
   }
 

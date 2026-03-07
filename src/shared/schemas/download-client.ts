@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DOWNLOAD_CLIENT_REGISTRY } from '../download-client-registry.js';
 
 // ============================================================================
 // Download Client schemas
@@ -44,24 +45,13 @@ export const createDownloadClientFormSchema = z.object({
     protocol: z.enum(['torrent', 'usenet']).optional(),
   }),
 }).superRefine((data, ctx) => {
-  if (data.type === 'blackhole') {
-    if (!data.settings.watchDir) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'watchDir'], message: 'Watch directory is required' });
-    }
-    if (!data.settings.protocol) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'protocol'], message: 'Protocol is required' });
-    }
-    return; // Blackhole doesn't need host/port
-  }
-  if (!data.settings.host) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'host'], message: 'Host is required' });
-  }
-  if (!data.settings.port) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'port'], message: 'Port is required' });
-  }
-  if (data.type === 'sabnzbd') {
-    if (!data.settings.apiKey) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', 'apiKey'], message: 'API key is required' });
+  const meta = DOWNLOAD_CLIENT_REGISTRY[data.type];
+  if (meta) {
+    for (const field of meta.requiredFields) {
+      const value = data.settings[field.path as keyof typeof data.settings];
+      if (!value) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['settings', field.path], message: field.message });
+      }
     }
   }
 });

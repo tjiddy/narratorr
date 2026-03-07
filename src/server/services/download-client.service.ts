@@ -3,33 +3,14 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloadClients } from '../../db/schema.js';
 import {
-  QBittorrentClient,
-  SABnzbdClient,
-  NZBGetClient,
-  TransmissionClient,
-  DelugeClient,
-  BlackholeClient,
+  DOWNLOAD_CLIENT_ADAPTER_FACTORIES,
   type DownloadClientAdapter,
   type DownloadProtocol,
-  type QBittorrentConfig,
-  type SABnzbdConfig,
-  type NZBGetConfig,
-  type TransmissionConfig,
-  type DelugeConfig,
-  type BlackholeConfig,
 } from '../../core/index.js';
+import { DOWNLOAD_CLIENT_REGISTRY } from '../../shared/download-client-registry.js';
 
 type DownloadClientRow = typeof downloadClients.$inferSelect;
 type NewDownloadClient = typeof downloadClients.$inferInsert;
-
-const CLIENT_PROTOCOL: Record<string, DownloadProtocol> = {
-  qbittorrent: 'torrent',
-  transmission: 'torrent',
-  deluge: 'torrent',
-  sabnzbd: 'usenet',
-  nzbget: 'usenet',
-  // blackhole uses per-instance settings.protocol — resolved in getFirstEnabledForProtocol
-};
 
 export class DownloadClientService {
   private adapters: Map<number, DownloadClientAdapter> = new Map();
@@ -70,11 +51,13 @@ export class DownloadClientService {
       .where(eq(downloadClients.enabled, true))
       .orderBy(downloadClients.priority);
     const match = results.find((c) => {
-      if (c.type === 'blackhole') {
+      const meta = DOWNLOAD_CLIENT_REGISTRY[c.type];
+      if (!meta) return false;
+      if (meta.protocol === 'per-instance') {
         const settings = c.settings as Record<string, unknown>;
         return (settings.protocol as string) === protocol;
       }
-      return CLIENT_PROTOCOL[c.type] === protocol;
+      return meta.protocol === protocol;
     }) || null;
     this.log.debug({ protocol, found: match?.name ?? null, candidates: results.length }, 'Download client lookup for protocol');
     return match;
@@ -133,76 +116,14 @@ export class DownloadClientService {
     return this.getAdapter(client.id);
   }
 
-  // eslint-disable-next-line complexity -- switch/case factory for 6 client types
   private createAdapter(client: DownloadClientRow): DownloadClientAdapter {
     const settings = client.settings as Record<string, unknown>;
-
-    switch (client.type) {
-      case 'qbittorrent': {
-        const config: QBittorrentConfig = {
-          host: (settings.host as string) || 'localhost',
-          port: (settings.port as number) || 8080,
-          username: (settings.username as string) || 'admin',
-          password: (settings.password as string) || '',
-          useSsl: (settings.useSsl as boolean) || false,
-        };
-        this.log.debug({ client: client.name, type: client.type, host: config.host, port: config.port, useSsl: config.useSsl }, 'Creating download client adapter');
-        return new QBittorrentClient(config);
-      }
-      case 'sabnzbd': {
-        const config: SABnzbdConfig = {
-          host: (settings.host as string) || 'localhost',
-          port: (settings.port as number) || 8080,
-          apiKey: (settings.apiKey as string) || '',
-          useSsl: (settings.useSsl as boolean) || false,
-        };
-        this.log.debug({ client: client.name, type: client.type, host: config.host, port: config.port }, 'Creating download client adapter');
-        return new SABnzbdClient(config);
-      }
-      case 'nzbget': {
-        const config: NZBGetConfig = {
-          host: (settings.host as string) || 'localhost',
-          port: (settings.port as number) || 6789,
-          username: (settings.username as string) || 'nzbget',
-          password: (settings.password as string) || '',
-          useSsl: (settings.useSsl as boolean) || false,
-        };
-        this.log.debug({ client: client.name, type: client.type, host: config.host, port: config.port }, 'Creating download client adapter');
-        return new NZBGetClient(config);
-      }
-      case 'transmission': {
-        const config: TransmissionConfig = {
-          host: (settings.host as string) || 'localhost',
-          port: (settings.port as number) || 9091,
-          username: (settings.username as string) || '',
-          password: (settings.password as string) || '',
-          useSsl: (settings.useSsl as boolean) || false,
-        };
-        this.log.debug({ client: client.name, type: client.type, host: config.host, port: config.port }, 'Creating download client adapter');
-        return new TransmissionClient(config);
-      }
-      case 'deluge': {
-        const config: DelugeConfig = {
-          host: (settings.host as string) || 'localhost',
-          port: (settings.port as number) || 8112,
-          password: (settings.password as string) || '',
-          useSsl: (settings.useSsl as boolean) || false,
-          onWarn: (msg) => this.log.warn(msg),
-        };
-        this.log.debug({ client: client.name, type: client.type, host: config.host, port: config.port }, 'Creating download client adapter');
-        return new DelugeClient(config);
-      }
-      case 'blackhole': {
-        const config: BlackholeConfig = {
-          watchDir: (settings.watchDir as string) || '',
-          protocol: ((settings.protocol as string) || 'torrent') as 'torrent' | 'usenet',
-        };
-        this.log.debug({ client: client.name, type: client.type, watchDir: config.watchDir, protocol: config.protocol }, 'Creating download client adapter');
-        return new BlackholeClient(config);
-      }
-      default:
-        throw new Error(`Unknown download client type: ${client.type}`);
+    const factory = DOWNLOAD_CLIENT_ADAPTER_FACTORIES[client.type];
+    if (!factory) {
+      throw new Error(`Unknown download client type: ${client.type}`);
     }
+    this.log.debug({ client: client.name, type: client.type }, 'Creating download client adapter');
+    return factory(settings, { onWarn: (msg) => this.log.warn(msg) });
   }
 
   async testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string }> {

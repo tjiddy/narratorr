@@ -3,3 +3,4 @@ export { AudioBookBayIndexer, type ABBConfig } from './abb.js';
 export { NewznabIndexer, type NewznabConfig } from './newznab.js';
 export { TorznabIndexer, type TorznabConfig } from './torznab.js';
 export { fetchWithProxy, type FetchWithProxyOptions } from './fetch.js';
+export { ADAPTER_FACTORIES as INDEXER_ADAPTER_FACTORIES } from './registry.js';

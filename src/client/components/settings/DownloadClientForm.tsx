@@ -12,13 +12,17 @@ import {
   downloadClientTypeSchema,
   type CreateDownloadClientFormData,
 } from '../../../shared/schemas.js';
-import {
-  IMPLEMENTED_TYPES,
-  TYPE_LABELS,
-  defaultSettings,
-  defaultValues,
-  settingsFromClient,
-} from './downloadClientConstants.js';
+import { DOWNLOAD_CLIENT_REGISTRY, settingsFromClient } from '../../../shared/download-client-registry.js';
+
+const IMPLEMENTED_TYPES = Object.keys(DOWNLOAD_CLIENT_REGISTRY);
+
+const defaultValues: CreateDownloadClientFormData = {
+  name: '',
+  type: 'qbittorrent',
+  enabled: true,
+  priority: 50,
+  settings: DOWNLOAD_CLIENT_REGISTRY.qbittorrent.defaultSettings,
+};
 
 interface DownloadClientFormProps {
   client?: DownloadClient;
@@ -55,7 +59,7 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
   }, [isEdit, client, reset]);
 
   useEffect(() => {
-    if (!isEdit) setValue('settings', defaultSettings[selectedType] || defaultSettings.qbittorrent);
+    if (!isEdit) setValue('settings', DOWNLOAD_CLIENT_REGISTRY[selectedType]?.defaultSettings || DOWNLOAD_CLIENT_REGISTRY.qbittorrent.defaultSettings);
   }, [selectedType, isEdit, setValue]);
 
   const isImplemented = IMPLEMENTED_TYPES.includes(selectedType);
@@ -73,7 +77,7 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
         <div>
           <label htmlFor="clientType" className="block text-sm font-medium mb-2">Type</label>
           <select id="clientType" {...register('type')} className={inputClass}>
-            {downloadClientTypeSchema.options.map((t) => <option key={t} value={t}>{TYPE_LABELS[t] || t}</option>)}
+            {downloadClientTypeSchema.options.map((t) => <option key={t} value={t}>{DOWNLOAD_CLIENT_REGISTRY[t]?.label || t}</option>)}
           </select>
         </div>
         {selectedType === 'blackhole'

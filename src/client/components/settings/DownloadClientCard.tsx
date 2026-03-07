@@ -2,7 +2,9 @@ import type { DownloadClient, TestResult } from '@/lib/api';
 import { SettingsCardShell, type IdTestResult } from './SettingsCardShell';
 import { DownloadClientForm } from './DownloadClientForm';
 import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
-import { IMPLEMENTED_TYPES } from './downloadClientConstants.js';
+import { DOWNLOAD_CLIENT_REGISTRY } from '../../../shared/download-client-registry.js';
+
+const IMPLEMENTED_TYPES = Object.keys(DOWNLOAD_CLIENT_REGISTRY);
 
 interface DownloadClientCardProps {
   client?: DownloadClient;
@@ -22,10 +24,9 @@ interface DownloadClientCardProps {
 }
 
 function viewSubtitle(client: DownloadClient): string {
-  const s = client.settings as Record<string, unknown>;
-  const host = (s.host as string) || '';
-  const port = (s.port as number) || '';
-  return host && port ? `${host}:${port}` : client.type;
+  const meta = DOWNLOAD_CLIENT_REGISTRY[client.type];
+  if (meta) return meta.viewSubtitle(client.settings as Record<string, unknown>);
+  return client.type;
 }
 
 export function DownloadClientCard(props: DownloadClientCardProps) {
