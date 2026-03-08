@@ -9,7 +9,7 @@ hooks:
   Stop:
     - hooks:
         - type: prompt
-          prompt: "The agent is running /review-pr (explore code → evaluate → post verdict comment → set labels → merge or stop). Check its last message. It is DONE only if it contains '## Verdict:' AND confirms the comment was posted to Gitea AND labels were updated, or an explicit STOP/block condition. If the last message contains review findings or a verdict that hasn't been posted to Gitea yet (no gitea issue-comment or gitea pr-comment confirmation), respond {\"ok\": false, \"reason\": \"Review incomplete. You have findings but haven't posted them to Gitea or updated labels. Post the review comment and set labels before stopping.\"}. If complete or blocked, respond {\"ok\": true}."
+          prompt: "The agent is running /review-pr (explore code → evaluate → post verdict comment → set labels → merge or stop). Check its last message. It is DONE only if it contains '## Verdict:' AND '## Exhaustiveness: complete' AND '## Depth Coverage: complete' AND confirms the comment was posted to Gitea AND labels were updated, or an explicit STOP/block condition. If the last message contains review findings or a verdict that hasn't been posted to Gitea yet (no gitea issue-comment or gitea pr-comment confirmation), or if exhaustiveness/depth coverage is missing, respond {\"ok\": false, \"reason\": \"Review incomplete. You must prove exhaustive file coverage and behavioral depth coverage, post the review comment to Gitea, and update labels before stopping.\"}. If complete or blocked, respond {\"ok\": true}."
 ---
 
 !`cat .claude/docs/testing.md`
@@ -52,6 +52,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    ```bash
    git fetch origin main <head-branch>
    git diff origin/main...<head-branch>
+   git diff --name-status origin/main...<head-branch>
    ```
    Use `origin/main` (not local `main`) to avoid false positives from stale local state. The three-dot syntax shows only changes introduced on the branch.
 
@@ -71,9 +72,62 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - If a finding was previously raised and the author **deferred** it to a new issue, it's resolved — don't re-raise.
    - **Net-new findings are always welcome.** The dispute rules only constrain re-raised findings. If the full review surfaces something genuinely new that wasn't in any prior round, raise it normally regardless of prior history.
 
+5c. **Build changed-file review inventory (MANDATORY):**
+   - From `git diff --name-status origin/main...<head-branch>`, build a `changed_files` list.
+   - Classify each file as exactly one of:
+     - `reviewed` (inspected during steps 6-9),
+     - `skipped-generated` (lockfiles, generated artifacts, snapshots, etc.),
+     - `skipped-nonruntime` (docs-only or metadata-only files).
+   - Every changed code file (`.ts`, `.tsx`, `.js`, `.jsx`, schema/migration/runtime config) MUST be `reviewed`.
+   - If any changed code file is not reviewed, **STOP** and continue reviewing before producing verdict.
+
+5d. **Enumerate behavior deltas per reviewed code file (MANDATORY):**
+   - For each `reviewed` changed code file, enumerate all new/modified behaviors introduced by the diff:
+     - Branches/conditionals (including precedence logic),
+     - Error paths and fallback paths,
+     - State transitions and side effects,
+     - Input/output contract changes (request fields, response fields, optional fields),
+     - Caching/invalidation behavior.
+   - Create a `Behavior Coverage` table entry per behavior with:
+     - `id` (B1, B2, ...),
+     - `file`,
+     - `behavior`,
+     - `status`: `finding(F#)` or `verified-correct (evidence)`.
+   - A behavior listed as `verified-correct` must cite concrete evidence (code path and/or test assertion). "Looks fine" is invalid.
+   - If any reviewed code file lacks behavior entries, review is incomplete.
+
+5e. **Enumerate interaction intersections (MANDATORY):**
+   - Build an `Interaction Checks` list for feature intersections touched by the PR (for example: precedence combinations, config-save shape x invalidation logic, route serialization x service response shape, fallback x retry).
+   - For each intersection, record:
+     - `interaction`,
+     - `checked evidence`,
+     - `result`: `finding(F#)` or `verified-correct`.
+   - If a changed feature has at least one plausible intersection and none are checked, review is incomplete.
+
+5f. **Enumeration quality examples (use this granularity):**
+   - These are illustrative patterns, not an exhaustive checklist.
+   - Do NOT limit review to these examples; enumerate additional behaviors/intersections introduced by the current PR.
+   - **Good behavior entries (specific, testable, branch-level):**
+     - `settings.ts`: "Cache invalidation runs only when `network` values changed, not when unchanged `network` is present in full-form payload."
+     - `newznab.ts`: "`test()` suppresses proxy `ip` reporting when `flareSolverrUrl` is configured (precedence)."
+     - `indexers routes`: "Both test endpoints preserve optional `ip` field in serialized response."
+   - **Bad behavior entries (too broad, non-falsifiable):**
+     - "Handles settings correctly."
+     - "Proxy logic works."
+     - "Routes look fine."
+   - **Good interaction entries (explicit intersection):**
+     - "FlareSolverr precedence x proxy IP reporting."
+     - "Full settings payload shape x network cache invalidation condition."
+     - "Service return shape (`ip?`) x route response serialization."
+   - **Bad interaction entries (missing intersection dimension):**
+     - "Checked FlareSolverr."
+     - "Checked settings."
+     - "Checked tests."
+
 6. **Check each AC criterion against the diff:**
    - For each acceptance criterion, determine: `pass` | `partial` | `missing`
    - Note specific files/lines that address each criterion
+   - Ensure each reviewed changed code file maps to at least one AC item or an explicit scope-creep/security/test-quality observation.
 
 7. **Check common issues:**
    - Missing error handling / logging in catch blocks
@@ -133,6 +187,14 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - If new UI components look unpolished or inconsistent with the app's design language, flag as a blocking finding with category `"ui-design"` — the author should run the `frontend-design` skill before merge
    - If no frontend changes, skip this step
 
+9b. **Exhaustiveness and depth gate (MANDATORY before step 10):**
+   - Produce a `File Coverage` table that includes every entry from `changed_files` with: `path`, `status` (`reviewed|skipped-generated|skipped-nonruntime`), and `notes`.
+   - For each `reviewed` file, record either:
+     - at least one finding ID touching that file, or
+     - explicit note `no issues found`.
+   - Produce `Behavior Coverage` and `Interaction Checks` sections from steps 5d/5e.
+   - If any changed file is missing from `File Coverage`, any changed code file is skipped, any enumerated behavior lacks disposition, or interaction checks are missing for touched feature intersections, the review is incomplete and MUST NOT produce a verdict.
+
 10. **Nitpick filter** — Do NOT flag these as findings:
    - Style preferences ("I would have named it differently")
    - Naming opinions unless inconsistent with existing codebase conventions
@@ -154,6 +216,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
     - If a finding matches one that was previously `fixed`, verify the fix in the current diff. If fixed, do not re-raise. If the fix is incomplete or wrong, raise a new finding with a description that explains what the fix missed.
     - If a finding matches one that was previously `disputed`, apply the dispute engagement rules from step 5b. You MUST either withdraw it or raise it with a substantively different reason that rebuts the author's argument. Copy-pasting the old finding is a review defect.
     - Include a `## Prior Findings` section in the review comment (see template in step 12) that explicitly states the disposition of each previously-raised finding: `withdrawn`, `verified-fixed`, or `re-raised (rebuttal: ...)`. This creates an audit trail and forces you to account for every prior finding.
+    - Cross-check the `File Coverage` table from step 9b: every `reviewed` file must appear in findings and/or be explicitly recorded as `no issues found`.
+    - Cross-check `Behavior Coverage`: every behavior ID must map to either a finding or `verified-correct` evidence.
+    - Cross-check `Interaction Checks`: each checked intersection must map to either a finding or `verified-correct` evidence.
 
 12. **Post review comment on PR (MANDATORY — this is a Gitea API call, not stdout):**
     - Write comment to temp file, then post via Gitea API: `gitea pr-comment <pr-number> --body-file <temp-file-path>`
@@ -193,6 +258,36 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
       | Prior ID | Original Description | Disposition |
       |----------|---------------------|-------------|
       | F1 (round 1) | <description> | verified-fixed / withdrawn / re-raised as F<N> (rebuttal: <why author's argument doesn't hold>) |
+
+      ## File Coverage
+
+      | File | Status | Notes |
+      |------|--------|-------|
+      | src/server/foo.ts | reviewed | F1, F3 |
+      | src/client/bar.tsx | reviewed | no issues found |
+      | pnpm-lock.yaml | skipped-generated | lockfile |
+
+      ## Behavior Coverage
+
+      | ID | File | Behavior | Disposition |
+      |----|------|----------|-------------|
+      | B1 | src/core/indexers/newznab.ts | test() precedence when both flareSolverrUrl and proxyUrl set | F2 |
+      | B2 | src/server/routes/settings.ts | full-form save should not invalidate cache on unchanged network | verified-correct (`settings.test.ts:123`) |
+
+      ## Interaction Checks
+
+      | Interaction | Evidence | Result |
+      |-------------|----------|--------|
+      | FlareSolverr precedence x proxy IP reporting | `newznab.test.ts:260`, `torznab.test.ts:248` | verified-correct |
+      | Full settings payload x network cache invalidation | `settings.test.ts:140` | F3 |
+
+      ## Exhaustiveness: complete
+
+      Reviewed all changed code files from `git diff --name-status origin/main...<head-branch>`. No changed code file was skipped.
+
+      ## Depth Coverage: complete
+
+      Enumerated behavior deltas and interaction intersections for all reviewed changed code files. Every entry is mapped to a finding or evidence-backed verified-correct disposition.
 
       ## Verdict: approve | needs-work
 
@@ -238,10 +333,13 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 ## Important
 
 - If no `Refs #<id>` found in PR body, ask the user which issue to review against
-- The diff can be large — focus on changed files, not the entire codebase
+- The diff can be large — focus on changed files, but you must still cover **all** changed files via the File Coverage table
+- Do not confuse breadth with depth. Reviewing a file is insufficient unless all new behaviors in that file are explicitly enumerated and dispositioned.
 - Be constructive — flag real issues, not style preferences. But err on the side of reporting: a dismissed suggestion costs the author 10 seconds, a missed defect costs a full review cycle.
 - The `## Findings` JSON block is consumed by `/respond-to-pr-review` — ensure it is valid JSON with `severity` values of exactly `"blocking"` or `"suggestion"` (no other terms)
 - An `approve` verdict means zero blocking findings. Any blocking finding → `needs-work`
 - If there are no findings at all, use an empty array: `[]`
+- Do not stop after the first few blocking findings. Continue until every changed file has an explicit coverage entry (`reviewed` or justified non-code skip).
+- Do not stop after first blockers if behavior/intersection coverage is incomplete. Finish behavior enumeration and intersection checks before verdict.
 - **Re-reviews require prior comment reading.** On any PR that already has `## Verdict:` comments, step 5b is mandatory. Skipping it produces review loops where the same finding bounces back and forth. The author has done work to address your findings — respect that by reading their response before re-reviewing.
 - **Stand your ground when you're right.** If the author disputes a finding and their rationale is wrong, rebut it with specific evidence. Don't withdraw just because they pushed back — withdraw because they proved you wrong. But if they DID prove you wrong (showed the code works, demonstrated a tool produces no output, cited docs), have the intellectual honesty to drop it.

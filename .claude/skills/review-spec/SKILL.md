@@ -9,7 +9,7 @@ hooks:
   Stop:
     - hooks:
         - type: prompt
-          prompt: "The agent is running /review-spec (explore codebase → evaluate spec → post review comment → set labels). Check its last message. It is DONE only if it confirms BOTH the review comment was posted to Gitea AND labels were updated (status/ready-for-dev or status/fixes-spec), or an explicit STOP/block condition. If the last message has review findings but no confirmation of posting to Gitea or updating labels, respond {\"ok\": false, \"reason\": \"Spec review incomplete. You must BOTH post the review comment to Gitea AND update the issue labels. You are not done until both 8a and 8b have executed.\"}. If complete or blocked, respond {\"ok\": true}."
+          prompt: "The agent is running /review-spec (explore codebase → evaluate spec → post review comment → set labels). Check its last message. It is DONE only if it confirms BOTH the review comment was posted to Gitea AND labels were updated (status/ready-for-dev or status/fixes-spec), and includes '### Assumption Coverage' with 'Assumption coverage: complete', or an explicit STOP/block condition. If the last message has review findings but no confirmation of posting to Gitea/updating labels, or lacks assumption coverage completion, respond {\"ok\": false, \"reason\": \"Spec review incomplete. You must prove assumption coverage, post the review comment to Gitea, and update labels before stopping.\"}. If complete or blocked, respond {\"ok\": true}."
 ---
 
 !`cat .claude/docs/testing.md`
@@ -80,6 +80,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > PRIOR ART: <similar implementations elsewhere in the codebase>
    > CONFLICTING PRS: <open PRs in the same area, or "none">
    > SPEC ASSUMPTION RISKS: <anything in the codebase that contradicts or complicates spec assumptions>
+   > ASSUMPTION COVERAGE: <table/list mapping each AC assumption to verified code evidence path:line, or "unverified">
    > ```
 
    Use the subagent's output to inform the spec evaluation in step 5.
@@ -128,10 +129,21 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Flag any mismatch between described behavior and actual implementation as `category: "behavioral-accuracy"`, severity `blocking`. Example: spec says "hook implements optimistic updates" but the hook only invalidates queries on success.
    - Skip this check for feature/bug issues where the spec describes *new* behavior to implement.
 
+   **Exhaustiveness gate (MANDATORY):**
+   - Build an **Assumption Coverage** table that lists:
+     - each AC item,
+     - each material implementation assumption in the spec (APIs, data shapes, jobs, UI states, error contracts),
+     - evidence (`path:line`), or `unverified`.
+   - Any `unverified` assumption is a review defect and MUST produce a finding:
+     - `blocking` when the assumption affects correctness/implementability,
+     - `suggestion` when it is non-critical scope/polish.
+   - Do not move to step 6 until every AC item and material assumption is represented in this table.
+
 6. **Classify findings** — For every issue found, create a finding with severity. Do not cap the number of findings — report everything you find.
    - **`"blocking"`**: Spec cannot be implemented correctly without addressing this. Missing AC, contradictions, wrong assumptions about existing code, untestable requirements. Blocking findings must be evidence-based — point to a specific spec line and a specific codebase fact that conflicts, or a concrete scenario that the spec fails to handle.
    - **`"suggestion"`**: Would improve the spec but not strictly required. Use liberally across these categories: edge case coverage, alternative approaches, pattern improvements, test-quality gaps, maintainability concerns, observability/logging gaps, naming clarity, and future regression risk.
    - Every finding MUST include a concrete "why" and ideally a proposed fix or question to resolve it.
+   - Cross-check with Assumption Coverage table: every `unverified` row must have a corresponding finding.
 
 7. **Determine verdict:**
    - **`approve`**: Zero blocking findings. Spec is ready for implementation.
@@ -162,6 +174,15 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      - Conflicts: none | <PR links or issue refs>
      - Blast radius: clean | <N test files affected> (<details>)
      - Error propagation: clean | swallowed (<details>)
+
+     ### Assumption Coverage
+     - Assumption coverage: complete | incomplete
+     - AC/assumption evidence table:
+       | Item | Evidence |
+       |------|----------|
+       | AC1: <short text> | src/server/foo.ts:42 |
+       | AC2: <short text> | unverified |
+       | Assumption: <API returns X> | src/shared/schema.ts:18 |
 
      ### Design
      - SRP: pass | concern (<details>)
@@ -227,6 +248,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 - Blocking findings require concrete evidence — a specific spec statement that conflicts with a specific codebase fact, or a concrete scenario that would fail. "This might cause issues" is not blocking; "AC 2 assumes `getBook()` returns narrators but it doesn't — see `services/book.ts:45`" is blocking.
 - Use suggestions liberally. When in doubt about severity, make it a suggestion — the spec author can promote it if they agree it matters.
 - If there are no findings at all, use an empty array: `[]`
+- You cannot approve a spec with incomplete assumption coverage. If any material assumption remains `unverified`, verdict must be `needs-work` unless it is explicitly made non-blocking and tracked as a suggestion with rationale.
 - Consult the project's CLAUDE.md philosophy section — optimize findings for defect prevention, not compliance.
 - **Re-reviews require prior comment reading.** On any issue that already has `## Spec Review` comments, step 2 is mandatory. Skipping it produces review loops where the same finding bounces back and forth.
 - **Stand your ground when you're right.** If the author disputes a finding and their rationale is wrong, rebut it with specific evidence. Don't withdraw just because they pushed back — withdraw because they proved you wrong. But if they DID prove you wrong, have the intellectual honesty to drop it.

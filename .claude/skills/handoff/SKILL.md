@@ -8,7 +8,7 @@ hooks:
   Stop:
     - hooks:
         - type: prompt
-          prompt: "The agent is running /handoff (verify → push → create PR → update labels → post comment → workflow log). Check its last message. It is DONE only if it mentions a created PR link or an explicit STOP/failure. If the last message is a verify summary (OVERALL: pass/fail), a coverage review, or any mid-workflow output without a PR link, respond {\"ok\": false, \"reason\": \"Handoff incomplete. Verify passed but you still need to push, create the PR, update labels, post the handoff comment, and write the workflow log. Continue immediately.\"}. If complete or stopped, respond {\"ok\": true}."
+          prompt: "The agent is running /handoff (self-review → test stubs → coverage → verify → push → create PR → update labels → post comment → workflow log). Check its last message. It is DONE only if it mentions a created PR link or an explicit STOP/failure. If the last message is a self-review result, a coverage review, a verify summary (OVERALL: pass/fail), or any mid-workflow output without a PR link, respond {\"ok\": false, \"reason\": \"Handoff incomplete. You still have steps remaining — continue immediately.\"}. If complete or stopped, respond {\"ok\": true}."
 ---
 
 !`cat .claude/docs/testing.md`
@@ -29,30 +29,48 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 1. **Verify branch:** Run `git branch --show-current`. It must match `feature/issue-<id>-*`. If not, STOP: "Not on the expected feature branch for #<id>."
 
-2. **Run quality gates** using the **Agent tool** (NOT the Skill tool — this MUST be a subagent to keep verbose output out of your context). Use this exact prompt:
+2. **Author self-review (pre-flight depth check)** via an Explore subagent:
 
-   > Run quality gates for this project from the repo root. Read `CLAUDE.md` § Commands for the exact commands.
-   > Run sequentially: lint → test → typecheck → build.
-   > If all pass, run coverage on changed files vs main branch — flag any non-test source file at ≤5% line coverage.
-   > See `.claude/skills/verify/SKILL.md` for full coverage gate details.
+   This catches behavioral bugs and security issues before running expensive quality gates — things where the code itself is wrong, not just untested. Launch an **Explore subagent** (Agent tool, `subagent_type: "Explore"`, thoroughness: "very thorough") with this prompt:
+
+   > You are the author reviewing your own code before handing off for external review.
+   > Run `git diff main --name-only -- '*.ts' '*.tsx' | grep -v '\.test\.'` to get changed source files.
+   > Read each changed source file and its diff (`git diff main -- <file>`).
    >
-   > Return ONLY this structured summary (5-15 lines max):
+   > For each file, perform these checks:
+   >
+   > **1. Behavior correctness under combined configurations:**
+   > For each new conditional/branch, enumerate the configuration combinations that affect it.
+   > Example: if code checks `proxyUrl`, also check what happens when `flareSolverrUrl` is set alongside it.
+   > Ask: "Does this branch do the right thing under ALL valid config states, not just the one I was thinking about?"
+   >
+   > **2. Interaction analysis:**
+   > For each feature this file touches, identify other features that interact with it.
+   > Check each intersection for correctness. Common problem areas:
+   > - Precedence logic (feature A takes priority over feature B — does the code enforce this everywhere?)
+   > - Cache/state invalidation (what triggers invalidation? Does it fire only when it should, or too broadly?)
+   > - Data flow through layers (does each layer correctly forward new fields? Response shapes, optional fields?)
+   > - Full-form vs partial-form submission (does the code handle both correctly?)
+   >
+   > **3. Security quick-scan:**
+   > - Log statements: do any log sensitive data (passwords, tokens, API keys, proxy credentials)?
+   > - Input handling: is user input sanitized before use in shell commands, SQL, file paths?
+   > - Response data: could any endpoint leak internal state or credentials?
+   >
+   > Return ONLY this structured output:
    > ```
-   > LINT: pass | fail (N errors: <first 3>)
-   > TEST: pass (N suites, M tests) | fail (N failed: <test names>)
-   > TYPECHECK: pass | fail (<first 5 errors>) | skipped
-   > BUILD: pass | fail (<error summary>)
-   > COVERAGE: pass | fail (N files at 0%: <file list>) | skipped
-   > OVERALL: pass | fail
+   > SELF-REVIEW:
+   > - <file>:
+   >   - [interaction] <description> → correct (evidence) | BUG: <what's wrong>
+   >   - [security] <description> → clean | ISSUE: <what's wrong>
+   >   - [config-combo] <description> → correct (evidence) | BUG: <what's wrong>
+   >
+   > RESULT: pass | fail (N issues found)
    > ```
 
-   **Do NOT invoke `/verify` via the Skill tool.** The Skill tool runs inline and dumps all verbose build/test output into your context, wasting tokens and risking context exhaustion before handoff. The Agent tool runs it in a subprocess and returns only the summary.
+   If RESULT is `fail` → STOP and report the issues. Fix them in the main context, then restart from step 2. Do NOT proceed past this step with known bugs.
 
-   **IMMEDIATELY when the subagent returns** (do NOT stop or end your turn):
-   - If OVERALL: fail → STOP and report failures (do NOT fix — that's the caller's job).
-   - If OVERALL: pass → continue to step 2b RIGHT NOW. The verify result is a mid-flow value, not a stopping point. You have 9 more steps to complete.
-
-2b. **Check for remaining test stubs.**
+3. **Check for remaining test stubs.**
    Search for `it.todo(` in all test files changed on this branch (use `git diff main --name-only -- '*.test.*'`).
    - If any `it.todo()` calls remain, STOP and report them:
      ```
@@ -61,9 +79,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      - <file>: "<stub description>"
      ```
      These stubs were created from spec interactions during `/claim`. Each one must be implemented as a real test before handoff.
-   - If none remain (or no test files changed), continue to step 2c.
+   - If none remain (or no test files changed), continue to step 4.
 
-2c. **Test coverage review (HARD GATE)** via an Explore subagent (keeps file reads out of main context):
+4. **Test coverage review (HARD GATE)** via an Explore subagent (keeps file reads out of main context):
 
    Launch an **Explore subagent** (Agent tool, `subagent_type: "Explore"`, thoroughness: "very thorough") with this prompt:
 
@@ -99,16 +117,39 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > RESULT: pass | fail (N untested behaviors)
    > ```
 
-   If RESULT is `fail` (any behavior marked UNTESTED) → STOP — write the missing tests in the main context, re-run `/verify`, then restart from step 2c. Do NOT proceed to push with untested behavior.
+   If RESULT is `fail` (any behavior marked UNTESTED) → STOP — write the missing tests in the main context, then restart from step 2. Do NOT proceed to push with untested behavior.
 
-3. **Push the branch:**
+5. **Run quality gates** using the **Agent tool** (NOT the Skill tool — this MUST be a subagent to keep verbose output out of your context). Use this exact prompt:
+
+   > Run quality gates for this project from the repo root. Read `CLAUDE.md` § Commands for the exact commands.
+   > Run sequentially: lint → test → typecheck → build.
+   > If all pass, run coverage on changed files vs main branch — flag any non-test source file at ≤5% line coverage.
+   > See `.claude/skills/verify/SKILL.md` for full coverage gate details.
+   >
+   > Return ONLY this structured summary (5-15 lines max):
+   > ```
+   > LINT: pass | fail (N errors: <first 3>)
+   > TEST: pass (N suites, M tests) | fail (N failed: <test names>)
+   > TYPECHECK: pass | fail (<first 5 errors>) | skipped
+   > BUILD: pass | fail (<error summary>)
+   > COVERAGE: pass | fail (N files at 0%: <file list>) | skipped
+   > OVERALL: pass | fail
+   > ```
+
+   **Do NOT invoke `/verify` via the Skill tool.** The Skill tool runs inline and dumps all verbose build/test output into your context, wasting tokens and risking context exhaustion before handoff. The Agent tool runs it in a subprocess and returns only the summary.
+
+   **IMMEDIATELY when the subagent returns** (do NOT stop or end your turn):
+   - If OVERALL: fail → STOP and report failures (do NOT fix — that's the caller's job).
+   - If OVERALL: pass → continue to step 6 RIGHT NOW. The verify result is a mid-flow value, not a stopping point. You have more steps to complete.
+
+6. **Push the branch:**
    ```bash
    git push -u origin $(git branch --show-current)
    ```
 
-4. **Read the issue** to get the title and details: `gitea issue $ARGUMENTS`
+7. **Read the issue** to get the title and details: `gitea issue $ARGUMENTS`
 
-5. **Create the PR** via the Gitea API:
+8. **Create the PR** via the Gitea API:
    - Write the PR body to a temp file (avoids shell escaping issues with multiline content):
    ```bash
    # Write PR body to temp file, then create PR
@@ -133,13 +174,13 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Rollback: revert PR
    ```
 
-6. **Update labels to `stage/review-pr`** (keeping all other existing labels):
-   - Read the current labels from the issue output (step 4).
+9. **Update labels to `stage/review-pr`** (keeping all other existing labels):
+   - Read the current labels from the issue output (step 7).
    - Replace any `stage/*` label with `stage/review-pr` (keep `status/in-progress` and all other labels).
    - Run: `gitea issue-update <id> labels "<comma-separated label names>"`
    - Verify the output shows `stage/review-pr`.
 
-7. **Post a handoff comment** on the issue:
+10. **Post a handoff comment** on the issue:
    - Write the comment to a temp file, then post it:
    ```bash
    gitea issue-comment <id> --body-file <temp-file-path>
@@ -157,12 +198,12 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    ```
    - Clean up the temp file after posting.
 
-8. **Switch back to main:**
+11. **Switch back to main:**
    ```bash
    git checkout main
    ```
 
-9. **Continuous Learning retrospective** — before writing the workflow log, reflect on the implementation:
+12. **Continuous Learning retrospective** — before writing the workflow log, reflect on the implementation:
 
    a. **Read scratch context:** If `.claude/cl/scratch.md` exists, read it — this contains recent assistant context captured before compaction. Use it as supplementary memory for the retrospective steps below. (If the file doesn't exist, that's fine — proceed without it.)
 
@@ -181,16 +222,16 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    c. **Log debt observations:** If you noticed anything out of scope that needs fixing (bad patterns, missing tests, poor abstractions, confusing naming), append one-liner bullets to `.claude/cl/debt.md`. Create the file with a `# Technical Debt` heading if it doesn't exist. Format: `- **<file or area>**: <what's wrong and why it matters> (discovered in #<id>)`
 
-   d. **Rank top 3:** Ask yourself: "What are 3 things I wish I'd known before starting this issue?" Write these to a `### Wish I'd Known` section in the workflow log entry (step 10). Reference the full learning files from 9b where applicable.
+   d. **Rank top 3:** Ask yourself: "What are 3 things I wish I'd known before starting this issue?" Write these to a `### Wish I'd Known` section in the workflow log entry (step 13). Reference the full learning files from 12b where applicable.
 
    e. **Delete scratch file:** If `.claude/cl/scratch.md` exists, delete it — it's been consumed.
 
-   f. **Verify capture (HARD GATE):** Before proceeding to step 10, verify:
-      - `.claude/cl/learnings/` exists and contains at least one `.md` file with `issue: <id>` in its frontmatter — OR the workflow log entry (step 10) explicitly states under `### Wish I'd Known` why zero learnings were captured (e.g., "Trivial issue with no surprises — no learnings to capture").
+   f. **Verify capture (HARD GATE):** Before proceeding to step 13, verify:
+      - `.claude/cl/learnings/` exists and contains at least one `.md` file with `issue: <id>` in its frontmatter — OR the workflow log entry (step 13) explicitly states under `### Wish I'd Known` why zero learnings were captured (e.g., "Trivial issue with no surprises — no learnings to capture").
       - If debt was discovered during implementation (fix iterations, dead code, out-of-scope issues found while reading code), `.claude/cl/debt.md` exists and contains at least one entry referencing `#<id>`.
       - If either check fails, STOP and complete the missing capture before continuing. Do NOT skip this step — it is the safety net for mid-implementation capture being skipped (which happens reliably).
 
-10. **Prepend to workflow log** (`.claude/cl/workflow-log.md`) — add a new entry at the **top** of the file (below the `# Workflow Log` heading), so entries are reverse-chronological. If the file doesn't exist, create it with the heading first.
+13. **Prepend to workflow log** (`.claude/cl/workflow-log.md`) — add a new entry at the **top** of the file (below the `# Workflow Log` heading), so entries are reverse-chronological. If the file doesn't exist, create it with the heading first.
 
    Entry format:
    ```
@@ -224,6 +265,6 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    3. <third most impactful>
    ```
 
-11. Tell the user the PR is created and show the link.
+14. Tell the user the PR is created and show the link.
 
    **If called as a sub-skill** (e.g., from `/implement`): append `CALLER: Sub-skill complete. Continue to your next step immediately.` to your output.
