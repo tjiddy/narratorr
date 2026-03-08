@@ -69,6 +69,8 @@ export const settingsRegistry = {
       minSeeders: 0,
       searchImmediately: false,
       monitorForUpgrades: false,
+      rejectWords: '',
+      requiredWords: '',
     },
   }),
 };

@@ -18,7 +18,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       getBooks: vi.fn(),
       addBook: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({
-        quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false },
+        quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false, rejectWords: '', requiredWords: '' },
       }),
     },
   };

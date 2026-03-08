@@ -36,7 +36,7 @@ function renderPopover({
 }
 
 const defaultSettings = createMockSettings({
-  quality: { grabFloor: 0, protocolPreference: 'none' as const, minSeeders: 0, searchImmediately: true, monitorForUpgrades: true },
+  quality: { grabFloor: 0, protocolPreference: 'none' as const, minSeeders: 0, searchImmediately: true, monitorForUpgrades: true, rejectWords: '', requiredWords: '' },
 });
 
 describe('AddBookPopover', () => {

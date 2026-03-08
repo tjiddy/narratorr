@@ -46,9 +46,15 @@ function canonicalCompare(
   return (b.seeders ?? 0) - (a.seeders ?? 0);
 }
 
+/** Parse a comma-separated word list into trimmed, non-empty lowercase entries. */
+export function parseWordList(csv: string | undefined): string[] {
+  if (!csv) return [];
+  return csv.split(',').map((w) => w.trim().toLowerCase()).filter(Boolean);
+}
+
 /**
  * Apply quality filtering and canonical ranking to search results.
- * Filters by MB/hr grab floor and min seeders, then sorts by
+ * Filters by word lists, MB/hr grab floor, and min seeders, then sorts by
  * canonical order: matchScore gate → MB/hr → protocol preference → seeders.
  */
 export function filterAndRankResults(
@@ -57,10 +63,30 @@ export function filterAndRankResults(
   grabFloor: number,
   minSeeders: number,
   protocolPreference: string,
+  rejectWords?: string,
+  requiredWords?: string,
 ): { results: SearchResult[]; durationUnknown: boolean } {
   const durationUnknown = !bookDuration || bookDuration <= 0;
 
   let filtered = results;
+
+  // Apply reject word filtering (before ranking)
+  const rejectList = parseWordList(rejectWords);
+  if (rejectList.length > 0) {
+    filtered = filtered.filter((r) => {
+      const sourceTitle = (r.rawTitle ?? r.title).toLowerCase();
+      return !rejectList.some((word) => sourceTitle.includes(word));
+    });
+  }
+
+  // Apply required word filtering (before ranking)
+  const requiredList = parseWordList(requiredWords);
+  if (requiredList.length > 0) {
+    filtered = filtered.filter((r) => {
+      const sourceTitle = (r.rawTitle ?? r.title).toLowerCase();
+      return requiredList.some((word) => sourceTitle.includes(word));
+    });
+  }
 
   // Apply min seeders filter (torrent only)
   if (minSeeders > 0) {
@@ -144,6 +170,8 @@ export async function searchRoutes(
         qualitySettings.grabFloor,
         qualitySettings.minSeeders,
         qualitySettings.protocolPreference,
+        qualitySettings.rejectWords,
+        qualitySettings.requiredWords,
       );
 
       return {

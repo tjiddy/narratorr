@@ -37,10 +37,10 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > Do ALL of the following and return a structured summary:
    >
    > **Workflow history:**
-   > 1. Read `.claude/cl/workflow-log.md` — find entries touching the same area (matching file paths, service names, feature names). Note recurring workarounds, fix iterations, infrastructure gaps.
-   > 2. Read `.claude/cl/observations.md` — look for known debt, gotchas, or patterns relevant to the scope.
-   > 3. Scan `.claude/cl/learnings/` — grep learning files by scope tags and file paths matching the issue's area.
-   > 4. Read `.claude/cl/debt.md` — check for known debt items in the target area.
+   > 1. Read `.claude/workflow-log.md` — find entries touching the same area (matching file paths, service names, feature names). Note recurring workarounds, fix iterations, infrastructure gaps.
+   > 2. Read `.claude/observations.md` — look for known debt, gotchas, or patterns relevant to the scope.
+   > 3. Scan `.claude/learnings/` — grep learning files by scope tags and file paths matching the issue's area.
+   > 4. Read `.claude/debt.md` — check for known debt items in the target area.
    >
    > **Codebase exploration:**
    > 5. Find similar existing features (e.g., if adding a new adapter, look at existing adapters)

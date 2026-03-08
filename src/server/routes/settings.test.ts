@@ -142,6 +142,42 @@ describe('settings routes', () => {
     });
   });
 
+  describe('PUT /api/settings (quality word lists)', () => {
+    it('persists and returns quality.rejectWords and quality.requiredWords', async () => {
+      const updated = {
+        ...mockSettings,
+        quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false, rejectWords: 'German, Abridged', requiredWords: 'M4B' },
+      };
+      (services.settings.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { quality: { rejectWords: 'German, Abridged', requiredWords: 'M4B' } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.quality.rejectWords).toBe('German, Abridged');
+      expect(body.quality.requiredWords).toBe('M4B');
+    });
+
+    it('returns default empty strings for new quality fields', async () => {
+      const settingsWithDefaults = {
+        ...mockSettings,
+        quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false, rejectWords: '', requiredWords: '' },
+      };
+      (services.settings.getAll as Mock).mockResolvedValue(settingsWithDefaults);
+
+      const res = await app.inject({ method: 'GET', url: '/api/settings' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.quality.rejectWords).toBe('');
+      expect(body.quality.requiredWords).toBe('');
+    });
+  });
+
   describe('error paths', () => {
     it('GET /api/settings returns 500 when service throws', async () => {
       (services.settings.getAll as Mock).mockRejectedValue(new Error('DB error'));

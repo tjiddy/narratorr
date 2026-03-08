@@ -9,4 +9,6 @@ export const qualitySettingsSchema = z.object({
   minSeeders: z.number().int().nonnegative().default(0),
   searchImmediately: z.boolean().default(false),
   monitorForUpgrades: z.boolean().default(false),
+  rejectWords: z.string().default(''),
+  requiredWords: z.string().default(''),
 });

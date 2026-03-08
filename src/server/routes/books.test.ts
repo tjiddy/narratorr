@@ -188,6 +188,58 @@ describe('books routes', () => {
       expect(services.download.grab).toHaveBeenCalled();
     });
 
+    it('fire-and-forget search excludes results matching reject words', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockResolvedValue({
+        grabFloor: 0, minSeeders: 0, protocolPreference: 'none',
+        rejectWords: 'abridged',
+        requiredWords: '',
+      });
+      (services.indexer.searchAll as Mock).mockResolvedValue([
+        { title: 'The Way of Kings Abridged', rawTitle: 'The Way of Kings Abridged', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500000, seeders: 10 },
+        { title: 'The Way of Kings', rawTitle: 'The Way of Kings Full', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500000, seeders: 5 },
+      ]);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson', searchImmediately: true },
+      });
+
+      expect(res.statusCode).toBe(201);
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(services.download.grab).toHaveBeenCalledTimes(1);
+      expect(services.download.grab).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadUrl: 'https://example.com/dl2' }),
+      );
+    });
+
+    it('fire-and-forget search skips grab when no results match required words', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockResolvedValue({
+        grabFloor: 0, minSeeders: 0, protocolPreference: 'none',
+        rejectWords: '',
+        requiredWords: 'unabridged',
+      });
+      (services.indexer.searchAll as Mock).mockResolvedValue([
+        { title: 'The Way of Kings', rawTitle: 'The Way of Kings MP3', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500000, seeders: 10 },
+      ]);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson', searchImmediately: true },
+      });
+
+      expect(res.statusCode).toBe(201);
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(services.download.grab).not.toHaveBeenCalled();
+    });
+
     it('does not trigger search when searchImmediately is false', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue(null);
       (services.book.create as Mock).mockResolvedValue(mockBook);

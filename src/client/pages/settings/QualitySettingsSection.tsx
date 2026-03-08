@@ -81,6 +81,34 @@ export function QualitySettingsSection({ register, errors }: QualitySettingsSect
         </p>
       </div>
 
+      <div>
+        <label htmlFor="rejectWords" className="block text-sm font-medium mb-2">Reject Words</label>
+        <input
+          id="rejectWords"
+          type="text"
+          {...register('quality.rejectWords')}
+          className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+          placeholder="German, Abridged, Full Cast, Dramatized"
+        />
+        <p className="text-sm text-muted-foreground mt-2">
+          Comma-separated words. Releases with titles matching any word are excluded from search results.
+        </p>
+      </div>
+
+      <div>
+        <label htmlFor="requiredWords" className="block text-sm font-medium mb-2">Required Words</label>
+        <input
+          id="requiredWords"
+          type="text"
+          {...register('quality.requiredWords')}
+          className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+          placeholder="M4B, Unabridged"
+        />
+        <p className="text-sm text-muted-foreground mt-2">
+          Comma-separated words. When set, only releases with titles matching at least one word are shown.
+        </p>
+      </div>
+
       <div className="space-y-4 pt-4 mt-2 border-t border-border/50">
         <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Defaults for New Books</h4>
 

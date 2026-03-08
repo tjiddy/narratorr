@@ -61,6 +61,8 @@ export async function runSearchJob(
         qualitySettings.grabFloor,
         qualitySettings.minSeeders,
         qualitySettings.protocolPreference,
+        qualitySettings.rejectWords,
+        qualitySettings.requiredWords,
       );
 
       // Take first downloadable result — already canonically ranked
@@ -150,6 +152,8 @@ export async function runUpgradeSearchJob(
         qualitySettings.grabFloor,
         qualitySettings.minSeeders,
         qualitySettings.protocolPreference,
+        qualitySettings.rejectWords,
+        qualitySettings.requiredWords,
       );
 
       if (results.length === 0) continue;

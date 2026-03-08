@@ -143,6 +143,150 @@ describe('filterAndRankResults', () => {
     const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 10, 'none');
     expect(filtered).toHaveLength(0);
   });
+
+  describe('reject word filtering', () => {
+    it('excludes result with title containing a reject word', () => {
+      const results = [makeResult({ title: 'German Language Edition' })];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German', '');
+      expect(filtered).toHaveLength(0);
+    });
+
+    it('excludes result when reject word differs in case (case-insensitive)', () => {
+      const results = [makeResult({ title: 'GERMAN Language Edition' })];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'german', '');
+      expect(filtered).toHaveLength(0);
+    });
+
+    it('reject word matches as substring (e.g., "german" matches "German Language Edition")', () => {
+      const results = [makeResult({ title: 'German Language Edition' })];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'german', '');
+      expect(filtered).toHaveLength(0);
+    });
+
+    it('excludes result if title matches ANY reject word (OR logic)', () => {
+      const results = [
+        makeResult({ title: 'Abridged Version' }),
+        makeResult({ title: 'German Edition' }),
+        makeResult({ title: 'Normal Audiobook' }),
+      ];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German, Abridged', '');
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0].title).toBe('Normal Audiobook');
+    });
+
+    it('does NOT exclude when no reject words match', () => {
+      const results = [makeResult({ title: 'Normal Audiobook' })];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German, Abridged', '');
+      expect(filtered).toHaveLength(1);
+    });
+
+    it('applies equally to torrent and usenet results', () => {
+      const results = [
+        makeResult({ title: 'German Torrent', protocol: 'torrent' }),
+        makeResult({ title: 'German Usenet', protocol: 'usenet' }),
+      ];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German', '');
+      expect(filtered).toHaveLength(0);
+    });
+
+    it('matches against rawTitle when present, falls back to title when rawTitle is undefined', () => {
+      const results = [
+        makeResult({ title: 'Clean Title', rawTitle: 'German Raw Title' }),
+        makeResult({ title: 'German In Title Only' }),
+      ];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German', '');
+      expect(filtered).toHaveLength(0);
+    });
+  });
+
+  describe('required word filtering', () => {
+    it('includes result when title contains at least one required word', () => {
+      const results = [makeResult({ title: 'Book M4B Unabridged' })];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', '', 'M4B');
+      expect(filtered).toHaveLength(1);
+    });
+
+    it('excludes result when title contains no required words (list non-empty)', () => {
+      const results = [makeResult({ title: 'Book MP3 Version' })];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', '', 'M4B, Unabridged');
+      expect(filtered).toHaveLength(0);
+    });
+
+    it('all results pass when required word list is empty', () => {
+      const results = [makeResult({ title: 'Any Book' })];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', '', '');
+      expect(filtered).toHaveLength(1);
+    });
+
+    it('all results pass when required word list is undefined', () => {
+      const results = [makeResult({ title: 'Any Book' })];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', '', undefined);
+      expect(filtered).toHaveLength(1);
+    });
+
+    it('matching is case-insensitive substring', () => {
+      const results = [makeResult({ title: 'Book m4b format' })];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', '', 'M4B');
+      expect(filtered).toHaveLength(1);
+    });
+
+    it('matches against rawTitle when present, falls back to title when rawTitle is undefined', () => {
+      const results = [
+        makeResult({ title: 'Clean Title', rawTitle: 'Book M4B Raw' }),
+        makeResult({ title: 'Book M4B In Title' }),
+      ];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', '', 'M4B');
+      expect(filtered).toHaveLength(2);
+    });
+  });
+
+  describe('reject + required combined', () => {
+    it('reject takes precedence — result matching both reject and required word is excluded', () => {
+      const results = [makeResult({ title: 'German M4B Audiobook' })];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German', 'M4B');
+      expect(filtered).toHaveLength(0);
+    });
+  });
+
+  describe('word list parsing edge cases', () => {
+    it('empty entries after comma split are ignored', () => {
+      const results = [makeResult({ title: 'German Edition' })];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German, , Abridged', '');
+      expect(filtered).toHaveLength(0);
+    });
+
+    it('whitespace around words is trimmed', () => {
+      const results = [makeResult({ title: 'German Edition' })];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', ' German , Abridged ', '');
+      expect(filtered).toHaveLength(0);
+    });
+
+    it('single-word list works (no comma)', () => {
+      const results = [makeResult({ title: 'German Edition' })];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German', '');
+      expect(filtered).toHaveLength(0);
+    });
+
+    it('word filtering applied BEFORE ranking (filtered results do not affect rank order)', () => {
+      const results = [
+        makeResult({ title: 'German High Score', matchScore: 1.0, seeders: 100 }),
+        makeResult({ title: 'Normal Low Score', matchScore: 0.5, seeders: 5 }),
+      ];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German', '');
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0].title).toBe('Normal Low Score');
+    });
+
+    it('result with high matchScore but containing a reject word is still excluded', () => {
+      const results = [
+        makeResult({ title: 'Perfect Match German', matchScore: 1.0 }),
+        makeResult({ title: 'Decent Match', matchScore: 0.7 }),
+      ];
+      const { results: filtered } = filterAndRankResults(results, ONE_HOUR, 0, 0, 'none', 'German', '');
+      expect(filtered).toHaveLength(1);
+      expect(filtered[0].title).toBe('Decent Match');
+    });
+  });
 });
 
 describe('search routes', () => {
@@ -380,6 +524,64 @@ describe('search routes', () => {
       expect(body.results).toHaveLength(2);
       expect(body.unsupportedResults.count).toBe(1);
       expect(body.unsupportedResults.titles).toEqual(['Book (5/20)']);
+    });
+  });
+
+  describe('GET /api/search word filtering', () => {
+    it('returns results filtered by reject words from quality settings', async () => {
+      const results = [
+        { ...mockSearchResult, title: 'German Edition' },
+        { ...mockSearchResult, title: 'English Edition' },
+      ];
+      (services.indexer.searchAll as Mock).mockResolvedValue(results);
+      (services.settings.get as Mock).mockImplementation((category: string) => {
+        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: '' });
+        return Promise.resolve({});
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/api/search?q=testquery' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.results).toHaveLength(1);
+      expect(body.results[0].title).toBe('English Edition');
+    });
+
+    it('returns results filtered by required words from quality settings', async () => {
+      const results = [
+        { ...mockSearchResult, title: 'Book M4B' },
+        { ...mockSearchResult, title: 'Book MP3' },
+      ];
+      (services.indexer.searchAll as Mock).mockResolvedValue(results);
+      (services.settings.get as Mock).mockImplementation((category: string) => {
+        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: 'M4B' });
+        return Promise.resolve({});
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/api/search?q=testquery' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.results).toHaveLength(1);
+      expect(body.results[0].title).toBe('Book M4B');
+    });
+
+    it('returns unfiltered results when both word lists are empty', async () => {
+      const results = [
+        { ...mockSearchResult, title: 'Book One' },
+        { ...mockSearchResult, title: 'Book Two' },
+      ];
+      (services.indexer.searchAll as Mock).mockResolvedValue(results);
+      (services.settings.get as Mock).mockImplementation((category: string) => {
+        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' });
+        return Promise.resolve({});
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/api/search?q=testquery' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.results).toHaveLength(2);
     });
   });
 

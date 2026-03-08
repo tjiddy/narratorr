@@ -116,7 +116,7 @@ describe('AuthorPage', () => {
     vi.mocked(api.getAuthorBooks).mockResolvedValue(mockBooks);
     vi.mocked(api.getBooks).mockResolvedValue(mockLibraryBooks);
     vi.mocked(api.getSettings).mockResolvedValue({
-      quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false },
+      quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false, rejectWords: '', requiredWords: '' },
     } as never);
   });
 

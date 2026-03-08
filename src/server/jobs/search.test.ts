@@ -266,6 +266,50 @@ describe('runSearchJob', () => {
     expect(log.warn).toHaveBeenCalled();
   });
 
+  it('applies word filtering via filterAndRankResults (reject words)', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const settings = createMockSettingsService({
+      search: { enabled: true, intervalMinutes: 60 },
+      quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: '' },
+    });
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService([
+      { ...mockResult(10, 'magnet:?xt=urn:btih:aaa'), title: 'German Edition' },
+      { ...mockResult(10, 'magnet:?xt=urn:btih:bbb'), title: 'English Edition' },
+    ]);
+    const download = createMockDownloadService();
+
+    const result = await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(1);
+    expect(result.grabbed).toBe(1);
+    expect(download.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'English Edition' }),
+    );
+  });
+
+  it('applies word filtering via filterAndRankResults (required words)', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const settings = createMockSettingsService({
+      search: { enabled: true, intervalMinutes: 60 },
+      quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: 'M4B' },
+    });
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService([
+      { ...mockResult(10, 'magnet:?xt=urn:btih:aaa'), title: 'Book MP3' },
+      { ...mockResult(10, 'magnet:?xt=urn:btih:bbb'), title: 'Book M4B' },
+    ]);
+    const download = createMockDownloadService();
+
+    const result = await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(1);
+    expect(result.grabbed).toBe(1);
+    expect(download.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Book M4B' }),
+    );
+  });
+
   it('applies quality filtering to search results (min seeders)', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' }, duration: 3600 }];
     // minSeeders = 5 should filter out the low-seeder result
@@ -467,6 +511,56 @@ describe('runUpgradeSearchJob', () => {
       'Upgrade search failed for book',
     );
     expect(indexer.searchAll).toHaveBeenCalledTimes(2);
+  });
+
+  it('applies word filtering via filterAndRankResults (reject words)', async () => {
+    const book = makeMonitoredBook();
+    const settings = createMockSettingsService({
+      quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: '' },
+    });
+    const books = createMockBookService([], [book]);
+    // Higher quality result but with reject word
+    const germanResult: SearchResult = {
+      title: 'German Better Quality',
+      protocol: 'torrent',
+      indexer: 'abb',
+      seeders: 10,
+      size: 500 * 1024 * 1024,
+      downloadUrl: 'magnet:?xt=urn:btih:german',
+    };
+    const indexer = createMockIndexerService([germanResult]);
+    const download = createMockDownloadService();
+
+    const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(1);
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+  });
+
+  it('applies word filtering via filterAndRankResults (required words)', async () => {
+    const book = makeMonitoredBook();
+    const settings = createMockSettingsService({
+      quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: 'M4B' },
+    });
+    const books = createMockBookService([], [book]);
+    // Higher quality result without required word
+    const mp3Result: SearchResult = {
+      title: 'Better Quality MP3',
+      protocol: 'torrent',
+      indexer: 'abb',
+      seeders: 10,
+      size: 500 * 1024 * 1024,
+      downloadUrl: 'magnet:?xt=urn:btih:mp3',
+    };
+    const indexer = createMockIndexerService([mp3Result]);
+    const download = createMockDownloadService();
+
+    const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(1);
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
   });
 
   it('handles active download error silently', async () => {

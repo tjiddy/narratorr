@@ -41,6 +41,8 @@ function triggerImmediateSearch(
         qualitySettings.grabFloor,
         qualitySettings.minSeeders,
         qualitySettings.protocolPreference,
+        qualitySettings.rejectWords,
+        qualitySettings.requiredWords,
       );
       // Take first downloadable result — already canonically ranked
       const best = ranked.find((r) => r.downloadUrl);

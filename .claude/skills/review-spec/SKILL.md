@@ -5,11 +5,6 @@ description: Review an elaborated spec for gaps, missing test plans, and codebas
   when user says "review spec", "check spec", or invokes /review-spec.
 argument-hint: <issue-id>
 disable-model-invocation: true
-hooks:
-  Stop:
-    - hooks:
-        - type: prompt
-          prompt: "The agent is running /review-spec (explore codebase → evaluate spec → post review comment → set labels). Check its last message. It is DONE only if it confirms BOTH the review comment was posted to Gitea AND labels were updated (status/ready-for-dev or status/fixes-spec), or an explicit STOP/block condition. If the last message has review findings but no confirmation of posting to Gitea or updating labels, respond {\"ok\": false, \"reason\": \"Spec review incomplete. You must BOTH post the review comment to Gitea AND update the issue labels. You are not done until both 8a and 8b have executed.\"}. If complete or blocked, respond {\"ok\": true}."
 ---
 
 # /review-spec <id> — Review an issue spec for gaps and quality
