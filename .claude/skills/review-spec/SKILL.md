@@ -26,16 +26,12 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Steps
 
-1. **Loop guard:** Run `gitea issue-comments <id>`. Count comments containing `## Spec Review` and `## Verdict:` that were posted in the last 24 hours (use the comment timestamps).
-   - If **5 or more** spec review verdicts in the last 24 hours → **STOP**: "Loop guard triggered: <N> spec review verdicts posted on issue #<id> in the last 24 hours. This suggests a review loop. Human intervention needed."
-   - If fewer than 5 → proceed.
-
-2. **Read the issue:** Run `gitea issue <id>`. Extract:
+1. **Read the issue:** Run `gitea issue <id>`. Extract:
    - Title, labels, milestone
    - Full issue body (spec)
    - Existing comments (prior review findings, elaboration notes)
 
-2b. **Parse prior review history (re-reviews only):** From the comments extracted in step 2, find all comments containing `## Spec Review` (prior reviews) and `## Spec Review Response` (author responses). Build a map of prior findings and their resolutions:
+2. **Parse prior review history (re-reviews only):** From the comments extracted in step 1, find all comments containing `## Spec Review` (prior reviews) and `## Spec Review Response` (author responses). Build a map of prior findings and their resolutions:
    - For each prior finding ID (F1, F2, etc.), note: the original finding, the author's resolution (`fixed`, `accepted`, `disputed`), and any rationale provided.
    - If this is the first review (no prior `## Spec Review` comments), skip to step 3.
    - **This does NOT reduce the scope of the review.** Steps 3-5 still run in full — you may find net-new issues that prior rounds missed. The prior history only affects how you handle findings that overlap with previously-disputed items (see dispute engagement rules below).
@@ -200,7 +196,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    **8b. Set labels based on verdict (the orchestrator depends on these — skipping this breaks the pipeline):**
 
-   Read the issue's current labels from step 2. Then:
+   Read the issue's current labels from step 1. Then:
 
    **If `approve`:**
    - Replace any `status/*` label with `status/ready-for-dev` (keep all other labels including `yolo`, type, priority, scope)
@@ -226,5 +222,5 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 - Use suggestions liberally. When in doubt about severity, make it a suggestion — the spec author can promote it if they agree it matters.
 - If there are no findings at all, use an empty array: `[]`
 - Consult the project's CLAUDE.md philosophy section — optimize findings for defect prevention, not compliance.
-- **Re-reviews require prior comment reading.** On any issue that already has `## Spec Review` comments, step 2b is mandatory. Skipping it produces review loops where the same finding bounces back and forth.
+- **Re-reviews require prior comment reading.** On any issue that already has `## Spec Review` comments, step 2 is mandatory. Skipping it produces review loops where the same finding bounces back and forth.
 - **Stand your ground when you're right.** If the author disputes a finding and their rationale is wrong, rebut it with specific evidence. Don't withdraw just because they pushed back — withdraw because they proved you wrong. But if they DID prove you wrong, have the intellectual honesty to drop it.
