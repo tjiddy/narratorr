@@ -5,6 +5,8 @@ description: Mark a Gitea issue as blocked. Use when user says "block issue", "m
 argument-hint: <issue-id>
 ---
 
+!`cat .claude/docs/workflow.md`
+
 # /block <id> — Mark a Gitea issue as blocked
 
 Automates the "BLOCKED" workflow.

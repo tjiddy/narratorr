@@ -12,6 +12,12 @@ hooks:
           prompt: "The agent is running /respond-to-pr-review (fix findings → verify → push → post response comment → update labels). Check its last message. It is DONE only if it contains 'ready-for-re-review' or 'needs-human-input' status report, or an explicit STOP/block condition. If the last message is a verify summary (OVERALL: pass/fail) or test output without a subsequent push, comment post, or label update, respond {\"ok\": false, \"reason\": \"Review response incomplete. Verify passed but you still need to: git push, post the Review Response comment on the PR, and update issue labels. Continue immediately.\"}. If complete or blocked, respond {\"ok\": true}."
 ---
 
+!`cat .claude/docs/testing.md`
+
+!`cat .claude/docs/workflow.md`
+
+!`cat .claude/docs/design-principles.md`
+
 # /respond-to-pr-review <pr-number> — Address review findings on a PR
 
 Author agent reads the review, addresses each finding with an explicit resolution, pushes fixes, and posts a structured response.

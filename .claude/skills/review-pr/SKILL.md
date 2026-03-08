@@ -12,6 +12,12 @@ hooks:
           prompt: "The agent is running /review-pr (explore code → evaluate → post verdict comment → set labels → merge or stop). Check its last message. It is DONE only if it contains '## Verdict:' AND confirms the comment was posted to Gitea AND labels were updated, or an explicit STOP/block condition. If the last message contains review findings or a verdict that hasn't been posted to Gitea yet (no gitea issue-comment or gitea pr-comment confirmation), respond {\"ok\": false, \"reason\": \"Review incomplete. You have findings but haven't posted them to Gitea or updated labels. Post the review comment and set labels before stopping.\"}. If complete or blocked, respond {\"ok\": true}."
 ---
 
+!`cat .claude/docs/testing.md`
+
+!`cat .claude/docs/design-principles.md`
+
+!`cat .claude/docs/architecture-checks.md`
+
 # /review-pr <pr-number> — Review a pull request against its linked issue
 
 Reviews a PR by checking the diff against the linked issue's acceptance criteria, the project's design principles, and code quality standards. Posts a structured review comment with machine-parseable findings.

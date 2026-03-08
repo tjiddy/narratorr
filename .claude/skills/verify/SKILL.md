@@ -6,6 +6,8 @@ description: Run quality gates (lint, test, typecheck, build) via subagent and r
 model: sonnet
 ---
 
+!`cat .claude/docs/testing.md`
+
 # /verify — Run quality gates and report structured results
 
 Runs the project's quality gate commands sequentially and returns a compact structured summary. Designed to be invoked by other skills (`/handoff`, `/implement`) to keep verbose build output out of the main context.

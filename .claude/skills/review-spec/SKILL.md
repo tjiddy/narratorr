@@ -12,6 +12,12 @@ hooks:
           prompt: "The agent is running /review-spec (explore codebase → evaluate spec → post review comment → set labels). Check its last message. It is DONE only if it confirms BOTH the review comment was posted to Gitea AND labels were updated (status/ready-for-dev or status/fixes-spec), or an explicit STOP/block condition. If the last message has review findings but no confirmation of posting to Gitea or updating labels, respond {\"ok\": false, \"reason\": \"Spec review incomplete. You must BOTH post the review comment to Gitea AND update the issue labels. You are not done until both 8a and 8b have executed.\"}. If complete or blocked, respond {\"ok\": true}."
 ---
 
+!`cat .claude/docs/testing.md`
+
+!`cat .claude/docs/design-principles.md`
+
+!`cat .claude/docs/architecture-checks.md`
+
 # /review-spec <id> — Review an issue spec for gaps and quality
 
 Reviews an elaborated issue spec with fresh eyes. Explores the codebase exhaustively to validate assumptions, find gaps, and suggest improvements. Posts structured findings as a comment. Sets `status/ready-for-dev` on approve, `status/fixes-spec` on needs-work.

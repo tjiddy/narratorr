@@ -5,6 +5,10 @@ description: Create a new Gitea issue from the spec template. Use when user says
 argument-hint: <title>
 ---
 
+!`cat .claude/docs/design-principles.md`
+
+!`cat .claude/docs/architecture-checks.md`
+
 # /spec <title> — Create a Gitea issue from template
 
 Draft a spec for a new issue using the spec template, then create it in Gitea.

@@ -8,6 +8,8 @@ disable-model-invocation: true
 model: sonnet
 ---
 
+!`cat .claude/docs/workflow.md`
+
 # /merge <pr-number> — Merge an approved pull request
 
 Merges a PR after verifying it has been approved, quality gates pass, and there are no unresolved disputes.

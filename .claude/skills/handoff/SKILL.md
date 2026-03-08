@@ -11,6 +11,12 @@ hooks:
           prompt: "The agent is running /handoff (verify → push → create PR → update labels → post comment → workflow log). Check its last message. It is DONE only if it mentions a created PR link or an explicit STOP/failure. If the last message is a verify summary (OVERALL: pass/fail), a coverage review, or any mid-workflow output without a PR link, respond {\"ok\": false, \"reason\": \"Handoff incomplete. Verify passed but you still need to push, create the PR, update labels, post the handoff comment, and write the workflow log. Continue immediately.\"}. If complete or stopped, respond {\"ok\": true}."
 ---
 
+!`cat .claude/docs/testing.md`
+
+!`cat .claude/docs/workflow.md`
+
+!`cat .claude/docs/design-principles.md`
+
 # /handoff <id> — Push, create PR, and hand off a Gitea issue
 
 Automates the "Push + Create PR + Update issue" workflow.

@@ -7,6 +7,8 @@ argument-hint: <issue-id>
 disable-model-invocation: true
 ---
 
+!`cat .claude/docs/workflow.md`
+
 # /respond-to-spec-review <id> — Address spec review findings on a Gitea issue
 
 Reads the latest `/review-spec` verdict on an issue, addresses each finding by updating the spec body, posts a structured response comment, and reports readiness.

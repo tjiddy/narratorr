@@ -12,6 +12,14 @@ hooks:
           prompt: "The agent is running /implement (claim → plan → implement → handoff). Check its last message. It is DONE only if it contains a completion report like '**#<id> complete** — <PR link>' or an explicit STOP/block condition. If the last message is a verify summary (OVERALL: pass/fail), a plan summary, a claim confirmation, or any mid-workflow output without a PR link or STOP, respond {\"ok\": false, \"reason\": \"Workflow incomplete. You are mid-skill — continue to the next phase immediately.\"}. If complete or blocked, respond {\"ok\": true}."
 ---
 
+!`cat .claude/docs/testing.md`
+
+!`cat .claude/docs/workflow.md`
+
+!`cat .claude/docs/design-principles.md`
+
+!`cat .claude/docs/architecture-checks.md`
+
 # /implement <id> — Full lifecycle: claim → plan → implement → handoff
 
 End-to-end orchestrator skill. Claims the issue, plans the implementation, builds it, and hands off with a PR. Chains `/claim`, `/plan`, and `/handoff` via the Skill tool.

@@ -6,6 +6,8 @@ argument-hint: <issue-id>
 disable-model-invocation: true
 ---
 
+!`cat .claude/docs/workflow.md`
+
 # /resume <id> — Resume a blocked issue
 
 Picks up a previously blocked issue by finding the blocker context, checking for answers, and restoring the working state.

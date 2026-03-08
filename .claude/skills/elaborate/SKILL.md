@@ -6,6 +6,10 @@ description: Groom and validate a Gitea issue spec. Checks completeness, explore
 argument-hint: <issue-id>
 ---
 
+!`cat .claude/docs/testing.md`
+
+!`cat .claude/docs/architecture-checks.md`
+
 # /elaborate <id> — Groom and validate a Gitea issue spec
 
 Standalone grooming/triage skill. Reads the issue, explores the codebase for gaps, checks dependencies, and reports a structured readiness verdict. Read-only except for updating the issue body with durable content (missing AC, test plan items, scope boundaries).

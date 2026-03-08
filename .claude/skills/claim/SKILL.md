@@ -6,6 +6,8 @@ description: Claim a spec-approved Gitea issue for implementation. Validates sta
 argument-hint: <issue-id>
 ---
 
+!`cat .claude/docs/workflow.md`
+
 # /claim <id> — Claim a Gitea issue
 
 Mechanical claiming action: validates the issue is ready, creates the feature branch, updates labels, and posts a claim comment. No codebase exploration or planning — that's `/plan`'s job.
