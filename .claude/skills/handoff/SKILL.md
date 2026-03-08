@@ -119,28 +119,12 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    If RESULT is `fail` (any behavior marked UNTESTED) → STOP — write the missing tests in the main context, then restart from step 2. Do NOT proceed to push with untested behavior.
 
-5. **Run quality gates** using the **Agent tool** (NOT the Skill tool — this MUST be a subagent to keep verbose output out of your context). Use this exact prompt:
+5. **Run quality gates** by executing: `node scripts/verify.ts`
 
-   > Run quality gates for this project from the repo root. Read `CLAUDE.md` § Commands for the exact commands.
-   > Run sequentially: lint → test → typecheck → build.
-   > If all pass, run coverage on changed files vs main branch — flag any non-test source file at ≤5% line coverage.
-   > See `.claude/skills/verify/SKILL.md` for full coverage gate details.
-   >
-   > Return ONLY this structured summary (5-15 lines max):
-   > ```
-   > LINT: pass | fail (N errors: <first 3>)
-   > TEST: pass (N suites, M tests) | fail (N failed: <test names>)
-   > TYPECHECK: pass | fail (<first 5 errors>) | skipped
-   > BUILD: pass | fail (<error summary>)
-   > COVERAGE: pass | fail (N files at 0%: <file list>) | skipped
-   > OVERALL: pass | fail
-   > ```
+   This is a script, not an LLM call — it runs lint → test+coverage → typecheck → build and returns a one-line summary on success or structured failures.
 
-   **Do NOT invoke `/verify` via the Skill tool.** The Skill tool runs inline and dumps all verbose build/test output into your context, wasting tokens and risking context exhaustion before handoff. The Agent tool runs it in a subprocess and returns only the summary.
-
-   **IMMEDIATELY when the subagent returns** (do NOT stop or end your turn):
-   - If OVERALL: fail → STOP and report failures (do NOT fix — that's the caller's job).
-   - If OVERALL: pass → continue to step 6 RIGHT NOW. The verify result is a mid-flow value, not a stopping point. You have more steps to complete.
+   - If output starts with `VERIFY: fail` → STOP and report failures (do NOT fix — that's the caller's job).
+   - If output starts with `VERIFY: pass` → continue to step 6 immediately.
 
 6. **Push the branch:**
    ```bash

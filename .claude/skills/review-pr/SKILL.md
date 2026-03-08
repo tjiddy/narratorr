@@ -319,7 +319,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
     - Replace any `stage/*` label with `stage/approved` (keep `status/in-progress`, `yolo`, and all other labels)
     - Run: `gitea issue-update <id> labels "<comma-separated label names>"`
     - Verify the output shows `stage/approved`
-    - Then invoke `/merge <pr-number>` to squash merge, update issue labels, and clean up the branch
+    - Then run `node scripts/merge.ts <pr-number>` to squash merge, update issue labels, and clean up the branch
     - If merge fails, report the error — do not retry
 
     **If verdict is `needs-work`:**

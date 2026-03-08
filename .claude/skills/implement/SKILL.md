@@ -22,7 +22,7 @@ hooks:
 
 # /implement <id> — Full lifecycle: claim → plan → implement → handoff
 
-End-to-end orchestrator skill. Claims the issue, plans the implementation, builds it, and hands off with a PR. Chains `/claim`, `/plan`, and `/handoff` via the Skill tool.
+End-to-end orchestrator skill. Claims the issue, plans the implementation, builds it, and hands off with a PR.
 
 ## Gitea CLI
 
@@ -32,10 +32,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ### Phase 1 — Claim
 
-1. **Invoke `/claim <id>`** via the Skill tool.
-   - `/claim` validates the issue status, creates the feature branch, and updates labels.
-   - If `/claim` STOPs (blocked, not ready, PR already exists) → the entire `/implement` STOPS. Do not continue.
-   - **If `/claim` succeeds → IMMEDIATELY continue to Phase 2.** Do not end your turn.
+1. **Claim the issue** by running: `node scripts/claim.ts <id>`
+   - If output starts with `ERROR:` → the entire `/implement` STOPS. Do not continue.
+   - If output starts with `CLAIMED:` → IMMEDIATELY continue to Phase 2. Do not end your turn.
 
 ### Phase 2 — Plan
 
@@ -55,31 +54,12 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **Follow design principles** (CLAUDE.md § Design Principles) — single responsibility per file, DRY (extract shared patterns), extend don't modify (new files over growing lists). If the plan comment flagged design warnings, address them during implementation.
    - Write/update tests per the Test Plan
    - Commit incrementally with `#<id>` prefix (e.g., `#58 Add Newznab search adapter`)
-   - **Stay in scope** — if requirements expand beyond the issue spec, invoke `/block <id>` via the Skill tool and STOP
+   - **Stay in scope** — if requirements expand beyond the issue spec, run `node scripts/block.ts <id> "<reason>"` and STOP
 
-5. **Run quality gates** using the **Agent tool** (NOT the Skill tool — this MUST be a subagent to keep verbose output out of your context). Use this exact prompt:
-
-   > Run quality gates for this project from the repo root. Read `CLAUDE.md` § Commands for the exact commands.
-   > Run sequentially: lint → test → typecheck → build.
-   > If all pass, run coverage on changed files vs main branch — flag any non-test source file at ≤5% line coverage.
-   > See `.claude/skills/verify/SKILL.md` for full coverage gate details.
-   >
-   > Return ONLY this structured summary (5-15 lines max):
-   > ```
-   > LINT: pass | fail (N errors: <first 3>)
-   > TEST: pass (N suites, M tests) | fail (N failed: <test names>)
-   > TYPECHECK: pass | fail (<first 5 errors>) | skipped
-   > BUILD: pass | fail (<error summary>)
-   > COVERAGE: pass | fail (N files at 0%: <file list>) | skipped
-   > OVERALL: pass | fail
-   > ```
-
-   **Do NOT invoke `/verify` via the Skill tool.** The Skill tool runs inline and dumps all verbose build/test output into your context, wasting tokens and risking context exhaustion before handoff. The Agent tool runs it in a subprocess and returns only the summary.
-
-   **IMMEDIATELY when the subagent returns** (do NOT stop or end your turn):
-   - If OVERALL: fail → fix failures in the main context and re-run the verify subagent (max 2 attempts)
-   - If still failing after 2 fix attempts → invoke `/block <id>` via the Skill tool and STOP
-   - If OVERALL: pass → continue to step 6 RIGHT NOW. You have 4 more steps to complete.
+5. **Run quality gates:** Execute `node scripts/verify.ts`
+   - If output starts with `VERIFY: fail` → fix failures and re-run (max 2 attempts)
+   - If still failing after 2 attempts → run `node scripts/block.ts <id> "Quality gates failing after 2 fix attempts"` and STOP
+   - If output starts with `VERIFY: pass` → continue to step 6 RIGHT NOW. You have 4 more steps to complete.
 
 6. **Frontend design pass (if applicable):** Check the issue labels or spec for frontend scope (`scope/frontend`).
    - If the issue includes frontend work → invoke the `frontend-design` skill on each new or significantly changed UI component. The goal is production-grade polish, not just functional correctness.
@@ -105,5 +85,5 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 - **Do NOT pause between phases or after sub-skill returns.** When `/claim`, `/plan`, or `/handoff` returns, immediately continue to the next step. Sub-skill results are mid-flow return values, not stopping points. The only valid stops are explicit STOP conditions (blocked, failures after retries, scope creep).
 - Each phase gates the next — if any phase STOPs, the whole skill STOPs
-- Do NOT skip `/claim`, `/plan`, or `/handoff` — they are invoked via the Skill tool, not inlined
-- Scope creep is a STOP condition, not a TODO — invoke `/block` and halt
+- Do NOT skip claim, `/plan`, or `/handoff` — claim runs via script, `/plan` and `/handoff` via the Skill tool
+- Scope creep is a STOP condition, not a TODO — run `node scripts/block.ts` and halt

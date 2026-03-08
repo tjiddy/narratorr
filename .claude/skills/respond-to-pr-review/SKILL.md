@@ -68,25 +68,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 4. **Determine flow:**
 
    **Clean flow** (no disputed blocking findings):
-   - Run quality gates using the **Agent tool** (NOT the Skill tool — this MUST be a subagent to keep verbose output out of your context). Use this exact prompt:
-     > Run quality gates for this project from the repo root. Read `CLAUDE.md` § Commands for the exact commands.
-     > Run sequentially: lint → test → typecheck → build.
-     > If all pass, run coverage on changed files vs main branch — flag any non-test source file at ≤5% line coverage.
-     > See `.claude/skills/verify/SKILL.md` for full coverage gate details.
-     >
-     > Return ONLY this structured summary (5-15 lines max):
-     > ```
-     > LINT: pass | fail (N errors: <first 3>)
-     > TEST: pass (N suites, M tests) | fail (N failed: <test names>)
-     > TYPECHECK: pass | fail (<first 5 errors>) | skipped
-     > BUILD: pass | fail (<error summary>)
-     > COVERAGE: pass | fail (N files at 0%: <file list>) | skipped
-     > OVERALL: pass | fail
-     > ```
-   - **Do NOT invoke `/verify` via the Skill tool.** The Skill tool runs inline and dumps all verbose build/test output into your context, wasting tokens and risking context exhaustion before handoff. The Agent tool runs it in a subprocess and returns only the summary.
-   - **IMMEDIATELY when the subagent returns** (do NOT stop or end your turn):
-     - If verify fails → fix issues and re-run until clean
-     - If verify passes → continue to push RIGHT NOW. You still need to push, post the response comment, and update labels.
+   - Run quality gates: `node scripts/verify.ts`
+     - If output starts with `VERIFY: fail` → fix issues and re-run until clean
+     - If output starts with `VERIFY: pass` → continue to push RIGHT NOW. You still need to push, post the response comment, and update labels.
    - Push: `git push origin <head-branch>`
    - Post response comment (see template below)
    - **Update labels:** If the linked issue has the `yolo` label, set `stage/review-pr` on the issue (replacing any `stage/*` label, preserving all other labels): `gitea issue-update <id> labels "stage/review-pr,status/in-progress,yolo,<other-existing-labels>"`
