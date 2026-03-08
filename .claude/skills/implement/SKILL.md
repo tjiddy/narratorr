@@ -44,10 +44,27 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Commit incrementally with `#<id>` prefix (e.g., `#58 Add Newznab search adapter`)
    - **Stay in scope** — if requirements expand beyond the issue spec, invoke `/block <id>` via the Skill tool and STOP
 
-5. **Run quality gates:** Invoke `/verify` via the Skill tool. It runs on haiku to keep cost down and verbose build output out of main context.
+5. **Run quality gates** using the **Agent tool** (NOT the Skill tool — this MUST be a subagent to keep verbose output out of your context). Use this exact prompt:
 
-   **IMMEDIATELY when `/verify` returns** (do NOT stop or end your turn):
-   - If OVERALL: fail → fix failures in the main context and re-invoke `/verify` (max 2 attempts)
+   > Run quality gates for this project from the repo root. Read `CLAUDE.md` § Commands for the exact commands.
+   > Run sequentially: lint → test → typecheck → build.
+   > If all pass, run coverage on changed files vs main branch — flag any non-test source file at ≤5% line coverage.
+   > See `.claude/skills/verify/SKILL.md` for full coverage gate details.
+   >
+   > Return ONLY this structured summary (5-15 lines max):
+   > ```
+   > LINT: pass | fail (N errors: <first 3>)
+   > TEST: pass (N suites, M tests) | fail (N failed: <test names>)
+   > TYPECHECK: pass | fail (<first 5 errors>) | skipped
+   > BUILD: pass | fail (<error summary>)
+   > COVERAGE: pass | fail (N files at 0%: <file list>) | skipped
+   > OVERALL: pass | fail
+   > ```
+
+   **Do NOT invoke `/verify` via the Skill tool.** The Skill tool runs inline and dumps all verbose build/test output into your context, wasting tokens and risking context exhaustion before handoff. The Agent tool runs it in a subprocess and returns only the summary.
+
+   **IMMEDIATELY when the subagent returns** (do NOT stop or end your turn):
+   - If OVERALL: fail → fix failures in the main context and re-run the verify subagent (max 2 attempts)
    - If still failing after 2 fix attempts → invoke `/block <id>` via the Skill tool and STOP
    - If OVERALL: pass → continue to step 6 RIGHT NOW. You have 4 more steps to complete.
 
