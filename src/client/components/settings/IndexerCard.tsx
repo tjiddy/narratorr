@@ -40,6 +40,8 @@ function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'
     apiUrl: (s.apiUrl as string) || '',
     apiKey: (s.apiKey as string) || '',
     flareSolverrUrl: (s.flareSolverrUrl as string) || '',
+    mamId: (s.mamId as string) || '',
+    baseUrl: (s.baseUrl as string) || '',
   };
 }
 

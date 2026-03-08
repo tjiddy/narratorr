@@ -100,3 +100,57 @@ describe('createIndexerFormSchema — flareSolverrUrl validation', () => {
     }
   });
 });
+
+describe('createIndexerFormSchema — MAM required-field validation', () => {
+  const mamBase = {
+    name: 'MAM Indexer',
+    type: 'myanonamouse' as const,
+    enabled: true,
+    priority: 50,
+  };
+
+  it('rejects when mamId is missing', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...mamBase,
+      settings: { baseUrl: 'https://mam.example.com' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const mamIdError = result.error.issues.find(
+        i => i.path.includes('mamId'),
+      );
+      expect(mamIdError).toBeDefined();
+      expect(mamIdError?.message).toBe('MAM ID is required');
+    }
+  });
+
+  it('rejects when mamId is empty string', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...mamBase,
+      settings: { mamId: '', baseUrl: 'https://mam.example.com' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const mamIdError = result.error.issues.find(
+        i => i.path.includes('mamId'),
+      );
+      expect(mamIdError).toBeDefined();
+    }
+  });
+
+  it('accepts when mamId is provided', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...mamBase,
+      settings: { mamId: 'my-mam-id-cookie' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts when mamId and baseUrl are both provided', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...mamBase,
+      settings: { mamId: 'my-mam-id-cookie', baseUrl: 'https://mam.example.com' },
+    });
+    expect(result.success).toBe(true);
+  });
+});

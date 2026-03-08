@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadProtocol } from './types.js';
 import { qbTorrentsResponseSchema } from './schemas.js';
 
@@ -146,6 +147,11 @@ export class QBittorrentClient implements DownloadClientAdapter {
   }
 
   async addDownload(url: string, options?: AddDownloadOptions): Promise<string> {
+    // Torrent file upload path — uses multipart form data
+    if (options?.torrentFile) {
+      return this.addDownloadFromFile(options.torrentFile, options);
+    }
+
     // Validate magnet URI before sending to qBittorrent — .torrent URLs are not supported
     if (!url.startsWith('magnet:')) {
       throw new Error(
@@ -184,6 +190,54 @@ export class QBittorrentClient implements DownloadClientAdapter {
     }
 
     throw new Error('Could not extract info hash from magnet URI');
+  }
+
+  private async addDownloadFromFile(torrentFile: Buffer, options?: AddDownloadOptions): Promise<string> {
+    if (!this.cookie) {
+      await this.login();
+    }
+
+    const formData = new FormData();
+    formData.append('torrents', new Blob([new Uint8Array(torrentFile)], { type: 'application/x-bittorrent' }), 'upload.torrent');
+
+    if (options?.savePath) {
+      formData.append('savepath', options.savePath);
+    }
+    if (options?.category) {
+      formData.append('category', options.category);
+    }
+    if (options?.paused) {
+      formData.append('paused', 'true');
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(`${this.baseUrl}/api/v2/torrents/add`, {
+        method: 'POST',
+        headers: {
+          Cookie: this.cookie!,
+          Referer: this.baseUrl,
+        },
+        body: formData,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Request failed: HTTP ${response.status} /api/v2/torrents/add`);
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    // Compute info hash from torrent file content using SHA-1 of bencoded info dictionary
+    const hash = extractInfoHashFromTorrent(torrentFile);
+    if (hash) {
+      return hash.toLowerCase();
+    }
+
+    throw new Error('Could not extract info hash from torrent file');
   }
 
   async getDownload(hash: string): Promise<DownloadItemInfo | null> {
@@ -310,6 +364,56 @@ export class QBittorrentClient implements DownloadClientAdapter {
 
     return stateMap[state] || 'downloading';
   }
+}
+
+/** Extract info_hash by finding '4:info' marker and hashing the bencode dict that follows.
+ *  Searches all occurrences of '4:info' in case earlier string payloads contain the same bytes. */
+function extractInfoHashFromTorrent(torrent: Buffer): string | null {
+  const marker = Buffer.from('4:info');
+  let searchFrom = 0;
+
+  while (searchFrom < torrent.length) {
+    const idx = torrent.indexOf(marker, searchFrom);
+    if (idx === -1) return null;
+
+    const infoStart = idx + marker.length;
+    // The info value must be a bencoded dictionary starting with 'd'
+    if (infoStart < torrent.length && torrent[infoStart] === 0x64) {
+      const result = hashBencodeDict(torrent, infoStart);
+      if (result !== null) return result;
+    }
+
+    // This occurrence wasn't a valid info dict — try the next one
+    searchFrom = idx + 1;
+  }
+
+  return null;
+}
+
+/** Hash a bencoded dictionary starting at `start` in the buffer. Returns null on parse failure. */
+function hashBencodeDict(torrent: Buffer, start: number): string | null {
+  let depth = 0;
+  let pos = start;
+  do {
+    const byte = torrent[pos];
+    if (byte === 0x64 || byte === 0x6C) depth++; // 'd' or 'l'
+    else if (byte === 0x65) depth--; // 'e'
+    else if (byte === 0x69) { // 'i' — integer, skip to closing 'e' (not a container end)
+      pos = torrent.indexOf(0x65, pos + 1);
+      if (pos === -1) return null;
+    } else if (byte >= 0x30 && byte <= 0x39) { // digit — string length prefix
+      const colonIdx = torrent.indexOf(0x3A, pos); // ':'
+      if (colonIdx === -1) return null;
+      const len = parseInt(torrent.subarray(pos, colonIdx).toString(), 10);
+      pos = colonIdx + len; // skip past the string content
+    }
+    pos++;
+  } while (depth > 0 && pos < torrent.length);
+
+  if (depth !== 0) return null;
+
+  const infoDict = torrent.subarray(start, pos);
+  return createHash('sha1').update(infoDict).digest('hex');
 }
 
 // Helper function to convert base32 to hex

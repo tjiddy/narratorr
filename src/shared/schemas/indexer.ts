@@ -5,7 +5,7 @@ import { INDEXER_REGISTRY } from '../indexer-registry.js';
 // Indexer schemas
 // ============================================================================
 
-export const indexerTypeSchema = z.enum(['abb', 'torznab', 'newznab']);
+export const indexerTypeSchema = z.enum(['abb', 'torznab', 'newznab', 'myanonamouse']);
 
 // Server-side: accepts any settings shape (type-specific validation is client-side only)
 export const createIndexerSchema = z.object({
@@ -39,6 +39,8 @@ export const createIndexerFormSchema = z.object({
     apiUrl: z.string().optional(),
     apiKey: z.string().optional(),
     flareSolverrUrl: z.string().optional(),
+    mamId: z.string().optional(),
+    baseUrl: z.string().optional(),
   }),
 }).superRefine((data, ctx) => {
   const meta = INDEXER_REGISTRY[data.type];

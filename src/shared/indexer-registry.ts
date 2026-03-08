@@ -37,4 +37,12 @@ export const INDEXER_REGISTRY: Record<string, IndexerTypeMetadata> = {
     ],
     viewSubtitle: (s) => (s.apiUrl as string) || 'newznab',
   },
+  myanonamouse: {
+    label: 'MyAnonamouse',
+    defaultSettings: { mamId: '', baseUrl: '' },
+    requiredFields: [
+      { path: 'mamId', message: 'MAM ID is required' },
+    ],
+    viewSubtitle: (s) => (s.baseUrl as string) || 'myanonamouse.net',
+  },
 };

@@ -23,6 +23,7 @@ export interface AddDownloadOptions {
   savePath?: string;
   category?: string;
   paused?: boolean;
+  torrentFile?: Buffer;
 }
 
 export interface DownloadClientAdapter {

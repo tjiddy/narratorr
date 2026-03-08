@@ -19,7 +19,16 @@ export class BlackholeClient implements DownloadClientAdapter {
     this.protocol = config.protocol;
   }
 
-  async addDownload(url: string, _options?: AddDownloadOptions): Promise<null> {
+  async addDownload(url: string, options?: AddDownloadOptions): Promise<null> {
+    // Torrent file path — write bytes directly to watch directory
+    if (options?.torrentFile) {
+      const ext = this.config.protocol === 'usenet' ? '.nzb' : '.torrent';
+      const filename = `download-${Date.now()}${ext}`;
+      const filePath = join(this.config.watchDir, filename);
+      await writeFile(filePath, options.torrentFile);
+      return null;
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 

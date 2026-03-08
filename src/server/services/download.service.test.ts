@@ -687,6 +687,95 @@ describe('DownloadService', () => {
       // db.update should NOT have been called (no book status update)
       expect(db.update).not.toHaveBeenCalled();
     });
+
+    it('decodes data: URI and passes torrentFile to adapter', async () => {
+      const torrentContent = Buffer.from('fake-torrent-bytes');
+      const dataUri = `data:application/x-bittorrent;base64,${torrentContent.toString('base64')}`;
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-789'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      await service.grab({
+        downloadUrl: dataUri,
+        title: 'MAM Torrent',
+      });
+
+      expect(mockAdapter.addDownload).toHaveBeenCalledWith(
+        dataUri,
+        expect.objectContaining({ torrentFile: expect.any(Buffer) }),
+      );
+      // Verify the decoded buffer matches original content
+      const passedOptions = mockAdapter.addDownload.mock.calls[0][1];
+      expect(passedOptions.torrentFile.toString()).toBe('fake-torrent-bytes');
+    });
+
+    it('does not pass torrentFile for non-data: URIs', async () => {
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        title: 'Regular Magnet',
+      });
+
+      expect(mockAdapter.addDownload).toHaveBeenCalledWith(
+        'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        undefined,
+      );
+    });
+
+    it('logs truncated URL for data: URIs instead of full base64', async () => {
+      const torrentContent = Buffer.from('fake-torrent-bytes');
+      const dataUri = `data:application/x-bittorrent;base64,${torrentContent.toString('base64')}`;
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-789'),
+      };
+
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(
+        mockDbChain([{ download: mockDownload, book: mockBook }]),
+      );
+
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+
+      await svc.grab({
+        downloadUrl: dataUri,
+        title: 'MAM Torrent',
+      });
+
+      // Should log truncated data URI, not full base64 content
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadUrl: expect.stringContaining('data:application/x-bittorrent') }),
+        expect.any(String),
+      );
+      const debugCall = log.debug.mock.calls[0][0] as Record<string, unknown>;
+      expect(debugCall.downloadUrl).not.toContain(torrentContent.toString('base64'));
+      expect(debugCall.downloadUrl).toContain('KB');
+    });
   });
 
   describe('cancel — path-aware book status recovery', () => {

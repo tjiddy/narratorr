@@ -75,7 +75,7 @@ export const books = sqliteTable('books', {
 export const indexers = sqliteTable('indexers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: ['abb', 'torznab', 'newznab'] }).notNull(),
+  type: text('type', { enum: ['abb', 'torznab', 'newznab', 'myanonamouse'] }).notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   priority: integer('priority').notNull().default(50),
   settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),

@@ -50,6 +50,11 @@ describe('INDEXER_REGISTRY', () => {
       expect(INDEXER_REGISTRY.abb.viewSubtitle({})).toBe('abb');
       expect(INDEXER_REGISTRY.torznab.viewSubtitle({})).toBe('torznab');
       expect(INDEXER_REGISTRY.newznab.viewSubtitle({})).toBe('newznab');
+      expect(INDEXER_REGISTRY.myanonamouse.viewSubtitle({})).toBe('myanonamouse.net');
+    });
+
+    it('returns baseUrl for myanonamouse type', () => {
+      expect(INDEXER_REGISTRY.myanonamouse.viewSubtitle({ baseUrl: 'https://custom.mam.net' })).toBe('https://custom.mam.net');
     });
   });
 
@@ -73,6 +78,12 @@ describe('INDEXER_REGISTRY', () => {
       expect(defaults).toHaveProperty('apiUrl');
       expect(defaults).toHaveProperty('apiKey');
       expect(defaults).toHaveProperty('flareSolverrUrl');
+    });
+
+    it('myanonamouse defaults include mamId and baseUrl', () => {
+      const defaults = INDEXER_REGISTRY.myanonamouse.defaultSettings;
+      expect(defaults).toHaveProperty('mamId');
+      expect(defaults).toHaveProperty('baseUrl');
     });
   });
 });

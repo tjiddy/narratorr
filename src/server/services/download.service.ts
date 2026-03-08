@@ -200,7 +200,16 @@ export class DownloadService {
     }
 
     const protocol = params.protocol ?? 'torrent';
-    const infoHash = protocol === 'torrent' ? parseInfoHash(params.downloadUrl) : null;
+
+    // Detect data: URI torrent files — decode base64 content for torrent file handoff
+    const isDataUri = params.downloadUrl.startsWith('data:application/x-bittorrent;base64,');
+    let torrentFile: Buffer | undefined;
+    if (isDataUri) {
+      const base64Content = params.downloadUrl.slice('data:application/x-bittorrent;base64,'.length);
+      torrentFile = Buffer.from(base64Content, 'base64');
+    }
+
+    const infoHash = protocol === 'torrent' && !isDataUri ? parseInfoHash(params.downloadUrl) : null;
 
     // Get the first enabled download client for this protocol
     const client = await this.downloadClientService.getFirstEnabledForProtocol(protocol);
@@ -216,8 +225,10 @@ export class DownloadService {
     // Add to download client
     const settings = (client.settings ?? {}) as Record<string, unknown>;
     const category = (settings.category as string | undefined)?.trim() || undefined;
-    this.log.debug({ protocol, downloadUrl: params.downloadUrl, infoHash, clientId: client.id, clientName: client.name, category }, 'Sending download to client');
-    const externalId = await adapter.addDownload(params.downloadUrl, category ? { category } : undefined);
+    const logUrl = isDataUri ? `data:application/x-bittorrent [${(torrentFile!.length / 1024).toFixed(1)} KB]` : params.downloadUrl;
+    this.log.debug({ protocol, downloadUrl: logUrl, infoHash, clientId: client.id, clientName: client.name, category }, 'Sending download to client');
+    const addOptions = { ...(category ? { category } : {}), ...(torrentFile ? { torrentFile } : {}) };
+    const externalId = await adapter.addDownload(params.downloadUrl, Object.keys(addOptions).length > 0 ? addOptions : undefined);
 
     // Handoff clients (e.g. Blackhole) return null externalId — mark as completed immediately
     const isHandoff = !externalId;

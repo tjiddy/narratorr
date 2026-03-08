@@ -44,6 +44,18 @@ describe('IndexerFields', () => {
     expect(apiUrl).toHaveValue('https://nzb.example.com');
   });
 
+  it('renders MAM ID and Base URL for myanonamouse type and accepts input', async () => {
+    const user = userEvent.setup();
+    render(<FieldWrapper type="myanonamouse" />);
+
+    expect(screen.getByText('MAM ID')).toBeInTheDocument();
+    expect(screen.getByText('Base URL')).toBeInTheDocument();
+    expect(screen.getByText(/Generate from MAM/)).toBeInTheDocument();
+    const baseUrlInput = screen.getByPlaceholderText('https://www.myanonamouse.net');
+    await user.type(baseUrlInput, 'https://custom.mam.net');
+    expect(baseUrlInput).toHaveValue('https://custom.mam.net');
+  });
+
   it('renders nothing for unknown type', () => {
     const { container } = render(<FieldWrapper type="unknown" />);
     expect(container.innerHTML).toBe('');

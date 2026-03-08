@@ -114,10 +114,54 @@ function ApiFields({ register, errors, selectedType }: Pick<IndexerFieldsProps, 
   );
 }
 
+function MamFields({ register, errors }: Pick<IndexerFieldsProps, 'register' | 'errors'>) {
+  return (
+    <>
+      <div className="sm:col-span-2">
+        <label htmlFor="indexerMamId" className="block text-sm font-medium mb-2">MAM ID</label>
+        <input
+          id="indexerMamId"
+          type="password"
+          {...register('settings.mamId')}
+          className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+            errors.settings?.mamId ? 'border-destructive' : 'border-border'
+          }`}
+        />
+        {errors.settings?.mamId ? (
+          <p className="text-sm text-destructive mt-1">{errors.settings.mamId.message}</p>
+        ) : (
+          <p className="text-sm text-muted-foreground mt-1">Generate from MAM &gt; Preferences &gt; Security &gt; Create Session</p>
+        )}
+      </div>
+      <div className="sm:col-span-2">
+        <label htmlFor="indexerBaseUrl" className="block text-sm font-medium mb-2">
+          Base URL
+          <span className="text-muted-foreground font-normal ml-1">(optional)</span>
+        </label>
+        <input
+          id="indexerBaseUrl"
+          type="text"
+          {...register('settings.baseUrl')}
+          className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+            errors.settings?.baseUrl ? 'border-destructive' : 'border-border'
+          }`}
+          placeholder="https://www.myanonamouse.net"
+        />
+        {errors.settings?.baseUrl ? (
+          <p className="text-sm text-destructive mt-1">{errors.settings.baseUrl.message}</p>
+        ) : (
+          <p className="text-sm text-muted-foreground mt-1">Only change if using a custom MAM mirror</p>
+        )}
+      </div>
+    </>
+  );
+}
+
 const FIELD_COMPONENTS: Record<string, FieldComponent> = {
   abb: AbbFields,
   torznab: ApiFields,
   newznab: ApiFields,
+  myanonamouse: MamFields,
 };
 
 export function IndexerFields({ selectedType, register, errors }: IndexerFieldsProps) {

@@ -327,6 +327,27 @@ describe('IndexerCard — edit mode', () => {
     expect(onCancel).toHaveBeenCalled();
   });
 
+  it('pre-fills MAM fields when editing a myanonamouse indexer', () => {
+    const mamIndexer: Indexer = createMockIndexer({
+      id: 5,
+      name: 'My MAM',
+      type: 'myanonamouse',
+      settings: { mamId: 'secret-mam-id', baseUrl: 'https://mam.example.com' },
+    });
+
+    renderWithProviders(
+      <IndexerCard
+        indexer={mamIndexer}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText('MAM ID')).toHaveValue('secret-mam-id');
+    expect(screen.getByLabelText(/Base URL/)).toHaveValue('https://mam.example.com');
+  });
+
   it('shows Save Changes on submit button', () => {
     renderWithProviders(
       <IndexerCard

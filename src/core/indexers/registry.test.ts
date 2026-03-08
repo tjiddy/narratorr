@@ -17,6 +17,7 @@ describe('Indexer ADAPTER_FACTORIES', () => {
         abb: { hostname: 'test.com', pageLimit: 2 },
         torznab: { apiUrl: 'https://test.com', apiKey: 'key' },
         newznab: { apiUrl: 'https://test.com', apiKey: 'key' },
+        myanonamouse: { mamId: 'test-id' },
       };
       for (const type of types) {
         const adapter = ADAPTER_FACTORIES[type](configs[type], 'TestIndexer');
@@ -44,6 +45,12 @@ describe('Indexer ADAPTER_FACTORIES', () => {
       const adapter = ADAPTER_FACTORIES.torznab({ apiUrl: 'https://torz.test', apiKey: 'xyz' }, 'Torz');
       expect(adapter.type).toBe('torznab');
       expect(adapter.name).toBe('Torz');
+    });
+
+    it('myanonamouse factory creates adapter with mamId', () => {
+      const adapter = ADAPTER_FACTORIES.myanonamouse({ mamId: 'test-mam-id' }, 'MAM');
+      expect(adapter.type).toBe('myanonamouse');
+      expect(adapter.name).toBe('MAM');
     });
 
     it('normalizes empty flareSolverrUrl string to undefined', () => {

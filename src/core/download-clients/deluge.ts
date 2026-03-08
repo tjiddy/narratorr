@@ -166,21 +166,7 @@ export class DelugeClient implements DownloadClientAdapter {
       addOptions.add_paused = true;
     }
 
-    let torrentId: string;
-
-    if (url.startsWith('magnet:')) {
-      const result = await this.rpc('core.add_torrent_magnet', [url, addOptions]);
-      if (!result || typeof result !== 'string') {
-        throw new Error('Deluge returned no torrent hash');
-      }
-      torrentId = result;
-    } else {
-      const result = await this.rpc('core.add_torrent_url', [url, addOptions]);
-      if (!result || typeof result !== 'string') {
-        throw new Error('Deluge returned no torrent hash');
-      }
-      torrentId = result;
-    }
+    const torrentId = await this.addTorrent(url, addOptions, options?.torrentFile);
 
     // Try to set label (category) — graceful fallback if plugin unavailable
     if (options?.category) {
@@ -192,6 +178,25 @@ export class DelugeClient implements DownloadClientAdapter {
     }
 
     return torrentId;
+  }
+
+  private async addTorrent(url: string, addOptions: Record<string, unknown>, torrentFile?: Buffer): Promise<string> {
+    let result: unknown;
+
+    if (torrentFile) {
+      const fileContent = torrentFile.toString('base64');
+      result = await this.rpc('core.add_torrent_file', ['upload.torrent', fileContent, addOptions]);
+    } else if (url.startsWith('magnet:')) {
+      result = await this.rpc('core.add_torrent_magnet', [url, addOptions]);
+    } else {
+      result = await this.rpc('core.add_torrent_url', [url, addOptions]);
+    }
+
+    if (!result || typeof result !== 'string') {
+      throw new Error('Deluge returned no torrent hash');
+    }
+
+    return result;
   }
 
   async getDownload(id: string): Promise<DownloadItemInfo | null> {

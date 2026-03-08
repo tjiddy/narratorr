@@ -2,6 +2,7 @@ import type { IndexerAdapter } from './types.js';
 import { AudioBookBayIndexer } from './abb.js';
 import { NewznabIndexer } from './newznab.js';
 import { TorznabIndexer } from './torznab.js';
+import { MyAnonamouseIndexer } from './myanonamouse.js';
 
 type AdapterFactory = (settings: Record<string, unknown>, name: string) => IndexerAdapter;
 
@@ -20,5 +21,9 @@ export const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
     apiUrl: s.apiUrl as string,
     apiKey: s.apiKey as string,
     flareSolverrUrl: (s.flareSolverrUrl as string) || undefined,
+  }, name),
+  myanonamouse: (s, name) => new MyAnonamouseIndexer({
+    mamId: s.mamId as string,
+    baseUrl: (s.baseUrl as string) || undefined,
   }, name),
 };

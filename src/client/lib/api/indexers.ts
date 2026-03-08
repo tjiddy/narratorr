@@ -4,7 +4,7 @@ import { type TestResult } from './settings.js';
 export interface Indexer {
   id: number;
   name: string;
-  type: 'abb' | 'torznab' | 'newznab';
+  type: 'abb' | 'torznab' | 'newznab' | 'myanonamouse';
   enabled: boolean;
   priority: number;
   settings: Record<string, unknown>;

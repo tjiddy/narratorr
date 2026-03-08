@@ -69,7 +69,15 @@ export class TransmissionClient implements DownloadClientAdapter {
   }
 
   async addDownload(url: string, options?: AddDownloadOptions): Promise<string> {
-    const args: Record<string, unknown> = { filename: url };
+    const args: Record<string, unknown> = {};
+
+    // Torrent file path — use metainfo base64 parameter
+    if (options?.torrentFile) {
+      args.metainfo = options.torrentFile.toString('base64');
+    } else {
+      args.filename = url;
+    }
+
     if (options?.savePath) {
       args['download-dir'] = options.savePath;
     }
