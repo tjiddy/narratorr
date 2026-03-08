@@ -256,24 +256,38 @@ Decision needed:
 
 ---
 
+## Workflow Scripts
+
+Mechanical workflow steps are deterministic Node scripts in `scripts/`. These run without an LLM:
+
+| Script | What it does | Output |
+|--------|-------------|--------|
+| `node scripts/verify.ts` | lint → test+coverage → typecheck → build | `VERIFY: pass/fail` |
+| `node scripts/claim.ts <id>` | Validate status, create branch, update labels | `CLAIMED:/ERROR:` |
+| `node scripts/merge.ts <pr>` | Validate approval, CI, squash merge, close issue | `MERGED:/ERROR:` |
+| `node scripts/block.ts <id> "<reason>"` | Post blocker comment, update labels | `BLOCKED:` |
+| `node scripts/resume.ts <id>` | Restore branch, collect context | Branch + context |
+| `node scripts/changelog.ts [since]` | Categorized changelog from git + Gitea | Markdown |
+
 ## Claude Code Skills
 
-If you're using Claude Code, workflow skills automate the steps above:
+If you're using Claude Code, workflow skills automate the steps above. Some are thin wrappers around the scripts above, others use LLM reasoning:
 
 | Skill | What it does |
 |-------|-------------|
 | `/implement <id>` | Full lifecycle: claim → plan → implement → verify → handoff |
-| `/claim <id>` | Validate status, create branch, update labels |
 | `/plan <id>` | JIT elaboration: explore codebase, extract test stubs, post plan |
-| `/handoff <id>` | Verify, push, create PR, update labels |
-| `/block <id>` | Post blocked comment, set labels, stop |
+| `/handoff <id>` | Self-review, coverage review, verify, push, create PR, update labels |
 | `/elaborate <id>` | Groom/validate issue spec (read-only) |
-| `/verify` | Run quality gates with structured summary |
 | `/review-pr <pr>` | Review PR against linked issue AC |
 | `/respond-to-pr-review <pr>` | Address PR review findings |
 | `/respond-to-spec-review <id>` | Address spec review findings |
 | `/triage` | Rank and categorize open issues |
-| `/resume <id>` | Resume a blocked issue |
-| `/changelog [since]` | Generate changelog from git history |
+| `/claim <id>` | Wrapper: runs `scripts/claim.ts` |
+| `/verify` | Wrapper: runs `scripts/verify.ts` |
+| `/block <id>` | Gathers reason from user, then runs `scripts/block.ts` |
+| `/resume <id>` | Wrapper: runs `scripts/resume.ts`, presents context |
+| `/merge <pr>` | Wrapper: runs `scripts/merge.ts` |
+| `/changelog [since]` | Wrapper: runs `scripts/changelog.ts` |
 
 These are optional conveniences — the workflow steps above work with any tool.

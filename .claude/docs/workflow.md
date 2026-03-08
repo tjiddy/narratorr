@@ -16,7 +16,7 @@ A detailed plan, pre-made spec, or explicit implementation instructions do NOT b
 1. `/review-pr <pr>` — reviewer posts structured findings with verdict
 2. `/respond-to-pr-review <pr>` — author addresses each finding (fix/accept/defer/dispute), pushes, posts response
 3. `/review-pr <pr>` — re-review after fixes (repeat until approved)
-4. `/merge <pr>` — squash merge once verdict is `approve`
+4. `node scripts/merge.ts <pr>` — squash merge once verdict is `approve`
 
 **Standalone tools:**
 - `/elaborate <id>` — groom/triage without claiming (no side effects)
@@ -26,9 +26,9 @@ Skipping `/claim` means no validation, no branch, no tracking, no audit trail.
 Skipping `/handoff` means no PR, no label update, no workflow log entry.
 
 **Workflow guardrails:**
-- **No pausing between sub-skills.** When `/claim`, `/plan`, `/verify`, or `/handoff` returns inside a parent skill (`/implement`, `/respond-to-pr-review`), immediately continue the parent flow. These are mid-flow return values, not stopping points.
+- **No pausing between sub-skills.** When `/plan`, `/handoff`, or a script (`verify.ts`, `claim.ts`) returns inside a parent skill (`/implement`, `/respond-to-pr-review`), immediately continue the parent flow. These are mid-flow return values, not stopping points.
 - **Self-review guard.** `/review-pr` checks the current user against the PR author — if they match, it STOPs and suggests `/respond-to-pr-review` instead.
-- **Merge author validation.** `/merge` requires the most recent `approve` verdict to come from a different user than the PR author. Stale approvals (superseded by `needs-work`) are ignored.
+- **Merge author validation.** `scripts/merge.ts` requires the most recent `approve` verdict to come from a different user than the PR author. Stale approvals (superseded by `needs-work`) are ignored.
 - **Dispute escalation.** If `/respond-to-pr-review` disputes a blocking finding, the issue goes `status/blocked` + `stage/review-pr` and STOPs for human input.
 - **Auto-maintained files.** `/handoff` prepends to `.claude/cl/workflow-log.md`.
 

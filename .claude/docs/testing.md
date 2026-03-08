@@ -34,6 +34,6 @@ All new/changed code must include tests. Run `pnpm test` (Vitest) to execute all
 
 Not every category applies to every issue. The standard is: if a category is relevant and missing, the test plan has a gap.
 
-**Coverage gate:** `/verify` runs coverage on files changed in the branch. Any source file (non-test) at ≤5% line coverage is a hard block on handoff. The threshold is >0% intentionally — files at 1-3% are typically just import/evaluation side effects, not real tests. This catches code shipped without meaningful test coverage.
+**Coverage gate:** `scripts/verify.ts` runs coverage on files changed in the branch. Any source file (non-test) at ≤5% line coverage is a hard block on handoff. The threshold is >0% intentionally — files at 1-3% are typically just import/evaluation side effects, not real tests. This catches code shipped without meaningful test coverage.
 
 **Required before PR:** `pnpm lint`, `pnpm test` (zero failures), `pnpm typecheck`, `pnpm build`.

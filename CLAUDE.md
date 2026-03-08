@@ -58,6 +58,20 @@ See `docs/SECURITY.md` for full model. Filesystem browsing is intentionally unre
 
 Issues with `scope/frontend` must include a UI/UX design pass. Use the `frontend-design` skill before handoff. Enforced by `/implement` (proactive) and `/review-pr` (blocking finding).
 
+## Workflow Scripts
+
+Mechanical workflow steps live in `scripts/` as deterministic Node scripts (not LLM-powered). Skills call these directly:
+
+| Script | What it does | Output |
+|--------|-------------|--------|
+| `scripts/verify.ts` | lint → test+coverage → typecheck → build | `VERIFY: pass/fail` |
+| `scripts/claim.ts <id>` | Validate status, create branch, update labels | `CLAIMED:/ERROR:` |
+| `scripts/merge.ts <pr>` | Validate approval, CI, squash merge, close issue | `MERGED:/ERROR:` |
+| `scripts/block.ts <id> "<reason>"` | Post blocker comment, update labels | `BLOCKED:` |
+| `scripts/resume.ts <id>` | Restore branch, collect context | Branch + context |
+| `scripts/changelog.ts [since]` | Categorized changelog from git + Gitea | Markdown |
+| `scripts/lib.ts` | Shared helpers (gitea, git, label parsing) | — |
+
 ## Project Management (Gitea)
 
 All work tracked as Gitea issues at `https://git.tjiddy.com/todd/narratorr`. Gitea CLI: `scripts/gitea.ts`. Gitea connectivity is intermittent — retry up to 3 times on ECONNREFUSED.

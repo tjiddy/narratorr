@@ -9,7 +9,7 @@ This document defines the **implementor workflow** for working Gitea issues in t
 **Goal:** Take a `status/ready-for-dev` (or legacy `status/ready`) issue → implement on a branch → open a PR → update the issue for downstream agents (review/QA/merge).
 **Do NOT merge** unless explicitly instructed.
 
-> **Skills available:** `/implement <id>`, `/claim <id>`, `/plan <id>`, `/handoff <id>`, `/block <id>`, `/elaborate <id>`, `/review-pr <pr>`, `/respond-to-pr-review <pr>`, `/respond-to-spec-review <id>` automate the steps below. Use these for the standard workflow; refer to this doc for edge cases and templates.
+> **Skills available:** `/implement <id>`, `/plan <id>`, `/handoff <id>`, `/elaborate <id>`, `/review-pr <pr>`, `/respond-to-pr-review <pr>`, `/respond-to-spec-review <id>` automate the steps below. Mechanical steps are Node scripts: `scripts/claim.ts`, `scripts/verify.ts`, `scripts/merge.ts`, `scripts/block.ts`, `scripts/resume.ts`, `scripts/changelog.ts`. Use these for the standard workflow; refer to this doc for edge cases and templates.
 
 ---
 
@@ -116,7 +116,7 @@ Must include the sections in the PR template below and **must include**: `Refs #
 
 ## 0) Pre-flight: Validation (before you change anything)
 
-> Validation is automated by `/claim`. Codebase exploration and planning is automated by `/plan`. Both are available standalone via `/elaborate` (read-only).
+> Validation is automated by `scripts/claim.ts`. Codebase exploration and planning is automated by `/plan`. Both are available standalone via `/elaborate` (read-only).
 
 1. Read issue:
     - `pnpm gitea issue <id>`
@@ -209,12 +209,13 @@ Rules:
 
 ## 4) Verify locally (required)
 
-Run **all** of the following:
-- `pnpm lint` — no lint errors
-- `pnpm test` — all tests must pass (zero failures)
-- `pnpm typecheck` — no type errors
-- `pnpm build` — clean build
-- Manual steps from Test Plan (if any)
+Run the quality gate script:
+```bash
+node scripts/verify.ts
+```
+This runs lint → test+coverage → typecheck → build sequentially. Output starts with `VERIFY: pass` or `VERIFY: fail` with structured details.
+
+Also run any manual steps from the Test Plan.
 
 If you cannot make tests pass:
 - Do not open a PR that is red without explanation.
