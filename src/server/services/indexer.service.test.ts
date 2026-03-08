@@ -4,6 +4,7 @@ import { createMockDbIndexer } from '../__tests__/factories.js';
 import { IndexerService } from './indexer.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
+import type { SettingsService } from './settings.service.js';
 
 const mockIndexer = createMockDbIndexer();
 
@@ -430,6 +431,7 @@ describe('IndexerService', () => {
         expect.objectContaining({
           settings: expect.objectContaining({ flareSolverrUrl: 'http://proxy:8191' }),
         }),
+        undefined,
       );
     });
 
@@ -446,6 +448,7 @@ describe('IndexerService', () => {
         expect.objectContaining({
           settings: expect.objectContaining({ flareSolverrUrl: 'http://proxy:8191' }),
         }),
+        undefined,
       );
     });
 
@@ -462,6 +465,7 @@ describe('IndexerService', () => {
         expect.objectContaining({
           settings: expect.objectContaining({ flareSolverrUrl: 'http://proxy:8191' }),
         }),
+        undefined,
       );
     });
 
@@ -500,6 +504,7 @@ describe('IndexerService', () => {
         expect.objectContaining({
           settings: expect.objectContaining({ flareSolverrUrl: 'http://proxy:8191' }),
         }),
+        undefined,
       );
     });
   });
@@ -528,5 +533,180 @@ describe('IndexerService', () => {
       expect(result.success).toBe(false);
       expect(result.message).toBe('Unknown error');
     });
+  });
+
+  describe('proxy integration', () => {
+    let proxyDb: ReturnType<typeof createMockDb>;
+    let proxyService: IndexerService;
+    let mockSettingsService: { get: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+      proxyDb = createMockDb();
+      mockSettingsService = {
+        get: vi.fn().mockResolvedValue({ proxyUrl: 'socks5://proxy:1080' }),
+      };
+      proxyService = new IndexerService(
+        inject<Db>(proxyDb),
+        inject<FastifyBaseLogger>(createMockLogger()),
+        inject<SettingsService>(mockSettingsService),
+      );
+    });
+
+    it('createAdapter passes proxyUrl when indexer has useProxy true and global proxy is set', async () => {
+      const createSpy = vi.spyOn(proxyService as never, 'createAdapter' as never);
+      const proxyIndexer = createMockDbIndexer({
+        settings: { hostname: 'audiobookbay.lu', pageLimit: 2, useProxy: true },
+      });
+
+      await proxyService.getAdapter(proxyIndexer);
+
+      expect(createSpy).toHaveBeenCalledWith(proxyIndexer, 'socks5://proxy:1080');
+    });
+
+    it('createAdapter omits proxyUrl when indexer has useProxy false', async () => {
+      const createSpy = vi.spyOn(proxyService as never, 'createAdapter' as never);
+      const noProxyIndexer = createMockDbIndexer({
+        settings: { hostname: 'audiobookbay.lu', pageLimit: 2, useProxy: false },
+      });
+
+      await proxyService.getAdapter(noProxyIndexer);
+
+      // createAdapter is called with the proxyUrl from settings, but internally
+      // it checks useProxy and passes undefined to the factory
+      expect(createSpy).toHaveBeenCalledWith(noProxyIndexer, 'socks5://proxy:1080');
+      // Verify the adapter was created without proxy by checking the factory wasn't given proxyUrl
+      // We need to check the actual adapter creation — spy on INDEXER_ADAPTER_FACTORIES
+      const { INDEXER_ADAPTER_FACTORIES } = await import('../../core/index.js');
+      const factorySpy = vi.spyOn(INDEXER_ADAPTER_FACTORIES, 'abb');
+
+      // Clear cache and create again
+      proxyService.clearAdapterCache();
+      await proxyService.getAdapter(noProxyIndexer);
+
+      expect(factorySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ useProxy: false }),
+        'AudioBookBay',
+        undefined,
+      );
+      factorySpy.mockRestore();
+    });
+
+    it('createAdapter omits proxyUrl when useProxy true but no global proxy URL configured', async () => {
+      mockSettingsService.get.mockResolvedValue({ proxyUrl: '' });
+      const { INDEXER_ADAPTER_FACTORIES } = await import('../../core/index.js');
+      const factorySpy = vi.spyOn(INDEXER_ADAPTER_FACTORIES, 'abb');
+
+      const proxyIndexer = createMockDbIndexer({
+        settings: { hostname: 'audiobookbay.lu', pageLimit: 2, useProxy: true },
+      });
+
+      await proxyService.getAdapter(proxyIndexer);
+
+      expect(factorySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ useProxy: true }),
+        'AudioBookBay',
+        undefined,
+      );
+      factorySpy.mockRestore();
+    });
+
+    it('searchAll uses proxy for proxy-enabled indexers', async () => {
+      const proxyIndexer = createMockDbIndexer({
+        settings: { hostname: 'audiobookbay.lu', pageLimit: 2, useProxy: true },
+      });
+      proxyDb.select.mockReturnValue(mockDbChain([proxyIndexer]));
+
+      const mockAdapter = {
+        type: 'abb',
+        name: 'AudioBookBay',
+        search: vi.fn().mockResolvedValue([{ title: 'Proxied Book', indexer: 'ABB', protocol: 'torrent' }]),
+        test: vi.fn(),
+      };
+      // Spy on createAdapter to verify proxyUrl is passed, but return our mock adapter
+      const createSpy = vi.spyOn(proxyService as never, 'createAdapter' as never).mockReturnValue(mockAdapter as never);
+
+      const results = await proxyService.searchAll('test');
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('Proxied Book');
+      // getAdapter calls getProxyUrl which calls settingsService.get('network')
+      expect(mockSettingsService.get).toHaveBeenCalledWith('network');
+      expect(createSpy).toHaveBeenCalledWith(proxyIndexer, 'socks5://proxy:1080');
+    });
+
+    it('searchAll catches ProxyError and continues with other indexers', async () => {
+      const { ProxyError } = await import('../../core/indexers/errors.js');
+      const indexer1 = createMockDbIndexer({
+        id: 1,
+        settings: { hostname: 'audiobookbay.lu', pageLimit: 2, useProxy: true },
+      });
+      const indexer2 = createMockDbIndexer({ id: 2, name: 'Indexer2' });
+      proxyDb.select.mockReturnValue(mockDbChain([indexer1, indexer2]));
+
+      const proxyErrorAdapter = {
+        search: vi.fn().mockRejectedValue(new ProxyError('SOCKS5 proxy connection refused')),
+        test: vi.fn(),
+      };
+      const goodAdapter = {
+        search: vi.fn().mockResolvedValue([{ title: 'Good Book', indexer: 'Indexer2', protocol: 'torrent' }]),
+        test: vi.fn(),
+      };
+
+      vi.spyOn(proxyService, 'getAdapter')
+        .mockResolvedValueOnce(proxyErrorAdapter as never)
+        .mockResolvedValueOnce(goodAdapter as never);
+
+      const results = await proxyService.searchAll('test');
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('Good Book');
+    });
+
+    it('test routes through proxy when indexer has useProxy enabled', async () => {
+      const proxyIndexer = createMockDbIndexer({
+        settings: { hostname: 'audiobookbay.lu', pageLimit: 2, useProxy: true },
+      });
+      proxyDb.select.mockReturnValue(mockDbChain([proxyIndexer]));
+
+      const mockAdapter = {
+        test: vi.fn().mockResolvedValue({ success: true, message: 'OK' }),
+        search: vi.fn(),
+      };
+      vi.spyOn(proxyService, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const result = await proxyService.test(1);
+      expect(result.success).toBe(true);
+      expect(proxyService.getAdapter).toHaveBeenCalledWith(proxyIndexer);
+    });
+
+    it('testConfig routes through proxy when useProxy is true in config', async () => {
+      const mockAdapter = { test: vi.fn().mockResolvedValue({ success: true, message: 'OK' }), search: vi.fn() };
+      const createSpy = vi.spyOn(proxyService as never, 'createAdapter' as never).mockReturnValue(mockAdapter as never);
+
+      const result = await proxyService.testConfig({
+        type: 'abb',
+        settings: { hostname: 'audiobookbay.lu', pageLimit: 2, useProxy: true },
+      });
+
+      expect(result.success).toBe(true);
+      // testConfig calls getProxyUrl then passes it to createAdapter
+      expect(createSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          settings: expect.objectContaining({ useProxy: true }),
+        }),
+        'socks5://proxy:1080',
+      );
+    });
+
+    it('clearAdapterCache invalidates all cached adapters', async () => {
+      const proxyIndexer = createMockDbIndexer({
+        settings: { hostname: 'audiobookbay.lu', pageLimit: 2, useProxy: true },
+      });
+
+      const adapter1 = await proxyService.getAdapter(proxyIndexer);
+      proxyService.clearAdapterCache();
+      const adapter2 = await proxyService.getAdapter(proxyIndexer);
+
+      expect(adapter2).not.toBe(adapter1);
+    });
+
   });
 });

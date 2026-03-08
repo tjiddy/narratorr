@@ -7,6 +7,7 @@ export { audibleRegionSchema, type AudibleRegion, metadataSettingsSchema } from 
 export { outputFormatSchema, type OutputFormat, mergeBehaviorSchema, type MergeBehavior, processingSettingsSchema } from './processing.js';
 export { tagModeSchema, type TagMode, taggingSettingsSchema } from './tagging.js';
 export { protocolPreferenceSchema, type ProtocolPreference, qualitySettingsSchema } from './quality.js';
+export { networkSettingsSchema } from './network.js';
 export {
   settingsRegistry,
   type SettingsCategory,

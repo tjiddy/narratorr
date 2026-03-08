@@ -63,7 +63,7 @@ export interface Services {
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
   const settings = new SettingsService(db, log);
   const auth = new AuthService(db, log);
-  const indexer = new IndexerService(db, log);
+  const indexer = new IndexerService(db, log, settings);
   const downloadClient = new DownloadClientService(db, log);
 
   // Load metadata settings for Audible region
@@ -117,7 +117,7 @@ export async function registerRoutes(
   await activityRoutes(app, services.download);
   await indexersRoutes(app, services.indexer);
   await downloadClientsRoutes(app, services.downloadClient);
-  await settingsRoutes(app, services.settings);
+  await settingsRoutes(app, services.settings, services.indexer);
   await metadataRoutes(app, services.metadata);
   await libraryScanRoutes(app, services.libraryScan, services.matchJob);
   await systemRoutes(app, services, db);

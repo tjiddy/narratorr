@@ -4,26 +4,30 @@ import { NewznabIndexer } from './newznab.js';
 import { TorznabIndexer } from './torznab.js';
 import { MyAnonamouseIndexer } from './myanonamouse.js';
 
-type AdapterFactory = (settings: Record<string, unknown>, name: string) => IndexerAdapter;
+type AdapterFactory = (settings: Record<string, unknown>, name: string, proxyUrl?: string) => IndexerAdapter;
 
 export const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
-  abb: (s) => new AudioBookBayIndexer({
+  abb: (s, _name, proxyUrl) => new AudioBookBayIndexer({
     hostname: (s.hostname as string) || 'audiobookbay.lu',
     pageLimit: (s.pageLimit as number) || 2,
     flareSolverrUrl: (s.flareSolverrUrl as string) || undefined,
+    proxyUrl,
   }),
-  newznab: (s, name) => new NewznabIndexer({
+  newznab: (s, name, proxyUrl) => new NewznabIndexer({
     apiUrl: s.apiUrl as string,
     apiKey: s.apiKey as string,
     flareSolverrUrl: (s.flareSolverrUrl as string) || undefined,
+    proxyUrl,
   }, name),
-  torznab: (s, name) => new TorznabIndexer({
+  torznab: (s, name, proxyUrl) => new TorznabIndexer({
     apiUrl: s.apiUrl as string,
     apiKey: s.apiKey as string,
     flareSolverrUrl: (s.flareSolverrUrl as string) || undefined,
+    proxyUrl,
   }, name),
-  myanonamouse: (s, name) => new MyAnonamouseIndexer({
+  myanonamouse: (s, name, proxyUrl) => new MyAnonamouseIndexer({
     mamId: s.mamId as string,
     baseUrl: (s.baseUrl as string) || undefined,
+    proxyUrl,
   }, name),
 };

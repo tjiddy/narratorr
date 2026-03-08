@@ -1,11 +1,14 @@
 import * as cheerio from 'cheerio';
 import type { IndexerAdapter, SearchResult, SearchOptions } from './types.js';
 import { fetchWithProxy } from './fetch.js';
+import { isProxyRelatedError } from './errors.js';
+import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 
 export interface NewznabConfig {
   apiUrl: string; // e.g., 'https://nzbgeek.info'
   apiKey: string;
   flareSolverrUrl?: string;
+  proxyUrl?: string;
 }
 
 const AUDIOBOOK_CATEGORY = '3030';
@@ -17,12 +20,14 @@ export class NewznabIndexer implements IndexerAdapter {
   private apiUrl: string;
   private apiKey: string;
   private flareSolverrUrl?: string;
+  private proxyUrl?: string;
 
   constructor(config: NewznabConfig, name?: string) {
     // Normalize: strip trailing slash
     this.apiUrl = config.apiUrl.replace(/\/+$/, '');
     this.apiKey = config.apiKey;
     this.flareSolverrUrl = config.flareSolverrUrl?.replace(/\/+$/, '');
+    this.proxyUrl = config.proxyUrl;
     this.name = name || new URL(config.apiUrl).hostname;
   }
 
@@ -47,14 +52,14 @@ export class NewznabIndexer implements IndexerAdapter {
       return this.parseSearchResults(xml, limit);
     } catch (error) {
       // Proxy errors bubble up to IndexerService.searchAll() for warn logging
-      if (this.flareSolverrUrl && error instanceof Error && error.message.startsWith('FlareSolverr')) {
+      if (isProxyRelatedError(error)) {
         throw error;
       }
       return [];
     }
   }
 
-  async test(): Promise<{ success: boolean; message?: string }> {
+  async test(): Promise<{ success: boolean; message?: string; ip?: string }> {
     const params = new URLSearchParams({
       t: 'caps',
       apikey: this.apiKey,
@@ -66,12 +71,18 @@ export class NewznabIndexer implements IndexerAdapter {
       const $ = cheerio.load(xml, { xmlMode: true });
       const serverTitle = $('server').attr('title') || $('caps server').attr('title');
 
-      return {
+      const result: { success: boolean; message: string; ip?: string } = {
         success: true,
         message: serverTitle
           ? `Connected to ${serverTitle}`
           : `Connected to ${this.name}`,
       };
+
+      if (this.proxyUrl && !this.flareSolverrUrl) {
+        result.ip = await resolveProxyIp(this.proxyUrl);
+      }
+
+      return result;
     } catch (error) {
       return {
         success: false,
@@ -81,10 +92,18 @@ export class NewznabIndexer implements IndexerAdapter {
   }
 
   private async fetchXml(url: string): Promise<string> {
-    return fetchWithProxy({
-      url,
+    // FlareSolverr takes precedence over standard proxy
+    if (this.flareSolverrUrl) {
+      return fetchWithProxy({
+        url,
+        headers: { Accept: 'application/rss+xml, application/xml, text/xml' },
+        proxyUrl: this.flareSolverrUrl,
+      });
+    }
+
+    return fetchWithProxyAgent(url, {
+      proxyUrl: this.proxyUrl,
       headers: { Accept: 'application/rss+xml, application/xml, text/xml' },
-      proxyUrl: this.flareSolverrUrl,
     });
   }
 

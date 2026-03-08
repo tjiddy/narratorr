@@ -10,6 +10,13 @@ export interface FfmpegProbeResult {
 export interface TestResult {
   success: boolean;
   message?: string;
+  ip?: string;
+}
+
+export interface ProxyTestResult {
+  success: boolean;
+  ip?: string;
+  message?: string;
 }
 
 export const settingsApi = {
@@ -23,5 +30,10 @@ export const settingsApi = {
     fetchApi<FfmpegProbeResult>('/settings/ffmpeg-probe', {
       method: 'POST',
       body: JSON.stringify({ path }),
+    }),
+  testProxy: (proxyUrl: string) =>
+    fetchApi<ProxyTestResult>('/settings/test-proxy', {
+      method: 'POST',
+      body: JSON.stringify({ proxyUrl }),
     }),
 };

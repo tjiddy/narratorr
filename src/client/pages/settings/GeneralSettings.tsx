@@ -25,6 +25,7 @@ import { SearchSettingsSection } from './SearchSettingsSection';
 import { ImportSettingsSection } from './ImportSettingsSection';
 import { ProcessingSettingsSection } from './ProcessingSettingsSection';
 import { QualitySettingsSection } from './QualitySettingsSection';
+import { NetworkSettingsSection } from './NetworkSettingsSection';
 
 const AUDIBLE_REGION_LABELS: Record<string, string> = {
   us: 'Audible.com (US)',
@@ -96,6 +97,7 @@ export function GeneralSettings() {
       <ImportSettingsSection register={register} errors={errors} />
       <QualitySettingsSection register={register} errors={errors} />
       <ProcessingSettingsSection register={register} errors={errors} watch={watch} />
+      <NetworkSettingsSection register={register} errors={errors} watch={watch} />
 
       <SettingsSection
         icon={<TerminalIcon className="w-5 h-5 text-primary" />}

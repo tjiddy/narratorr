@@ -1,10 +1,14 @@
-import type { UseFormRegister, FieldErrors } from 'react-hook-form';
+import type { UseFormRegister, FieldErrors, UseFormWatch } from 'react-hook-form';
 import type { CreateIndexerFormData } from '../../../shared/schemas.js';
+import { useQuery } from '@tanstack/react-query';
+import { queryKeys } from '@/lib/queryKeys';
+import { api } from '@/lib/api';
 
 interface IndexerFieldsProps {
   selectedType: string;
   register: UseFormRegister<CreateIndexerFormData>;
   errors: FieldErrors<CreateIndexerFormData>;
+  watch?: UseFormWatch<CreateIndexerFormData>;
 }
 
 type FieldComponent = (props: Pick<IndexerFieldsProps, 'register' | 'errors'> & { selectedType: string }) => JSX.Element;
@@ -164,8 +168,45 @@ const FIELD_COMPONENTS: Record<string, FieldComponent> = {
   myanonamouse: MamFields,
 };
 
-export function IndexerFields({ selectedType, register, errors }: IndexerFieldsProps) {
+function UseProxyField({ register, watch }: { register: UseFormRegister<CreateIndexerFormData>; watch?: UseFormWatch<CreateIndexerFormData> }) {
+  const { data: settings } = useQuery({
+    queryKey: queryKeys.settings(),
+    queryFn: api.getSettings,
+  });
+
+  const hasGlobalProxy = !!settings?.network?.proxyUrl;
+  const useProxy = watch ? watch('settings.useProxy') : false;
+
+  return (
+    <div className="sm:col-span-2">
+      <div className="flex items-center justify-between">
+        <div>
+          <label htmlFor="indexerUseProxy" className="block text-sm font-medium">Route through proxy</label>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Send search and test requests through the global proxy
+          </p>
+        </div>
+        <label className="relative inline-flex items-center cursor-pointer">
+          <input id="indexerUseProxy" type="checkbox" {...register('settings.useProxy')} className="sr-only peer" />
+          <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+        </label>
+      </div>
+      {useProxy && !hasGlobalProxy && (
+        <p className="text-sm text-amber-500 mt-1">
+          No proxy URL configured in Settings &gt; General
+        </p>
+      )}
+    </div>
+  );
+}
+
+export function IndexerFields({ selectedType, register, errors, watch }: IndexerFieldsProps) {
   const Component = FIELD_COMPONENTS[selectedType];
   if (!Component) return null;
-  return <Component register={register} errors={errors} selectedType={selectedType} />;
+  return (
+    <>
+      <Component register={register} errors={errors} selectedType={selectedType} />
+      <UseProxyField register={register} watch={watch} />
+    </>
+  );
 }

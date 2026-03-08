@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { AudioBookBayIndexer } from './abb.js';
+import { ProxyError } from './errors.js';
 
 const fixturesDir = resolve(import.meta.dirname, '../__tests__/fixtures');
 const searchHtml = readFileSync(resolve(fixturesDir, 'abb-search.html'), 'utf-8');
@@ -475,6 +476,101 @@ describe('AudioBookBayIndexer', () => {
       expect(results.length).toBeGreaterThan(0);
       expect(results[0].author).toBe('Brandon Sanderson');
       expect(results[0].narrator).toBe('Michael Kramer');
+    });
+  });
+
+  describe('proxy support', () => {
+    const PROXY_URL = 'http://proxy.test:8080';
+    let proxiedIndexer: AudioBookBayIndexer;
+
+    beforeEach(() => {
+      proxiedIndexer = new AudioBookBayIndexer({
+        hostname: ABB_HOST,
+        pageLimit: 1,
+        proxyUrl: PROXY_URL,
+      });
+      vi.spyOn(proxiedIndexer as never, 'delay').mockResolvedValue(undefined);
+    });
+
+    it('routes search through proxy when proxyUrl is set', async () => {
+      let callCount = 0;
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return new Response(searchHtml, {
+            status: 200,
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }
+        // All subsequent calls are detail page fetches
+        return new Response(detailHtml, {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        });
+      });
+
+      const results = await proxiedIndexer.search('Brandon Sanderson');
+
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].indexer).toBe('AudioBookBay');
+      // Verify fetch was called with a dispatcher (proxy agent)
+      expect(fetchSpy).toHaveBeenCalled();
+      const callArgs = fetchSpy.mock.calls[0];
+      expect((callArgs[1] as Record<string, unknown>).dispatcher).toBeDefined();
+
+      fetchSpy.mockRestore();
+    });
+
+    it('search rethrows ProxyError', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+        new Error('connect ECONNREFUSED'),
+      );
+
+      await expect(proxiedIndexer.search('test')).rejects.toThrow(ProxyError);
+
+      fetchSpy.mockRestore();
+    });
+
+    it('search returns empty results for non-proxy errors', async () => {
+      // Create a non-proxied indexer so errors are NOT wrapped as ProxyError
+      const directIndexer = new AudioBookBayIndexer({
+        hostname: ABB_HOST,
+        pageLimit: 1,
+      });
+      vi.spyOn(directIndexer as never, 'delay').mockResolvedValue(undefined);
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+        new Error('some random error'),
+      );
+
+      const results = await directIndexer.search('test');
+      expect(results).toEqual([]);
+
+      fetchSpy.mockRestore();
+    });
+
+    it('test with proxy returns success with exit IP', async () => {
+      const ipifyResponse = JSON.stringify({ ip: '1.2.3.4' });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response('<html>ok</html>', {
+            status: 200,
+            headers: { 'Content-Type': 'text/html' },
+          }),
+        )
+        .mockResolvedValueOnce(
+          new Response(ipifyResponse, {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+
+      const result = await proxiedIndexer.test();
+      expect(result.success).toBe(true);
+      expect(result.ip).toBe('1.2.3.4');
+      expect(result.message).toContain('via proxy');
+
+      fetchSpy.mockRestore();
     });
   });
 });

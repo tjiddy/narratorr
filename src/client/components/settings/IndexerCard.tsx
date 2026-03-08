@@ -42,6 +42,7 @@ function settingsFromIndexer(indexer: Indexer): CreateIndexerFormData['settings'
     flareSolverrUrl: (s.flareSolverrUrl as string) || '',
     mamId: (s.mamId as string) || '',
     baseUrl: (s.baseUrl as string) || '',
+    useProxy: (s.useProxy as boolean) || false,
   };
 }
 
@@ -182,7 +183,7 @@ export function IndexerCard(props: IndexerCardProps) {
           </>
         )}
 
-        <IndexerFields selectedType={selectedType} register={register} errors={errors} />
+        <IndexerFields selectedType={selectedType} register={register} errors={errors} watch={watch} />
       </div>
 
       {!isImplemented && (

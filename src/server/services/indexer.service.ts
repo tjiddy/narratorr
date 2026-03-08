@@ -10,6 +10,7 @@ import {
   type SearchResult,
   type SearchOptions,
 } from '../../core/index.js';
+import type { SettingsService } from './settings.service.js';
 
 type IndexerRow = typeof indexers.$inferSelect;
 type NewIndexer = typeof indexers.$inferInsert;
@@ -17,7 +18,11 @@ type NewIndexer = typeof indexers.$inferInsert;
 export class IndexerService {
   private adapters: Map<number, IndexerAdapter> = new Map();
 
-  constructor(private db: Db, private log: FastifyBaseLogger) {}
+  constructor(
+    private db: Db,
+    private log: FastifyBaseLogger,
+    private settingsService?: SettingsService,
+  ) {}
 
   async getAll(): Promise<IndexerRow[]> {
     return this.db.select().from(indexers).orderBy(indexers.priority);
@@ -58,32 +63,51 @@ export class IndexerService {
     return true;
   }
 
+  private async getProxyUrl(): Promise<string | undefined> {
+    if (!this.settingsService) return undefined;
+    const network = await this.settingsService.get('network');
+    return network.proxyUrl || undefined;
+  }
+
   async getAdapter(indexer: IndexerRow): Promise<IndexerAdapter> {
     let adapter = this.adapters.get(indexer.id);
 
     if (!adapter) {
-      adapter = this.createAdapter(indexer);
+      const proxyUrl = await this.getProxyUrl();
+      adapter = this.createAdapter(indexer, proxyUrl);
       this.adapters.set(indexer.id, adapter);
     }
 
     return adapter;
   }
 
-  private createAdapter(indexer: IndexerRow): IndexerAdapter {
+  private createAdapter(indexer: IndexerRow, proxyUrl?: string): IndexerAdapter {
     const settings = indexer.settings as Record<string, unknown>;
     const factory = INDEXER_ADAPTER_FACTORIES[indexer.type];
     if (!factory) {
       throw new Error(`Unknown indexer type: ${indexer.type}`);
     }
-    this.log.debug({ indexer: indexer.name, type: indexer.type }, 'Creating indexer adapter');
-    return factory(settings, indexer.name);
+
+    // Resolve effective proxy URL: only pass when indexer has useProxy enabled
+    // FlareSolverr takes precedence at the adapter level — we still pass proxyUrl,
+    // and each adapter handles precedence internally
+    const useProxy = settings.useProxy === true;
+    const effectiveProxyUrl = useProxy ? proxyUrl : undefined;
+
+    this.log.debug({ indexer: indexer.name, type: indexer.type, proxied: !!effectiveProxyUrl }, 'Creating indexer adapter');
+    return factory(settings, indexer.name, effectiveProxyUrl);
   }
 
-  async testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string }> {
+  clearAdapterCache(): void {
+    this.adapters.clear();
+  }
+
+  async testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string; ip?: string }> {
     try {
       this.log.debug({ type: data.type, hostname: data.settings.hostname, pageLimit: data.settings.pageLimit }, 'Testing indexer config');
+      const proxyUrl = await this.getProxyUrl();
       const fakeRow = { id: 0, name: '', type: data.type, enabled: true, priority: 0, settings: data.settings, createdAt: new Date() } as IndexerRow;
-      const adapter = this.createAdapter(fakeRow);
+      const adapter = this.createAdapter(fakeRow, proxyUrl);
       const result = await adapter.test();
       this.log.debug({ type: data.type, success: result.success, message: result.message }, 'Indexer config test result');
       return result;
@@ -95,7 +119,7 @@ export class IndexerService {
     }
   }
 
-  async test(id: number): Promise<{ success: boolean; message?: string }> {
+  async test(id: number): Promise<{ success: boolean; message?: string; ip?: string }> {
     const indexer = await this.getById(id);
     if (!indexer) {
       return { success: false, message: 'Indexer not found' };

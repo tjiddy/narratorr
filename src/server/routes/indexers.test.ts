@@ -158,6 +158,31 @@ describe('indexers routes', () => {
       });
     });
 
+    it('passes through ip when proxy is used', async () => {
+      (services.indexer.testConfig as Mock).mockResolvedValue({
+        success: true,
+        message: 'Connected via proxy',
+        ip: '203.0.113.42',
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers/test',
+        payload: {
+          name: 'AudioBookBay',
+          type: 'abb',
+          enabled: true,
+          priority: 50,
+          settings: { hostname: 'audiobookbay.lu', pageLimit: 2 },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.success).toBe(true);
+      expect(body.ip).toBe('203.0.113.42');
+    });
+
     it('returns 400 for invalid body', async () => {
       const res = await app.inject({
         method: 'POST',
@@ -177,6 +202,21 @@ describe('indexers routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload).success).toBe(true);
+    });
+
+    it('passes through ip when proxy is used', async () => {
+      (services.indexer.test as Mock).mockResolvedValue({
+        success: true,
+        message: 'Connected via proxy',
+        ip: '203.0.113.42',
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/indexers/1/test' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.success).toBe(true);
+      expect(body.ip).toBe('203.0.113.42');
     });
   });
 });

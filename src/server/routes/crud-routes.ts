@@ -10,8 +10,8 @@ interface CrudService {
   create(data: unknown): Promise<unknown>;
   update(id: number, data: unknown): Promise<unknown | null>;
   delete(id: number): Promise<boolean>;
-  test(id: number): Promise<{ success: boolean; message?: string }>;
-  testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string }>;
+  test(id: number): Promise<{ success: boolean; message?: string; ip?: string }>;
+  testConfig(data: { type: string; settings: Record<string, unknown> }): Promise<{ success: boolean; message?: string; ip?: string }>;
 }
 
 interface CrudRouteOptions {

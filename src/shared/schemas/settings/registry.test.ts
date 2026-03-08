@@ -37,7 +37,7 @@ describe('settingsRegistry', () => {
     });
 
     it('exports exactly the expected category keys', () => {
-      const expected = ['library', 'search', 'import', 'general', 'metadata', 'processing', 'tagging', 'quality'];
+      const expected = ['library', 'search', 'import', 'general', 'metadata', 'processing', 'tagging', 'quality', 'network'];
       expect(SETTINGS_CATEGORIES.sort()).toEqual(expected.sort());
     });
 

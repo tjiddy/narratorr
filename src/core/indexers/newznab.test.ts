@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { NewznabIndexer } from './newznab.js';
+import { ProxyError } from './errors.js';
 
 const fixturesDir = resolve(import.meta.dirname, '../__tests__/fixtures');
 const searchXml = readFileSync(resolve(fixturesDir, 'newznab-search.xml'), 'utf-8');
@@ -315,6 +316,28 @@ describe('NewznabIndexer', () => {
       await expect(proxiedIndexer.search('test')).rejects.toThrow('FlareSolverr');
     });
 
+    it('does not resolve proxy IP when FlareSolverr takes precedence', async () => {
+      const combinedIndexer = new NewznabIndexer({
+        apiUrl: API_BASE,
+        apiKey: 'testapikey',
+        flareSolverrUrl: PROXY_URL,
+        proxyUrl: 'http://proxy.test:8080',
+      });
+
+      server.use(
+        http.post(`${PROXY_URL}/v1`, () => {
+          return HttpResponse.json({
+            status: 'ok',
+            solution: { response: capsXml, status: 200 },
+          });
+        }),
+      );
+
+      const result = await combinedIndexer.test();
+      expect(result.success).toBe(true);
+      expect(result.ip).toBeUndefined();
+    });
+
     it('returns failure on proxy error during test', async () => {
       server.use(
         http.post(`${PROXY_URL}/v1`, () => {
@@ -451,6 +474,90 @@ describe('NewznabIndexer', () => {
         apiKey: 'key',
       });
       expect(idx.name).toBe('indexer.test');
+    });
+  });
+
+  describe('proxy support', () => {
+    const PROXY_URL = 'http://proxy.test:8080';
+    let proxiedIndexer: NewznabIndexer;
+
+    beforeEach(() => {
+      proxiedIndexer = new NewznabIndexer({
+        apiUrl: API_BASE,
+        apiKey: 'testapikey',
+        proxyUrl: PROXY_URL,
+      });
+    });
+
+    it('routes search through proxy when proxyUrl is set', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(searchXml, {
+          status: 200,
+          headers: { 'Content-Type': 'application/rss+xml' },
+        }),
+      );
+
+      const results = await proxiedIndexer.search('Brandon Sanderson');
+
+      expect(results).toHaveLength(3);
+      expect(results[0].title).toBe('The Way of Kings - Brandon Sanderson (Unabridged)');
+      // Verify fetch was called with a dispatcher (proxy agent)
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      const callArgs = fetchSpy.mock.calls[0];
+      expect((callArgs[1] as Record<string, unknown>).dispatcher).toBeDefined();
+
+      fetchSpy.mockRestore();
+    });
+
+    it('search rethrows ProxyError', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+        new Error('connect ECONNREFUSED'),
+      );
+
+      await expect(proxiedIndexer.search('test')).rejects.toThrow(ProxyError);
+
+      fetchSpy.mockRestore();
+    });
+
+    it('search returns empty results for non-proxy errors', async () => {
+      // Create a non-proxied indexer so errors are NOT wrapped as ProxyError
+      const directIndexer = new NewznabIndexer({
+        apiUrl: API_BASE,
+        apiKey: 'testapikey',
+      });
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+        new Error('some random error'),
+      );
+
+      const results = await directIndexer.search('test');
+      expect(results).toEqual([]);
+
+      fetchSpy.mockRestore();
+    });
+
+    it('test with proxy returns success with exit IP', async () => {
+      const ipifyResponse = JSON.stringify({ ip: '1.2.3.4' });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response(capsXml, {
+            status: 200,
+            headers: { 'Content-Type': 'application/xml' },
+          }),
+        )
+        .mockResolvedValueOnce(
+          new Response(ipifyResponse, {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+
+      const result = await proxiedIndexer.test();
+      expect(result.success).toBe(true);
+      expect(result.ip).toBe('1.2.3.4');
+      expect(result.message).toContain('Test Newznab Indexer');
+
+      fetchSpy.mockRestore();
     });
   });
 });

@@ -6,9 +6,15 @@ vi.mock('../../core/utils/audio-processor.js', () => ({
   probeFfmpeg: vi.fn(),
 }));
 
+vi.mock('../../core/indexers/proxy.js', () => ({
+  resolveProxyIp: vi.fn(),
+}));
+
 import { probeFfmpeg } from '../../core/utils/audio-processor.js';
+import { resolveProxyIp } from '../../core/indexers/proxy.js';
 
 const mockProbeFfmpeg = vi.mocked(probeFfmpeg);
+const mockResolveProxyIp = vi.mocked(resolveProxyIp);
 
 const mockSettings = {
   library: { path: '/audiobooks', folderFormat: '{author}/{title}' },
@@ -199,6 +205,161 @@ describe('settings routes', () => {
 
       expect(res.statusCode).toBe(500);
       expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+  });
+
+  describe('POST /api/settings/test-proxy', () => {
+    it('returns success with exit IP for reachable proxy', async () => {
+      mockResolveProxyIp.mockResolvedValue('203.0.113.42');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/test-proxy',
+        payload: { proxyUrl: 'http://proxy.example.com:8080' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.success).toBe(true);
+      expect(body.ip).toBe('203.0.113.42');
+      expect(mockResolveProxyIp).toHaveBeenCalledWith('http://proxy.example.com:8080');
+    });
+
+    it('returns failure with error message for unreachable proxy', async () => {
+      mockResolveProxyIp.mockRejectedValue(new Error('Proxy connection failed: ECONNREFUSED'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/test-proxy',
+        payload: { proxyUrl: 'http://dead-proxy.example.com:8080' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.success).toBe(false);
+      expect(body.message).toContain('ECONNREFUSED');
+    });
+
+    it('returns validation error when no proxy URL in body', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/test-proxy',
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns validation error for invalid proxy URL scheme', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/settings/test-proxy',
+        payload: { proxyUrl: 'ftp://proxy.example.com:21' },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+  });
+
+  describe('network settings', () => {
+    it('saves network settings with valid proxy URL', async () => {
+      const updated = {
+        ...mockSettings,
+        network: { proxyUrl: 'http://proxy.example.com:8080' },
+      };
+      (services.settings.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { network: { proxyUrl: 'http://proxy.example.com:8080' } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.network.proxyUrl).toBe('http://proxy.example.com:8080');
+    });
+
+    it('loads saved network settings', async () => {
+      const settingsWithNetwork = {
+        ...mockSettings,
+        network: { proxyUrl: 'socks5://proxy.example.com:1080' },
+      };
+      (services.settings.getAll as Mock).mockResolvedValue(settingsWithNetwork);
+
+      const res = await app.inject({ method: 'GET', url: '/api/settings' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.network.proxyUrl).toBe('socks5://proxy.example.com:1080');
+    });
+
+    it('clears proxy URL when saving empty string', async () => {
+      const updated = {
+        ...mockSettings,
+        network: { proxyUrl: '' },
+      };
+      (services.settings.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { network: { proxyUrl: '' } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.network.proxyUrl).toBe('');
+    });
+
+    it('clears indexer adapter cache when network settings actually change', async () => {
+      const updated = {
+        ...mockSettings,
+        network: { proxyUrl: 'http://proxy.example.com:8080' },
+      };
+      (services.settings.get as Mock).mockResolvedValue({ proxyUrl: '' });
+      (services.settings.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { network: { proxyUrl: 'http://proxy.example.com:8080' } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.settings.get).toHaveBeenCalledWith('network');
+      expect(services.indexer.clearAdapterCache).toHaveBeenCalled();
+    });
+
+    it('does not clear indexer adapter cache when non-network settings are saved', async () => {
+      const updated = { ...mockSettings, library: { path: '/new-path', folderFormat: '{author}/{title}' } };
+      (services.settings.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { library: { path: '/new-path', folderFormat: '{author}/{title}' } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.indexer.clearAdapterCache).not.toHaveBeenCalled();
+    });
+
+    it('does not clear indexer adapter cache when network settings are unchanged in full-form save', async () => {
+      const currentNetwork = { proxyUrl: 'http://proxy.example.com:8080' };
+      const updated = { ...mockSettings, network: currentNetwork };
+      (services.settings.get as Mock).mockResolvedValue(currentNetwork);
+      (services.settings.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { ...mockSettings, network: currentNetwork },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.settings.get).toHaveBeenCalledWith('network');
+      expect(services.indexer.clearAdapterCache).not.toHaveBeenCalled();
     });
   });
 });

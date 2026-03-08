@@ -41,6 +41,7 @@ export const createIndexerFormSchema = z.object({
     flareSolverrUrl: z.string().optional(),
     mamId: z.string().optional(),
     baseUrl: z.string().optional(),
+    useProxy: z.boolean().optional(),
   }),
 }).superRefine((data, ctx) => {
   const meta = INDEXER_REGISTRY[data.type];

@@ -1,9 +1,11 @@
 import type { IndexerAdapter, SearchResult } from './types.js';
-import { IndexerAuthError } from './errors.js';
+import { IndexerAuthError, ProxyError } from './errors.js';
+import { createProxyAgent, resolveProxyIp } from './proxy.js';
 
 export interface MAMConfig {
   mamId: string;
   baseUrl?: string;
+  proxyUrl?: string;
 }
 
 const DEFAULT_BASE_URL = 'https://www.myanonamouse.net';
@@ -62,10 +64,12 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   readonly name: string;
   private baseUrl: string;
   private mamId: string;
+  private proxyUrl?: string;
 
   constructor(config: MAMConfig, name?: string) {
     this.mamId = config.mamId;
     this.baseUrl = (config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
+    this.proxyUrl = config.proxyUrl;
     this.name = name || 'MyAnonamouse';
   }
 
@@ -130,7 +134,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     return results;
   }
 
-  async test(): Promise<{ success: boolean; message?: string }> {
+  async test(): Promise<{ success: boolean; message?: string; ip?: string }> {
     try {
       const body = await this.fetchWithCookie(`${this.baseUrl}/jsonLoad.php`);
 
@@ -146,7 +150,16 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       }
 
       if (data.username) {
-        return { success: true, message: `Connected as ${data.username}` };
+        const result: { success: boolean; message: string; ip?: string } = {
+          success: true,
+          message: `Connected as ${data.username}`,
+        };
+
+        if (this.proxyUrl) {
+          result.ip = await resolveProxyIp(this.proxyUrl);
+        }
+
+        return result;
       }
 
       return { success: false, message: 'Authentication failed — check your MAM ID' };
@@ -168,14 +181,33 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
   private async fetchWithCookie(url: string): Promise<string> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const dispatcher = createProxyAgent(this.proxyUrl);
 
     try {
-      const response = await fetch(url, {
+      const fetchOptions: RequestInit & { dispatcher?: unknown } = {
         headers: {
           Cookie: `mam_id=${this.mamId}`,
         },
         signal: controller.signal,
-      });
+      };
+
+      if (dispatcher) {
+        fetchOptions.dispatcher = dispatcher;
+      }
+
+      let response: Response;
+      try {
+        response = await fetch(url, fetchOptions);
+      } catch (error) {
+        if (dispatcher) {
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            throw new ProxyError(`Proxy timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s`);
+          }
+          const msg = error instanceof Error ? error.message : 'unknown error';
+          throw new ProxyError(`Proxy connection failed: ${msg}`);
+        }
+        throw error;
+      }
 
       if (response.status === 403) {
         throw new IndexerAuthError(this.name, 'Authentication failed — check your MAM ID');
@@ -199,14 +231,34 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     const url = `${this.baseUrl}/tor/download.php?tid=${torrentId}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const dispatcher = createProxyAgent(this.proxyUrl);
 
     try {
-      const response = await fetch(url, {
+      const fetchOptions: RequestInit & { dispatcher?: unknown } = {
         headers: {
           Cookie: `mam_id=${this.mamId}`,
         },
         signal: controller.signal,
-      });
+      };
+
+      if (dispatcher) {
+        fetchOptions.dispatcher = dispatcher;
+      }
+
+      let response: Response;
+      try {
+        response = await fetch(url, fetchOptions);
+      } catch (error) {
+        // Proxy errors must propagate — not be swallowed as undefined
+        if (dispatcher) {
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            throw new ProxyError(`Proxy timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s`);
+          }
+          const msg = error instanceof Error ? error.message : 'unknown error';
+          throw new ProxyError(`Proxy connection failed: ${msg}`);
+        }
+        throw error;
+      }
 
       if (!response.ok) {
         console.warn(`MAM torrent fetch failed for tid=${torrentId}: HTTP ${response.status}`);
@@ -216,6 +268,10 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       const buffer = Buffer.from(await response.arrayBuffer());
       return `data:application/x-bittorrent;base64,${buffer.toString('base64')}`;
     } catch (error) {
+      // ProxyError must propagate up — not be swallowed
+      if (error instanceof ProxyError) {
+        throw error;
+      }
       const msg = error instanceof Error ? error.message : 'unknown error';
       console.warn(`MAM torrent fetch failed for tid=${torrentId}: ${msg}`);
       return undefined;

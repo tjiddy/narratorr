@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { MyAnonamouseIndexer } from './myanonamouse.js';
-import { IndexerAuthError } from './errors.js';
+import { IndexerAuthError, ProxyError } from './errors.js';
 
 const MAM_BASE = 'https://mam.test';
 
@@ -448,6 +448,168 @@ describe('MyAnonamouseIndexer', () => {
       const result = await indexer.test();
       expect(result.success).toBe(false);
       expect(result.message).toBeDefined();
+    });
+  });
+
+  describe('proxy support', () => {
+    const PROXY_URL = 'http://proxy.test:8080';
+    let proxiedIndexer: MyAnonamouseIndexer;
+
+    beforeEach(() => {
+      proxiedIndexer = new MyAnonamouseIndexer({
+        mamId: 'test-mam-id',
+        baseUrl: MAM_BASE,
+        proxyUrl: PROXY_URL,
+      });
+    });
+
+    it('routes fetchWithCookie through proxy when proxyUrl is set', async () => {
+      const searchResponse = JSON.stringify({ data: [makeResult()] });
+      const torrentBytes = Buffer.from('fake-torrent');
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response(searchResponse, {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        )
+        .mockResolvedValueOnce(
+          new Response(torrentBytes, {
+            status: 200,
+            headers: { 'Content-Type': 'application/x-bittorrent' },
+          }),
+        );
+
+      const results = await proxiedIndexer.search('Brandon Sanderson');
+
+      expect(results.length).toBe(1);
+      expect(results[0].title).toBe('The Way of Kings');
+      // Verify fetch was called with a dispatcher (proxy agent)
+      expect(fetchSpy).toHaveBeenCalled();
+      const callArgs = fetchSpy.mock.calls[0];
+      expect((callArgs[1] as Record<string, unknown>).dispatcher).toBeDefined();
+
+      fetchSpy.mockRestore();
+    });
+
+    it('sends mam_id cookie correctly through proxy', async () => {
+      const searchResponse = JSON.stringify({ data: [] });
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response(searchResponse, {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+
+      await proxiedIndexer.search('test');
+
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      const callArgs = fetchSpy.mock.calls[0];
+      const headers = (callArgs[1] as Record<string, unknown>).headers as Record<string, string>;
+      expect(headers.Cookie).toBe('mam_id=test-mam-id');
+
+      fetchSpy.mockRestore();
+    });
+
+    it('test with proxy returns success with exit IP', async () => {
+      const userResponse = JSON.stringify({ username: 'testuser' });
+      const ipifyResponse = JSON.stringify({ ip: '1.2.3.4' });
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response(userResponse, {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        )
+        .mockResolvedValueOnce(
+          new Response(ipifyResponse, {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+
+      const result = await proxiedIndexer.test();
+      expect(result.success).toBe(true);
+      expect(result.ip).toBe('1.2.3.4');
+      expect(result.message).toContain('Connected as testuser');
+
+      fetchSpy.mockRestore();
+    });
+
+    it('fetchTorrentAsDataUri rethrows ProxyError (not swallowed)', async () => {
+      const searchResponse = JSON.stringify({ data: [makeResult()] });
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response(searchResponse, {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        )
+        .mockRejectedValueOnce(
+          new Error('connect ECONNREFUSED'),
+        );
+
+      // The search calls fetchTorrentAsDataUri internally, which should rethrow ProxyError
+      await expect(proxiedIndexer.search('test')).rejects.toThrow(ProxyError);
+
+      fetchSpy.mockRestore();
+    });
+
+    it('fetchTorrentAsDataUri returns undefined for non-proxy errors', async () => {
+      // Non-proxied indexer: errors in torrent fetch are swallowed to undefined
+      const directIndexer = new MyAnonamouseIndexer({
+        mamId: 'test-mam-id',
+        baseUrl: MAM_BASE,
+      });
+
+      const searchResponse = JSON.stringify({ data: [makeResult()] });
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          new Response(searchResponse, {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        )
+        .mockRejectedValueOnce(
+          new Error('some network error'),
+        );
+
+      const results = await directIndexer.search('test');
+      expect(results.length).toBe(1);
+      expect(results[0].downloadUrl).toBeUndefined();
+
+      fetchSpy.mockRestore();
+      warnSpy.mockRestore();
+    });
+
+    it('search rethrows ProxyError', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+        new Error('connect ECONNREFUSED'),
+      );
+
+      await expect(proxiedIndexer.search('test')).rejects.toThrow(ProxyError);
+
+      fetchSpy.mockRestore();
+    });
+
+    it('search returns empty results for non-proxy errors', async () => {
+      // Non-proxied indexer: network errors propagate as plain errors (not ProxyError)
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      await expect(indexer.search('test')).rejects.toThrow();
+      // Verify it's NOT a ProxyError — just a regular error
+      await expect(indexer.search('test')).rejects.not.toThrow(ProxyError);
     });
   });
 });

@@ -5,3 +5,5 @@ export { TorznabIndexer, type TorznabConfig } from './torznab.js';
 export { MyAnonamouseIndexer, type MAMConfig } from './myanonamouse.js';
 export { fetchWithProxy, type FetchWithProxyOptions } from './fetch.js';
 export { ADAPTER_FACTORIES as INDEXER_ADAPTER_FACTORIES } from './registry.js';
+export { ProxyError, isProxyRelatedError } from './errors.js';
+export { createProxyAgent, resolveProxyIp } from './proxy.js';

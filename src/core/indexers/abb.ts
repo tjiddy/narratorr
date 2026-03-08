@@ -2,11 +2,14 @@ import * as cheerio from 'cheerio';
 import type { IndexerAdapter, SearchResult, SearchOptions } from './types.js';
 import { buildMagnetUri } from '../utils';
 import { fetchWithProxy } from './fetch.js';
+import { isProxyRelatedError } from './errors.js';
+import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 
 export interface ABBConfig {
   hostname: string; // e.g., 'audiobookbay.lu'
   pageLimit: number; // Max pages to scrape per search
   flareSolverrUrl?: string;
+  proxyUrl?: string;
 }
 
 const REQUEST_TIMEOUT_MS = 30000;
@@ -25,10 +28,12 @@ export class AudioBookBayIndexer implements IndexerAdapter {
   private baseUrl: string;
   private userAgentIndex = 0;
   private flareSolverrUrl?: string;
+  private proxyUrl?: string;
 
   constructor(private config: ABBConfig) {
     this.baseUrl = `https://${config.hostname}`;
     this.flareSolverrUrl = config.flareSolverrUrl?.replace(/\/+$/, '');
+    this.proxyUrl = config.proxyUrl;
   }
 
   // eslint-disable-next-line complexity -- HTML scraping with pagination, rate limiting, and proxy error branching
@@ -63,7 +68,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
               Object.assign(result, details);
             } catch (error) {
               // Proxy errors bubble up — consistent with outer catch behavior
-              if (this.flareSolverrUrl && error instanceof Error && error.message.startsWith('FlareSolverr')) {
+              if (isProxyRelatedError(error)) {
                 throw error;
               }
               // Skip non-proxy detail page failures — result won't have download URL and will be filtered out
@@ -81,7 +86,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         }
       } catch (error) {
         // Proxy errors bubble up to IndexerService.searchAll() for warn logging
-        if (this.flareSolverrUrl && error instanceof Error && error.message.startsWith('FlareSolverr')) {
+        if (isProxyRelatedError(error)) {
           throw error;
         }
         break; // Stop pagination on fetch failure
@@ -92,18 +97,21 @@ export class AudioBookBayIndexer implements IndexerAdapter {
   }
 
   private async fetchPage(url: string): Promise<string> {
-    return fetchWithProxy({
-      url,
-      headers: {
-        'User-Agent': this.getNextUserAgent(),
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        Connection: 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-      },
-      proxyUrl: this.flareSolverrUrl,
-    });
+    const headers = {
+      'User-Agent': this.getNextUserAgent(),
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      Connection: 'keep-alive',
+      'Upgrade-Insecure-Requests': '1',
+    };
+
+    // FlareSolverr takes precedence over standard proxy
+    if (this.flareSolverrUrl) {
+      return fetchWithProxy({ url, headers, proxyUrl: this.flareSolverrUrl });
+    }
+
+    return fetchWithProxyAgent(url, { proxyUrl: this.proxyUrl, headers });
   }
 
   private parseSearchPage(html: string): SearchResult[] {
@@ -306,9 +314,12 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async test(): Promise<{ success: boolean; message?: string }> {
+  async test(): Promise<{ success: boolean; message?: string; ip?: string }> {
     if (this.flareSolverrUrl) {
-      return this.testViaProxy();
+      return this.testViaFlareSolverr();
+    }
+    if (this.proxyUrl) {
+      return this.testViaStandardProxy();
     }
     return this.testDirect();
   }
@@ -345,7 +356,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     }
   }
 
-  private async testViaProxy(): Promise<{ success: boolean; message?: string }> {
+  private async testViaFlareSolverr(): Promise<{ success: boolean; message?: string }> {
     try {
       // FlareSolverr has no request.head — use GET via request.get
       await fetchWithProxy({
@@ -354,6 +365,23 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         proxyUrl: this.flareSolverrUrl,
       });
       return { success: true, message: `Connected to ${this.config.hostname} via FlareSolverr` };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Connection failed',
+      };
+    }
+  }
+
+  private async testViaStandardProxy(): Promise<{ success: boolean; message?: string; ip?: string }> {
+    try {
+      await fetchWithProxyAgent(this.baseUrl, {
+        proxyUrl: this.proxyUrl,
+        headers: { 'User-Agent': this.getNextUserAgent() },
+      });
+
+      const ip = await resolveProxyIp(this.proxyUrl!);
+      return { success: true, message: `Connected to ${this.config.hostname} via proxy`, ip };
     } catch (error) {
       return {
         success: false,

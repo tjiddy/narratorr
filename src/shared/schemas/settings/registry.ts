@@ -7,6 +7,7 @@ import { metadataSettingsSchema } from './metadata.js';
 import { processingSettingsSchema } from './processing.js';
 import { taggingSettingsSchema } from './tagging.js';
 import { qualitySettingsSchema } from './quality.js';
+import { networkSettingsSchema } from './network.js';
 
 // ---------------------------------------------------------------------------
 // Registry entry helper — enforces defaults match schema at compile time
@@ -72,6 +73,10 @@ export const settingsRegistry = {
       rejectWords: '',
       requiredWords: '',
     },
+  }),
+  network: defineCategory({
+    schema: networkSettingsSchema,
+    defaults: { proxyUrl: '' },
   }),
 };
 
