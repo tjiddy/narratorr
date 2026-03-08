@@ -5,6 +5,11 @@ description: Full lifecycle implementation of a Gitea issue — claims, plans, i
   invokes /implement.
 argument-hint: <issue-id>
 disable-model-invocation: true
+hooks:
+  Stop:
+    - hooks:
+        - type: prompt
+          prompt: "The agent is running /implement (claim → plan → implement → handoff). Check its last message. It is DONE only if it contains a completion report like '**#<id> complete** — <PR link>' or an explicit STOP/block condition. If the last message is a verify summary (OVERALL: pass/fail), a plan summary, a claim confirmation, or any mid-workflow output without a PR link or STOP, respond {\"ok\": false, \"reason\": \"Workflow incomplete. You are mid-skill — continue to the next phase immediately.\"}. If complete or blocked, respond {\"ok\": true}."
 ---
 
 # /implement <id> — Full lifecycle: claim → plan → implement → handoff
