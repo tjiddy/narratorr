@@ -7,6 +7,7 @@ import {
 import { vi } from 'vitest';
 import type { Db } from '../../db/index.js';
 import { registerRoutes, type Services } from '../routes/index.js';
+import { RetryBudget } from '../services/retry-budget.js';
 
 /**
  * Cast a mock object to a production type for dependency injection in tests.
@@ -123,6 +124,8 @@ export function createMockServices(overrides?: Partial<Record<keyof Services, Re
       },
     });
   }
+  // RetryBudget is a real instance (not a proxy-based mock) since it's transient state
+  services.retryBudget = new RetryBudget();
   // Proxy-based mock can't be statically verified against Services interface.
   // Every property access returns a vi.fn() stub at runtime.
   return inject<Services>(services);

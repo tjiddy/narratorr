@@ -90,7 +90,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     },
   );
 
-  // POST /api/activity/:id/retry
+  // POST /api/activity/:id/retry (search-based retry)
   app.post<{ Params: IdParam }>(
     '/api/activity/:id/retry',
     { schema: { params: idParamSchema } },
@@ -99,14 +99,21 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
 
       try {
         request.log.info({ id }, 'Download retry');
-        const newDownload = await downloadService.retry(id);
-        return newDownload;
+        const result = await downloadService.retry(id);
+
+        switch (result.status) {
+          case 'retried':
+            return await reply.status(201).send(result.download);
+          case 'no_candidates':
+            return await reply.status(200).send({ status: 'no_candidates' });
+          case 'retry_error':
+            return await reply.status(200).send({ status: 'retry_error' });
+        }
       } catch (error) {
         request.log.error({ id, error }, 'Retry failed');
         const message = error instanceof Error ? error.message : 'Unknown error';
-        // Map service-level validation errors to appropriate HTTP status
-        if (message.includes('not found')) return reply.status(404).send({ error: message });
-        if (message.includes('not in failed state') || message.includes('no download URL')) return reply.status(400).send({ error: message });
+        if (message.includes('not found') || message.includes('no book linked')) return reply.status(404).send({ error: message });
+        if (message.includes('not in failed state')) return reply.status(400).send({ error: message });
         return reply.status(500).send({ error: message });
       }
     },

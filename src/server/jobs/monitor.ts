@@ -5,12 +5,25 @@ import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '../../db/schema.js';
 import type { DownloadClientService } from '../services';
 import type { NotifierService } from '../services';
+import { retrySearch, type RetrySearchDeps } from '../services/retry-search.js';
+import type { BlacklistService } from '../services';
 
-export function startMonitorJob(db: Db, downloadClientService: DownloadClientService, notifierService: NotifierService, log: FastifyBaseLogger) {
+export interface MonitorRetryDeps {
+  blacklistService: BlacklistService;
+  retrySearchDeps: RetrySearchDeps;
+}
+
+export function startMonitorJob(
+  db: Db,
+  downloadClientService: DownloadClientService,
+  notifierService: NotifierService,
+  log: FastifyBaseLogger,
+  retryDeps?: MonitorRetryDeps,
+) {
   // Run every 30 seconds
   cron.schedule('*/30 * * * * *', async () => {
     try {
-      await monitorDownloads(db, downloadClientService, notifierService, log);
+      await monitorDownloads(db, downloadClientService, notifierService, log, retryDeps);
     } catch (error) {
       log.error(error, 'Monitor job error');
     }
@@ -19,8 +32,14 @@ export function startMonitorJob(db: Db, downloadClientService: DownloadClientSer
   log.info('Download monitor job started (every 30 seconds)');
 }
 
-// eslint-disable-next-line complexity -- linear download monitoring loop with per-item error handling and status recovery
-export async function monitorDownloads(db: Db, downloadClientService: DownloadClientService, notifierService: NotifierService, log: FastifyBaseLogger) {
+// eslint-disable-next-line complexity -- linear download monitoring loop with per-item error handling, status recovery, and retry orchestration
+export async function monitorDownloads(
+  db: Db,
+  downloadClientService: DownloadClientService,
+  notifierService: NotifierService,
+  log: FastifyBaseLogger,
+  retryDeps?: MonitorRetryDeps,
+) {
   // Get all active downloads
   const activeStatuses = ['downloading', 'queued', 'paused'] as const;
   const activeDownloads = await db
@@ -60,8 +79,15 @@ export async function monitorDownloads(db: Db, downloadClientService: DownloadCl
           })
           .where(eq(downloads.id, download.id));
 
-        // Recover book status
-        if (download.bookId) {
+        // Attempt retry recovery if bookId present and retry deps available
+        if (download.bookId && retryDeps) {
+          const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.title, retryDeps, log);
+          if (outcome === 'retried') {
+            // Old download replaced — delete the failed record
+            await db.delete(downloads).where(eq(downloads.id, download.id));
+          }
+        } else if (download.bookId) {
+          // Fallback: recover book status without retry
           await recoverBookStatus(db, download.bookId, download.id, log);
         }
 
@@ -97,9 +123,16 @@ export async function monitorDownloads(db: Db, downloadClientService: DownloadCl
         })
         .where(eq(downloads.id, download.id));
 
-      // Recover book status when download transitions to failed
-      if (newStatus === 'failed' && download.status !== 'failed' && download.bookId) {
-        await recoverBookStatus(db, download.bookId, download.id, log);
+      // Handle failure transitions with retry recovery
+      if (newStatus === 'failed' && download.status !== 'failed') {
+        if (download.bookId && retryDeps) {
+          const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.title, retryDeps, log);
+          if (outcome === 'retried') {
+            await db.delete(downloads).where(eq(downloads.id, download.id));
+          }
+        } else if (download.bookId) {
+          await recoverBookStatus(db, download.bookId, download.id, log);
+        }
       }
 
       // Log completion — import job will handle copying files to library
@@ -119,6 +152,69 @@ export async function monitorDownloads(db: Db, downloadClientService: DownloadCl
     } catch (error) {
       log.error({ error, id: download.id }, 'Error monitoring download');
     }
+  }
+}
+
+/**
+ * Handle a failed download: blacklist the release (if infoHash present),
+ * then attempt retry via retrySearch. Updates errorMessage on the download record.
+ * Returns the retry outcome string.
+ */
+async function handleDownloadFailure(
+  db: Db,
+  downloadId: number,
+  bookId: number,
+  infoHash: string | null,
+  title: string,
+  retryDeps: MonitorRetryDeps,
+  log: FastifyBaseLogger,
+): Promise<string> {
+  // Blacklist the release if infoHash present
+  if (infoHash) {
+    try {
+      await retryDeps.blacklistService.create({
+        infoHash,
+        title,
+        bookId,
+        reason: 'bad_quality',
+      });
+      log.info({ downloadId, infoHash }, 'Blacklisted failed release before retry');
+    } catch (err) {
+      log.warn({ downloadId, err }, 'Failed to blacklist release — proceeding with retry');
+    }
+  } else {
+    log.debug({ downloadId }, 'Skipping blacklist — no infoHash (Usenet download)');
+  }
+
+  // Attempt retry search
+  try {
+    const result = await retrySearch(bookId, retryDeps.retrySearchDeps);
+
+    switch (result.outcome) {
+      case 'retried': {
+        const attempt = retryDeps.retrySearchDeps.retryBudget.hasRemaining(bookId) ? 'within budget' : 'at limit';
+        log.info({ downloadId, bookId, newDownloadId: result.download.id, attempt }, 'Retry search succeeded');
+        // errorMessage on new download will show retry progress — update old record before deletion
+        await db.update(downloads).set({ errorMessage: `Retrying` }).where(eq(downloads.id, downloadId));
+        return 'retried';
+      }
+      case 'exhausted':
+        await db.update(downloads).set({ errorMessage: 'Retries exhausted' }).where(eq(downloads.id, downloadId));
+        await recoverBookStatus(db, bookId, downloadId, log);
+        return 'exhausted';
+      case 'no_candidates':
+        await db.update(downloads).set({ errorMessage: 'No viable candidates' }).where(eq(downloads.id, downloadId));
+        await recoverBookStatus(db, bookId, downloadId, log);
+        return 'no_candidates';
+      case 'retry_error':
+        await db.update(downloads).set({ errorMessage: 'Retry failed - will retry next cycle' }).where(eq(downloads.id, downloadId));
+        // Don't recover book status on retry_error — will try again next cycle
+        return 'retry_error';
+    }
+  } catch (error) {
+    log.error({ downloadId, bookId, error }, 'handleDownloadFailure unexpected error');
+    await db.update(downloads).set({ errorMessage: 'Retry failed - will retry next cycle' }).where(eq(downloads.id, downloadId));
+    return 'retry_error';
   }
 }
 

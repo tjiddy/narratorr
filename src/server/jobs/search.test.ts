@@ -80,6 +80,23 @@ describe('runSearchJob', () => {
     log = createMockLogger();
   });
 
+  it('resets retry budget at the start of every search cycle', async () => {
+    const { RetryBudget } = await import('../services/retry-budget.js');
+    const retryBudget = new RetryBudget();
+    retryBudget.consumeAttempt(1);
+    retryBudget.consumeAttempt(2);
+    const resetAllSpy = vi.spyOn(retryBudget, 'resetAll');
+
+    const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
+    const books = createMockBookService([]);
+    const indexer = createMockIndexerService();
+    const download = createMockDownloadService();
+
+    await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log), retryBudget);
+
+    expect(resetAllSpy).toHaveBeenCalledOnce();
+  });
+
   it('returns zeros when search is disabled', async () => {
     const settings = createMockSettingsService({ search: { enabled: false, intervalMinutes: 60 } });
     const books = createMockBookService();

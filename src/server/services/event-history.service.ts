@@ -5,6 +5,7 @@ import { bookEvents, downloads } from '../../db/schema.js';
 import { type BlacklistService } from './blacklist.service.js';
 import { type BookService } from './book.service.js';
 import { actionableEventTypes, type EventType, type EventSource } from '../../shared/schemas/event-history.js';
+import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 
 type BookEventRow = typeof bookEvents.$inferSelect;
 
@@ -19,12 +20,19 @@ export interface CreateEventInput {
 }
 
 export class EventHistoryService {
+  private retrySearchDeps?: RetrySearchDeps;
+
   constructor(
     private db: Db,
     private log: FastifyBaseLogger,
     private blacklistService: BlacklistService,
     private bookService: BookService,
   ) {}
+
+  /** Set retry search dependencies (called after service graph construction). */
+  setRetrySearchDeps(deps: RetrySearchDeps): void {
+    this.retrySearchDeps = deps;
+  }
 
   async create(input: CreateEventInput): Promise<BookEventRow> {
     const result = await this.db.insert(bookEvents).values({
@@ -102,17 +110,21 @@ export class EventHistoryService {
       .limit(1);
 
     const download = downloadRows[0];
-    if (!download || !download.infoHash) {
-      throw new Error('Associated download not found or has no info hash');
+    if (!download) {
+      throw new Error('Associated download not found');
     }
 
-    // Blacklist the release
-    await this.blacklistService.create({
-      infoHash: download.infoHash,
-      title: download.title,
-      bookId: event.bookId ?? undefined,
-      reason: 'bad_quality',
-    });
+    // Blacklist the release if infoHash present; skip for Usenet (no infoHash)
+    if (download.infoHash) {
+      await this.blacklistService.create({
+        infoHash: download.infoHash,
+        title: download.title,
+        bookId: event.bookId ?? undefined,
+        reason: 'bad_quality',
+      });
+    } else {
+      this.log.debug({ downloadId: download.id }, 'Skipping blacklist — no infoHash (Usenet download)');
+    }
 
     // Revert book to wanted status
     if (event.bookId) {
@@ -120,6 +132,13 @@ export class EventHistoryService {
     }
 
     this.log.info({ eventId, downloadId: event.downloadId, bookId: event.bookId }, 'Event marked as failed');
+
+    // Trigger book-scoped retry search (fire-and-forget) — does NOT reset global retry budget
+    if (event.bookId && this.retrySearchDeps) {
+      retrySearch(event.bookId, this.retrySearchDeps)
+        .catch((err) => this.log.warn(err, 'Mark-as-failed retry search failed'));
+    }
+
     return { success: true };
   }
 }

@@ -4,6 +4,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { DownloadClientService } from '../services/download-client.service.js';
 import type { NotifierService } from '../services/notifier.service.js';
+import type { RetryBudget } from '../services/retry-budget.js';
 import { createMockDbBook } from '../__tests__/factories.js';
 
 let cronCallback: (() => Promise<void>) | null = null;
@@ -17,7 +18,7 @@ vi.mock('node-cron', () => ({
 }));
 
 // Must import after vi.mock so the mock is in place
-const { startMonitorJob } = await import('./monitor.js');
+const { startMonitorJob, monitorDownloads } = await import('./monitor.js');
 
 describe('monitor job', () => {
   let db: ReturnType<typeof createMockDb>;
@@ -517,6 +518,194 @@ describe('monitor job', () => {
       db.update.mockReturnValue(mockDbChain());
 
       await runMonitor();
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, status: 'wanted' }),
+        'Book status recovered after download failure',
+      );
+    });
+  });
+
+  describe('failed download recovery (retry)', () => {
+    let retryDeps: {
+      blacklistService: { create: ReturnType<typeof vi.fn> };
+      retrySearchDeps: {
+        indexerService: { searchAll: ReturnType<typeof vi.fn> };
+        downloadService: { grab: ReturnType<typeof vi.fn> };
+        blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn> };
+        bookService: { getById: ReturnType<typeof vi.fn> };
+        settingsService: { get: ReturnType<typeof vi.fn> };
+        retryBudget: RetryBudget;
+        log: ReturnType<typeof createMockLogger>;
+      };
+    };
+
+    beforeEach(async () => {
+      const { RetryBudget } = await import('../services/retry-budget.js');
+      retryDeps = {
+        blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
+        retrySearchDeps: {
+          indexerService: { searchAll: vi.fn().mockResolvedValue([]) },
+          downloadService: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
+          blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
+          bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, author: { name: 'Author' } }) },
+          settingsService: { get: vi.fn().mockResolvedValue({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' }) },
+          retryBudget: new RetryBudget(),
+          log: createMockLogger(),
+        },
+      };
+    });
+
+    it('blacklists release before retry search when infoHash is present', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+      db.delete.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ infoHash: 'abc123', reason: 'bad_quality' }),
+      );
+    });
+
+    it('skips blacklist with debug log when infoHash is absent (Usenet)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: null },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.blacklistService.create).not.toHaveBeenCalled();
+      expect(log.debug).toHaveBeenCalledWith({ downloadId: 1 }, 'Skipping blacklist — no infoHash (Usenet download)');
+    });
+
+    it('sets errorMessage to "No viable candidates" when search returns nothing', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+      // recoverBookStatus selects
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ errorMessage: 'No viable candidates' }));
+    });
+
+    it('sets errorMessage to "Retries exhausted" when max attempts reached', async () => {
+      // Exhaust the budget
+      retryDeps.retrySearchDeps.retryBudget.consumeAttempt(42);
+      retryDeps.retrySearchDeps.retryBudget.consumeAttempt(42);
+      retryDeps.retrySearchDeps.retryBudget.consumeAttempt(42);
+
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+      // recoverBookStatus selects
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ errorMessage: 'Retries exhausted' }));
+    });
+
+    it('sets errorMessage to "Retrying" when retry search succeeds', async () => {
+      const searchResult = { title: 'New Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:new123', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
+      retryDeps.retrySearchDeps.indexerService.searchAll.mockResolvedValue([searchResult]);
+
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+      db.delete.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ errorMessage: 'Retrying' }));
+    });
+
+    it('sets errorMessage to "Retry failed" on retry_error', async () => {
+      retryDeps.retrySearchDeps.indexerService.searchAll.mockRejectedValue(new Error('Indexer down'));
+
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ errorMessage: 'Retry failed - will retry next cycle' }));
+    });
+
+    it('deletes old failed record when retry search succeeds', async () => {
+      const searchResult = { title: 'New Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:new123', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
+      retryDeps.retrySearchDeps.indexerService.searchAll.mockResolvedValue([searchResult]);
+
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+      db.delete.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.retrySearchDeps.downloadService.grab).toHaveBeenCalled();
+      expect(db.delete).toHaveBeenCalled();
+    });
+
+    it('does not corrupt book status on retry_error', async () => {
+      retryDeps.retrySearchDeps.indexerService.searchAll.mockRejectedValue(new Error('Indexer down'));
+
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      // Book status should NOT be recovered on retry_error (will try again next cycle)
+      expect(log.info).not.toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'wanted' }),
+        'Book status recovered after download failure',
+      );
+    });
+
+    it('falls back to book status recovery without retry when no retryDeps', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      // Call without retryDeps (undefined)
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log));
 
       expect(log.info).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 42, status: 'wanted' }),

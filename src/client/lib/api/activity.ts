@@ -24,6 +24,8 @@ export interface ActivityCounts {
   completed: number;
 }
 
+export type RetryResponse = Download | { status: 'no_candidates' } | { status: 'retry_error' };
+
 export const activityApi = {
   getActivity: () => fetchApi<Download[]>('/activity'),
   getActiveDownloads: () => fetchApi<Download[]>('/activity/active'),
@@ -31,5 +33,5 @@ export const activityApi = {
   cancelDownload: (id: number) =>
     fetchApi<{ success: boolean }>(`/activity/${id}`, { method: 'DELETE' }),
   retryDownload: (id: number) =>
-    fetchApi<Download>(`/activity/${id}/retry`, { method: 'POST' }),
+    fetchApi<RetryResponse>(`/activity/${id}/retry`, { method: 'POST' }),
 };

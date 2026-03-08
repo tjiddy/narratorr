@@ -40,6 +40,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       services.indexer,
       services.download,
       request.log,
+      services.retryBudget,
     );
     return result;
   });

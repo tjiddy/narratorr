@@ -3,7 +3,7 @@ export { AuthService, type AuthConfig, type AuthStatus, type AuthPublicConfig } 
 export { IndexerService } from './indexer.service.js';
 export { DownloadClientService } from './download-client.service.js';
 export { BookService, type BookWithAuthor } from './book.service.js';
-export { DownloadService, type DownloadWithBook } from './download.service.js';
+export { DownloadService, type DownloadWithBook, type RetryResult } from './download.service.js';
 export { MetadataService } from './metadata.service.js';
 export { ImportService } from './import.service.js';
 export { NotifierService } from './notifier.service.js';
@@ -13,3 +13,4 @@ export { RemotePathMappingService } from './remote-path-mapping.service.js';
 export { RenameService, RenameError, type RenameResult } from './rename.service.js';
 export { EventHistoryService, type CreateEventInput } from './event-history.service.js';
 export { TaggingService, RetagError, type RetagResult } from './tagging.service.js';
+export { RetryBudget } from './retry-budget.js';

@@ -6,6 +6,7 @@ import { parseInfoHash, type DownloadProtocol } from '../../core/index.js';
 import { type DownloadClientService } from './download-client.service.js';
 import { type NotifierService } from './notifier.service.js';
 import { type EventHistoryService, type CreateEventInput } from './event-history.service.js';
+import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 
 type DownloadRow = typeof downloads.$inferSelect;
 type BookRow = typeof books.$inferSelect;
@@ -14,7 +15,14 @@ export interface DownloadWithBook extends DownloadRow {
   book?: BookRow;
 }
 
+export type RetryResult =
+  | { status: 'retried'; download: DownloadWithBook }
+  | { status: 'no_candidates' }
+  | { status: 'retry_error'; error: string };
+
 export class DownloadService {
+  private retrySearchDeps?: RetrySearchDeps;
+
   constructor(
     private db: Db,
     private downloadClientService: DownloadClientService,
@@ -22,6 +30,11 @@ export class DownloadService {
     private notifierService?: NotifierService,
     private eventHistory?: EventHistoryService,
   ) {}
+
+  /** Set retry search dependencies (called after service graph construction). */
+  setRetrySearchDeps(deps: RetrySearchDeps): void {
+    this.retrySearchDeps = deps;
+  }
 
   /** Fire-and-forget event recording — silently skips if no eventHistory injected. */
   private emitEvent(input: CreateEventInput): void {
@@ -333,34 +346,44 @@ export class DownloadService {
     return true;
   }
 
-  async retry(id: number): Promise<DownloadWithBook> {
+  async retry(id: number): Promise<RetryResult> {
     const download = await this.getById(id);
     if (!download) throw new Error(`Download ${id} not found`);
     if (download.status !== 'failed') throw new Error(`Download ${id} is not in failed state`);
-    if (!download.downloadUrl) throw new Error(`Download ${id} has no download URL for retry`);
+    if (!download.bookId) throw new Error(`Download ${id} has no book linked`);
 
-    // Re-grab with original params — skip duplicate check since we're replacing a failed download
-    const newDownload = await this.grab({
-      downloadUrl: download.downloadUrl,
-      title: download.title,
-      protocol: download.protocol,
-      bookId: download.bookId ?? undefined,
-      indexerId: download.indexerId ?? undefined,
-      size: download.size ?? undefined,
-      seeders: download.seeders ?? undefined,
-      skipDuplicateCheck: true,
-    });
-
-    // Delete the old failed download record — if this fails, the old record
-    // is harmless (already 'failed' status), so log and return the new one
-    try {
-      await this.db.delete(downloads).where(eq(downloads.id, id));
-    } catch (error) {
-      this.log.warn({ oldId: id, newId: newDownload.id, error }, 'Failed to delete old download record after retry');
+    if (!this.retrySearchDeps) {
+      throw new Error('Retry search dependencies not configured');
     }
 
-    this.log.info({ oldId: id, newId: newDownload.id }, 'Download retried');
-    return newDownload;
+    // Reset retry counter for this book (manual retry = new cycle)
+    this.retrySearchDeps.retryBudget.reset(download.bookId);
+
+    const result = await retrySearch(download.bookId, this.retrySearchDeps);
+
+    switch (result.outcome) {
+      case 'retried': {
+        // Delete the old failed download record
+        try {
+          await this.db.delete(downloads).where(eq(downloads.id, id));
+        } catch (error) {
+          this.log.warn({ oldId: id, newId: result.download.id, error }, 'Failed to delete old download record after retry');
+        }
+        this.log.info({ oldId: id, newId: result.download.id }, 'Download retried');
+        return { status: 'retried', download: result.download };
+      }
+      case 'no_candidates':
+      case 'exhausted': {
+        await this.db.update(downloads).set({ errorMessage: 'No viable candidates' }).where(eq(downloads.id, id));
+        this.log.info({ id }, 'Manual retry found no candidates');
+        return { status: 'no_candidates' };
+      }
+      case 'retry_error': {
+        await this.db.update(downloads).set({ errorMessage: 'Retry failed - will retry next cycle' }).where(eq(downloads.id, id));
+        this.log.warn({ id, error: result.error }, 'Manual retry search failed');
+        return { status: 'retry_error', error: result.error };
+      }
+    }
   }
 
   async delete(id: number): Promise<boolean> {

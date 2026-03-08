@@ -733,206 +733,174 @@ describe('DownloadService', () => {
     });
   });
 
-  describe('retry', () => {
-    it('re-adds failed download to client with original params', async () => {
-      const failedDownload = {
-        ...mockDownload,
-        status: 'failed' as const,
-        errorMessage: 'Connection refused',
-      };
-      const mockAdapter = {
-        addDownload: vi.fn().mockResolvedValue('ext-new'),
-      };
-
-      // getById for retry
-      db.select.mockReturnValueOnce(
-        mockDbChain([{ download: failedDownload, book: mockBook }]),
-      );
-      // grab: getFirstEnabledForProtocol
-      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
-      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
-      // grab: insert new download
-      db.insert.mockReturnValue(mockDbChain([{ id: 99 }]));
-      db.update.mockReturnValue(mockDbChain());
-      // grab: getById for return
-      db.select.mockReturnValueOnce(
-        mockDbChain([{ download: { ...mockDownload, id: 99 }, book: mockBook }]),
-      );
-      // delete old download
-      db.delete.mockReturnValue(mockDbChain());
-
-      const result = await service.retry(1);
-
-      expect(mockAdapter.addDownload).toHaveBeenCalled();
-      expect(result.id).toBe(99);
-    });
-
-    it('resets book status to downloading on retry', async () => {
-      const failedDownload = { ...mockDownload, status: 'failed' as const };
-      const mockAdapter = { addDownload: vi.fn().mockResolvedValue('ext-new') };
-
-      db.select.mockReturnValueOnce(
-        mockDbChain([{ download: failedDownload, book: mockBook }]),
-      );
-      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1 });
-      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
-      db.insert.mockReturnValue(mockDbChain([{ id: 99 }]));
-      db.update.mockReturnValue(mockDbChain());
-      db.select.mockReturnValueOnce(
-        mockDbChain([{ download: { ...mockDownload, id: 99 }, book: mockBook }]),
-      );
-      db.delete.mockReturnValue(mockDbChain());
-
-      await service.retry(1);
-
-      // grab() updates book to downloading
-      expect(db.update).toHaveBeenCalled();
-    });
-
-    it('preserves book path when retrying for imported book', async () => {
-      const importedBook = createMockDbBook({ id: 1, path: '/audiobooks/existing', status: 'wanted' });
-      const failedDownload = { ...mockDownload, status: 'failed' as const };
-      const mockAdapter = { addDownload: vi.fn().mockResolvedValue('ext-new') };
-
-      db.select.mockReturnValueOnce(
-        mockDbChain([{ download: failedDownload, book: importedBook }]),
-      );
-      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1 });
-      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
-      db.insert.mockReturnValue(mockDbChain([{ id: 99 }]));
-      db.update.mockReturnValue(mockDbChain());
-      db.select.mockReturnValueOnce(
-        mockDbChain([{ download: { ...mockDownload, id: 99 }, book: importedBook }]),
-      );
-      db.delete.mockReturnValue(mockDbChain());
-
-      await service.retry(1);
-
-      // book.path should NOT be cleared — grab only updates status
-      const updateCalls = db.update.mock.results;
-      const setCalls = updateCalls
-        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
-        .filter(Boolean);
-      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
-      const pathUpdates = allSetArgs.filter(a => 'path' in a);
-      expect(pathUpdates).toHaveLength(0); // path should never be set
+  describe('retry (search-based)', () => {
+    it('throws when download not found', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      await expect(service.retry(999)).rejects.toThrow('not found');
     });
 
     it('throws when download is not in failed state', async () => {
       db.select.mockReturnValue(
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
-
       await expect(service.retry(1)).rejects.toThrow('not in failed state');
     });
 
-    it('throws when download has no downloadUrl', async () => {
-      const failedNoUrl = { ...mockDownload, status: 'failed' as const, downloadUrl: null };
+    it('throws when download has no bookId', async () => {
+      const failedNoBook = { ...mockDownload, status: 'failed' as const, bookId: null };
       db.select.mockReturnValue(
-        mockDbChain([{ download: failedNoUrl, book: mockBook }]),
+        mockDbChain([{ download: failedNoBook, book: null }]),
       );
-
-      await expect(service.retry(1)).rejects.toThrow('no download URL');
+      await expect(service.retry(1)).rejects.toThrow('no book linked');
     });
 
-    it('propagates error when grab() throws during retry — db.delete() never called', async () => {
+    it('throws when retrySearchDeps not configured', async () => {
       const failedDownload = { ...mockDownload, status: 'failed' as const };
-
-      // getById for retry
-      db.select.mockReturnValueOnce(
+      db.select.mockReturnValue(
         mockDbChain([{ download: failedDownload, book: mockBook }]),
       );
-      // grab: getFirstEnabledForProtocol throws
-      (clientService.getFirstEnabledForProtocol as Mock).mockRejectedValue(
-        new Error('No client available'),
-      );
-
-      await expect(service.retry(1)).rejects.toThrow('No client available');
-
-      // db.delete should never have been called
-      expect(db.delete).not.toHaveBeenCalled();
+      await expect(service.retry(1)).rejects.toThrow('not configured');
     });
 
-    it('returns new download and logs warning when db.delete() throws after successful grab', async () => {
-      const failedDownload = { ...mockDownload, status: 'failed' as const };
-      const mockAdapter = { addDownload: vi.fn().mockResolvedValue('ext-new') };
-      const log = createMockLogger();
-      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+    describe('with retrySearchDeps', () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let retryBudget: any;
+      let retryService: DownloadService;
+      let retryLog: ReturnType<typeof createMockLogger>;
+      let mockRetryDeps: {
+        indexerService: { searchAll: ReturnType<typeof vi.fn> };
+        downloadService: { grab: ReturnType<typeof vi.fn> };
+        blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn> };
+        bookService: { getById: ReturnType<typeof vi.fn> };
+        settingsService: { get: ReturnType<typeof vi.fn> };
+        retryBudget: unknown;
+        log: ReturnType<typeof createMockLogger>;
+      };
 
-      // getById for retry
-      db.select.mockReturnValueOnce(
-        mockDbChain([{ download: failedDownload, book: mockBook }]),
-      );
-      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1 });
-      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
-      // grab: insert new download
-      db.insert.mockReturnValue(mockDbChain([{ id: 99 }]));
-      db.update.mockReturnValue(mockDbChain());
-      // grab: getById for return
-      db.select.mockReturnValueOnce(
-        mockDbChain([{ download: { ...mockDownload, id: 99 }, book: mockBook }]),
-      );
-      // delete throws
-      db.delete.mockImplementation(() => { throw new Error('SQLITE_BUSY'); });
+      beforeEach(async () => {
+        const { RetryBudget } = await import('../services/retry-budget.js');
+        retryBudget = new RetryBudget();
+        retryLog = createMockLogger();
+        mockRetryDeps = {
+          indexerService: { searchAll: vi.fn().mockResolvedValue([]) },
+          downloadService: { grab: vi.fn().mockResolvedValue({ id: 99, title: 'New Download', bookId: 1, book: mockBook }) },
+          blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
+          bookService: { getById: vi.fn().mockResolvedValue({ id: 1, title: 'The Way of Kings', duration: 3600, author: { name: 'Sanderson' } }) },
+          settingsService: { get: vi.fn().mockResolvedValue({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' }) },
+          retryBudget,
+          log: retryLog,
+        };
+        retryService = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(createMockLogger()));
+        retryService.setRetrySearchDeps(mockRetryDeps as never);
+      });
 
-      const result = await svc.retry(1);
+      it('returns retried and deletes old record on successful retry', async () => {
+        const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
+        const searchResult = { title: 'Better Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:new', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
+        mockRetryDeps.indexerService.searchAll.mockResolvedValue([searchResult]);
 
-      // New download returned despite delete failure
-      expect(result.id).toBe(99);
-      // Warning logged with both IDs and error
-      expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ oldId: 1, newId: 99, error: expect.any(Error) }),
-        'Failed to delete old download record after retry',
-      );
-    });
+        db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
+        db.delete.mockReturnValue(mockDbChain());
+        db.update.mockReturnValue(mockDbChain());
 
-    it('succeeds with null externalId — old record deleted, log.info with both IDs', async () => {
-      const failedDownload = { ...mockDownload, status: 'failed' as const };
-      const mockAdapter = { addDownload: vi.fn().mockResolvedValue(null) };
-      const log = createMockLogger();
-      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+        const result = await retryService.retry(1);
 
-      db.select.mockReturnValueOnce(
-        mockDbChain([{ download: failedDownload, book: mockBook }]),
-      );
-      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
-      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
-      db.insert.mockReturnValue(mockDbChain([{ id: 99 }]));
-      db.update.mockReturnValue(mockDbChain());
-      db.select.mockReturnValueOnce(
-        mockDbChain([{ download: { ...mockDownload, id: 99, externalId: null, status: 'downloading' }, book: mockBook }]),
-      );
-      db.delete.mockReturnValue(mockDbChain());
+        expect(result.status).toBe('retried');
+        expect(db.delete).toHaveBeenCalled();
+      });
 
-      const result = await svc.retry(1);
+      it('returns no_candidates and updates errorMessage when no results found', async () => {
+        const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
+        mockRetryDeps.indexerService.searchAll.mockResolvedValue([]);
 
-      expect(result.id).toBe(99);
-      expect(db.delete).toHaveBeenCalled();
-      expect(log.info).toHaveBeenCalledWith(
-        expect.objectContaining({ oldId: 1, newId: 99 }),
-        'Download retried',
-      );
-    });
+        db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
+        const chain = mockDbChain();
+        db.update.mockReturnValue(chain);
 
-    it('deletes old failed download record after successful retry', async () => {
-      const failedDownload = { ...mockDownload, status: 'failed' as const };
-      const mockAdapter = { addDownload: vi.fn().mockResolvedValue('ext-new') };
+        const result = await retryService.retry(1);
 
-      db.select.mockReturnValueOnce(
-        mockDbChain([{ download: failedDownload, book: mockBook }]),
-      );
-      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1 });
-      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
-      db.insert.mockReturnValue(mockDbChain([{ id: 99 }]));
-      db.update.mockReturnValue(mockDbChain());
-      db.select.mockReturnValueOnce(
-        mockDbChain([{ download: { ...mockDownload, id: 99 }, book: mockBook }]),
-      );
-      db.delete.mockReturnValue(mockDbChain());
+        expect(result.status).toBe('no_candidates');
+        expect(chain.set).toHaveBeenCalledWith({ errorMessage: 'No viable candidates' });
+      });
 
-      await service.retry(1);
+      it('returns no_candidates and updates errorMessage when budget exhausted', async () => {
+        const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
+        retryBudget.consumeAttempt(1);
+        retryBudget.consumeAttempt(1);
+        retryBudget.consumeAttempt(1);
+        // Budget reset by retry(), then immediately exhausted — need 4 total since reset clears
+        // Actually retry() calls reset(bookId) first, so let's re-exhaust after
+        // We need to make the budget report exhausted AFTER the reset
+        // The retry method resets, then calls retrySearch which checks hasRemaining
+        // To exhaust: we need retrySearch to return 'exhausted'
+        // Since retry() resets first, we can't exhaust by pre-consuming. Instead test the no_candidates/exhausted mapping:
+        // Both no_candidates and exhausted map to the same response. Let's verify with no_candidates already tested above.
 
-      expect(db.delete).toHaveBeenCalled();
+        // For exhausted specifically, we need the budget to be exhausted WITHIN the retrySearch call
+        // This means consuming 3 attempts on the same bookId after the reset
+        // We can spy on retryBudget to prevent the reset:
+        vi.spyOn(retryBudget, 'reset').mockImplementation(() => {
+          // no-op — don't actually reset so budget stays exhausted
+        });
+
+        db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
+        const chain = mockDbChain();
+        db.update.mockReturnValue(chain);
+
+        const result = await retryService.retry(1);
+
+        expect(result.status).toBe('no_candidates');
+        expect(chain.set).toHaveBeenCalledWith({ errorMessage: 'No viable candidates' });
+      });
+
+      it('returns retry_error and updates errorMessage when search throws', async () => {
+        const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
+        mockRetryDeps.indexerService.searchAll.mockRejectedValue(new Error('Indexer down'));
+
+        db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
+        const chain = mockDbChain();
+        db.update.mockReturnValue(chain);
+
+        const result = await retryService.retry(1);
+
+        expect(result.status).toBe('retry_error');
+        expect((result as { error: string }).error).toBe('Indexer down');
+        expect(chain.set).toHaveBeenCalledWith({ errorMessage: 'Retry failed - will retry next cycle' });
+      });
+
+      it('resets retry budget for the book before searching', async () => {
+        const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
+        const resetSpy = vi.spyOn(retryBudget, 'reset');
+
+        db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
+        db.update.mockReturnValue(mockDbChain());
+
+        await retryService.retry(1);
+
+        expect(resetSpy).toHaveBeenCalledWith(1);
+      });
+
+      it('logs warning but still returns retried when old record deletion fails', async () => {
+        const failedDownload = { ...mockDownload, id: 1, status: 'failed' as const };
+        const searchResult = { title: 'Better Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:new', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
+        mockRetryDeps.indexerService.searchAll.mockResolvedValue([searchResult]);
+
+        db.select.mockReturnValue(mockDbChain([{ download: failedDownload, book: mockBook }]));
+        db.delete.mockImplementation(() => { throw new Error('FK constraint'); });
+        db.update.mockReturnValue(mockDbChain());
+
+        const retryLogLocal = createMockLogger();
+        const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(retryLogLocal));
+        svc.setRetrySearchDeps(mockRetryDeps as never);
+
+        const result = await svc.retry(1);
+
+        expect(result.status).toBe('retried');
+        expect(retryLogLocal.warn).toHaveBeenCalledWith(
+          expect.objectContaining({ oldId: 1 }),
+          expect.stringContaining('Failed to delete old download'),
+        );
+      });
     });
   });
 
@@ -1119,4 +1087,5 @@ describe('DownloadService', () => {
       expect(eventHistory.create).not.toHaveBeenCalled();
     });
   });
+
 });

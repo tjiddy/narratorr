@@ -4,6 +4,7 @@ import type { SettingsService } from '../services/settings.service.js';
 import type { BookService } from '../services/book.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadService } from '../services/download.service.js';
+import type { RetryBudget } from '../services/retry-budget.js';
 import { filterAndRankResults } from '../routes/search.js';
 
 export interface SearchJobResult {
@@ -20,7 +21,11 @@ export async function runSearchJob(
   indexerService: IndexerService,
   downloadService: DownloadService,
   log: FastifyBaseLogger,
+  retryBudget?: RetryBudget,
 ): Promise<SearchJobResult> {
+  // Reset retry budget at the start of every search cycle (any caller)
+  retryBudget?.resetAll();
+
   const searchSettings = await settingsService.get('search');
   if (!searchSettings.enabled) {
     log.debug('Scheduled search is disabled, skipping');
@@ -210,6 +215,7 @@ export function startSearchJob(
   indexerService: IndexerService,
   downloadService: DownloadService,
   log: FastifyBaseLogger,
+  retryBudget?: RetryBudget,
 ): void {
   async function scheduleNext() {
     try {
@@ -218,7 +224,7 @@ export function startSearchJob(
 
       setTimeout(async () => {
         try {
-          await runSearchJob(settingsService, bookService, indexerService, downloadService, log);
+          await runSearchJob(settingsService, bookService, indexerService, downloadService, log, retryBudget);
         } catch (error) {
           log.error(error, 'Search job error');
         }

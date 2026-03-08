@@ -131,14 +131,33 @@ describe('activity routes', () => {
   });
 
   describe('POST /api/activity/:id/retry', () => {
-    it('retries download via service', async () => {
+    it('returns 201 with new download on successful retry', async () => {
       const newDownload = { ...mockDownload, id: 2 };
-      (services.download.retry as Mock).mockResolvedValue(newDownload);
+      (services.download.retry as Mock).mockResolvedValue({ status: 'retried', download: newDownload });
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
+
+      expect(res.statusCode).toBe(201);
+      expect(services.download.retry).toHaveBeenCalledWith(1);
+      expect(JSON.parse(res.payload).id).toBe(2);
+    });
+
+    it('returns 200 with no_candidates status when no candidates found', async () => {
+      (services.download.retry as Mock).mockResolvedValue({ status: 'no_candidates' });
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
       expect(res.statusCode).toBe(200);
-      expect(services.download.retry).toHaveBeenCalledWith(1);
+      expect(JSON.parse(res.payload).status).toBe('no_candidates');
+    });
+
+    it('returns 200 with retry_error status when retry search errors', async () => {
+      (services.download.retry as Mock).mockResolvedValue({ status: 'retry_error' });
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).status).toBe('retry_error');
     });
 
     it('returns 404 when download not found', async () => {
@@ -149,21 +168,20 @@ describe('activity routes', () => {
       expect(res.statusCode).toBe(404);
     });
 
+    it('returns 404 when no book linked', async () => {
+      (services.download.retry as Mock).mockRejectedValue(new Error('Download 1 has no book linked'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
+
+      expect(res.statusCode).toBe(404);
+    });
+
     it('returns 400 when download not in failed state', async () => {
       (services.download.retry as Mock).mockRejectedValue(new Error('Download 1 is not in failed state'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
       expect(res.statusCode).toBe(400);
-    });
-
-    it('returns 400 when no download URL', async () => {
-      (services.download.retry as Mock).mockRejectedValue(new Error('Download 1 has no download URL for retry'));
-
-      const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
-
-      expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res.payload).error).toContain('no download URL');
     });
 
     it('returns 500 when retry fails unexpectedly', async () => {
@@ -237,11 +255,11 @@ describe('activity routes', () => {
 
     it('POST /api/activity/:id/retry delegates to service retry method', async () => {
       const newDownload = { ...mockDownload, id: 2 };
-      (services.download.retry as Mock).mockResolvedValue(newDownload);
+      (services.download.retry as Mock).mockResolvedValue({ status: 'retried', download: newDownload });
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(201);
       expect(services.download.retry).toHaveBeenCalledWith(1);
     });
   });

@@ -16,6 +16,7 @@ import {
   RenameService,
   EventHistoryService,
   TaggingService,
+  RetryBudget,
 } from '../services';
 import { ImportService } from '../services/import.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
@@ -56,6 +57,7 @@ export interface Services {
   rename: RenameService;
   eventHistory: EventHistoryService;
   tagging: TaggingService;
+  retryBudget: RetryBudget;
 }
 
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
@@ -86,8 +88,22 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const prowlarrSync = new ProwlarrSyncService(db, log);
 
   const renameService = new RenameService(book, settings, log, eventHistory);
+  const retryBudget = new RetryBudget();
 
-  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService };
+  // Wire retry search dependencies into services that need them
+  const retrySearchDeps = {
+    indexerService: indexer,
+    downloadService: download,
+    blacklistService,
+    bookService: book,
+    settingsService: settings,
+    retryBudget,
+    log,
+  };
+  download.setRetrySearchDeps(retrySearchDeps);
+  eventHistory.setRetrySearchDeps(retrySearchDeps);
+
+  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, retryBudget };
 }
 
 export async function registerRoutes(

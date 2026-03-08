@@ -160,15 +160,32 @@ describe('EventHistoryService', () => {
       await expect(service.markFailed(1)).rejects.toThrow('no associated download');
     });
 
-    it('throws when download has no info hash', async () => {
+    it('skips blacklist and reverts book when download has no infoHash (Usenet)', async () => {
       const event = createMockDbBookEvent({ downloadId: 5 });
-      const download = { id: 5, infoHash: null, title: 'Test' };
+      const download = { id: 5, infoHash: null, title: 'Usenet Download' };
 
       db.select
         .mockReturnValueOnce(mockDbChain([event]))
         .mockReturnValueOnce(mockDbChain([download]));
 
-      await expect(service.markFailed(1)).rejects.toThrow('no info hash');
+      const result = await service.markFailed(1);
+
+      expect(result).toEqual({ success: true });
+      expect(blacklistService.create).not.toHaveBeenCalled();
+      expect(log.debug).toHaveBeenCalledWith(
+        { downloadId: 5 },
+        'Skipping blacklist — no infoHash (Usenet download)',
+      );
+      expect(bookService.updateStatus).toHaveBeenCalledWith(1, 'wanted');
+    });
+
+    it('throws when download not found', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5 });
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      await expect(service.markFailed(1)).rejects.toThrow('Associated download not found');
     });
 
     it('handles deleted book (null bookId) without calling updateStatus', async () => {
@@ -184,6 +201,80 @@ describe('EventHistoryService', () => {
       expect(result).toEqual({ success: true });
       expect(blacklistService.create).toHaveBeenCalled();
       expect(bookService.updateStatus).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('markFailed search trigger', () => {
+    it('triggers book-scoped retry search when retrySearchDeps are set', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5, bookId: 42 });
+      const download = { id: 5, infoHash: 'abc123', title: 'Test' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      const { RetryBudget } = await import('./retry-budget.js');
+      const mockSearchAll = vi.fn().mockResolvedValue([]);
+      service.setRetrySearchDeps({
+        indexerService: { searchAll: mockSearchAll },
+        downloadService: { grab: vi.fn() },
+        blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
+        bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, author: { name: 'Author' } }) },
+        settingsService: { get: vi.fn().mockResolvedValue({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' }) },
+        retryBudget: new RetryBudget(),
+        log: createMockLogger(),
+      } as never);
+
+      const result = await service.markFailed(1);
+
+      expect(result).toEqual({ success: true });
+      // Verify the retry search was actually triggered (fire-and-forget)
+      await vi.waitFor(() => {
+        expect(mockSearchAll).toHaveBeenCalled();
+      });
+    });
+
+    it('markFailed succeeds even when trigger-search fails and logs warning', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5, bookId: 42 });
+      const download = { id: 5, infoHash: 'abc123', title: 'Test' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      // Set retrySearchDeps that will cause retrySearch to fail
+      const { RetryBudget } = await import('./retry-budget.js');
+      const mockSearchAll = vi.fn().mockRejectedValue(new Error('Indexer down'));
+      service.setRetrySearchDeps({
+        indexerService: { searchAll: mockSearchAll },
+        downloadService: { grab: vi.fn() },
+        blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
+        bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, author: { name: 'Author' } }) },
+        settingsService: { get: vi.fn().mockResolvedValue({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' }) },
+        retryBudget: new RetryBudget(),
+        log: createMockLogger(),
+      } as never);
+
+      // markFailed should succeed — search failure is caught inside retrySearch (returns retry_error)
+      const result = await service.markFailed(1);
+      expect(result).toEqual({ success: true });
+      // Verify the search was attempted even though it failed
+      await vi.waitFor(() => {
+        expect(mockSearchAll).toHaveBeenCalled();
+      });
+    });
+
+    it('does not trigger search when no retrySearchDeps', async () => {
+      const event = createMockDbBookEvent({ downloadId: 5, bookId: 42 });
+      const download = { id: 5, infoHash: 'abc123', title: 'Test' };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([event]))
+        .mockReturnValueOnce(mockDbChain([download]));
+
+      // No retrySearchDeps set on service — should succeed without triggering search
+      const result = await service.markFailed(1);
+      expect(result).toEqual({ success: true });
     });
   });
 
