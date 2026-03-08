@@ -3,7 +3,7 @@ name: verify
 description: Run quality gates (lint, test, typecheck, build) via subagent and return
   a structured pass/fail summary. Use when user says "run checks", "verify", "quality
   gates", or invokes /verify.
-model: haiku
+model: sonnet
 ---
 
 # /verify — Run quality gates and report structured results
@@ -22,32 +22,32 @@ Runs the project's quality gate commands sequentially and returns a compact stru
 
 2. **Run each gate sequentially.** For each command, capture the exit code and extract only failure details (not full output):
 
-   - If it passes, note `pass` and any relevant count (e.g., number of tests passed)
-   - If it fails, extract the first 3-5 actionable error messages (not the full log)
-   - Stop running subsequent gates if one fails — report remaining as `skipped`
+   - **Lint:** Run the lint command. If it passes, note `pass`. If it fails, extract the first 3-5 actionable error messages.
+   - **Test (with coverage):** Run tests with coverage in a single command — do NOT run tests twice. The exact command depends on the project's test runner:
+     - **Vitest:** `pnpm exec vitest run --coverage --coverage.reporter=json-summary`
+     - **Jest:** `npx jest --coverage --coverageReporters=json-summary`
+     - **pytest:** `pytest --cov --cov-report=json`
+     - **Requires** `@vitest/coverage-v8` (or equivalent) to be installed. If missing, run tests without coverage and report coverage as `skip (coverage provider not installed)`.
 
-3. **Coverage gate (after all other gates pass).** Check if the project's `CLAUDE.md` mentions a coverage gate or convention. If it does:
+     From this single run, extract both:
+     - **TEST result:** pass/fail with suite and test counts
+     - **Coverage data:** saved to `coverage/coverage-summary.json` (Vitest) or equivalent for later analysis
+   - **Typecheck:** Run the typecheck command.
+   - **Build:** Run the build command.
+   - If any gate fails, stop — report remaining gates as `skipped`
+
+3. **Coverage analysis (after all gates pass).** Check if the project's `CLAUDE.md` mentions a coverage gate or convention. If it does:
 
    a. Get the list of source files changed on this branch vs the main branch:
       ```bash
       git diff --name-only --diff-filter=ACMR $(git merge-base HEAD main)..HEAD
       ```
    b. Filter to source files only (exclude test files like `*.test.ts`, `*.test.tsx`, `*.spec.*`, config files, markdown, etc.)
-   c. Run tests with coverage enabled. The exact command depends on the project's test runner:
-      - **Vitest:** Run from the repo root:
-        `pnpm exec vitest run --coverage --coverage.reporter=json-summary`
-        Output: `coverage/coverage-summary.json`
-      - **Jest:** `npx jest --coverage --coverageReporters=json-summary`
-      - **pytest:** `pytest --cov --cov-report=json` (writes `coverage.json`)
-      - Adapt for other runners as needed. If unsure, check `CLAUDE.md` or package.json for hints.
-      - **Requires** `@vitest/coverage-v8` (or equivalent) to be installed. If missing, report `skip (coverage provider not installed)`.
-   d. Read `coverage/coverage-summary.json` and check each changed source file. The JSON format has file paths as keys with `{ lines: { pct: N } }`. Flag any file at **0% line coverage** (meaning zero test coverage at all). Files with tiny percentages like 1-3% from import evaluation should also be flagged — use a threshold of **≤5% line coverage** to catch these.
-   e. Report result:
-      - `pass` if all changed source files have >0% coverage
-      - `fail` with the list of 0%-coverage files if any exist
-      - `skip` if no coverage convention is mentioned in CLAUDE.md, or if there are no changed source files
-
-   **Important:** This gate is intentionally lenient — it only catches files with *zero* tests, not low coverage. The goal is preventing entirely untested code from shipping, not enforcing a coverage percentage.
+   c. Read `coverage/coverage-summary.json` (already generated in step 2) and check each changed source file. The JSON format has file paths as keys with `{ lines: { pct: N } }`. Flag any file at **≤5% line coverage**. This catches both truly untested files (0%) and files where the only "coverage" is import/evaluation side effects (1-3%).
+   d. Report result:
+      - `pass` if all changed source files have >5% coverage
+      - `fail` with the list of under-covered files and their percentages
+      - `skip` if no coverage convention is mentioned in CLAUDE.md, no changed source files, or coverage data wasn't generated
 
 4. **Return a structured summary** (this is the ONLY output — no verbose logs):
 
@@ -70,7 +70,8 @@ Runs the project's quality gate commands sequentially and returns a compact stru
 
 - This skill is a **utility** — it does NOT fix failures, it only reports them
 - The calling skill (`/handoff`, `/implement`) decides what to do with failures
-- Do NOT run gates in parallel — they must be sequential (test depends on build artifacts, etc.)
+- Do NOT run gates in parallel — they must be sequential
+- Do NOT run tests twice — the test step already includes coverage instrumentation
 - Do NOT create temp files or write output anywhere — just return structured text
 - Run all commands from the repo root
-- The coverage gate runs LAST because it re-runs tests with coverage instrumentation — don't run it if earlier gates already failed
+- Coverage analysis is a post-processing step on data already collected during the test run — it does NOT re-run tests
