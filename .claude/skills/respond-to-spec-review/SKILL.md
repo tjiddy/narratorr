@@ -56,13 +56,15 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      ```
    This feeds the same learning pipeline as PR review learnings — `/triage` can graduate recurring spec gaps into process fixes.
 
-6. **Update the issue body.** Apply all `fixed` changes to the spec:
+6. **Verify fixes before writing.** Before updating the issue body, verify every factual claim your fixes introduce — file paths exist (`ls`), gitignore status is correct (`git check-ignore`), named artifacts are present. Each review round is expensive; don't introduce new defects while fixing old ones.
+
+7. **Update the issue body.** Apply all `fixed` changes to the spec:
    - Preserve ALL existing content structure
    - Modify in-place where the finding points to a specific section (e.g., fix an AC item, add a Test Plan section)
    - Write updated body to a temp file, then: `gitea issue-update <id> body --body-file <temp-file-path>`
    - Clean up the temp file
 
-7. **Post a response comment.** Write a structured response and post it:
+8. **Post a response comment.** Write a structured response and post it:
    ```
    ## Spec Review Response
 
@@ -75,12 +77,12 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    ```
    Write to temp file, then: `gitea issue-comment <id> --body-file <temp-file-path>`
 
-8. **Update labels** (for `yolo`-tagged issues):
+9. **Update labels** (for `yolo`-tagged issues):
    - If the issue has the `yolo` label:
      - Run: `node scripts/update-labels.ts <id> --replace "status/" "status/review-spec"`
    - If the issue does NOT have `yolo`: do not change labels (manual workflow)
 
-9. **Report readiness verdict** using this format:
+10. **Report readiness verdict** using this format:
 
    ```
    VERDICT: ready | filled | not-ready
@@ -98,7 +100,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Important
 
-- This skill writes to the issue body (step 6), posts a response comment (step 7), and updates labels (step 8) for yolo-tagged issues
+- This skill writes to the issue body (step 7), posts a response comment (step 8), and updates labels (step 9) for yolo-tagged issues
 - Do NOT create branches — that's `/claim`'s job
 - Do NOT suggest claiming or starting implementation — just report readiness
 - Ephemeral codebase findings stay in the verdict output — they're consumed by `/claim` or the user, not persisted to the issue

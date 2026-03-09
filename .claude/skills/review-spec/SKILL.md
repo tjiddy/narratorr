@@ -72,6 +72,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > 4. Check for related features that might interact or conflict
    > 5. Look for prior art — has something similar been built elsewhere in the codebase?
    > 6. Run `node scripts/gitea.ts prs` to check for conflicting open PRs
+   > 7. **Verify named artifacts:** If the spec names specific files to create, modify, or delete (especially cleanup targets like learning files, debt entries, config files), verify each one exists using `ls` or `git ls-files`. For files claimed to be gitignored/local-only, verify with `git check-ignore <path>`. Report any named-but-missing artifacts.
    >
    > Return this structure:
    > ```
@@ -82,6 +83,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > PRIOR ART: <similar implementations elsewhere in the codebase>
    > CONFLICTING PRS: <open PRs in the same area, or "none">
    > SPEC ASSUMPTION RISKS: <anything in the codebase that contradicts or complicates spec assumptions>
+   > NAMED ARTIFACTS: <for each file the spec names as a cleanup/creation/deletion target: exists | missing | gitignored (with git check-ignore result)>
    > ASSUMPTION COVERAGE: <table/list mapping each AC assumption to verified code evidence path:line, or "unverified">
    > ```
 
@@ -110,6 +112,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - No conflicts with in-progress work (check open PRs via `gitea prs`)
    - **Blast radius scan:** When the spec adds or modifies types, schema fields, or service interfaces, grep for existing test mocks that reference those types. List any test files that hardcode objects of the affected types — these will need mock updates during implementation. Flag in findings as `category: "blast-radius"` severity `suggestion` if more than 2 test files are affected.
    - **Error propagation check:** When the spec introduces a new error type or changes error handling, trace the call chain from where the error is thrown to where it's caught. Flag any catch-all blocks (`catch { return null }`, `catch (e) { return [] }`, etc.) that would silently swallow the new error. This is a `category: "error-propagation"` finding, severity `blocking` if the error would be silently swallowed.
+   - **Named artifact verification:** When ACs reference specific files to create, modify, or delete, verify each named file exists in the working tree. For files claimed to be gitignored or local-only, verify with `git check-ignore <path>`. If a named artifact doesn't exist, the AC must use conditional language ("if file exists...") or be flagged as `blocking`.
 
    **Design checks (from `.claude/docs/architecture-checks.md` + CLAUDE.md):**
    - **OCP-1 (Wiring Cost):** Does the spec describe adding a new type variant? Based on codebase exploration, how many files would need type-registration edits? If >3, flag it and suggest a registry pattern.
