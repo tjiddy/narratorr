@@ -27,17 +27,20 @@ if (lint.ok) {
 // --- Test + Coverage ---
 if (!failed) {
   const test = run("pnpm exec vitest run --no-color --coverage --coverage.reporter=json-summary");
-  const output = test.stdout || "";
+  const combined = [test.stdout, test.stderr].filter(Boolean).join("\n");
   if (test.ok) {
-    const filesMatch = output.match(/Test Files\s+(\d+)\s+passed/);
-    const testsMatch = output.match(/Tests\s+(\d+)\s+passed/);
+    const filesMatch = combined.match(/Test Files\s+(\d+)\s+passed/);
+    const testsMatch = combined.match(/Tests\s+(\d+)\s+passed/);
     const suites = filesMatch?.[1] ?? "?";
     const tests = testsMatch?.[1] ?? "?";
     addGate("TEST", `pass (${suites} suites, ${tests} tests)`, true);
   } else {
-    const failMatch = output.match(/Tests\s+(\d+)\s+failed/);
-    const failedLines = output.split("\n").filter(l => /FAIL|AssertionError|Error:/.test(l)).slice(0, 5);
-    addGate("TEST", `fail (${failMatch?.[1] ?? "?"} failed)\n${failedLines.join("\n")}`, false);
+    const failMatch = combined.match(/Tests\s+(\d+)\s+failed/);
+    const failedLines = combined.split("\n")
+      .filter(l => /^\s*FAIL\s/.test(l))
+      .map(l => l.trim())
+      .slice(0, 10);
+    addGate("TEST", `fail (${failMatch?.[1] ?? "?"} failed)${failedLines.length ? "\n" + failedLines.join("\n") : ""}`, false);
   }
 } else {
   addGate("TEST", "skipped", true);
