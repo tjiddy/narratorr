@@ -91,7 +91,7 @@ describe('ProcessingSettingsSection', () => {
   it('disables bitrate input when "Keep original" is checked', async () => {
     const user = userEvent.setup();
     const settingsWithProcessing: Settings = createMockSettings({
-      processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
+      processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
     });
     (api.getSettings as Mock).mockResolvedValue(settingsWithProcessing);
     renderWithProviders(<GeneralSettings />);
@@ -113,7 +113,7 @@ describe('ProcessingSettingsSection', () => {
     (api.probeFfmpeg as Mock).mockResolvedValue({ version: '6.1.1' });
 
     const settingsWithProcessing: Settings = createMockSettings({
-      processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
+      processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
     });
     (api.getSettings as Mock).mockResolvedValue(settingsWithProcessing);
     renderWithProviders(<GeneralSettings />);
@@ -135,7 +135,7 @@ describe('ProcessingSettingsSection', () => {
     (api.probeFfmpeg as Mock).mockRejectedValue(new Error('spawn ENOENT'));
 
     const settingsWithProcessing: Settings = createMockSettings({
-      processing: { enabled: true, ffmpegPath: '/bad/path', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
+      processing: { enabled: true, ffmpegPath: '/bad/path', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
     });
     (api.getSettings as Mock).mockResolvedValue(settingsWithProcessing);
     renderWithProviders(<GeneralSettings />);
@@ -188,10 +188,52 @@ describe('ProcessingSettingsSection', () => {
     });
   });
 
+  it('renders max concurrent jobs field when processing is enabled', async () => {
+    const settingsWithProcessing: Settings = createMockSettings({
+      processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
+    });
+    (api.getSettings as Mock).mockResolvedValue(settingsWithProcessing);
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Max Concurrent Jobs')).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText('Max Concurrent Jobs')).not.toBeDisabled();
+    expect(screen.getByLabelText('Max Concurrent Jobs')).toHaveValue(2);
+  });
+
+  it('disables max concurrent jobs field when processing is disabled', async () => {
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Max Concurrent Jobs')).toBeInTheDocument();
+    });
+
+    expect(screen.getByLabelText('Max Concurrent Jobs')).toBeDisabled();
+  });
+
+  it('allows changing max concurrent jobs value', async () => {
+    const user = userEvent.setup();
+    const settingsWithProcessing: Settings = createMockSettings({
+      processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
+    });
+    (api.getSettings as Mock).mockResolvedValue(settingsWithProcessing);
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Max Concurrent Jobs')).not.toBeDisabled();
+    });
+
+    const input = screen.getByLabelText('Max Concurrent Jobs');
+    await user.clear(input);
+    await user.type(input, '4');
+    expect(input).toHaveValue(4);
+  });
+
   it('shows mp3 chapter warning when mp3 format selected', async () => {
     const user = userEvent.setup();
     const settingsWithProcessing: Settings = createMockSettings({
-      processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' },
+      processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
     });
     (api.getSettings as Mock).mockResolvedValue(settingsWithProcessing);
     renderWithProviders(<GeneralSettings />);

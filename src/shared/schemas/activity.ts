@@ -11,6 +11,7 @@ export const downloadStatusSchema = z.enum([
   'completed',
   'checking',
   'pending_review',
+  'processing_queued',
   'importing',
   'imported',
   'failed',

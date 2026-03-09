@@ -60,6 +60,14 @@ export const DOWNLOAD_STATUS_REGISTRY: Record<DownloadStatus, DownloadStatusMeta
     bgColor: 'bg-amber-500/10',
     textColor: 'text-amber-600 dark:text-amber-400',
   },
+  processing_queued: {
+    category: 'inProgress',
+    label: 'Processing Queued',
+    icon: 'clock',
+    color: 'text-amber-500',
+    bgColor: 'bg-amber-500/10',
+    textColor: 'text-amber-600 dark:text-amber-400',
+  },
   importing: {
     category: 'inProgress',
     label: 'Importing',

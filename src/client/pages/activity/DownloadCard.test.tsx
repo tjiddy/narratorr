@@ -11,7 +11,7 @@ beforeEach(() => {
 describe('DownloadCard', () => {
   describe('status rendering', () => {
     const allStatuses: Download['status'][] = [
-      'queued', 'downloading', 'paused', 'completed', 'checking', 'pending_review', 'importing', 'imported', 'failed',
+      'queued', 'downloading', 'paused', 'completed', 'checking', 'pending_review', 'processing_queued', 'importing', 'imported', 'failed',
     ];
 
     it.each(allStatuses)('renders %s status with label', (status) => {
@@ -22,6 +22,7 @@ describe('DownloadCard', () => {
         completed: 'Completed',
         checking: 'Checking Quality',
         pending_review: 'Pending Review',
+        processing_queued: 'Processing Queued',
         importing: 'Importing',
         imported: 'Imported',
         failed: 'Failed',

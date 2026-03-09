@@ -137,6 +137,7 @@ function BitrateField({ register, errors, enabled, keepOriginalBitrate }: {
   );
 }
 
+// eslint-disable-next-line max-lines-per-function -- linear form with ffmpeg, processing, and tagging sections
 export function ProcessingSettingsSection({ register, errors, watch }: ProcessingSettingsSectionProps) {
   const [probeResult, setProbeResult] = useState<{ version: string } | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
@@ -240,6 +241,26 @@ export function ProcessingSettingsSection({ register, errors, watch }: Processin
           </select>
           <p className="text-sm text-muted-foreground mt-2">
             Controls when multiple audio files are merged into a single output file with chapter markers
+          </p>
+        </div>
+        <div>
+          <label htmlFor="maxConcurrentProcessing" className="block text-sm font-medium mb-2">Max Concurrent Jobs</label>
+          <input
+            id="maxConcurrentProcessing"
+            type="number"
+            {...register('processing.maxConcurrentProcessing', { valueAsNumber: true })}
+            disabled={!enabled}
+            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed ${
+              errors.processing?.maxConcurrentProcessing ? 'border-destructive' : 'border-border'
+            }`}
+            min={1}
+            placeholder="2"
+          />
+          {errors.processing?.maxConcurrentProcessing && (
+            <p className="text-sm text-destructive mt-1">{errors.processing.maxConcurrentProcessing.message}</p>
+          )}
+          <p className="text-sm text-muted-foreground mt-2">
+            Maximum number of imports that can run simultaneously. Higher values use more CPU and disk I/O.
           </p>
         </div>
       </div>

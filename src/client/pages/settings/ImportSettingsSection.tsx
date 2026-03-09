@@ -47,6 +47,27 @@ export function ImportSettingsSection({ register, errors }: ImportSettingsSectio
           How long to seed before removing the torrent (only applies when delete after import is enabled)
         </p>
       </div>
+
+      <div>
+        <label htmlFor="minFreeSpaceGB" className="block text-sm font-medium mb-2">Minimum Free Space (GB)</label>
+        <input
+          id="minFreeSpaceGB"
+          type="number"
+          {...register('import.minFreeSpaceGB', { valueAsNumber: true })}
+          className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+            errors.import?.minFreeSpaceGB ? 'border-destructive' : 'border-border'
+          }`}
+          min={0}
+          step={1}
+          placeholder="5"
+        />
+        {errors.import?.minFreeSpaceGB && (
+          <p className="text-sm text-destructive mt-1">{errors.import.minFreeSpaceGB.message}</p>
+        )}
+        <p className="text-sm text-muted-foreground mt-2">
+          Block imports when free disk space is below this threshold. Set to 0 to disable.
+        </p>
+      </div>
     </SettingsSection>
   );
 }

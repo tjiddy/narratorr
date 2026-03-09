@@ -99,6 +99,7 @@ describe('Error recovery E2E', () => {
     await e2e.services.settings.set('import', {
       deleteAfterImport: false,
       minSeedTime: 0,
+      minFreeSpaceGB: 5,
     });
   });
 

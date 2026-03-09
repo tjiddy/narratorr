@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
+import { Semaphore } from '../utils/semaphore.js';
 
 const mockDownload = {
   id: 1,
@@ -24,9 +25,12 @@ const mockDownload = {
 describe('activity routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
+  const importSemaphore = new Semaphore(2);
 
   beforeAll(async () => {
-    services = createMockServices();
+    services = createMockServices({
+      import: { semaphore: importSemaphore },
+    });
     app = await createTestApp(services);
   });
 
@@ -254,6 +258,64 @@ describe('activity routes', () => {
       const res = await app.inject({ method: 'POST', url: '/api/activity/999/approve' });
 
       expect(res.statusCode).toBe(404);
+    });
+  });
+
+  describe('POST /api/activity/:id/approve — concurrency', () => {
+    it('approve when slot available triggers import immediately', async () => {
+      (services.qualityGate.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
+      (services.import.importDownload as Mock).mockResolvedValue({});
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.import.importDownload).toHaveBeenCalledWith(1);
+      // setProcessingQueued should NOT have been called
+      expect(services.import.setProcessingQueued).not.toHaveBeenCalled();
+    });
+
+    it('approve when no concurrency slot available sets download to processing_queued', async () => {
+      // Fill all semaphore slots
+      importSemaphore.setMax(2);
+      importSemaphore.tryAcquire();
+      importSemaphore.tryAcquire();
+
+      (services.qualityGate.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ id: 1, status: 'processing_queued' });
+      expect(services.import.importDownload).not.toHaveBeenCalled();
+      expect(services.import.setProcessingQueued).toHaveBeenCalledWith(1);
+
+      // Release slots for cleanup
+      importSemaphore.release();
+      importSemaphore.release();
+    });
+
+    it('releases semaphore slot when import fails after approve', async () => {
+      (services.qualityGate.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
+      (services.import.importDownload as Mock).mockRejectedValue(new Error('import failed'));
+
+      // Semaphore starts with capacity 2, both free
+      expect(importSemaphore.tryAcquire()).toBe(true);
+      importSemaphore.release(); // confirm slot was available
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.import.importDownload).toHaveBeenCalledWith(1);
+
+      // Wait for fire-and-forget promise to settle
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      // Semaphore slot should be released despite import failure
+      // If we can acquire 2 slots, all capacity is free (none leaked)
+      expect(importSemaphore.tryAcquire()).toBe(true);
+      expect(importSemaphore.tryAcquire()).toBe(true);
+      importSemaphore.release();
+      importSemaphore.release();
     });
   });
 

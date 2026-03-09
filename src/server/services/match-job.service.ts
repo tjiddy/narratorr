@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
+import { Semaphore } from '../utils/semaphore.js';
 
 // ============ Types ============
 
@@ -28,34 +29,6 @@ export interface MatchJobStatus {
   total: number;
   matched: number;
   results: MatchResult[];
-}
-
-// ============ Semaphore ============
-
-class Semaphore {
-  private queue: Array<() => void> = [];
-  private active = 0;
-
-  constructor(private max: number) {}
-
-  async acquire(): Promise<void> {
-    if (this.active < this.max) {
-      this.active++;
-      return;
-    }
-    return new Promise<void>(resolve => {
-      this.queue.push(resolve);
-    });
-  }
-
-  release(): void {
-    this.active--;
-    const next = this.queue.shift();
-    if (next) {
-      this.active++;
-      next();
-    }
-  }
 }
 
 // ============ Service ============

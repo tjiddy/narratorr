@@ -64,9 +64,10 @@ describe('settingsRegistry', () => {
     });
 
     it('import schema defaults match registry defaults', () => {
-      expect(DEFAULT_SETTINGS.import).toEqual({ deleteAfterImport: false, minSeedTime: 60 });
+      expect(DEFAULT_SETTINGS.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 });
       const schemaParsed = settingsRegistry.import.schema.parse({});
       expect(schemaParsed.minSeedTime).toBe(60);
+      expect(schemaParsed.minFreeSpaceGB).toBe(5);
       expect(schemaParsed).toEqual(DEFAULT_SETTINGS.import);
     });
 
@@ -86,6 +87,7 @@ describe('settingsRegistry', () => {
         keepOriginalBitrate: false,
         bitrate: 128,
         mergeBehavior: 'multi-file-only',
+        maxConcurrentProcessing: 2,
       });
     });
 
@@ -107,6 +109,55 @@ describe('settingsRegistry', () => {
         rejectWords: '',
         requiredWords: '',
       });
+    });
+  });
+
+  describe('processing maxConcurrentProcessing boundary constraints', () => {
+    it('accepts maxConcurrentProcessing=1 (minimum)', () => {
+      const result = settingsRegistry.processing.schema.safeParse({ ...DEFAULT_SETTINGS.processing, maxConcurrentProcessing: 1 });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects maxConcurrentProcessing=0', () => {
+      const result = settingsRegistry.processing.schema.safeParse({ ...DEFAULT_SETTINGS.processing, maxConcurrentProcessing: 0 });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects negative maxConcurrentProcessing', () => {
+      const result = settingsRegistry.processing.schema.safeParse({ ...DEFAULT_SETTINGS.processing, maxConcurrentProcessing: -1 });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects non-integer maxConcurrentProcessing', () => {
+      const result = settingsRegistry.processing.schema.safeParse({ ...DEFAULT_SETTINGS.processing, maxConcurrentProcessing: 1.5 });
+      expect(result.success).toBe(false);
+    });
+
+    it('defaults to 2 when absent', () => {
+      const result = settingsRegistry.processing.schema.parse({});
+      expect(result.maxConcurrentProcessing).toBe(2);
+    });
+  });
+
+  describe('import minFreeSpaceGB boundary constraints', () => {
+    it('accepts minFreeSpaceGB=0 (disables check)', () => {
+      const result = settingsRegistry.import.schema.safeParse({ ...DEFAULT_SETTINGS.import, minFreeSpaceGB: 0 });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects negative minFreeSpaceGB', () => {
+      const result = settingsRegistry.import.schema.safeParse({ ...DEFAULT_SETTINGS.import, minFreeSpaceGB: -1 });
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts minFreeSpaceGB=5 (default)', () => {
+      const result = settingsRegistry.import.schema.safeParse({ ...DEFAULT_SETTINGS.import, minFreeSpaceGB: 5 });
+      expect(result.success).toBe(true);
+    });
+
+    it('defaults to 5 when absent', () => {
+      const result = settingsRegistry.import.schema.parse({});
+      expect(result.minFreeSpaceGB).toBe(5);
     });
   });
 

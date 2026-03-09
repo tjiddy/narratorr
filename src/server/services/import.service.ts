@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- linear import pipeline with copy, process, rename, tag, enrich steps */
-import { eq, and, isNotNull } from 'drizzle-orm';
-import { mkdir, cp, stat, readdir, rm } from 'node:fs/promises';
+import { eq, and, inArray, isNotNull } from 'drizzle-orm';
+import { mkdir, cp, stat, readdir, rm, statfs } from 'node:fs/promises';
 import { join, extname, basename, normalize } from 'node:path';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -16,6 +16,7 @@ import type { NotifierService } from './notifier.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import type { TaggingService } from './tagging.service.js';
 import type { EventHistoryService } from './event-history.service.js';
+import { Semaphore } from '../utils/semaphore.js';
 
 type DownloadRow = typeof downloads.$inferSelect;
 type BookRow = typeof books.$inferSelect;
@@ -115,6 +116,8 @@ export interface ImportResult {
 }
 
 export class ImportService {
+  readonly semaphore = new Semaphore(2);
+
   constructor(
     private db: Db,
     private downloadClientService: DownloadClientService,
@@ -192,6 +195,28 @@ export class ImportService {
         sourcePath = savePath;
       } else if (sourceStats.isFile()) {
         fileCount = 1;
+      }
+
+      // 5b. Disk space check before copy
+      if (importSettings.minFreeSpaceGB > 0) {
+        const sourceSize = sourceStats.isDirectory() ? await getPathSize(sourcePath) : sourceStats.size;
+        const multiplier = processingSettings?.enabled ? 1.5 : 1;
+        const estimatedOutputSize = sourceSize * multiplier;
+        const requiredBytes = importSettings.minFreeSpaceGB * 1024 ** 3 + estimatedOutputSize;
+
+        let freeBytes: number;
+        try {
+          const fsStats = await statfs(librarySettings.path);
+          freeBytes = Number(fsStats.bavail) * Number(fsStats.bsize);
+        } catch (statfsError) {
+          throw new Error(`Disk space check failed: ${statfsError instanceof Error ? statfsError.message : 'unknown error'}`);
+        }
+
+        if (freeBytes < requiredBytes) {
+          const freeGB = (freeBytes / 1024 ** 3).toFixed(1);
+          const requiredGB = (requiredBytes / 1024 ** 3).toFixed(1);
+          throw new Error(`Import blocked — insufficient disk space (${freeGB} GB free, ${requiredGB} GB required)`);
+        }
       }
 
       // 6. Create target directory and copy
@@ -405,38 +430,75 @@ export class ImportService {
   }
 
   /**
-   * Process all completed downloads that are ready for import.
+   * Process all completed and queued downloads that are ready for import.
+   * Uses semaphore-based parallel admission up to maxConcurrentProcessing.
    */
   async processCompletedDownloads(): Promise<ImportResult[]> {
-    const completedDownloads = await this.db
+    // Read concurrency limit and update semaphore
+    const processingSettings = await this.settingsService.get('processing');
+    this.semaphore.setMax(processingSettings.maxConcurrentProcessing);
+
+    const eligibleDownloads = await this.db
       .select()
       .from(downloads)
-      .where(and(eq(downloads.status, 'completed'), isNotNull(downloads.externalId)));
+      .where(and(
+        inArray(downloads.status, ['completed', 'processing_queued']),
+        isNotNull(downloads.externalId),
+        isNotNull(downloads.completedAt),
+      ))
+      .orderBy(downloads.completedAt, downloads.id);
 
-    if (completedDownloads.length === 0) {
+    if (eligibleDownloads.length === 0) {
       this.log.debug('No completed downloads to import');
       return [];
     }
 
-    this.log.info({ count: completedDownloads.length }, 'Processing completed downloads for import');
+    this.log.info({ count: eligibleDownloads.length }, 'Processing completed downloads for import');
 
-    const results: ImportResult[] = [];
-    for (const download of completedDownloads) {
+    const importPromises: Promise<ImportResult | null>[] = [];
+
+    for (const download of eligibleDownloads) {
       if (!download.bookId) {
         this.log.debug({ id: download.id }, 'Skipping download with no linked book');
         continue;
       }
 
-      try {
-        const result = await this.importDownload(download.id);
-        results.push(result);
-      } catch (_error) {
-        // Error already logged in importDownload; continue with next
-        this.log.warn({ downloadId: download.id }, 'Skipping failed import, continuing with next');
+      if (!this.semaphore.tryAcquire()) {
+        // No slot available — mark as processing_queued for next tick
+        if (download.status !== 'processing_queued') {
+          await this.db.update(downloads).set({ status: 'processing_queued' }).where(eq(downloads.id, download.id));
+        }
+        this.log.debug({ downloadId: download.id }, 'Concurrency limit reached, queuing for next tick');
+        continue;
       }
+
+      // Slot acquired — launch import wrapped in finally to release
+      importPromises.push(
+        this.importDownload(download.id)
+          .then((result): ImportResult => result)
+          .catch((_error): null => {
+            this.log.warn({ downloadId: download.id }, 'Skipping failed import, continuing with next');
+            return null;
+          })
+          .finally(() => {
+            this.semaphore.release();
+          }),
+      );
     }
 
+    const settled = await Promise.allSettled(importPromises);
+    const results: ImportResult[] = [];
+    for (const outcome of settled) {
+      if (outcome.status === 'fulfilled' && outcome.value) {
+        results.push(outcome.value);
+      }
+    }
     return results;
+  }
+
+  /** Set a download to processing_queued status (for deferred import). */
+  async setProcessingQueued(downloadId: number): Promise<void> {
+    await this.db.update(downloads).set({ status: 'processing_queued' }).where(eq(downloads.id, downloadId));
   }
 
   private async getDownload(id: number): Promise<DownloadRow | null> {

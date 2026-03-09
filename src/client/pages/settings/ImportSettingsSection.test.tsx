@@ -10,7 +10,7 @@ function Wrapper({ children }: { children: (props: ReturnType<typeof useForm<Upd
     defaultValues: {
       search: { enabled: false, intervalMinutes: 360 },
       library: { path: '', folderFormat: '' },
-      import: { deleteAfterImport: false, minSeedTime: 60 },
+      import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
       general: { logLevel: 'info' },
       metadata: { audibleRegion: 'us' },
     },
@@ -39,6 +39,48 @@ describe('ImportSettingsSection', () => {
     expect(checkbox.checked).toBe(false);
     await user.click(checkbox);
     expect(checkbox.checked).toBe(true);
+  });
+
+  it('renders minimum free space field', () => {
+    render(
+      <Wrapper>
+        {({ register, formState: { errors } }) => (
+          <ImportSettingsSection register={register} errors={errors} />
+        )}
+      </Wrapper>,
+    );
+
+    expect(screen.getByText('Minimum Free Space (GB)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveValue(5);
+  });
+
+  it('allows changing minimum free space value', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <Wrapper>
+        {({ register, formState: { errors } }) => (
+          <ImportSettingsSection register={register} errors={errors} />
+        )}
+      </Wrapper>,
+    );
+
+    const input = screen.getByLabelText('Minimum Free Space (GB)');
+    await user.clear(input);
+    await user.type(input, '10');
+    expect(input).toHaveValue(10);
+  });
+
+  it('shows helper text for free space field', () => {
+    render(
+      <Wrapper>
+        {({ register, formState: { errors } }) => (
+          <ImportSettingsSection register={register} errors={errors} />
+        )}
+      </Wrapper>,
+    );
+
+    expect(screen.getByText(/Set to 0 to disable/)).toBeInTheDocument();
   });
 
   it('allows changing the minimum seed time', async () => {

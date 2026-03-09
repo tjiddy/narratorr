@@ -10,6 +10,8 @@ import type { TaggingService } from './tagging.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
+import { and, inArray, isNotNull } from 'drizzle-orm';
+import { downloads } from '../../db/schema.js';
 
 // Mock node:fs/promises
 vi.mock('node:fs/promises', () => ({
@@ -20,6 +22,7 @@ vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
   rename: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined),
+  statfs: vi.fn().mockResolvedValue({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) }),
 }));
 
 // Mock enrichment-utils — delegates to real impl by default, override per-test for throw scenarios
@@ -49,7 +52,7 @@ vi.mock('../../core/utils/audio-processor.js', () => ({
   processAudioFiles: vi.fn().mockResolvedValue({ success: true, outputFiles: [] }),
 }));
 
-import { mkdir, cp, stat, readdir, writeFile, rename, rm } from 'node:fs/promises';
+import { mkdir, cp, stat, readdir, writeFile, rename, rm, statfs } from 'node:fs/promises';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
@@ -116,8 +119,8 @@ function createMockSettingsService(): SettingsService {
   return inject<SettingsService>({
     get: vi.fn().mockImplementation((key: string) => {
       if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-      if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
-      if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only' });
+      if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 5 });
+      if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 });
       return Promise.resolve({});
     }),
   });
@@ -1502,6 +1505,370 @@ describe('ImportService', () => {
           eventType: 'import_failed',
           source: 'auto',
           reason: expect.objectContaining({ error: expect.any(String) }),
+        }),
+      );
+    });
+  });
+
+  describe('concurrency limiting (semaphore)', () => {
+    it('with limit=2, two imports run concurrently and third queues', async () => {
+      // Configure limit=2
+      const settingsWithLimit = createMockSettingsService();
+      (settingsWithLimit.get as Mock).mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 });
+        return Promise.resolve({});
+      });
+
+      const svc = new ImportService(inject<Db>(db), clientService, settingsWithLimit, inject<FastifyBaseLogger>(log));
+
+      // 3 downloads: limit=2, so third should be set to processing_queued
+      const dl1 = { ...mockDownload, id: 1, bookId: 1 };
+      const dl2 = { ...mockDownload, id: 2, bookId: 2 };
+      const dl3 = { ...mockDownload, id: 3, bookId: 3 };
+      db.select.mockReturnValueOnce(mockDbChain([dl1, dl2, dl3]));
+      // Each importDownload calls: select(download), select(book+author), then updates
+      db.select.mockReturnValue(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      // Mock book lookups for imports that actually run
+      const origSelect = db.select;
+      let selectCount = 0;
+      origSelect.mockImplementation(() => {
+        selectCount++;
+        if (selectCount === 1) return mockDbChain([dl1, dl2, dl3]); // initial query
+        // For importDownload calls
+        if (selectCount % 2 === 0) return mockDbChain([mockDownload]); // download lookup
+        return mockDbChain([{ book: mockBook, author: mockAuthor }]); // book lookup
+      });
+
+      await svc.processCompletedDownloads();
+
+      // Third download should have been set to processing_queued
+      const updateSetCalls = db.update.mock.results
+        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+
+      expect(updateSetCalls).toEqual(
+        expect.arrayContaining([{ status: 'processing_queued' }]),
+      );
+    });
+
+    it('semaphore releases slot even when importDownload throws', async () => {
+      // Import should release semaphore slot via finally block even on failure
+      const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log));
+
+      // Before: tryAcquire should succeed
+      expect(svc.semaphore.tryAcquire()).toBe(true);
+      svc.semaphore.release();
+
+      // Now simulate: processCompletedDownloads with a download that fails import
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([])); // importDownload: download not found
+      db.update.mockReturnValue(mockDbChain());
+
+      await svc.processCompletedDownloads();
+
+      // Semaphore should be released despite failure
+      expect(svc.semaphore.tryAcquire()).toBe(true);
+      svc.semaphore.release();
+    });
+
+    it('download set to processing_queued when no slot available', async () => {
+      // Set limit=1, pre-fill one slot
+      const settingsWithLimit1 = createMockSettingsService();
+      (settingsWithLimit1.get as Mock).mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1 });
+        return Promise.resolve({});
+      });
+
+      const svc = new ImportService(inject<Db>(db), clientService, settingsWithLimit1, inject<FastifyBaseLogger>(log));
+
+      const dl1 = { ...mockDownload, id: 1 };
+      const dl2 = { ...mockDownload, id: 2, status: 'completed' as const };
+
+      let selectCount = 0;
+      db.select.mockImplementation(() => {
+        selectCount++;
+        if (selectCount === 1) return mockDbChain([dl1, dl2]); // initial query
+        if (selectCount % 2 === 0) return mockDbChain([mockDownload]); // download lookup
+        return mockDbChain([{ book: mockBook, author: mockAuthor }]); // book lookup
+      });
+      db.update.mockReturnValue(mockDbChain());
+
+      await svc.processCompletedDownloads();
+
+      // dl2 should be set to processing_queued
+      const updateSetCalls = db.update.mock.results
+        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      expect(updateSetCalls).toEqual(
+        expect.arrayContaining([{ status: 'processing_queued' }]),
+      );
+    });
+    it('queued downloads are retried on a later tick in FIFO order', async () => {
+      // limit=1: first tick processes dl1, queues dl2 and dl3
+      // second tick processes dl2 (oldest completedAt), queues dl3
+      const settingsWithLimit1 = createMockSettingsService();
+      (settingsWithLimit1.get as Mock).mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1 });
+        return Promise.resolve({});
+      });
+
+      const svc = new ImportService(inject<Db>(db), clientService, settingsWithLimit1, inject<FastifyBaseLogger>(log));
+
+      const dl1 = { ...mockDownload, id: 1, bookId: 1, completedAt: new Date('2025-01-01T00:00:00Z') };
+      const dl2 = { ...mockDownload, id: 2, bookId: 2, completedAt: new Date('2025-01-01T00:01:00Z') };
+      const dl3 = { ...mockDownload, id: 3, bookId: 3, completedAt: new Date('2025-01-01T00:02:00Z') };
+
+      // --- Tick 1: all 3 eligible, limit=1 ---
+      let selectCount = 0;
+      db.select.mockImplementation(() => {
+        selectCount++;
+        if (selectCount === 1) return mockDbChain([dl1, dl2, dl3]); // initial query
+        if (selectCount % 2 === 0) return mockDbChain([mockDownload]); // download lookup
+        return mockDbChain([{ book: mockBook, author: mockAuthor }]); // book lookup
+      });
+      db.update.mockReturnValue(mockDbChain());
+
+      await svc.processCompletedDownloads();
+
+      // dl2 and dl3 should be queued (status set to processing_queued)
+      const tick1Updates = db.update.mock.results
+        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      const queuedUpdates = tick1Updates.filter(u => u.status === 'processing_queued');
+      expect(queuedUpdates.length).toBeGreaterThanOrEqual(2);
+
+      // --- Tick 2: dl2 and dl3 still eligible (processing_queued), limit=1 ---
+      vi.clearAllMocks();
+      selectCount = 0;
+      const dl2Queued = { ...dl2, status: 'processing_queued' as const };
+      const dl3Queued = { ...dl3, status: 'processing_queued' as const };
+
+      // Spy on importDownload to track which download IDs get imported
+      const importSpy = vi.spyOn(svc as unknown as { importDownload: (id: number) => Promise<unknown> }, 'importDownload')
+        .mockResolvedValue({ downloadId: 2, bookId: 2, success: true });
+
+      db.select.mockImplementation(() => {
+        selectCount++;
+        if (selectCount === 1) return mockDbChain([dl2Queued, dl3Queued]); // FIFO: dl2 first (earlier completedAt)
+        return mockDbChain([]); // any other lookups
+      });
+      db.update.mockReturnValue(mockDbChain());
+
+      await svc.processCompletedDownloads();
+
+      // dl2 (oldest completedAt) must be the one imported — proves FIFO ordering
+      expect(importSpy).toHaveBeenCalledTimes(1);
+      expect(importSpy).toHaveBeenCalledWith(2); // dl2.id, NOT dl3.id
+    });
+
+    it('eligibility query filters by correct statuses, non-null fields, and FIFO ordering', async () => {
+      // Capture the query chain to assert where/orderBy constraints
+      const chain = mockDbChain([]);
+      db.select.mockReturnValueOnce(chain);
+
+      await service.processCompletedDownloads();
+
+      // Verify the where clause matches the expected Drizzle expression
+      const whereFn = (chain as Record<string, Mock>).where;
+      expect(whereFn).toHaveBeenCalledTimes(1);
+      const whereArg = whereFn.mock.calls[0][0];
+
+      // Build the expected where expression using the same Drizzle operators
+      const expectedWhere = and(
+        inArray(downloads.status, ['completed', 'processing_queued']),
+        isNotNull(downloads.externalId),
+        isNotNull(downloads.completedAt),
+      );
+      expect(whereArg).toEqual(expectedWhere);
+
+      // Verify orderBy was called with downloads.completedAt, downloads.id
+      const orderByFn = (chain as Record<string, Mock>).orderBy;
+      expect(orderByFn).toHaveBeenCalledTimes(1);
+      expect(orderByFn.mock.calls[0][0]).toEqual(downloads.completedAt);
+      expect(orderByFn.mock.calls[0][1]).toEqual(downloads.id);
+    });
+  });
+
+  describe('disk space check', () => {
+    function setupDiskCheckMocks(overrides?: { minFreeSpaceGB?: number; processingEnabled?: boolean }) {
+      const minFreeSpaceGB = overrides?.minFreeSpaceGB ?? 5;
+      const enabled = overrides?.processingEnabled ?? false;
+      const customSettings = createMockSettingsService();
+      (customSettings.get as Mock).mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB });
+        if (key === 'processing') return Promise.resolve({ enabled, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 });
+        if (key === 'tagging') return Promise.resolve({ enabled: false, mode: 'populate_missing', embedCover: false });
+        return Promise.resolve({});
+      });
+      return customSettings;
+    }
+
+    function setupImportMocks() {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+    }
+
+    it('import proceeds when free space >= threshold + estimated output size', async () => {
+      const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 5 });
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      setupImportMocks();
+
+      // 100GB free, 5GB threshold + ~500MB source = plenty of space
+      vi.mocked(statfs).mockResolvedValueOnce({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) } as never);
+
+      const result = await svc.importDownload(1);
+      expect(result.downloadId).toBe(1);
+    });
+
+    it('import aborts when free space < threshold + estimated output size', async () => {
+      const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 5 });
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      setupImportMocks();
+
+      // Only 1GB free, need 5GB threshold + source
+      vi.mocked(statfs).mockResolvedValueOnce({ bavail: BigInt(1_000_000_000), bsize: BigInt(1) } as never);
+
+      await expect(svc.importDownload(1)).rejects.toThrow('insufficient disk space');
+    });
+
+    it('free space at exactly threshold + estimated size proceeds (>= boundary)', async () => {
+      const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 5 });
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      setupImportMocks();
+
+      // Source size is 500_000_000 (from stat mock), processing disabled so multiplier=1
+      // Required = 5 * 1024^3 + 500_000_000 = 5_368_709_120 + 500_000_000 = 5_868_709_120
+      const exactlyEnough = BigInt(5) * BigInt(1024 ** 3) + BigInt(500_000_000);
+      vi.mocked(statfs).mockResolvedValueOnce({ bavail: exactlyEnough, bsize: BigInt(1) } as never);
+
+      const result = await svc.importDownload(1);
+      expect(result.downloadId).toBe(1);
+    });
+
+    it('estimated output uses sourceSize * 1.5 when processing enabled', async () => {
+      // Use minFreeSpaceGB=1 so disk check actually runs (0 skips it)
+      const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 1, processingEnabled: true });
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      setupImportMocks();
+
+      // Source = 500MB, with processing: estimated = 750MB, threshold = 1GB
+      // Required = 1GB + 750MB = ~1.75GB
+      // Free = 1.5GB → should fail because 1.5GB < 1.75GB
+      vi.mocked(statfs).mockResolvedValueOnce({ bavail: BigInt(1_500_000_000), bsize: BigInt(1) } as never);
+
+      await expect(svc.importDownload(1)).rejects.toThrow('insufficient disk space');
+    });
+
+    it('estimated output uses sourceSize * 1 when processing disabled', async () => {
+      // Use minFreeSpaceGB=1 so disk check actually runs (0 skips it)
+      const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 1, processingEnabled: false });
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      setupImportMocks();
+
+      // Source = 500MB, no processing: estimated = 500MB, threshold = 1GB
+      // Required = 1GB + 500MB = ~1.5GB
+      // Free = 2GB → should succeed because 2GB >= 1.5GB
+      vi.mocked(statfs).mockResolvedValueOnce({ bavail: BigInt(2_000_000_000), bsize: BigInt(1) } as never);
+
+      const result = await svc.importDownload(1);
+      expect(result.downloadId).toBe(1);
+    });
+
+    it('statfs failure aborts import with clear error', async () => {
+      const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 5 });
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      setupImportMocks();
+
+      vi.mocked(statfs).mockReset();
+      vi.mocked(statfs).mockRejectedValueOnce(new Error('ENOENT: no such file'));
+
+      await expect(svc.importDownload(1)).rejects.toThrow('Disk space check failed');
+    });
+
+    it('disk space check skipped when minFreeSpaceGB=0', async () => {
+      const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 0 });
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      setupImportMocks();
+
+      // statfs should not be called
+      const result = await svc.importDownload(1);
+      expect(result.downloadId).toBe(1);
+      expect(statfs).not.toHaveBeenCalled();
+    });
+
+    it('download set to failed with descriptive errorMessage on disk-space abort', async () => {
+      const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 5 });
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      setupImportMocks();
+
+      vi.mocked(statfs).mockResolvedValueOnce({ bavail: BigInt(1_000_000_000), bsize: BigInt(1) } as never);
+
+      await expect(svc.importDownload(1)).rejects.toThrow();
+
+      // Verify download was set to failed with error message
+      const updateSetCalls = db.update.mock.results
+        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+
+      expect(updateSetCalls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            status: 'failed',
+            errorMessage: expect.stringContaining('insufficient disk space'),
+          }),
+        ]),
+      );
+    });
+
+    it('book status reverted per existing recovery logic on disk-space abort', async () => {
+      const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 5 });
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      setupImportMocks();
+
+      vi.mocked(statfs).mockResolvedValueOnce({ bavail: BigInt(1_000_000_000), bsize: BigInt(1) } as never);
+
+      await expect(svc.importDownload(1)).rejects.toThrow();
+
+      // Book should be reverted to 'wanted' (mockBook.path is undefined)
+      const updateSetCalls = db.update.mock.results
+        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+
+      expect(updateSetCalls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ status: 'wanted' }),
+        ]),
+      );
+    });
+
+    it('event history records import_failed on disk-space abort', async () => {
+      const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 5 });
+      const eventHistory = inject<EventHistoryService>({ create: vi.fn().mockResolvedValue(undefined) });
+      const svc = new ImportService(
+        inject<Db>(db), clientService, customSettings,
+        inject<FastifyBaseLogger>(log),
+        undefined, undefined, undefined, eventHistory,
+      );
+      setupImportMocks();
+
+      vi.mocked(statfs).mockResolvedValueOnce({ bavail: BigInt(1_000_000_000), bsize: BigInt(1) } as never);
+
+      await expect(svc.importDownload(1)).rejects.toThrow();
+
+      expect(eventHistory.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'import_failed',
+          reason: expect.objectContaining({ error: expect.stringContaining('insufficient disk space') }),
         }),
       );
     });

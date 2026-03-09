@@ -110,6 +110,7 @@ describe('Notifier event triggers E2E', () => {
     await e2e.services.settings.set('import', {
       deleteAfterImport: false,
       minSeedTime: 0,
+      minFreeSpaceGB: 5,
     });
 
     // Notifier 1: grab-only webhook (WEBHOOK_URL)

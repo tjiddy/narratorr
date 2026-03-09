@@ -50,7 +50,7 @@ describe('SettingsService', () => {
       expect(result.library).toEqual({ path: '/custom', folderFormat: '{title}', fileFormat: '{author} - {title}' });
       // Other sections fall back to defaults
       expect(result.search).toEqual({ intervalMinutes: 360, enabled: true });
-      expect(result.import).toEqual({ deleteAfterImport: false, minSeedTime: 60 });
+      expect(result.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 });
       expect(result.general).toEqual({ logLevel: 'info' });
     });
 

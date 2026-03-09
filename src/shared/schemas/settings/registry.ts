@@ -38,7 +38,7 @@ export const settingsRegistry = {
   }),
   import: defineCategory({
     schema: importSettingsSchema,
-    defaults: { deleteAfterImport: false, minSeedTime: 60 },
+    defaults: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
   }),
   general: defineCategory({
     schema: generalSettingsSchema,
@@ -57,6 +57,7 @@ export const settingsRegistry = {
       keepOriginalBitrate: false,
       bitrate: 128,
       mergeBehavior: 'multi-file-only' as const,
+      maxConcurrentProcessing: 2,
     },
   }),
   tagging: defineCategory({

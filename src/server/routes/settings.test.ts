@@ -19,9 +19,9 @@ const mockResolveProxyIp = vi.mocked(resolveProxyIp);
 const mockSettings = {
   library: { path: '/audiobooks', folderFormat: '{author}/{title}' },
   search: { intervalMinutes: 360, enabled: true },
-  import: { deleteAfterImport: false, minSeedTime: 60 },
+  import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
   general: { logLevel: 'info' },
-  processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only' },
+  processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
 };
 
 describe('settings routes', () => {

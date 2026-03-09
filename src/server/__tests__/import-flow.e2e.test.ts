@@ -109,6 +109,7 @@ describe('Import flow E2E', () => {
     await e2e.services.settings.set('import', {
       deleteAfterImport: false,
       minSeedTime: 0,
+      minFreeSpaceGB: 5,
     });
   });
 
@@ -118,7 +119,7 @@ describe('Import flow E2E', () => {
     vi.mocked(scanAudioDirectory).mockReset();
     vi.mocked(scanAudioDirectory).mockResolvedValue(null);
     // Restore default import settings (torrent tests modify these)
-    await e2e.services.settings.set('import', { deleteAfterImport: false, minSeedTime: 0 });
+    await e2e.services.settings.set('import', { deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 5 });
   });
 
   afterAll(async () => {
@@ -231,7 +232,7 @@ describe('Import flow E2E', () => {
   });
 
   it('calls removeDownload when deleteAfterImport is enabled and seed time is met', async () => {
-    await e2e.services.settings.set('import', { deleteAfterImport: true, minSeedTime: 60 });
+    await e2e.services.settings.set('import', { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5 });
 
     // completedAt 2 hours ago — well past the 60-min seed time
     const { downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Delete After Import Book', 'Test Author', {
@@ -256,7 +257,7 @@ describe('Import flow E2E', () => {
   });
 
   it('does NOT call removeDownload when seed time has not elapsed', async () => {
-    await e2e.services.settings.set('import', { deleteAfterImport: true, minSeedTime: 60 });
+    await e2e.services.settings.set('import', { deleteAfterImport: true, minSeedTime: 60, minFreeSpaceGB: 5 });
 
     // completedAt 1 minute ago — seed time NOT met (needs 60 min)
     const { downloadId } = await seedBookAndDownload(e2e, downloadClientId,'No Delete Book', 'Test Author', {

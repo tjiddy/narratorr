@@ -11,6 +11,7 @@ const activityListQuerySchema = z.object({
   status: z.string().optional(),
 });
 
+// eslint-disable-next-line max-lines-per-function -- linear route registration
 export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, qualityGateService: QualityGateService, importService: ImportService) {
   // GET /api/activity
   app.get<{ Querystring: z.infer<typeof activityListQuerySchema> }>(
@@ -143,12 +144,23 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
         request.log.info({ id }, 'Download approved');
         const result = await qualityGateService.approve(id);
 
-        // Fire-and-forget: trigger import pipeline immediately
-        importService.importDownload(id).catch((err) => {
-          request.log.error({ id, error: err }, 'Import after approve failed');
-        });
-
-        return result;
+        // Try to acquire a concurrency slot for immediate import
+        if (importService.semaphore.tryAcquire()) {
+          // Slot available — fire-and-forget import with guaranteed slot release
+          importService.importDownload(id)
+            .catch((err) => {
+              request.log.error({ id, error: err }, 'Import after approve failed');
+            })
+            .finally(() => {
+              importService.semaphore.release();
+            });
+          return result;
+        } else {
+          // No slot available — queue for next tick
+          request.log.info({ id }, 'Concurrency limit reached, queuing approved download');
+          await importService.setProcessingQueued(id);
+          return { ...result, status: 'processing_queued' };
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
         if (message === 'not found') return reply.status(404).send({ error: 'Download not found' });
