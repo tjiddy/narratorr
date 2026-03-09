@@ -100,6 +100,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
      <Summary of changes made>
      ```
+   - **Granularity mirroring:** If the reviewer split a finding into sub-items (e.g., F2a, F2b, F2c), the response table must have one row per sub-item — not a single collapsed "F2: fixed" row. Fixes should line up 1:1 with findings so the re-review is verification, not reinterpretation.
    - Clean up temp file
 
 6. **Report to main agent:** "**PR #<pr-number> (issue #<id>)** — <status: ready-for-re-review | needs-human-input> — <1-line summary of resolutions>"
@@ -108,7 +109,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 - **Do NOT pause between steps.** This skill runs end-to-end without user interaction. When `/verify` returns, immediately continue to push and post the response comment. The Skill tool returning is a mid-flow return value, not a stopping point.
 - This skill is for the **author agent** — the one who wrote the code, not the reviewer
-- Every finding requires an explicit resolution. The response table must have one row per finding.
+- Every finding requires an explicit resolution. The response table must have one row per finding — or one row per sub-item if the reviewer enumerated them (e.g., F2a, F2b, F2c).
 - Disputed blocking findings → `needs-human-input` status → issue goes `status/blocked` → STOP
 - Clean resolutions (all blocking fixed, suggestions resolved) → `ready-for-re-review`
 - Do NOT merge — that's the reviewer's job via `/merge`
