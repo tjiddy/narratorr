@@ -51,9 +51,10 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > 6. Check interfaces/types relevant to the issue
    > 7. Identify touch points — wiring files, registries, route registrations
    > 8. Note naming conventions, folder structure, and test patterns used by similar features
+   > 9. Check existing test files in the target area (co-located `*.test.ts(x)` files). Note what's already covered, what patterns/helpers they use, and which areas have no tests yet. This saves significant implementation time by avoiding duplicate test setup.
    >
    > **Deep source analysis for test plan (CRITICAL — read actual source, not just signatures):**
-   > 9. For every service/util/route the issue will modify or call, READ THE FULL SOURCE and identify:
+   > 10. For every service/util/route the issue will modify or call, READ THE FULL SOURCE and identify:
    >    - Null/zero/undefined guards and what happens when they trigger (e.g., returns null, throws, skips)
    >    - Division, ratio, or threshold calculations and their boundary behavior
    >    - Optional fields on interfaces that callers may or may not provide
@@ -62,7 +63,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    >    - Transient vs persisted fields (flags that trigger actions but aren't stored in DB)
    >    - Fire-and-forget patterns where failure must not break the parent operation
    >    - Race conditions: data read in one step, used in a later step where it may have changed
-   > 10. For each finding, note the specific file, line range, and the test scenario it implies
+   > 11. For each finding, note the specific file, line range, and the test scenario it implies
    >
    > Include a new section in the return structure:
    > ```
@@ -70,9 +71,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > ```
    >
    > **Overlap and dependencies:**
-   > 11. Run `node scripts/gitea.ts prs` — any open PR touching the same area?
-   > 12. Check for `status/in-progress` issues that overlap in scope
-   > 13. For any issues referenced as dependencies (e.g., "depends on #X"), run `node scripts/gitea.ts issue <dep-id>` to verify status
+   > 12. Run `node scripts/gitea.ts prs` — any open PR touching the same area?
+   > 13. Check for `status/in-progress` issues that overlap in scope
+   > 14. For any issues referenced as dependencies (e.g., "depends on #X"), run `node scripts/gitea.ts issue <dep-id>` to verify status
    >
    > Return this structure:
    > ```

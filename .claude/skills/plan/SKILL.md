@@ -71,7 +71,12 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    Use the subagent's structured output directly in the plan comment (step 5).
 
-4. **Extract test stubs from spec (if present).**
+4. **Check for pre-existing lint violations** in the target area:
+   - Run `pnpm lint` and note any pre-existing violations in files the plan will touch
+   - If violations exist, include them in the plan comment so the implementer can fix them upfront (not discover them mid-work)
+   - This is a read-only check — do not fix violations here
+
+5. **Extract test stubs from spec (if present).**
    Scan the issue body for `## User Interactions`, `## System Behaviors`, and `## Edge Cases (auto-generated)` sections (or equivalent interaction-style requirements like "user does X → Y" / "when X → Y" anywhere in the spec):
 
    **For User Interactions** (frontend):
@@ -96,7 +101,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    These stubs are the **minimum test coverage** — every spec interaction and system behavior must have a corresponding test. The implementer should add additional tests beyond these stubs for edge cases, error states, and implementation details discovered during development. The stubs are a floor, not a ceiling.
 
-5. **Post a plan comment** on the issue:
+6. **Post a plan comment** on the issue:
    - Write the comment to a temp file, then post it:
    ```bash
    gitea issue-comment <id> --body-file <temp-file-path>
@@ -124,7 +129,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    If any check fails, note the specific check ID (e.g., OCP-1) and the mitigation plan. If the mitigation is "introduce a registry pattern first," note that as a prerequisite step in the plan.
    - Clean up the temp file after posting.
 
-6. Tell the user the plan is posted and show the summary, including codebase findings from step 3.
+7. Tell the user the plan is posted and show the summary, including codebase findings from step 3.
 
    **If called as a sub-skill** (e.g., from `/implement`): append `CALLER: Sub-skill complete. Continue to your next step immediately.` to your output.
 

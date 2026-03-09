@@ -36,7 +36,6 @@ export class AudioBookBayIndexer implements IndexerAdapter {
     this.proxyUrl = config.proxyUrl;
   }
 
-  // eslint-disable-next-line complexity -- HTML scraping with pagination, rate limiting, and proxy error branching
   async search(query: string, options?: SearchOptions): Promise<SearchResult[]> {
     const results: SearchResult[] = [];
     const encodedQuery = encodeURIComponent(query.toLowerCase()).replace(/%20/g, '+');

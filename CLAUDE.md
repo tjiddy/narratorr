@@ -36,7 +36,7 @@ pnpm typecheck     # TypeScript checking
 
 ## Code Style
 
-TypeScript strict, ESM (`.js` extensions), functional React components, TanStack Query for server state, Tailwind CSS (no CSS files), `@/` path alias for client imports. Always use `return await` (not bare `return`) for async calls inside try/catch blocks — without `await`, the catch block is dead code for rejected promises.
+TypeScript strict, ESM (`.js` extensions), functional React components, TanStack Query for server state, Tailwind CSS (no CSS files), `@/` path alias for client imports. Always use `return await` (not bare `return`) for async calls inside try/catch blocks — without `await`, the catch block is dead code for rejected promises. Non-submit `<button>` elements inside `<form>` must have `type="button"` — without it, the browser default is `type="submit"`, which triggers form submission on click. API client methods in `src/client/lib/api/` must use domain-prefixed names (e.g., `getSystemStatus` not `getStatus`) to prevent silent overwrites in the barrel export spread.
 
 ## Logging
 

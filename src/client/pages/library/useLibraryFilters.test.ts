@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useLibraryFilters } from './useLibraryFilters';
 import type { BookWithAuthor } from '@/lib/api';
+import { createMockBook } from '@/__tests__/factories';
 
 // Mock the library search hook — searchResultFilter allows tests to simulate search narrowing
 let searchResultFilter: ((books: BookWithAuthor[]) => BookWithAuthor[]) | null = null;
@@ -16,48 +17,12 @@ vi.mock('@/hooks/useLibrarySearch', () => ({
   }),
 }));
 
-function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
-  return {
-    id: 1,
-    title: 'Test Book',
-    status: 'wanted',
-    enrichmentStatus: 'pending',
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-01T00:00:00Z',
-    author: undefined,
-    authorId: null,
-    narrator: null,
-    description: null,
-    coverUrl: null,
-    asin: null,
-    isbn: null,
-    seriesName: null,
-    seriesPosition: null,
-    duration: null,
-    publishedDate: null,
-    genres: null,
-    path: null,
-    size: null,
-    audioCodec: null,
-    audioBitrate: null,
-    audioSampleRate: null,
-    audioChannels: null,
-    audioBitrateMode: null,
-    audioFileFormat: null,
-    audioFileCount: null,
-    audioTotalSize: null,
-    audioDuration: null,
-    monitorForUpgrades: false,
-    ...overrides,
-  };
-}
-
 describe('useLibraryFilters', () => {
   const books: BookWithAuthor[] = [
-    makeBook({ id: 1, title: 'Alpha', status: 'wanted', author: { id: 1, name: 'Author A', slug: 'author-a', asin: null, imageUrl: null, bio: null }, seriesName: 'Series X', createdAt: '2024-01-01T00:00:00Z' }),
-    makeBook({ id: 2, title: 'Zulu', status: 'imported', author: { id: 2, name: 'Author B', slug: 'author-b', asin: null, imageUrl: null, bio: null }, seriesName: 'Series Y', createdAt: '2024-01-02T00:00:00Z' }),
-    makeBook({ id: 3, title: 'Middle', status: 'downloading', author: { id: 1, name: 'Author A', slug: 'author-a', asin: null, imageUrl: null, bio: null }, createdAt: '2024-01-03T00:00:00Z' }),
-    makeBook({ id: 4, title: 'Bravo', status: 'searching', createdAt: '2024-01-04T00:00:00Z' }),
+    createMockBook({ id: 1, title: 'Alpha', status: 'wanted', author: { id: 1, name: 'Author A', slug: 'author-a', asin: null, imageUrl: null, bio: null }, seriesName: 'Series X', createdAt: '2024-01-01T00:00:00Z' }),
+    createMockBook({ id: 2, title: 'Zulu', status: 'imported', author: { id: 2, name: 'Author B', slug: 'author-b', asin: null, imageUrl: null, bio: null }, seriesName: 'Series Y', createdAt: '2024-01-02T00:00:00Z' }),
+    createMockBook({ id: 3, title: 'Middle', status: 'downloading', author: { id: 1, name: 'Author A', slug: 'author-a', asin: null, imageUrl: null, bio: null }, seriesName: null, createdAt: '2024-01-03T00:00:00Z' }),
+    createMockBook({ id: 4, title: 'Bravo', status: 'searching', author: undefined, seriesName: null, createdAt: '2024-01-04T00:00:00Z' }),
   ];
 
   beforeEach(() => {
@@ -183,11 +148,11 @@ describe('useLibraryFilters', () => {
 
   describe('collapse series', () => {
     const seriesBooks: BookWithAuthor[] = [
-      makeBook({ id: 10, title: 'Book 1', status: 'wanted', seriesName: 'Stormlight', seriesPosition: 1, createdAt: '2024-01-01T00:00:00Z' }),
-      makeBook({ id: 11, title: 'Book 2', status: 'imported', seriesName: 'Stormlight', seriesPosition: 2, createdAt: '2024-01-02T00:00:00Z' }),
-      makeBook({ id: 12, title: 'Book 3', status: 'wanted', seriesName: 'Stormlight', seriesPosition: 3, createdAt: '2024-01-03T00:00:00Z' }),
-      makeBook({ id: 13, title: 'Standalone', status: 'wanted', seriesName: null, createdAt: '2024-01-04T00:00:00Z' }),
-      makeBook({ id: 14, title: 'Other Series 1', status: 'imported', seriesName: 'Cosmere', seriesPosition: 1, createdAt: '2024-01-05T00:00:00Z' }),
+      createMockBook({ id: 10, title: 'Book 1', status: 'wanted', seriesName: 'Stormlight', seriesPosition: 1, createdAt: '2024-01-01T00:00:00Z' }),
+      createMockBook({ id: 11, title: 'Book 2', status: 'imported', seriesName: 'Stormlight', seriesPosition: 2, createdAt: '2024-01-02T00:00:00Z' }),
+      createMockBook({ id: 12, title: 'Book 3', status: 'wanted', seriesName: 'Stormlight', seriesPosition: 3, createdAt: '2024-01-03T00:00:00Z' }),
+      createMockBook({ id: 13, title: 'Standalone', status: 'wanted', seriesName: null, createdAt: '2024-01-04T00:00:00Z' }),
+      createMockBook({ id: 14, title: 'Other Series 1', status: 'imported', seriesName: 'Cosmere', seriesPosition: 1, createdAt: '2024-01-05T00:00:00Z' }),
     ];
 
     it('collapseSeriesEnabled toggle state persists and affects output', () => {
@@ -242,10 +207,10 @@ describe('useLibraryFilters', () => {
 
     it('collapse + author filter: only books by that author are collapsed', () => {
       const mixedAuthorBooks: BookWithAuthor[] = [
-        makeBook({ id: 20, title: 'SA 1', seriesName: 'Stormlight', seriesPosition: 1, author: { id: 1, name: 'Sanderson', slug: 's', asin: null, imageUrl: null, bio: null }, createdAt: '2024-01-01T00:00:00Z' }),
-        makeBook({ id: 21, title: 'SA 2', seriesName: 'Stormlight', seriesPosition: 2, author: { id: 1, name: 'Sanderson', slug: 's', asin: null, imageUrl: null, bio: null }, createdAt: '2024-01-02T00:00:00Z' }),
-        makeBook({ id: 22, title: 'KKC 1', seriesName: 'Kingkiller', seriesPosition: 1, author: { id: 2, name: 'Rothfuss', slug: 'r', asin: null, imageUrl: null, bio: null }, createdAt: '2024-01-03T00:00:00Z' }),
-        makeBook({ id: 23, title: 'KKC 2', seriesName: 'Kingkiller', seriesPosition: 2, author: { id: 2, name: 'Rothfuss', slug: 'r', asin: null, imageUrl: null, bio: null }, createdAt: '2024-01-04T00:00:00Z' }),
+        createMockBook({ id: 20, title: 'SA 1', seriesName: 'Stormlight', seriesPosition: 1, author: { id: 1, name: 'Sanderson', slug: 's', asin: null, imageUrl: null, bio: null }, createdAt: '2024-01-01T00:00:00Z' }),
+        createMockBook({ id: 21, title: 'SA 2', seriesName: 'Stormlight', seriesPosition: 2, author: { id: 1, name: 'Sanderson', slug: 's', asin: null, imageUrl: null, bio: null }, createdAt: '2024-01-02T00:00:00Z' }),
+        createMockBook({ id: 22, title: 'KKC 1', seriesName: 'Kingkiller', seriesPosition: 1, author: { id: 2, name: 'Rothfuss', slug: 'r', asin: null, imageUrl: null, bio: null }, createdAt: '2024-01-03T00:00:00Z' }),
+        createMockBook({ id: 23, title: 'KKC 2', seriesName: 'Kingkiller', seriesPosition: 2, author: { id: 2, name: 'Rothfuss', slug: 'r', asin: null, imageUrl: null, bio: null }, createdAt: '2024-01-04T00:00:00Z' }),
       ];
 
       const { result } = renderHook(() => useLibraryFilters(mixedAuthorBooks));

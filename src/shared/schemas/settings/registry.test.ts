@@ -46,7 +46,7 @@ describe('settingsRegistry', () => {
     });
   });
 
-  describe('schema-default mismatch preservation', () => {
+  describe('schema-default alignment', () => {
     it('library defaults have correct values', () => {
       expect(DEFAULT_SETTINGS.library).toEqual({
         path: '/audiobooks',
@@ -55,21 +55,19 @@ describe('settingsRegistry', () => {
       });
     });
 
-    it('search defaults have intervalMinutes 360 (not schema default 60) and enabled true (not schema default false)', () => {
+    it('search schema defaults match registry defaults', () => {
       expect(DEFAULT_SETTINGS.search).toEqual({ intervalMinutes: 360, enabled: true });
-      // Verify schema default differs from runtime default
       const schemaParsed = settingsRegistry.search.schema.parse({});
-      expect(schemaParsed.intervalMinutes).toBe(60); // schema default
-      expect(DEFAULT_SETTINGS.search.intervalMinutes).toBe(360); // runtime default
-      expect(schemaParsed.enabled).toBe(false); // schema default
-      expect(DEFAULT_SETTINGS.search.enabled).toBe(true); // runtime default
+      expect(schemaParsed.intervalMinutes).toBe(360);
+      expect(schemaParsed.enabled).toBe(true);
+      expect(schemaParsed).toEqual(DEFAULT_SETTINGS.search);
     });
 
-    it('import defaults have deleteAfterImport false and minSeedTime 60 (not schema default 0)', () => {
+    it('import schema defaults match registry defaults', () => {
       expect(DEFAULT_SETTINGS.import).toEqual({ deleteAfterImport: false, minSeedTime: 60 });
       const schemaParsed = settingsRegistry.import.schema.parse({});
-      expect(schemaParsed.minSeedTime).toBe(0); // schema default
-      expect(DEFAULT_SETTINGS.import.minSeedTime).toBe(60); // runtime default
+      expect(schemaParsed.minSeedTime).toBe(60);
+      expect(schemaParsed).toEqual(DEFAULT_SETTINGS.import);
     });
 
     it('general defaults have logLevel info', () => {
@@ -268,15 +266,20 @@ describe('settingsRegistry', () => {
       expect(schemaParsed).toEqual(DEFAULT_SETTINGS.quality);
     });
 
-    it('category where Zod defaults differ from runtime defaults: search', () => {
-      const schemaParsed = settingsRegistry.search.schema.parse({});
-      expect(schemaParsed).not.toEqual(DEFAULT_SETTINGS.search);
+    it('categories with all-defaulted fields: Zod defaults match runtime defaults', () => {
+      // Library has required fields (path) with no .default(), so schema.parse({}) fails — skip it
+      const defaultableCategories = SETTINGS_CATEGORIES.filter(k => k !== 'library');
+      for (const key of defaultableCategories) {
+        const { schema, defaults } = settingsRegistry[key];
+        const schemaParsed = schema.parse({});
+        expect(schemaParsed, `${key} schema defaults should match registry defaults`).toEqual(defaults);
+      }
     });
   });
 
   describe('stripDefaults behavior (via form schema)', () => {
     it('form schema rejects missing fields that have .default() in base schema', () => {
-      // search.intervalMinutes has .default(60) in the base schema, so parse({}) works.
+      // search.intervalMinutes has .default(360) in the base schema, so parse({}) works.
       // But the form schema strips defaults, so omitting it should fail.
       const data = { ...DEFAULT_SETTINGS, search: {} as never };
       const result = updateSettingsFormSchema.safeParse(data);

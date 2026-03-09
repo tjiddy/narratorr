@@ -37,10 +37,7 @@ export default tseslint.config(
         ecmaFeatures: {
           jsx: true,
         },
-        projectService: {
-          allowDefaultProject: ['scripts/*.ts'],
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 20,
-        },
+        projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },
     },

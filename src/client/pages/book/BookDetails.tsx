@@ -1,104 +1,27 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
 import { HistoryIcon, BookOpenIcon } from '@/components/icons';
-import { api, type BookWithAuthor, type UpdateBookPayload } from '@/lib/api';
-import { queryKeys } from '@/lib/queryKeys';
+import type { BookWithAuthor } from '@/lib/api';
 import { BookHero } from './BookHero.js';
 import { BookDetailsContent } from './BookDetailsContent.js';
 import { BookEventHistory } from './BookEventHistory.js';
 import { mergeBookData, type MetadataBook } from './helpers.js';
+import { useBookActions } from './useBookActions.js';
 
-// eslint-disable-next-line max-lines-per-function -- orchestrates multiple mutations + modal states for book detail page
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
   metadataBook?: MetadataBook | null;
 }) {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
   const [tab, setTab] = useState<'details' | 'history'>('details');
 
   const merged = mergeBookData(libraryBook, metadataBook);
-
-  const invalidateBookQueries = () => {
-    queryClient.invalidateQueries({ queryKey: queryKeys.book(libraryBook.id) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.bookFiles(libraryBook.id) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.books() });
-  };
-
-  const renameMutation = useMutation({
-    mutationFn: () => api.renameBook(libraryBook.id),
-    onSuccess: (result) => {
-      invalidateBookQueries();
-      toast.success(result.message);
-    },
-    onError: (error: Error) => {
-      toast.error(`Rename failed: ${error.message}`);
-    },
-  });
-
-  const retagMutation = useMutation({
-    mutationFn: () => api.retagBook(libraryBook.id),
-    onSuccess: (result) => {
-      const msg = `Tagged ${result.tagged} file${result.tagged !== 1 ? 's' : ''}`;
-      if (result.failed > 0) {
-        toast.warning(`${msg}, ${result.failed} failed`);
-      } else {
-        toast.success(msg);
-      }
-    },
-    onError: (error: Error) => {
-      toast.error(`Re-tag failed: ${error.message}`);
-    },
-  });
-
-  const { data: settings } = useQuery({
-    queryKey: queryKeys.settings(),
-    queryFn: api.getSettings,
-  });
-
-  const ffmpegConfigured = !!settings?.processing?.ffmpegPath?.trim();
-
-  const monitorMutation = useMutation({
-    mutationFn: () => api.updateBook(libraryBook.id, { monitorForUpgrades: !libraryBook.monitorForUpgrades }),
-    onSuccess: () => {
-      invalidateBookQueries();
-      toast.success(libraryBook.monitorForUpgrades ? 'Upgrade monitoring disabled' : 'Upgrade monitoring enabled');
-    },
-    onError: (error: Error) => {
-      toast.error(`Failed to update: ${error.message}`);
-    },
-  });
-
-  const handleSave = async (data: UpdateBookPayload, renameFiles: boolean) => {
-    setIsSaving(true);
-    try {
-      await api.updateBook(libraryBook.id, data);
-      invalidateBookQueries();
-      setEditModalOpen(false);
-      toast.success('Metadata updated');
-
-      if (renameFiles) {
-        try {
-          const renameResult = await api.renameBook(libraryBook.id);
-          invalidateBookQueries();
-          toast.success(renameResult.message);
-        } catch (renameError) {
-          toast.error(`Rename failed: ${renameError instanceof Error ? renameError.message : 'Unknown error'}`);
-        }
-      }
-    } catch (error) {
-      toast.error(`Failed to update book: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  const { renameMutation, retagMutation, monitorMutation, ffmpegConfigured, isSaving, handleSave } =
+    useBookActions(libraryBook.id, libraryBook.monitorForUpgrades);
 
   return (
     <div className="space-y-6">
@@ -173,7 +96,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
       {editModalOpen && (
         <BookMetadataModal
           book={libraryBook}
-          onSave={handleSave}
+          onSave={(data, renameFiles) => handleSave(data, renameFiles, () => setEditModalOpen(false))}
           onClose={() => setEditModalOpen(false)}
           isSaving={isSaving}
         />

@@ -542,7 +542,7 @@ describe('settingsApi', () => {
 
 describe('systemApi', () => {
   it('getStatus → GET /system/status', async () => {
-    await systemApi.getStatus();
+    await systemApi.getSystemStatus();
     expect(mockFetchApi).toHaveBeenCalledWith('/system/status');
   });
 
@@ -652,7 +652,7 @@ describe('response pass-through', () => {
   it('systemApi.getStatus returns fetchApi response', async () => {
     const data = { version: '1.0', status: 'ok' };
     mockFetchApi.mockResolvedValue(data);
-    const result = await systemApi.getStatus();
+    const result = await systemApi.getSystemStatus();
     expect(result).toBe(data);
   });
 });
