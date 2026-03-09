@@ -375,3 +375,102 @@ describe('IndexerCard — edit mode', () => {
     expect(screen.getByText('Saving...')).toBeInTheDocument();
   });
 });
+
+describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
+  const prowlarrIndexer: Indexer = createMockIndexer({
+    id: 10,
+    name: 'Prowlarr Torznab',
+    type: 'torznab',
+    source: 'prowlarr',
+    sourceIndexerId: 5,
+    settings: { apiUrl: 'http://prowlarr:9696/5/', apiKey: 'abc123' },
+  });
+
+  it('shows Prowlarr badge/indicator when indexer has source: "prowlarr"', () => {
+    renderWithProviders(
+      <IndexerCard
+        indexer={prowlarrIndexer}
+        mode="view"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Managed by Prowlarr')).toBeInTheDocument();
+  });
+
+  it('does not show Prowlarr indicator for manually-created indexers (source: null)', () => {
+    renderWithProviders(
+      <IndexerCard
+        indexer={mockTorznabIndexer}
+        mode="view"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText('Managed by Prowlarr')).not.toBeInTheDocument();
+  });
+
+  it('makes name field read-only for Prowlarr-managed indexers in edit mode', () => {
+    renderWithProviders(
+      <IndexerCard
+        indexer={prowlarrIndexer}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    const nameInput = screen.getByLabelText('Name');
+    expect(nameInput).toHaveAttribute('readonly');
+  });
+
+  it('makes API URL and API Key fields read-only for Prowlarr-managed indexers in edit mode', () => {
+    renderWithProviders(
+      <IndexerCard
+        indexer={prowlarrIndexer}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    const apiUrlInput = screen.getByLabelText('API URL');
+    const apiKeyInput = screen.getByLabelText('API Key');
+    expect(apiUrlInput).toHaveAttribute('readonly');
+    expect(apiKeyInput).toHaveAttribute('readonly');
+  });
+
+  it('keeps priority and enabled fields editable for Prowlarr-managed indexers', () => {
+    renderWithProviders(
+      <IndexerCard
+        indexer={prowlarrIndexer}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    const priorityInput = screen.getByLabelText('Priority');
+    const enabledInput = screen.getByLabelText('Enabled');
+    expect(priorityInput).not.toHaveAttribute('readonly');
+    expect(enabledInput).not.toHaveAttribute('readonly');
+  });
+
+  it('all fields remain editable for manually-created indexers', () => {
+    renderWithProviders(
+      <IndexerCard
+        indexer={mockTorznabIndexer}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    const nameInput = screen.getByLabelText('Name');
+    const apiUrlInput = screen.getByLabelText('API URL');
+    expect(nameInput).not.toHaveAttribute('readonly');
+    expect(apiUrlInput).not.toHaveAttribute('readonly');
+  });
+});

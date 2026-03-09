@@ -9,6 +9,8 @@ const mockIndexer = {
   enabled: true,
   priority: 50,
   settings: { hostname: 'audiobookbay.lu', pageLimit: 2 },
+  source: null,
+  sourceIndexerId: null,
   createdAt: new Date(),
 };
 

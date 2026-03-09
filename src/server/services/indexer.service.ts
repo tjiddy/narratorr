@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { indexers } from '../../db/schema.js';
@@ -61,6 +61,59 @@ export class IndexerService {
     this.adapters.delete(id);
     this.log.info({ id }, 'Indexer deleted');
     return true;
+  }
+
+  /** Find an existing Prowlarr-sourced indexer by sourceIndexerId */
+  async findByProwlarrSource(sourceIndexerId: number): Promise<IndexerRow | null> {
+    const results = await this.db
+      .select()
+      .from(indexers)
+      .where(and(eq(indexers.source, 'prowlarr'), eq(indexers.sourceIndexerId, sourceIndexerId)))
+      .limit(1);
+    return results[0] || null;
+  }
+
+  /** Create or upsert a Prowlarr-sourced indexer (AC7, AC9) */
+  async createOrUpsertProwlarr(data: {
+    name: string;
+    type: NewIndexer['type'];
+    enabled: boolean;
+    priority: number;
+    settings: Record<string, unknown>;
+    sourceIndexerId: number | null;
+  }): Promise<{ row: IndexerRow; upserted: boolean }> {
+    // If sourceIndexerId is non-null, check for existing row to upsert
+    if (data.sourceIndexerId !== null) {
+      const existing = await this.findByProwlarrSource(data.sourceIndexerId);
+      if (existing) {
+        // Upsert: overwrite Prowlarr-managed fields, preserve local-only fields
+        // Merge settings: incoming Prowlarr keys overwrite, but local-only keys are kept
+        const existingSettings = (existing.settings ?? {}) as Record<string, unknown>;
+        const mergedSettings = { ...existingSettings, ...data.settings };
+        const updated = await this.update(existing.id, {
+          name: data.name,
+          type: data.type,
+          settings: mergedSettings,
+          source: 'prowlarr',
+          sourceIndexerId: data.sourceIndexerId,
+          // Preserve: priority, enabled from existing row
+        });
+        this.log.info({ id: existing.id, sourceIndexerId: data.sourceIndexerId }, 'Prowlarr indexer upserted');
+        return { row: updated!, upserted: true };
+      }
+    }
+
+    // Insert new row
+    const row = await this.create({
+      name: data.name,
+      type: data.type,
+      enabled: data.enabled,
+      priority: data.priority,
+      settings: data.settings,
+      source: 'prowlarr',
+      sourceIndexerId: data.sourceIndexerId,
+    });
+    return { row, upserted: false };
   }
 
   private async getProxyUrl(): Promise<string | undefined> {

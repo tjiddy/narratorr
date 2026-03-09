@@ -54,6 +54,43 @@ const defaultValues: CreateIndexerFormData = {
   settings: INDEXER_REGISTRY.abb.defaultSettings,
 };
 
+function ProwlarrBadge() {
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20">
+      Managed by Prowlarr
+    </span>
+  );
+}
+
+function IndexerCardView({ indexer, onEdit, onTest, onDelete, testingId, testResult, animationDelay }: {
+  indexer: Indexer;
+  onEdit?: () => void;
+  onTest?: (id: number) => void;
+  onDelete?: () => void;
+  testingId?: number | null;
+  testResult?: IdTestResult | null;
+  animationDelay?: string;
+}) {
+  return (
+    <SettingsCardShell
+      name={indexer.name}
+      subtitle={INDEXER_REGISTRY[indexer.type]?.viewSubtitle(indexer.settings as Record<string, unknown>) || indexer.type}
+      enabled={indexer.enabled}
+      itemId={indexer.id}
+      onEdit={onEdit}
+      onTest={onTest}
+      onDelete={onDelete}
+      testingId={testingId}
+      testResult={testResult}
+      testDisabled={!IMPLEMENTED_TYPES.includes(indexer.type)}
+      testDisabledTitle={!IMPLEMENTED_TYPES.includes(indexer.type) ? 'Testing available for implemented adapter types' : undefined}
+      animationDelay={animationDelay}
+    >
+      {indexer.source === 'prowlarr' && <div className="mt-1"><ProwlarrBadge /></div>}
+    </SettingsCardShell>
+  );
+}
+
 export function IndexerCard(props: IndexerCardProps) {
   const {
     indexer, mode, onEdit, onCancel, onDelete, onSubmit, onFormTest,
@@ -99,21 +136,17 @@ export function IndexerCard(props: IndexerCardProps) {
   }, [selectedType, mode, setValue]);
 
   const isImplemented = IMPLEMENTED_TYPES.includes(selectedType);
+  const isProwlarrManaged = indexer?.source === 'prowlarr';
 
   if (mode === 'view' && indexer) {
     return (
-      <SettingsCardShell
-        name={indexer.name}
-        subtitle={INDEXER_REGISTRY[indexer.type]?.viewSubtitle(indexer.settings as Record<string, unknown>) || indexer.type}
-        enabled={indexer.enabled}
-        itemId={indexer.id}
+      <IndexerCardView
+        indexer={indexer}
         onEdit={onEdit}
         onTest={onTest}
         onDelete={onDelete}
         testingId={testingId}
         testResult={testResult}
-        testDisabled={!IMPLEMENTED_TYPES.includes(indexer.type)}
-        testDisabledTitle={!IMPLEMENTED_TYPES.includes(indexer.type) ? 'Testing available for implemented adapter types' : undefined}
         animationDelay={animationDelay}
       />
     );
@@ -122,9 +155,12 @@ export function IndexerCard(props: IndexerCardProps) {
   const isEdit = mode === 'edit';
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="glass-card rounded-2xl p-6 animate-fade-in-up space-y-5">
-      <h3 className="font-display text-lg font-semibold">
-        {isEdit ? 'Edit Indexer' : 'Add New Indexer'}
-      </h3>
+      <div className="flex items-center gap-3">
+        <h3 className="font-display text-lg font-semibold">
+          {isEdit ? 'Edit Indexer' : 'Add New Indexer'}
+        </h3>
+        {isProwlarrManaged && <ProwlarrBadge />}
+      </div>
 
       <div className="grid gap-5 sm:grid-cols-2">
         <div>
@@ -133,9 +169,10 @@ export function IndexerCard(props: IndexerCardProps) {
             id="indexerName"
             type="text"
             {...register('name')}
+            readOnly={isProwlarrManaged}
             className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
               errors.name ? 'border-destructive' : 'border-border'
-            }`}
+            } ${isProwlarrManaged ? 'opacity-60 cursor-not-allowed' : ''}`}
             placeholder="AudioBookBay"
           />
           {errors.name && (
@@ -183,7 +220,7 @@ export function IndexerCard(props: IndexerCardProps) {
           </>
         )}
 
-        <IndexerFields selectedType={selectedType} register={register} errors={errors} watch={watch} />
+        <IndexerFields selectedType={selectedType} register={register} errors={errors} watch={watch} prowlarrManaged={isProwlarrManaged} />
       </div>
 
       {!isImplemented && (

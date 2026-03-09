@@ -69,6 +69,8 @@ export function createMockIndexer(overrides?: Partial<Indexer>): Indexer {
     enabled: true,
     priority: 50,
     settings: { hostname: 'audiobookbay.lu', pageLimit: 2 },
+    source: null,
+    sourceIndexerId: null,
     createdAt: '2024-01-01T00:00:00Z',
     ...overrides,
   };

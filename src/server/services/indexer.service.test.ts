@@ -764,4 +764,190 @@ describe('IndexerService', () => {
     });
 
   });
+
+  describe('Prowlarr upsert logic', () => {
+    describe('findByProwlarrSource', () => {
+      it('returns matching row when source=prowlarr and sourceIndexerId match', async () => {
+        const prowlarrIndexer = createMockDbIndexer({ source: 'prowlarr', sourceIndexerId: 42 });
+        db.select.mockReturnValue(mockDbChain([prowlarrIndexer]));
+
+        const result = await service.findByProwlarrSource(42);
+        expect(result).not.toBeNull();
+        expect(result!.sourceIndexerId).toBe(42);
+      });
+
+      it('returns null when no matching prowlarr-sourced row exists', async () => {
+        db.select.mockReturnValue(mockDbChain([]));
+
+        const result = await service.findByProwlarrSource(999);
+        expect(result).toBeNull();
+      });
+    });
+
+    describe('createOrUpsertProwlarr', () => {
+      it('inserts new row when no existing prowlarr-sourced row matches sourceIndexerId', async () => {
+        // findByProwlarrSource returns nothing
+        db.select.mockReturnValue(mockDbChain([]));
+        const newRow = createMockDbIndexer({ id: 5, source: 'prowlarr', sourceIndexerId: 10 });
+        db.insert.mockReturnValue(mockDbChain([newRow]));
+
+        const result = await service.createOrUpsertProwlarr({
+          name: 'New Indexer',
+          type: 'torznab',
+          enabled: true,
+          priority: 50,
+          settings: { apiUrl: 'http://prowlarr/10/', apiKey: 'key' },
+          sourceIndexerId: 10,
+        });
+
+        expect(result.upserted).toBe(false);
+        expect(result.row.id).toBe(5);
+        expect(db.insert).toHaveBeenCalled();
+      });
+
+      it('updates existing row when prowlarr-sourced row with same sourceIndexerId exists', async () => {
+        const existing = createMockDbIndexer({ id: 3, source: 'prowlarr', sourceIndexerId: 10, priority: 25, enabled: false });
+        db.select.mockReturnValue(mockDbChain([existing]));
+        const updatedRow = { ...existing, name: 'Updated Name', settings: { apiUrl: 'http://new/', apiKey: 'newkey' } };
+        db.update.mockReturnValue(mockDbChain([updatedRow]));
+
+        const result = await service.createOrUpsertProwlarr({
+          name: 'Updated Name',
+          type: 'torznab',
+          enabled: true,
+          priority: 50,
+          settings: { apiUrl: 'http://new/', apiKey: 'newkey' },
+          sourceIndexerId: 10,
+        });
+
+        expect(result.upserted).toBe(true);
+        expect(result.row.id).toBe(3);
+        expect(db.update).toHaveBeenCalled();
+      });
+
+      it('preserves local-only fields (priority, enabled) on upsert', async () => {
+        const existing = createMockDbIndexer({ id: 3, source: 'prowlarr', sourceIndexerId: 10, priority: 25, enabled: false });
+        db.select.mockReturnValue(mockDbChain([existing]));
+        const updateChain = mockDbChain([existing]);
+        db.update.mockReturnValue(updateChain);
+
+        await service.createOrUpsertProwlarr({
+          name: 'New Name',
+          type: 'torznab',
+          enabled: true, // This should NOT be written on upsert
+          priority: 99,  // This should NOT be written on upsert
+          settings: { apiUrl: 'http://prowlarr/10/', apiKey: 'key' },
+          sourceIndexerId: 10,
+        });
+
+        // Verify update was called and .set() payload excludes priority and enabled
+        expect(db.update).toHaveBeenCalled();
+        const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0];
+        expect(setPayload).not.toHaveProperty('priority');
+        expect(setPayload).not.toHaveProperty('enabled');
+        expect(setPayload).toHaveProperty('name', 'New Name');
+        expect(setPayload).toHaveProperty('settings');
+        expect(setPayload).toHaveProperty('source', 'prowlarr');
+      });
+
+      it('preserves local-only settings keys on upsert', async () => {
+        const existing = createMockDbIndexer({
+          id: 3,
+          source: 'prowlarr',
+          sourceIndexerId: 10,
+          settings: {
+            apiUrl: 'http://old/',
+            apiKey: 'oldkey',
+            flareSolverrUrl: 'http://flaresolverr:8191',
+            useProxy: true,
+            proxyUrl: 'socks5://proxy:1080',
+          },
+        });
+        db.select.mockReturnValue(mockDbChain([existing]));
+        const updateChain = mockDbChain([existing]);
+        db.update.mockReturnValue(updateChain);
+
+        await service.createOrUpsertProwlarr({
+          name: 'Synced Name',
+          type: 'torznab',
+          enabled: true,
+          priority: 99,
+          settings: { apiUrl: 'http://new/', apiKey: 'newkey' },
+          sourceIndexerId: 10,
+        });
+
+        const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0];
+        // Prowlarr-managed settings keys are updated
+        expect(setPayload.settings.apiUrl).toBe('http://new/');
+        expect(setPayload.settings.apiKey).toBe('newkey');
+        // Local-only settings keys are preserved from existing row
+        expect(setPayload.settings.flareSolverrUrl).toBe('http://flaresolverr:8191');
+        expect(setPayload.settings.useProxy).toBe(true);
+        expect(setPayload.settings.proxyUrl).toBe('socks5://proxy:1080');
+      });
+
+      it('always inserts when sourceIndexerId is null', async () => {
+        const newRow = createMockDbIndexer({ id: 7, source: 'prowlarr', sourceIndexerId: null });
+        db.insert.mockReturnValue(mockDbChain([newRow]));
+
+        const result = await service.createOrUpsertProwlarr({
+          name: 'No ID Indexer',
+          type: 'torznab',
+          enabled: true,
+          priority: 50,
+          settings: { apiUrl: 'http://example.com/', apiKey: 'key' },
+          sourceIndexerId: null,
+        });
+
+        expect(result.upserted).toBe(false);
+        expect(db.insert).toHaveBeenCalled();
+        // Should NOT call select (no lookup when sourceIndexerId is null)
+        expect(db.select).not.toHaveBeenCalled();
+      });
+
+      it('returns the row with existing id on upsert', async () => {
+        const existing = createMockDbIndexer({ id: 42, source: 'prowlarr', sourceIndexerId: 5 });
+        db.select.mockReturnValue(mockDbChain([existing]));
+        db.update.mockReturnValue(mockDbChain([existing]));
+
+        const result = await service.createOrUpsertProwlarr({
+          name: 'Updated',
+          type: 'torznab',
+          enabled: true,
+          priority: 50,
+          settings: { apiUrl: 'http://prowlarr/5/', apiKey: 'key' },
+          sourceIndexerId: 5,
+        });
+
+        expect(result.upserted).toBe(true);
+        expect(result.row.id).toBe(42);
+      });
+    });
+
+    describe('sourceIndexerId extraction', () => {
+      // These test the extractSourceIndexerId utility exported from prowlarr-compat
+      // but we test the integration through createOrUpsertProwlarr calls above.
+      // Unit tests for the extraction function are in prowlarr-compat.test.ts.
+
+      it('extracts numeric id from baseUrl like http://prowlarr:9696/1/', async () => {
+        const { extractSourceIndexerId } = await import('../routes/prowlarr-compat.js');
+        expect(extractSourceIndexerId('http://prowlarr:9696/1/')).toBe(1);
+      });
+
+      it('extracts numeric id from baseUrl like http://prowlarr:9696/42/api', async () => {
+        const { extractSourceIndexerId } = await import('../routes/prowlarr-compat.js');
+        expect(extractSourceIndexerId('http://prowlarr:9696/42/api')).toBe(42);
+      });
+
+      it('returns null for baseUrl with no numeric path segment', async () => {
+        const { extractSourceIndexerId } = await import('../routes/prowlarr-compat.js');
+        expect(extractSourceIndexerId('http://example.com/no-numeric-path')).toBeNull();
+      });
+
+      it('returns null for baseUrl like http://example.com/', async () => {
+        const { extractSourceIndexerId } = await import('../routes/prowlarr-compat.js');
+        expect(extractSourceIndexerId('http://example.com/')).toBeNull();
+      });
+    });
+  });
 });

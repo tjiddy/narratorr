@@ -8,12 +8,16 @@ export interface Indexer {
   enabled: boolean;
   priority: number;
   settings: Record<string, unknown>;
+  source: string | null;
+  sourceIndexerId: number | null;
   createdAt: string;
 }
 
+type IndexerInput = Omit<Indexer, 'id' | 'createdAt' | 'source' | 'sourceIndexerId'>;
+
 export const indexersApi = {
   getIndexers: () => fetchApi<Indexer[]>('/indexers'),
-  createIndexer: (data: Omit<Indexer, 'id' | 'createdAt'>) =>
+  createIndexer: (data: IndexerInput) =>
     fetchApi<Indexer>('/indexers', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -27,7 +31,7 @@ export const indexersApi = {
     fetchApi<{ success: boolean }>(`/indexers/${id}`, { method: 'DELETE' }),
   testIndexer: (id: number) =>
     fetchApi<TestResult>(`/indexers/${id}/test`, { method: 'POST' }),
-  testIndexerConfig: (data: Omit<Indexer, 'id' | 'createdAt'>) =>
+  testIndexerConfig: (data: IndexerInput) =>
     fetchApi<TestResult>('/indexers/test', {
       method: 'POST',
       body: JSON.stringify(data),

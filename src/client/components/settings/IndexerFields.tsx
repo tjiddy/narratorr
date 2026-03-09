@@ -9,9 +9,10 @@ interface IndexerFieldsProps {
   register: UseFormRegister<CreateIndexerFormData>;
   errors: FieldErrors<CreateIndexerFormData>;
   watch?: UseFormWatch<CreateIndexerFormData>;
+  prowlarrManaged?: boolean;
 }
 
-type FieldComponent = (props: Pick<IndexerFieldsProps, 'register' | 'errors'> & { selectedType: string }) => JSX.Element;
+type FieldComponent = (props: Pick<IndexerFieldsProps, 'register' | 'errors'> & { selectedType: string; prowlarrManaged?: boolean }) => JSX.Element;
 
 function FlareSolverrField({ register, errors }: Pick<IndexerFieldsProps, 'register' | 'errors'>) {
   return (
@@ -79,7 +80,8 @@ function AbbFields({ register, errors }: Pick<IndexerFieldsProps, 'register' | '
   );
 }
 
-function ApiFields({ register, errors, selectedType }: Pick<IndexerFieldsProps, 'register' | 'errors'> & { selectedType: string }) {
+function ApiFields({ register, errors, selectedType, prowlarrManaged }: Pick<IndexerFieldsProps, 'register' | 'errors'> & { selectedType: string; prowlarrManaged?: boolean }) {
+  const readOnlyClass = prowlarrManaged ? 'opacity-60 cursor-not-allowed' : '';
   return (
     <>
       <div className="sm:col-span-2">
@@ -88,9 +90,10 @@ function ApiFields({ register, errors, selectedType }: Pick<IndexerFieldsProps, 
           id="indexerApiUrl"
           type="text"
           {...register('settings.apiUrl')}
+          readOnly={prowlarrManaged}
           className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
             errors.settings?.apiUrl ? 'border-destructive' : 'border-border'
-          }`}
+          } ${readOnlyClass}`}
           placeholder="https://indexer.example.com/api"
         />
         {errors.settings?.apiUrl ? (
@@ -105,9 +108,10 @@ function ApiFields({ register, errors, selectedType }: Pick<IndexerFieldsProps, 
           id="indexerApiKey"
           type="password"
           {...register('settings.apiKey')}
+          readOnly={prowlarrManaged}
           className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
             errors.settings?.apiKey ? 'border-destructive' : 'border-border'
-          }`}
+          } ${readOnlyClass}`}
         />
         {errors.settings?.apiKey && (
           <p className="text-sm text-destructive mt-1">{errors.settings.apiKey.message}</p>
@@ -200,12 +204,12 @@ function UseProxyField({ register, watch }: { register: UseFormRegister<CreateIn
   );
 }
 
-export function IndexerFields({ selectedType, register, errors, watch }: IndexerFieldsProps) {
+export function IndexerFields({ selectedType, register, errors, watch, prowlarrManaged }: IndexerFieldsProps) {
   const Component = FIELD_COMPONENTS[selectedType];
   if (!Component) return null;
   return (
     <>
-      <Component register={register} errors={errors} selectedType={selectedType} />
+      <Component register={register} errors={errors} selectedType={selectedType} prowlarrManaged={prowlarrManaged} />
       <UseProxyField register={register} watch={watch} />
     </>
   );

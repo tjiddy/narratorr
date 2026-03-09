@@ -39,6 +39,7 @@ import { authRoutes } from './auth.js';
 import { filesystemRoutes } from './filesystem.js';
 import { remotePathMappingRoutes } from './remote-path-mappings.js';
 import { eventHistoryRoutes } from './event-history.js';
+import { prowlarrCompatRoutes } from './prowlarr-compat.js';
 
 export interface Services {
   settings: SettingsService;
@@ -131,4 +132,5 @@ export async function registerRoutes(
   await remotePathMappingRoutes(app, services.remotePathMapping);
   await filesystemRoutes(app);
   await eventHistoryRoutes(app, services.eventHistory);
+  await prowlarrCompatRoutes(app, services.indexer);
 }
