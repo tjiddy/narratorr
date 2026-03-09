@@ -18,7 +18,7 @@ const EXEC_OPTS = { encoding: "utf-8" as const, cwd: process.cwd(), stdio: ["pip
 export function gitea(...args: string[]): string {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      return execFileSync("tsx", [GITEA_CLI, ...args], EXEC_OPTS).trim();
+      return execFileSync("node", [GITEA_CLI, ...args], EXEC_OPTS).trim();
     } catch (e: unknown) {
       const err = e as { stderr?: string; message?: string };
       const msg = (err.stderr || err.message || "").toString();
@@ -107,13 +107,13 @@ export function parseSha(output: string): string | null {
 
 // Parse state from gitea output.
 export function parseState(output: string): string | null {
-  const match = output.match(/state:\s*(\S+)/i);
+  const match = output.match(/^#\d+\s+\[(\w+)]/m);
   return match ? match[1] : null;
 }
 
 // Parse head branch from gitea PR output.
 export function parseHeadBranch(output: string): string | null {
-  const match = output.match(/head:\s*(\S+)/i);
+  const match = output.match(/^(\S+)\s*→/m);
   return match ? match[1] : null;
 }
 
