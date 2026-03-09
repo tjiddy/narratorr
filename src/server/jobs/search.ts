@@ -12,6 +12,13 @@ export interface SearchJobResult {
   grabbed: number;
 }
 
+export interface SearchAllWantedResult {
+  searched: number;
+  grabbed: number;
+  skipped: number;
+  errors: number;
+}
+
 /**
  * Run a single search cycle: find wanted books, search indexers, and grab the best result.
  */
@@ -100,6 +107,92 @@ export async function runSearchJob(
 
   log.info({ searched, grabbed }, 'Scheduled search completed');
   return { searched, grabbed };
+}
+
+/**
+ * Search all wanted books against all enabled indexers and grab the best result per book.
+ * Unlike runSearchJob, this bypasses the searchSettings.enabled check (manual trigger).
+ */
+export async function searchAllWanted(
+  settingsService: SettingsService,
+  bookService: BookService,
+  indexerService: IndexerService,
+  downloadService: DownloadService,
+  log: FastifyBaseLogger,
+): Promise<SearchAllWantedResult> {
+  const qualitySettings = await settingsService.get('quality');
+  const wantedBooks = await bookService.getAll('wanted');
+
+  if (wantedBooks.length === 0) {
+    log.debug('No wanted books to search for');
+    return { searched: 0, grabbed: 0, skipped: 0, errors: 0 };
+  }
+
+  log.info({ count: wantedBooks.length }, 'Starting search-all-wanted');
+
+  let searched = 0;
+  let grabbed = 0;
+  let skipped = 0;
+  let errors = 0;
+
+  for (const book of wantedBooks) {
+    const query = [book.title, book.author?.name].filter(Boolean).join(' ');
+    try {
+      const rawResults = await indexerService.searchAll(query, {
+        title: book.title,
+        author: book.author?.name,
+      });
+      searched++;
+
+      if (rawResults.length === 0) {
+        log.debug({ bookId: book.id, title: book.title }, 'No results found');
+        continue;
+      }
+
+      log.info({ bookId: book.id, title: book.title, resultCount: rawResults.length }, 'Search results found');
+
+      const { results } = filterAndRankResults(
+        rawResults,
+        book.duration ?? undefined,
+        qualitySettings.grabFloor,
+        qualitySettings.minSeeders,
+        qualitySettings.protocolPreference,
+        qualitySettings.rejectWords,
+        qualitySettings.requiredWords,
+      );
+
+      const best = results.find((r) => r.downloadUrl);
+      if (best) {
+        try {
+          await downloadService.grab({
+            downloadUrl: best.downloadUrl!,
+            title: best.title,
+            protocol: best.protocol,
+            bookId: book.id,
+            size: best.size,
+            seeders: best.seeders,
+          });
+          grabbed++;
+          log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
+        } catch (grabError) {
+          const message = grabError instanceof Error ? grabError.message : String(grabError);
+          if (message.includes('already has an active download')) {
+            skipped++;
+            log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book already has active download');
+          } else {
+            errors++;
+            log.warn({ error: grabError, bookId: book.id, title: book.title }, 'Grab failed for book');
+          }
+        }
+      }
+    } catch (error) {
+      errors++;
+      log.warn({ error, bookId: book.id, title: book.title }, 'Search failed for book');
+    }
+  }
+
+  log.info({ searched, grabbed, skipped, errors }, 'Search-all-wanted completed');
+  return { searched, grabbed, skipped, errors };
 }
 
 /**

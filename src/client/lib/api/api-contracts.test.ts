@@ -550,6 +550,11 @@ describe('systemApi', () => {
     await systemApi.triggerSearch();
     expect(mockFetchApi).toHaveBeenCalledWith('/system/tasks/search', expect.objectContaining({ method: 'POST' }));
   });
+
+  it('searchAllWanted → POST /system/tasks/search-all-wanted', async () => {
+    await systemApi.searchAllWanted();
+    expect(mockFetchApi).toHaveBeenCalledWith('/system/tasks/search-all-wanted', expect.objectContaining({ method: 'POST' }));
+  });
 });
 
 // ============================================================================

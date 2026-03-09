@@ -32,6 +32,8 @@ function defaultProps(overrides = {}) {
     isRescanning: false,
     missingCount: 0,
     onRemoveMissing: vi.fn(),
+    onSearchAllWanted: vi.fn(),
+    isSearchingAllWanted: false,
     ...overrides,
   };
 }

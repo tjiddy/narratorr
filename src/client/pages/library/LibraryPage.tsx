@@ -1,7 +1,9 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useLibrary } from '@/hooks/useLibrary';
-import { type BookWithAuthor } from '@/lib/api';
+import { api, type BookWithAuthor } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import type { DisplayBook } from './helpers.js';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
@@ -14,6 +16,7 @@ import { LibraryToolbar } from './LibraryToolbar.js';
 import { LibraryBookCard } from './LibraryBookCard.js';
 import { EmptyLibraryState } from './EmptyLibraryState.js';
 import { NoMatchState } from './NoMatchState.js';
+import { LibraryHeader } from './LibraryHeader.js';
 
 export function LibraryPage() {
   const navigate = useNavigate();
@@ -21,16 +24,21 @@ export function LibraryPage() {
 
   useImportPolling(books);
   const filters = useLibraryFilters(books);
-  const { rescanMutation, deleteMutation, deleteMissingMutation } = useLibraryMutations();
-
+  const { rescanMutation, deleteMutation, deleteMissingMutation, searchAllWantedMutation } = useLibraryMutations();
+  const { data: indexers = [] } = useQuery({ queryKey: queryKeys.indexers(), queryFn: api.getIndexers });
   const deleteConfirm = useDeleteConfirmation<BookWithAuthor>();
   const [deleteFiles, setDeleteFiles] = useState(false);
   const [searchBook, setSearchBook] = useState<BookWithAuthor | null>(null);
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
   const [showRemoveMissingModal, setShowRemoveMissingModal] = useState(false);
-
+  const [showSearchAllWantedModal, setShowSearchAllWantedModal] = useState(false);
   const missingCount = books.filter((b) => b.status === 'missing').length;
-
+  const wantedCount = useMemo(() => books.filter((b) => b.status === 'wanted').length, [books]);
+  const enabledIndexerCount = useMemo(() => indexers.filter((i) => i.enabled).length, [indexers]);
+  const bp = books.length !== 1 ? 's' : '';
+  const subtitle = filters.isSearching
+    ? `${filters.filteredBooks.length} of ${books.length} book${bp}` : `${books.length} book${bp} in your collection`;
+  const searchAllWantedMessage = `Search ${wantedCount} wanted book${wantedCount !== 1 ? 's' : ''} across ${enabledIndexerCount} enabled indexer${enabledIndexerCount !== 1 ? 's' : ''} (~${wantedCount * enabledIndexerCount} API calls)?`;
   const closeMenu = useCallback(() => setOpenMenuId(null), []);
   useEffect(() => {
     if (openMenuId !== null) {
@@ -38,43 +46,27 @@ export function LibraryPage() {
       return () => document.removeEventListener('click', closeMenu);
     }
   }, [openMenuId, closeMenu]);
-
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <div className="animate-fade-in-up">
-          <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Library</h1>
-          <p className="text-muted-foreground mt-1">Your audiobook collection</p>
-        </div>
+        <LibraryHeader />
         <div className="flex items-center justify-center py-24">
           <LoadingSpinner className="w-8 h-8 text-primary" />
         </div>
       </div>
     );
   }
-
   if (books.length === 0) {
     return (
       <div className="space-y-6">
-        <div className="animate-fade-in-up">
-          <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Library</h1>
-          <p className="text-muted-foreground mt-1">Your audiobook collection</p>
-        </div>
+        <LibraryHeader />
         <EmptyLibraryState />
       </div>
     );
   }
-
   return (
     <div className="space-y-5">
-      <div className="animate-fade-in-up">
-        <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Library</h1>
-        <p className="text-muted-foreground mt-1">
-          {filters.isSearching
-            ? `${filters.filteredBooks.length} of ${books.length} book${books.length !== 1 ? 's' : ''}`
-            : `${books.length} book${books.length !== 1 ? 's' : ''} in your collection`}
-        </p>
-      </div>
+      <LibraryHeader subtitle={subtitle} />
 
       <LibraryToolbar
         searchQuery={filters.searchQuery}
@@ -102,6 +94,8 @@ export function LibraryPage() {
         isRescanning={rescanMutation.isPending}
         missingCount={missingCount}
         onRemoveMissing={() => setShowRemoveMissingModal(true)}
+        onSearchAllWanted={() => setShowSearchAllWantedModal(true)}
+        isSearchingAllWanted={searchAllWantedMutation.isPending}
       />
 
       {filters.filteredBooks.length === 0 ? (
@@ -155,6 +149,16 @@ export function LibraryPage() {
         cancelLabel="Cancel"
         onConfirm={() => { setShowRemoveMissingModal(false); deleteMissingMutation.mutate(); }}
         onCancel={() => setShowRemoveMissingModal(false)}
+      />
+
+      <ConfirmModal
+        isOpen={showSearchAllWantedModal}
+        title="Search All Wanted"
+        message={searchAllWantedMessage}
+        confirmLabel="Search"
+        cancelLabel="Cancel"
+        onConfirm={() => { setShowSearchAllWantedModal(false); searchAllWantedMutation.mutate(); }}
+        onCancel={() => setShowSearchAllWantedModal(false)}
       />
 
       {searchBook && (

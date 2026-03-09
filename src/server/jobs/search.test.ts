@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
-import { runSearchJob, runUpgradeSearchJob } from './search.js';
+import { runSearchJob, runUpgradeSearchJob, searchAllWanted } from './search.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SettingsService } from '../services/settings.service.js';
 import type { BookService } from '../services/book.service.js';
@@ -611,5 +611,265 @@ describe('runUpgradeSearchJob', () => {
     );
     // Should NOT have logged a warning (it was handled silently)
     expect(log.warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('searchAllWanted', () => {
+  let log: ReturnType<typeof createMockLogger>;
+
+  beforeEach(() => {
+    log = createMockLogger();
+  });
+
+  it('searches each wanted book against all enabled indexers', async () => {
+    const wantedBooks = [
+      { id: 1, title: 'Book One', author: { name: 'Author A' } },
+      { id: 2, title: 'Book Two', author: { name: 'Author B' } },
+    ];
+    const settings = createMockSettingsService();
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService([]);
+    const download = createMockDownloadService();
+
+    const result = await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(2);
+    expect(indexer.searchAll).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(indexer.searchAll).mock.calls[0][0]).toBe('Book One Author A');
+    expect(vi.mocked(indexer.searchAll).mock.calls[1][0]).toBe('Book Two Author B');
+  });
+
+  it('grabs the best ranked result per book', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa'), mockResult(5, 'magnet:?xt=urn:btih:bbb')];
+    const settings = createMockSettingsService();
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService(searchResults);
+    const download = createMockDownloadService();
+
+    const result = await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(1);
+    expect(download.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:aaa', bookId: 1 }),
+    );
+  });
+
+  it('skips books where grab throws "already has an active download" — increments skipped', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
+    const settings = createMockSettingsService();
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService(searchResults);
+    const download = createMockDownloadService();
+    vi.mocked(download.grab).mockRejectedValueOnce(new Error('Book 1 already has an active download (id: 5)'));
+
+    const result = await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.skipped).toBe(1);
+    expect(result.errors).toBe(0);
+    expect(result.grabbed).toBe(0);
+  });
+
+  it('continues searching remaining books when one book search throws — increments errors', async () => {
+    const wantedBooks = [
+      { id: 1, title: 'Book A', author: { name: 'Author' } },
+      { id: 2, title: 'Book B', author: { name: 'Author' } },
+      { id: 3, title: 'Book C', author: { name: 'Author' } },
+    ];
+    const settings = createMockSettingsService();
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService([]);
+    const results = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
+    vi.mocked(indexer.searchAll)
+      .mockResolvedValueOnce(results)
+      .mockRejectedValueOnce(new Error('Network error'))
+      .mockResolvedValueOnce(results);
+    const download = createMockDownloadService();
+
+    const result = await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(2);
+    expect(result.grabbed).toBe(2);
+    expect(result.errors).toBe(1);
+    expect(indexer.searchAll).toHaveBeenCalledTimes(3);
+  });
+
+  it('does NOT check searchSettings.enabled — manual trigger always runs', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const settings = createMockSettingsService({ search: { enabled: false, intervalMinutes: 60 } });
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService([mockResult(10, 'magnet:?xt=urn:btih:aaa')]);
+    const download = createMockDownloadService();
+
+    const result = await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(1);
+    expect(result.grabbed).toBe(1);
+  });
+
+  it('returns accurate searched, grabbed, skipped, and errors counts', async () => {
+    const wantedBooks = [
+      { id: 1, title: 'Book A', author: { name: 'Author' } },
+      { id: 2, title: 'Book B', author: { name: 'Author' } },
+      { id: 3, title: 'Book C', author: { name: 'Author' } },
+    ];
+    const settings = createMockSettingsService();
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService([]);
+    const results = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
+    vi.mocked(indexer.searchAll)
+      .mockResolvedValueOnce(results) // Book A — grab succeeds
+      .mockResolvedValueOnce(results) // Book B — grab fails (active download)
+      .mockResolvedValueOnce(results); // Book C — grab succeeds
+    const download = createMockDownloadService();
+    vi.mocked(download.grab)
+      .mockResolvedValueOnce({ id: 1 } as never)
+      .mockRejectedValueOnce(new Error('already has an active download'))
+      .mockResolvedValueOnce({ id: 2 } as never);
+
+    const result = await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result).toEqual({ searched: 3, grabbed: 2, skipped: 1, errors: 0 });
+  });
+
+  it('filters results below grab floor (no grab attempted)', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author' }, duration: 36000 }];
+    // size=1000 bytes, duration=36000s → very low MB/hr, should be filtered out
+    const searchResults: SearchResult[] = [{ title: 'Test', protocol: 'torrent', indexer: 'abb', seeders: 10, downloadUrl: 'magnet:?aaa', size: 1000 }];
+    const settings = createMockSettingsService({ quality: { grabFloor: 100, minSeeders: 0, protocolPreference: 'none' } });
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService(searchResults);
+    const download = createMockDownloadService();
+
+    const result = await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(1);
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+  });
+
+  it('grabFloor=0 disables quality filtering (all results eligible)', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author' }, duration: 36000 }];
+    const searchResults: SearchResult[] = [{ title: 'Test', protocol: 'torrent', indexer: 'abb', seeders: 10, downloadUrl: 'magnet:?aaa', size: 1000 }];
+    const settings = createMockSettingsService({ quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' } });
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService(searchResults);
+    const download = createMockDownloadService();
+
+    const result = await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(1);
+  });
+
+  it('results without downloadUrl are skipped (not grabbable)', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author' } }];
+    const searchResults = [mockResult(10, undefined)]; // no downloadUrl
+    const settings = createMockSettingsService();
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService(searchResults);
+    const download = createMockDownloadService();
+
+    const result = await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(1);
+    expect(result.grabbed).toBe(0);
+    expect(download.grab).not.toHaveBeenCalled();
+  });
+
+  it('returns zeros when no wanted books exist', async () => {
+    const settings = createMockSettingsService();
+    const books = createMockBookService([]);
+    const indexer = createMockIndexerService();
+    const download = createMockDownloadService();
+
+    const result = await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result).toEqual({ searched: 0, grabbed: 0, skipped: 0, errors: 0 });
+  });
+
+  it('all books already have active downloads — grabbed: 0, skipped: N', async () => {
+    const wantedBooks = [
+      { id: 1, title: 'Book A', author: { name: 'Author' } },
+      { id: 2, title: 'Book B', author: { name: 'Author' } },
+    ];
+    const settings = createMockSettingsService();
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService([mockResult(10, 'magnet:?aaa')]);
+    const download = createMockDownloadService();
+    vi.mocked(download.grab).mockRejectedValue(new Error('already has an active download'));
+
+    const result = await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.grabbed).toBe(0);
+    expect(result.skipped).toBe(2);
+  });
+
+  it('all indexer searches return zero results — searched: N, grabbed: 0', async () => {
+    const wantedBooks = [
+      { id: 1, title: 'Book A', author: { name: 'Author' } },
+      { id: 2, title: 'Book B', author: { name: 'Author' } },
+    ];
+    const settings = createMockSettingsService();
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService([]);
+    const download = createMockDownloadService();
+
+    const result = await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.searched).toBe(2);
+    expect(result.grabbed).toBe(0);
+  });
+
+  it('book with author=null — query uses title only', async () => {
+    const wantedBooks = [{ id: 1, title: 'Anonymous Work', author: null }];
+    const settings = createMockSettingsService();
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService([]);
+    const download = createMockDownloadService();
+
+    await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(vi.mocked(indexer.searchAll).mock.calls[0][0]).toBe('Anonymous Work');
+  });
+
+  it('mixed success/failure: accurate partial counts', async () => {
+    const wantedBooks = [
+      { id: 1, title: 'Book A', author: { name: 'Author' } },
+      { id: 2, title: 'Book B', author: { name: 'Author' } },
+      { id: 3, title: 'Book C', author: { name: 'Author' } },
+      { id: 4, title: 'Book D', author: { name: 'Author' } },
+    ];
+    const settings = createMockSettingsService();
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService([]);
+    const results = [mockResult(10, 'magnet:?aaa')];
+    vi.mocked(indexer.searchAll)
+      .mockResolvedValueOnce(results) // Book A — grab succeeds
+      .mockRejectedValueOnce(new Error('Timeout')) // Book B — search fails
+      .mockResolvedValueOnce(results) // Book C — active download
+      .mockResolvedValueOnce([]); // Book D — no results
+    const download = createMockDownloadService();
+    vi.mocked(download.grab)
+      .mockResolvedValueOnce({ id: 1 } as never) // Book A
+      .mockRejectedValueOnce(new Error('already has an active download')); // Book C
+
+    const result = await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result).toEqual({ searched: 3, grabbed: 1, skipped: 1, errors: 1 });
+  });
+
+  it('non-Error thrown from grab — String(grabError) fallback handles message check', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author' } }];
+    const settings = createMockSettingsService();
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService([mockResult(10, 'magnet:?aaa')]);
+    const download = createMockDownloadService();
+    vi.mocked(download.grab).mockRejectedValueOnce('already has an active download');
+
+    const result = await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    expect(result.skipped).toBe(1);
+    expect(result.errors).toBe(0);
   });
 });

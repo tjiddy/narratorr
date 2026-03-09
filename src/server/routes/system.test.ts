@@ -124,4 +124,46 @@ describe('system routes', () => {
       expect(res.statusCode).toBe(500);
     });
   });
+
+  describe('POST /api/system/tasks/search-all-wanted', () => {
+    it('returns 200 with { searched, grabbed, skipped, errors } summary', async () => {
+      (services.settings.get as Mock).mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
+        return Promise.resolve({ enabled: false, intervalMinutes: 360 });
+      });
+      (services.book.getAll as Mock).mockResolvedValue([]);
+
+      const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search-all-wanted' });
+
+      expect(res.statusCode).toBe(200);
+
+      const payload = JSON.parse(res.payload);
+      expect(payload).toHaveProperty('searched');
+      expect(payload).toHaveProperty('grabbed');
+      expect(payload).toHaveProperty('skipped');
+      expect(payload).toHaveProperty('errors');
+    });
+
+    it('returns zeros when no wanted books exist', async () => {
+      (services.settings.get as Mock).mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
+        return Promise.resolve({ enabled: true, intervalMinutes: 360 });
+      });
+      (services.book.getAll as Mock).mockResolvedValue([]);
+
+      const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search-all-wanted' });
+
+      expect(res.statusCode).toBe(200);
+      const payload = JSON.parse(res.payload);
+      expect(payload).toEqual({ searched: 0, grabbed: 0, skipped: 0, errors: 0 });
+    });
+
+    it('returns 500 when search-all-wanted throws', async () => {
+      (services.settings.get as Mock).mockRejectedValue(new Error('DB connection lost'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search-all-wanted' });
+
+      expect(res.statusCode).toBe(500);
+    });
+  });
 });

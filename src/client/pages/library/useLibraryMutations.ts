@@ -40,5 +40,20 @@ export function useLibraryMutations() {
     },
   });
 
-  return { rescanMutation, deleteMutation, deleteMissingMutation };
+  const searchAllWantedMutation = useMutation({
+    mutationFn: () => api.searchAllWanted(),
+    onSuccess: (data) => {
+      const parts = [`${data.searched} searched`, `${data.grabbed} grabbed`];
+      if (data.skipped > 0) parts.push(`${data.skipped} skipped`);
+      if (data.errors > 0) parts.push(`${data.errors} errors`);
+      toast.success(`Search complete: ${parts.join(', ')}`);
+      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
+    },
+    onError: (error: Error) => {
+      toast.error(`Search all wanted failed: ${error.message}`);
+    },
+  });
+
+  return { rescanMutation, deleteMutation, deleteMissingMutation, searchAllWantedMutation };
 }

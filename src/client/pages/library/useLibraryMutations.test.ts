@@ -9,6 +9,7 @@ vi.mock('@/lib/api', () => ({
     rescanLibrary: vi.fn(),
     deleteBook: vi.fn(),
     deleteMissingBooks: vi.fn(),
+    searchAllWanted: vi.fn(),
   },
 }));
 
@@ -139,6 +140,88 @@ describe('useLibraryMutations', () => {
 
       await waitFor(() => {
         expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to remove missing books: DB connection lost');
+      });
+    });
+  });
+
+  describe('searchAllWantedMutation', () => {
+    it('calls api.searchAllWanted on mutate', async () => {
+      vi.mocked(api.searchAllWanted).mockResolvedValue({ searched: 5, grabbed: 2, skipped: 1, errors: 0 });
+
+      const { result } = renderHook(() => useLibraryMutations(), { wrapper: createWrapper() });
+
+      act(() => { result.current.searchAllWantedMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(api.searchAllWanted).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it('shows success toast with searched/grabbed/skipped counts on success', async () => {
+      vi.mocked(api.searchAllWanted).mockResolvedValue({ searched: 5, grabbed: 2, skipped: 1, errors: 0 });
+
+      const { result } = renderHook(() => useLibraryMutations(), { wrapper: createWrapper() });
+
+      act(() => { result.current.searchAllWantedMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Search complete: 5 searched, 2 grabbed, 1 skipped');
+      });
+    });
+
+    it('includes errors in toast when present', async () => {
+      vi.mocked(api.searchAllWanted).mockResolvedValue({ searched: 3, grabbed: 1, skipped: 0, errors: 2 });
+
+      const { result } = renderHook(() => useLibraryMutations(), { wrapper: createWrapper() });
+
+      act(() => { result.current.searchAllWantedMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Search complete: 3 searched, 1 grabbed, 2 errors');
+      });
+    });
+
+    it('omits both skipped and errors from toast when both are zero', async () => {
+      vi.mocked(api.searchAllWanted).mockResolvedValue({ searched: 4, grabbed: 3, skipped: 0, errors: 0 });
+
+      const { result } = renderHook(() => useLibraryMutations(), { wrapper: createWrapper() });
+
+      act(() => { result.current.searchAllWantedMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Search complete: 4 searched, 3 grabbed');
+      });
+    });
+
+    it('invalidates books and activity queries on success', async () => {
+      vi.mocked(api.searchAllWanted).mockResolvedValue({ searched: 2, grabbed: 1, skipped: 0, errors: 0 });
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      });
+      const spy = vi.spyOn(queryClient, 'invalidateQueries');
+      const wrapper = ({ children }: { children: React.ReactNode }) =>
+        createElement(QueryClientProvider, { client: queryClient }, children);
+
+      const { result } = renderHook(() => useLibraryMutations(), { wrapper });
+
+      act(() => { result.current.searchAllWantedMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(spy).toHaveBeenCalledWith({ queryKey: ['books'] });
+        expect(spy).toHaveBeenCalledWith({ queryKey: ['activity'] });
+      });
+    });
+
+    it('shows error toast on failure', async () => {
+      vi.mocked(api.searchAllWanted).mockRejectedValue(new Error('Server error'));
+
+      const { result } = renderHook(() => useLibraryMutations(), { wrapper: createWrapper() });
+
+      act(() => { result.current.searchAllWantedMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Search all wanted failed: Server error');
       });
     });
   });

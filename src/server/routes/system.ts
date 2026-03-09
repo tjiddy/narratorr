@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { sql } from 'drizzle-orm';
 import type { Services } from './index.js';
-import { runSearchJob } from '../jobs/search.js';
+import { runSearchJob, searchAllWanted } from '../jobs/search.js';
 import { runRssJob } from '../jobs/rss.js';
 
 export async function systemRoutes(app: FastifyInstance, services: Services, db: Db) {
@@ -42,6 +42,18 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       services.download,
       request.log,
       services.retryBudget,
+    );
+    return result;
+  });
+
+  // POST /api/system/tasks/search-all-wanted — search all wanted books
+  app.post('/api/system/tasks/search-all-wanted', async (request) => {
+    const result = await searchAllWanted(
+      services.settings,
+      services.book,
+      services.indexer,
+      services.download,
+      request.log,
     );
     return result;
   });

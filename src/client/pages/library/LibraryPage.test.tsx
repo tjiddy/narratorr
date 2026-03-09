@@ -14,6 +14,12 @@ vi.mock('@/lib/api', () => ({
     rescanLibrary: vi.fn(),
     search: vi.fn(),
     grab: vi.fn(),
+    searchAllWanted: vi.fn(),
+    getIndexers: vi.fn().mockResolvedValue([
+      { id: 1, name: 'Indexer A', enabled: true },
+      { id: 2, name: 'Indexer B', enabled: true },
+      { id: 3, name: 'Indexer C', enabled: false },
+    ]),
   },
   formatBytes: (bytes?: number) => {
     if (!bytes) return '0 B';
@@ -117,7 +123,7 @@ describe('LibraryPage', () => {
       expect(screen.getByText('4')).toBeInTheDocument(); // All count
     });
     // Wanted count = 2
-    const wantedPill = screen.getByRole('button', { name: /Wanted/i });
+    const wantedPill = screen.getByRole('button', { name: /^Wanted\s*\d*$/i });
     expect(within(wantedPill).getByText('2')).toBeInTheDocument();
     // Downloading count = 1
     const downloadingPill = screen.getByRole('button', { name: /Downloading/i });
@@ -515,7 +521,7 @@ describe('LibraryPage', () => {
     });
 
     // Click Wanted tab — should still show Sanderson's wanted books
-    await user.click(screen.getByRole('button', { name: /Wanted/i }));
+    await user.click(screen.getByRole('button', { name: /^Wanted\s*\d*$/i }));
 
     await waitFor(() => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
@@ -806,6 +812,153 @@ describe('LibraryPage', () => {
       await waitFor(() => {
         expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
           'Rescan failed: Library path is not configured',
+        );
+      });
+    });
+  });
+
+  describe('Search All Wanted', () => {
+    it('shows confirmation modal with book count, indexer count, and estimated API calls when button clicked', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Search Wanted'));
+
+      await waitFor(() => {
+        // mockBooks has 2 wanted books (id 1 and 4), 2 enabled indexers → 4 API calls
+        expect(screen.getByText(/Search 2 wanted books across 2 enabled indexers/)).toBeInTheDocument();
+        expect(screen.getByText(/~4 API calls/)).toBeInTheDocument();
+      });
+    });
+
+    it('triggers searchAllWanted API call when user confirms modal', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+      vi.mocked(api.searchAllWanted).mockResolvedValue({ searched: 2, grabbed: 1, skipped: 0, errors: 0 });
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Search Wanted'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Search', { selector: 'button' })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Search', { selector: 'button' }));
+
+      await waitFor(() => {
+        expect(api.searchAllWanted).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it('does nothing when user cancels modal', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Search Wanted'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Cancel', { selector: 'button' })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Cancel', { selector: 'button' }));
+
+      expect(api.searchAllWanted).not.toHaveBeenCalled();
+    });
+
+    it('shows summary toast on successful search completion', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+      vi.mocked(api.searchAllWanted).mockResolvedValue({ searched: 2, grabbed: 1, skipped: 0, errors: 0 });
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Search Wanted'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Search', { selector: 'button' })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Search', { selector: 'button' }));
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.success)).toHaveBeenCalledWith('Search complete: 2 searched, 1 grabbed');
+      });
+    });
+
+    it('disables Search Wanted button while mutation is pending', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+      // Return a promise that never resolves to keep mutation pending
+      vi.mocked(api.searchAllWanted).mockReturnValue(new Promise(() => {}));
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      // Button should be enabled initially
+      const searchWantedButton = screen.getByRole('button', { name: /Search Wanted/ });
+      expect(searchWantedButton).toBeEnabled();
+
+      // Open modal and confirm
+      await user.click(searchWantedButton);
+
+      await waitFor(() => {
+        expect(screen.getByText('Search', { selector: 'button' })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Search', { selector: 'button' }));
+
+      // Button should now be disabled while mutation is pending
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Search Wanted/ })).toBeDisabled();
+      });
+    });
+
+    it('shows error toast on search failure', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+      vi.mocked(api.searchAllWanted).mockRejectedValue(new Error('Server error'));
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Search Wanted'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Search', { selector: 'button' })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Search', { selector: 'button' }));
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+          'Search all wanted failed: Server error',
         );
       });
     });
