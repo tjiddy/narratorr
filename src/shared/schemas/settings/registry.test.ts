@@ -37,7 +37,7 @@ describe('settingsRegistry', () => {
     });
 
     it('exports exactly the expected category keys', () => {
-      const expected = ['library', 'search', 'import', 'general', 'metadata', 'processing', 'tagging', 'quality', 'network'];
+      const expected = ['library', 'search', 'import', 'general', 'metadata', 'processing', 'tagging', 'quality', 'network', 'rss'];
       expect(SETTINGS_CATEGORIES.sort()).toEqual(expected.sort());
     });
 
@@ -109,6 +109,28 @@ describe('settingsRegistry', () => {
         rejectWords: '',
         requiredWords: '',
       });
+    });
+  });
+
+  describe('rss schema boundary constraints', () => {
+    it('rejects intervalMinutes below minimum (4)', () => {
+      const result = settingsRegistry.rss.schema.safeParse({ intervalMinutes: 4, enabled: true });
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts intervalMinutes at minimum boundary (5)', () => {
+      const result = settingsRegistry.rss.schema.safeParse({ intervalMinutes: 5, enabled: true });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts intervalMinutes at maximum boundary (1440)', () => {
+      const result = settingsRegistry.rss.schema.safeParse({ intervalMinutes: 1440, enabled: true });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects intervalMinutes above maximum (1441)', () => {
+      const result = settingsRegistry.rss.schema.safeParse({ intervalMinutes: 1441, enabled: true });
+      expect(result.success).toBe(false);
     });
   });
 

@@ -165,6 +165,61 @@ describe('IndexerService', () => {
     });
   });
 
+  describe('getRssCapableIndexers', () => {
+    it('returns only newznab and torznab enabled indexers', async () => {
+      const newznab = createMockDbIndexer({ id: 1, name: 'Newznab', type: 'newznab', enabled: true });
+      const torznab = createMockDbIndexer({ id: 2, name: 'Torznab', type: 'torznab', enabled: true });
+      const abb = createMockDbIndexer({ id: 3, name: 'ABB', type: 'abb', enabled: true });
+      db.select.mockReturnValue(mockDbChain([newznab, torznab, abb]));
+
+      const result = await service.getRssCapableIndexers();
+      expect(result).toHaveLength(2);
+      expect(result.map((i: { name: string }) => i.name)).toEqual(['Newznab', 'Torznab']);
+    });
+
+    it('returns empty array when no RSS-capable indexers are enabled', async () => {
+      const abb = createMockDbIndexer({ id: 1, name: 'ABB', type: 'abb', enabled: true });
+      db.select.mockReturnValue(mockDbChain([abb]));
+
+      const result = await service.getRssCapableIndexers();
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('pollRss', () => {
+    it('calls adapter.search with empty query and parses release names', async () => {
+      const torznabIndexer = createMockDbIndexer({ id: 1, name: 'Torznab', type: 'torznab', settings: { apiUrl: 'https://tracker.test', apiKey: 'key' } });
+      const mockAdapter = {
+        type: 'torznab',
+        name: 'Torznab',
+        search: vi.fn().mockResolvedValue([
+          { title: 'Brandon Sanderson - The Way of Kings', indexer: 'Torznab', protocol: 'torrent' },
+        ]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.pollRss(torznabIndexer);
+
+      expect(mockAdapter.search).toHaveBeenCalledWith('');
+      expect(results).toHaveLength(1);
+      expect(results[0].author).toBe('Brandon Sanderson');
+      expect(results[0].title).toBe('The Way of Kings');
+    });
+
+    it('returns empty array when feed has no items', async () => {
+      const newznabIndexer = createMockDbIndexer({ id: 1, name: 'Newznab', type: 'newznab', settings: { apiUrl: 'https://nzb.test', apiKey: 'key' } });
+      const mockAdapter = {
+        search: vi.fn().mockResolvedValue([]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.pollRss(newznabIndexer);
+      expect(results).toEqual([]);
+    });
+  });
+
   describe('searchAll', () => {
     it('searches enabled indexers and aggregates results', async () => {
       const mockResult = {

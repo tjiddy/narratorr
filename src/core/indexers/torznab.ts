@@ -2,7 +2,6 @@ import * as cheerio from 'cheerio';
 import type { IndexerAdapter, SearchResult, SearchOptions } from './types.js';
 import { buildMagnetUri } from '../utils/magnet.js';
 import { fetchWithProxy } from './fetch.js';
-import { isProxyRelatedError } from './errors.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
 
 export interface TorznabConfig {
@@ -47,16 +46,10 @@ export class TorznabIndexer implements IndexerAdapter {
 
     const url = `${this.apiUrl}/api?${params.toString()}`;
 
-    try {
-      const xml = await this.fetchXml(url);
-      return this.parseSearchResults(xml, limit);
-    } catch (error) {
-      // Proxy errors bubble up to IndexerService.searchAll() for warn logging
-      if (isProxyRelatedError(error)) {
-        throw error;
-      }
-      return [];
-    }
+    // All errors (fetch, parse, proxy) bubble up to IndexerService.searchAll()
+    // which catches and logs warnings per-indexer, then continues with remaining indexers
+    const xml = await this.fetchXml(url);
+    return this.parseSearchResults(xml, limit);
   }
 
   async test(): Promise<{ success: boolean; message?: string; ip?: string }> {
@@ -110,6 +103,16 @@ export class TorznabIndexer implements IndexerAdapter {
 
   private parseSearchResults(xml: string, limit: number): SearchResult[] {
     const $ = cheerio.load(xml, { xmlMode: true });
+
+    // Validate RSS structure — invalid/non-RSS payloads must throw, not silently return []
+    if ($('rss').length === 0 && $('channel').length === 0) {
+      const apiError = $('error').attr('description') || $('error').attr('code');
+      if (apiError) {
+        throw new Error(`Torznab API error: ${apiError}`);
+      }
+      throw new Error('Invalid RSS response: missing <rss> or <channel> element');
+    }
+
     const results: SearchResult[] = [];
 
     // eslint-disable-next-line complexity -- XML item parsing with optional attribute extraction

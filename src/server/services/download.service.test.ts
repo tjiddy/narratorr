@@ -1126,6 +1126,34 @@ describe('DownloadService', () => {
       );
     });
 
+    it('records grabbed event with custom source when source is passed to grab', async () => {
+      const mockAdapter = { addDownload: vi.fn().mockResolvedValue('ext-789') };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit', settings: {} });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+      db.insert.mockReturnValue(mockDbChain([{ ...mockDownload, id: 11 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([{ download: { ...mockDownload, id: 11 }, book: mockBook }]));
+
+      await svcWithEvents.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:rss123',
+        title: 'RSS Book',
+        bookId: 1,
+        source: 'rss',
+      });
+
+      expect(eventHistory.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookId: 1,
+          bookTitle: 'RSS Book',
+          downloadId: 11,
+          eventType: 'grabbed',
+          source: 'rss',
+        }),
+      );
+    });
+
     it('records download_completed event when progress reaches 1', async () => {
       db.update.mockReturnValue(mockDbChain());
       db.select.mockReturnValue(mockDbChain([{ download: mockDownload, book: mockBook }]));

@@ -13,6 +13,7 @@ function Wrapper({ children }: { children: (props: ReturnType<typeof useForm<Upd
       import: { deleteAfterImport: false, minSeedTime: 60 },
       general: { logLevel: 'info' },
       metadata: { audibleRegion: 'us' },
+      rss: { enabled: false, intervalMinutes: 30 },
     },
   });
   return <FormProvider {...methods}>{children(methods)}</FormProvider>;
@@ -58,6 +59,63 @@ describe('SearchSettingsSection', () => {
     await user.clear(intervalInput);
     await user.type(intervalInput, '120');
     expect(intervalInput).toHaveValue(120);
+  });
+
+  it('RSS toggle renders and persists enable/disable state', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <Wrapper>
+        {({ register, formState: { errors } }) => (
+          <SearchSettingsSection register={register} errors={errors} />
+        )}
+      </Wrapper>,
+    );
+
+    expect(screen.getByText('Enable RSS Sync')).toBeInTheDocument();
+
+    const rssCheckbox = screen.getByText('Enable RSS Sync')
+      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+
+    expect(rssCheckbox.checked).toBe(false);
+    await user.click(rssCheckbox);
+    expect(rssCheckbox.checked).toBe(true);
+  });
+
+  it('RSS interval input renders and accepts value', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <Wrapper>
+        {({ register, formState: { errors } }) => (
+          <SearchSettingsSection register={register} errors={errors} />
+        )}
+      </Wrapper>,
+    );
+
+    expect(screen.getByText('RSS Interval (minutes)')).toBeInTheDocument();
+    const rssIntervalInput = screen.getByPlaceholderText('30');
+    await user.clear(rssIntervalInput);
+    await user.type(rssIntervalInput, '60');
+    expect(rssIntervalInput).toHaveValue(60);
+  });
+
+  it('RSS controls are separate from existing scheduled search controls', () => {
+    render(
+      <Wrapper>
+        {({ register, formState: { errors } }) => (
+          <SearchSettingsSection register={register} errors={errors} />
+        )}
+      </Wrapper>,
+    );
+
+    // Both search and RSS toggles exist
+    expect(screen.getByText('Enable Scheduled Search')).toBeInTheDocument();
+    expect(screen.getByText('Enable RSS Sync')).toBeInTheDocument();
+
+    // Both interval inputs exist
+    expect(screen.getByPlaceholderText('360')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('30')).toBeInTheDocument();
   });
 
   it('describes that search includes grabbing', () => {

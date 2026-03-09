@@ -216,26 +216,24 @@ describe('TorznabIndexer', () => {
       expect(url.searchParams.get('q')).toBe('test query');
     });
 
-    it('returns empty array on network error', async () => {
+    it('throws on network error', async () => {
       server.use(
         http.get(`${API_BASE}/api`, () => {
           return HttpResponse.error();
         }),
       );
 
-      const results = await indexer.search('test');
-      expect(results).toEqual([]);
+      await expect(indexer.search('test')).rejects.toThrow();
     });
 
-    it('returns empty array on non-200 response', async () => {
+    it('throws on non-200 response', async () => {
       server.use(
         http.get(`${API_BASE}/api`, () => {
           return new HttpResponse(null, { status: 500 });
         }),
       );
 
-      const results = await indexer.search('test');
-      expect(results).toEqual([]);
+      await expect(indexer.search('test')).rejects.toThrow();
     });
 
     it('returns empty array on empty response', async () => {
@@ -252,6 +250,32 @@ describe('TorznabIndexer', () => {
 
       const results = await indexer.search('nonexistent');
       expect(results).toEqual([]);
+    });
+
+    it('throws on invalid non-RSS XML payload', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse('<html><body>Not RSS</body></html>', {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      await expect(indexer.search('test')).rejects.toThrow('Invalid RSS response');
+    });
+
+    it('throws with API error description for torznab error responses', async () => {
+      const errorXml = `<?xml version="1.0" encoding="UTF-8"?><error code="100" description="Incorrect user credentials"/>`;
+
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(errorXml, {
+            headers: { 'Content-Type': 'application/xml' },
+          });
+        }),
+      );
+
+      await expect(indexer.search('test')).rejects.toThrow('Torznab API error: Incorrect user credentials');
     });
   });
 
@@ -577,7 +601,7 @@ describe('TorznabIndexer', () => {
       fetchSpy.mockRestore();
     });
 
-    it('search returns empty results for non-proxy errors', async () => {
+    it('search throws non-proxy errors (not swallowed)', async () => {
       // Create a non-proxied indexer so errors are NOT wrapped as ProxyError
       const directIndexer = new TorznabIndexer({
         apiUrl: API_BASE,
@@ -588,8 +612,7 @@ describe('TorznabIndexer', () => {
         new Error('some random error'),
       );
 
-      const results = await directIndexer.search('test');
-      expect(results).toEqual([]);
+      await expect(directIndexer.search('test')).rejects.toThrow('some random error');
 
       fetchSpy.mockRestore();
     });

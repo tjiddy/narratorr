@@ -8,6 +8,7 @@ import { processingSettingsSchema } from './processing.js';
 import { taggingSettingsSchema } from './tagging.js';
 import { qualitySettingsSchema } from './quality.js';
 import { networkSettingsSchema } from './network.js';
+import { rssSettingsSchema } from './rss.js';
 
 // ---------------------------------------------------------------------------
 // Registry entry helper — enforces defaults match schema at compile time
@@ -77,6 +78,10 @@ export const settingsRegistry = {
   network: defineCategory({
     schema: networkSettingsSchema,
     defaults: { proxyUrl: '' },
+  }),
+  rss: defineCategory({
+    schema: rssSettingsSchema,
+    defaults: { intervalMinutes: 30, enabled: false },
   }),
 };
 

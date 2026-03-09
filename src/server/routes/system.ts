@@ -3,6 +3,7 @@ import type { Db } from '../../db/index.js';
 import { sql } from 'drizzle-orm';
 import type { Services } from './index.js';
 import { runSearchJob } from '../jobs/search.js';
+import { runRssJob } from '../jobs/rss.js';
 
 export async function systemRoutes(app: FastifyInstance, services: Services, db: Db) {
   // GET /api/system/status
@@ -41,6 +42,19 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       services.download,
       request.log,
       services.retryBudget,
+    );
+    return result;
+  });
+
+  // POST /api/system/tasks/rss — manually trigger an RSS sync cycle
+  app.post('/api/system/tasks/rss', async (request) => {
+    const result = await runRssJob(
+      services.settings,
+      services.book,
+      services.indexer,
+      services.download,
+      services.blacklist,
+      request.log,
     );
     return result;
   });

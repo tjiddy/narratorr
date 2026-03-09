@@ -96,4 +96,32 @@ describe('system routes', () => {
       expect(res.statusCode).toBe(500);
     });
   });
+
+  describe('POST /api/system/tasks/rss', () => {
+    it('returns 200 with RSS sync summary', async () => {
+      (services.settings.get as Mock).mockImplementation((cat: string) => {
+        if (cat === 'rss') return Promise.resolve({ enabled: false, intervalMinutes: 30 });
+        if (cat === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
+        return Promise.resolve({});
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/system/tasks/rss' });
+
+      expect(res.statusCode).toBe(200);
+
+      const payload = JSON.parse(res.payload);
+      expect(payload).toHaveProperty('polled');
+      expect(payload).toHaveProperty('matched');
+      expect(payload).toHaveProperty('grabbed');
+      expect(payload.polled).toBe(0);
+    });
+
+    it('returns 500 when RSS job throws', async () => {
+      (services.settings.get as Mock).mockRejectedValue(new Error('DB connection lost'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/system/tasks/rss' });
+
+      expect(res.statusCode).toBe(500);
+    });
+  });
 });

@@ -43,9 +43,9 @@ export class DownloadService {
   }
 
   /** Emit grabbed event if bookId is present (fire-and-forget). */
-  private emitEventForGrab(bookId: number | undefined, title: string, downloadId: number, reason?: Record<string, unknown>): void {
+  private emitEventForGrab(bookId: number | undefined, title: string, downloadId: number, reason?: Record<string, unknown>, source: CreateEventInput['source'] = 'auto'): void {
     if (bookId) {
-      this.emitEvent({ bookId, bookTitle: title, downloadId, eventType: 'grabbed', source: 'auto', reason });
+      this.emitEvent({ bookId, bookTitle: title, downloadId, eventType: 'grabbed', source, reason });
     }
   }
 
@@ -192,6 +192,7 @@ export class DownloadService {
     size?: number;
     seeders?: number;
     skipDuplicateCheck?: boolean;
+    source?: CreateEventInput['source'];
   }): Promise<DownloadWithBook> {
     // Check for existing active downloads for this book
     if (params.bookId && !params.skipDuplicateCheck) {
@@ -286,7 +287,7 @@ export class DownloadService {
       indexerId: params.indexerId,
       size: params.size,
       protocol,
-    });
+    }, params.source);
 
     return this.getById(result[0].id) as Promise<DownloadWithBook>;
   }

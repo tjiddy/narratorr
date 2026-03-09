@@ -155,6 +155,27 @@ export class IndexerService {
     }
   }
 
+  /** RSS-capable adapter types that support empty-query polling. */
+  private static readonly RSS_CAPABLE_TYPES = ['newznab', 'torznab'];
+
+  /** Get enabled indexers filtered to RSS-capable types. */
+  async getRssCapableIndexers(): Promise<IndexerRow[]> {
+    const all = await this.db
+      .select()
+      .from(indexers)
+      .where(eq(indexers.enabled, true))
+      .orderBy(indexers.priority);
+    return all.filter((i) => IndexerService.RSS_CAPABLE_TYPES.includes(i.type));
+  }
+
+  /** Poll a single indexer with empty query (RSS feed). Returns results with parsed release names. */
+  async pollRss(indexer: IndexerRow): Promise<SearchResult[]> {
+    const adapter = await this.getAdapter(indexer);
+    const results = await adapter.search('');
+    this.parseReleaseNames(results);
+    return results;
+  }
+
   async searchAll(query: string, options?: SearchOptions): Promise<SearchResult[]> {
     const enabledIndexers = await this.db
       .select()
