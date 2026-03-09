@@ -29,20 +29,27 @@ Skipping `/handoff` means no PR, no label update, no workflow log entry.
 - **No pausing between sub-skills.** When `/plan`, `/handoff`, or a script (`verify.ts`, `claim.ts`) returns inside a parent skill (`/implement`, `/respond-to-pr-review`), immediately continue the parent flow. These are mid-flow return values, not stopping points.
 - **Self-review guard.** `/review-pr` checks the current user against the PR author — if they match, it STOPs and suggests `/respond-to-pr-review` instead.
 - **Merge author validation.** `scripts/merge.ts` requires the most recent `approve` verdict to come from a different user than the PR author. Stale approvals (superseded by `needs-work`) are ignored.
-- **Dispute escalation.** If `/respond-to-pr-review` disputes a blocking finding, the issue goes `status/blocked` + `stage/review-pr` and STOPs for human input.
+- **Dispute escalation.** If `/respond-to-pr-review` disputes a blocking finding, the issue gets the `blocked` flag and STOPs for human input.
 - **Auto-maintained files.** `/handoff` prepends to `.claude/cl/workflow-log.md`.
 
-## Labels (2-axis model)
+## Labels
 
-Labels use `/` separators. Two exclusive groups track workflow state:
+### Exclusive groups (exactly one per entity)
 
-- **Status** (lifecycle — exactly one): `status/backlog` · `status/ready` · `status/ready-for-dev` · `status/elaborating` · `status/review-spec` · `status/fixes-spec` · `status/in-progress` · `status/blocked` · `status/done`
-- **Stage** (pipeline — exactly one when in-progress): `stage/dev` · `stage/review-pr` · `stage/fixes-pr` · `stage/approved` · `stage/qa`
-- **Gate**: `yolo` — enables autonomous orchestration (narrator-yolo). Without it, skills run manually.
+**Issue status (`status/*`)** — one at a time, on the issue:
+`status/backlog` · `status/review-spec` · `status/fixes-spec` · `status/ready-for-dev` · `status/in-progress` · `status/in-review` · `status/done`
 
-Legacy aliases (accepted on read, never written): `status/ready` → `status/ready-for-dev`, `stage/review` → `stage/review-pr`
+**PR stage (`stage/*`)** — one at a time, on the PR:
+`stage/review-pr` · `stage/fixes-pr` · `stage/approved`
 
-Other labels: Type: `type/feature` · `type/bug` · `type/chore` | Priority: `priority/high` · `priority/medium` · `priority/low` | Scope: `scope/backend` · `scope/frontend` · `scope/core` · `scope/db`
+### Standalone flags (additive, not exclusive)
+
+- `blocked` — something is preventing progress (overlays current status, doesn't replace it)
+- `yolo` — enables autonomous orchestration (narrator-yolo)
+
+### Metadata labels (additive)
+
+Type: `type/feature` · `type/bug` · `type/chore` | Priority: `priority/high` · `priority/medium` · `priority/low` | Scope: `scope/backend` · `scope/frontend` · `scope/core` · `scope/db` · `scope/infra` · `scope/api` · `scope/services` · `scope/ui`
 
 ## Milestones
 

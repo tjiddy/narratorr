@@ -335,26 +335,25 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
       ```
     - Clean up temp file
 
-13. **Update labels on linked issue (MANDATORY — the orchestrator depends on these transitions):**
-
-    Read the linked issue's current labels from step 3. Then update based on verdict:
+13. **Update labels (MANDATORY — the orchestrator depends on these transitions):**
 
     **If verdict is `approve`:**
-    - Run: `node scripts/update-labels.ts <id> --replace "stage/" "stage/approved"`
-    - Verify the output shows `stage/approved`
+    - Set `stage/approved` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/approved"`
+    - Verify the PR output shows `stage/approved`
     - Then run `node scripts/merge.ts <pr-number>` to squash merge, update issue labels, and clean up the branch
     - If merge fails, report the error — do not retry
 
     **If verdict is `needs-work`:**
-    - Run: `node scripts/update-labels.ts <id> --replace "stage/" "stage/fixes-pr"`
-    - Verify the output shows `stage/fixes-pr`
+    - Set `stage/fixes-pr` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/fixes-pr"`
+    - Set `status/in-progress` on the **issue**: `node scripts/update-labels.ts <id> --replace "status/" "status/in-progress"`
+    - Verify the PR shows `stage/fixes-pr` and the issue shows `status/in-progress`
     - **STOP.** Do not attempt to fix anything — that's the author's job via `/respond-to-pr-review`
 
 14. **Report to main agent:** Overall verdict + outcome (merged or awaiting author response).
 
 ## Important
 
-- If no `Refs #<id>` found in PR body, ask the user which issue to review against
+- If no issue reference (`Refs #<id>`, `closes #<id>`, `fixes #<id>`) found in PR body, ask the user which issue to review against
 - The diff can be large — focus on changed files, but you must still cover **all** changed files via the File Coverage table
 - Do not confuse breadth with depth. Reviewing a file is insufficient unless all new behaviors in that file are explicitly enumerated and dispositioned.
 - Be constructive — flag real issues, not style preferences. But err on the side of reporting: a dismissed suggestion costs the author 10 seconds, a missed defect costs a full review cycle.

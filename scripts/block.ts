@@ -3,7 +3,7 @@
 // Usage: node scripts/block.ts <issue-id> <reason>
 // Output: "BLOCKED: #<id>" on success, error otherwise.
 
-import { gitea, parseLabels, replaceLabel, withTempFile, die } from "./lib.ts";
+import { gitea, parseLabels, withTempFile, die } from "./lib.ts";
 
 const id = process.argv[2];
 const reason = process.argv.slice(3).join(" ");
@@ -19,8 +19,8 @@ withTempFile(comment, (path) => {
   gitea("issue-comment", id, "--body-file", path);
 });
 
-// 3. Update labels
-const newLabels = replaceLabel(labels, "status/", "status/blocked");
+// 3. Add blocked flag without changing status
+const newLabels = labels.includes("blocked") ? labels : [...labels, "blocked"];
 gitea("issue-update", id, "labels", newLabels.join(","));
 
 console.log(`BLOCKED: #${id}`);

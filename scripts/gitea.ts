@@ -583,6 +583,29 @@ switch (cmd) {
     break;
   }
 
+  case "pr-update-labels": {
+    const num = args[0];
+    const value = args[1];
+    if (!num || !value) {
+      console.error("Usage: gitea pr-update-labels <number> <label1,label2,...>");
+      process.exit(1);
+    }
+    const labelIds = await resolveLabels(value);
+    const data = await api<GiteaLabel[]>(`/issues/${num}/labels`, {
+      method: "PUT",
+      body: JSON.stringify({ labels: labelIds }),
+    });
+    if (Array.isArray(data)) {
+      const names = data.map((l: GiteaLabel) => l.name);
+      console.log("Labels set: " + names.join(", "));
+    } else {
+      console.error("ERROR: unexpected response");
+      console.error(JSON.stringify(data));
+      process.exit(1);
+    }
+    break;
+  }
+
   case "pr-merge": {
     const num = args[0];
     const method = args[1] || "squash";
@@ -664,6 +687,7 @@ Commands:
   pr-create <t> <b> <h> [base]  Create pull request
   pr-comment <n> <body>      Add comment to PR
   pr-comments <number>       List all comments on a PR
+  pr-update-labels <n> <l>   Set labels on a PR
   pr-merge <n> [method]      Merge PR (merge|rebase|squash, default: squash)
   commit-status <ref>        Get combined CI status for a ref (branch/tag/SHA)
   whoami                     Print authenticated user's login name

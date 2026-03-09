@@ -87,10 +87,20 @@ export function removeLabel(labels: string[], prefix: string): string[] {
   return labels.filter(l => !l.startsWith(prefix));
 }
 
-// Parse linked issue ID from PR body (Refs #123).
+// Parse linked issue ID from PR body (Refs #123, closes #123, fixes #123, resolves #123).
+// Prefers closing keywords over Refs.
 export function parseLinkedIssue(output: string): string | null {
-  const match = output.match(/Refs\s+#(\d+)/i);
-  return match ? match[1] : null;
+  const closing = output.match(/(?:closes|fixes|resolves)\s+#(\d+)/i);
+  if (closing) return closing[1];
+  const refs = output.match(/Refs\s+#(\d+)/i);
+  return refs ? refs[1] : null;
+}
+
+// Parse all issue IDs from closing keywords (closes #N, fixes #N, resolves #N).
+// Returns empty array for non-closing references (Refs #N).
+export function parseClosingIssues(output: string): string[] {
+  const matches = output.matchAll(/(?:closes|fixes|resolves)\s+#(\d+)/gi);
+  return [...matches].map(m => m[1]);
 }
 
 // Parse PR/issue author from gitea output.

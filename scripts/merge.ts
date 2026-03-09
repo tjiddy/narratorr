@@ -5,7 +5,7 @@
 
 import {
   gitea, giteaSafe, git, parseLabels, replaceLabel, removeLabel,
-  parseLinkedIssue, parseAuthor, parseSha, parseState, parseHeadBranch,
+  parseLinkedIssue, parseClosingIssues, parseAuthor, parseSha, parseState, parseHeadBranch,
   parseComments, withTempFile, die,
 } from "./lib.ts";
 
@@ -20,7 +20,8 @@ if (state !== "open") die(`ERROR: PR #${prNum} is not open (state: ${state})`);
 const prAuthor = parseAuthor(pr);
 const sha = parseSha(pr);
 const headBranch = parseHeadBranch(pr);
-const issueId = parseLinkedIssue(pr);
+const linkedIssueId = parseLinkedIssue(pr);
+const closingIssueIds = parseClosingIssues(pr);
 
 // 2. Check approval — find latest verdict from a non-author user
 const commentsRaw = gitea("pr-comments", prNum);
@@ -63,16 +64,17 @@ if (sha) {
   if (ok) {
     if (output.includes("CI: pending")) die("ERROR: CI checks still running — wait and retry");
     if (output.includes("CI: failure") || output.includes("CI: error")) {
-      // Set issue to blocked
-      if (issueId) {
-        const issueOut = gitea("issue", issueId);
-        const labels = replaceLabel(parseLabels(issueOut), "status/", "status/blocked");
-        gitea("issue-update", issueId, "labels", labels.join(","));
+      // Add blocked flag to linked issue (don't change status)
+      if (linkedIssueId) {
+        const issueOut = gitea("issue", linkedIssueId);
+        const labels = parseLabels(issueOut);
+        const newLabels = labels.includes("blocked") ? labels : [...labels, "blocked"];
+        gitea("issue-update", linkedIssueId, "labels", newLabels.join(","));
         withTempFile(`Merge blocked — CI checks failed on PR #${prNum}.`, (p) => {
-          gitea("issue-comment", issueId, "--body-file", p);
+          gitea("issue-comment", linkedIssueId, "--body-file", p);
         });
       }
-      die(`ERROR: CI failed — issue set to status/blocked\n${output}`);
+      die(`ERROR: CI failed — issue flagged as blocked\n${output}`);
     }
     // CI: success or no status checks → proceed
     if (output.includes("no status checks found")) {
@@ -90,18 +92,27 @@ if (!mergeOk) {
   const err = mergeOut.toLowerCase();
   const errorType = err.includes("conflict") ? "merge conflict" : err.includes("status check") ? "CI failure" : "unknown error";
 
-  if (issueId) {
-    const issueOut = gitea("issue", issueId);
+  // Set stage/fixes-pr on the PR for merge conflicts so orchestrator can dispatch fixes
+  if (errorType === "merge conflict") {
+    const prOut = gitea("pr", prNum);
+    const prLabels = replaceLabel(parseLabels(prOut), "stage/", "stage/fixes-pr");
+    gitea("pr-update-labels", prNum, prLabels.join(","));
+  }
+
+  if (linkedIssueId) {
+    const issueOut = gitea("issue", linkedIssueId);
     const labels = parseLabels(issueOut);
-    let newLabels: string[];
     if (errorType === "merge conflict") {
-      newLabels = replaceLabel(labels, "stage/", "stage/fixes-pr");
+      // Merge conflict: send issue back to in-progress (author needs to fix)
+      const newLabels = replaceLabel(labels, "status/", "status/in-progress");
+      gitea("issue-update", linkedIssueId, "labels", newLabels.join(","));
     } else {
-      newLabels = replaceLabel(labels, "status/", "status/blocked");
+      // Non-conflict failures: add blocked flag
+      const newLabels = labels.includes("blocked") ? labels : [...labels, "blocked"];
+      gitea("issue-update", linkedIssueId, "labels", newLabels.join(","));
     }
-    gitea("issue-update", issueId, "labels", newLabels.join(","));
     withTempFile(`Merge failed on PR #${prNum} — ${errorType}. ${mergeOut}`, (p) => {
-      gitea("issue-comment", issueId, "--body-file", p);
+      gitea("issue-comment", linkedIssueId, "--body-file", p);
     });
   }
   die(`ERROR: merge failed (${errorType}): ${mergeOut}`);
@@ -114,14 +125,17 @@ if (headBranch) {
   try { git("branch", "-d", headBranch); } catch { /* already deleted or not local */ }
 }
 
-// 7. Update issue
-if (issueId) {
+// 7. Update closing issues to status/done
+for (const issueId of closingIssueIds) {
   const issueOut = gitea("issue", issueId);
   let labels = parseLabels(issueOut);
   labels = replaceLabel(labels, "status/", "status/done");
-  labels = removeLabel(labels, "stage/");
+  labels = removeLabel(labels, "stage/"); // safety: remove any stale stage labels
   gitea("issue-update", issueId, "labels", labels.join(","));
   giteaSafe("issue-update", issueId, "state", "closed");
 }
 
-console.log(`MERGED: PR #${prNum}${issueId ? ` — #${issueId} closed` : ""}`);
+const closedSummary = closingIssueIds.length > 0
+  ? ` — ${closingIssueIds.map(id => `#${id}`).join(", ")} closed`
+  : "";
+console.log(`MERGED: PR #${prNum}${closedSummary}`);

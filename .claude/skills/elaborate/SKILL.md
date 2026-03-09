@@ -124,7 +124,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      - Run: `node scripts/update-labels.ts <id> --replace "status/" "status/review-spec"`
    - If the issue has the `yolo` label AND verdict is `not-ready`:
      - Post a comment explaining why: `gitea issue-comment <id> "**BLOCKED — elaboration verdict: not-ready**\n\nContext: <1-2 sentences about what's missing or unresolvable>\n\nNeeded: <what must be fixed before this can proceed>"`
-     - Run: `node scripts/update-labels.ts <id> --replace "status/" "status/blocked"`
+     - Add blocked flag: `node scripts/block.ts <id> "Elaboration verdict: not-ready — <reason>"`
    - If the issue does NOT have `yolo`: do not change labels (manual workflow — `/claim` handles labels)
 
 ## Important

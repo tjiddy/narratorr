@@ -72,10 +72,12 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - This pushes, creates the PR, updates labels, posts the handoff comment, updates the context cache, and appends the workflow log.
    - **When `/handoff` returns → IMMEDIATELY continue to step 8.** Do not end your turn.
 
-8. **Verify label transition (safety net):** Run `gitea issue <id>` and check that the issue has `stage/review-pr`. If `/handoff` didn't set it (this happens with some agents):
-   - Run: `node scripts/update-labels.ts <id> --replace "stage/" "stage/review-pr"`
-   - Verify the output shows `stage/review-pr`
-   - **This step is critical for the orchestrator pipeline** — without `stage/review-pr`, the PR will never be picked up for review.
+8. **Verify label transition (safety net):** Check both sides of the bridge:
+   - Run `gitea issue <id>` and check that the issue has `status/in-review`. If missing:
+     - Run: `node scripts/update-labels.ts <id> --replace "status/" "status/in-review"`
+   - Run `gitea pr <pr-number>` and check that the PR has `stage/review-pr`. If missing:
+     - Run: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/review-pr"`
+   - **Both checks are critical for the orchestrator pipeline** — the PR label drives review dispatch, the issue label tracks workflow state.
 
 9. **Report completion** to the user: "**#<id> complete** — <PR link> — <1-line summary of what was built>"
 

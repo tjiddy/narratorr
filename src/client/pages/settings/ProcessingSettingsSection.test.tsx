@@ -196,9 +196,8 @@ describe('ProcessingSettingsSection', () => {
     renderWithProviders(<GeneralSettings />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Max Concurrent Jobs')).toBeInTheDocument();
+      expect(screen.getByLabelText('Max Concurrent Jobs')).not.toBeDisabled();
     });
-    expect(screen.getByLabelText('Max Concurrent Jobs')).not.toBeDisabled();
     expect(screen.getByLabelText('Max Concurrent Jobs')).toHaveValue(2);
   });
 

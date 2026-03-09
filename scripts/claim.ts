@@ -15,7 +15,7 @@ const labels = parseLabels(issue);
 // 2. Check status
 const status = labels.find(l => l.startsWith("status/"));
 if (status === "status/in-progress") die(`ERROR: #${id} is already in progress`);
-if (status === "status/blocked") die(`ERROR: #${id} is blocked — run /resume ${id}`);
+if (labels.includes("blocked")) die(`ERROR: #${id} is blocked — run /resume ${id}`);
 if (status !== "status/ready" && status !== "status/ready-for-dev") {
   // Check for spec review
   const { ok, output } = giteaSafe("issue-comments", id);
@@ -46,8 +46,7 @@ git("checkout", "-b", branch);
 try { git("stash", "pop"); } catch { /* no stash to pop */ }
 
 // 6. Update labels
-let newLabels = replaceLabel(labels, "status/", "status/in-progress");
-newLabels = replaceLabel(newLabels, "stage/", "stage/dev");
+const newLabels = replaceLabel(labels, "status/", "status/in-progress");
 gitea("issue-update", id, "labels", newLabels.join(","));
 
 // 7. Post comment

@@ -3,7 +3,7 @@
 // Usage: node scripts/resume.ts <issue-id>
 // Output: branch + blocker context for the LLM to present to user.
 
-import { gitea, git, parseLabels, replaceLabel, parseComments, withTempFile, die } from "./lib.ts";
+import { gitea, git, parseLabels, parseComments, withTempFile, die } from "./lib.ts";
 
 const id = process.argv[2];
 if (!id) die("ERROR: usage: node scripts/resume.ts <issue-id>");
@@ -11,7 +11,7 @@ if (!id) die("ERROR: usage: node scripts/resume.ts <issue-id>");
 // 1. Read issue, verify blocked
 const issue = gitea("issue", id);
 const labels = parseLabels(issue);
-if (!labels.includes("status/blocked")) die(`ERROR: #${id} is not blocked (labels: ${labels.join(", ")})`);
+if (!labels.includes("blocked")) die(`ERROR: #${id} is not blocked (labels: ${labels.join(", ")})`);
 
 // 2. Find BLOCKED comment and post-blocker answers
 const commentsRaw = gitea("issue-comments", id);
@@ -54,11 +54,8 @@ if (!branch) {
   git("checkout", "-b", branch);
 }
 
-// 4. Update labels
-let newLabels = replaceLabel(labels, "status/", "status/in-progress");
-if (!newLabels.includes("stage/dev")) {
-  newLabels = replaceLabel(newLabels, "stage/", "stage/dev");
-}
+// 4. Remove blocked flag (status unchanged)
+const newLabels = labels.filter(l => l !== "blocked");
 gitea("issue-update", id, "labels", newLabels.join(","));
 
 // 5. Post resume comment

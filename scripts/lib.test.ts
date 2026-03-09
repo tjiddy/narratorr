@@ -4,6 +4,7 @@ import {
   replaceLabel,
   removeLabel,
   parseLinkedIssue,
+  parseClosingIssues,
   parseAuthor,
   parseSha,
   parseState,
@@ -54,9 +55,15 @@ describe('replaceLabel', () => {
       .toEqual(['type/chore', 'status/in-progress']);
   });
 
-  it('preserves other labels including yolo', () => {
-    expect(replaceLabel(['status/backlog', 'yolo', 'type/chore'], 'status/', 'status/done'))
-      .toEqual(['yolo', 'type/chore', 'status/done']);
+  it('preserves standalone flags (yolo, blocked) when replacing status/', () => {
+    expect(replaceLabel(['status/backlog', 'yolo', 'blocked', 'type/chore'], 'status/', 'status/done'))
+      .toEqual(['yolo', 'blocked', 'type/chore', 'status/done']);
+  });
+
+  it('allows status + blocked + yolo simultaneously', () => {
+    const labels = ['status/in-progress', 'blocked', 'yolo', 'type/feature'];
+    expect(replaceLabel(labels, 'status/', 'status/in-review'))
+      .toEqual(['blocked', 'yolo', 'type/feature', 'status/in-review']);
   });
 
   it('replaces multiple labels with same prefix', () => {
@@ -90,8 +97,27 @@ describe('parseLinkedIssue', () => {
     expect(parseLinkedIssue('Some text\n\nRefs #123\n\nMore text')).toBe('123');
   });
 
+  it('parses closes #123 format', () => {
+    expect(parseLinkedIssue('Some text\n\ncloses #123')).toBe('123');
+  });
+
+  it('parses fixes #123 format', () => {
+    expect(parseLinkedIssue('fixes #789\n\nSome text')).toBe('789');
+  });
+
+  it('prefers closing keyword over Refs when both present', () => {
+    expect(parseLinkedIssue('Refs #100\n\ncloses #200')).toBe('200');
+  });
+
+  it('parses resolves #123 format', () => {
+    expect(parseLinkedIssue('resolves #321\n\nSome text')).toBe('321');
+  });
+
   it('is case insensitive', () => {
     expect(parseLinkedIssue('refs #456')).toBe('456');
+    expect(parseLinkedIssue('Closes #456')).toBe('456');
+    expect(parseLinkedIssue('FIXES #456')).toBe('456');
+    expect(parseLinkedIssue('Resolves #456')).toBe('456');
   });
 
   it('returns null when no linked issue', () => {
@@ -220,6 +246,36 @@ describe('parseComments', () => {
     const result = parseComments(output);
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('1');
+  });
+});
+
+describe('parseClosingIssues', () => {
+  it('returns empty array for Refs #123 (non-closing keyword)', () => {
+    expect(parseClosingIssues('Refs #123')).toEqual([]);
+  });
+
+  it('returns [123] for closes #123', () => {
+    expect(parseClosingIssues('closes #123')).toEqual(['123']);
+  });
+
+  it('returns [123] for fixes #123', () => {
+    expect(parseClosingIssues('fixes #123')).toEqual(['123']);
+  });
+
+  it('returns [123, 456] for body with closes #123 and closes #456', () => {
+    expect(parseClosingIssues('closes #123\nsome text\ncloses #456')).toEqual(['123', '456']);
+  });
+
+  it('returns empty array for no issue reference', () => {
+    expect(parseClosingIssues('No issue reference here')).toEqual([]);
+  });
+
+  it('returns [123] for resolves #123', () => {
+    expect(parseClosingIssues('resolves #123')).toEqual(['123']);
+  });
+
+  it('is case-insensitive (Closes vs closes vs CLOSES vs Resolves)', () => {
+    expect(parseClosingIssues('Closes #1\nfixes #2\nRESOLVES #3')).toEqual(['1', '2', '3']);
   });
 });
 

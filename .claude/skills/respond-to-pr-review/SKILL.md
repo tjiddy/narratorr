@@ -73,14 +73,14 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      - If output starts with `VERIFY: pass` → continue to push RIGHT NOW. You still need to push, post the response comment, and update labels.
    - Push: `git push origin <head-branch>`
    - Post response comment (see template below)
-   - **Update labels:** If the linked issue has the `yolo` label, run: `node scripts/update-labels.ts <id> --replace "stage/" "stage/review-pr"`
+   - **Update labels:** Set `stage/review-pr` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/review-pr"`
+   - Set `status/in-review` on the **issue**: `node scripts/update-labels.ts <id> --replace "status/" "status/in-review"`
 
    **Dispute flow** (any blocking finding is disputed):
    - Push any fixes made so far: `git push origin <head-branch>`
    - Post response comment with rebuttal reasoning
-   - Find linked issue number from PR body (`Refs #<id>`)
-   - Update issue labels: `node scripts/update-labels.ts <id> --replace "status/" "status/blocked"`
-   - Post blocked comment on issue: `gitea issue-comment <id> "Blocked: PR #<pr-number> has disputed blocking findings requiring human input. See PR comments."`
+   - Find linked issue number from PR body (`Refs #<id>`, `closes #<id>`, or `fixes #<id>`)
+   - Add `blocked` flag to issue: `node scripts/block.ts <id> "PR #<pr-number> has disputed blocking findings requiring human input. See PR comments."`
    - **STOP** — do not continue. Human must weigh in.
 
 5. **Post response comment on PR:**
@@ -110,7 +110,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 - **Do NOT pause between steps.** This skill runs end-to-end without user interaction. When `/verify` returns, immediately continue to push and post the response comment. The Skill tool returning is a mid-flow return value, not a stopping point.
 - This skill is for the **author agent** — the one who wrote the code, not the reviewer
 - Every finding requires an explicit resolution. The response table must have one row per finding — or one row per sub-item if the reviewer enumerated them (e.g., F2a, F2b, F2c).
-- Disputed blocking findings → `needs-human-input` status → issue goes `status/blocked` → STOP
+- Disputed blocking findings → `needs-human-input` status → issue gets `blocked` flag → STOP
 - Clean resolutions (all blocking fixed, suggestions resolved) → `ready-for-re-review`
 - Do NOT merge — that's the reviewer's job via `/merge`
 - When creating deferred issues, use descriptive titles and reference the PR number in the body

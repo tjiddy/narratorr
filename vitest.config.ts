@@ -12,6 +12,7 @@ export default defineConfig({
       'src/shared/**/*.test.ts',
       'src/core/**/*.test.ts',
       'src/db/**/*.test.ts',
+      'scripts/**/*.test.ts',
     ],
     passWithNoTests: true,
     environmentMatchGlobs: [

@@ -13,17 +13,23 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const giteaCli = resolve(__dirname, "gitea.ts");
 
 const labels: Array<{ name: string; color: string; description: string }> = [
-  // Status (lifecycle)
+  // Status (lifecycle — exclusive, one at a time on issue)
   { name: "status/backlog", color: "ededed", description: "Not yet ready for work" },
-  { name: "status/ready", color: "0e8a16", description: "Spec complete, ready to claim" },
+  { name: "status/review-spec", color: "7c4dff", description: "Spec under review" },
+  { name: "status/fixes-spec", color: "ea80fc", description: "Spec needs fixes from review" },
+  { name: "status/ready-for-dev", color: "00c853", description: "Spec approved, ready for implementation" },
   { name: "status/in-progress", color: "1d76db", description: "Actively being worked on" },
-  { name: "status/blocked", color: "b60205", description: "Blocked, needs resolution" },
+  { name: "status/in-review", color: "ff6d00", description: "PR exists, waiting on reviewer" },
   { name: "status/done", color: "5319e7", description: "Completed and merged" },
 
-  // Stage (pipeline)
-  { name: "stage/dev", color: "c2e0c6", description: "In development" },
-  { name: "stage/review", color: "bfd4f2", description: "In code review" },
-  { name: "stage/qa", color: "d4c5f9", description: "In QA / testing" },
+  // Stage (pipeline — exclusive, one at a time on PR)
+  { name: "stage/review-pr", color: "ff6d00", description: "PR under review" },
+  { name: "stage/fixes-pr", color: "ff9100", description: "PR needs fixes from review" },
+  { name: "stage/approved", color: "00e676", description: "PR approved, ready to merge" },
+
+  // Standalone flags (additive, not exclusive)
+  { name: "blocked", color: "b60205", description: "Blocked, needs resolution" },
+  { name: "yolo", color: "5c007b", description: "Automate this!" },
 
   // Type
   { name: "type/feature", color: "0075ca", description: "New feature" },
