@@ -228,7 +228,7 @@ describe('Torrent file handoff — data: URI pipeline', () => {
       await client.addDownload('unused-url', { torrentFile: fakeTorrentFile });
 
       expect(writeFile).toHaveBeenCalledWith(
-        expect.stringContaining('/tmp/watch/download-'),
+        expect.stringMatching(/[/\\]tmp[/\\]watch[/\\]download-/),
         fakeTorrentFile,
       );
     });
@@ -246,7 +246,7 @@ describe('Torrent file handoff — data: URI pipeline', () => {
       await client.addDownload('https://example.com/file.torrent');
 
       expect(writeFile).toHaveBeenCalledWith(
-        expect.stringContaining('/tmp/watch/file.torrent'),
+        expect.stringMatching(/[/\\]tmp[/\\]watch[/\\]file\.torrent$/),
         expect.any(Buffer),
       );
     });
