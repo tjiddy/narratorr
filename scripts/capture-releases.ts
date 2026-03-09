@@ -87,7 +87,7 @@ async function main() {
     console.error(`Failed to fetch indexers: ${indexerRes.status} ${indexerRes.statusText}`);
     process.exit(1);
   }
-  const indexers: ProwlarrIndexer[] = await indexerRes.json();
+  const indexers = (await indexerRes.json()) as ProwlarrIndexer[];
 
   // Filter to enabled indexers with audio categories
   const audioIndexers = indexers.filter((i) => {

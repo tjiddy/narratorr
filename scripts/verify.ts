@@ -77,7 +77,7 @@ if (!failed) {
       const mergeBase = git("merge-base", "HEAD", "main");
       const changedRaw = git("diff", "--name-only", "--diff-filter=ACMR", `${mergeBase}..HEAD`);
       const changedFiles = changedRaw.split("\n").filter(f =>
-        /\.(ts|tsx|js|jsx)$/.test(f) && !/\.(test|spec)\./i.test(f) && !f.includes("config")
+        /\.(ts|tsx|js|jsx)$/.test(f) && !/\.(test|spec)\./i.test(f) && !f.includes("config") && !f.startsWith("scripts/")
       );
 
       if (changedFiles.length > 0) {

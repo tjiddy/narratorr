@@ -85,15 +85,19 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - For each `reviewed` changed code file, enumerate all new/modified behaviors introduced by the diff:
      - Branches/conditionals (including precedence logic),
      - Error paths and fallback paths,
-     - State transitions and side effects,
+     - State transitions and side effects (including fire-and-forget triggers),
      - Input/output contract changes (request fields, response fields, optional fields),
-     - Caching/invalidation behavior.
+     - Caching/invalidation behavior,
+     - New mutations (`useMutation`) and their consequences,
+     - New callback wiring (parent passes handler to child).
    - Create a `Behavior Coverage` table entry per behavior with:
      - `id` (B1, B2, ...),
      - `file`,
      - `behavior`,
-     - `status`: `finding(F#)` or `verified-correct (evidence)`.
-   - A behavior listed as `verified-correct` must cite concrete evidence (code path and/or test assertion). "Looks fine" is invalid.
+     - `test-level`: the level where this behavior MUST have direct test coverage — one of `service` | `route` | `hook` | `component` | `page`,
+     - `status`: `finding(F#)` or `verified-correct (test-file:line)`.
+   - A behavior listed as `verified-correct` must cite a specific test file and line/describe block that directly exercises the behavior at the required test level. "Tests exist nearby" or "covered by higher-level test" is insufficient unless the higher-level test actually executes the exact code path.
+   - **Deletion heuristic:** For each `verified-correct` entry, ask: "If this behavior's code were deleted, would the cited test fail?" If the answer is unclear, the coverage is insufficient — change status to `finding`.
    - If any reviewed code file lacks behavior entries, review is incomplete.
 
 5e. **Enumerate interaction intersections (MANDATORY):**
@@ -111,10 +115,11 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      - `settings.ts`: "Cache invalidation runs only when `network` values changed, not when unchanged `network` is present in full-form payload."
      - `newznab.ts`: "`test()` suppresses proxy `ip` reporting when `flareSolverrUrl` is configured (precedence)."
      - `indexers routes`: "Both test endpoints preserve optional `ip` field in serialized response."
-   - **Bad behavior entries (too broad, non-falsifiable):**
+   - **Bad behavior entries (too broad, non-falsifiable, wrong test level):**
      - "Handles settings correctly."
      - "Proxy logic works."
      - "Routes look fine."
+     - `useActivity.ts`: "approveMutation works" — test-level: page — **wrong**: mutation behavior requires hook-level coverage, not just page rendering.
    - **Good interaction entries (explicit intersection):**
      - "FlareSolverr precedence x proxy IP reporting."
      - "Full settings payload shape x network cache invalidation condition."
@@ -145,6 +150,16 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **DB persistence:** New columns passed through create/update must be tested at the route level (not just "service was called" — verify the field is in the call args)
 
    Flag any behavior that exists in source but has no test as a **blocking** finding with category `"tests"`. The finding must name the specific untested behavior and explain what bug it could catch.
+
+   **Mandatory sub-audits** (apply after the per-file check above):
+
+   - **Side-effect audit:** If the PR introduces any new side effect that is NOT the primary return value of its function (fire-and-forget call, event emission, notification dispatch, import trigger, queue enqueue, query invalidation), require direct tests for: (1) success path, (2) failure path, (3) observable consequence (log entry, status change, cache update). A side effect without failure-path coverage is a blocking finding.
+
+   - **Mutation audit:** Every newly added `useMutation` requires direct hook-level or component-level tests covering: (1) API method called with correct arguments, (2) success consequence (toast, navigation, state update), (3) failure consequence if handled, (4) query invalidation or cache update behavior. "The page renders" is not mutation coverage.
+
+   - **Wiring audit:** If a parent component/page adds new callback props or action handlers that wire to a child, require at least one of: (a) a page/component interaction test that exercises the full user path through that wiring, or (b) evidence that the parent passes the callback through unchanged AND an existing test already exercises that exact code path end-to-end. If neither holds, flag as blocking.
+
+   - **Completeness cross-check:** Before finalizing test findings, re-scan the Behavior Coverage table from step 5d. Every behavior with `test-level: hook` must have hook-level test evidence. Every behavior with `test-level: route` must have route-level test evidence. A test at a different level (e.g., page-level test cited for a hook-level behavior) does not count unless it demonstrably executes the same code path. This is the primary mechanism for catching the "tests exist somewhere nearby" false positive.
 
 7b. **Test quality review** — Go beyond "do tests exist" and evaluate whether they actually catch defects:
    - **Mock realism:** Does mock data actually exercise the code path? Watch for mocks that return perfect happy-path objects when the test should verify handling of missing/optional fields.
@@ -269,10 +284,12 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
       ## Behavior Coverage
 
-      | ID | File | Behavior | Disposition |
-      |----|------|----------|-------------|
-      | B1 | src/core/indexers/newznab.ts | test() precedence when both flareSolverrUrl and proxyUrl set | F2 |
-      | B2 | src/server/routes/settings.ts | full-form save should not invalidate cache on unchanged network | verified-correct (`settings.test.ts:123`) |
+      | ID | File | Behavior | Test Level | Disposition |
+      |----|------|----------|------------|-------------|
+      | B1 | src/core/indexers/newznab.ts | test() precedence when both flareSolverrUrl and proxyUrl set | service | F2 |
+      | B2 | src/server/routes/settings.ts | full-form save should not invalidate cache on unchanged network | route | verified-correct (`settings.test.ts:123`) |
+      | B3 | src/client/hooks/useActivity.ts | approveMutation calls api.approveDownload with correct ID | hook | verified-correct (`useActivity.test.ts:45`) |
+      | B4 | src/client/pages/ActivityPage.tsx | approve button click triggers approveMutation | page | F5 |
 
       ## Interaction Checks
 

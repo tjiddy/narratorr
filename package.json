@@ -12,7 +12,7 @@
     "build:server": "tsup",
     "build:client": "vite build",
     "start": "node dist/server/index.js",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts/tsconfig.json",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "vitest run",

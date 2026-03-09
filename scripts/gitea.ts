@@ -115,6 +115,7 @@ interface GiteaLabel {
 }
 
 interface GiteaMilestone {
+  id: number;
   title: string;
   open_issues: number;
   closed_issues: number;

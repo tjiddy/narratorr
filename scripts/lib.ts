@@ -11,7 +11,7 @@ import { join } from "node:path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GITEA_CLI = resolve(__dirname, "gitea.ts");
 
-const EXEC_OPTS = { encoding: "utf-8" as const, cwd: process.cwd(), stdio: ["pipe", "pipe", "pipe"] as const };
+const EXEC_OPTS = { encoding: "utf-8" as const, cwd: process.cwd(), stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"] };
 
 // Run a gitea CLI command, return stdout. Throws on failure.
 // Retries up to 3 times on ECONNREFUSED (Gitea connectivity is intermittent).
@@ -72,7 +72,7 @@ export function withTempFile<T>(content: string, fn: (path: string) => T): T {
 
 // Parse label names from gitea issue/PR output.
 export function parseLabels(output: string): string[] {
-  const match = output.match(/labels:\s*(.+)/i);
+  const match = output.match(/labels:\s*(.+?)(?:\s*\||$)/i);
   if (!match) return [];
   return match[1].split(",").map(l => l.trim()).filter(Boolean);
 }
