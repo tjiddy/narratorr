@@ -90,6 +90,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      - Caching/invalidation behavior,
      - New mutations (`useMutation`) and their consequences,
      - New callback wiring (parent passes handler to child).
+   - **Granularity rule:** Split behaviors by independently breakable consequence. Do not collapse multiple side effects into one broad entry like "mutation works" or "tests missing for hook." If a success path both toasts and invalidates cache, those are separate behaviors unless one assertion necessarily proves both. If a hook owns save, rename, and monitor mutations, enumerate each mutation's success/failure/cache-update consequences separately.
    - Create a `Behavior Coverage` table entry per behavior with:
      - `id` (B1, B2, ...),
      - `file`,
@@ -150,6 +151,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **DB persistence:** New columns passed through create/update must be tested at the route level (not just "service was called" — verify the field is in the call args)
 
    Flag any behavior that exists in source but has no test as a **blocking** finding with category `"tests"`. The finding must name the specific untested behavior and explain what bug it could catch.
+   - **No umbrella findings:** Do not stop at a coarse finding like "new hook lacks enough tests" if the missing coverage can be enumerated more precisely. Convert that umbrella concern into the concrete missing behaviors (for example: rename success does not assert cache invalidation; monitor success does not assert cache invalidation; save failure does not assert error recovery). The goal is a first-round review the author can fully satisfy without guesswork.
 
    **Mandatory sub-audits** (apply after the per-file check above):
 
@@ -160,6 +162,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **Wiring audit:** If a parent component/page adds new callback props or action handlers that wire to a child, require at least one of: (a) a page/component interaction test that exercises the full user path through that wiring, or (b) evidence that the parent passes the callback through unchanged AND an existing test already exercises that exact code path end-to-end. If neither holds, flag as blocking.
 
    - **Completeness cross-check:** Before finalizing test findings, re-scan the Behavior Coverage table from step 5d. Every behavior with `test-level: hook` must have hook-level test evidence. Every behavior with `test-level: route` must have route-level test evidence. A test at a different level (e.g., page-level test cited for a hook-level behavior) does not count unless it demonstrably executes the same code path. This is the primary mechanism for catching the "tests exist somewhere nearby" false positive.
+   - **Ping-pong check:** Before finalizing a blocking tests finding, ask: "If the author fixed exactly what I wrote and nothing else, could a nearby unmentioned behavior in the same unit still remain untested?" If yes, the finding is still too coarse. Refine it until the remaining gap is explicit, or split it into multiple findings.
 
 7b. **Test quality review** — Go beyond "do tests exist" and evaluate whether they actually catch defects:
    - **Mock realism:** Does mock data actually exercise the code path? Watch for mocks that return perfect happy-path objects when the test should verify handling of missing/optional fields.
@@ -234,6 +237,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
     - Cross-check the `File Coverage` table from step 9b: every `reviewed` file must appear in findings and/or be explicitly recorded as `no issues found`.
     - Cross-check `Behavior Coverage`: every behavior ID must map to either a finding or `verified-correct` evidence.
     - Cross-check `Interaction Checks`: each checked intersection must map to either a finding or `verified-correct` evidence.
+    - Cross-check blocking test findings for specificity: each one should point to a concrete behavior, branch, or side effect that is still unproven. If a finding could be "satisfied" by adding some tests while leaving another enumerated behavior in the same unit uncovered, split or refine the finding before posting.
 
 12. **Post review comment on PR (MANDATORY — this is a Gitea API call, not stdout):**
     - Write comment to temp file, then post via Gitea API: `gitea pr-comment <pr-number> --body-file <temp-file-path>`
@@ -356,5 +360,6 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 - If there are no findings at all, use an empty array: `[]`
 - Do not stop after the first few blocking findings. Continue until every changed file has an explicit coverage entry (`reviewed` or justified non-code skip).
 - Do not stop after first blockers if behavior/intersection coverage is incomplete. Finish behavior enumeration and intersection checks before verdict.
+- Broad findings create review ping-pong. Prefer several precise findings over one vague finding whenever different behaviors could be fixed independently.
 - **Re-reviews require prior comment reading.** On any PR that already has `## Verdict:` comments, step 5b is mandatory. Skipping it produces review loops where the same finding bounces back and forth. The author has done work to address your findings — respect that by reading their response before re-reviewing.
 - **Stand your ground when you're right.** If the author disputes a finding and their rationale is wrong, rebut it with specific evidence. Don't withdraw just because they pushed back — withdraw because they proved you wrong. But if they DID prove you wrong (showed the code works, demonstrated a tool produces no output, cited docs), have the intellectual honesty to drop it.

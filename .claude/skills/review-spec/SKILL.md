@@ -139,6 +139,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      - each AC item,
      - each material implementation assumption in the spec (APIs, data shapes, jobs, UI states, error contracts),
      - evidence (`path:line`), or `unverified`.
+   - **Granularity rule:** Split assumptions and gaps by independently falsifiable claim. Do not collapse multiple open questions into one broad finding like "test plan is incomplete" or "defaults are unclear" if the missing details can be named separately. If a spec touches save behavior, error handling, and cache updates, enumerate those as separate assumptions/gaps unless one piece of evidence truly proves them together.
    - Any `unverified` assumption is a review defect and MUST produce a finding:
      - `blocking` when the assumption affects correctness/implementability,
      - `suggestion` when it is non-critical scope/polish.
@@ -149,6 +150,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **`"suggestion"`**: Would improve the spec but not strictly required. Use liberally across these categories: edge case coverage, alternative approaches, pattern improvements, test-quality gaps, maintainability concerns, observability/logging gaps, naming clarity, and future regression risk.
    - Every finding MUST include a concrete "why" and ideally a proposed fix or question to resolve it.
    - Cross-check with Assumption Coverage table: every `unverified` row must have a corresponding finding.
+   - **No umbrella findings:** If a broad finding could be "addressed" while leaving another nearby assumption in the same AC or test-plan area unresolved, split it into smaller findings or refine it until the remaining gap is explicit. The author should be able to resolve exactly what is written without guessing what else the reviewer meant.
+   - **Ping-pong check:** Before finalizing a blocking finding, ask: "If the spec author updated only the text I called out, could another unmentioned assumption in the same area still remain ambiguous or wrong?" If yes, the finding is too coarse and should be refined or split before posting.
 
 7. **Determine verdict:**
    - **`approve`**: Zero blocking findings. Spec is ready for implementation.
@@ -253,5 +256,6 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 - If there are no findings at all, use an empty array: `[]`
 - You cannot approve a spec with incomplete assumption coverage. If any material assumption remains `unverified`, verdict must be `needs-work` unless it is explicitly made non-blocking and tracked as a suggestion with rationale.
 - Consult the project's CLAUDE.md philosophy section — optimize findings for defect prevention, not compliance.
+- Broad findings create review ping-pong. Prefer several precise findings over one vague finding whenever different assumptions could be corrected independently.
 - **Re-reviews require prior comment reading.** On any issue that already has `## Spec Review` comments, step 2 is mandatory. Skipping it produces review loops where the same finding bounces back and forth.
 - **Stand your ground when you're right.** If the author disputes a finding and their rationale is wrong, rebut it with specific evidence. Don't withdraw just because they pushed back — withdraw because they proved you wrong. But if they DID prove you wrong, have the intellectual honesty to drop it.
