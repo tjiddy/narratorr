@@ -333,15 +333,13 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
     Read the linked issue's current labels from step 3. Then update based on verdict:
 
     **If verdict is `approve`:**
-    - Replace any `stage/*` label with `stage/approved` (keep `status/in-progress`, `yolo`, and all other labels)
-    - Run: `gitea issue-update <id> labels "<comma-separated label names>"`
+    - Run: `node scripts/update-labels.ts <id> --replace "stage/" "stage/approved"`
     - Verify the output shows `stage/approved`
     - Then run `node scripts/merge.ts <pr-number>` to squash merge, update issue labels, and clean up the branch
     - If merge fails, report the error — do not retry
 
     **If verdict is `needs-work`:**
-    - Replace any `stage/*` label with `stage/fixes-pr` (keep `status/in-progress`, `yolo`, and all other labels)
-    - Run: `gitea issue-update <id> labels "<comma-separated label names>"`
+    - Run: `node scripts/update-labels.ts <id> --replace "stage/" "stage/fixes-pr"`
     - Verify the output shows `stage/fixes-pr`
     - **STOP.** Do not attempt to fix anything — that's the author's job via `/respond-to-pr-review`
 

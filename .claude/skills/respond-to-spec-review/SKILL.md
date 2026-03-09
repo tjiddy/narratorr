@@ -77,8 +77,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 8. **Update labels** (for `yolo`-tagged issues):
    - If the issue has the `yolo` label:
-     - Replace any `status/*` label with `status/review-spec` (preserve `yolo` and all other labels)
-     - Run: `gitea issue-update <id> labels "<comma-separated label names>"`
+     - Run: `node scripts/update-labels.ts <id> --replace "status/" "status/review-spec"`
    - If the issue does NOT have `yolo`: do not change labels (manual workflow)
 
 9. **Report readiness verdict** using this format:

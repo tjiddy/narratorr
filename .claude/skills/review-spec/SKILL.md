@@ -228,13 +228,11 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    Read the issue's current labels from step 1. Then:
 
    **If `approve`:**
-   - Replace any `status/*` label with `status/ready-for-dev` (keep all other labels including `yolo`, type, priority, scope)
-   - Run: `gitea issue-update <id> labels "<comma-separated>"`
+   - Run: `node scripts/update-labels.ts <id> --replace "status/" "status/ready-for-dev"`
    - Verify the output shows `status/ready-for-dev`. If it doesn't, STOP and report the error.
 
    **If `needs-work`:**
-   - Replace any `status/*` label with `status/fixes-spec` (keep all other labels including `yolo`, type, priority, scope)
-   - Run: `gitea issue-update <id> labels "<comma-separated>"`
+   - Run: `node scripts/update-labels.ts <id> --replace "status/" "status/fixes-spec"`
    - Verify the output shows `status/fixes-spec`. If it doesn't, STOP and report the error.
 
    **You are NOT done until BOTH 8a and 8b have executed.** Posting the comment without setting the label leaves the issue in a dead state — the orchestrator will never pick it up.

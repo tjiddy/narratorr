@@ -72,7 +72,7 @@ export function withTempFile<T>(content: string, fn: (path: string) => T): T {
 
 // Parse label names from gitea issue/PR output.
 export function parseLabels(output: string): string[] {
-  const match = output.match(/labels:\s*(.+?)(?:\s*\||$)/i);
+  const match = output.match(/labels:\s*(.+?)(?:\s*\||\s*$)/im);
   if (!match) return [];
   return match[1].split(",").map(l => l.trim()).filter(Boolean);
 }

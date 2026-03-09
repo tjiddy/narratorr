@@ -73,13 +73,13 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      - If output starts with `VERIFY: pass` → continue to push RIGHT NOW. You still need to push, post the response comment, and update labels.
    - Push: `git push origin <head-branch>`
    - Post response comment (see template below)
-   - **Update labels:** If the linked issue has the `yolo` label, set `stage/review-pr` on the issue (replacing any `stage/*` label, preserving all other labels): `gitea issue-update <id> labels "stage/review-pr,status/in-progress,yolo,<other-existing-labels>"`
+   - **Update labels:** If the linked issue has the `yolo` label, run: `node scripts/update-labels.ts <id> --replace "stage/" "stage/review-pr"`
 
    **Dispute flow** (any blocking finding is disputed):
    - Push any fixes made so far: `git push origin <head-branch>`
    - Post response comment with rebuttal reasoning
    - Find linked issue number from PR body (`Refs #<id>`)
-   - Update issue labels to `status/blocked` (keep `stage/review-pr`): `gitea issue-update <id> labels "status/blocked,stage/review-pr,<other-existing-labels>"`
+   - Update issue labels: `node scripts/update-labels.ts <id> --replace "status/" "status/blocked"`
    - Post blocked comment on issue: `gitea issue-comment <id> "Blocked: PR #<pr-number> has disputed blocking findings requiring human input. See PR comments."`
    - **STOP** — do not continue. Human must weigh in.
 

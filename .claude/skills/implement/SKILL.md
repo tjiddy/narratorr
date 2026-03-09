@@ -73,9 +73,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **When `/handoff` returns → IMMEDIATELY continue to step 8.** Do not end your turn.
 
 8. **Verify label transition (safety net):** Run `gitea issue <id>` and check that the issue has `stage/review-pr`. If `/handoff` didn't set it (this happens with some agents):
-   - Read the current labels from the issue output
-   - Replace any `stage/*` label with `stage/review-pr` (keep `status/in-progress` and all other labels)
-   - Run: `gitea issue-update <id> labels "<comma-separated label names>"`
+   - Run: `node scripts/update-labels.ts <id> --replace "stage/" "stage/review-pr"`
    - Verify the output shows `stage/review-pr`
    - **This step is critical for the orchestrator pipeline** — without `stage/review-pr`, the PR will never be picked up for review.
 
