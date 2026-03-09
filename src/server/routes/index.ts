@@ -16,6 +16,7 @@ import {
   RenameService,
   EventHistoryService,
   TaggingService,
+  QualityGateService,
   RetryBudget,
 } from '../services';
 import { ImportService } from '../services/import.service.js';
@@ -57,6 +58,7 @@ export interface Services {
   rename: RenameService;
   eventHistory: EventHistoryService;
   tagging: TaggingService;
+  qualityGate: QualityGateService;
   retryBudget: RetryBudget;
 }
 
@@ -87,6 +89,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const matchJob = new MatchJobService(metadata, log);
   const prowlarrSync = new ProwlarrSyncService(db, log);
 
+  const qualityGateService = new QualityGateService(db, downloadClient, eventHistory, blacklistService, log, remotePathMapping);
   const renameService = new RenameService(book, settings, log, eventHistory);
   const retryBudget = new RetryBudget();
 
@@ -103,7 +106,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   download.setRetrySearchDeps(retrySearchDeps);
   eventHistory.setRetrySearchDeps(retrySearchDeps);
 
-  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, retryBudget };
+  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, retryBudget };
 }
 
 export async function registerRoutes(
@@ -114,7 +117,7 @@ export async function registerRoutes(
   await booksRoutes(app, services.book, services.download, services.settings, services.rename, services.tagging, services.eventHistory, services.indexer);
   await bookFilesRoute(app, services.book);
   await searchRoutes(app, services.indexer, services.download, services.blacklist, services.settings);
-  await activityRoutes(app, services.download);
+  await activityRoutes(app, services.download, services.qualityGate, services.import);
   await indexersRoutes(app, services.indexer);
   await downloadClientsRoutes(app, services.downloadClient);
   await settingsRoutes(app, services.settings, services.indexer);

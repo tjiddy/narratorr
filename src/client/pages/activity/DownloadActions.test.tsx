@@ -35,7 +35,7 @@ describe('DownloadActions', () => {
     });
 
     it('does not show retry for non-failed statuses', () => {
-      const statuses = ['queued', 'downloading', 'paused', 'completed', 'importing', 'imported'] as const;
+      const statuses = ['queued', 'downloading', 'paused', 'completed', 'checking', 'pending_review', 'importing', 'imported'] as const;
       for (const status of statuses) {
         const { unmount } = render(
           <DownloadActions download={createMockDownload({ status })} onRetry={vi.fn()} />,

@@ -9,6 +9,8 @@ export const downloadStatusSchema = z.enum([
   'downloading',
   'paused',
   'completed',
+  'checking',
+  'pending_review',
   'importing',
   'imported',
   'failed',

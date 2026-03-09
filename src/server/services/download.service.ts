@@ -107,6 +107,8 @@ export class DownloadService {
       'queued',
       'downloading',
       'paused',
+      'checking',
+      'pending_review',
       'importing',
     ];
 
@@ -128,7 +130,7 @@ export class DownloadService {
 
   async getCounts(): Promise<{ active: number; completed: number }> {
     const activeStatuses: DownloadRow['status'][] = [
-      'queued', 'downloading', 'paused', 'importing',
+      'queued', 'downloading', 'paused', 'checking', 'pending_review', 'importing',
     ];
     const completedStatuses: DownloadRow['status'][] = [
       'completed', 'imported',

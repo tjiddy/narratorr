@@ -4,6 +4,8 @@ import {
   CheckCircleIcon,
   PackageIcon,
   AlertCircleIcon,
+  AlertTriangleIcon,
+  ShieldIcon,
   PauseIcon,
 } from '@/components/icons';
 
@@ -43,6 +45,20 @@ export const statusConfig: Record<string, DownloadStatusConfig> = {
     color: 'text-success',
     bgColor: 'bg-success/10',
     textColor: 'text-success',
+  },
+  checking: {
+    icon: ShieldIcon,
+    label: 'Checking Quality',
+    color: 'text-cyan-500',
+    bgColor: 'bg-cyan-500/10',
+    textColor: 'text-cyan-600 dark:text-cyan-400',
+  },
+  pending_review: {
+    icon: AlertTriangleIcon,
+    label: 'Pending Review',
+    color: 'text-amber-500',
+    bgColor: 'bg-amber-500/10',
+    textColor: 'text-amber-600 dark:text-amber-400',
   },
   importing: {
     icon: PackageIcon,

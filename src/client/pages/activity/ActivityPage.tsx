@@ -10,7 +10,7 @@ import { EventHistorySection } from './EventHistorySection.js';
 import { useActivity } from './useActivity.js';
 
 export function ActivityPage() {
-  const { queue, history, isLoading, cancelMutation, retryMutation } = useActivity();
+  const { queue, history, isLoading, cancelMutation, retryMutation, approveMutation, rejectMutation } = useActivity();
   const [tab, setTab] = useState<'downloads' | 'events'>('downloads');
 
   if (isLoading) {
@@ -103,7 +103,11 @@ export function ActivityPage() {
                     download={download}
                     onCancel={() => cancelMutation.mutate(download.id)}
                     onRetry={() => retryMutation.mutate(download.id)}
+                    onApprove={() => approveMutation.mutate(download.id)}
+                    onReject={() => rejectMutation.mutate(download.id)}
                     isCancelling={cancelMutation.isPending}
+                    isApproving={approveMutation.isPending}
+                    isRejecting={rejectMutation.isPending}
                     index={index}
                   />
                 ))}

@@ -10,6 +10,8 @@ vi.mock('@/lib/api', () => ({
     getActivity: vi.fn(),
     cancelDownload: vi.fn(),
     retryDownload: vi.fn(),
+    approveDownload: vi.fn(),
+    rejectDownload: vi.fn(),
   },
   formatBytes: (bytes?: number) => {
     if (!bytes || bytes === 0) return '0 B';
@@ -226,6 +228,83 @@ describe('ActivityPage', () => {
     // After invalidation, item moves back to queue and error is gone
     await waitFor(() => {
       expect(screen.queryByText('Timed out')).not.toBeInTheDocument();
+    });
+  });
+
+  it('approves pending_review download and invalidates query on success', async () => {
+    const user = userEvent.setup();
+    const pending = makeDownload({
+      id: 20,
+      title: 'Review Me',
+      status: 'pending_review',
+      qualityGate: {
+        action: 'held',
+        mbPerHour: 120,
+        existingMbPerHour: 100,
+        narratorMatch: false,
+        durationDelta: 0.05,
+        codec: 'mp3',
+        channels: 1,
+        probeFailure: false,
+        holdReasons: ['narrator_mismatch'],
+      },
+    });
+    const approved = makeDownload({ id: 20, title: 'Review Me', status: 'importing' });
+
+    vi.mocked(api.getActivity)
+      .mockResolvedValueOnce([pending])
+      .mockResolvedValueOnce([approved]);
+    vi.mocked(api.approveDownload).mockResolvedValue({ id: 20, status: 'importing' });
+
+    renderWithProviders(<ActivityPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Review Me')).toBeInTheDocument();
+    });
+
+    const approveSpan = screen.getByText('Approve');
+    await user.click(approveSpan.closest('button')!);
+
+    await waitFor(() => {
+      expect(vi.mocked(api.approveDownload).mock.calls[0][0]).toBe(20);
+    });
+  });
+
+  it('rejects pending_review download and invalidates query on success', async () => {
+    const user = userEvent.setup();
+    const pending = makeDownload({
+      id: 21,
+      title: 'Reject Me',
+      status: 'pending_review',
+      qualityGate: {
+        action: 'held',
+        mbPerHour: 80,
+        existingMbPerHour: 100,
+        narratorMatch: true,
+        durationDelta: 0.02,
+        codec: 'mp3',
+        channels: 1,
+        probeFailure: false,
+        holdReasons: [],
+      },
+    });
+
+    vi.mocked(api.getActivity)
+      .mockResolvedValueOnce([pending])
+      .mockResolvedValueOnce([]);
+    vi.mocked(api.rejectDownload).mockResolvedValue({ id: 21, status: 'failed' });
+
+    renderWithProviders(<ActivityPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Reject Me')).toBeInTheDocument();
+    });
+
+    const rejectSpan = screen.getByText('Reject');
+    await user.click(rejectSpan.closest('button')!);
+
+    await waitFor(() => {
+      expect(vi.mocked(api.rejectDownload).mock.calls[0][0]).toBe(21);
     });
   });
 

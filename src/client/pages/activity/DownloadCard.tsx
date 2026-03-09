@@ -1,15 +1,42 @@
 import { formatBytes, type Download } from '@/lib/api';
-import { AlertCircleIcon } from '@/components/icons';
+import { AlertCircleIcon, LoadingSpinner } from '@/components/icons';
 import { ProtocolBadge } from '@/components/ProtocolBadge';
 import { statusConfig } from './helpers.js';
 import { DownloadProgress } from './DownloadProgress.js';
 import { DownloadActions } from './DownloadActions.js';
+import { QualityComparisonPanel } from './QualityComparisonPanel.js';
+
+function DownloadStatusDetails({ download }: { download: Download }) {
+  return (
+    <>
+      {download.errorMessage && (
+        <div className="flex items-start gap-2 mt-3 p-3 bg-destructive/5 rounded-xl">
+          <AlertCircleIcon className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+          <p className="text-sm text-destructive">{download.errorMessage}</p>
+        </div>
+      )}
+      {download.status === 'checking' && (
+        <div className="flex items-center gap-2 mt-3 text-sm text-muted-foreground">
+          <LoadingSpinner className="w-4 h-4" />
+          Checking audio quality...
+        </div>
+      )}
+      {download.status === 'pending_review' && download.qualityGate && (
+        <QualityComparisonPanel data={download.qualityGate} />
+      )}
+    </>
+  );
+}
 
 export function DownloadCard({
   download,
   onCancel,
   onRetry,
+  onApprove,
+  onReject,
   isCancelling,
+  isApproving,
+  isRejecting,
   showProgress = true,
   index = 0,
   compact = false,
@@ -17,7 +44,11 @@ export function DownloadCard({
   download: Download;
   onCancel?: () => void;
   onRetry?: () => void;
+  onApprove?: () => void;
+  onReject?: () => void;
   isCancelling?: boolean;
+  isApproving?: boolean;
+  isRejecting?: boolean;
   showProgress?: boolean;
   index?: number;
   compact?: boolean;
@@ -63,16 +94,15 @@ export function DownloadCard({
               download={download}
               onCancel={onCancel}
               onRetry={onRetry}
+              onApprove={onApprove}
+              onReject={onReject}
               isCancelling={isCancelling}
+              isApproving={isApproving}
+              isRejecting={isRejecting}
             />
           </div>
 
-          {download.errorMessage && (
-            <div className="flex items-start gap-2 mt-3 p-3 bg-destructive/5 rounded-xl">
-              <AlertCircleIcon className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
-              <p className="text-sm text-destructive">{download.errorMessage}</p>
-            </div>
-          )}
+          <DownloadStatusDetails download={download} />
 
           {showProgress && download.status === 'downloading' && (
             <DownloadProgress download={download} />

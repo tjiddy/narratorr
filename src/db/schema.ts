@@ -1,5 +1,6 @@
 import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
+import { downloadStatusSchema } from '../shared/schemas/activity.js';
 
 // ============ LIBRARY ============
 
@@ -147,7 +148,7 @@ export const downloads = sqliteTable('downloads', {
   size: integer('size'),
   seeders: integer('seeders'),
   status: text('status', {
-    enum: ['queued', 'downloading', 'paused', 'completed', 'importing', 'imported', 'failed'],
+    enum: downloadStatusSchema.options as unknown as [string, ...string[]],
   })
     .notNull()
     .default('queued'),

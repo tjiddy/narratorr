@@ -21,6 +21,6 @@ export default defineConfig({
       ['src/db/**', 'node'],
     ],
     setupFiles: ['src/client/__tests__/setup.ts'],
-    coverage: { provider: 'v8', reportsDirectory: 'coverage' },
+    coverage: { provider: 'v8', reportsDirectory: 'coverage', exclude: ['scripts/**'] },
   },
 });

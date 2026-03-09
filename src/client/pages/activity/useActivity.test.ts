@@ -10,6 +10,8 @@ vi.mock('@/lib/api', () => ({
     getActivity: vi.fn(),
     cancelDownload: vi.fn(),
     retryDownload: vi.fn(),
+    approveDownload: vi.fn(),
+    rejectDownload: vi.fn(),
   },
 }));
 
@@ -124,6 +126,71 @@ describe('useActivity', () => {
       expect(api.retryDownload).toHaveBeenCalled();
     });
     expect(vi.mocked(api.retryDownload).mock.calls[0][0]).toBe(42);
+  });
+
+  it('classifies checking and pending_review downloads into queue', async () => {
+    const downloads: Download[] = [
+      makeDownload({ id: 1, status: 'checking' }),
+      makeDownload({ id: 2, status: 'pending_review' }),
+      makeDownload({ id: 3, status: 'imported' }),
+    ];
+    vi.mocked(api.getActivity).mockResolvedValue(downloads);
+
+    const { result } = renderHook(() => useActivity(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.queue).toHaveLength(2);
+    expect(result.current.queue.map((d) => d.id).sort()).toEqual([1, 2]);
+    expect(result.current.history).toHaveLength(1);
+  });
+
+  it('approve mutation calls api and invalidates queries', async () => {
+    vi.mocked(api.getActivity).mockResolvedValue([]);
+    vi.mocked(api.approveDownload).mockResolvedValue(undefined as never);
+
+    const { result } = renderHook(() => useActivity(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      result.current.approveMutation.mutate(42);
+    });
+
+    await waitFor(() => {
+      expect(api.approveDownload).toHaveBeenCalled();
+    });
+    expect(vi.mocked(api.approveDownload).mock.calls[0][0]).toBe(42);
+  });
+
+  it('reject mutation calls api and invalidates queries', async () => {
+    vi.mocked(api.getActivity).mockResolvedValue([]);
+    vi.mocked(api.rejectDownload).mockResolvedValue(undefined as never);
+
+    const { result } = renderHook(() => useActivity(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      result.current.rejectMutation.mutate(42);
+    });
+
+    await waitFor(() => {
+      expect(api.rejectDownload).toHaveBeenCalled();
+    });
+    expect(vi.mocked(api.rejectDownload).mock.calls[0][0]).toBe(42);
   });
 
   it('sets isError when API rejects', async () => {

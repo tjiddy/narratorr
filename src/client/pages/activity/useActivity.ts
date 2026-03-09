@@ -11,7 +11,7 @@ export function useActivity() {
     refetchInterval: (query) => {
       const data = query.state.data;
       if (!data) return 5000;
-      return data.some((d: Download) => ['queued', 'downloading', 'importing'].includes(d.status)) ? 5000 : false;
+      return data.some((d: Download) => ['queued', 'downloading', 'checking', 'importing'].includes(d.status)) ? 5000 : false;
     },
   });
 
@@ -29,8 +29,22 @@ export function useActivity() {
     },
   });
 
+  const approveMutation = useMutation({
+    mutationFn: api.approveDownload,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
+    },
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: (id: number) => api.rejectDownload(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
+    },
+  });
+
   const queue = downloads.filter((d) =>
-    ['queued', 'downloading', 'paused', 'importing'].includes(d.status)
+    ['queued', 'downloading', 'paused', 'checking', 'pending_review', 'importing'].includes(d.status)
   );
   const history = downloads.filter((d) =>
     ['completed', 'imported', 'failed'].includes(d.status)
@@ -44,5 +58,7 @@ export function useActivity() {
     isError,
     cancelMutation,
     retryMutation,
+    approveMutation,
+    rejectMutation,
   };
 }

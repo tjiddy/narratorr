@@ -55,6 +55,21 @@ describe('activity routes', () => {
 
       expect(services.download.getAll).toHaveBeenCalledWith('downloading');
     });
+
+    it('augments pending_review downloads with quality gate data', async () => {
+      const pendingDownload = { ...mockDownload, id: 2, status: 'pending_review' };
+      const gateData = { action: 'held', mbPerHour: 60, existingMbPerHour: 40 };
+      (services.download.getAll as Mock).mockResolvedValue([mockDownload, pendingDownload]);
+      (services.qualityGate.getQualityGateData as Mock).mockResolvedValue(gateData);
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity' });
+
+      const body = JSON.parse(res.payload);
+      expect(body).toHaveLength(2);
+      expect(body[0].qualityGate).toBeUndefined();
+      expect(body[1].qualityGate).toEqual(gateData);
+      expect(services.qualityGate.getQualityGateData).toHaveBeenCalledWith(2);
+    });
   });
 
   describe('GET /api/activity/active', () => {
@@ -190,6 +205,96 @@ describe('activity routes', () => {
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
       expect(res.statusCode).toBe(500);
+    });
+  });
+
+  describe('POST /api/activity/:id/approve', () => {
+    it('transitions pending_review download to importing and triggers import', async () => {
+      (services.qualityGate.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
+      (services.import.importDownload as Mock).mockResolvedValue({});
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ id: 1, status: 'importing' });
+      expect(services.import.importDownload).toHaveBeenCalledWith(1);
+    });
+
+    it('logs error when fire-and-forget import trigger fails', async () => {
+      (services.qualityGate.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
+      const importError = new Error('Import pipeline crashed');
+      let rejectImport: (err: Error) => void;
+      (services.import.importDownload as Mock).mockReturnValue(
+        new Promise((_resolve, reject) => { rejectImport = reject; })
+      );
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
+
+      // Response should succeed regardless of import failure
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ id: 1, status: 'importing' });
+
+      // Trigger the rejection and verify it doesn't throw unhandled
+      rejectImport!(importError);
+      // Allow microtask queue to flush the .catch handler
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    it('returns 409 when download is not in pending_review status', async () => {
+      (services.qualityGate.approve as Mock).mockRejectedValue(new Error('not pending_review'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
+
+      expect(res.statusCode).toBe(409);
+    });
+
+    it('returns 404 when download not found', async () => {
+      (services.qualityGate.approve as Mock).mockRejectedValue(new Error('not found'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/999/approve' });
+
+      expect(res.statusCode).toBe(404);
+    });
+  });
+
+  describe('POST /api/activity/:id/reject', () => {
+    it('transitions pending_review download to failed', async () => {
+      (services.qualityGate.reject as Mock).mockResolvedValue({ id: 1, status: 'failed' });
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/reject' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ id: 1, status: 'failed' });
+      expect(services.qualityGate.reject).toHaveBeenCalledWith(1, undefined);
+    });
+
+    it('passes reason from body to service', async () => {
+      (services.qualityGate.reject as Mock).mockResolvedValue({ id: 1, status: 'failed' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/activity/1/reject',
+        payload: { reason: 'Wrong narrator' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.qualityGate.reject).toHaveBeenCalledWith(1, 'Wrong narrator');
+    });
+
+    it('returns 409 when download is not in pending_review status', async () => {
+      (services.qualityGate.reject as Mock).mockRejectedValue(new Error('not pending_review'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/reject' });
+
+      expect(res.statusCode).toBe(409);
+    });
+
+    it('returns 404 when download not found', async () => {
+      (services.qualityGate.reject as Mock).mockRejectedValue(new Error('not found'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/999/reject' });
+
+      expect(res.statusCode).toBe(404);
     });
   });
 

@@ -22,7 +22,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
     retrySearchDeps,
   });
   startEnrichmentJob(db, services.metadata, log);
-  startImportJob(services.import, log);
+  startImportJob(services.import, services.qualityGate, log);
   startSearchJob(services.settings, services.book, services.indexer, services.download, log, services.retryBudget);
   log.info('Background jobs started');
 }

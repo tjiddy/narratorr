@@ -18,9 +18,10 @@ const EXEC_OPTS = { encoding: "utf-8" as const, cwd: process.cwd(), stdio: ["pip
 export function gitea(...args: string[]): string {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      return execFileSync("node", [GITEA_CLI, ...args], EXEC_OPTS).trim();
-    } catch (e: any) {
-      const msg = (e.stderr || e.message || "").toString();
+      return execFileSync("tsx", [GITEA_CLI, ...args], EXEC_OPTS).trim();
+    } catch (e: unknown) {
+      const err = e as { stderr?: string; message?: string };
+      const msg = (err.stderr || err.message || "").toString();
       if (msg.includes("ECONNREFUSED") && attempt < 3) continue;
       throw e;
     }
@@ -38,11 +39,12 @@ export function run(cmd: string): { ok: boolean; stdout: string; stderr: string 
   try {
     const stdout = execSync(cmd, EXEC_OPTS);
     return { ok: true, stdout: stdout.trim(), stderr: "" };
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const err = e as { stdout?: string; stderr?: string };
     return {
       ok: false,
-      stdout: (e.stdout || "").toString().trim(),
-      stderr: (e.stderr || "").toString().trim(),
+      stdout: (err.stdout || "").toString().trim(),
+      stderr: (err.stderr || "").toString().trim(),
     };
   }
 }
@@ -51,8 +53,9 @@ export function run(cmd: string): { ok: boolean; stdout: string; stderr: string 
 export function giteaSafe(...args: string[]): { ok: boolean; output: string } {
   try {
     return { ok: true, output: gitea(...args) };
-  } catch (e: any) {
-    return { ok: false, output: (e.stderr || e.stdout || e.message || "").toString().trim() };
+  } catch (e: unknown) {
+    const err = e as { stderr?: string; stdout?: string; message?: string };
+    return { ok: false, output: (err.stderr || err.stdout || err.message || "").toString().trim() };
   }
 }
 
@@ -63,7 +66,7 @@ export function withTempFile<T>(content: string, fn: (path: string) => T): T {
   try {
     return fn(path);
   } finally {
-    try { unlinkSync(path); } catch {}
+    try { unlinkSync(path); } catch { /* ignore cleanup errors */ }
   }
 }
 

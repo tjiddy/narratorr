@@ -1,5 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { DownloadService } from '../services';
+import type { QualityGateService } from '../services/quality-gate.service.js';
+import type { ImportService } from '../services/import.service.js';
 import { idParamSchema } from '../../shared/schemas.js';
 import { z } from 'zod';
 
@@ -9,7 +11,7 @@ const activityListQuerySchema = z.object({
   status: z.string().optional(),
 });
 
-export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService) {
+export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, qualityGateService: QualityGateService, importService: ImportService) {
   // GET /api/activity
   app.get<{ Querystring: z.infer<typeof activityListQuerySchema> }>(
     '/api/activity',
@@ -18,7 +20,18 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
       try {
         const { status } = request.query;
         request.log.debug({ status }, 'Fetching activity');
-        return await downloadService.getAll(status);
+        const downloads = await downloadService.getAll(status);
+
+        // Augment pending_review downloads with quality gate comparison data
+        const augmented = await Promise.all(downloads.map(async (dl) => {
+          if (dl.status === 'pending_review') {
+            const qualityGate = await qualityGateService.getQualityGateData(dl.id);
+            return { ...dl, qualityGate };
+          }
+          return dl;
+        }));
+
+        return augmented;
       } catch (error) {
         request.log.error(error, 'Failed to fetch activity');
         return reply.status(500).send({ error: 'Internal server error' });
@@ -115,6 +128,56 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
         if (message.includes('not found') || message.includes('no book linked')) return reply.status(404).send({ error: message });
         if (message.includes('not in failed state')) return reply.status(400).send({ error: message });
         return reply.status(500).send({ error: message });
+      }
+    },
+  );
+
+  // POST /api/activity/:id/approve (quality gate approval)
+  app.post<{ Params: IdParam }>(
+    '/api/activity/:id/approve',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      try {
+        request.log.info({ id }, 'Download approved');
+        const result = await qualityGateService.approve(id);
+
+        // Fire-and-forget: trigger import pipeline immediately
+        importService.importDownload(id).catch((err) => {
+          request.log.error({ id, error: err }, 'Import after approve failed');
+        });
+
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        if (message === 'not found') return reply.status(404).send({ error: 'Download not found' });
+        if (message === 'not pending_review') return reply.status(409).send({ error: 'Download is not pending review' });
+        request.log.error({ id, error }, 'Approve failed');
+        return reply.status(500).send({ error: 'Internal server error' });
+      }
+    },
+  );
+
+  // POST /api/activity/:id/reject (quality gate rejection)
+  app.post<{ Params: IdParam }>(
+    '/api/activity/:id/reject',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => {
+      const { id } = request.params;
+      const body = request.body as { reason?: string } | undefined;
+      const reason = body?.reason;
+
+      try {
+        request.log.info({ id }, 'Download rejected');
+        const result = await qualityGateService.reject(id, reason);
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        if (message === 'not found') return reply.status(404).send({ error: 'Download not found' });
+        if (message === 'not pending_review') return reply.status(409).send({ error: 'Download is not pending review' });
+        request.log.error({ id, error }, 'Reject failed');
+        return reply.status(500).send({ error: 'Internal server error' });
       }
     },
   );

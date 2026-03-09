@@ -1,0 +1,118 @@
+import { AlertTriangleIcon, AlertCircleIcon } from '@/components/icons';
+import type { QualityGateData } from '@/lib/api/activity';
+
+function formatMbPerHour(mbPerHour: number | null): string {
+  if (mbPerHour === null) return '—';
+  return `${Math.round(mbPerHour)} MB/hr`;
+}
+
+function formatDurationDelta(delta: number | null): string {
+  if (delta === null) return '—';
+  const percent = Math.round(delta * 100);
+  return `${percent > 0 ? '+' : ''}${percent}%`;
+}
+
+export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
+  const rows: { label: string; current: string; downloaded: string; flagged?: boolean }[] = [];
+
+  rows.push({
+    label: 'Quality',
+    current: formatMbPerHour(data.existingMbPerHour),
+    downloaded: formatMbPerHour(data.mbPerHour),
+  });
+
+  if (data.durationDelta !== null) {
+    rows.push({
+      label: 'Duration Delta',
+      current: '—',
+      downloaded: formatDurationDelta(data.durationDelta),
+      flagged: Math.abs(data.durationDelta) > 0.15,
+    });
+  }
+
+  if (data.codec !== null) {
+    rows.push({
+      label: 'Codec',
+      current: '—',
+      downloaded: data.codec,
+    });
+  }
+
+  if (data.channels !== null) {
+    rows.push({
+      label: 'Channels',
+      current: '—',
+      downloaded: data.channels === 1 ? 'Mono' : data.channels === 2 ? 'Stereo' : `${data.channels}ch`,
+      flagged: data.channels > 1,
+    });
+  }
+
+  return (
+    <div className="mt-3 p-4 bg-muted/50 rounded-xl border border-border/50 space-y-3">
+      <h4 className="text-sm font-semibold flex items-center gap-2">
+        Quality Comparison
+        {data.probeFailure && (
+          <span className="inline-flex items-center gap-1 text-xs text-destructive">
+            <AlertCircleIcon className="w-3.5 h-3.5" />
+            Probe failed
+          </span>
+        )}
+      </h4>
+
+      {data.probeFailure ? (
+        <p className="text-sm text-muted-foreground">
+          Audio probe failed — unable to determine download quality. Manual review required.
+        </p>
+      ) : (
+        <>
+          {/* Narrator match */}
+          {data.narratorMatch !== null && (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Narrator:</span>
+              {data.narratorMatch ? (
+                <span className="text-success">Match</span>
+              ) : (
+                <span className="text-destructive flex items-center gap-1">
+                  <AlertTriangleIcon className="w-3.5 h-3.5" />
+                  Mismatch
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Comparison grid */}
+          <div className="grid grid-cols-3 gap-2 text-sm">
+            <div className="text-muted-foreground font-medium" />
+            <div className="text-muted-foreground font-medium text-center">Current</div>
+            <div className="text-muted-foreground font-medium text-center">Downloaded</div>
+
+            {rows.map((row) => (
+              <div key={row.label} className="contents">
+                <div className="text-muted-foreground">{row.label}</div>
+                <div className="text-center">{row.current}</div>
+                <div className={`text-center flex items-center justify-center gap-1 ${row.flagged ? 'text-amber-500' : ''}`}>
+                  {row.downloaded}
+                  {row.flagged && <AlertTriangleIcon className="w-3.5 h-3.5" />}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Hold reasons */}
+          {data.holdReasons.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {data.holdReasons.map((reason) => (
+                <span
+                  key={reason}
+                  className="px-2 py-0.5 text-xs rounded-lg bg-amber-500/10 text-amber-500"
+                >
+                  {reason.replace(/_/g, ' ')}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
