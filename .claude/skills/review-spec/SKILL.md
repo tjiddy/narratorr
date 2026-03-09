@@ -50,7 +50,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      1. **Withdraw** — the author's rationale is correct. Drop the finding.
      2. **Rebut** — the author's rationale is wrong. Raise the finding with a NEW reason that directly refutes their argument.
      3. **Refine** — the author's rationale is partially correct. Raise a narrower finding that accounts for their point.
-   - **Re-raising a finding with the same description and reason after it was disputed is NOT allowed.** If you can't rebut the author's specific argument, withdraw. Repeating yourself is not reviewing.
+   - **Re-raising a finding with the same description and reason after it was disputed is NOT allowed.** If you can't rebut the author's specific argument, withdraw. Repeating yourself is not reviewing — it's a defect.
+   - **Re-read before re-raising:** Before re-raising ANY finding, re-read the current spec body and relevant source files to verify the concern still exists. Do not rely on cached context from a prior round — the author may have fixed it.
    - If a finding was previously **accepted** or **deferred**, it's resolved — don't re-raise.
    - **Net-new findings are always welcome** regardless of prior history.
 
@@ -104,12 +105,15 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Error states are specified — what happens when each operation fails?
    - Edge cases are identified — empty states, boundary values, concurrent operations
    - Data flow is traceable — where does input come from, where does output go?
+   - **Core design contracts:** For features involving feed/event processing, matching, or synchronization, verify the spec defines the item-to-entity matching contract (scoring, thresholds, tie-breaking, dedup). For features involving concurrency, verify the spec defines the concurrency model (locks, queues, semaphores) and which entry points are covered. These are the most expensive questions to defer — catching them in round 4 instead of round 1 wastes 3 full review cycles.
 
    **Codebase alignment checks:**
    - Assumptions about existing code are accurate (APIs exist, types match, patterns are followed)
    - Proposed approach follows existing patterns or explicitly justifies divergence
    - Dependencies are real — referenced issues/features actually exist and are in the expected state
    - No conflicts with in-progress work (check open PRs via `gitea prs`)
+   - **Caller surface audit:** When the spec modifies a shared service method or interface, grep for ALL callers of that method. Verify the spec covers each caller's usage. A spec that changes `getBlacklistedHashes()` but only considers the search caller while ignoring the retry-search and RSS callers has a gap. This is the #1 source of avoidable spec review ping-pong.
+   - **Schema/field name verification:** Cross-check every DB column, API endpoint, field name, and status literal mentioned in the spec against the actual schema (`src/db/schema.ts`), routes, and types. If the spec references `updatedAt` but the table only has `createdAt`, that's a blocking finding. Do not assume field names are correct — verify them.
    - **Blast radius scan:** When the spec adds or modifies types, schema fields, or service interfaces, grep for existing test mocks that reference those types. List any test files that hardcode objects of the affected types — these will need mock updates during implementation. Flag in findings as `category: "blast-radius"` severity `suggestion` if more than 2 test files are affected.
    - **Error propagation check:** When the spec introduces a new error type or changes error handling, trace the call chain from where the error is thrown to where it's caught. Flag any catch-all blocks (`catch { return null }`, `catch (e) { return [] }`, etc.) that would silently swallow the new error. This is a `category: "error-propagation"` finding, severity `blocking` if the error would be silently swallowed.
    - **Named artifact verification:** When ACs reference specific files to create, modify, or delete, verify each named file exists in the working tree. For files claimed to be gitignored or local-only, verify with `git check-ignore <path>`. If a named artifact doesn't exist, the AC must use conditional language ("if file exists...") or be flagged as `blocking`.

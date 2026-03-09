@@ -52,7 +52,14 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > - Data flow through layers (does each layer correctly forward new fields? Response shapes, optional fields?)
    > - Full-form vs partial-form submission (does the code handle both correctly?)
    >
-   > **3. Security quick-scan:**
+   > **3. AC keyword cross-check:**
+   > Read the linked issue's acceptance criteria. For each AC that contains assertion keywords
+   > (e.g., "roundtrip", "full payload", "all keys", "end-to-end"), verify the test code contains
+   > a concrete assertion matching that keyword's intent. If an AC says "settings roundtrip," the
+   > test must assert settings in both the request AND the response — not just one side.
+   > Report any AC whose keywords don't map to concrete test assertions.
+   >
+   > **4. Security quick-scan:**
    > - Log statements: do any log sensitive data (passwords, tokens, API keys, proxy credentials)?
    > - Input handling: is user input sanitized before use in shell commands, SQL, file paths?
    > - Response data: could any endpoint leak internal state or credentials?

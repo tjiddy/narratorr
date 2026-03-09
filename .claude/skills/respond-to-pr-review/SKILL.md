@@ -114,3 +114,4 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 - Clean resolutions (all blocking fixed, suggestions resolved) → `ready-for-re-review`
 - Do NOT merge — that's the reviewer's job via `/merge`
 - When creating deferred issues, use descriptive titles and reference the PR number in the body
+- **Test the right abstraction layer.** When a reviewer says "service-level test," they mean call the actual service method and assert its observable behavior (DB queries, return values, side effects) — not test the helpers it delegates to in isolation. If inline logic is hard to test through the service, extract it into a named testable unit first, then wire and test the delegation. Testing one layer too shallow is the #1 author-side cause of review ping-pong.

@@ -22,7 +22,7 @@ hooks:
 
 Reviews a PR by checking the diff against the linked issue's acceptance criteria, the project's design principles, and code quality standards. Posts a structured review comment with machine-parseable findings.
 
-**Review policy: high recall.** Prefer false positives over missed defects. The cost of a PR author dismissing a noisy suggestion is far lower than the cost of a bug reaching main. Do not cap the number of findings — report everything you find. Use `suggestion` liberally for anything that *might* matter; reserve `blocking` strictly for issues backed by concrete evidence (broken behavior, missing tests for new code paths, verified design violations). No speculative blockers — if you can't point to a specific line and a specific consequence, it's a suggestion.
+**Review policy: high recall.** Prefer false positives over missed defects. The cost of a PR author dismissing a noisy suggestion is far lower than the cost of a defect reaching main. Do not cap the number of findings — report everything you find. Use `suggestion` liberally for anything that *might* matter; reserve `blocking` strictly for issues backed by concrete evidence (broken behavior, missing tests for new code paths, verified design violations). No speculative blockers — if you can't point to a specific line and a specific consequence, it's a suggestion.
 
 ## Gitea CLI
 
@@ -67,7 +67,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      1. **Withdraw** — the author's rationale is correct. Drop the finding entirely.
      2. **Rebut** — the author's rationale is wrong. Raise the finding again with a NEW reason that directly addresses and refutes their argument. Explain specifically why their evidence doesn't hold. "The spec says X" is not a rebuttal if the author demonstrated X is technically impossible.
      3. **Refine** — the author's rationale is partially correct but misses something. Raise a narrower or modified finding that accounts for their point.
-   - **Re-raising a finding with the same description and reason after it was disputed is NOT allowed.** If you can't produce a concrete rebuttal to the author's specific argument, withdraw the finding. Repeating yourself is not reviewing — it's a bug.
+   - **Re-raising a finding with the same description and reason after it was disputed is NOT allowed.** If you can't produce a concrete rebuttal to the author's specific argument, withdraw the finding. Repeating yourself is not reviewing — it's a defect.
+   - **Re-read before re-raising:** Before re-raising ANY finding (disputed or otherwise), re-read the current file contents to verify the concern still exists. Do not rely on cached context from a prior round — the author may have fixed it. Re-raising based on stale file contents wastes a full review round.
    - If a finding was previously raised and the author **accepted** it (suggestion severity), it's resolved — don't re-raise.
    - If a finding was previously raised and the author **deferred** it to a new issue, it's resolved — don't re-raise.
    - **Net-new findings are always welcome.** The dispute rules only constrain re-raised findings. If the full review surfaces something genuinely new that wasn't in any prior round, raise it normally regardless of prior history.
@@ -150,8 +151,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **Settings/config:** Fetch failure fallback behavior must be tested (what happens when settings API fails?)
    - **DB persistence:** New columns passed through create/update must be tested at the route level (not just "service was called" — verify the field is in the call args)
 
-   Flag any behavior that exists in source but has no test as a **blocking** finding with category `"tests"`. The finding must name the specific untested behavior and explain what bug it could catch.
+   Flag any behavior that exists in source but has no test as a **blocking** finding with category `"tests"`. The finding must name the specific untested behavior and explain what defect it could catch.
    - **No umbrella findings:** Do not stop at a coarse finding like "new hook lacks enough tests" if the missing coverage can be enumerated more precisely. Convert that umbrella concern into the concrete missing behaviors (for example: rename success does not assert cache invalidation; monitor success does not assert cache invalidation; save failure does not assert error recovery). The goal is a first-round review the author can fully satisfy without guesswork.
+   - **Multi-layer audit (do not peel the onion):** For each new behavior, audit test coverage at ALL layers it touches (service → route → hook → component/page) in a single pass. Do not flag only the lowest untested layer and stop — if service tests exist but route, hook, AND page tests are all missing, report all three gaps in one round. Discovering test gaps one layer per review round is the #1 source of avoidable ping-pong.
 
    **Mandatory sub-audits** (apply after the per-file check above):
 
@@ -163,6 +165,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    - **Completeness cross-check:** Before finalizing test findings, re-scan the Behavior Coverage table from step 5d. Every behavior with `test-level: hook` must have hook-level test evidence. Every behavior with `test-level: route` must have route-level test evidence. A test at a different level (e.g., page-level test cited for a hook-level behavior) does not count unless it demonstrably executes the same code path. This is the primary mechanism for catching the "tests exist somewhere nearby" false positive.
    - **Ping-pong check:** Before finalizing a blocking tests finding, ask: "If the author fixed exactly what I wrote and nothing else, could a nearby unmentioned behavior in the same unit still remain untested?" If yes, the finding is still too coarse. Refine it until the remaining gap is explicit, or split it into multiple findings.
+   - **Neighborhood check:** When you find a defect in a function, also audit the surrounding code in the same function for related defects. Check the full input domain (edge-case inputs, query params, null fields, URLs with special characters), not just the happy path. Finding one defect but missing an adjacent one in the same function wastes a full review round.
 
 7b. **Test quality review** — Go beyond "do tests exist" and evaluate whether they actually catch defects:
    - **Mock realism:** Does mock data actually exercise the code path? Watch for mocks that return perfect happy-path objects when the test should verify handling of missing/optional fields.
