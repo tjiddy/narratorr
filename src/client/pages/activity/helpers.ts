@@ -8,6 +8,8 @@ import {
   ShieldIcon,
   PauseIcon,
 } from '@/components/icons';
+import { DOWNLOAD_STATUS_REGISTRY, type DownloadStatusMetadata } from '../../../shared/download-status-registry.js';
+import type { DownloadStatus } from '../../../shared/schemas.js';
 
 export interface DownloadStatusConfig {
   icon: React.FC<{ className?: string }>;
@@ -17,68 +19,30 @@ export interface DownloadStatusConfig {
   textColor: string;
 }
 
-export const statusConfig: Record<string, DownloadStatusConfig> = {
-  queued: {
-    icon: ClockIcon,
-    label: 'Queued',
-    color: 'text-amber-500',
-    bgColor: 'bg-amber-500/10',
-    textColor: 'text-amber-600 dark:text-amber-400',
-  },
-  downloading: {
-    icon: ArrowDownIcon,
-    label: 'Downloading',
-    color: 'text-blue-500',
-    bgColor: 'bg-blue-500/10',
-    textColor: 'text-blue-600 dark:text-blue-400',
-  },
-  paused: {
-    icon: PauseIcon,
-    label: 'Paused',
-    color: 'text-muted-foreground',
-    bgColor: 'bg-muted',
-    textColor: 'text-muted-foreground',
-  },
-  completed: {
-    icon: CheckCircleIcon,
-    label: 'Completed',
-    color: 'text-success',
-    bgColor: 'bg-success/10',
-    textColor: 'text-success',
-  },
-  checking: {
-    icon: ShieldIcon,
-    label: 'Checking Quality',
-    color: 'text-cyan-500',
-    bgColor: 'bg-cyan-500/10',
-    textColor: 'text-cyan-600 dark:text-cyan-400',
-  },
-  pending_review: {
-    icon: AlertTriangleIcon,
-    label: 'Pending Review',
-    color: 'text-amber-500',
-    bgColor: 'bg-amber-500/10',
-    textColor: 'text-amber-600 dark:text-amber-400',
-  },
-  importing: {
-    icon: PackageIcon,
-    label: 'Importing',
-    color: 'text-violet-500',
-    bgColor: 'bg-violet-500/10',
-    textColor: 'text-violet-600 dark:text-violet-400',
-  },
-  imported: {
-    icon: CheckCircleIcon,
-    label: 'Imported',
-    color: 'text-success',
-    bgColor: 'bg-success/10',
-    textColor: 'text-success',
-  },
-  failed: {
-    icon: AlertCircleIcon,
-    label: 'Failed',
-    color: 'text-destructive',
-    bgColor: 'bg-destructive/10',
-    textColor: 'text-destructive',
-  },
+/** Map registry icon identifiers to React icon components. */
+const ICON_COMPONENTS: Record<string, React.FC<{ className?: string }>> = {
+  'clock': ClockIcon,
+  'arrow-down': ArrowDownIcon,
+  'check-circle': CheckCircleIcon,
+  'package': PackageIcon,
+  'alert-circle': AlertCircleIcon,
+  'alert-triangle': AlertTriangleIcon,
+  'shield': ShieldIcon,
+  'pause': PauseIcon,
 };
+
+function toStatusConfig(meta: DownloadStatusMetadata): DownloadStatusConfig {
+  return {
+    icon: ICON_COMPONENTS[meta.icon] ?? ClockIcon,
+    label: meta.label,
+    color: meta.color,
+    bgColor: meta.bgColor,
+    textColor: meta.textColor,
+  };
+}
+
+export const statusConfig: Record<string, DownloadStatusConfig> = Object.fromEntries(
+  (Object.entries(DOWNLOAD_STATUS_REGISTRY) as [DownloadStatus, DownloadStatusMetadata][]).map(
+    ([status, meta]) => [status, toStatusConfig(meta)],
+  ),
+);

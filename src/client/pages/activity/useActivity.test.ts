@@ -193,6 +193,66 @@ describe('useActivity', () => {
     expect(vi.mocked(api.rejectDownload).mock.calls[0][0]).toBe(42);
   });
 
+  it('enables polling when any download has in-progress status', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const downloads: Download[] = [
+        makeDownload({ id: 1, status: 'checking' }),
+        makeDownload({ id: 2, status: 'imported' }),
+      ];
+      vi.mocked(api.getActivity).mockResolvedValue(downloads);
+
+      const { result } = renderHook(() => useActivity(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      // First call from initial fetch
+      expect(api.getActivity).toHaveBeenCalledTimes(1);
+
+      // Advance past the refetch interval
+      await vi.advanceTimersByTimeAsync(5500);
+
+      // Should have refetched because an in-progress download exists
+      expect(vi.mocked(api.getActivity).mock.calls.length).toBeGreaterThan(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('disables polling when all downloads are terminal', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const downloads: Download[] = [
+        makeDownload({ id: 1, status: 'completed' }),
+        makeDownload({ id: 2, status: 'imported' }),
+        makeDownload({ id: 3, status: 'failed' }),
+      ];
+      vi.mocked(api.getActivity).mockResolvedValue(downloads);
+
+      const { result } = renderHook(() => useActivity(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      const callCountAfterLoad = vi.mocked(api.getActivity).mock.calls.length;
+
+      // Advance past when a refetch would have fired
+      await vi.advanceTimersByTimeAsync(10000);
+
+      // Should NOT have refetched — all statuses are terminal
+      expect(vi.mocked(api.getActivity).mock.calls.length).toBe(callCountAfterLoad);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('sets isError when API rejects', async () => {
     vi.mocked(api.getActivity).mockRejectedValue(new Error('Network error'));
 

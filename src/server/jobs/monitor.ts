@@ -3,6 +3,7 @@ import { eq, inArray, and, ne } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '../../db/schema.js';
+import { getInProgressStatuses } from '../../shared/download-status-registry.js';
 import type { DownloadClientService } from '../services';
 import type { NotifierService } from '../services';
 import { retrySearch, type RetrySearchDeps } from '../services/retry-search.js';
@@ -224,7 +225,8 @@ async function handleDownloadFailure(
  * Otherwise: book has path → imported, no path → wanted.
  */
 async function recoverBookStatus(db: Db, bookId: number, failedDownloadId: number, log: FastifyBaseLogger): Promise<void> {
-  const activeStatuses = ['downloading', 'queued', 'paused', 'completed'] as const;
+  // Recovery guard: in-progress statuses plus 'completed' (pre-import pipeline awareness)
+  const activeStatuses = [...getInProgressStatuses(), 'completed' as const];
 
   // Check for other active downloads for the same book
   const otherActive = await db

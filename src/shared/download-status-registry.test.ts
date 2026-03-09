@@ -1,0 +1,135 @@
+import { describe, it, expect } from 'vitest';
+import { downloadStatusSchema } from './schemas.js';
+import {
+  DOWNLOAD_STATUS_REGISTRY,
+  isInProgressStatus,
+  isTerminalStatus,
+  getInProgressStatuses,
+  getTerminalStatuses,
+  getCompletedStatuses,
+} from './download-status-registry.js';
+
+describe('download-status-registry', () => {
+  const allStatuses = downloadStatusSchema.options;
+
+  describe('registry completeness', () => {
+    it('every downloadStatusSchema value has an entry in the registry', () => {
+      for (const status of allStatuses) {
+        expect(DOWNLOAD_STATUS_REGISTRY[status]).toBeDefined();
+      }
+    });
+
+    it('inProgress and terminal partitions are exhaustive — union equals full status set', () => {
+      const inProgress = getInProgressStatuses();
+      const terminal = getTerminalStatuses();
+      const union = [...inProgress, ...terminal].sort();
+      expect(union).toEqual([...allStatuses].sort());
+    });
+
+    it('no status appears in multiple categories (partitions are disjoint)', () => {
+      const inProgress = new Set(getInProgressStatuses());
+      const terminal = new Set(getTerminalStatuses());
+      for (const status of inProgress) {
+        expect(terminal.has(status)).toBe(false);
+      }
+    });
+  });
+
+  describe('isInProgressStatus', () => {
+    it.each(['queued', 'downloading', 'paused', 'checking', 'pending_review', 'importing'] as const)(
+      'returns true for %s',
+      (status) => {
+        expect(isInProgressStatus(status)).toBe(true);
+      },
+    );
+
+    it.each(['completed', 'imported', 'failed'] as const)(
+      'returns false for %s',
+      (status) => {
+        expect(isInProgressStatus(status)).toBe(false);
+      },
+    );
+
+    it('returns false for unknown/invalid status string', () => {
+      expect(isInProgressStatus('nonexistent')).toBe(false);
+      expect(isInProgressStatus('')).toBe(false);
+    });
+  });
+
+  describe('isTerminalStatus', () => {
+    it.each(['completed', 'imported', 'failed'] as const)(
+      'returns true for %s',
+      (status) => {
+        expect(isTerminalStatus(status)).toBe(true);
+      },
+    );
+
+    it.each(['queued', 'downloading', 'paused', 'checking', 'pending_review', 'importing'] as const)(
+      'returns false for %s',
+      (status) => {
+        expect(isTerminalStatus(status)).toBe(false);
+      },
+    );
+
+    it('returns false for unknown/invalid status string', () => {
+      expect(isTerminalStatus('nonexistent')).toBe(false);
+      expect(isTerminalStatus('')).toBe(false);
+    });
+  });
+
+  describe('getInProgressStatuses', () => {
+    it('returns all 6 in-progress statuses', () => {
+      const statuses = getInProgressStatuses();
+      expect(statuses).toHaveLength(6);
+      expect(statuses).toEqual(
+        expect.arrayContaining(['queued', 'downloading', 'paused', 'checking', 'pending_review', 'importing']),
+      );
+    });
+  });
+
+  describe('getTerminalStatuses', () => {
+    it('returns all 3 terminal statuses', () => {
+      const statuses = getTerminalStatuses();
+      expect(statuses).toHaveLength(3);
+      expect(statuses).toEqual(
+        expect.arrayContaining(['completed', 'imported', 'failed']),
+      );
+    });
+  });
+
+  describe('getCompletedStatuses', () => {
+    it('returns terminal statuses excluding failed', () => {
+      const completed = getCompletedStatuses();
+      const terminal = getTerminalStatuses();
+      expect(completed).not.toContain('failed');
+      expect(completed.length).toBe(terminal.length - 1);
+      for (const s of completed) {
+        expect(terminal).toContain(s);
+      }
+    });
+
+    it('includes completed and imported', () => {
+      const completed = getCompletedStatuses();
+      expect(completed).toContain('completed');
+      expect(completed).toContain('imported');
+    });
+  });
+
+  describe('visual metadata', () => {
+    it('every status has label, icon, color, bgColor, textColor', () => {
+      for (const status of allStatuses) {
+        const meta = DOWNLOAD_STATUS_REGISTRY[status];
+        expect(meta.label).toBeTruthy();
+        expect(meta.icon).toBeTruthy();
+        expect(meta.color).toBeTruthy();
+        expect(meta.bgColor).toBeTruthy();
+        expect(meta.textColor).toBeTruthy();
+      }
+    });
+
+    it('registry keys exactly match Zod schema options', () => {
+      const registryKeys = Object.keys(DOWNLOAD_STATUS_REGISTRY).sort();
+      expect(registryKeys).toEqual([...allStatuses].sort());
+    });
+  });
+});

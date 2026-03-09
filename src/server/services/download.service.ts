@@ -3,6 +3,7 @@ import { type Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '../../db/schema.js';
 import { parseInfoHash, type DownloadProtocol } from '../../core/index.js';
+import { getInProgressStatuses, getCompletedStatuses } from '../../shared/download-status-registry.js';
 import { type DownloadClientService } from './download-client.service.js';
 import { type NotifierService } from './notifier.service.js';
 import { type EventHistoryService, type CreateEventInput } from './event-history.service.js';
@@ -103,14 +104,7 @@ export class DownloadService {
   }
 
   async getActive(): Promise<DownloadWithBook[]> {
-    const activeStatuses: DownloadRow['status'][] = [
-      'queued',
-      'downloading',
-      'paused',
-      'checking',
-      'pending_review',
-      'importing',
-    ];
+    const activeStatuses = getInProgressStatuses();
 
     const results = await this.db
       .select({
@@ -129,12 +123,8 @@ export class DownloadService {
   }
 
   async getCounts(): Promise<{ active: number; completed: number }> {
-    const activeStatuses: DownloadRow['status'][] = [
-      'queued', 'downloading', 'paused', 'checking', 'pending_review', 'importing',
-    ];
-    const completedStatuses: DownloadRow['status'][] = [
-      'completed', 'imported',
-    ];
+    const activeStatuses = getInProgressStatuses();
+    const completedStatuses = getCompletedStatuses();
 
     const rows = await this.db
       .select({
@@ -156,12 +146,7 @@ export class DownloadService {
   }
 
   async getActiveByBookId(bookId: number): Promise<DownloadWithBook[]> {
-    const activeStatuses: DownloadRow['status'][] = [
-      'queued',
-      'downloading',
-      'paused',
-      'importing',
-    ];
+    const activeStatuses = getInProgressStatuses();
 
     const results = await this.db
       .select({

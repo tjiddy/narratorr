@@ -505,6 +505,78 @@ describe('monitor job', () => {
       );
     });
 
+    it('skips recovery when another download is in checking status', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book' },
+        ]))
+        // Other active downloads: one in checking status
+        .mockReturnValueOnce(mockDbChain([{ id: 5, bookId: 42, status: 'checking' }]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      await runMonitor();
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, otherActiveCount: 1 }),
+        'Skipping book status recovery — other active downloads exist',
+      );
+    });
+
+    it('skips recovery when another download is in pending_review status', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book' },
+        ]))
+        // Other active downloads: one in pending_review status
+        .mockReturnValueOnce(mockDbChain([{ id: 6, bookId: 42, status: 'pending_review' }]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      await runMonitor();
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, otherActiveCount: 1 }),
+        'Skipping book status recovery — other active downloads exist',
+      );
+    });
+
+    it('skips recovery when another download is in importing status', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book' },
+        ]))
+        // Other active downloads: one in importing status
+        .mockReturnValueOnce(mockDbChain([{ id: 7, bookId: 42, status: 'importing' }]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      await runMonitor();
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, otherActiveCount: 1 }),
+        'Skipping book status recovery — other active downloads exist',
+      );
+    });
+
+    it('skips recovery when another download is in completed status (pre-import)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book' },
+        ]))
+        // Other active downloads: one in completed status (awaiting import)
+        .mockReturnValueOnce(mockDbChain([{ id: 8, bookId: 42, status: 'completed' }]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+
+      await runMonitor();
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, otherActiveCount: 1 }),
+        'Skipping book status recovery — other active downloads exist',
+      );
+    });
+
     it('recovers when last active download fails (other downloads already failed)', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([

@@ -7,6 +7,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 
 import { createMockDbBook } from '../__tests__/factories.js';
+import * as statusRegistry from '../../shared/download-status-registry.js';
 
 const now = new Date();
 const mockBook = createMockDbBook();
@@ -104,6 +105,16 @@ describe('DownloadService', () => {
       const result = await service.getActive();
       expect(result).toHaveLength(1);
     });
+
+    it('delegates to getInProgressStatuses() for its status filter', async () => {
+      const spy = vi.spyOn(statusRegistry, 'getInProgressStatuses');
+      db.select.mockReturnValue(mockDbChain([]));
+
+      await service.getActive();
+
+      expect(spy).toHaveBeenCalled();
+      spy.mockRestore();
+    });
   });
 
   describe('getCounts', () => {
@@ -134,6 +145,24 @@ describe('DownloadService', () => {
       const result = await service.getCounts();
       expect(result).toEqual({ active: 2, completed: 0 });
     });
+
+    it('delegates to getCompletedStatuses() which excludes failed from terminal set', async () => {
+      const completedSpy = vi.spyOn(statusRegistry, 'getCompletedStatuses');
+      const inProgressSpy = vi.spyOn(statusRegistry, 'getInProgressStatuses');
+      db.select.mockReturnValue(mockDbChain([]));
+
+      await service.getCounts();
+
+      expect(completedSpy).toHaveBeenCalled();
+      expect(inProgressSpy).toHaveBeenCalled();
+      // Verify the effective completed set excludes 'failed'
+      const completedStatuses = completedSpy.mock.results[0]!.value as string[];
+      expect(completedStatuses).not.toContain('failed');
+      expect(completedStatuses).toContain('completed');
+      expect(completedStatuses).toContain('imported');
+      completedSpy.mockRestore();
+      inProgressSpy.mockRestore();
+    });
   });
 
   describe('getActiveByBookId', () => {
@@ -152,6 +181,19 @@ describe('DownloadService', () => {
 
       const result = await service.getActiveByBookId(999);
       expect(result).toEqual([]);
+    });
+
+    it('uses in-progress statuses including checking and pending_review (bug fix)', async () => {
+      const spy = vi.spyOn(statusRegistry, 'getInProgressStatuses');
+      db.select.mockReturnValue(mockDbChain([]));
+
+      await service.getActiveByBookId(1);
+
+      expect(spy).toHaveBeenCalled();
+      const usedStatuses = spy.mock.results[0]!.value as string[];
+      expect(usedStatuses).toContain('checking');
+      expect(usedStatuses).toContain('pending_review');
+      spy.mockRestore();
     });
   });
 
