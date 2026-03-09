@@ -146,4 +146,265 @@ describe('notifiers routes', () => {
       expect(res.json()).toEqual({ success: true });
     });
   });
+
+  describe('POST /api/notifiers (email)', () => {
+    const emailSettings = {
+      smtpHost: 'smtp.example.com',
+      smtpPort: 587,
+      smtpUser: 'user@example.com',
+      smtpPass: 'secret',
+      smtpTls: true,
+      fromAddress: 'noreply@example.com',
+      toAddress: 'admin@example.com',
+    };
+
+    it('creates email notifier with full settings and verifies service receives all email keys', async () => {
+      const mockEmail = {
+        id: 2,
+        name: 'Email Notifier',
+        type: 'email' as const,
+        enabled: true,
+        events: ['on_grab'],
+        settings: emailSettings as Record<string, unknown>,
+        createdAt: new Date(),
+      };
+      vi.mocked(services.notifier.create).mockResolvedValue(mockEmail);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/notifiers',
+        payload: {
+          name: 'Email Notifier',
+          type: 'email',
+          enabled: true,
+          events: ['on_grab'],
+          settings: emailSettings,
+        },
+      });
+
+      expect(res.statusCode).toBe(201);
+      const body = res.json();
+      expect(body).toMatchObject({
+        name: 'Email Notifier',
+        type: 'email',
+        settings: {
+          smtpHost: 'smtp.example.com',
+          smtpPort: 587,
+          smtpUser: 'user@example.com',
+          smtpPass: 'secret',
+          smtpTls: true,
+          fromAddress: 'noreply@example.com',
+          toAddress: 'admin@example.com',
+        },
+      });
+
+      expect(services.notifier.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          settings: expect.objectContaining({
+            smtpHost: 'smtp.example.com',
+            smtpPort: 587,
+            smtpUser: 'user@example.com',
+            smtpPass: 'secret',
+            smtpTls: true,
+            fromAddress: 'noreply@example.com',
+            toAddress: 'admin@example.com',
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('POST /api/notifiers (telegram)', () => {
+    const telegramSettings = {
+      botToken: '123456:ABC-DEF',
+      chatId: '987654321',
+    };
+
+    it('creates telegram notifier with full settings and verifies service receives botToken and chatId', async () => {
+      const mockTelegram = {
+        id: 3,
+        name: 'Telegram Notifier',
+        type: 'telegram' as const,
+        enabled: true,
+        events: ['on_import'],
+        settings: telegramSettings as Record<string, unknown>,
+        createdAt: new Date(),
+      };
+      vi.mocked(services.notifier.create).mockResolvedValue(mockTelegram);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/notifiers',
+        payload: {
+          name: 'Telegram Notifier',
+          type: 'telegram',
+          enabled: true,
+          events: ['on_import'],
+          settings: telegramSettings,
+        },
+      });
+
+      expect(res.statusCode).toBe(201);
+      const body = res.json();
+      expect(body).toMatchObject({
+        name: 'Telegram Notifier',
+        type: 'telegram',
+        settings: {
+          botToken: '123456:ABC-DEF',
+          chatId: '987654321',
+        },
+      });
+
+      expect(services.notifier.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          settings: expect.objectContaining({
+            botToken: '123456:ABC-DEF',
+            chatId: '987654321',
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('POST /api/notifiers/test (email)', () => {
+    it('tests email config with full create payload and verifies testConfig receives type and settings', async () => {
+      vi.mocked(services.notifier.testConfig).mockResolvedValue({ success: true });
+
+      const emailSettings = {
+        smtpHost: 'smtp.example.com',
+        smtpPort: 587,
+        smtpUser: 'user@example.com',
+        smtpPass: 'secret',
+        smtpTls: true,
+        fromAddress: 'noreply@example.com',
+        toAddress: 'admin@example.com',
+      };
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/notifiers/test',
+        payload: {
+          name: 'Email Test',
+          type: 'email',
+          enabled: true,
+          events: ['on_grab'],
+          settings: emailSettings,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ success: true });
+      expect(services.notifier.testConfig).toHaveBeenCalledWith({
+        type: 'email',
+        settings: expect.objectContaining({
+          smtpHost: 'smtp.example.com',
+          smtpPort: 587,
+          smtpUser: 'user@example.com',
+          smtpPass: 'secret',
+          smtpTls: true,
+          fromAddress: 'noreply@example.com',
+          toAddress: 'admin@example.com',
+        }),
+      });
+    });
+  });
+
+  describe('POST /api/notifiers/test (telegram)', () => {
+    it('tests telegram config with full create payload and verifies testConfig receives type and settings', async () => {
+      vi.mocked(services.notifier.testConfig).mockResolvedValue({ success: true });
+
+      const telegramSettings = {
+        botToken: '123456:ABC-DEF',
+        chatId: '987654321',
+      };
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/notifiers/test',
+        payload: {
+          name: 'Telegram Test',
+          type: 'telegram',
+          enabled: true,
+          events: ['on_grab'],
+          settings: telegramSettings,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ success: true });
+      expect(services.notifier.testConfig).toHaveBeenCalledWith({
+        type: 'telegram',
+        settings: expect.objectContaining({
+          botToken: '123456:ABC-DEF',
+          chatId: '987654321',
+        }),
+      });
+    });
+  });
+
+  describe('POST /api/notifiers/test error paths', () => {
+    it('returns error when testConfig rejects for email type', async () => {
+      vi.mocked(services.notifier.testConfig).mockRejectedValue(new Error('SMTP connection refused'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/notifiers/test',
+        payload: {
+          name: 'Email Fail',
+          type: 'email',
+          enabled: true,
+          events: ['on_grab'],
+          settings: {
+            smtpHost: 'bad.host',
+            smtpPort: 587,
+            smtpUser: 'user@example.com',
+            smtpPass: 'secret',
+            smtpTls: true,
+            fromAddress: 'noreply@example.com',
+            toAddress: 'admin@example.com',
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).toEqual({ error: 'Internal server error' });
+    });
+
+    it('returns error when testConfig rejects for telegram type', async () => {
+      vi.mocked(services.notifier.testConfig).mockRejectedValue(new Error('Telegram API error'));
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/notifiers/test',
+        payload: {
+          name: 'Telegram Fail',
+          type: 'telegram',
+          enabled: true,
+          events: ['on_grab'],
+          settings: {
+            botToken: 'invalid-token',
+            chatId: '123',
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).toEqual({ error: 'Internal server error' });
+    });
+  });
+
+  describe('POST /api/notifiers validation (non-webhook)', () => {
+    it('returns 400 for email type missing required top-level fields', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/notifiers',
+        payload: {
+          type: 'email',
+          settings: { smtpHost: 'smtp.example.com' },
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+  });
 });
