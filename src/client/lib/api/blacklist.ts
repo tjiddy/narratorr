@@ -5,8 +5,10 @@ export interface BlacklistEntry {
   bookId?: number;
   infoHash: string;
   title: string;
-  reason?: 'wrong_content' | 'bad_quality' | 'wrong_narrator' | 'spam' | 'other';
+  reason?: 'wrong_content' | 'bad_quality' | 'wrong_narrator' | 'spam' | 'other' | 'download_failed' | 'infrastructure_error';
   note?: string;
+  blacklistType: 'temporary' | 'permanent';
+  expiresAt?: string | null;
   blacklistedAt: string;
 }
 
@@ -18,6 +20,7 @@ export const blacklistApi = {
     bookId?: number;
     reason?: BlacklistEntry['reason'];
     note?: string;
+    blacklistType?: 'temporary' | 'permanent';
   }) =>
     fetchApi<BlacklistEntry>('/blacklist', {
       method: 'POST',
@@ -25,4 +28,9 @@ export const blacklistApi = {
     }),
   removeFromBlacklist: (id: number) =>
     fetchApi<{ success: boolean }>(`/blacklist/${id}`, { method: 'DELETE' }),
+  toggleBlacklistType: (id: number, blacklistType: 'temporary' | 'permanent') =>
+    fetchApi<BlacklistEntry>(`/blacklist/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ blacklistType }),
+    }),
 };

@@ -16,7 +16,22 @@ const REASON_LABELS: Record<string, string> = {
   wrong_narrator: 'Wrong Narrator',
   spam: 'Spam',
   other: 'Other',
+  download_failed: 'Download Failed',
+  infrastructure_error: 'Infrastructure Error',
 };
+
+function formatExpiry(entry: BlacklistEntry): string {
+  if (entry.blacklistType === 'permanent' || !entry.expiresAt) {
+    return 'Permanent';
+  }
+  const expiresAt = new Date(entry.expiresAt);
+  const now = new Date();
+  const diffMs = expiresAt.getTime() - now.getTime();
+  if (diffMs <= 0) return 'Expired';
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  if (diffDays === 1) return 'Expires in 1 day';
+  return `Expires in ${diffDays} days`;
+}
 
 export function BlacklistSettings() {
   const queryClient = useQueryClient();
@@ -35,6 +50,18 @@ export function BlacklistSettings() {
     },
     onError: () => {
       toast.error('Failed to remove from blacklist');
+    },
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: ({ id, blacklistType }: { id: number; blacklistType: 'temporary' | 'permanent' }) =>
+      api.toggleBlacklistType(id, blacklistType),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.blacklist() });
+      toast.success('Blacklist entry updated');
+    },
+    onError: () => {
+      toast.error('Failed to update blacklist entry');
     },
   });
 
@@ -76,11 +103,16 @@ export function BlacklistSettings() {
                 <div className="min-w-0 flex-1">
                   <h3 className="font-medium text-sm truncate">{entry.title}</h3>
                   <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                    {entry.reason && (
-                      <span className="text-xs px-2 py-0.5 bg-muted rounded-md font-medium text-muted-foreground">
-                        {REASON_LABELS[entry.reason] ?? entry.reason}
-                      </span>
-                    )}
+                    <span className="text-xs px-2 py-0.5 bg-muted rounded-md font-medium text-muted-foreground">
+                      {entry.reason ? (REASON_LABELS[entry.reason] ?? entry.reason) : 'Unknown'}
+                    </span>
+                    <span className={`text-xs px-2 py-0.5 rounded-md font-medium ${
+                      entry.blacklistType === 'temporary'
+                        ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                        : 'bg-muted text-muted-foreground'
+                    }`}>
+                      {formatExpiry(entry)}
+                    </span>
                     <span className="text-xs text-muted-foreground font-mono">
                       {entry.infoHash.slice(0, 12)}...
                     </span>
@@ -92,13 +124,27 @@ export function BlacklistSettings() {
                     <p className="text-xs text-muted-foreground mt-1.5">{entry.note}</p>
                   )}
                 </div>
-                <button
-                  onClick={() => setDeleteTarget(entry)}
-                  className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors focus-ring shrink-0"
-                  aria-label={`Remove ${entry.title} from blacklist`}
-                >
-                  <TrashIcon className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => toggleMutation.mutate({
+                      id: entry.id,
+                      blacklistType: entry.blacklistType === 'temporary' ? 'permanent' : 'temporary',
+                    })}
+                    className="px-2 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors focus-ring"
+                    aria-label={`Toggle ${entry.title} to ${entry.blacklistType === 'temporary' ? 'permanent' : 'temporary'}`}
+                  >
+                    {entry.blacklistType === 'temporary' ? 'Make Permanent' : 'Make Temporary'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteTarget(entry)}
+                    className="p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors focus-ring shrink-0"
+                    aria-label={`Remove ${entry.title} from blacklist`}
+                  >
+                    <TrashIcon className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
           ))}

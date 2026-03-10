@@ -76,7 +76,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   });
 
   const notifier = new NotifierService(db, log);
-  const blacklistService = new BlacklistService(db, log);
+  const blacklistService = new BlacklistService(db, log, settings);
 
   // EventHistoryService created early so it can be injected into lifecycle services
   const book = new BookService(db, log, metadata);
@@ -126,7 +126,7 @@ export async function registerRoutes(
   await libraryScanRoutes(app, services.libraryScan, services.matchJob);
   await systemRoutes(app, services, db);
   await notifiersRoutes(app, services.notifier);
-  await blacklistRoutes(app, services.blacklist);
+  await blacklistRoutes(app, services.blacklist, services.settings);
   await prowlarrRoutes(app, services.prowlarrSync);
   await authRoutes(app, services.auth);
   await remotePathMappingRoutes(app, services.remotePathMapping);

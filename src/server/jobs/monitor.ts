@@ -82,7 +82,7 @@ export async function monitorDownloads(
 
         // Attempt retry recovery if bookId present and retry deps available
         if (download.bookId && retryDeps) {
-          const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.title, retryDeps, log);
+          const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.title, retryDeps, log, 'download_failed', 'temporary');
           if (outcome === 'retried') {
             // Old download replaced — delete the failed record
             await db.delete(downloads).where(eq(downloads.id, download.id));
@@ -127,7 +127,7 @@ export async function monitorDownloads(
       // Handle failure transitions with retry recovery
       if (newStatus === 'failed' && download.status !== 'failed') {
         if (download.bookId && retryDeps) {
-          const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.title, retryDeps, log);
+          const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.title, retryDeps, log, 'download_failed', 'temporary');
           if (outcome === 'retried') {
             await db.delete(downloads).where(eq(downloads.id, download.id));
           }
@@ -152,6 +152,22 @@ export async function monitorDownloads(
       }
     } catch (error) {
       log.error({ error, id: download.id }, 'Error monitoring download');
+
+      // Infrastructure error — blacklist as temporary if infoHash and retryDeps available
+      if (download.infoHash && retryDeps) {
+        try {
+          await retryDeps.blacklistService.create({
+            infoHash: download.infoHash,
+            title: download.title,
+            bookId: download.bookId ?? undefined,
+            reason: 'infrastructure_error',
+            blacklistType: 'temporary',
+          });
+          log.info({ downloadId: download.id, infoHash: download.infoHash }, 'Blacklisted release as infrastructure_error (temporary)');
+        } catch (err) {
+          log.warn({ downloadId: download.id, err }, 'Failed to blacklist release on infrastructure error');
+        }
+      }
     }
   }
 }
@@ -169,6 +185,8 @@ async function handleDownloadFailure(
   title: string,
   retryDeps: MonitorRetryDeps,
   log: FastifyBaseLogger,
+  reason: 'bad_quality' | 'download_failed' | 'infrastructure_error' = 'bad_quality',
+  blacklistType: 'temporary' | 'permanent' = 'permanent',
 ): Promise<string> {
   // Blacklist the release if infoHash present
   if (infoHash) {
@@ -177,9 +195,10 @@ async function handleDownloadFailure(
         infoHash,
         title,
         bookId,
-        reason: 'bad_quality',
+        reason,
+        blacklistType,
       });
-      log.info({ downloadId, infoHash }, 'Blacklisted failed release before retry');
+      log.info({ downloadId, infoHash, reason, blacklistType }, 'Blacklisted failed release before retry');
     } catch (err) {
       log.warn({ downloadId, err }, 'Failed to blacklist release — proceeding with retry');
     }

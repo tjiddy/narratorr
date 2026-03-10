@@ -56,10 +56,11 @@ describe('settingsRegistry', () => {
     });
 
     it('search schema defaults match registry defaults', () => {
-      expect(DEFAULT_SETTINGS.search).toEqual({ intervalMinutes: 360, enabled: true });
+      expect(DEFAULT_SETTINGS.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 });
       const schemaParsed = settingsRegistry.search.schema.parse({});
       expect(schemaParsed.intervalMinutes).toBe(360);
       expect(schemaParsed.enabled).toBe(true);
+      expect(schemaParsed.blacklistTtlDays).toBe(7);
       expect(schemaParsed).toEqual(DEFAULT_SETTINGS.search);
     });
 
@@ -158,6 +159,38 @@ describe('settingsRegistry', () => {
     it('defaults to 5 when absent', () => {
       const result = settingsRegistry.import.schema.parse({});
       expect(result.minFreeSpaceGB).toBe(5);
+    });
+  });
+
+  describe('search blacklistTtlDays boundary constraints', () => {
+    it('rejects blacklistTtlDays of 0 (below minimum)', () => {
+      const result = settingsRegistry.search.schema.safeParse({ ...DEFAULT_SETTINGS.search, blacklistTtlDays: 0 });
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts blacklistTtlDays at minimum boundary (1)', () => {
+      const result = settingsRegistry.search.schema.safeParse({ ...DEFAULT_SETTINGS.search, blacklistTtlDays: 1 });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts blacklistTtlDays at maximum boundary (365)', () => {
+      const result = settingsRegistry.search.schema.safeParse({ ...DEFAULT_SETTINGS.search, blacklistTtlDays: 365 });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects blacklistTtlDays above maximum (366)', () => {
+      const result = settingsRegistry.search.schema.safeParse({ ...DEFAULT_SETTINGS.search, blacklistTtlDays: 366 });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects negative blacklistTtlDays', () => {
+      const result = settingsRegistry.search.schema.safeParse({ ...DEFAULT_SETTINGS.search, blacklistTtlDays: -1 });
+      expect(result.success).toBe(false);
+    });
+
+    it('defaults to 7 when absent', () => {
+      const result = settingsRegistry.search.schema.parse({});
+      expect(result.blacklistTtlDays).toBe(7);
     });
   });
 
@@ -360,10 +393,10 @@ describe('settingsRegistry', () => {
     it('spreads defaults under stored values', () => {
       const settings = {
         ...DEFAULT_SETTINGS,
-        search: { intervalMinutes: 120, enabled: false },
+        search: { intervalMinutes: 120, enabled: false, blacklistTtlDays: 14 },
       };
       const result = settingsToFormData(settings);
-      expect(result.search).toEqual({ intervalMinutes: 120, enabled: false });
+      expect(result.search).toEqual({ intervalMinutes: 120, enabled: false, blacklistTtlDays: 14 });
     });
 
     it('falls back to defaults for missing category properties', () => {

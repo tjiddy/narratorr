@@ -1,6 +1,22 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { eq, or, gt, and, lte, inArray } from 'drizzle-orm';
 import { BlacklistService } from './blacklist.service.js';
+import { blacklist } from '../../db/schema.js';
 import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
+
+vi.mock('drizzle-orm', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const actual = await importOriginal<typeof import('drizzle-orm')>();
+  return {
+    ...actual,
+    eq: vi.fn(actual.eq),
+    or: vi.fn(actual.or),
+    gt: vi.fn(actual.gt),
+    and: vi.fn(actual.and),
+    lte: vi.fn(actual.lte),
+    inArray: vi.fn(actual.inArray),
+  };
+});
 
 const mockEntry = {
   id: 1,
@@ -9,6 +25,8 @@ const mockEntry = {
   title: 'Bad Release [Unabridged]',
   reason: 'wrong_content',
   note: 'Not the right book',
+  blacklistType: 'permanent',
+  expiresAt: null,
   blacklistedAt: new Date(),
 };
 
@@ -19,18 +37,23 @@ const mockEntry2 = {
   title: 'Spam Release',
   reason: 'spam',
   note: null,
+  blacklistType: 'permanent',
+  expiresAt: null,
   blacklistedAt: new Date(),
 };
 
 describe('BlacklistService', () => {
   let db: ReturnType<typeof createMockDb>;
   let log: ReturnType<typeof createMockLogger>;
+  let settingsService: { get: ReturnType<typeof vi.fn> };
   let service: BlacklistService;
 
   beforeEach(() => {
     db = createMockDb();
     log = createMockLogger();
-    service = new BlacklistService(db as never, log as never);
+    settingsService = { get: vi.fn() };
+    settingsService.get.mockResolvedValue({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 });
+    service = new BlacklistService(db as never, log as never, settingsService as never);
   });
 
   describe('getAll', () => {
@@ -124,6 +147,261 @@ describe('BlacklistService', () => {
       db.select.mockReturnValue(mockDbChain([]));
       const result = await service.getBlacklistedHashes(['unknown']);
       expect(result.size).toBe(0);
+    });
+
+    it('excludes expired temporary entries (expires_at <= now)', async () => {
+      const expiredEntry = {
+        ...mockEntry,
+        blacklistType: 'temporary',
+        expiresAt: new Date(Date.now() - 1000),
+      };
+      // getBlacklistedHashes applies expiry filter, so expired entries won't be returned by DB
+      const chain = mockDbChain([]);
+      db.select.mockReturnValue(chain);
+      const result = await service.getBlacklistedHashes([expiredEntry.infoHash]);
+      expect(result.has(expiredEntry.infoHash)).toBe(false);
+
+      // Assert the where predicate was applied (not skipped)
+      expect(chain.where).toHaveBeenCalled();
+    });
+
+    it('builds expiry-aware predicate: permanent OR expires_at > now', async () => {
+      vi.mocked(eq).mockClear();
+      vi.mocked(or).mockClear();
+      vi.mocked(gt).mockClear();
+
+      db.select.mockReturnValue(mockDbChain([]));
+      await service.getBlacklistedHashes();
+
+      // Assert the predicate checks blacklistType = 'permanent'
+      expect(eq).toHaveBeenCalledWith(blacklist.blacklistType, 'permanent');
+      // Assert the predicate checks expiresAt > now (a Date instance)
+      expect(gt).toHaveBeenCalledWith(blacklist.expiresAt, expect.any(Date));
+      // Assert or() combines the two conditions
+      expect(or).toHaveBeenCalled();
+    });
+
+    it('includes non-expired temporary entries in returned set', async () => {
+      const temporaryEntry = {
+        ...mockEntry,
+        blacklistType: 'temporary',
+        expiresAt: new Date(Date.now() + 86400000),
+      };
+      db.select.mockReturnValue(mockDbChain([temporaryEntry]));
+      const result = await service.getBlacklistedHashes();
+      expect(result.has(temporaryEntry.infoHash)).toBe(true);
+    });
+
+    it('includes permanent entries regardless of expires_at', async () => {
+      db.select.mockReturnValue(mockDbChain([mockEntry]));
+      const result = await service.getBlacklistedHashes();
+      expect(result.has(mockEntry.infoHash)).toBe(true);
+    });
+
+    it('applies expiry filter where predicate to both hash-filtered and unfiltered queries', async () => {
+      vi.mocked(or).mockClear();
+      vi.mocked(eq).mockClear();
+      vi.mocked(gt).mockClear();
+      vi.mocked(and).mockClear();
+      vi.mocked(inArray).mockClear();
+
+      // Without hash filter — uses or(eq(permanent), gt(expiresAt, now))
+      const chain1 = mockDbChain([]);
+      db.select.mockReturnValue(chain1);
+      await service.getBlacklistedHashes();
+      expect(chain1.where).toHaveBeenCalledTimes(1);
+      expect(or).toHaveBeenCalled();
+
+      vi.mocked(or).mockClear();
+      vi.mocked(and).mockClear();
+
+      // With hash filter — uses and(inArray(hashes), or(permanent, gt(expiresAt, now)))
+      const chain2 = mockDbChain([]);
+      db.select.mockReturnValue(chain2);
+      await service.getBlacklistedHashes(['abc123']);
+      expect(chain2.where).toHaveBeenCalledTimes(1);
+      expect(inArray).toHaveBeenCalledWith(blacklist.infoHash, ['abc123']);
+      expect(and).toHaveBeenCalled();
+    });
+  });
+
+  describe('create — blacklist type and TTL', () => {
+    it('creates entry with blacklistType temporary and auto-fills expires_at from TTL setting', async () => {
+      const temporaryEntry = {
+        ...mockEntry,
+        blacklistType: 'temporary',
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      };
+      const chain = mockDbChain([temporaryEntry]);
+      db.insert.mockReturnValue(chain);
+      const result = await service.create({
+        infoHash: 'abc123def456',
+        title: 'Bad Release [Unabridged]',
+        reason: 'wrong_content',
+        blacklistType: 'temporary',
+      });
+      expect(result).toEqual(expect.objectContaining({ blacklistType: 'temporary' }));
+      expect(result.expiresAt).not.toBeNull();
+      expect(settingsService.get).toHaveBeenCalledWith('search');
+
+      // Assert the actual values payload includes computed expiresAt
+      const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(valuesPayload.blacklistType).toBe('temporary');
+      expect(valuesPayload.expiresAt).toBeInstanceOf(Date);
+      // TTL is 7 days — verify expiresAt is approximately 7 days from now
+      const expectedExpiry = Date.now() + 7 * 24 * 60 * 60 * 1000;
+      expect(valuesPayload.expiresAt.getTime()).toBeGreaterThan(expectedExpiry - 5000);
+      expect(valuesPayload.expiresAt.getTime()).toBeLessThan(expectedExpiry + 5000);
+    });
+
+    it('creates entry with blacklistType permanent and expires_at null', async () => {
+      const permanentEntry = { ...mockEntry, blacklistType: 'permanent', expiresAt: null };
+      const chain = mockDbChain([permanentEntry]);
+      db.insert.mockReturnValue(chain);
+      const result = await service.create({
+        infoHash: 'abc123def456',
+        title: 'Bad Release [Unabridged]',
+        reason: 'wrong_content',
+        blacklistType: 'permanent',
+      });
+      expect(result).toEqual(expect.objectContaining({ blacklistType: 'permanent', expiresAt: null }));
+
+      // Assert the values payload explicitly nullifies expiresAt for permanent entries
+      const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(valuesPayload.blacklistType).toBe('permanent');
+      expect(valuesPayload.expiresAt).toBeNull();
+    });
+
+    it('defaults to permanent when blacklistType not specified', async () => {
+      const permanentEntry = { ...mockEntry, blacklistType: 'permanent', expiresAt: null };
+      const chain = mockDbChain([permanentEntry]);
+      db.insert.mockReturnValue(chain);
+      const result = await service.create({
+        infoHash: 'abc123def456',
+        title: 'Bad Release [Unabridged]',
+        reason: 'wrong_content',
+      });
+      expect(result).toEqual(expect.objectContaining({ expiresAt: null }));
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ blacklistType: 'permanent' }),
+        'Added to blacklist',
+      );
+
+      // Assert the values payload nullifies expiresAt when no blacklistType specified
+      const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(valuesPayload.expiresAt).toBeNull();
+    });
+  });
+
+  describe('toggleType', () => {
+    it('toggling temporary→permanent sets expires_at to null and blacklistType to permanent', async () => {
+      const temporaryEntry = {
+        ...mockEntry,
+        blacklistType: 'temporary',
+        expiresAt: new Date(Date.now() + 86400000),
+      };
+      const toggledEntry = { ...temporaryEntry, blacklistType: 'permanent', expiresAt: null };
+      db.select.mockReturnValue(mockDbChain([temporaryEntry]));
+      const updateChain = mockDbChain([toggledEntry]);
+      db.update.mockReturnValue(updateChain);
+      const result = await service.toggleType(1, 'permanent');
+      expect(result).toEqual(expect.objectContaining({ blacklistType: 'permanent', expiresAt: null }));
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, blacklistType: 'permanent', expiresAt: null }),
+        'Blacklist entry type toggled',
+      );
+
+      // Assert the actual update payload nullifies expiresAt
+      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(setPayload).toEqual({ blacklistType: 'permanent', expiresAt: null });
+    });
+
+    it('toggling permanent→temporary calculates expires_at from current date + TTL setting', async () => {
+      const toggledEntry = {
+        ...mockEntry,
+        blacklistType: 'temporary',
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      };
+      db.select.mockReturnValue(mockDbChain([mockEntry]));
+      const updateChain = mockDbChain([toggledEntry]);
+      db.update.mockReturnValue(updateChain);
+      const result = await service.toggleType(1, 'temporary');
+      expect(result).toEqual(expect.objectContaining({ blacklistType: 'temporary' }));
+      expect(result!.expiresAt).not.toBeNull();
+      expect(settingsService.get).toHaveBeenCalledWith('search');
+
+      // Assert the actual update payload includes computed expiresAt from TTL
+      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(setPayload.blacklistType).toBe('temporary');
+      expect(setPayload.expiresAt).toBeInstanceOf(Date);
+      const expectedExpiry = Date.now() + 7 * 24 * 60 * 60 * 1000;
+      expect(setPayload.expiresAt.getTime()).toBeGreaterThan(expectedExpiry - 5000);
+      expect(setPayload.expiresAt.getTime()).toBeLessThan(expectedExpiry + 5000);
+    });
+
+    it('returns null when entry not found', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      const result = await service.toggleType(999, 'permanent');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('deleteExpired', () => {
+    it('deletes only expired temporary entries (expires_at <= now AND blacklistType = temporary)', async () => {
+      vi.mocked(eq).mockClear();
+      vi.mocked(and).mockClear();
+      vi.mocked(lte).mockClear();
+
+      const expiredEntry = {
+        ...mockEntry,
+        blacklistType: 'temporary',
+        expiresAt: new Date(Date.now() - 1000),
+      };
+      const chain = mockDbChain([expiredEntry]);
+      db.delete.mockReturnValue(chain);
+      const count = await service.deleteExpired();
+      expect(count).toBe(1);
+      expect(db.delete).toHaveBeenCalled();
+
+      // Assert the exact safety predicate: blacklistType = 'temporary' AND expiresAt <= now
+      expect(eq).toHaveBeenCalledWith(blacklist.blacklistType, 'temporary');
+      expect(lte).toHaveBeenCalledWith(blacklist.expiresAt, expect.any(Date));
+      expect(and).toHaveBeenCalled();
+      expect(chain.where).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not delete permanent entries', async () => {
+      vi.mocked(eq).mockClear();
+      vi.mocked(and).mockClear();
+      vi.mocked(lte).mockClear();
+
+      const chain = mockDbChain([]);
+      db.delete.mockReturnValue(chain);
+      const count = await service.deleteExpired();
+      expect(count).toBe(0);
+      // The where clause filters to only temporary + expired, so permanent entries are never touched
+      expect(db.delete).toHaveBeenCalled();
+      // Assert the safety predicate is always applied even when result is empty
+      expect(eq).toHaveBeenCalledWith(blacklist.blacklistType, 'temporary');
+      expect(lte).toHaveBeenCalledWith(blacklist.expiresAt, expect.any(Date));
+      expect(and).toHaveBeenCalled();
+      expect(chain.where).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns count of deleted entries', async () => {
+      const expired1 = { ...mockEntry, id: 10, blacklistType: 'temporary', expiresAt: new Date(Date.now() - 1000) };
+      const expired2 = { ...mockEntry2, id: 11, blacklistType: 'temporary', expiresAt: new Date(Date.now() - 2000) };
+      db.delete.mockReturnValue(mockDbChain([expired1, expired2]));
+      const count = await service.deleteExpired();
+      expect(count).toBe(2);
+      expect(log.info).toHaveBeenCalledWith({ count: 2 }, 'Cleaned up expired temporary blacklist entries');
+    });
+
+    it('handles zero expired entries gracefully (no-op)', async () => {
+      db.delete.mockReturnValue(mockDbChain([]));
+      const count = await service.deleteExpired();
+      expect(count).toBe(0);
+      expect(log.info).not.toHaveBeenCalled();
     });
   });
 });

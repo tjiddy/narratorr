@@ -8,7 +8,7 @@ import type { UpdateSettingsFormData } from '../../../shared/schemas.js';
 function Wrapper({ children }: { children: (props: ReturnType<typeof useForm<UpdateSettingsFormData>>) => React.ReactNode }) {
   const methods = useForm<UpdateSettingsFormData>({
     defaultValues: {
-      search: { enabled: false, intervalMinutes: 360 },
+      search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7 },
       library: { path: '', folderFormat: '' },
       import: { deleteAfterImport: false, minSeedTime: 60 },
       general: { logLevel: 'info' },
@@ -128,5 +128,50 @@ describe('SearchSettingsSection', () => {
     );
 
     expect(screen.getByText(/grab the best result/)).toBeInTheDocument();
+  });
+
+  describe('Blacklist TTL setting', () => {
+    it('renders TTL input field with label and default value', () => {
+      render(
+        <Wrapper>
+          {({ register, formState: { errors } }) => (
+            <SearchSettingsSection register={register} errors={errors} />
+          )}
+        </Wrapper>,
+      );
+
+      expect(screen.getByText('Blacklist TTL (days)')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('7')).toBeInTheDocument();
+    });
+
+    it('accepts positive integer value for TTL days', async () => {
+      const user = userEvent.setup();
+
+      render(
+        <Wrapper>
+          {({ register, formState: { errors } }) => (
+            <SearchSettingsSection register={register} errors={errors} />
+          )}
+        </Wrapper>,
+      );
+
+      const ttlInput = screen.getByPlaceholderText('7');
+      await user.clear(ttlInput);
+      await user.type(ttlInput, '14');
+      expect(ttlInput).toHaveValue(14);
+    });
+
+    it('has min=1 attribute to prevent TTL < 1', () => {
+      render(
+        <Wrapper>
+          {({ register, formState: { errors } }) => (
+            <SearchSettingsSection register={register} errors={errors} />
+          )}
+        </Wrapper>,
+      );
+
+      const ttlInput = screen.getByPlaceholderText('7');
+      expect(ttlInput).toHaveAttribute('min', '1');
+    });
   });
 });

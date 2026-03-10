@@ -45,7 +45,7 @@ import { toast } from 'sonner';
 import { createMockSettings, createMockIndexer, createMockDownloadClient } from '@/__tests__/factories';
 
 const mockSettings = createMockSettings({
-  search: { enabled: true, intervalMinutes: 30 },
+  search: { enabled: true, intervalMinutes: 30, blacklistTtlDays: 7 },
   import: { deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 5 },
 });
 

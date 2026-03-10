@@ -9,6 +9,8 @@ const mockEntry = {
   title: 'Bad Release [Unabridged]',
   reason: 'wrong_content' as const,
   note: 'Not the right book',
+  blacklistType: 'permanent' as const,
+  expiresAt: null,
   blacklistedAt: new Date(),
 };
 
@@ -76,6 +78,77 @@ describe('blacklist routes', () => {
       vi.mocked(services.blacklist.delete).mockResolvedValue(false);
       const res = await app.inject({ method: 'DELETE', url: '/api/blacklist/999' });
       expect(res.statusCode).toBe(404);
+    });
+  });
+
+  describe('PATCH /api/blacklist/:id', () => {
+    it('toggles to permanent — sets expires_at null', async () => {
+      const permanentEntry = { ...mockEntry, blacklistType: 'permanent' as const, expiresAt: null };
+      vi.mocked(services.blacklist.toggleType).mockResolvedValue(permanentEntry);
+
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/blacklist/1',
+        payload: { blacklistType: 'permanent' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ blacklistType: 'permanent' });
+      expect(services.blacklist.toggleType).toHaveBeenCalledWith(1, 'permanent');
+    });
+
+    it('toggles to temporary — sets expires_at from TTL setting', async () => {
+      const temporaryEntry = {
+        ...mockEntry,
+        blacklistType: 'temporary' as const,
+        expiresAt: new Date('2026-04-08T00:00:00Z'),
+      };
+      vi.mocked(services.blacklist.toggleType).mockResolvedValue(temporaryEntry);
+
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/blacklist/1',
+        payload: { blacklistType: 'temporary' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({ blacklistType: 'temporary' });
+      expect(services.blacklist.toggleType).toHaveBeenCalledWith(1, 'temporary');
+    });
+
+    it('returns 404 for non-existent entry', async () => {
+      vi.mocked(services.blacklist.toggleType).mockResolvedValue(null);
+
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/blacklist/999',
+        payload: { blacklistType: 'permanent' },
+      });
+
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 500 when toggleType service throws', async () => {
+      vi.mocked(services.blacklist.toggleType).mockRejectedValue(new Error('DB connection lost'));
+
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/blacklist/1',
+        payload: { blacklistType: 'permanent' },
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).toMatchObject({ error: 'DB connection lost' });
+    });
+
+    it('returns 400 for invalid blacklistType value', async () => {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/blacklist/1',
+        payload: { blacklistType: 'invalid' },
+      });
+
+      expect(res.statusCode).toBe(400);
     });
   });
 });

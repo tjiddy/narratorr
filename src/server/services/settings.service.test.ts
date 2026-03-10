@@ -34,7 +34,7 @@ describe('SettingsService', () => {
       db.select.mockReturnValue(mockDbChain([]));
 
       const result = await service.get('search');
-      expect(result).toEqual({ intervalMinutes: 360, enabled: true });
+      expect(result).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 });
     });
   });
 
@@ -49,7 +49,7 @@ describe('SettingsService', () => {
       // Zod fills missing fileFormat with default
       expect(result.library).toEqual({ path: '/custom', folderFormat: '{title}', fileFormat: '{author} - {title}' });
       // Other sections fall back to defaults
-      expect(result.search).toEqual({ intervalMinutes: 360, enabled: true });
+      expect(result.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 });
       expect(result.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 });
       expect(result.general).toEqual({ logLevel: 'info' });
     });

@@ -8,7 +8,7 @@ import type { UpdateSettingsFormData } from '../../../shared/schemas.js';
 function Wrapper({ children }: { children: (props: ReturnType<typeof useForm<UpdateSettingsFormData>>) => React.ReactNode }) {
   const methods = useForm<UpdateSettingsFormData>({
     defaultValues: {
-      search: { enabled: false, intervalMinutes: 360 },
+      search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7 },
       library: { path: '', folderFormat: '' },
       import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
       general: { logLevel: 'info' },

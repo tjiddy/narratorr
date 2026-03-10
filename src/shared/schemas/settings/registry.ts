@@ -34,7 +34,7 @@ export const settingsRegistry = {
   }),
   search: defineCategory({
     schema: searchSettingsSchema,
-    defaults: { intervalMinutes: 360, enabled: true },
+    defaults: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 },
   }),
   import: defineCategory({
     schema: importSettingsSchema,

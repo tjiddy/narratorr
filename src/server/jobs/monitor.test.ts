@@ -639,7 +639,7 @@ describe('monitor job', () => {
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
       expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ infoHash: 'abc123', reason: 'bad_quality' }),
+        expect.objectContaining({ infoHash: 'abc123', reason: 'download_failed', blacklistType: 'temporary' }),
       );
     });
 
@@ -783,6 +783,143 @@ describe('monitor job', () => {
         expect.objectContaining({ bookId: 42, status: 'wanted' }),
         'Book status recovered after download failure',
       );
+    });
+  });
+
+  describe('auto-classification — infrastructure_error and download_failed', () => {
+    let retryDeps: {
+      blacklistService: { create: ReturnType<typeof vi.fn> };
+      retrySearchDeps: {
+        indexerService: { searchAll: ReturnType<typeof vi.fn> };
+        downloadService: { grab: ReturnType<typeof vi.fn> };
+        blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn> };
+        bookService: { getById: ReturnType<typeof vi.fn> };
+        settingsService: { get: ReturnType<typeof vi.fn> };
+        retryBudget: RetryBudget;
+        log: ReturnType<typeof createMockLogger>;
+      };
+    };
+
+    beforeEach(async () => {
+      const { RetryBudget } = await import('../services/retry-budget.js');
+      retryDeps = {
+        blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
+        retrySearchDeps: {
+          indexerService: { searchAll: vi.fn().mockResolvedValue([]) },
+          downloadService: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
+          blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
+          bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, author: { name: 'Author' } }) },
+          settingsService: { get: vi.fn().mockResolvedValue({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' }) },
+          retryBudget: new RetryBudget(),
+          log: createMockLogger(),
+        },
+      };
+    });
+
+    it('adapter.getDownload() throws → blacklists with reason infrastructure_error, type temporary', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockRejectedValueOnce(new Error('Connection refused'));
+      db.update.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ infoHash: 'abc123', reason: 'infrastructure_error', blacklistType: 'temporary' }),
+      );
+    });
+
+    it('adapter.getDownload() returns null → blacklists with reason download_failed, type temporary', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+      db.delete.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ infoHash: 'abc123', reason: 'download_failed', blacklistType: 'temporary' }),
+      );
+    });
+
+    it('download item status is error → blacklists with reason download_failed, type temporary', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 30, status: 'error' });
+      db.update.mockReturnValue(mockDbChain());
+      db.delete.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ infoHash: 'abc123', reason: 'download_failed', blacklistType: 'temporary' }),
+      );
+    });
+
+    it('adapter throw + blacklist insert failure logs warning and continues monitoring', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+        { id: 2, externalId: 'ext-2', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null },
+      ]));
+      adapter.getDownload
+        .mockRejectedValueOnce(new Error('Connection refused'))
+        .mockResolvedValueOnce({ progress: 50, status: 'downloading' });
+      retryDeps.blacklistService.create.mockRejectedValueOnce(new Error('DB constraint error'));
+      db.update.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      // Blacklist failure is caught and logged as warning
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 1 }),
+        'Failed to blacklist release on infrastructure error',
+      );
+      // Second download still processes normally
+      expect(db.update).toHaveBeenCalled();
+    });
+
+    it('handleDownloadFailure blacklist insert failure logs warning and proceeds with retry', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      retryDeps.blacklistService.create.mockRejectedValueOnce(new Error('DB constraint error'));
+      db.update.mockReturnValue(mockDbChain());
+      db.delete.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      // Blacklist failure is caught and logged as warning, retry still proceeds
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 1 }),
+        'Failed to blacklist release — proceeding with retry',
+      );
+    });
+
+    it('null-download path blacklists with full payload including title and bookId', async () => {
+      // The null-download path passes download_failed/temporary to handleDownloadFailure.
+      // This test verifies the complete payload shape (not just reason/type).
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+      db.delete.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      // Verify the blacklist entry includes the title and bookId along with reason/type
+      expect(retryDeps.blacklistService.create).toHaveBeenCalledWith({
+        infoHash: 'abc123',
+        title: 'Test Book',
+        bookId: 42,
+        reason: 'download_failed',
+        blacklistType: 'temporary',
+      });
     });
   });
 });

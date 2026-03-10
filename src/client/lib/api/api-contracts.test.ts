@@ -150,6 +150,14 @@ describe('blacklistApi', () => {
     await blacklistApi.removeFromBlacklist(7);
     expect(mockFetchApi).toHaveBeenCalledWith('/blacklist/7', expect.objectContaining({ method: 'DELETE' }));
   });
+
+  it('toggleBlacklistType → PATCH /blacklist/:id with blacklistType', async () => {
+    await blacklistApi.toggleBlacklistType(3, 'temporary');
+    expect(mockFetchApi).toHaveBeenCalledWith('/blacklist/3', expect.objectContaining({
+      method: 'PATCH',
+      body: JSON.stringify({ blacklistType: 'temporary' }),
+    }));
+  });
 });
 
 describe('booksApi', () => {

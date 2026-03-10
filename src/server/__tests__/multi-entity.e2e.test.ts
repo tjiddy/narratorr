@@ -296,6 +296,7 @@ describe('Job lifecycle E2E', () => {
     await e2e.services.settings.set('search', {
       enabled: true,
       intervalMinutes: 60,
+      blacklistTtlDays: 7,
     });
   });
 

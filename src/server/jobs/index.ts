@@ -6,6 +6,7 @@ import { startEnrichmentJob } from './enrichment.js';
 import { startImportJob } from './import.js';
 import { startSearchJob } from './search.js';
 import { startRssJob } from './rss.js';
+import { startBlacklistCleanupJob } from './blacklist-cleanup.js';
 
 export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   const retrySearchDeps = {
@@ -26,5 +27,6 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   startImportJob(services.import, services.qualityGate, log);
   startSearchJob(services.settings, services.book, services.indexer, services.download, log, services.retryBudget);
   startRssJob(services.settings, services.book, services.indexer, services.download, services.blacklist, log);
+  startBlacklistCleanupJob(services.blacklist, log);
   log.info('Background jobs started');
 }

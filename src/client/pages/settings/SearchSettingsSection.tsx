@@ -49,6 +49,28 @@ export function SearchSettingsSection({ register, errors }: SearchSettingsSectio
         </p>
       </div>
 
+      {/* Blacklist TTL */}
+      <div>
+        <label htmlFor="blacklistTtlDays" className="block text-sm font-medium mb-2">Blacklist TTL (days)</label>
+        <input
+          id="blacklistTtlDays"
+          type="number"
+          {...register('search.blacklistTtlDays', { valueAsNumber: true })}
+          className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+            errors.search?.blacklistTtlDays ? 'border-destructive' : 'border-border'
+          }`}
+          min={1}
+          max={365}
+          placeholder="7"
+        />
+        {errors.search?.blacklistTtlDays && (
+          <p className="text-sm text-destructive mt-1">{errors.search.blacklistTtlDays.message}</p>
+        )}
+        <p className="text-sm text-muted-foreground mt-2">
+          How long temporary blacklist entries last before expiring (1-365 days)
+        </p>
+      </div>
+
       {/* RSS Sync subsection */}
       <div className="border-t border-border pt-6 mt-6">
         <h4 className="text-sm font-semibold mb-4">RSS Sync</h4>
