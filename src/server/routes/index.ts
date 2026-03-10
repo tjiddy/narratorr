@@ -22,6 +22,8 @@ import {
 import { ImportService } from '../services/import.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
 import { MatchJobService } from '../services/match-job.service.js';
+import { BackupService } from '../services/backup.service.js';
+import { config } from '../config.js';
 
 import { booksRoutes, bookFilesRoute } from './books.js';
 import { searchRoutes } from './search.js';
@@ -64,6 +66,7 @@ export interface Services {
   qualityGate: QualityGateService;
   retryBudget: RetryBudget;
   eventBroadcaster: EventBroadcasterService;
+  backup: BackupService;
 }
 
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
@@ -97,6 +100,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const qualityGateService = new QualityGateService(db, downloadClient, eventHistory, blacklistService, log, remotePathMapping);
   const renameService = new RenameService(book, settings, log, eventHistory);
   const retryBudget = new RetryBudget();
+  const backup = new BackupService(config.configPath, config.dbPath, settings, log);
 
   // Wire broadcaster into quality gate service
   qualityGateService.setBroadcaster(eventBroadcaster);
@@ -114,7 +118,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   download.setRetrySearchDeps(retrySearchDeps);
   eventHistory.setRetrySearchDeps(retrySearchDeps);
 
-  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, retryBudget, eventBroadcaster };
+  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, retryBudget, eventBroadcaster, backup };
 }
 
 export async function registerRoutes(

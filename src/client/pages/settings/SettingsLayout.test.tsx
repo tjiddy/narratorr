@@ -15,6 +15,8 @@ describe('SettingsLayout', () => {
     expect(screen.getByText('Download Clients').closest('a')).toHaveAttribute('href', '/settings/download-clients');
     expect(screen.getByText('Notifications').closest('a')).toHaveAttribute('href', '/settings/notifications');
     expect(screen.getByText('Blacklist').closest('a')).toHaveAttribute('href', '/settings/blacklist');
+    expect(screen.getByText('Security').closest('a')).toHaveAttribute('href', '/settings/security');
+    expect(screen.getByText('System').closest('a')).toHaveAttribute('href', '/settings/system');
 
     // Navigate to Indexers
     await user.click(screen.getByText('Indexers'));

@@ -32,4 +32,5 @@ export const queryKeys = {
     all: (params?: { eventType?: string; search?: string }) => ['eventHistory', params] as const,
     byBookId: (bookId: number) => ['eventHistory', 'book', bookId] as const,
   },
+  backups: () => ['backups'] as const,
 } as const;

@@ -9,6 +9,7 @@ import { taggingSettingsSchema } from './tagging.js';
 import { qualitySettingsSchema } from './quality.js';
 import { networkSettingsSchema } from './network.js';
 import { rssSettingsSchema } from './rss.js';
+import { systemSettingsSchema } from './system.js';
 
 // ---------------------------------------------------------------------------
 // Registry entry helper — enforces defaults match schema at compile time
@@ -83,6 +84,10 @@ export const settingsRegistry = {
   rss: defineCategory({
     schema: rssSettingsSchema,
     defaults: { intervalMinutes: 30, enabled: false },
+  }),
+  system: defineCategory({
+    schema: systemSettingsSchema,
+    defaults: { backupIntervalMinutes: 10080, backupRetention: 7 },
   }),
 };
 

@@ -22,8 +22,10 @@ import { createDb, runMigrations } from '../db/index.js';
 import { config } from './config.js';
 import { createServices, registerRoutes } from './routes';
 import { startJobs } from './jobs';
+import multipart from '@fastify/multipart';
 import authPlugin from './plugins/auth.js';
 import { registerStaticAndSpa, listenWithRetry } from './server-utils.js';
+import { applyPendingRestore } from './services/backup.service.js';
 
 function buildLoggerConfig(): boolean | { transport: { target: string; options: Record<string, unknown> } } {
   if (!config.isDev) return true;
@@ -72,11 +74,17 @@ async function main() {
   // Rate limiting (per-route only — global: false prevents auto-applying to all routes)
   await app.register(rateLimit, { global: false });
 
+  // Multipart support for file uploads (restore)
+  await app.register(multipart, { limits: { fileSize: 500 * 1024 * 1024 } });
+
   // Ensure config directory exists
   const configDir = path.dirname(config.dbPath);
   if (!fs.existsSync(configDir)) {
     fs.mkdirSync(configDir, { recursive: true });
   }
+
+  // Check for pending restore before DB is opened
+  applyPendingRestore(config.configPath, config.dbPath, app.log);
 
   // Initialize database with migrations
   app.log.info({ dbPath: config.dbPath }, 'Initializing database');

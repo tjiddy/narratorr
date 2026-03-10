@@ -37,7 +37,7 @@ describe('settingsRegistry', () => {
     });
 
     it('exports exactly the expected category keys', () => {
-      const expected = ['library', 'search', 'import', 'general', 'metadata', 'processing', 'tagging', 'quality', 'network', 'rss'];
+      const expected = ['library', 'search', 'import', 'general', 'metadata', 'processing', 'tagging', 'quality', 'network', 'rss', 'system'];
       expect(SETTINGS_CATEGORIES.sort()).toEqual(expected.sort());
     });
 
@@ -212,6 +212,59 @@ describe('settingsRegistry', () => {
 
     it('rejects intervalMinutes above maximum (1441)', () => {
       const result = settingsRegistry.rss.schema.safeParse({ intervalMinutes: 1441, enabled: true });
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('system schema boundary constraints', () => {
+    it('rejects backupIntervalMinutes below minimum (59)', () => {
+      const result = settingsRegistry.system.schema.safeParse({ backupIntervalMinutes: 59, backupRetention: 7 });
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts backupIntervalMinutes at minimum boundary (60)', () => {
+      const result = settingsRegistry.system.schema.safeParse({ backupIntervalMinutes: 60, backupRetention: 7 });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts backupIntervalMinutes at maximum boundary (43200)', () => {
+      const result = settingsRegistry.system.schema.safeParse({ backupIntervalMinutes: 43200, backupRetention: 7 });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects backupIntervalMinutes above maximum (43201)', () => {
+      const result = settingsRegistry.system.schema.safeParse({ backupIntervalMinutes: 43201, backupRetention: 7 });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects backupRetention below minimum (0)', () => {
+      const result = settingsRegistry.system.schema.safeParse({ backupIntervalMinutes: 10080, backupRetention: 0 });
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts backupRetention at minimum boundary (1)', () => {
+      const result = settingsRegistry.system.schema.safeParse({ backupIntervalMinutes: 10080, backupRetention: 1 });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts backupRetention at maximum boundary (100)', () => {
+      const result = settingsRegistry.system.schema.safeParse({ backupIntervalMinutes: 10080, backupRetention: 100 });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects backupRetention above maximum (101)', () => {
+      const result = settingsRegistry.system.schema.safeParse({ backupIntervalMinutes: 10080, backupRetention: 101 });
+      expect(result.success).toBe(false);
+    });
+
+    it('defaults to 10080 intervalMinutes and 7 retention when absent', () => {
+      const result = settingsRegistry.system.schema.parse({});
+      expect(result.backupIntervalMinutes).toBe(10080);
+      expect(result.backupRetention).toBe(7);
+    });
+
+    it('rejects non-integer values', () => {
+      const result = settingsRegistry.system.schema.safeParse({ backupIntervalMinutes: 100.5, backupRetention: 7 });
       expect(result.success).toBe(false);
     });
   });

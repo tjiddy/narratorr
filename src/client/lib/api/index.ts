@@ -14,6 +14,7 @@ export type { ProwlarrConfig, SyncPreviewItem, SyncResult } from './prowlarr.js'
 export type { BrowseResult } from './filesystem.js';
 export type { RemotePathMapping } from './remote-path-mappings.js';
 export type { BookEvent } from './event-history.js';
+export type { BackupMetadata, RestoreValidation, BackupJobResult } from './backups.js';
 
 export { formatBytes, formatProgress } from './utils.js';
 
@@ -32,6 +33,7 @@ import { authApi } from './auth.js';
 import { filesystemApi } from './filesystem.js';
 import { remotePathMappingsApi } from './remote-path-mappings.js';
 import { eventHistoryApi } from './event-history.js';
+import { backupsApi } from './backups.js';
 
 export const api = {
   ...booksApi,
@@ -49,4 +51,5 @@ export const api = {
   ...filesystemApi,
   ...remotePathMappingsApi,
   ...eventHistoryApi,
+  ...backupsApi,
 };

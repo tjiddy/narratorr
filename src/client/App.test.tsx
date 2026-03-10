@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Outlet } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { App } from '@/App';
 
@@ -43,13 +43,14 @@ vi.mock('@/pages/activity', () => ({
 }));
 
 vi.mock('@/pages/settings', () => ({
-  SettingsLayout: () => <div data-testid="settings-page">Settings Page</div>,
+  SettingsLayout: () => <div data-testid="settings-page">Settings Page<Outlet /></div>,
   GeneralSettings: () => <div>General</div>,
   IndexersSettings: () => <div>Indexers</div>,
   DownloadClientsSettings: () => <div>Download Clients</div>,
   NotificationsSettings: () => <div>Notifications</div>,
   BlacklistSettings: () => <div>Blacklist</div>,
   SecuritySettings: () => <div>Security</div>,
+  SystemSettings: () => <div>System</div>,
 }));
 
 function renderApp(route = '/') {
@@ -101,5 +102,11 @@ describe('App', () => {
     renderApp('/settings');
 
     expect(screen.getByTestId('settings-page')).toBeInTheDocument();
+  });
+
+  it('renders system settings page at /settings/system', () => {
+    renderApp('/settings/system');
+
+    expect(screen.getByText('System')).toBeInTheDocument();
   });
 });
