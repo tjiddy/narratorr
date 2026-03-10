@@ -19,6 +19,15 @@ const envSchema = z.object({
     .string()
     .default('false')
     .transform((val) => val === 'true'),
+  URL_BASE: z
+    .string()
+    .default('/')
+    .transform((v) => {
+      // Normalize empty string to /
+      if (!v || v === '/') return '/';
+      // Strip trailing slash
+      return v.endsWith('/') ? v.slice(0, -1) : v;
+    }),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -30,6 +39,11 @@ if (!parsed.success) {
   throw new Error(`Invalid environment config: ${parsed.error.message}`);
 }
 
+// Validate URL_BASE format after transform (must start with / unless it's the default /)
+if (parsed.data.URL_BASE !== '/' && !parsed.data.URL_BASE.startsWith('/')) {
+  throw new Error(`Invalid URL_BASE: "${process.env.URL_BASE}" — must start with /`);
+}
+
 export const config = {
   port: parsed.data.PORT,
   isDev: parsed.data.NODE_ENV !== 'production',
@@ -38,4 +52,5 @@ export const config = {
   libraryPath: parsed.data.LIBRARY_PATH,
   dbPath: parsed.data.DATABASE_URL,
   authBypass: parsed.data.AUTH_BYPASS,
+  urlBase: parsed.data.URL_BASE,
 };

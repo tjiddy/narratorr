@@ -1,6 +1,7 @@
 import { useImageError } from '@/hooks/useImageError';
 import type { BookWithAuthor } from '@/lib/api';
 import { bookStatusConfig } from '@/lib/status';
+import { resolveUrl } from '@/lib/url-utils';
 import { BookOpenIcon, MoreVerticalIcon, BrokenLinkIcon } from '@/components/icons';
 import { BookContextMenu } from './BookContextMenu.js';
 
@@ -42,7 +43,7 @@ export function LibraryBookCard({
       <div className="relative aspect-square bg-muted overflow-hidden">
         {book.coverUrl && !imageError ? (
           <img
-            src={book.coverUrl}
+            src={resolveUrl(book.coverUrl)}
             alt={book.title}
             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
             loading="lazy"

@@ -1,4 +1,13 @@
-const API_BASE = '/api';
+declare global {
+  interface Window {
+    __NARRATORR_URL_BASE__?: string;
+  }
+}
+
+/** URL_BASE prefix injected by the server at runtime. Empty string when at root. */
+export const URL_BASE = typeof window !== 'undefined' ? (window.__NARRATORR_URL_BASE__ ?? '') : '';
+
+const API_BASE = `${URL_BASE}/api`;
 
 export class ApiError extends Error {
   status: number;

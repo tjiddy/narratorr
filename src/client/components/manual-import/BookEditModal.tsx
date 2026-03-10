@@ -3,6 +3,7 @@ import { type BookMetadata, type DiscoveredBook } from '@/lib/api';
 import { formatBytes } from '@/lib/api';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useAudnexusSearch } from '@/hooks/useAudnexusSearch';
+import { resolveUrl } from '@/lib/url-utils';
 import { isBookInLibrary } from '@/lib/helpers';
 import { useLibrary } from '@/hooks/useLibrary';
 import {
@@ -114,7 +115,7 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
           <div className="flex gap-4">
             <div className="w-[80px] h-[80px] shrink-0 rounded-lg overflow-hidden bg-muted/50 relative">
               {selectedMetadata?.coverUrl ? (
-                <img src={selectedMetadata.coverUrl} alt="" className="w-full h-full object-cover" />
+                <img src={resolveUrl(selectedMetadata.coverUrl)} alt="" className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-muted/80 to-muted/30">
                   <BookOpenIcon className="w-6 h-6 text-muted-foreground/20" />
@@ -227,7 +228,7 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
                   >
                     <div className="w-8 h-8 shrink-0 rounded overflow-hidden bg-muted/30 relative">
                       {meta.coverUrl ? (
-                        <img src={meta.coverUrl} alt="" className="w-full h-full object-cover" />
+                        <img src={resolveUrl(meta.coverUrl)} alt="" className="w-full h-full object-cover" />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">
                           <BookOpenIcon className="w-3 h-3 text-muted-foreground/20" />

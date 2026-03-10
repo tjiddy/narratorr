@@ -1,5 +1,6 @@
 import { type BookMetadata } from '@/lib/api';
 import { formatDuration } from '@/lib/helpers';
+import { resolveUrl } from '@/lib/url-utils';
 import { AddBookPopover } from '@/components/AddBookPopover';
 import { BookOpenIcon, CheckIcon } from '@/components/icons';
 
@@ -25,7 +26,7 @@ export function BookRow({
         <div className="relative w-10 sm:w-12 aspect-square rounded-lg overflow-hidden ring-1 ring-black/10 transition-transform duration-200 group-hover:scale-105">
           {book.coverUrl ? (
             <img
-              src={book.coverUrl}
+              src={resolveUrl(book.coverUrl)}
               alt={`Cover of ${book.title}`}
               className="w-full h-full object-cover"
               loading="lazy"

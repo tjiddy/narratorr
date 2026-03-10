@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { LibraryBookCard } from './LibraryBookCard';
@@ -262,6 +262,28 @@ describe('LibraryBookCard', () => {
     it('does not render badge when collapsedCount is undefined', () => {
       render(<LibraryBookCard {...defaultProps()} />);
       expect(screen.queryByTestId('collapsed-badge')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('URL_BASE resolveUrl integration', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('prefixes app-relative cover URLs with URL_BASE via resolveUrl', async () => {
+      vi.spyOn(await import('@/lib/url-utils'), 'resolveUrl').mockImplementation(
+        (url) => {
+          if (!url) return undefined;
+          if (url.startsWith('http://') || url.startsWith('https://')) return url;
+          return `/narratorr${url}`;
+        },
+      );
+
+      const book = createMockBook({ coverUrl: '/api/books/1/cover' });
+      render(<LibraryBookCard {...defaultProps({ book })} />);
+
+      const img = screen.getByAltText('The Way of Kings');
+      expect(img).toHaveAttribute('src', '/narratorr/api/books/1/cover');
     });
   });
 

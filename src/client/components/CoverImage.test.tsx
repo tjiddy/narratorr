@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { CoverImage } from '@/components/CoverImage';
@@ -58,5 +58,41 @@ describe('CoverImage', () => {
 
     const wrapper = container.querySelector('.w-20.h-20');
     expect(wrapper).toBeInTheDocument();
+  });
+
+  describe('URL_BASE resolveUrl integration', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('prefixes app-relative cover URLs with URL_BASE', async () => {
+      // Mock resolveUrl to simulate URL_BASE = /narratorr
+      vi.spyOn(await import('@/lib/url-utils'), 'resolveUrl').mockImplementation(
+        (url) => {
+          if (!url) return undefined;
+          if (url.startsWith('http://') || url.startsWith('https://')) return url;
+          return `/narratorr${url}`;
+        },
+      );
+
+      // Re-import component to pick up mocked resolveUrl
+      const { CoverImage: PrefixedCoverImage } = await import('@/components/CoverImage');
+
+      renderWithProviders(
+        <PrefixedCoverImage src="/api/books/1/cover" alt="Prefixed Cover" fallback={<span>No Cover</span>} />,
+      );
+
+      const img = screen.getByAltText('Prefixed Cover');
+      expect(img).toHaveAttribute('src', '/narratorr/api/books/1/cover');
+    });
+
+    it('leaves absolute cover URLs unchanged', () => {
+      renderWithProviders(
+        <CoverImage src="https://cdn.example.com/cover.jpg" alt="Absolute Cover" fallback={<span>No Cover</span>} />,
+      );
+
+      const img = screen.getByAltText('Absolute Cover');
+      expect(img).toHaveAttribute('src', 'https://cdn.example.com/cover.jpg');
+    });
   });
 });

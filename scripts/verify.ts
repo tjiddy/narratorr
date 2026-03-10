@@ -79,8 +79,11 @@ if (!failed) {
     try {
       const mergeBase = git("merge-base", "HEAD", "main");
       const changedRaw = git("diff", "--name-only", "--diff-filter=ACMR", `${mergeBase}..HEAD`);
+      // Exclude test files, config files, scripts, and side-effect entry points
+      // (entry points execute main()/render at import — untestable in isolation)
+      const ENTRY_POINTS = new Set(["src/server/index.ts", "src/client/main.tsx"]);
       const changedFiles = changedRaw.split("\n").filter(f =>
-        /\.(ts|tsx|js|jsx)$/.test(f) && !/\.(test|spec)\./i.test(f) && !f.includes("config") && !f.startsWith("scripts/")
+        /\.(ts|tsx|js|jsx)$/.test(f) && !/\.(test|spec)\./i.test(f) && !f.includes("config") && !f.startsWith("scripts/") && !ENTRY_POINTS.has(f)
       );
 
       if (changedFiles.length > 0) {

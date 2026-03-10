@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -106,6 +106,52 @@ describe('BookEditModal', () => {
     it('shows file info (count and size)', () => {
       renderModal({ book: makeBook({ fileCount: 37, totalSize: 1200000000 }) });
       expect(screen.getByText(/37 files/)).toBeInTheDocument();
+    });
+  });
+
+  describe('URL_BASE resolveUrl integration', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('prefixes app-relative metadata preview cover URL with URL_BASE via resolveUrl', async () => {
+      vi.spyOn(await import('@/lib/url-utils'), 'resolveUrl').mockImplementation(
+        (url) => {
+          if (!url) return undefined;
+          if (url.startsWith('http://') || url.startsWith('https://')) return url;
+          return `/narratorr${url}`;
+        },
+      );
+
+      const meta = makeMetadata({ coverUrl: '/api/books/1/cover' });
+      renderModal({ initial: makeEditState({ metadata: meta }) });
+
+      const imgs = document.querySelectorAll('img');
+      const coverImg = Array.from(imgs).find(img => img.getAttribute('src')?.includes('/api/books/1/cover'));
+      expect(coverImg).toBeTruthy();
+      expect(coverImg!.getAttribute('src')).toBe('/narratorr/api/books/1/cover');
+    });
+
+    it('prefixes app-relative alternative match cover URLs with URL_BASE via resolveUrl', async () => {
+      vi.spyOn(await import('@/lib/url-utils'), 'resolveUrl').mockImplementation(
+        (url) => {
+          if (!url) return undefined;
+          if (url.startsWith('http://') || url.startsWith('https://')) return url;
+          return `/narratorr${url}`;
+        },
+      );
+
+      const bestMatch = makeMetadata({ providerId: 'best', coverUrl: 'https://example.com/cover.jpg' });
+      const alt = makeMetadata({ title: 'Alt Book', providerId: 'alt1', coverUrl: '/api/books/2/cover' });
+      renderModal({
+        initial: makeEditState({ metadata: bestMatch }),
+        alternatives: [alt],
+        confidence: 'medium',
+      });
+
+      const imgs = document.querySelectorAll('img');
+      const altCoverImg = Array.from(imgs).find(img => img.getAttribute('src') === '/narratorr/api/books/2/cover');
+      expect(altCoverImg).toBeTruthy();
     });
   });
 

@@ -119,4 +119,48 @@ describe('useAuth', () => {
     expect(cachedStatus?.authenticated).toBe(false);
     expect(window.location.href).toBe('/login');
   });
+
+  it('logout redirects to {URL_BASE}/login when URL_BASE is set', async () => {
+    // Set URL_BASE before re-importing the hook
+    window.__NARRATORR_URL_BASE__ = '/narratorr';
+    vi.resetModules();
+
+    // Re-import with the new URL_BASE value
+    const { useAuth: useAuthWithBase } = await import('./useAuth');
+    const freshApi = (await import('@/lib/api')).api;
+    vi.mocked(freshApi.getStatus).mockResolvedValueOnce({
+      mode: 'forms',
+      hasUser: true,
+      localBypass: false,
+      authenticated: true,
+    }).mockResolvedValue({
+      mode: 'forms',
+      hasUser: true,
+      localBypass: false,
+      authenticated: false,
+    });
+    vi.mocked(freshApi.logout).mockResolvedValue(undefined as never);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: React.ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+
+    const { result } = renderHook(() => useAuthWithBase(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.logout();
+    });
+
+    expect(window.location.href).toBe('/narratorr/login');
+
+    // Clean up
+    delete window.__NARRATORR_URL_BASE__;
+    vi.resetModules();
+  });
 });

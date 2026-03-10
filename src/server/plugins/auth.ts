@@ -5,15 +5,16 @@ import { config } from '../config.js';
 
 export interface AuthPluginOptions {
   authService: AuthService;
+  urlBase?: string;
 }
 
-/** Routes that never require authentication. */
-const PUBLIC_ROUTES = new Set([
+/** Base public route paths (without URL_BASE prefix). */
+const BASE_PUBLIC_ROUTES = [
   '/api/auth/status',
   '/api/auth/login',
   '/api/health',
   '/api/system/status',
-]);
+];
 
 /**
  * Private IP ranges for local network bypass.
@@ -130,13 +131,21 @@ async function handleFormsAuth(
 }
 
 async function authPlugin(app: FastifyInstance, opts: AuthPluginOptions) {
-  const { authService } = opts;
+  const { authService, urlBase: rawUrlBase } = opts;
+  const urlBase = rawUrlBase && rawUrlBase !== '/' ? rawUrlBase : '';
+  const apiPrefix = `${urlBase}/api/`;
+
+  // Build public routes set with URL_BASE prefix
+  const PUBLIC_ROUTES = new Set(
+    BASE_PUBLIC_ROUTES.map((route) => `${urlBase}${route}`),
+  );
+  const setupRoute = `${urlBase}/api/auth/setup`;
 
   app.decorateRequest('user', null);
 
   app.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
-    // Only intercept /api/* routes
-    if (!request.url.startsWith('/api/')) return;
+    // Only intercept {urlBase}/api/* routes
+    if (!request.url.startsWith(apiPrefix)) return;
 
     const routePath = request.url.split('?')[0];
 
@@ -144,7 +153,7 @@ async function authPlugin(app: FastifyInstance, opts: AuthPluginOptions) {
     if (PUBLIC_ROUTES.has(routePath)) return;
 
     // /api/auth/setup is public when no user exists
-    if (routePath === '/api/auth/setup' && request.method === 'POST') {
+    if (routePath === setupRoute && request.method === 'POST') {
       const hasUser = await authService.hasUser();
       if (!hasUser) return;
     }

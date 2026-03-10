@@ -26,8 +26,8 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Install ffmpeg for audio processing (merge/convert)
-RUN apk add --no-cache ffmpeg
+# Install ffmpeg for audio processing and su-exec for PUID/PGID support
+RUN apk add --no-cache ffmpeg su-exec
 
 # Install pnpm for production dependencies
 RUN corepack enable
@@ -44,6 +44,10 @@ COPY --from=builder /app/dist ./dist
 # Copy migration files (not bundled, loaded at runtime)
 COPY --from=builder /app/drizzle ./drizzle
 
+# Copy entrypoint script
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Create directories for config and data
 RUN mkdir -p /config /audiobooks /downloads
 
@@ -55,7 +59,8 @@ ENV CONFIG_PATH=/config
 ENV LIBRARY_PATH=/audiobooks
 ENV DATABASE_URL=file:/config/narratorr.db
 
+# Health check — uses URL_BASE env var for subpath deployments
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget --spider -q http://localhost:3000/api/health || exit 1
+  CMD wget --spider -q http://localhost:3000${URL_BASE:-}/api/health || exit 1
 
-CMD ["node", "dist/server/index.js"]
+ENTRYPOINT ["/entrypoint.sh"]

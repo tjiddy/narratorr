@@ -141,6 +141,49 @@ describe('config', () => {
     });
   });
 
+  describe('urlBase', () => {
+    it('defaults to / when URL_BASE is not set', async () => {
+      delete process.env.URL_BASE;
+      const config = await loadConfig();
+      expect(config.urlBase).toBe('/');
+    });
+
+    it('parses URL_BASE=/narratorr from env', async () => {
+      process.env.URL_BASE = '/narratorr';
+      const config = await loadConfig();
+      expect(config.urlBase).toBe('/narratorr');
+    });
+
+    it('normalizes empty string to /', async () => {
+      process.env.URL_BASE = '';
+      const config = await loadConfig();
+      expect(config.urlBase).toBe('/');
+    });
+
+    it('normalizes / to /', async () => {
+      process.env.URL_BASE = '/';
+      const config = await loadConfig();
+      expect(config.urlBase).toBe('/');
+    });
+
+    it('strips trailing slash from URL_BASE', async () => {
+      process.env.URL_BASE = '/narratorr/';
+      const config = await loadConfig();
+      expect(config.urlBase).toBe('/narratorr');
+    });
+
+    it('accepts multi-segment path like /deep/nested/path', async () => {
+      process.env.URL_BASE = '/deep/nested/path';
+      const config = await loadConfig();
+      expect(config.urlBase).toBe('/deep/nested/path');
+    });
+
+    it('throws on URL_BASE missing leading slash', async () => {
+      process.env.URL_BASE = 'narratorr';
+      await expect(loadConfig()).rejects.toThrow('Invalid URL_BASE');
+    });
+  });
+
   describe('authBypass', () => {
     it('is false when AUTH_BYPASS is not set', async () => {
       delete process.env.AUTH_BYPASS;

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -487,6 +487,44 @@ describe('BookMetadataModal', () => {
         }),
         false,
       );
+    });
+
+    describe('URL_BASE resolveUrl integration', () => {
+      afterEach(() => {
+        vi.restoreAllMocks();
+      });
+
+      it('prefixes app-relative search result cover URLs with URL_BASE via resolveUrl', async () => {
+        vi.spyOn(await import('@/lib/url-utils'), 'resolveUrl').mockImplementation(
+          (url) => {
+            if (!url) return undefined;
+            if (url.startsWith('http://') || url.startsWith('https://')) return url;
+            return `/narratorr${url}`;
+          },
+        );
+
+        const { api } = await import('@/lib/api');
+        const searchMock = vi.mocked(api.searchMetadata);
+        searchMock.mockResolvedValueOnce({
+          books: [
+            createMockBookMetadata({ title: 'Prefixed Cover', coverUrl: '/api/books/1/cover', asin: 'B999' }),
+          ],
+          authors: [],
+          series: [],
+        });
+
+        const user = userEvent.setup();
+        renderModal();
+
+        await user.click(screen.getByText('Search Audnexus for metadata'));
+        await user.click(screen.getByRole('button', { name: 'Search' }));
+
+        await screen.findByText('Prefixed Cover');
+        const imgs = document.querySelectorAll('img');
+        const coverImg = Array.from(imgs).find(img => img.getAttribute('src')?.includes('/api/books/1/cover'));
+        expect(coverImg).toBeTruthy();
+        expect(coverImg!.getAttribute('src')).toBe('/narratorr/api/books/1/cover');
+      });
     });
 
     it('clears narrator field when selected metadata has no narrators', async () => {

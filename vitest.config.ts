@@ -13,6 +13,7 @@ export default defineConfig({
       'src/core/**/*.test.ts',
       'src/db/**/*.test.ts',
       'scripts/**/*.test.ts',
+      'docker/**/*.test.ts',
     ],
     passWithNoTests: true,
     environmentMatchGlobs: [
@@ -22,6 +23,10 @@ export default defineConfig({
       ['src/db/**', 'node'],
     ],
     setupFiles: ['src/client/__tests__/setup.ts'],
-    coverage: { provider: 'v8', reportsDirectory: 'coverage', exclude: ['scripts/**'] },
+    coverage: {
+      provider: 'v8',
+      reportsDirectory: 'coverage',
+      exclude: ['scripts/**', 'src/server/index.ts', 'src/client/main.tsx'],
+    },
   },
 });

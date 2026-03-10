@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fetchApi, ApiError } from './client';
+import { fetchApi, ApiError, URL_BASE } from './client';
 
 describe('ApiError', () => {
   it('extracts error message from body.error', () => {
@@ -135,5 +135,41 @@ describe('fetchApi', () => {
     await fetchApi('/test');
 
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].credentials).toBe('include');
+  });
+});
+
+describe('fetchApi with URL_BASE', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('prepends URL_BASE to API requests when set', async () => {
+    // Set URL_BASE on window and force fresh module import
+    window.__NARRATORR_URL_BASE__ = '/narratorr';
+    vi.resetModules();
+    const { fetchApi: prefixedFetchApi } = await import('./client.js');
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true }),
+    });
+
+    await prefixedFetchApi('/books');
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/narratorr/api/books',
+      expect.objectContaining({ credentials: 'include' }),
+    );
+
+    // Clean up
+    delete window.__NARRATORR_URL_BASE__;
+    vi.resetModules();
+  });
+
+  it('exports URL_BASE from window injection', () => {
+    // In test env, window.__NARRATORR_URL_BASE__ is undefined → URL_BASE defaults to ''
+    expect(typeof URL_BASE).toBe('string');
   });
 });

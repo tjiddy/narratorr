@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import type { BookWithAuthor, UpdateBookPayload, BookMetadata } from '@/lib/api';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useAudnexusSearch } from '@/hooks/useAudnexusSearch';
+import { resolveUrl } from '@/lib/url-utils';
 import { XIcon, SearchIcon, LoadingSpinner, HeadphonesIcon, AlertCircleIcon, ArrowLeftIcon } from '@/components/icons';
 
 type SearchView = 'edit' | 'search';
@@ -277,7 +278,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
                     >
                       <div className="w-9 h-12 shrink-0 rounded-md overflow-hidden bg-muted/30 relative">
                         {meta.coverUrl ? (
-                          <img src={meta.coverUrl} alt="" className="w-full h-full object-cover" />
+                          <img src={resolveUrl(meta.coverUrl)} alt="" className="w-full h-full object-cover" />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center">
                             <SearchIcon className="w-3 h-3 text-muted-foreground/20" />

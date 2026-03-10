@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -153,6 +153,40 @@ describe('BookHero', () => {
     const button = screen.getByText('Re-tag files').closest('button');
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute('title', 'Requires ffmpeg');
+  });
+
+  describe('URL_BASE resolveUrl integration', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('prefixes both foreground and background cover URLs with URL_BASE via resolveUrl', async () => {
+      vi.spyOn(await import('@/lib/url-utils'), 'resolveUrl').mockImplementation(
+        (url) => {
+          if (!url) return undefined;
+          if (url.startsWith('http://') || url.startsWith('https://')) return url;
+          return `/narratorr${url}`;
+        },
+      );
+
+      render(
+        <MemoryRouter>
+          <BookHero {...defaultProps} coverUrl="/api/books/1/cover" />
+        </MemoryRouter>,
+      );
+
+      // Foreground cover image
+      const coverImg = screen.getByAltText('Cover of The Way of Kings');
+      expect(coverImg).toHaveAttribute('src', '/narratorr/api/books/1/cover');
+
+      // Background blur image (aria-hidden, alt="")
+      const allImgs = document.querySelectorAll('img');
+      const blurImg = Array.from(allImgs).find(
+        img => img.getAttribute('aria-hidden') === 'true' && img.getAttribute('src')?.includes('/api/books/1/cover'),
+      );
+      expect(blurImg).toBeTruthy();
+      expect(blurImg!.getAttribute('src')).toBe('/narratorr/api/books/1/cover');
+    });
   });
 
   describe('monitor toggle', () => {

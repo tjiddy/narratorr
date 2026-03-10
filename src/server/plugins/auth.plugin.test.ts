@@ -341,4 +341,83 @@ describe('auth middleware', () => {
       await testApp.close();
     });
   });
+
+  describe('URL_BASE-aware path checks', () => {
+    const urlBase = '/narratorr';
+
+    async function createUrlBaseApp(
+      authService: AuthService,
+      extraRoutes?: (app: FastifyInstance) => void,
+    ): Promise<FastifyInstance> {
+      const app = Fastify({ logger: false });
+      await app.register(cookie);
+      await app.register(authPlugin, { authService, urlBase });
+
+      // Test route behind auth (under urlBase prefix)
+      app.get(`${urlBase}/api/test`, async () => ({ ok: true }));
+
+      // Non-API route under urlBase
+      app.get(`${urlBase}/books/123`, async () => ({ page: true }));
+
+      // Route outside urlBase scope
+      app.get('/api/other', async () => ({ outside: true }));
+
+      extraRoutes?.(app);
+
+      await app.ready();
+      return app;
+    }
+
+    it('intercepts {urlBase}/api/protected when URL_BASE is set', async () => {
+      const authService = createMockAuthService({
+        getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
+      });
+      const app = await createUrlBaseApp(authService);
+      const res = await app.inject({ method: 'GET', url: '/narratorr/api/test' });
+      expect(res.statusCode).toBe(401);
+      await app.close();
+    });
+
+    it('skips non-API routes under URL_BASE', async () => {
+      const authService = createMockAuthService();
+      const app = await createUrlBaseApp(authService);
+      const res = await app.inject({ method: 'GET', url: '/narratorr/books/123' });
+      expect(res.statusCode).toBe(200);
+      await app.close();
+    });
+
+    it('recognizes PUBLIC_ROUTES with URL_BASE prefix', async () => {
+      const authService = createMockAuthService();
+      const app = await createUrlBaseApp(authService, (a) => {
+        a.get('/narratorr/api/health', async () => ({ status: 'ok' }));
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/narratorr/api/health' });
+      expect(res.statusCode).toBe(200);
+      await app.close();
+    });
+
+    it('recognizes PUBLIC_ROUTES with query strings under URL_BASE', async () => {
+      const authService = createMockAuthService();
+      const app = await createUrlBaseApp(authService, (a) => {
+        a.get('/narratorr/api/auth/status', async () => ({ mode: 'none' }));
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/narratorr/api/auth/status?foo=bar' });
+      expect(res.statusCode).toBe(200);
+      await app.close();
+    });
+
+    it('does not intercept /api/ routes outside URL_BASE scope', async () => {
+      const authService = createMockAuthService({
+        getStatus: vi.fn().mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false }),
+      });
+      const app = await createUrlBaseApp(authService);
+
+      // /api/other is outside the /narratorr prefix, so auth hook should not intercept it
+      const res = await app.inject({ method: 'GET', url: '/api/other' });
+      expect(res.statusCode).toBe(200);
+      await app.close();
+    });
+  });
 });

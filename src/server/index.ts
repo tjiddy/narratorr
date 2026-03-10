@@ -13,7 +13,6 @@ import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
-import fastifyStatic from '@fastify/static';
 import {
   serializerCompiler,
   validatorCompiler,
@@ -24,6 +23,7 @@ import { config } from './config.js';
 import { createServices, registerRoutes } from './routes';
 import { startJobs } from './jobs';
 import authPlugin from './plugins/auth.js';
+import { registerStaticAndSpa, listenWithRetry } from './server-utils.js';
 
 function buildLoggerConfig(): boolean | { transport: { target: string; options: Record<string, unknown> } } {
   if (!config.isDev) return true;
@@ -57,7 +57,7 @@ async function main() {
       : {
           directives: {
             defaultSrc: ["'self'"],
-            scriptSrc: ["'self'"],
+            scriptSrc: ["'self'", "'unsafe-inline'"],
             styleSrc: ["'self'", 'https://fonts.googleapis.com'],
             fontSrc: ["'self'", 'https://fonts.gstatic.com'],
             imgSrc: ["'self'", 'data:', 'https:'],
@@ -99,28 +99,19 @@ async function main() {
   // Initialize auth and register cookie/auth plugins
   await services.auth.initialize();
   await app.register(cookie);
-  await app.register(authPlugin, { authService: services.auth });
+  await app.register(authPlugin, { authService: services.auth, urlBase: config.urlBase });
 
-  // Register API routes
-  await registerRoutes(app, services, db);
+  // URL_BASE prefix — routes, static files, and SPA fallback are scoped under urlBase
+  const urlBasePrefix = config.urlBase === '/' ? '' : config.urlBase;
 
-  // Serve static files in production
+  // Register API routes under URL_BASE scope
+  await app.register(async (scoped) => {
+    await registerRoutes(scoped, services, db);
+  }, { prefix: urlBasePrefix || '/' });
+
+  // Serve static files and SPA fallback in production
   if (!config.isDev) {
-    const clientPath = path.join(__dirname, '../client');
-    if (fs.existsSync(clientPath)) {
-      await app.register(fastifyStatic, {
-        root: clientPath,
-        prefix: '/',
-      });
-
-      // SPA fallback - serve index.html for non-API routes
-      app.setNotFoundHandler((request, reply) => {
-        if (!request.url.startsWith('/api/')) {
-          return reply.sendFile('index.html');
-        }
-        return reply.status(404).send({ error: 'Not found' });
-      });
-    }
+    await registerStaticAndSpa(app, urlBasePrefix);
   }
 
   // Start background jobs
@@ -135,23 +126,7 @@ async function main() {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
-  // Start server (retry on EADDRINUSE — handles tsx watch race on Windows
-  // where the previous process hasn't released the port yet)
-  const maxRetries = 5;
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      await app.listen({ port: config.port, host: '0.0.0.0' });
-      break;
-    } catch (err: unknown) {
-      const isAddrInUse = err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EADDRINUSE';
-      if (isAddrInUse && attempt < maxRetries) {
-        app.log.warn({ port: config.port, attempt }, 'Port in use, retrying…');
-        await new Promise((r) => setTimeout(r, 1000));
-        continue;
-      }
-      throw err;
-    }
-  }
+  await listenWithRetry(app, config.port);
 
   app.log.info({ port: config.port }, 'Server running');
 }

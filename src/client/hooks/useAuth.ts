@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { api } from '@/lib/api';
+import { URL_BASE } from '@/lib/api/client';
 import { queryKeys } from '@/lib/queryKeys';
 import type { AuthMode } from '../../shared/schemas.js';
 
@@ -28,7 +29,7 @@ export function useAuth(): AuthState {
     queryClient.setQueryData(queryKeys.auth.status(), undefined);
     // Force refetch to get updated status
     await queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
-    window.location.href = '/login';
+    window.location.href = `${URL_BASE}/login`;
   }, [queryClient]);
 
   // Server-determined authentication state:

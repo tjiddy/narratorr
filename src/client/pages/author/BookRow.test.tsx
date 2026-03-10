@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -97,5 +97,26 @@ describe('BookRow', () => {
   it('renders fallback when no cover', () => {
     renderBookRow({ book: createMockBookMetadata({ coverUrl: undefined }) });
     expect(screen.queryByAltText('Cover of The Way of Kings')).not.toBeInTheDocument();
+  });
+
+  describe('URL_BASE resolveUrl integration', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('prefixes app-relative cover URLs with URL_BASE via resolveUrl', async () => {
+      vi.spyOn(await import('@/lib/url-utils'), 'resolveUrl').mockImplementation(
+        (url) => {
+          if (!url) return undefined;
+          if (url.startsWith('http://') || url.startsWith('https://')) return url;
+          return `/narratorr${url}`;
+        },
+      );
+
+      renderBookRow({ book: createMockBookMetadata({ coverUrl: '/api/books/1/cover' }) });
+
+      const img = screen.getByAltText('Cover of The Way of Kings');
+      expect(img).toHaveAttribute('src', '/narratorr/api/books/1/cover');
+    });
   });
 });

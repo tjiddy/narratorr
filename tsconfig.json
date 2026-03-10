@@ -23,6 +23,6 @@
       "@/*": ["./src/client/*"]
     }
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "docker/**/*"],
   "exclude": ["node_modules", "dist"]
 }
