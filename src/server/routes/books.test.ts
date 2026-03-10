@@ -774,6 +774,130 @@ describe('books routes', () => {
     });
   });
 
+  // #282 — Per-book search endpoint
+  describe('POST /api/books/:id/search (#282)', () => {
+    const qualitySettings = { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' };
+
+    it('returns result: grabbed with title when best result found and grabbed', async () => {
+      (services.book.getById as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockResolvedValue(qualitySettings);
+      (services.indexer.searchAll as Mock).mockResolvedValue([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
+      ]);
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.result).toBe('grabbed');
+      expect(body.title).toBe('The Way of Kings');
+    });
+
+    it('returns result: no_results when search succeeds but no qualifying results', async () => {
+      (services.book.getById as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockResolvedValue(qualitySettings);
+      (services.indexer.searchAll as Mock).mockResolvedValue([]);
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.result).toBe('no_results');
+    });
+
+    it('returns result: skipped with reason when book has active download', async () => {
+      (services.book.getById as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockResolvedValue(qualitySettings);
+      (services.indexer.searchAll as Mock).mockResolvedValue([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
+      ]);
+      (services.download.grab as Mock).mockRejectedValue(new Error('Book 1 already has an active download'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.result).toBe('skipped');
+      expect(body.reason).toBe('already_has_active_download');
+    });
+
+    it('returns 404 when book ID does not exist', async () => {
+      (services.book.getById as Mock).mockResolvedValue(null);
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/999/search' });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload).error).toBe('Book not found');
+    });
+
+    it('returns 500 when indexer search fails', async () => {
+      (services.book.getById as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockResolvedValue(qualitySettings);
+      (services.indexer.searchAll as Mock).mockRejectedValue(new Error('Indexer down'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+
+    it('uses quality settings for filter/rank', async () => {
+      const strictQuality = { grabFloor: 100, minSeeders: 5, protocolPreference: 'torrent', rejectWords: 'abridged', requiredWords: '' };
+      (services.book.getById as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockResolvedValue(strictQuality);
+      (services.indexer.searchAll as Mock).mockResolvedValue([
+        { title: 'The Way of Kings Abridged', rawTitle: 'The Way of Kings Abridged', downloadUrl: 'https://example.com/dl1', protocol: 'torrent', size: 500000, seeders: 10 },
+        { title: 'The Way of Kings', rawTitle: 'The Way of Kings Full', downloadUrl: 'https://example.com/dl2', protocol: 'torrent', size: 500000, seeders: 10 },
+      ]);
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.settings.get).toHaveBeenCalledWith('quality');
+      // The abridged result should be filtered out by rejectWords
+      if (JSON.parse(res.payload).result === 'grabbed') {
+        expect(services.download.grab).toHaveBeenCalledWith(
+          expect.objectContaining({ downloadUrl: 'https://example.com/dl2' }),
+        );
+      }
+    });
+
+    it('sends grabbed result to download client via downloadService.grab', async () => {
+      (services.book.getById as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockResolvedValue(qualitySettings);
+      (services.indexer.searchAll as Mock).mockResolvedValue([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
+      ]);
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.download.grab).toHaveBeenCalledTimes(1);
+      expect(services.download.grab).toHaveBeenCalledWith({
+        downloadUrl: 'https://example.com/dl',
+        title: 'The Way of Kings',
+        protocol: 'torrent',
+        bookId: mockBook.id,
+        size: 500000,
+        seeders: 10,
+      });
+    });
+
+    it('returns 500 when downloadService.grab fails with a non-active-download error', async () => {
+      (services.book.getById as Mock).mockResolvedValue(mockBook);
+      (services.settings.get as Mock).mockResolvedValue(qualitySettings);
+      (services.indexer.searchAll as Mock).mockResolvedValue([
+        { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
+      ]);
+      (services.download.grab as Mock).mockRejectedValue(new Error('Download client connection refused'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+  });
+
   describe('error paths', () => {
     it('POST /api/books returns 500 when service.create throws', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue(null);

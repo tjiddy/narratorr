@@ -5,6 +5,7 @@ import type { BookService, DownloadService, SettingsService, RenameService, Even
 import { RenameError } from '../services/rename.service.js';
 import { filterAndRankResults } from './search.js';
 import { RetagError } from '../services/tagging.service.js';
+import { searchAndGrabForBook } from '../jobs/search.js';
 import { type z } from 'zod';
 import {
   idParamSchema,
@@ -144,6 +145,35 @@ async function registerDeleteMissingRoute(app: FastifyInstance, bookService: Boo
   });
 }
 
+function registerBookSearchRoute(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, indexerService: IndexerService) {
+  app.post<{ Params: IdParam }>(
+    '/api/books/:id/search',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => {
+      try {
+        const { id } = request.params;
+        const book = await bookService.getById(id);
+        if (!book) {
+          return await reply.status(404).send({ error: 'Book not found' });
+        }
+
+        const qualitySettings = await settingsService.get('quality');
+        const result = await searchAndGrabForBook(
+          book,
+          indexerService,
+          downloadService,
+          qualitySettings,
+          request.log,
+        );
+        return result;
+      } catch (error) {
+        request.log.error(error, 'Per-book search failed');
+        return reply.status(500).send({ error: 'Internal server error' });
+      }
+    },
+  );
+}
+
 export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, renameService: RenameService, taggingService: TaggingService, eventHistory?: EventHistoryService, indexerService?: IndexerService) {
   // GET /api/books
   app.get<{ Querystring: BookListQuery }>(
@@ -265,6 +295,10 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
       }
     },
   );
+
+  if (indexerService) {
+    registerBookSearchRoute(app, bookService, downloadService, settingsService, indexerService);
+  }
 
   // POST /api/books/:id/retag
   app.post<{ Params: IdParam }>(

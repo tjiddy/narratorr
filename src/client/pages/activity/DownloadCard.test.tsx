@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { DownloadCard } from './DownloadCard';
 import { createMockDownload } from '@/__tests__/factories';
 import type { Download } from '@/lib/api';
+import type { QualityGateData } from '@/lib/api/activity';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -116,6 +118,130 @@ describe('DownloadCard', () => {
         />,
       );
       expect(screen.queryByText('100%')).not.toBeInTheDocument();
+    });
+  });
+
+  // #282 — Pending review expand/collapse
+  describe('pending review expand/collapse (#282)', () => {
+    const gateData: QualityGateData = {
+      action: 'held',
+      mbPerHour: 60,
+      existingMbPerHour: 40,
+      narratorMatch: true,
+      durationDelta: 0.05,
+      codec: 'AAC',
+      channels: 1,
+      probeFailure: false,
+      holdReasons: ['narrator_mismatch'],
+    };
+
+    function renderPendingReview(
+      downloadOverrides?: Partial<Download>,
+      cardProps?: Partial<Omit<Parameters<typeof DownloadCard>[0], 'download'>>,
+    ) {
+      const user = userEvent.setup();
+      const download = createMockDownload({
+        status: 'pending_review',
+        qualityGate: gateData,
+        ...downloadOverrides,
+      });
+      const result = render(
+        <DownloadCard
+          download={download}
+          onApprove={vi.fn()}
+          onReject={vi.fn()}
+          {...cardProps}
+        />,
+      );
+      return { user, download, ...result };
+    }
+
+    it('pending_review downloads show expand/collapse toggle', () => {
+      renderPendingReview();
+      const toggle = screen.getByRole('button', { name: /expand quality comparison/i });
+      expect(toggle).toBeInTheDocument();
+    });
+
+    it('comparison panel is collapsed by default', () => {
+      renderPendingReview();
+      const toggle = screen.getByRole('button', { name: /expand quality comparison/i });
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.queryByText('Quality Comparison')).not.toBeInTheDocument();
+    });
+
+    it('clicking expand toggle reveals QualityComparisonPanel', async () => {
+      const { user } = renderPendingReview();
+      const toggle = screen.getByRole('button', { name: /expand quality comparison/i });
+      await user.click(toggle);
+      expect(screen.getByText('Quality Comparison')).toBeInTheDocument();
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    it('approve/reject buttons render inside expanded panel', async () => {
+      const { user } = renderPendingReview();
+      // Before expanding, no approve/reject buttons
+      expect(screen.queryByText('Approve')).not.toBeInTheDocument();
+      expect(screen.queryByText('Reject')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /expand quality comparison/i }));
+      expect(screen.getByText('Approve')).toBeInTheDocument();
+      expect(screen.getByText('Reject')).toBeInTheDocument();
+    });
+
+    it('approve button shows pending state while approving', async () => {
+      const { user } = renderPendingReview(undefined, { isApproving: true });
+      await user.click(screen.getByRole('button', { name: /expand quality comparison/i }));
+
+      const approveBtn = screen.getByText('Approving...');
+      expect(approveBtn).toBeInTheDocument();
+      expect(approveBtn.closest('button')).toBeDisabled();
+      // Panel remains expanded during the async operation
+      expect(screen.getByText('Quality Comparison')).toBeInTheDocument();
+    });
+
+    it('reject button shows pending state while rejecting', async () => {
+      const { user } = renderPendingReview(undefined, { isRejecting: true });
+      await user.click(screen.getByRole('button', { name: /expand quality comparison/i }));
+
+      const rejectBtn = screen.getByText('Rejecting...');
+      expect(rejectBtn).toBeInTheDocument();
+      expect(rejectBtn.closest('button')).toBeDisabled();
+      // Panel remains expanded during the async operation
+      expect(screen.getByText('Quality Comparison')).toBeInTheDocument();
+    });
+
+    it('panel is not rendered when status changes away from pending_review', () => {
+      // When the download status changes (parent re-renders with different status),
+      // PendingReviewDetails is not rendered, effectively "collapsing" the panel
+      render(
+        <DownloadCard
+          download={createMockDownload({ status: 'importing' })}
+        />,
+      );
+      expect(screen.queryByRole('button', { name: /expand quality comparison/i })).not.toBeInTheDocument();
+      expect(screen.queryByText('Quality Comparison')).not.toBeInTheDocument();
+      expect(screen.queryByText('Approve')).not.toBeInTheDocument();
+      expect(screen.queryByText('Reject')).not.toBeInTheDocument();
+    });
+
+    it('handles null quality gate data gracefully', () => {
+      render(
+        <DownloadCard
+          download={createMockDownload({ status: 'pending_review', qualityGate: undefined })}
+        />,
+      );
+      // No expand toggle should render when qualityGate is absent
+      expect(screen.queryByRole('button', { name: /expand quality comparison/i })).not.toBeInTheDocument();
+      expect(screen.queryByText('Quality Comparison')).not.toBeInTheDocument();
+    });
+
+    it('handles probeFailure=true with warning', async () => {
+      const { user } = renderPendingReview({
+        qualityGate: { ...gateData, probeFailure: true },
+      });
+      await user.click(screen.getByRole('button', { name: /expand quality comparison/i }));
+      expect(screen.getByText('Probe failed')).toBeInTheDocument();
+      expect(screen.getByText(/unable to determine/i)).toBeInTheDocument();
     });
   });
 

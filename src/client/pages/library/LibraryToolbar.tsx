@@ -3,7 +3,10 @@ import { type StatusFilter, type SortField, type SortDirection } from './helpers
 import { StatusPills } from './StatusPills';
 import { FilterRow } from './FilterRow';
 import { SortControls } from './SortControls';
+import { ViewToggle } from './ViewToggle.js';
 import { LibraryActions } from './LibraryActions.js';
+
+export type ViewMode = 'grid' | 'table';
 
 export function LibraryToolbar({
   searchQuery, onSearchChange, onSearchClear,
@@ -11,8 +14,10 @@ export function LibraryToolbar({
   filtersOpen, onFiltersToggle, activeFilterCount,
   authorFilter, onAuthorFilterChange, uniqueAuthors,
   seriesFilter, onSeriesFilterChange, uniqueSeries,
+  narratorFilter, onNarratorFilterChange, uniqueNarrators,
   sortField, onSortFieldChange, sortDirection, onSortDirectionChange,
   collapseSeriesEnabled, onCollapseSeriesToggle,
+  viewMode, onViewModeChange,
   onRescan, isRescanning,
   missingCount, onRemoveMissing,
   onSearchAllWanted, isSearchingAllWanted,
@@ -32,12 +37,17 @@ export function LibraryToolbar({
   seriesFilter: string;
   onSeriesFilterChange: (f: string) => void;
   uniqueSeries: string[];
+  narratorFilter: string;
+  onNarratorFilterChange: (f: string) => void;
+  uniqueNarrators: string[];
   sortField: SortField;
   onSortFieldChange: (f: SortField) => void;
   sortDirection: SortDirection;
   onSortDirectionChange: (d: SortDirection) => void;
   collapseSeriesEnabled: boolean;
   onCollapseSeriesToggle: () => void;
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
   onRescan: () => void;
   isRescanning: boolean;
   missingCount: number;
@@ -117,6 +127,8 @@ export function LibraryToolbar({
           Series
         </button>
 
+        <ViewToggle viewMode={viewMode} onViewModeChange={onViewModeChange} />
+
         <LibraryActions
           missingCount={missingCount}
           onRemoveMissing={onRemoveMissing}
@@ -135,6 +147,9 @@ export function LibraryToolbar({
           seriesFilter={seriesFilter}
           onSeriesFilterChange={onSeriesFilterChange}
           uniqueSeries={uniqueSeries}
+          narratorFilter={narratorFilter}
+          onNarratorFilterChange={onNarratorFilterChange}
+          uniqueNarrators={uniqueNarrators}
         />
       )}
     </div>

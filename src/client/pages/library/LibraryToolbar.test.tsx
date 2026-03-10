@@ -26,8 +26,13 @@ function defaultProps(overrides = {}) {
     onSortFieldChange: vi.fn(),
     sortDirection: 'desc' as const,
     onSortDirectionChange: vi.fn(),
+    narratorFilter: '',
+    onNarratorFilterChange: vi.fn(),
+    uniqueNarrators: ['Narrator A', 'Narrator B'],
     collapseSeriesEnabled: false,
     onCollapseSeriesToggle: vi.fn(),
+    viewMode: 'grid' as const,
+    onViewModeChange: vi.fn(),
     onRescan: vi.fn(),
     isRescanning: false,
     missingCount: 0,
@@ -216,8 +221,9 @@ describe('LibraryToolbar', () => {
   describe('collapse series toggle', () => {
     it('renders Series toggle button', () => {
       renderWithProviders(<LibraryToolbar {...defaultProps()} />);
-      expect(screen.getByLabelText('Collapse series')).toBeInTheDocument();
-      expect(screen.getByText('Series')).toBeInTheDocument();
+      const toggle = screen.getByLabelText('Collapse series');
+      expect(toggle).toBeInTheDocument();
+      expect(toggle).toHaveTextContent('Series');
     });
 
     it('fires onCollapseSeriesToggle when clicked', async () => {

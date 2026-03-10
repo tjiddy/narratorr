@@ -262,6 +262,10 @@ describe('ActivityPage', () => {
       expect(screen.getByText('Review Me')).toBeInTheDocument();
     });
 
+    // Expand the pending review panel to reveal approve/reject buttons
+    const expandToggle = screen.getByRole('button', { expanded: false });
+    await user.click(expandToggle);
+
     const approveSpan = screen.getByText('Approve');
     await user.click(approveSpan.closest('button')!);
 
@@ -299,6 +303,10 @@ describe('ActivityPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Reject Me')).toBeInTheDocument();
     });
+
+    // Expand the pending review panel to reveal approve/reject buttons
+    const expandToggle = screen.getByRole('button', { expanded: false });
+    await user.click(expandToggle);
 
     const rejectSpan = screen.getByText('Reject');
     await user.click(rejectSpan.closest('button')!);

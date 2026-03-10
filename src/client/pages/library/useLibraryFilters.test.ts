@@ -258,6 +258,135 @@ describe('useLibraryFilters', () => {
     });
   });
 
+  // #282 — Narrator filter
+  describe('narrator filter (#282)', () => {
+    const narratorBooks: BookWithAuthor[] = [
+      createMockBook({ id: 30, title: 'Book A', status: 'wanted', narrator: 'Michael Kramer, Kate Reading', author: { id: 1, name: 'Author A', slug: 'author-a', asin: null, imageUrl: null, bio: null }, seriesName: 'Series X', createdAt: '2024-01-01T00:00:00Z' }),
+      createMockBook({ id: 31, title: 'Book B', status: 'imported', narrator: 'Tim Gerard Reynolds', author: { id: 2, name: 'Author B', slug: 'author-b', asin: null, imageUrl: null, bio: null }, seriesName: null, createdAt: '2024-01-02T00:00:00Z' }),
+      createMockBook({ id: 32, title: 'Book C', status: 'wanted', narrator: 'Kate Reading & Steven Pacey', author: { id: 1, name: 'Author A', slug: 'author-a', asin: null, imageUrl: null, bio: null }, seriesName: 'Series X', createdAt: '2024-01-03T00:00:00Z' }),
+      createMockBook({ id: 33, title: 'Book D', status: 'downloading', narrator: null, author: { id: 2, name: 'Author B', slug: 'author-b', asin: null, imageUrl: null, bio: null }, seriesName: null, createdAt: '2024-01-04T00:00:00Z' }),
+      createMockBook({ id: 34, title: 'Book E', status: 'searching', narrator: 'michael kramer; Ray Porter', author: { id: 1, name: 'Author A', slug: 'author-a', asin: null, imageUrl: null, bio: null }, seriesName: 'Series Y', createdAt: '2024-01-05T00:00:00Z' }),
+    ];
+
+    it('computes unique narrators from all books, splitting on [,;&]', () => {
+      const { result } = renderHook(() => useLibraryFilters(narratorBooks));
+
+      // Case-insensitive dedup: 'michael kramer' (Book E) is same as 'Michael Kramer' (Book A)
+      expect(result.current.uniqueNarrators).toEqual([
+        'Kate Reading',
+        'Michael Kramer',
+        'Ray Porter',
+        'Steven Pacey',
+        'Tim Gerard Reynolds',
+      ]);
+    });
+
+    it('handles multi-narrator books contributing each narrator to the set', () => {
+      const { result } = renderHook(() => useLibraryFilters(narratorBooks));
+
+      // Kate Reading appears in both Book A (comma-delimited) and Book C (ampersand-delimited)
+      // but should only appear once in the unique list
+      const kateCount = result.current.uniqueNarrators.filter((n) => n === 'Kate Reading').length;
+      expect(kateCount).toBe(1);
+
+      // All individual narrators from multi-narrator strings should be present
+      expect(result.current.uniqueNarrators).toContain('Michael Kramer');
+      expect(result.current.uniqueNarrators).toContain('Kate Reading');
+      expect(result.current.uniqueNarrators).toContain('Steven Pacey');
+      expect(result.current.uniqueNarrators).toContain('Ray Porter');
+    });
+
+    it('excludes null/empty narrators from unique list', () => {
+      const emptyBooks: BookWithAuthor[] = [
+        createMockBook({ id: 40, narrator: null, createdAt: '2024-01-01T00:00:00Z' }),
+        createMockBook({ id: 41, narrator: '', createdAt: '2024-01-02T00:00:00Z' }),
+        createMockBook({ id: 42, narrator: '  ', createdAt: '2024-01-03T00:00:00Z' }),
+        createMockBook({ id: 43, narrator: 'Ray Porter', createdAt: '2024-01-04T00:00:00Z' }),
+      ];
+
+      const { result } = renderHook(() => useLibraryFilters(emptyBooks));
+
+      expect(result.current.uniqueNarrators).toEqual(['Ray Porter']);
+    });
+
+    it('filters books by selected narrator (case-insensitive)', () => {
+      const { result } = renderHook(() => useLibraryFilters(narratorBooks));
+
+      act(() => {
+        result.current.setNarratorFilter('Tim Gerard Reynolds');
+      });
+
+      expect(result.current.filteredBooks).toHaveLength(1);
+      expect(result.current.filteredBooks[0].id).toBe(31);
+    });
+
+    it('multi-narrator book matches when any narrator matches', () => {
+      const { result } = renderHook(() => useLibraryFilters(narratorBooks));
+
+      act(() => {
+        result.current.setNarratorFilter('Kate Reading');
+      });
+
+      // Book A has "Michael Kramer, Kate Reading" and Book C has "Kate Reading & Steven Pacey"
+      expect(result.current.filteredBooks).toHaveLength(2);
+      const ids = result.current.filteredBooks.map((b) => b.id);
+      expect(ids).toContain(30);
+      expect(ids).toContain(32);
+    });
+
+    it('narrator filter combines with status + author + series filters', () => {
+      const { result } = renderHook(() => useLibraryFilters(narratorBooks));
+
+      act(() => {
+        result.current.setNarratorFilter('Kate Reading');
+        result.current.setStatusFilter('wanted');
+        result.current.setAuthorFilter('Author A');
+        result.current.setSeriesFilter('Series X');
+      });
+
+      // Book A: wanted, Author A, Series X, has Kate Reading -> matches
+      // Book C: wanted, Author A, Series X, has Kate Reading -> matches
+      expect(result.current.filteredBooks).toHaveLength(2);
+      const ids = result.current.filteredBooks.map((b) => b.id);
+      expect(ids).toContain(30);
+      expect(ids).toContain(32);
+    });
+
+    it('clearing narrator filter restores full list', () => {
+      const { result } = renderHook(() => useLibraryFilters(narratorBooks));
+
+      act(() => {
+        result.current.setNarratorFilter('Tim Gerard Reynolds');
+      });
+
+      expect(result.current.filteredBooks).toHaveLength(1);
+
+      act(() => {
+        result.current.setNarratorFilter('');
+      });
+
+      expect(result.current.filteredBooks).toHaveLength(5);
+    });
+
+    it('includes narrator in active filter count', () => {
+      const { result } = renderHook(() => useLibraryFilters(narratorBooks));
+
+      expect(result.current.activeFilterCount).toBe(0);
+
+      act(() => {
+        result.current.setNarratorFilter('Kate Reading');
+      });
+
+      expect(result.current.activeFilterCount).toBe(1);
+
+      act(() => {
+        result.current.setAuthorFilter('Author A');
+      });
+
+      expect(result.current.activeFilterCount).toBe(2);
+    });
+  });
+
   it('clearAllFilters resets all filter state', () => {
     const { result } = renderHook(() => useLibraryFilters(books));
 

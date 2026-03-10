@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sortBooks, collapseSeries, matchesStatusFilter, getStatusCount } from './helpers';
+import { sortBooks, collapseSeries, matchesStatusFilter, getStatusCount, extractNarrators, computeMbPerHour } from './helpers';
 import type { BookWithAuthor } from '@/lib/api';
 
 function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
@@ -191,5 +191,150 @@ describe('getStatusCount', () => {
     ];
     expect(getStatusCount(books, 'wanted')).toBe(1);
     expect(getStatusCount(books, 'downloading')).toBe(1);
+  });
+});
+
+// #282 — Table view sorting with extended sort fields
+describe('sortBooks — extended sort fields (#282)', () => {
+  it('sorts by narrator alphabetically, nulls last', () => {
+    const books = [
+      makeBook({ id: 1, narrator: 'Zelda' }),
+      makeBook({ id: 2, narrator: null }),
+      makeBook({ id: 3, narrator: 'Alice' }),
+    ];
+
+    const sorted = sortBooks(books, 'narrator', 'asc');
+    expect(sorted.map((b) => b.id)).toEqual([3, 1, 2]);
+  });
+
+  it('sorts by series name alphabetically, nulls last', () => {
+    const books = [
+      makeBook({ id: 1, seriesName: 'Stormlight' }),
+      makeBook({ id: 2, seriesName: null }),
+      makeBook({ id: 3, seriesName: 'Cosmere' }),
+    ];
+
+    const sorted = sortBooks(books, 'series', 'asc');
+    expect(sorted.map((b) => b.id)).toEqual([3, 1, 2]);
+  });
+
+  it('sorts by quality (MB/hr) numerically, nulls last', () => {
+    // Book 1: 100MB in 1hr = 100 MB/hr, Book 3: 200MB in 1hr = 200 MB/hr
+    const books = [
+      makeBook({ id: 1, audioTotalSize: 100 * 1024 * 1024, audioDuration: 3600 }),
+      makeBook({ id: 2, audioTotalSize: null, audioDuration: null }),
+      makeBook({ id: 3, audioTotalSize: 200 * 1024 * 1024, audioDuration: 3600 }),
+    ];
+
+    const sorted = sortBooks(books, 'quality', 'asc');
+    expect(sorted.map((b) => b.id)).toEqual([1, 3, 2]);
+  });
+
+  it('sorts by size (audioTotalSize with fallback to size) numerically, nulls last', () => {
+    const books = [
+      makeBook({ id: 1, audioTotalSize: 500, size: null }),
+      makeBook({ id: 2, audioTotalSize: null, size: null }),
+      makeBook({ id: 3, audioTotalSize: null, size: 300 }),
+      makeBook({ id: 4, audioTotalSize: 100, size: 999 }),
+    ];
+
+    const sorted = sortBooks(books, 'size', 'asc');
+    expect(sorted.map((b) => b.id)).toEqual([4, 3, 1, 2]);
+  });
+
+  it('sorts by audioFileFormat alphabetically, nulls last', () => {
+    const books = [
+      makeBook({ id: 1, audioFileFormat: 'mp3' }),
+      makeBook({ id: 2, audioFileFormat: null }),
+      makeBook({ id: 3, audioFileFormat: 'flac' }),
+    ];
+
+    const sorted = sortBooks(books, 'format', 'asc');
+    expect(sorted.map((b) => b.id)).toEqual([3, 1, 2]);
+  });
+
+  it('reverses sort direction for all extended fields', () => {
+    const narratorBooks = [
+      makeBook({ id: 1, narrator: 'Alice' }),
+      makeBook({ id: 2, narrator: 'Zelda' }),
+    ];
+    const sortedNarrator = sortBooks(narratorBooks, 'narrator', 'desc');
+    expect(sortedNarrator.map((b) => b.id)).toEqual([2, 1]);
+
+    const sizeBooks = [
+      makeBook({ id: 1, audioTotalSize: 100 }),
+      makeBook({ id: 2, audioTotalSize: 500 }),
+    ];
+    const sortedSize = sortBooks(sizeBooks, 'size', 'desc');
+    expect(sortedSize.map((b) => b.id)).toEqual([2, 1]);
+
+    const formatBooks = [
+      makeBook({ id: 1, audioFileFormat: 'flac' }),
+      makeBook({ id: 2, audioFileFormat: 'mp3' }),
+    ];
+    const sortedFormat = sortBooks(formatBooks, 'format', 'desc');
+    expect(sortedFormat.map((b) => b.id)).toEqual([2, 1]);
+  });
+});
+
+// #282 — Narrator split helper
+describe('extractNarrators (#282)', () => {
+  it('splits narrator string on comma delimiter', () => {
+    expect(extractNarrators('Alice, Bob, Charlie')).toEqual(['Alice', 'Bob', 'Charlie']);
+  });
+
+  it('splits narrator string on semicolon delimiter', () => {
+    expect(extractNarrators('Alice; Bob; Charlie')).toEqual(['Alice', 'Bob', 'Charlie']);
+  });
+
+  it('splits narrator string on ampersand delimiter', () => {
+    expect(extractNarrators('Alice & Bob & Charlie')).toEqual(['Alice', 'Bob', 'Charlie']);
+  });
+
+  it('trims whitespace from split narrator names', () => {
+    expect(extractNarrators('  Alice ,  Bob  ; Charlie  ')).toEqual(['Alice', 'Bob', 'Charlie']);
+  });
+
+  it('returns empty array for null narrator', () => {
+    expect(extractNarrators(null)).toEqual([]);
+  });
+
+  it('returns empty array for empty string narrator', () => {
+    expect(extractNarrators('')).toEqual([]);
+    expect(extractNarrators('   ')).toEqual([]);
+  });
+
+  it('returns single-element array for single narrator', () => {
+    expect(extractNarrators('Steven Pacey')).toEqual(['Steven Pacey']);
+  });
+
+  it('deduplicates narrators case-insensitively', () => {
+    expect(extractNarrators('Alice, alice, ALICE')).toEqual(['Alice']);
+    expect(extractNarrators('Alice, Bob, alice')).toEqual(['Alice', 'Bob']);
+  });
+});
+
+// #282 — computeMbPerHour helper
+describe('computeMbPerHour (#282)', () => {
+  it('computes MB/hr from audioTotalSize and audioDuration', () => {
+    // 100 MB in 1 hour = 100 MB/hr
+    const book = makeBook({ audioTotalSize: 100 * 1024 * 1024, audioDuration: 3600 });
+    expect(computeMbPerHour(book)).toBeCloseTo(100, 1);
+  });
+
+  it('falls back to size when audioTotalSize is null', () => {
+    // 50 MB in 1 hour = 50 MB/hr
+    const book = makeBook({ audioTotalSize: null, size: 50 * 1024 * 1024, audioDuration: 3600 });
+    expect(computeMbPerHour(book)).toBeCloseTo(50, 1);
+  });
+
+  it('returns null when audioDuration is null', () => {
+    const book = makeBook({ audioTotalSize: 100 * 1024 * 1024, audioDuration: null });
+    expect(computeMbPerHour(book)).toBeNull();
+  });
+
+  it('returns null when audioDuration is 0', () => {
+    const book = makeBook({ audioTotalSize: 100 * 1024 * 1024, audioDuration: 0 });
+    expect(computeMbPerHour(book)).toBeNull();
   });
 });

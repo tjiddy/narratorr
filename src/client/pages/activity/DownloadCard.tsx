@@ -1,12 +1,90 @@
+import { useState } from 'react';
 import { formatBytes, type Download } from '@/lib/api';
-import { AlertCircleIcon, LoadingSpinner } from '@/components/icons';
+import { AlertCircleIcon, LoadingSpinner, ChevronDownIcon } from '@/components/icons';
 import { ProtocolBadge } from '@/components/ProtocolBadge';
 import { statusConfig } from './helpers.js';
 import { DownloadProgress } from './DownloadProgress.js';
 import { DownloadActions } from './DownloadActions.js';
 import { QualityComparisonPanel } from './QualityComparisonPanel.js';
 
-function DownloadStatusDetails({ download }: { download: Download }) {
+function PendingReviewDetails({
+  download,
+  onApprove,
+  onReject,
+  isApproving,
+  isRejecting,
+}: {
+  download: Download;
+  onApprove?: () => void;
+  onReject?: () => void;
+  isApproving?: boolean;
+  isRejecting?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!download.qualityGate) return null;
+
+  const holdCount = download.qualityGate.holdReasons.length;
+  const summary = holdCount > 0
+    ? `${holdCount} hold reason${holdCount !== 1 ? 's' : ''}`
+    : 'Pending review';
+
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 rounded-lg hover:bg-amber-500/20 transition-all focus-ring"
+        aria-expanded={expanded}
+        aria-label={expanded ? 'Collapse quality comparison' : 'Expand quality comparison'}
+      >
+        <ChevronDownIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+        {summary}
+      </button>
+      {expanded && (
+        <div className="mt-3 animate-fade-in">
+          <QualityComparisonPanel data={download.qualityGate} />
+          <div className="flex items-center gap-2 mt-3">
+            {onApprove && (
+              <button
+                type="button"
+                onClick={onApprove}
+                disabled={isApproving}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-success/10 text-success rounded-xl hover:bg-success hover:text-white disabled:opacity-50 transition-all focus-ring"
+              >
+                {isApproving ? 'Approving...' : 'Approve'}
+              </button>
+            )}
+            {onReject && (
+              <button
+                type="button"
+                onClick={onReject}
+                disabled={isRejecting}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-destructive/10 text-destructive rounded-xl hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50 transition-all focus-ring"
+              >
+                {isRejecting ? 'Rejecting...' : 'Reject'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DownloadStatusDetails({
+  download,
+  onApprove,
+  onReject,
+  isApproving,
+  isRejecting,
+}: {
+  download: Download;
+  onApprove?: () => void;
+  onReject?: () => void;
+  isApproving?: boolean;
+  isRejecting?: boolean;
+}) {
   return (
     <>
       {download.errorMessage && (
@@ -22,7 +100,13 @@ function DownloadStatusDetails({ download }: { download: Download }) {
         </div>
       )}
       {download.status === 'pending_review' && download.qualityGate && (
-        <QualityComparisonPanel data={download.qualityGate} />
+        <PendingReviewDetails
+          download={download}
+          onApprove={onApprove}
+          onReject={onReject}
+          isApproving={isApproving}
+          isRejecting={isRejecting}
+        />
       )}
     </>
   );
@@ -55,6 +139,7 @@ export function DownloadCard({
 }) {
   const config = statusConfig[download.status] || statusConfig.queued;
   const StatusIcon = config.icon;
+  const isPendingReview = download.status === 'pending_review';
 
   return (
     <div
@@ -90,19 +175,28 @@ export function DownloadCard({
               </div>
             </div>
 
-            <DownloadActions
-              download={download}
-              onCancel={onCancel}
-              onRetry={onRetry}
-              onApprove={onApprove}
-              onReject={onReject}
-              isCancelling={isCancelling}
-              isApproving={isApproving}
-              isRejecting={isRejecting}
-            />
+            {/* Hide top-level actions for pending_review — they move into the expand panel */}
+            {!isPendingReview && (
+              <DownloadActions
+                download={download}
+                onCancel={onCancel}
+                onRetry={onRetry}
+                onApprove={onApprove}
+                onReject={onReject}
+                isCancelling={isCancelling}
+                isApproving={isApproving}
+                isRejecting={isRejecting}
+              />
+            )}
           </div>
 
-          <DownloadStatusDetails download={download} />
+          <DownloadStatusDetails
+            download={download}
+            onApprove={onApprove}
+            onReject={onReject}
+            isApproving={isApproving}
+            isRejecting={isRejecting}
+          />
 
           {showProgress && download.status === 'downloading' && (
             <DownloadProgress download={download} />

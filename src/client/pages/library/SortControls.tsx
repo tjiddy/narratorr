@@ -5,6 +5,11 @@ const sortLabels: Record<SortField, string> = {
   createdAt: 'Date Added',
   title: 'Title',
   author: 'Author',
+  narrator: 'Narrator',
+  series: 'Series',
+  quality: 'Quality',
+  size: 'Size',
+  format: 'Format',
 };
 
 export function SortControls({

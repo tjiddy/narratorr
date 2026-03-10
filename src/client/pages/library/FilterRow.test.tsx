@@ -11,6 +11,9 @@ function defaultProps(overrides = {}) {
     seriesFilter: '',
     onSeriesFilterChange: vi.fn(),
     uniqueSeries: ['The Stormlight Archive'],
+    narratorFilter: '',
+    onNarratorFilterChange: vi.fn(),
+    uniqueNarrators: [],
     ...overrides,
   };
 }
@@ -76,6 +79,35 @@ describe('FilterRow', () => {
         'The Stormlight Archive',
       );
       expect(props.onSeriesFilterChange).toHaveBeenCalledWith('The Stormlight Archive');
+    });
+  });
+
+  describe('narrator filter', () => {
+    it('shows narrator dropdown when more than 1 narrator', () => {
+      render(<FilterRow {...defaultProps({ uniqueNarrators: ['Michael Kramer', 'Kate Reading'] })} />);
+      expect(screen.getByText('All Narrators')).toBeInTheDocument();
+    });
+
+    it('hides narrator dropdown when 1 or fewer narrators', () => {
+      render(<FilterRow {...defaultProps({ uniqueNarrators: ['Solo Narrator'] })} />);
+      expect(screen.queryByText('All Narrators')).not.toBeInTheDocument();
+    });
+
+    it('hides narrator dropdown when 0 narrators', () => {
+      render(<FilterRow {...defaultProps({ uniqueNarrators: [] })} />);
+      expect(screen.queryByText('All Narrators')).not.toBeInTheDocument();
+    });
+
+    it('calls onNarratorFilterChange when narrator is selected', async () => {
+      const user = userEvent.setup();
+      const props = defaultProps({ uniqueNarrators: ['Michael Kramer', 'Kate Reading'] });
+      render(<FilterRow {...props} />);
+
+      await user.selectOptions(
+        screen.getByDisplayValue('All Narrators'),
+        'Michael Kramer',
+      );
+      expect(props.onNarratorFilterChange).toHaveBeenCalledWith('Michael Kramer');
     });
   });
 

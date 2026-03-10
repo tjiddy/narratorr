@@ -15,6 +15,8 @@ vi.mock('@/lib/api', () => ({
     search: vi.fn(),
     grab: vi.fn(),
     searchAllWanted: vi.fn(),
+    searchBook: vi.fn(),
+    updateBook: vi.fn(),
     getIndexers: vi.fn().mockResolvedValue([
       { id: 1, name: 'Indexer A', enabled: true },
       { id: 2, name: 'Indexer B', enabled: true },
@@ -814,6 +816,140 @@ describe('LibraryPage', () => {
           'Rescan failed: Library path is not configured',
         );
       });
+    });
+  });
+
+  // #282 — Grid/Table view toggle
+  describe('grid/table view toggle (#282)', () => {
+    beforeEach(() => {
+      localStorage.removeItem('narratorr:library-view');
+    });
+
+    it('renders view toggle button in toolbar', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      expect(screen.getByRole('group', { name: 'View mode' })).toBeInTheDocument();
+      expect(screen.getByLabelText('Grid view')).toBeInTheDocument();
+      expect(screen.getByLabelText('Table view')).toBeInTheDocument();
+    });
+
+    it('defaults to grid view when no localStorage value', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      const gridButton = screen.getByLabelText('Grid view');
+      expect(gridButton).toHaveAttribute('aria-pressed', 'true');
+
+      const tableButton = screen.getByLabelText('Table view');
+      expect(tableButton).toHaveAttribute('aria-pressed', 'false');
+    });
+
+    it('clicking toggle switches from grid to table view', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText('Table view'));
+
+      expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByLabelText('Grid view')).toHaveAttribute('aria-pressed', 'false');
+    });
+
+    it('clicking toggle again switches back to grid', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      // Switch to table
+      await user.click(screen.getByLabelText('Table view'));
+      expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'true');
+
+      // Switch back to grid
+      await user.click(screen.getByLabelText('Grid view'));
+      expect(screen.getByLabelText('Grid view')).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'false');
+    });
+
+    it('saves view preference to localStorage on toggle', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText('Table view'));
+      expect(localStorage.getItem('narratorr:library-view')).toBe('table');
+
+      await user.click(screen.getByLabelText('Grid view'));
+      expect(localStorage.getItem('narratorr:library-view')).toBe('grid');
+    });
+
+    it('restores view preference from localStorage on load', async () => {
+      localStorage.setItem('narratorr:library-view', 'table');
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'true');
+      });
+
+      expect(screen.getByLabelText('Grid view')).toHaveAttribute('aria-pressed', 'false');
+    });
+
+    it('selection state clears when switching to grid view', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      // Switch to table view
+      await user.click(screen.getByLabelText('Table view'));
+
+      // Select a book via checkbox
+      await waitFor(() => {
+        expect(screen.getByLabelText('Select all books')).toBeInTheDocument();
+      });
+      await user.click(screen.getByLabelText('Select all books'));
+
+      // Verify selection is active (bulk toolbar should appear)
+      await waitFor(() => {
+        expect(screen.getByText(/selected/i)).toBeInTheDocument();
+      });
+
+      // Switch back to grid — selection should clear
+      await user.click(screen.getByLabelText('Grid view'));
+
+      // Bulk toolbar should be gone (no selection)
+      expect(screen.queryByText(/selected/i)).not.toBeInTheDocument();
     });
   });
 

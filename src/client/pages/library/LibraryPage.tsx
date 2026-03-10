@@ -5,18 +5,30 @@ import { useLibrary } from '@/hooks/useLibrary';
 import { api, type BookWithAuthor } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import type { DisplayBook } from './helpers.js';
-import { ConfirmModal } from '@/components/ConfirmModal';
-import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { useDeleteConfirmation } from '@/hooks/useDeleteConfirmation';
+import { LibraryModals } from './LibraryModals.js';
 import { LoadingSpinner } from '@/components/icons';
 import { useImportPolling } from './useImportPolling.js';
 import { useLibraryFilters } from './useLibraryFilters.js';
 import { useLibraryMutations } from './useLibraryMutations.js';
-import { LibraryToolbar } from './LibraryToolbar.js';
+import { useLibraryBulkActions } from './useLibraryBulkActions.js';
+import { LibraryToolbar, type ViewMode } from './LibraryToolbar.js';
 import { LibraryBookCard } from './LibraryBookCard.js';
+import { LibraryTableView } from './LibraryTableView.js';
+import { BulkActionToolbar } from './BulkActionToolbar.js';
 import { EmptyLibraryState } from './EmptyLibraryState.js';
 import { NoMatchState } from './NoMatchState.js';
 import { LibraryHeader } from './LibraryHeader.js';
+
+const VIEW_STORAGE_KEY = 'narratorr:library-view';
+
+function getInitialViewMode(): ViewMode {
+  try {
+    const stored = localStorage.getItem(VIEW_STORAGE_KEY);
+    if (stored === 'grid' || stored === 'table') return stored;
+  } catch { /* localStorage unavailable */ }
+  return 'grid';
+}
 
 export function LibraryPage() {
   const navigate = useNavigate();
@@ -25,6 +37,7 @@ export function LibraryPage() {
   useImportPolling(books);
   const filters = useLibraryFilters(books);
   const { rescanMutation, deleteMutation, deleteMissingMutation, searchAllWantedMutation } = useLibraryMutations();
+  const bulk = useLibraryBulkActions(filters.filteredBooks);
   const { data: indexers = [] } = useQuery({ queryKey: queryKeys.indexers(), queryFn: api.getIndexers });
   const deleteConfirm = useDeleteConfirmation<BookWithAuthor>();
   const [deleteFiles, setDeleteFiles] = useState(false);
@@ -32,6 +45,14 @@ export function LibraryPage() {
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
   const [showRemoveMissingModal, setShowRemoveMissingModal] = useState(false);
   const [showSearchAllWantedModal, setShowSearchAllWantedModal] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
+
+  const handleViewModeChange = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    try { localStorage.setItem(VIEW_STORAGE_KEY, mode); } catch { /* noop */ }
+    if (mode === 'grid') bulk.clearSelection();
+  }, [bulk]);
+
   const missingCount = books.filter((b) => b.status === 'missing').length;
   const wantedCount = useMemo(() => books.filter((b) => b.status === 'wanted').length, [books]);
   const enabledIndexerCount = useMemo(() => indexers.filter((i) => i.enabled).length, [indexers]);
@@ -46,24 +67,23 @@ export function LibraryPage() {
       return () => document.removeEventListener('click', closeMenu);
     }
   }, [openMenuId, closeMenu]);
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <LibraryHeader />
-        <div className="flex items-center justify-center py-24">
-          <LoadingSpinner className="w-8 h-8 text-primary" />
-        </div>
+
+  const anySelectedHasPath = bulk.selectedBooks.some((b) => b.path);
+
+  if (isLoading) return (
+    <div className="space-y-6">
+      <LibraryHeader />
+      <div className="flex items-center justify-center py-24">
+        <LoadingSpinner className="w-8 h-8 text-primary" />
       </div>
-    );
-  }
-  if (books.length === 0) {
-    return (
-      <div className="space-y-6">
-        <LibraryHeader />
-        <EmptyLibraryState />
-      </div>
-    );
-  }
+    </div>
+  );
+  if (books.length === 0) return (
+    <div className="space-y-6">
+      <LibraryHeader />
+      <EmptyLibraryState />
+    </div>
+  );
   return (
     <div className="space-y-5">
       <LibraryHeader subtitle={subtitle} />
@@ -84,12 +104,17 @@ export function LibraryPage() {
         seriesFilter={filters.seriesFilter}
         onSeriesFilterChange={filters.setSeriesFilter}
         uniqueSeries={filters.uniqueSeries}
+        narratorFilter={filters.narratorFilter}
+        onNarratorFilterChange={filters.setNarratorFilter}
+        uniqueNarrators={filters.uniqueNarrators}
         sortField={filters.sortField}
         onSortFieldChange={filters.setSortField}
         sortDirection={filters.sortDirection}
         onSortDirectionChange={filters.setSortDirection}
         collapseSeriesEnabled={filters.collapseSeriesEnabled}
         onCollapseSeriesToggle={() => filters.setCollapseSeriesEnabled(!filters.collapseSeriesEnabled)}
+        viewMode={viewMode}
+        onViewModeChange={handleViewModeChange}
         onRescan={() => rescanMutation.mutate()}
         isRescanning={rescanMutation.isPending}
         missingCount={missingCount}
@@ -98,8 +123,31 @@ export function LibraryPage() {
         isSearchingAllWanted={searchAllWantedMutation.isPending}
       />
 
+      {viewMode === 'table' && bulk.selectedIds.size > 0 && (
+        <BulkActionToolbar
+          selectedCount={bulk.selectedIds.size}
+          onDelete={(df) => bulk.bulkDeleteMutation.mutate({ deleteFiles: df })}
+          isDeleting={bulk.bulkDeleteMutation.isPending}
+          onSearch={() => bulk.bulkSearchMutation.mutate()}
+          isSearching={bulk.bulkSearchMutation.isPending}
+          onSetStatus={(status, label) => bulk.bulkSetStatusMutation.mutate({ status, label })}
+          isSettingStatus={bulk.bulkSetStatusMutation.isPending}
+          hasPath={anySelectedHasPath}
+        />
+      )}
+
       {filters.filteredBooks.length === 0 ? (
         <NoMatchState onClearFilters={filters.clearAllFilters} />
+      ) : viewMode === 'table' ? (
+        <LibraryTableView
+          books={filters.filteredBooks}
+          selectedIds={bulk.selectedIds}
+          onSelectionChange={bulk.setSelectedIds}
+          sortField={filters.sortField}
+          sortDirection={filters.sortDirection}
+          onSortFieldChange={filters.setSortField}
+          onSortDirectionChange={filters.setSortDirection}
+        />
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
           {filters.filteredBooks.map((book: DisplayBook, index) => (
@@ -119,55 +167,24 @@ export function LibraryPage() {
         </div>
       )}
 
-      <ConfirmModal
-        isOpen={deleteConfirm.isOpen}
-        title="Remove from Library"
-        message={`Are you sure you want to remove "${deleteConfirm.target?.title}" from your library? This will cancel any active downloads.`}
-        confirmLabel="Remove"
-        cancelLabel="Cancel"
-        onConfirm={() => { const item = deleteConfirm.confirm(); if (item) deleteMutation.mutate({ id: item.id, deleteFiles }); setDeleteFiles(false); }}
-        onCancel={() => { deleteConfirm.cancel(); setDeleteFiles(false); }}
-      >
-        {deleteConfirm.target?.path && (
-          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={deleteFiles}
-              onChange={(e) => setDeleteFiles(e.target.checked)}
-              className="rounded border-border text-destructive focus:ring-destructive"
-            />
-            Delete files from disk
-          </label>
-        )}
-      </ConfirmModal>
-
-      <ConfirmModal
-        isOpen={showRemoveMissingModal}
-        title="Remove Missing Books"
-        message={`Remove ${missingCount} missing book${missingCount !== 1 ? 's' : ''} from library?`}
-        confirmLabel="Remove"
-        cancelLabel="Cancel"
-        onConfirm={() => { setShowRemoveMissingModal(false); deleteMissingMutation.mutate(); }}
-        onCancel={() => setShowRemoveMissingModal(false)}
+      <LibraryModals
+        deleteTarget={deleteConfirm.target}
+        isDeleteOpen={deleteConfirm.isOpen}
+        deleteFiles={deleteFiles}
+        onDeleteFilesChange={setDeleteFiles}
+        onDeleteConfirm={() => { const item = deleteConfirm.confirm(); if (item) deleteMutation.mutate({ id: item.id, deleteFiles }); setDeleteFiles(false); }}
+        onDeleteCancel={() => { deleteConfirm.cancel(); setDeleteFiles(false); }}
+        showRemoveMissingModal={showRemoveMissingModal}
+        missingCount={missingCount}
+        onRemoveMissingConfirm={() => { setShowRemoveMissingModal(false); deleteMissingMutation.mutate(); }}
+        onRemoveMissingCancel={() => setShowRemoveMissingModal(false)}
+        showSearchAllWantedModal={showSearchAllWantedModal}
+        searchAllWantedMessage={searchAllWantedMessage}
+        onSearchAllWantedConfirm={() => { setShowSearchAllWantedModal(false); searchAllWantedMutation.mutate(); }}
+        onSearchAllWantedCancel={() => setShowSearchAllWantedModal(false)}
+        searchBook={searchBook}
+        onSearchBookClose={() => setSearchBook(null)}
       />
-
-      <ConfirmModal
-        isOpen={showSearchAllWantedModal}
-        title="Search All Wanted"
-        message={searchAllWantedMessage}
-        confirmLabel="Search"
-        cancelLabel="Cancel"
-        onConfirm={() => { setShowSearchAllWantedModal(false); searchAllWantedMutation.mutate(); }}
-        onCancel={() => setShowSearchAllWantedModal(false)}
-      />
-
-      {searchBook && (
-        <SearchReleasesModal
-          isOpen={searchBook !== null}
-          book={searchBook}
-          onClose={() => setSearchBook(null)}
-        />
-      )}
     </div>
   );
 }

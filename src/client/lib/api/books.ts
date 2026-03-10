@@ -121,6 +121,11 @@ export interface RetagResult {
   warnings: string[];
 }
 
+export type SingleBookSearchResult =
+  | { result: 'grabbed'; title: string }
+  | { result: 'no_results' }
+  | { result: 'skipped'; reason: string };
+
 export const booksApi = {
   getBooks: (status?: string) =>
     fetchApi<BookWithAuthor[]>(status ? `/books?status=${encodeURIComponent(status)}` : '/books'),
@@ -155,4 +160,6 @@ export const booksApi = {
     fetchApi<RenameResult>(`/books/${id}/rename`, { method: 'POST' }),
   retagBook: (id: number) =>
     fetchApi<RetagResult>(`/books/${id}/retag`, { method: 'POST' }),
+  searchBook: (id: number) =>
+    fetchApi<SingleBookSearchResult>(`/books/${id}/search`, { method: 'POST' }),
 };
