@@ -1,13 +1,14 @@
+import cron from 'node-cron';
+import { sql } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Services } from '../routes/index.js';
-import { startMonitorJob } from './monitor.js';
-import { startEnrichmentJob } from './enrichment.js';
-import { startImportJob } from './import.js';
-import { startSearchJob } from './search.js';
-import { startRssJob } from './rss.js';
-import { startBackupJob } from './backup.js';
-import { startHousekeepingJob } from './housekeeping.js';
+import type { TaskRegistry } from '../services/task-registry.js';
+import { monitorDownloads } from './monitor.js';
+import { runEnrichment } from './enrichment.js';
+import { runSearchJob } from './search.js';
+import { runRssJob } from './rss.js';
+import { runBackupJob } from './backup.js';
 
 export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   const retrySearchDeps = {
@@ -20,15 +21,82 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
     log,
   };
 
-  startMonitorJob(db, services.downloadClient, services.notifier, log, {
+  const retryDeps = {
     blacklistService: services.blacklist,
     retrySearchDeps,
-  }, services.eventBroadcaster);
-  startEnrichmentJob(db, services.metadata, log);
-  startImportJob(services.import, services.qualityGate, log);
-  startSearchJob(services.settings, services.book, services.indexer, services.download, log, services.retryBudget);
-  startRssJob(services.settings, services.book, services.indexer, services.download, services.blacklist, log);
-  startBackupJob(services.settings, services.backup, log);
-  startHousekeepingJob(db, services.settings, services.eventHistory, services.blacklist, log);
+  };
+
+  const reg = services.taskRegistry;
+
+  // Register all jobs with the task registry for the dashboard
+  reg.register('monitor', 'cron', () => monitorDownloads(db, services.downloadClient, services.notifier, log, retryDeps, services.eventBroadcaster), '*/30 * * * * *');
+  reg.register('enrichment', 'cron', () => runEnrichment(db, services.metadata, log), '*/5 * * * *');
+  reg.register('import', 'cron', async () => {
+    await services.qualityGate.processCompletedDownloads();
+    await services.import.processCompletedDownloads();
+  }, '*/60 * * * * *');
+  reg.register('search', 'timeout', () => runSearchJob(services.settings, services.book, services.indexer, services.download, log, services.retryBudget));
+  reg.register('rss', 'timeout', () => runRssJob(services.settings, services.book, services.indexer, services.download, services.blacklist, log));
+  reg.register('backup', 'timeout', () => runBackupJob(services.backup, log));
+  reg.register('housekeeping', 'cron', async () => {
+    await db.run(sql`VACUUM`);
+    const generalSettings = await services.settings.get('general');
+    const retentionDays = generalSettings.housekeepingRetentionDays ?? 90;
+    await services.eventHistory.pruneOlderThan(retentionDays);
+    await services.blacklist.deleteExpired();
+  }, '0 0 * * 0');
+  reg.register('health-check', 'cron', () => services.healthCheck.runAllChecks(), '*/5 * * * *');
+
+  // Schedule cron jobs — all go through the registry for lastRun/running tracking
+  scheduleCron(reg, 'monitor', '*/30 * * * * *', log);
+  scheduleCron(reg, 'enrichment', '*/5 * * * *', log);
+  scheduleCron(reg, 'import', '*/60 * * * * *', log);
+  scheduleCron(reg, 'housekeeping', '0 0 * * 0', log);
+  scheduleCron(reg, 'health-check', '*/5 * * * *', log);
+
+  // Schedule timeout-loop jobs — use registry tracking for lastRun/running/nextRun
+  scheduleTimeoutLoop(reg, 'search', () => services.settings.get('search').then((s) => s.intervalMinutes), log);
+  scheduleTimeoutLoop(reg, 'rss', () => services.settings.get('rss').then((s) => s.intervalMinutes), log);
+  scheduleTimeoutLoop(reg, 'backup', () => services.settings.get('system').then((s) => s.backupIntervalMinutes), log);
+
   log.info('Background jobs started');
+}
+
+function scheduleCron(reg: TaskRegistry, name: string, expression: string, log: FastifyBaseLogger): void {
+  cron.schedule(expression, async () => {
+    try {
+      await reg.executeTracked(name);
+    } catch (error) {
+      log.error(error, `${name} job error`);
+    }
+  });
+}
+
+function scheduleTimeoutLoop(
+  reg: TaskRegistry,
+  name: string,
+  getIntervalMinutes: () => Promise<number>,
+  log: FastifyBaseLogger,
+): void {
+  async function scheduleNext() {
+    try {
+      const intervalMinutes = await getIntervalMinutes();
+      const intervalMs = intervalMinutes * 60 * 1000;
+      reg.setNextRun(name, new Date(Date.now() + intervalMs));
+
+      setTimeout(async () => {
+        try {
+          await reg.executeTracked(name);
+        } catch (error) {
+          log.error(error, `${name} job error`);
+        }
+        scheduleNext();
+      }, intervalMs);
+    } catch (error) {
+      log.error(error, `Failed to read ${name} interval, retrying in 5 minutes`);
+      setTimeout(scheduleNext, 5 * 60 * 1000);
+    }
+  }
+
+  scheduleNext();
 }

@@ -119,12 +119,14 @@ export async function monitorDownloads(
       }
 
       // Update download status
+      const progressChanged = progress !== download.progress;
       await db
         .update(downloads)
         .set({
           progress,
           status: newStatus,
           completedAt: isCompleted && !download.completedAt ? new Date() : download.completedAt,
+          ...(progressChanged ? { progressUpdatedAt: new Date() } : {}),
         })
         .where(eq(downloads.id, download.id));
 

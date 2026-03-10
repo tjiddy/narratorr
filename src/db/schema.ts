@@ -159,6 +159,7 @@ export const downloads = sqliteTable('downloads', {
     .notNull()
     .default(sql`(unixepoch())`),
   completedAt: integer('completed_at', { mode: 'timestamp' }),
+  progressUpdatedAt: integer('progress_updated_at', { mode: 'timestamp' }),
 }, (table) => [
   index('idx_downloads_status').on(table.status),
   index('idx_downloads_book_id').on(table.bookId),

@@ -1124,6 +1124,30 @@ describe('DownloadService', () => {
       const setArgs = (chain.set as Mock).mock.calls[0][0] as Record<string, unknown>;
       expect(setArgs.completedAt).toBeInstanceOf(Date);
     });
+
+    it('includes progressUpdatedAt when progress changes', async () => {
+      // Mock select to return existing progress of 0.3
+      db.select.mockReturnValueOnce(mockDbChain([{ progress: 0.3 }]));
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await service.updateProgress(1, 0.5);
+
+      const setArgs = (chain.set as Mock).mock.calls[0][0] as Record<string, unknown>;
+      expect(setArgs.progressUpdatedAt).toBeInstanceOf(Date);
+    });
+
+    it('omits progressUpdatedAt when progress is unchanged', async () => {
+      // Mock select to return existing progress matching the update value
+      db.select.mockReturnValueOnce(mockDbChain([{ progress: 0.5 }]));
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await service.updateProgress(1, 0.5);
+
+      const setArgs = (chain.set as Mock).mock.calls[0][0] as Record<string, unknown>;
+      expect(setArgs).not.toHaveProperty('progressUpdatedAt');
+    });
   });
 
   describe('event history producers', () => {

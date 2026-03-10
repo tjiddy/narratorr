@@ -14,6 +14,9 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { SettingsSection } from './SettingsSection';
 import { BackupTable } from './BackupTable';
 import { BackupScheduleForm } from './BackupScheduleForm';
+import { HealthDashboard } from './HealthDashboard';
+import { ScheduledTasks } from './ScheduledTasks';
+import { SystemInfo } from './SystemInfo';
 
 export function SystemSettings() {
   const queryClient = useQueryClient();
@@ -88,6 +91,8 @@ export function SystemSettings() {
 
   return (
     <div className="space-y-8">
+      <HealthDashboard />
+
       <BackupScheduleForm />
 
       <SettingsSection
@@ -120,6 +125,10 @@ export function SystemSettings() {
 
         <BackupTable backups={backups} isLoading={isLoading} onDownload={handleDownload} />
       </SettingsSection>
+
+      <SystemInfo />
+
+      <ScheduledTasks />
 
       <ConfirmModal
         isOpen={restoreConfirmOpen}

@@ -300,9 +300,13 @@ export class DownloadService {
     const status: DownloadStatus = progress >= 1 ? 'completed' : 'downloading';
     const completedAt = progress >= 1 ? new Date() : null;
 
+    // Only update progressUpdatedAt when progress actually changes (for stuck download detection)
+    const existing = await this.db.select({ progress: downloads.progress }).from(downloads).where(eq(downloads.id, id));
+    const progressChanged = !existing[0] || existing[0].progress !== progress;
+
     await this.db
       .update(downloads)
-      .set({ progress, status, completedAt })
+      .set({ progress, status, completedAt, ...(progressChanged ? { progressUpdatedAt: new Date() } : {}) })
       .where(eq(downloads.id, id));
 
     // SSE: download_progress (always emit if we have a broadcaster)

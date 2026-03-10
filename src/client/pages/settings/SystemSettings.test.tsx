@@ -20,6 +20,10 @@ vi.mock('@/lib/api', () => ({
     getBackupDownloadUrl: vi.fn((filename: string) => `/api/system/backups/${filename}/download`),
     uploadRestore: vi.fn(),
     confirmRestore: vi.fn(),
+    getHealthStatus: vi.fn().mockResolvedValue([]),
+    getHealthSummary: vi.fn().mockResolvedValue({ state: 'healthy' }),
+    getSystemTasks: vi.fn().mockResolvedValue([]),
+    getSystemInfo: vi.fn().mockResolvedValue({ version: '0.1.0', nodeVersion: 'v20.0.0', os: 'linux', dbSize: 1024, libraryPath: '/books', freeSpace: 100000000000 }),
   },
   formatBytes: vi.fn((bytes: number) => `${(bytes / 1024).toFixed(1)} KB`),
 }));
@@ -279,6 +283,21 @@ describe('SystemSettings', () => {
 
       await waitFor(() => {
         expect(screen.queryByText(/confirm restore/i)).not.toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('page-level section wiring', () => {
+    it('renders Health Checks, Backup & Restore, System Information, and Scheduled Tasks sections together', async () => {
+      mockApi.getBackups.mockResolvedValue([]);
+
+      renderWithProviders(<SystemSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Health Checks')).toBeInTheDocument();
+        expect(screen.getByText('Backup & Restore')).toBeInTheDocument();
+        expect(screen.getByText('System Information')).toBeInTheDocument();
+        expect(screen.getByText('Scheduled Tasks')).toBeInTheDocument();
       });
     });
   });

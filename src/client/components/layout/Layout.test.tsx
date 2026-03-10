@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { Layout } from '@/components/layout/Layout';
@@ -12,8 +12,16 @@ vi.mock('@/hooks/useAuthContext', () => ({
   useAuthContext: vi.fn(),
 }));
 
+vi.mock('@/lib/api', () => ({
+  api: {
+    getHealthSummary: vi.fn().mockResolvedValue({ state: 'healthy' }),
+  },
+}));
+
 import { useActivityCounts } from '@/hooks/useActivityCounts';
 import { useAuthContext } from '@/hooks/useAuthContext';
+const { api } = await import('@/lib/api');
+const mockApi = api as unknown as { getHealthSummary: ReturnType<typeof vi.fn> };
 
 describe('Layout', () => {
   beforeEach(() => {
@@ -148,6 +156,20 @@ describe('Layout', () => {
       unmount();
       renderWithProviders(<Layout />);
       expect(screen.queryByText(/authentication is disabled/i)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('health indicator wiring', () => {
+    it('renders HealthIndicator in the navbar when health is in error state', async () => {
+      mockCounts(0);
+      mockAuth('forms');
+      mockApi.getHealthSummary.mockResolvedValue({ state: 'error' });
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('health-indicator')).toBeInTheDocument();
+      });
     });
   });
 });

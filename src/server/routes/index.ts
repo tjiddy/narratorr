@@ -23,7 +23,10 @@ import { ImportService } from '../services/import.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
 import { MatchJobService } from '../services/match-job.service.js';
 import { BackupService } from '../services/backup.service.js';
+import { HealthCheckService } from '../services/health-check.service.js';
+import { TaskRegistry } from '../services/task-registry.js';
 import { config } from '../config.js';
+import fsp from 'fs/promises';
 
 import { booksRoutes, bookFilesRoute } from './books.js';
 import { searchRoutes } from './search.js';
@@ -67,6 +70,8 @@ export interface Services {
   retryBudget: RetryBudget;
   eventBroadcaster: EventBroadcasterService;
   backup: BackupService;
+  healthCheck: HealthCheckService;
+  taskRegistry: TaskRegistry;
 }
 
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
@@ -101,6 +106,14 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const renameService = new RenameService(book, settings, log, eventHistory);
   const retryBudget = new RetryBudget();
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
+  const taskRegistry = new TaskRegistry();
+
+  // Health check service with system deps
+  const { probeFfmpeg } = await import('../../core/utils/audio-processor.js');
+  const healthCheck = new HealthCheckService(
+    indexer, downloadClient, settings, notifier, db, log,
+    { fsAccess: fsp.access, fsStatfs: fsp.statfs, probeFfmpeg },
+  );
 
   // Wire broadcaster into quality gate service
   qualityGateService.setBroadcaster(eventBroadcaster);
@@ -118,7 +131,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   download.setRetrySearchDeps(retrySearchDeps);
   eventHistory.setRetrySearchDeps(retrySearchDeps);
 
-  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, retryBudget, eventBroadcaster, backup };
+  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry };
 }
 
 export async function registerRoutes(

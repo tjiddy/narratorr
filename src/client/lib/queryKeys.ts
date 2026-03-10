@@ -33,4 +33,10 @@ export const queryKeys = {
     byBookId: (bookId: number) => ['eventHistory', 'book', bookId] as const,
   },
   backups: () => ['backups'] as const,
+  health: {
+    status: () => ['health', 'status'] as const,
+    summary: () => ['health', 'summary'] as const,
+  },
+  systemTasks: () => ['system', 'tasks'] as const,
+  systemInfo: () => ['system', 'info'] as const,
 } as const;

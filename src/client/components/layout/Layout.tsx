@@ -15,6 +15,7 @@ import {
   AlertTriangleIcon,
   XIcon,
 } from '@/components/icons';
+import { HealthIndicator } from './HealthIndicator';
 
 const BANNER_DISMISSED_KEY = 'narratorr:auth-banner-dismissed';
 
@@ -129,6 +130,9 @@ export function Layout() {
                   </NavLink>
                 );
               })}
+
+              {/* Health Indicator */}
+              <HealthIndicator />
 
               {/* Theme Toggle */}
               <button

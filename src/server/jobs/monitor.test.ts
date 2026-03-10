@@ -107,6 +107,36 @@ describe('monitor job', () => {
     expect(log.debug).toHaveBeenCalledWith({ id: 1, progress: 0.5 }, 'Download progress');
   });
 
+  it('includes progressUpdatedAt in update payload when progress changes', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', progress: 0.3, completedAt: null, bookId: null },
+    ]));
+    adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading' });
+    const chain = mockDbChain();
+    db.update.mockReturnValue(chain);
+
+    await runMonitor();
+
+    const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+    expect(setCalls).toContainEqual(expect.objectContaining({ progressUpdatedAt: expect.any(Date) }));
+  });
+
+  it('omits progressUpdatedAt from update payload when progress is unchanged', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', progress: 0.5, completedAt: null, bookId: null },
+    ]));
+    adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading' });
+    const chain = mockDbChain();
+    db.update.mockReturnValue(chain);
+
+    await runMonitor();
+
+    const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+    const progressUpdate = setCalls.find((c) => 'progress' in c);
+    expect(progressUpdate).toBeDefined();
+    expect(progressUpdate).not.toHaveProperty('progressUpdatedAt');
+  });
+
   it('logs state transitions at info level', async () => {
     db.select.mockReturnValueOnce(mockDbChain([
       { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null },

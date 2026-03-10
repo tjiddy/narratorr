@@ -5,6 +5,7 @@ import type { Services } from './index.js';
 import { runSearchJob, searchAllWanted } from '../jobs/search.js';
 import { runRssJob } from '../jobs/rss.js';
 import { runBackupJob } from '../jobs/backup.js';
+import { healthRoutes } from './health-routes.js';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
@@ -169,6 +170,9 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       return reply.status(500).send({ error: 'Failed to process restore file' });
     }
   });
+
+  // Health, task, and system info routes
+  await healthRoutes(app, services, db);
 
   // POST /api/system/restore/confirm — confirm and apply the pending restore
   app.post('/api/system/restore/confirm', async (request, reply) => {

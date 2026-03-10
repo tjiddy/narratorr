@@ -67,6 +67,21 @@ describe('auth middleware', () => {
       expect(res.statusCode).not.toBe(401);
     });
 
+    it('health/task/info routes are NOT public — return 401 without auth', async () => {
+      const protectedRoutes = [
+        { method: 'GET' as const, url: '/api/system/health/status' },
+        { method: 'GET' as const, url: '/api/system/health/summary' },
+        { method: 'POST' as const, url: '/api/system/health/run' },
+        { method: 'GET' as const, url: '/api/system/tasks' },
+        { method: 'POST' as const, url: '/api/system/tasks/monitor/run' },
+        { method: 'GET' as const, url: '/api/system/info' },
+      ];
+      for (const { method, url } of protectedRoutes) {
+        const res = await app.inject({ method, url });
+        expect(res.statusCode, `${method} ${url} should be 401`).toBe(401);
+      }
+    });
+
     it('non-API routes (no /api/ prefix) are never intercepted by auth middleware', async () => {
       const res = await app.inject({ method: 'GET', url: '/healthcheck' });
       expect(res.statusCode).toBe(200);
