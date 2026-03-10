@@ -10,6 +10,7 @@ import {
   CheckIcon,
   TerminalIcon,
   HeadphonesIcon,
+  ClockIcon,
 } from '@/components/icons';
 import {
   updateSettingsFormSchema,
@@ -98,6 +99,27 @@ export function GeneralSettings() {
       <QualitySettingsSection register={register} errors={errors} />
       <ProcessingSettingsSection register={register} errors={errors} watch={watch} />
       <NetworkSettingsSection register={register} errors={errors} watch={watch} />
+
+      <SettingsSection
+        icon={<ClockIcon className="w-5 h-5 text-primary" />}
+        title="Housekeeping"
+        description="Automatic database maintenance and cleanup"
+      >
+        <div>
+          <label htmlFor="housekeepingRetentionDays" className="block text-sm font-medium mb-2">Event History Retention (days)</label>
+          <input
+            id="housekeepingRetentionDays"
+            type="number"
+            min={1}
+            max={365}
+            {...register('general.housekeepingRetentionDays', { valueAsNumber: true })}
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+          />
+          <p className="text-sm text-muted-foreground mt-2">
+            Events older than this many days are automatically pruned during the weekly housekeeping job. Valid range: 1–365 days.
+          </p>
+        </div>
+      </SettingsSection>
 
       <SettingsSection
         icon={<TerminalIcon className="w-5 h-5 text-primary" />}

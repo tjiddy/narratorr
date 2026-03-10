@@ -72,8 +72,8 @@ describe('settingsRegistry', () => {
       expect(schemaParsed).toEqual(DEFAULT_SETTINGS.import);
     });
 
-    it('general defaults have logLevel info', () => {
-      expect(DEFAULT_SETTINGS.general).toEqual({ logLevel: 'info' });
+    it('general defaults have logLevel info and housekeepingRetentionDays 90', () => {
+      expect(DEFAULT_SETTINGS.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90 });
     });
 
     it('metadata defaults have audibleRegion us', () => {
@@ -191,6 +191,43 @@ describe('settingsRegistry', () => {
     it('defaults to 7 when absent', () => {
       const result = settingsRegistry.search.schema.parse({});
       expect(result.blacklistTtlDays).toBe(7);
+    });
+  });
+
+  describe('general housekeepingRetentionDays boundary constraints', () => {
+    it('rejects housekeepingRetentionDays of 0 (below minimum)', () => {
+      const result = settingsRegistry.general.schema.safeParse({ ...DEFAULT_SETTINGS.general, housekeepingRetentionDays: 0 });
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts housekeepingRetentionDays at minimum boundary (1)', () => {
+      const result = settingsRegistry.general.schema.safeParse({ ...DEFAULT_SETTINGS.general, housekeepingRetentionDays: 1 });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts housekeepingRetentionDays at maximum boundary (365)', () => {
+      const result = settingsRegistry.general.schema.safeParse({ ...DEFAULT_SETTINGS.general, housekeepingRetentionDays: 365 });
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects housekeepingRetentionDays above maximum (366)', () => {
+      const result = settingsRegistry.general.schema.safeParse({ ...DEFAULT_SETTINGS.general, housekeepingRetentionDays: 366 });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects negative housekeepingRetentionDays', () => {
+      const result = settingsRegistry.general.schema.safeParse({ ...DEFAULT_SETTINGS.general, housekeepingRetentionDays: -1 });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects non-integer housekeepingRetentionDays', () => {
+      const result = settingsRegistry.general.schema.safeParse({ ...DEFAULT_SETTINGS.general, housekeepingRetentionDays: 30.5 });
+      expect(result.success).toBe(false);
+    });
+
+    it('defaults to 90 when absent', () => {
+      const result = settingsRegistry.general.schema.parse({});
+      expect(result.housekeepingRetentionDays).toBe(90);
     });
   });
 

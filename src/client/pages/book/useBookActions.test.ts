@@ -26,7 +26,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
         library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
         search: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 },
         import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
-        general: { logLevel: 'info' },
+        general: { logLevel: 'info', housekeepingRetentionDays: 90 },
         metadata: { audibleRegion: 'us' },
         tagging: { enabled: false, mode: 'populate_missing', embedCover: false },
         quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false, rejectWords: '', requiredWords: '' },

@@ -1,4 +1,4 @@
-import { eq, desc, like, and } from 'drizzle-orm';
+import { eq, desc, like, and, lt } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { bookEvents, downloads } from '../../db/schema.js';
@@ -86,6 +86,15 @@ export class EventHistoryService {
       .where(eq(bookEvents.id, id))
       .limit(1);
     return results[0] || null;
+  }
+
+  async pruneOlderThan(retentionDays: number): Promise<number> {
+    const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
+    const deleted = await this.db
+      .delete(bookEvents)
+      .where(lt(bookEvents.createdAt, cutoff))
+      .returning();
+    return deleted.length;
   }
 
   async markFailed(eventId: number): Promise<{ success: true }> {

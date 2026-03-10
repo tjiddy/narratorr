@@ -51,7 +51,7 @@ describe('SettingsService', () => {
       // Other sections fall back to defaults
       expect(result.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 });
       expect(result.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 });
-      expect(result.general).toEqual({ logLevel: 'info' });
+      expect(result.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90 });
     });
 
     it('returns all defaults when nothing stored', async () => {

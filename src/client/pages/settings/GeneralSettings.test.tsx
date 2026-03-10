@@ -216,6 +216,48 @@ describe('GeneralSettings', () => {
     });
   });
 
+  describe('Housekeeping section', () => {
+    it('renders Housekeeping section with retention days input', async () => {
+      renderWithProviders(<GeneralSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Housekeeping')).toBeInTheDocument();
+      });
+      expect(screen.getByLabelText('Event History Retention (days)')).toBeInTheDocument();
+    });
+
+    it('retention days input defaults to 90', async () => {
+      renderWithProviders(<GeneralSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Event History Retention (days)')).toHaveValue(90);
+      });
+    });
+
+    it('changes retention days and saves → payload includes general.housekeepingRetentionDays', async () => {
+      const user = userEvent.setup();
+      (api.updateSettings as Mock).mockResolvedValue(mockSettings);
+      renderWithProviders(<GeneralSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Event History Retention (days)')).toHaveValue(90);
+      });
+
+      const input = screen.getByLabelText('Event History Retention (days)');
+      await user.clear(input);
+      await user.type(input, '30');
+
+      await user.click(screen.getByText('Save Changes').closest('button')!);
+
+      await waitFor(() => {
+        expect(api.updateSettings).toHaveBeenCalled();
+      });
+      expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
+        general: { housekeepingRetentionDays: 30 },
+      });
+    });
+  });
+
   it('inserts a token into folder format and updates preview', async () => {
     const user = userEvent.setup();
     renderWithProviders(<GeneralSettings />);

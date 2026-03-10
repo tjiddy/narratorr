@@ -278,6 +278,77 @@ describe('EventHistoryService', () => {
     });
   });
 
+  describe('pruneOlderThan', () => {
+    it('deletes events older than retention period and returns count', async () => {
+      const oldEvents = [
+        createMockDbBookEvent({ id: 1 }),
+        createMockDbBookEvent({ id: 2 }),
+        createMockDbBookEvent({ id: 3 }),
+      ];
+      db.delete.mockReturnValue(mockDbChain(oldEvents));
+
+      const result = await service.pruneOlderThan(90);
+
+      expect(result).toBe(3);
+      expect(db.delete).toHaveBeenCalled();
+    });
+
+    it('returns 0 when no events qualify for pruning', async () => {
+      db.delete.mockReturnValue(mockDbChain([]));
+
+      const result = await service.pruneOlderThan(90);
+
+      expect(result).toBe(0);
+    });
+
+    it('prunes orphaned events (bookId = null) by age', async () => {
+      const orphanedEvent = createMockDbBookEvent({ id: 1, bookId: null });
+      db.delete.mockReturnValue(mockDbChain([orphanedEvent]));
+
+      const result = await service.pruneOlderThan(90);
+
+      expect(result).toBe(1);
+      expect(db.delete).toHaveBeenCalled();
+    });
+
+    it('uses lt (strictly older than) with a Date cutoff derived from retention days', async () => {
+      const chain = mockDbChain([]);
+      db.delete.mockReturnValue(chain);
+
+      const fakeNow = new Date('2026-03-10T00:00:00Z').getTime();
+      vi.useFakeTimers({ now: fakeNow });
+
+      try {
+        await service.pruneOlderThan(30);
+      } finally {
+        vi.useRealTimers();
+      }
+
+      // Verify where was called with a predicate
+      const whereFn = chain.where as ReturnType<typeof vi.fn>;
+      expect(whereFn).toHaveBeenCalledTimes(1);
+
+      // The predicate passed to where() is lt(bookEvents.createdAt, cutoff)
+      // Drizzle comparison operators produce SQL objects with queryChunks:
+      //   [StringChunk(''), Column, StringChunk(' < '), Param(value), StringChunk('')]
+      const predicate = whereFn.mock.calls[0][0];
+      const chunks = predicate.queryChunks;
+
+      // Must use strict less-than (lt), not less-than-or-equal (lte)
+      const operatorChunk = chunks[2];
+      expect(operatorChunk.value[0]).toBe(' < ');
+
+      // The right-hand value should be a Date (matching Drizzle { mode: 'timestamp' } contract)
+      // Drizzle wraps the value in a Param — extract it
+      const paramChunk = chunks[3];
+      expect(paramChunk.value).toBeInstanceOf(Date);
+
+      // Cutoff should be Date(2026-03-10 - 30 days) = 2026-02-08T00:00:00Z
+      const expectedCutoff = new Date(fakeNow - 30 * 86_400_000);
+      expect(paramChunk.value.getTime()).toBe(expectedCutoff.getTime());
+    });
+  });
+
   describe('deleted book history', () => {
     it('returns events with null bookId and snapshotted title', async () => {
       const event = createMockDbBookEvent({

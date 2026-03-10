@@ -20,7 +20,7 @@ const mockSettings = {
   library: { path: '/audiobooks', folderFormat: '{author}/{title}' },
   search: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 },
   import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
-  general: { logLevel: 'info' },
+  general: { logLevel: 'info', housekeepingRetentionDays: 90 },
   processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
 };
 
@@ -181,6 +181,58 @@ describe('settings routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.quality.rejectWords).toBe('');
       expect(body.quality.requiredWords).toBe('');
+    });
+  });
+
+  describe('PUT /api/settings (housekeeping)', () => {
+    it('round-trips housekeepingRetentionDays through PUT and returns updated value', async () => {
+      const updated = {
+        ...mockSettings,
+        general: { logLevel: 'info', housekeepingRetentionDays: 30 },
+      };
+      (services.settings.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { general: { housekeepingRetentionDays: 30 } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).general.housekeepingRetentionDays).toBe(30);
+      expect(services.settings.update).toHaveBeenCalledWith(
+        expect.objectContaining({ general: expect.objectContaining({ housekeepingRetentionDays: 30 }) }),
+      );
+    });
+
+    it('rejects housekeepingRetentionDays below minimum (0)', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { general: { housekeepingRetentionDays: 0 } },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects housekeepingRetentionDays above maximum (366)', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { general: { housekeepingRetentionDays: 366 } },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects non-integer housekeepingRetentionDays', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { general: { housekeepingRetentionDays: 30.5 } },
+      });
+
+      expect(res.statusCode).toBe(400);
     });
   });
 

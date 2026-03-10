@@ -11,7 +11,7 @@ function Wrapper({ children }: { children: (props: ReturnType<typeof useForm<Upd
       search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7 },
       library: { path: '', folderFormat: '' },
       import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
-      general: { logLevel: 'info' },
+      general: { logLevel: 'info', housekeepingRetentionDays: 90 },
       metadata: { audibleRegion: 'us' },
     },
   });
