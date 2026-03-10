@@ -90,27 +90,40 @@ const { ok: mergeOk, output: mergeOut } = giteaSafe("pr-merge", prNum);
 if (!mergeOk) {
   // Route merge failures
   const err = mergeOut.toLowerCase();
-  const errorType = err.includes("conflict") ? "merge conflict" : err.includes("status check") ? "CI failure" : "unknown error";
+  const errorType = err.includes("conflict") ? "merge conflict"
+    : err.includes("status check") ? "CI failure"
+    : (err.includes("405") || err.includes("please try again")) ? "branch behind base"
+    : "unknown error";
 
-  // Set stage/fixes-pr on the PR for merge conflicts so orchestrator can dispatch fixes
+  // Branch behind base: recoverable — caller should try a clean rebase
+  if (errorType === "branch behind base") {
+    die(`REBASE: PR #${prNum} branch is behind main. Run: git fetch origin main && git rebase origin/main && git push --force-with-lease, then re-run node scripts/merge.ts ${prNum}`);
+  }
+
+  // Merge conflict or branch behind with conflicts: send back to implementer
   if (errorType === "merge conflict") {
     const prOut = gitea("pr", prNum);
     const prLabels = replaceLabel(parseLabels(prOut), "stage/", "stage/fixes-pr");
     gitea("pr-update-labels", prNum, prLabels.join(","));
+
+    if (linkedIssueId) {
+      const issueOut = gitea("issue", linkedIssueId);
+      const newLabels = replaceLabel(parseLabels(issueOut), "status/", "status/in-progress");
+      gitea("issue-update", linkedIssueId, "labels", newLabels.join(","));
+      withTempFile(
+        `**Rebase needed** — PR #${prNum} has merge conflicts with main. Rebase onto main, resolve conflicts, push, and set \`stage/review-pr\` for a lightweight re-review.`,
+        (p) => { gitea("issue-comment", linkedIssueId, "--body-file", p); }
+      );
+    }
+    die(`REBASE_CONFLICT: PR #${prNum} has merge conflicts with main — sent back to implementer`);
   }
 
+  // Other failures: block the issue
   if (linkedIssueId) {
     const issueOut = gitea("issue", linkedIssueId);
     const labels = parseLabels(issueOut);
-    if (errorType === "merge conflict") {
-      // Merge conflict: send issue back to in-progress (author needs to fix)
-      const newLabels = replaceLabel(labels, "status/", "status/in-progress");
-      gitea("issue-update", linkedIssueId, "labels", newLabels.join(","));
-    } else {
-      // Non-conflict failures: add blocked flag
-      const newLabels = labels.includes("blocked") ? labels : [...labels, "blocked"];
-      gitea("issue-update", linkedIssueId, "labels", newLabels.join(","));
-    }
+    const newLabels = labels.includes("blocked") ? labels : [...labels, "blocked"];
+    gitea("issue-update", linkedIssueId, "labels", newLabels.join(","));
     withTempFile(`Merge failed on PR #${prNum} — ${errorType}. ${mergeOut}`, (p) => {
       gitea("issue-comment", linkedIssueId, "--body-file", p);
     });

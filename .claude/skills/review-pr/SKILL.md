@@ -154,6 +154,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **DB persistence:** New columns passed through create/update must be tested at the route level (not just "service was called" — verify the field is in the call args)
 
    Flag any behavior that exists in source but has no test as a **blocking** finding with category `"tests"`. The finding must name the specific untested behavior and explain what defect it could catch.
+   - **Assertion contract required:** Every test-category finding must specify the **minimum assertion contract** — the specific values, predicates, or behaviors the test must verify. "Add a test for X" is not a valid finding. "Add a test that asserts `pruneOlderThan(90)` passes `lt(bookEvents.createdAt, cutoffDate)` to `.where()` — a test that only checks `db.delete` was called would not catch a comparator regression (`lte` vs `lt`)" is. The goal: the author can satisfy the finding in one pass without guessing what "sufficient" means.
    - **No umbrella findings:** Do not stop at a coarse finding like "new hook lacks enough tests" if the missing coverage can be enumerated more precisely. Convert that umbrella concern into the concrete missing behaviors (for example: rename success does not assert cache invalidation; monitor success does not assert cache invalidation; save failure does not assert error recovery). The goal is a first-round review the author can fully satisfy without guesswork.
    - **Multi-layer audit (do not peel the onion):** For each new behavior, audit test coverage at ALL layers it touches (service → route → hook → component/page) in a single pass. Do not flag only the lowest untested layer and stop — if service tests exist but route, hook, AND page tests are all missing, report all three gaps in one round. Discovering test gaps one layer per review round is the #1 source of avoidable ping-pong.
 
@@ -171,7 +172,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 7b. **Test quality review** — Go beyond "do tests exist" and evaluate whether they actually catch defects:
    - **Mock realism:** Does mock data actually exercise the code path? Watch for mocks that return perfect happy-path objects when the test should verify handling of missing/optional fields.
-   - **Assertion specificity:** Flag lazy assertions — `toHaveBeenCalled()` without checking args, `toBeInTheDocument()` matching coincidental text. Assertions should verify the *right* thing happened, not just *something* happened.
+   - **Assertion specificity:** Flag lazy assertions — `toHaveBeenCalled()` without checking args, `toBeInTheDocument()` matching coincidental text. Assertions should verify the *right* thing happened, not just *something* happened. When flagging a weak assertion, specify the minimum assertion that would be sufficient (e.g., "assert `toHaveBeenCalledWith(expect.objectContaining({ retentionDays: 90 }))` — the current `toHaveBeenCalled()` would pass even if the argument were wrong").
    - **Tests that can't fail:** Would the test still pass if the feature code was deleted? Tests that assert initial state (e.g., "Loading" text that's always there on first render) without waiting for a state transition catch nothing.
    - **Mock leakage:** Missing `clearAllMocks` in `beforeEach`, module-level mock state that persists between tests, test ordering dependencies.
    - **Flaky patterns:** Timing-dependent assertions without `waitFor`, non-deterministic test data (random IDs, `Date.now()`), assertions that depend on execution order rather than explicit state setup.
@@ -343,7 +344,12 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
     - Set `stage/approved` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/approved"`
     - Verify the PR output shows `stage/approved`
     - Then run `node scripts/merge.ts <pr-number>` to squash merge, update issue labels, and clean up the branch
-    - If merge fails, report the error — do not retry
+    - If merge output starts with `REBASE:` — the branch is behind main. Attempt a clean rebase:
+      1. `git checkout <head-branch> && git fetch origin main && git rebase origin/main`
+      2. If the rebase succeeds (no conflicts): `git push --force-with-lease` then re-run `node scripts/merge.ts <pr-number>`
+      3. If the rebase has conflicts: `git rebase --abort && git checkout main`, then run `node scripts/merge.ts <pr-number>` — it will detect the conflict, set `stage/fixes-pr`, post a rebase comment on the issue, and send it back to the implementer
+    - If merge output starts with `REBASE_CONFLICT:` — the implementer needs to resolve conflicts. Report it and stop.
+    - If merge output starts with `ERROR:` — report the error, do not retry
 
     **If verdict is `needs-work`:**
     - Set `stage/fixes-pr` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/fixes-pr"`

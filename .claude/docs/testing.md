@@ -2,7 +2,7 @@
 
 All new/changed code must include tests. Run `pnpm test` (Vitest) to execute all suites.
 
-**Test-first convention:** When implementing spec behaviors, write stub test cases _before_ the implementation. Each acceptance criterion or behavioral requirement from the spec becomes a failing test first, then code to make it pass. This applies to both backend logic and frontend component behavior. The goal isn't full TDD — it's ensuring spec requirements have explicit test coverage before the implementation is "done."
+**Red/green TDD convention:** Implementation follows a strict red→green cycle per module. `/plan` creates `it.todo()` stubs from the spec. During `/implement`, for each module: (1) convert stubs to real failing tests with full assertions/mocks, (2) run the test file and **confirm tests fail** (if a test passes before implementation exists, the assertion is vacuous — fix it), (3) write production code until tests pass, (4) commit. This applies to both backend logic and frontend component behavior.
 
 **Conventions:**
 - Co-located test files: `foo.ts` → `foo.test.ts` (or `.test.tsx` for JSX)

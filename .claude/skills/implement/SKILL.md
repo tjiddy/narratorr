@@ -48,12 +48,24 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 3. **Read the issue spec one final time** — it may have been updated during elaboration:
    - `gitea issue $ARGUMENTS`
 
-4. **Implement the feature/fix:**
+4. **Implement the feature/fix using red/green TDD:**
+
+   Work through the plan one module at a time (e.g., service, route, component). For each module:
+
+   **a. Red — write failing tests first.**
+   Convert the `it.todo()` stubs from `/plan` into real test implementations. Write the full test body (assertions, mocks, setup) against the spec requirements — not against any implementation that exists yet. Run `pnpm exec vitest run <test-file> --no-color` and **confirm the tests fail**. If a test passes before implementation exists, it's vacuous — fix the assertion so it actually tests the spec behavior.
+
+   **b. Green — implement until tests pass.**
+   Write the production code for that module. Follow existing patterns found during the plan phase. Run the test file again to confirm green. Fix failures before moving to the next module.
+
+   **c. Commit.**
+   Once the module's tests pass, commit with `#<id>` prefix (e.g., `#58 Add Newznab search adapter`).
+
+   **d. Repeat** for the next module in the plan.
+
+   **General rules:**
    - Follow Acceptance Criteria as a checklist — each AC maps to something you must build and verify
-   - Follow existing patterns found during the plan phase (adapters, services, routes, tests)
    - **Follow design principles** (CLAUDE.md § Design Principles) — single responsibility per file, DRY (extract shared patterns), extend don't modify (new files over growing lists). If the plan comment flagged design warnings, address them during implementation.
-   - Write/update tests per the Test Plan
-   - Commit incrementally with `#<id>` prefix (e.g., `#58 Add Newznab search adapter`)
    - **Stay in scope** — if requirements expand beyond the issue spec, run `node scripts/block.ts <id> "<reason>"` and STOP
 
 5. **Run quality gates:** Execute `node scripts/verify.ts`
