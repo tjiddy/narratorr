@@ -30,6 +30,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Steps
 
+0. **Ensure latest branch state:** Run `git fetch origin` to get the latest commits on all branches. If this is a re-review (you have reviewed this PR before in this session), the author has pushed fixes since your last review — you MUST re-run ALL steps from scratch against the updated branch. Do not reuse prior results from your session context.
+
 1. **Fetch PR details:** Run `gitea pr <pr-number>`. Extract:
    - Title, body, state, head branch, base branch, **author** (`author: <login>` in output), labels
    - Linked issue: parse `Refs #<id>` from PR body
