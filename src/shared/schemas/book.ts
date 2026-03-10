@@ -4,7 +4,7 @@ import { z } from 'zod';
 // Book schemas
 // ============================================================================
 
-export const bookStatusSchema = z.enum(['wanted', 'searching', 'downloading', 'imported', 'missing']);
+export const bookStatusSchema = z.enum(['wanted', 'searching', 'downloading', 'importing', 'imported', 'missing', 'failed']);
 export type BookStatus = z.infer<typeof bookStatusSchema>;
 
 export const bookListQuerySchema = z.object({

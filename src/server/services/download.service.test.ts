@@ -3,6 +3,8 @@ import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests_
 import { DownloadService } from './download.service.js';
 import { type DownloadClientService } from './download-client.service.js';
 import { type EventHistoryService } from './event-history.service.js';
+import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 
@@ -1244,6 +1246,154 @@ describe('DownloadService', () => {
       // Wait a tick then verify no event was created
       await new Promise((r) => setTimeout(r, 10));
       expect(eventHistory.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('SSE emissions', () => {
+    let svcWithBroadcaster: DownloadService;
+    let broadcaster: { emit: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+      broadcaster = { emit: vi.fn() };
+      svcWithBroadcaster = new DownloadService(
+        inject<Db>(db),
+        clientService,
+        inject<FastifyBaseLogger>(createMockLogger()),
+        undefined,
+        undefined,
+        inject<EventBroadcasterService>(broadcaster),
+      );
+    });
+
+    it('updateProgress emits download_progress', async () => {
+      db.update.mockReturnValue(mockDbChain());
+
+      await svcWithBroadcaster.updateProgress(1, 0.5, 2);
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_progress', {
+        download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null,
+      });
+    });
+
+    it('updateProgress emits download_status_change on completion', async () => {
+      db.update.mockReturnValue(mockDbChain());
+      // getById is called inside emitEventForDownload — return a minimal download
+      db.select.mockReturnValue(mockDbChain([]));
+
+      await svcWithBroadcaster.updateProgress(1, 1, 2);
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_progress', {
+        download_id: 1, book_id: 2, percentage: 1, speed: null, eta: null,
+      });
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', {
+        download_id: 1, book_id: 2, old_status: 'downloading', new_status: 'completed',
+      });
+    });
+
+    it('updateStatus emits download_status_change with meta', async () => {
+      db.update.mockReturnValue(mockDbChain());
+
+      await svcWithBroadcaster.updateStatus(1, 'completed', { bookId: 2, oldStatus: 'downloading' as DownloadStatus });
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', {
+        download_id: 1, book_id: 2, old_status: 'downloading', new_status: 'completed',
+      });
+    });
+
+    it('setError emits download_status_change with meta', async () => {
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(mockDbChain([]));
+
+      await svcWithBroadcaster.setError(1, 'oops', { bookId: 2, oldStatus: 'downloading' as DownloadStatus });
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', {
+        download_id: 1, book_id: 2, old_status: 'downloading', new_status: 'failed',
+      });
+    });
+
+    it('broadcaster.emit failure does not break updateProgress', async () => {
+      broadcaster.emit.mockImplementation(() => { throw new Error('SSE broken'); });
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValue(mockDbChain([]));
+
+      await expect(svcWithBroadcaster.updateProgress(1, 0.5, 2)).resolves.not.toThrow();
+    });
+
+    it('grab emits grab_started and book_status_change', async () => {
+      const mockAdapterGrab = { addDownload: vi.fn().mockResolvedValue('ext-new') };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit', enabled: true });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapterGrab);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 99 }]));
+      db.update.mockReturnValue(mockDbChain());
+      // getActiveByBookId returns empty (no dupe)
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // getById for return value
+      db.select.mockReturnValueOnce(mockDbChain([{ download: { ...mockDownload, id: 99 }, book: mockBook }]));
+
+      await svcWithBroadcaster.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        title: 'Test Grab',
+        bookId: 5,
+      });
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('grab_started', {
+        download_id: 99, book_id: 5, book_title: 'Test Grab', release_title: 'Test Grab',
+      });
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', {
+        book_id: 5, old_status: 'wanted', new_status: 'downloading',
+      });
+    });
+
+    it('grab does not break when broadcaster.emit throws', async () => {
+      broadcaster.emit.mockImplementation(() => { throw new Error('SSE broken'); });
+      const mockAdapterGrab = { addDownload: vi.fn().mockResolvedValue('ext-new') };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit', enabled: true });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapterGrab);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 99 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([{ download: { ...mockDownload, id: 99 }, book: mockBook }]));
+
+      await expect(svcWithBroadcaster.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        title: 'Test',
+        bookId: 5,
+      })).resolves.toBeDefined();
+    });
+
+    it('cancel emits download_status_change and book_status_change', async () => {
+      const mockAdapterCancel = { removeDownload: vi.fn().mockResolvedValue(undefined) };
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapterCancel);
+
+      // getById returns download with book (no path → revert to wanted)
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, status: 'downloading', bookId: 1 }, book: { ...mockBook, status: 'downloading', path: null } }]),
+      );
+      db.update.mockReturnValue(mockDbChain());
+
+      await svcWithBroadcaster.cancel(1);
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', {
+        download_id: 1, book_id: 1, old_status: 'downloading', new_status: 'failed',
+      });
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', {
+        book_id: 1, old_status: 'downloading', new_status: 'wanted',
+      });
+    });
+
+    it('cancel does not break when broadcaster.emit throws', async () => {
+      broadcaster.emit.mockImplementation(() => { throw new Error('SSE broken'); });
+      const mockAdapterCancel = { removeDownload: vi.fn().mockResolvedValue(undefined) };
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapterCancel);
+
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, status: 'downloading', bookId: 1 }, book: { ...mockBook, status: 'downloading', path: null } }]),
+      );
+      db.update.mockReturnValue(mockDbChain());
+
+      await expect(svcWithBroadcaster.cancel(1)).resolves.toBe(true);
     });
   });
 

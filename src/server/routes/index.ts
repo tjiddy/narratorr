@@ -40,6 +40,8 @@ import { filesystemRoutes } from './filesystem.js';
 import { remotePathMappingRoutes } from './remote-path-mappings.js';
 import { eventHistoryRoutes } from './event-history.js';
 import { prowlarrCompatRoutes } from './prowlarr-compat.js';
+import { eventsRoutes } from './events.js';
+import { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 
 export interface Services {
   settings: SettingsService;
@@ -61,6 +63,7 @@ export interface Services {
   tagging: TaggingService;
   qualityGate: QualityGateService;
   retryBudget: RetryBudget;
+  eventBroadcaster: EventBroadcasterService;
 }
 
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
@@ -78,14 +81,15 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const notifier = new NotifierService(db, log);
   const blacklistService = new BlacklistService(db, log, settings);
 
-  // EventHistoryService created early so it can be injected into lifecycle services
+  // EventBroadcaster and EventHistoryService created early so they can be injected into lifecycle services
+  const eventBroadcaster = new EventBroadcasterService(log);
   const book = new BookService(db, log, metadata);
   const eventHistory = new EventHistoryService(db, log, blacklistService, book);
 
-  const download = new DownloadService(db, downloadClient, log, notifier, eventHistory);
+  const download = new DownloadService(db, downloadClient, log, notifier, eventHistory, eventBroadcaster);
   const remotePathMapping = new RemotePathMappingService(db, log);
   const taggingService = new TaggingService(db, settings, log);
-  const importService = new ImportService(db, downloadClient, settings, log, notifier, remotePathMapping, taggingService, eventHistory);
+  const importService = new ImportService(db, downloadClient, settings, log, notifier, remotePathMapping, taggingService, eventHistory, eventBroadcaster);
   const libraryScan = new LibraryScanService(db, book, metadata, settings, log);
   const matchJob = new MatchJobService(metadata, log);
   const prowlarrSync = new ProwlarrSyncService(db, log);
@@ -93,6 +97,9 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const qualityGateService = new QualityGateService(db, downloadClient, eventHistory, blacklistService, log, remotePathMapping);
   const renameService = new RenameService(book, settings, log, eventHistory);
   const retryBudget = new RetryBudget();
+
+  // Wire broadcaster into quality gate service
+  qualityGateService.setBroadcaster(eventBroadcaster);
 
   // Wire retry search dependencies into services that need them
   const retrySearchDeps = {
@@ -107,7 +114,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   download.setRetrySearchDeps(retrySearchDeps);
   eventHistory.setRetrySearchDeps(retrySearchDeps);
 
-  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, retryBudget };
+  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, retryBudget, eventBroadcaster };
 }
 
 export async function registerRoutes(
@@ -132,5 +139,6 @@ export async function registerRoutes(
   await remotePathMappingRoutes(app, services.remotePathMapping);
   await filesystemRoutes(app);
   await eventHistoryRoutes(app, services.eventHistory);
+  await eventsRoutes(app, services.eventBroadcaster);
   await prowlarrCompatRoutes(app, services.indexer);
 }

@@ -15,7 +15,12 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
+vi.mock('@/hooks/useEventSource', () => ({
+  useSSEConnected: vi.fn(() => false),
+}));
+
 import { api } from '@/lib/api';
+import { useSSEConnected } from '@/hooks/useEventSource';
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -263,5 +268,44 @@ describe('useActivity', () => {
     await waitFor(() => {
       expect(result.current.isError).toBe(true);
     });
+  });
+
+  it('disables polling when SSE is connected', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      // SSE is connected — polling should be gated off
+      vi.mocked(useSSEConnected).mockReturnValue(true);
+
+      const downloads: Download[] = [
+        makeDownload({ id: 1, status: 'downloading' }),
+        makeDownload({ id: 2, status: 'checking' }),
+      ];
+      vi.mocked(api.getActivity).mockResolvedValue(downloads);
+
+      const { result, rerender } = renderHook(() => useActivity(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      const callCountAfterLoad = vi.mocked(api.getActivity).mock.calls.length;
+
+      // Advance well past the 5s interval — SSE gate should suppress polling
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      expect(vi.mocked(api.getActivity).mock.calls.length).toBe(callCountAfterLoad);
+
+      // Now disconnect SSE — polling should resume since in-progress downloads exist
+      vi.mocked(useSSEConnected).mockReturnValue(false);
+      rerender();
+
+      await vi.advanceTimersByTimeAsync(6_000);
+
+      expect(vi.mocked(api.getActivity).mock.calls.length).toBeGreaterThan(callCountAfterLoad);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

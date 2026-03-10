@@ -6,6 +6,7 @@ import type { Db } from '../../db/index.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { DownloadClientService } from './download-client.service.js';
+import type { EventBroadcasterService } from './event-broadcaster.service.js';
 
 vi.mock('../../core/utils/audio-scanner.js', () => ({
   scanAudioDirectory: vi.fn(),
@@ -519,6 +520,148 @@ describe('QualityGateService', () => {
       db.select.mockReturnValue(mockDbChain([]));
 
       await expect(service.reject(1)).rejects.toThrow('not found');
+    });
+  });
+
+  describe('SSE emissions', () => {
+    function createServiceWithBroadcaster() {
+      const base = createService();
+      const broadcaster = { emit: vi.fn() };
+      base.service.setBroadcaster(inject<EventBroadcasterService>(broadcaster));
+      return { ...base, broadcaster };
+    }
+
+    it('emits download_status_change on atomicClaim (completed→checking)', async () => {
+      const { service, db, broadcaster } = createServiceWithBroadcaster();
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(makeScan({ totalSize: 600_000_000 }));
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.select.mockReturnValue(mockDbChain([{ download: baseDownload, book: baseBook }]));
+
+      await service.processCompletedDownloads();
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
+        download_id: 1, book_id: 1, old_status: 'completed', new_status: 'checking',
+      }));
+    });
+
+    it('emits download_status_change and review_needed on hold (narrator mismatch)', async () => {
+      const { service, db, broadcaster } = createServiceWithBroadcaster();
+      // Narrator mismatch triggers hold
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeScan({ tagNarrator: 'Different Narrator' }),
+      );
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.select.mockReturnValue(mockDbChain([{ download: baseDownload, book: baseBook }]));
+
+      await service.processCompletedDownloads();
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
+        download_id: 1, book_id: 1, old_status: 'checking', new_status: 'pending_review',
+      }));
+      expect(broadcaster.emit).toHaveBeenCalledWith('review_needed', {
+        download_id: 1, book_id: 1, book_title: baseBook.title,
+      });
+    });
+
+    it('emits download_status_change on auto-import (checking→completed)', async () => {
+      const { service, db, broadcaster } = createServiceWithBroadcaster();
+      // Better quality triggers auto-import
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(makeScan({ totalSize: 600_000_000 }));
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.select.mockReturnValue(mockDbChain([{ download: baseDownload, book: baseBook }]));
+
+      await service.processCompletedDownloads();
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
+        download_id: 1, book_id: 1, old_status: 'checking', new_status: 'completed',
+      }));
+    });
+
+    it('emits download_status_change and book_status_change on auto-reject', async () => {
+      const { service, db, broadcaster } = createServiceWithBroadcaster();
+      // Equal quality triggers auto-reject
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(makeScan({ totalSize: 400_000_000 }));
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.select.mockReturnValue(mockDbChain([{ download: baseDownload, book: baseBook }]));
+
+      await service.processCompletedDownloads();
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
+        download_id: 1, book_id: 1, new_status: 'failed',
+      }));
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
+        book_id: 1,
+      }));
+    });
+
+    it('broadcaster.emit failure does not break processCompletedDownloads', async () => {
+      const { service, db, broadcaster } = createServiceWithBroadcaster();
+      broadcaster.emit.mockImplementation(() => { throw new Error('SSE broken'); });
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(makeScan({ totalSize: 600_000_000 }));
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.select.mockReturnValue(mockDbChain([{ download: baseDownload, book: baseBook }]));
+
+      await expect(service.processCompletedDownloads()).resolves.not.toThrow();
+    });
+
+    it('approve emits download_status_change (pending_review → importing)', async () => {
+      const { service, db, broadcaster } = createServiceWithBroadcaster();
+      // approve() calls db.select().from(downloads).where(...).limit(1)
+      db.select.mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review', bookId: 1 }]));
+      // approve() calls db.select().from(books).where(...).limit(1) for recording decision
+      db.select.mockReturnValueOnce(mockDbChain([baseBook]));
+      db.update.mockReturnValue(mockDbChain());
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.approve(1);
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', {
+        download_id: 1, book_id: 1, old_status: 'pending_review', new_status: 'importing',
+      });
+    });
+
+    it('approve does not break when broadcaster.emit throws', async () => {
+      const { service, db, broadcaster } = createServiceWithBroadcaster();
+      broadcaster.emit.mockImplementation(() => { throw new Error('SSE broken'); });
+      db.select.mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review', bookId: 1 }]));
+      db.select.mockReturnValueOnce(mockDbChain([baseBook]));
+      db.update.mockReturnValue(mockDbChain());
+      db.insert.mockReturnValue(mockDbChain());
+
+      await expect(service.approve(1)).resolves.toEqual({ id: 1, status: 'importing' });
+    });
+
+    it('reject emits download_status_change and book_status_change', async () => {
+      const { service, db, broadcaster } = createServiceWithBroadcaster();
+      // reject() calls db.select({ download, book }).from(downloads).leftJoin(books)...
+      db.select.mockReturnValueOnce(mockDbChain([{
+        download: { ...baseDownload, status: 'pending_review', bookId: 1, infoHash: null, downloadClientId: null },
+        book: { ...baseBook, status: 'pending_review' },
+      }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.reject(1);
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', {
+        download_id: 1, book_id: 1, old_status: 'pending_review', new_status: 'failed',
+      });
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', {
+        book_id: 1, old_status: 'pending_review', new_status: 'imported',
+      });
+    });
+
+    it('reject does not break when broadcaster.emit throws', async () => {
+      const { service, db, broadcaster } = createServiceWithBroadcaster();
+      broadcaster.emit.mockImplementation(() => { throw new Error('SSE broken'); });
+      db.select.mockReturnValueOnce(mockDbChain([{
+        download: { ...baseDownload, status: 'pending_review', bookId: 1, infoHash: null, downloadClientId: null },
+        book: { ...baseBook, status: 'pending_review' },
+      }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.insert.mockReturnValue(mockDbChain());
+
+      await expect(service.reject(1)).resolves.toEqual({ id: 1, status: 'failed' });
     });
   });
 });

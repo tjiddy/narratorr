@@ -2,14 +2,17 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type Download } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { isInProgressStatus, isTerminalStatus } from '../../../shared/download-status-registry.js';
+import { useSSEConnected } from '@/hooks/useEventSource';
 
 export function useActivity() {
   const queryClient = useQueryClient();
+  const sseConnected = useSSEConnected();
 
   const { data: downloads = [], isLoading, isError } = useQuery({
     queryKey: queryKeys.activity(),
     queryFn: api.getActivity,
     refetchInterval: (query) => {
+      if (sseConnected) return false; // SSE handles real-time updates
       const data = query.state.data;
       if (!data) return 5000;
       return data.some((d: Download) => isInProgressStatus(d.status)) ? 5000 : false;

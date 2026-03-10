@@ -5,6 +5,7 @@ import type { Db } from '../../db/index.js';
 import type { DownloadClientService } from '../services/download-client.service.js';
 import type { NotifierService } from '../services/notifier.service.js';
 import type { RetryBudget } from '../services/retry-budget.js';
+import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { createMockDbBook } from '../__tests__/factories.js';
 
 let cronCallback: (() => Promise<void>) | null = null;
@@ -783,6 +784,52 @@ describe('monitor job', () => {
         expect.objectContaining({ bookId: 42, status: 'wanted' }),
         'Book status recovered after download failure',
       );
+    });
+  });
+
+  describe('SSE emissions', () => {
+    it('emits download_progress when bookId is present', async () => {
+      const broadcaster = { emit: vi.fn() };
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 1 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading' });
+      db.update.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_progress', {
+        download_id: 1, book_id: 1, percentage: 0.5, speed: null, eta: null,
+      });
+    });
+
+    it('emits download_status_change when status transitions', async () => {
+      const broadcaster = { emit: vi.fn() };
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 1 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed' });
+      db.update.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster));
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_progress', expect.objectContaining({ download_id: 1, book_id: 1 }));
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', {
+        download_id: 1, book_id: 1, old_status: 'downloading', new_status: 'completed',
+      });
+    });
+
+    it('does not break when broadcaster.emit throws', async () => {
+      const broadcaster = { emit: vi.fn().mockImplementation(() => { throw new Error('SSE broken'); }) };
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 1 },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading' });
+      db.update.mockReturnValue(mockDbChain());
+
+      await expect(
+        monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster)),
+      ).resolves.not.toThrow();
     });
   });
 

@@ -4,10 +4,13 @@ import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '../../db/schema.js';
 import { parseInfoHash, type DownloadProtocol } from '../../core/index.js';
 import { getInProgressStatuses, getCompletedStatuses } from '../../shared/download-status-registry.js';
+import type { DownloadStatus } from '../../shared/schemas/activity.js';
+import type { BookStatus } from '../../shared/schemas/book.js';
 import { type DownloadClientService } from './download-client.service.js';
 import { type NotifierService } from './notifier.service.js';
 import { type EventHistoryService, type CreateEventInput } from './event-history.service.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
+import { type EventBroadcasterService } from './event-broadcaster.service.js';
 
 type DownloadRow = typeof downloads.$inferSelect;
 type BookRow = typeof books.$inferSelect;
@@ -30,6 +33,7 @@ export class DownloadService {
     private log: FastifyBaseLogger,
     private notifierService?: NotifierService,
     private eventHistory?: EventHistoryService,
+    private broadcaster?: EventBroadcasterService,
   ) {}
 
   /** Set retry search dependencies (called after service graph construction). */
@@ -274,11 +278,26 @@ export class DownloadService {
       protocol,
     }, params.source);
 
+    // SSE: grab_started
+    if (params.bookId) {
+      try {
+        this.broadcaster?.emit('grab_started', {
+          download_id: result[0].id, book_id: params.bookId, book_title: params.title, release_title: params.title,
+        });
+        // SSE: book_status_change (wanted -> downloading or missing for handoff)
+        const bookStatus = isHandoff ? 'missing' as const : 'downloading' as const;
+        this.broadcaster?.emit('book_status_change', {
+          book_id: params.bookId, old_status: 'wanted', new_status: bookStatus,
+        });
+      } catch { /* fire-and-forget */ }
+    }
+
     return this.getById(result[0].id) as Promise<DownloadWithBook>;
   }
 
-  async updateProgress(id: number, progress: number): Promise<void> {
-    const status: DownloadRow['status'] = progress >= 1 ? 'completed' : 'downloading';
+  async updateProgress(id: number, progress: number, bookId?: number): Promise<void> {
+    const oldStatus: DownloadStatus = 'downloading';
+    const status: DownloadStatus = progress >= 1 ? 'completed' : 'downloading';
     const completedAt = progress >= 1 ? new Date() : null;
 
     await this.db
@@ -286,30 +305,51 @@ export class DownloadService {
       .set({ progress, status, completedAt })
       .where(eq(downloads.id, id));
 
+    // SSE: download_progress (always emit if we have a broadcaster)
+    if (bookId) {
+      try { this.broadcaster?.emit('download_progress', { download_id: id, book_id: bookId, percentage: progress, speed: null, eta: null }); } catch { /* fire-and-forget */ }
+    }
+
     if (progress >= 1) {
       this.log.info({ id }, 'Download completed');
+
+      // SSE: download_status_change
+      if (bookId) {
+        try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: bookId, old_status: oldStatus, new_status: status }); } catch { /* fire-and-forget */ }
+      }
 
       // Record download_completed event (fire-and-forget)
       this.emitEventForDownload(id, 'download_completed', { progress: 1 });
     }
   }
 
-  async updateStatus(id: number, status: DownloadRow['status']): Promise<void> {
+  async updateStatus(id: number, status: DownloadRow['status'], meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
     await this.db.update(downloads).set({ status }).where(eq(downloads.id, id));
     this.log.info({ id, status }, 'Download status changed');
+
+    // SSE: download_status_change
+    if (meta?.bookId && meta?.oldStatus) {
+      try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: meta.bookId, old_status: meta.oldStatus, new_status: status as DownloadStatus }); } catch { /* fire-and-forget */ }
+    }
   }
 
-  async setError(id: number, errorMessage: string): Promise<void> {
+  async setError(id: number, errorMessage: string, meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
     await this.db
       .update(downloads)
       .set({ status: 'failed', errorMessage })
       .where(eq(downloads.id, id));
     this.log.warn({ id, error: errorMessage }, 'Download error recorded');
 
+    // SSE: download_status_change
+    if (meta?.bookId && meta?.oldStatus) {
+      try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: meta.bookId, old_status: meta.oldStatus, new_status: 'failed' }); } catch { /* fire-and-forget */ }
+    }
+
     // Record download_failed event (fire-and-forget)
     this.emitEventForDownload(id, 'download_failed', { error: errorMessage });
   }
 
+  // eslint-disable-next-line complexity -- linear cancel flow with SSE emission at each status transition
   async cancel(id: number): Promise<boolean> {
     const download = await this.getById(id);
     if (!download) return false;
@@ -327,18 +367,28 @@ export class DownloadService {
     }
 
     // Update download status
+    const oldStatus = download.status as DownloadStatus;
     await this.db
       .update(downloads)
       .set({ status: 'failed', errorMessage: 'Cancelled by user' })
       .where(eq(downloads.id, id));
 
+    // SSE: download_status_change
+    if (download.bookId) {
+      try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: download.bookId, old_status: oldStatus, new_status: 'failed' }); } catch { /* fire-and-forget */ }
+    }
+
     // Reset book status if linked — revert to imported if book has a path, else wanted
     if (download.bookId) {
-      const revertStatus = download.book?.path ? 'imported' : 'wanted';
+      const oldBookStatus = (download.book?.status ?? 'downloading') as BookStatus;
+      const revertStatus: BookStatus = download.book?.path ? 'imported' : 'wanted';
       await this.db
         .update(books)
         .set({ status: revertStatus, updatedAt: new Date() })
         .where(eq(books.id, download.bookId));
+
+      // SSE: book_status_change
+      try { this.broadcaster?.emit('book_status_change', { book_id: download.bookId, old_status: oldBookStatus, new_status: revertStatus }); } catch { /* fire-and-forget */ }
     }
 
     this.log.info({ id }, 'Download cancelled');

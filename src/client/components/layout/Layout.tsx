@@ -3,6 +3,7 @@ import { Outlet, NavLink, useLocation, Link } from 'react-router-dom';
 import { useTheme } from '@/hooks/useTheme';
 import { useActivityCounts } from '@/hooks/useActivityCounts';
 import { useAuthContext } from '@/hooks/useAuthContext';
+import { SSEProvider } from '@/components/SSEProvider';
 import {
   HeadphonesIcon,
   SearchIcon,
@@ -40,6 +41,7 @@ export function Layout() {
 
   return (
     <div className="min-h-screen gradient-bg noise-overlay">
+      <SSEProvider />
       {/* Auth Warning Banner */}
       {mode === 'none' && !bannerDismissed && (
         <div className="bg-amber-500/15 border-b border-amber-500/30 animate-fade-in">

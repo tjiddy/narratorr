@@ -8,6 +8,7 @@ import type { NotifierService } from './notifier.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import type { TaggingService } from './tagging.service.js';
 import type { EventHistoryService } from './event-history.service.js';
+import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { and, inArray, isNotNull } from 'drizzle-orm';
@@ -1871,6 +1872,119 @@ describe('ImportService', () => {
           reason: expect.objectContaining({ error: expect.stringContaining('insufficient disk space') }),
         }),
       );
+    });
+  });
+
+  describe('SSE emissions', () => {
+    /** Settings with minFreeSpaceGB=0 to skip disk check in SSE-focused tests. */
+    function createNoCheckSettings(): ReturnType<typeof createMockSettingsService> {
+      const s = createMockSettingsService();
+      (s.get as Mock).mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 });
+        return Promise.resolve({});
+      });
+      return s;
+    }
+
+    function setupImportMocksForSSE(db: ReturnType<typeof createMockDb>) {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+    }
+
+    it('emits download_status_change and book_status_change on import start', async () => {
+      const broadcaster = { emit: vi.fn() };
+      const localDb = createMockDb();
+      const svc = new ImportService(
+        inject<Db>(localDb), clientService, createNoCheckSettings(),
+        inject<FastifyBaseLogger>(log),
+        undefined, undefined, undefined, undefined,
+        inject<EventBroadcasterService>(broadcaster),
+      );
+      setupImportMocksForSSE(localDb);
+
+      vi.mocked(stat).mockResolvedValueOnce({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
+      vi.mocked(readdir).mockResolvedValueOnce([{ name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false }] as never);
+
+      await svc.importDownload(1);
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
+        download_id: 1, book_id: 1, new_status: 'importing',
+      }));
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
+        book_id: 1, new_status: 'importing',
+      }));
+    });
+
+    it('emits download_status_change, book_status_change, and import_complete on success', async () => {
+      const broadcaster = { emit: vi.fn() };
+      const localDb = createMockDb();
+      const svc = new ImportService(
+        inject<Db>(localDb), clientService, createNoCheckSettings(),
+        inject<FastifyBaseLogger>(log),
+        undefined, undefined, undefined, undefined,
+        inject<EventBroadcasterService>(broadcaster),
+      );
+      setupImportMocksForSSE(localDb);
+
+      vi.mocked(stat).mockResolvedValueOnce({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
+      vi.mocked(readdir).mockResolvedValueOnce([{ name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false }] as never);
+
+      await svc.importDownload(1);
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
+        download_id: 1, book_id: 1, old_status: 'importing', new_status: 'imported',
+      }));
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
+        book_id: 1, old_status: 'importing', new_status: 'imported',
+      }));
+      expect(broadcaster.emit).toHaveBeenCalledWith('import_complete', {
+        download_id: 1, book_id: 1, book_title: mockBook.title,
+      });
+    });
+
+    it('emits download_status_change and book_status_change on import failure', async () => {
+      const broadcaster = { emit: vi.fn() };
+      const localDb = createMockDb();
+      const svc = new ImportService(
+        inject<Db>(localDb), clientService, createNoCheckSettings(),
+        inject<FastifyBaseLogger>(log),
+        undefined, undefined, undefined, undefined,
+        inject<EventBroadcasterService>(broadcaster),
+      );
+      setupImportMocksForSSE(localDb);
+
+      // Force failure by making stat throw after service starts import
+      vi.mocked(stat).mockRejectedValueOnce(new Error('ENOENT'));
+
+      await expect(svc.importDownload(1)).rejects.toThrow();
+
+      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
+        download_id: 1, book_id: 1, old_status: 'importing', new_status: 'failed',
+      }));
+      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
+        book_id: 1, old_status: 'importing',
+      }));
+    });
+
+    it('broadcaster.emit failure does not break import', async () => {
+      const broadcaster = { emit: vi.fn().mockImplementation(() => { throw new Error('SSE broken'); }) };
+      const localDb = createMockDb();
+      const svc = new ImportService(
+        inject<Db>(localDb), clientService, createNoCheckSettings(),
+        inject<FastifyBaseLogger>(log),
+        undefined, undefined, undefined, undefined,
+        inject<EventBroadcasterService>(broadcaster),
+      );
+      setupImportMocksForSSE(localDb);
+
+      vi.mocked(stat).mockResolvedValueOnce({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
+      vi.mocked(readdir).mockResolvedValueOnce([{ name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false }] as never);
+
+      const result = await svc.importDownload(1);
+      expect(result.downloadId).toBe(1);
     });
   });
 });

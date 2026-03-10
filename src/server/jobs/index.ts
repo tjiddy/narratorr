@@ -22,7 +22,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   startMonitorJob(db, services.downloadClient, services.notifier, log, {
     blacklistService: services.blacklist,
     retrySearchDeps,
-  });
+  }, services.eventBroadcaster);
   startEnrichmentJob(db, services.metadata, log);
   startImportJob(services.import, services.qualityGate, log);
   startSearchJob(services.settings, services.book, services.indexer, services.download, log, services.retryBudget);

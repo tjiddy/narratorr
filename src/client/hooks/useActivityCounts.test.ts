@@ -10,7 +10,12 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
+vi.mock('@/hooks/useEventSource', () => ({
+  useSSEConnected: vi.fn(() => false),
+}));
+
 import { api } from '@/lib/api';
+import { useSSEConnected } from '@/hooks/useEventSource';
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -65,5 +70,62 @@ describe('useActivityCounts', () => {
 
     expect(result.current.active).toBe(0);
     expect(result.current.completed).toBe(0);
+  });
+
+  it('disables polling when SSE is connected', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(useSSEConnected).mockReturnValue(true);
+      vi.mocked(api.getActivityCounts).mockResolvedValue({ active: 2, completed: 1 });
+
+      const { result } = renderHook(() => useActivityCounts(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      const callCountAfterLoad = vi.mocked(api.getActivityCounts).mock.calls.length;
+
+      // Advance well past the 30s interval — SSE gate should suppress polling
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(vi.mocked(api.getActivityCounts).mock.calls.length).toBe(callCountAfterLoad);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('enables polling when SSE disconnects', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(useSSEConnected).mockReturnValue(true);
+      vi.mocked(api.getActivityCounts).mockResolvedValue({ active: 1, completed: 0 });
+
+      const { result, rerender } = renderHook(() => useActivityCounts(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.isLoading).toBe(false);
+      });
+
+      const callCountAfterLoad = vi.mocked(api.getActivityCounts).mock.calls.length;
+
+      // Confirm polling is suppressed while SSE is connected
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(vi.mocked(api.getActivityCounts).mock.calls.length).toBe(callCountAfterLoad);
+
+      // SSE disconnects — interval should switch to 30_000
+      vi.mocked(useSSEConnected).mockReturnValue(false);
+      rerender();
+
+      await vi.advanceTimersByTimeAsync(31_000);
+
+      expect(vi.mocked(api.getActivityCounts).mock.calls.length).toBeGreaterThan(callCountAfterLoad);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

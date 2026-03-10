@@ -16,6 +16,9 @@ import type { NotifierService } from './notifier.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import type { TaggingService } from './tagging.service.js';
 import type { EventHistoryService } from './event-history.service.js';
+import type { EventBroadcasterService } from './event-broadcaster.service.js';
+import type { DownloadStatus } from '../../shared/schemas/activity.js';
+import type { BookStatus } from '../../shared/schemas/book.js';
 import { Semaphore } from '../utils/semaphore.js';
 
 type DownloadRow = typeof downloads.$inferSelect;
@@ -127,6 +130,7 @@ export class ImportService {
     private remotePathMappingService?: RemotePathMappingService,
     private taggingService?: TaggingService,
     private eventHistory?: EventHistoryService,
+    private broadcaster?: EventBroadcasterService,
   ) {}
 
   /**
@@ -147,6 +151,12 @@ export class ImportService {
 
     // 2. Mark as importing
     await this.db.update(downloads).set({ status: 'importing' }).where(eq(downloads.id, downloadId));
+
+    // SSE: download_status_change + book_status_change (importing)
+    try {
+      this.broadcaster?.emit('download_status_change', { download_id: downloadId, book_id: book.id, old_status: download.status as DownloadStatus, new_status: 'importing' });
+      this.broadcaster?.emit('book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: 'importing' });
+    } catch { /* fire-and-forget */ }
 
     let targetPath: string | undefined;
     try {
@@ -361,6 +371,13 @@ export class ImportService {
         'Import completed successfully',
       );
 
+      // SSE: download_status_change (importing → imported) + book_status_change + import_complete
+      try {
+        this.broadcaster?.emit('download_status_change', { download_id: downloadId, book_id: book.id, old_status: 'importing', new_status: 'imported' });
+        this.broadcaster?.emit('book_status_change', { book_id: book.id, old_status: 'importing', new_status: 'imported' });
+        this.broadcaster?.emit('import_complete', { download_id: downloadId, book_id: book.id, book_title: book.title });
+      } catch { /* fire-and-forget */ }
+
       // 9b. Notify on import
       this.notifierService?.notify('on_import', {
         event: 'on_import',
@@ -404,6 +421,12 @@ export class ImportService {
         status: revertStatus,
         updatedAt: new Date(),
       }).where(eq(books.id, book.id));
+
+      // SSE: download_status_change + book_status_change (failure revert)
+      try {
+        this.broadcaster?.emit('download_status_change', { download_id: downloadId, book_id: book.id, old_status: 'importing', new_status: 'failed' });
+        this.broadcaster?.emit('book_status_change', { book_id: book.id, old_status: 'importing', new_status: revertStatus });
+      } catch { /* fire-and-forget */ }
 
       this.log.error({ error, downloadId, bookStatus: revertStatus }, 'Import failed');
 

@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- quality gate decision tree with SSE emission at each transition point */
 import { eq, and, desc } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -8,7 +9,10 @@ import type { EventHistoryService } from './event-history.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
+import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import { applyPathMapping } from '../../core/utils/path-mapping.js';
+import type { DownloadStatus } from '../../shared/schemas/activity.js';
+import type { BookStatus } from '../../shared/schemas/book.js';
 
 type DownloadRow = typeof downloads.$inferSelect;
 type BookRow = typeof books.$inferSelect;
@@ -29,6 +33,8 @@ export interface QualityDecisionReason {
 const DURATION_TOLERANCE = 0.15; // 15%
 
 export class QualityGateService {
+  private broadcaster?: EventBroadcasterService;
+
   constructor(
     private db: Db,
     private downloadClientService: DownloadClientService,
@@ -37,6 +43,11 @@ export class QualityGateService {
     private log: FastifyBaseLogger,
     private remotePathMappingService?: RemotePathMappingService,
   ) {}
+
+  /** Set broadcaster for SSE emission (called after service graph construction). */
+  setBroadcaster(broadcaster: EventBroadcasterService): void {
+    this.broadcaster = broadcaster;
+  }
 
   /**
    * Process all completed downloads through the quality gate.
@@ -85,6 +96,11 @@ export class QualityGateService {
     if (!claimed) {
       this.log.debug({ id: download.id }, 'Quality gate: already claimed by another cycle');
       return;
+    }
+
+    // SSE: download_status_change (completed → checking)
+    if (book) {
+      try { this.broadcaster?.emit('download_status_change', { download_id: download.id, book_id: book.id, old_status: 'completed', new_status: 'checking' }); } catch { /* fire-and-forget */ }
     }
 
     // Resolve save path
@@ -181,12 +197,27 @@ export class QualityGateService {
       reason.action = 'held';
       await this.setStatus(download.id, 'pending_review');
       await this.recordDecision(download, book, reason);
+
+      // SSE: download_status_change (checking → pending_review) + review_needed
+      if (book) {
+        try {
+          this.broadcaster?.emit('download_status_change', { download_id: download.id, book_id: book.id, old_status: 'checking', new_status: 'pending_review' });
+          this.broadcaster?.emit('review_needed', { download_id: download.id, book_id: book.id, book_title: book.title });
+        } catch { /* fire-and-forget */ }
+      }
+
       this.log.info({ downloadId: download.id, holdReasons }, 'Quality gate: held for review');
     } else if (newMbPerHour !== null && existingMbPerHour !== null && newMbPerHour > existingMbPerHour) {
       // Auto-import: quality strictly better
       reason.action = 'imported';
       await this.setStatus(download.id, 'completed');
       await this.recordDecision(download, book, reason);
+
+      // SSE: download_status_change (checking → completed)
+      if (book) {
+        try { this.broadcaster?.emit('download_status_change', { download_id: download.id, book_id: book.id, old_status: 'checking', new_status: 'completed' }); } catch { /* fire-and-forget */ }
+      }
+
       this.log.info({ downloadId: download.id, newMbPerHour, existingMbPerHour }, 'Quality gate: auto-import (better quality)');
     } else if (newMbPerHour !== null && existingMbPerHour !== null) {
       // Auto-reject: quality same or worse
@@ -198,6 +229,15 @@ export class QualityGateService {
       reason.holdReasons.push('no_quality_data');
       await this.setStatus(download.id, 'pending_review');
       await this.recordDecision(download, book, reason);
+
+      // SSE: download_status_change (checking → pending_review) + review_needed
+      if (book) {
+        try {
+          this.broadcaster?.emit('download_status_change', { download_id: download.id, book_id: book.id, old_status: 'checking', new_status: 'pending_review' });
+          this.broadcaster?.emit('review_needed', { download_id: download.id, book_id: book.id, book_title: book.title });
+        } catch { /* fire-and-forget */ }
+      }
+
       this.log.info({ downloadId: download.id }, 'Quality gate: held for review (insufficient quality data)');
     }
   }
@@ -259,6 +299,15 @@ export class QualityGateService {
       channels: null,
       ...partial,
     });
+
+    // SSE: download_status_change (checking → pending_review) + review_needed
+    if (book) {
+      try {
+        this.broadcaster?.emit('download_status_change', { download_id: download.id, book_id: book.id, old_status: 'checking', new_status: 'pending_review' });
+        this.broadcaster?.emit('review_needed', { download_id: download.id, book_id: book.id, book_title: book.title });
+      } catch { /* fire-and-forget */ }
+    }
+
     this.log.info({ downloadId: download.id, holdReasons: partial.holdReasons }, 'Quality gate: held for review');
   }
 
@@ -308,6 +357,12 @@ export class QualityGateService {
         status: revertStatus as BookRow['status'],
         updatedAt: new Date(),
       }).where(eq(books.id, book.id));
+
+      // SSE: download_status_change + book_status_change (rejected)
+      try {
+        this.broadcaster?.emit('download_status_change', { download_id: download.id, book_id: book.id, old_status: download.status as DownloadStatus, new_status: 'failed' });
+        this.broadcaster?.emit('book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: revertStatus as BookStatus });
+      } catch { /* fire-and-forget */ }
     }
 
     this.log.info({ downloadId: download.id }, 'Quality gate: auto-rejected (quality same or worse)');
@@ -354,6 +409,12 @@ export class QualityGateService {
     }
 
     await this.setStatus(downloadId, 'importing');
+
+    // SSE: download_status_change (pending_review → importing)
+    if (download[0].bookId) {
+      try { this.broadcaster?.emit('download_status_change', { download_id: downloadId, book_id: download[0].bookId, old_status: 'pending_review', new_status: 'importing' }); } catch { /* fire-and-forget */ }
+    }
+
     this.log.info({ downloadId }, 'Quality gate: download approved for import');
 
     // Record approval event
@@ -451,6 +512,12 @@ export class QualityGateService {
         status: revertStatus as BookRow['status'],
         updatedAt: new Date(),
       }).where(eq(books.id, book.id));
+
+      // SSE: download_status_change + book_status_change (rejected)
+      try {
+        this.broadcaster?.emit('download_status_change', { download_id: downloadId, book_id: book.id, old_status: 'pending_review', new_status: 'failed' });
+        this.broadcaster?.emit('book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: revertStatus as BookStatus });
+      } catch { /* fire-and-forget */ }
     }
 
     return { id: downloadId, status: 'failed' };

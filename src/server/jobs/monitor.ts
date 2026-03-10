@@ -8,6 +8,8 @@ import type { DownloadClientService } from '../services';
 import type { NotifierService } from '../services';
 import { retrySearch, type RetrySearchDeps } from '../services/retry-search.js';
 import type { BlacklistService } from '../services';
+import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
+import type { DownloadStatus } from '../../shared/schemas/activity.js';
 
 export interface MonitorRetryDeps {
   blacklistService: BlacklistService;
@@ -20,11 +22,12 @@ export function startMonitorJob(
   notifierService: NotifierService,
   log: FastifyBaseLogger,
   retryDeps?: MonitorRetryDeps,
+  broadcaster?: EventBroadcasterService,
 ) {
   // Run every 30 seconds
   cron.schedule('*/30 * * * * *', async () => {
     try {
-      await monitorDownloads(db, downloadClientService, notifierService, log, retryDeps);
+      await monitorDownloads(db, downloadClientService, notifierService, log, retryDeps, broadcaster);
     } catch (error) {
       log.error(error, 'Monitor job error');
     }
@@ -40,6 +43,7 @@ export async function monitorDownloads(
   notifierService: NotifierService,
   log: FastifyBaseLogger,
   retryDeps?: MonitorRetryDeps,
+  broadcaster?: EventBroadcasterService,
 ) {
   // Get all active downloads
   const activeStatuses = ['downloading', 'queued', 'paused'] as const;
@@ -123,6 +127,16 @@ export async function monitorDownloads(
           completedAt: isCompleted && !download.completedAt ? new Date() : download.completedAt,
         })
         .where(eq(downloads.id, download.id));
+
+      // SSE: emit progress and status changes
+      if (download.bookId) {
+        try {
+          broadcaster?.emit('download_progress', { download_id: download.id, book_id: download.bookId, percentage: progress, speed: null, eta: null });
+          if (download.status !== newStatus) {
+            broadcaster?.emit('download_status_change', { download_id: download.id, book_id: download.bookId, old_status: download.status as DownloadStatus, new_status: newStatus as DownloadStatus });
+          }
+        } catch { /* fire-and-forget */ }
+      }
 
       // Handle failure transitions with retry recovery
       if (newStatus === 'failed' && download.status !== 'failed') {
