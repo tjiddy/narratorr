@@ -50,18 +50,23 @@ The server will start on http://localhost:3000 (API) and http://localhost:5173 (
 
 ### Docker
 
+Built on [linuxserver.io](https://www.linuxserver.io/) base image with s6-overlay for process supervision, matching the conventions used by Sonarr, Radarr, and Lidarr.
+
 ```bash
 # Build and run with Docker Compose
-docker-compose up -d
+docker compose up -d
 ```
 
-Edit `docker-compose.yml` to set your volume paths:
+Edit `docker-compose.yml` to set your volume paths and user:
 
 ```yaml
+environment:
+  - PUID=1000                           # Container process UID (default: 911)
+  - PGID=1000                           # Container process GID (default: 911)
 volumes:
   - ./config:/config                    # Database and config
   - /path/to/audiobooks:/audiobooks     # Your audiobook library
-  - /path/to/downloads:/downloads       # qBittorrent download directory
+  - /path/to/downloads:/downloads       # Download client save path
 ```
 
 ## Configuration

@@ -16,7 +16,7 @@ services:
       - CONFIG_PATH=/config
       - LIBRARY_PATH=/audiobooks
       - DATABASE_URL=file:/config/narratorr.db
-      # - PUID=1000              # Set container process UID (optional)
-      # - PGID=1000              # Set container process GID (optional, defaults to PUID)
+      - PUID=1000                # Set container process UID (default: 911)
+      - PGID=1000                # Set container process GID (default: 911)
       # - URL_BASE=/narratorr    # Subpath for reverse proxy (optional, default: /)
     restart: unless-stopped

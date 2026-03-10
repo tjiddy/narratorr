@@ -19,15 +19,15 @@ COPY tsconfig.json tsup.config.ts vite.config.ts postcss.config.js tailwind.conf
 # Build application
 RUN pnpm build
 
-# Production stage
-FROM node:20-alpine AS runner
+# Production stage — linuxserver.io base image with s6-overlay
+FROM ghcr.io/linuxserver/baseimage-alpine:3.21 AS runner
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Install ffmpeg for audio processing and su-exec for PUID/PGID support
-RUN apk add --no-cache ffmpeg su-exec
+# Install Node.js and ffmpeg (LSIO base does not include Node)
+RUN apk add --no-cache nodejs ffmpeg
 
 # Install pnpm for production dependencies
 RUN corepack enable
@@ -44,9 +44,8 @@ COPY --from=builder /app/dist ./dist
 # Copy migration files (not bundled, loaded at runtime)
 COPY --from=builder /app/drizzle ./drizzle
 
-# Copy entrypoint script
-COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Copy s6-overlay service definition
+COPY docker/root/ /
 
 # Create directories for config and data
 RUN mkdir -p /config /audiobooks /downloads
@@ -61,6 +60,4 @@ ENV DATABASE_URL=file:/config/narratorr.db
 
 # Health check — uses URL_BASE env var for subpath deployments
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget --spider -q http://localhost:3000${URL_BASE:-}/api/health || exit 1
-
-ENTRYPOINT ["/entrypoint.sh"]
+  CMD curl -sf http://localhost:3000${URL_BASE:-}/api/health || exit 1

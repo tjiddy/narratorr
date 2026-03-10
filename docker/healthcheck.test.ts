@@ -12,7 +12,7 @@ const dockerfile = path.join(__dirname, '..', 'Dockerfile');
  * Tests the Docker HEALTHCHECK command's URL_BASE variable expansion.
  *
  * The Dockerfile uses:
- *   wget --spider -q http://localhost:3000${URL_BASE:-}/api/health
+ *   curl -sf http://localhost:3000${URL_BASE:-}/api/health
  *
  * This verifies the shell expansion produces correct URLs for both
  * root deployments (URL_BASE unset) and subpath deployments (URL_BASE=/narratorr).
@@ -41,6 +41,12 @@ describe('Docker HEALTHCHECK URL_BASE expansion', () => {
     expect(content).toContain('HEALTHCHECK');
     expect(content).toContain('${URL_BASE:-}');
     expect(content).toContain('/api/health');
+  });
+
+  it('uses curl for health probing (LSIO base includes curl)', () => {
+    const content = fs.readFileSync(dockerfile, 'utf-8');
+    expect(content).toContain('curl -sf');
+    expect(content).not.toContain('wget');
   });
 
   it('expands to root path when URL_BASE is unset', () => {
