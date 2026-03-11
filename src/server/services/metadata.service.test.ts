@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { RateLimitError } from '../../core/index.js';
-import { createMockLogger } from '../__tests__/helpers.js';
+import { createMockLogger, inject } from '../__tests__/helpers.js';
+import type { FastifyBaseLogger } from 'fastify';
 import { MetadataService } from './metadata.service.js';
 
 const mockAudibleProvider = {
@@ -29,8 +30,8 @@ vi.mock('../../core/index.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../core/index.js')>();
   return {
     ...actual,
-    AudibleProvider: vi.fn().mockImplementation(() => mockAudibleProvider),
-    AudnexusProvider: vi.fn().mockImplementation(() => mockAudnexus),
+    AudibleProvider: vi.fn().mockImplementation(function () { return mockAudibleProvider; }),
+    AudnexusProvider: vi.fn().mockImplementation(function () { return mockAudnexus; }),
   };
 });
 
@@ -50,7 +51,7 @@ describe('MetadataService', () => {
     mockAudibleProvider.test.mockResolvedValue({ success: true });
     mockAudnexus.getBook.mockResolvedValue(null);
     mockAudnexus.getAuthor.mockResolvedValue(null);
-    service = new MetadataService(createMockLogger());
+    service = new MetadataService(inject<FastifyBaseLogger>(createMockLogger()));
   });
 
   describe('search', () => {
@@ -232,7 +233,7 @@ describe('MetadataService', () => {
     });
 
     it('registers Audible with custom region', () => {
-      const ukService = new MetadataService(createMockLogger(), { audibleRegion: 'uk' });
+      const ukService = new MetadataService(inject<FastifyBaseLogger>(createMockLogger()), { audibleRegion: 'uk' });
       const providers = ukService.getProviders();
       expect(providers).toHaveLength(1);
       expect(providers[0].type).toBe('audible');
@@ -382,7 +383,7 @@ describe('MetadataService', () => {
 
   describe('no API keys', () => {
     it('still has Audible provider when no API keys are set', async () => {
-      const minService = new MetadataService(createMockLogger());
+      const minService = new MetadataService(inject<FastifyBaseLogger>(createMockLogger()));
 
       // Audible is always available (no API key required)
       expect(minService.getProviders()).toHaveLength(1);

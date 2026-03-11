@@ -145,7 +145,8 @@ describe('IndexerService', () => {
   describe('testConfig', () => {
     it('creates adapter from config and returns test result', async () => {
       const mockAdapter = { test: vi.fn().mockResolvedValue({ success: true, message: 'OK' }), search: vi.fn() };
-      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
 
       const result = await service.testConfig({
         type: 'abb',
@@ -474,7 +475,8 @@ describe('IndexerService', () => {
 
   describe('FlareSolverr proxy support', () => {
     it('passes flareSolverrUrl to ABB adapter config', async () => {
-      const createSpy = vi.spyOn(service as never, 'createAdapter' as never);
+      const createSpy = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter');
       const proxyIndexer = createMockDbIndexer({
         type: 'abb',
         settings: { hostname: 'audiobookbay.lu', pageLimit: 2, flareSolverrUrl: 'http://proxy:8191' },
@@ -491,7 +493,8 @@ describe('IndexerService', () => {
     });
 
     it('passes flareSolverrUrl to torznab adapter config', async () => {
-      const createSpy = vi.spyOn(service as never, 'createAdapter' as never);
+      const createSpy = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter');
       const proxyIndexer = createMockDbIndexer({
         type: 'torznab',
         settings: { apiUrl: 'https://tracker.test', apiKey: 'key', flareSolverrUrl: 'http://proxy:8191' },
@@ -508,7 +511,8 @@ describe('IndexerService', () => {
     });
 
     it('passes flareSolverrUrl to newznab adapter config', async () => {
-      const createSpy = vi.spyOn(service as never, 'createAdapter' as never);
+      const createSpy = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter');
       const proxyIndexer = createMockDbIndexer({
         type: 'newznab',
         settings: { apiUrl: 'https://nzb.test', apiKey: 'key', flareSolverrUrl: 'http://proxy:8191' },
@@ -548,7 +552,8 @@ describe('IndexerService', () => {
 
     it('testConfig passes flareSolverrUrl through settings', async () => {
       const mockAdapter = { test: vi.fn().mockResolvedValue({ success: true, message: 'OK' }), search: vi.fn() };
-      const createSpy = vi.spyOn(service as never, 'createAdapter' as never).mockReturnValue(mockAdapter as never);
+      const createSpy = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
 
       const result = await service.testConfig({
         type: 'abb',
@@ -608,7 +613,8 @@ describe('IndexerService', () => {
     });
 
     it('createAdapter passes proxyUrl when indexer has useProxy true and global proxy is set', async () => {
-      const createSpy = vi.spyOn(proxyService as never, 'createAdapter' as never);
+      const createSpy = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(proxyService as any, 'createAdapter');
       const proxyIndexer = createMockDbIndexer({
         settings: { hostname: 'audiobookbay.lu', pageLimit: 2, useProxy: true },
       });
@@ -619,7 +625,8 @@ describe('IndexerService', () => {
     });
 
     it('createAdapter omits proxyUrl when indexer has useProxy false', async () => {
-      const createSpy = vi.spyOn(proxyService as never, 'createAdapter' as never);
+      const createSpy = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(proxyService as any, 'createAdapter');
       const noProxyIndexer = createMockDbIndexer({
         settings: { hostname: 'audiobookbay.lu', pageLimit: 2, useProxy: false },
       });
@@ -678,7 +685,8 @@ describe('IndexerService', () => {
         test: vi.fn(),
       };
       // Spy on createAdapter to verify proxyUrl is passed, but return our mock adapter
-      const createSpy = vi.spyOn(proxyService as never, 'createAdapter' as never).mockReturnValue(mockAdapter as never);
+      const createSpy = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(proxyService as any, 'createAdapter').mockReturnValue(mockAdapter as never);
 
       const results = await proxyService.searchAll('test');
       expect(results).toHaveLength(1);
@@ -734,7 +742,8 @@ describe('IndexerService', () => {
 
     it('testConfig routes through proxy when useProxy is true in config', async () => {
       const mockAdapter = { test: vi.fn().mockResolvedValue({ success: true, message: 'OK' }), search: vi.fn() };
-      const createSpy = vi.spyOn(proxyService as never, 'createAdapter' as never).mockReturnValue(mockAdapter as never);
+      const createSpy = // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(proxyService as any, 'createAdapter').mockReturnValue(mockAdapter as never);
 
       const result = await proxyService.testConfig({
         type: 'abb',

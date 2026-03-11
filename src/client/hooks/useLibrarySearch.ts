@@ -20,7 +20,7 @@ const fuseOptions: IFuseOptions<BookWithAuthor> = {
 export function useLibrarySearch(books: BookWithAuthor[]) {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const handleQueryChange = useCallback((value: string) => {
     setQuery(value);

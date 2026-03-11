@@ -12,7 +12,7 @@ interface IndexerFieldsProps {
   prowlarrManaged?: boolean;
 }
 
-type FieldComponent = (props: Pick<IndexerFieldsProps, 'register' | 'errors'> & { selectedType: string; prowlarrManaged?: boolean }) => JSX.Element;
+type FieldComponent = (props: Pick<IndexerFieldsProps, 'register' | 'errors'> & { selectedType: string; prowlarrManaged?: boolean }) => React.JSX.Element;
 
 function FlareSolverrField({ register, errors }: Pick<IndexerFieldsProps, 'register' | 'errors'>) {
   return (

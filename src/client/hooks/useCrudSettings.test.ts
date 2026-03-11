@@ -57,7 +57,7 @@ describe('useCrudSettings', () => {
   const testByConfig = vi.fn();
   const entityName = 'Indexer';
 
-  let mockClearFormTestResult: ReturnType<typeof vi.fn>;
+  let mockClearFormTestResult: ReturnType<typeof vi.fn<() => void>>;
   let queryClient: QueryClient;
 
   function renderCrudHook() {

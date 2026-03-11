@@ -9,7 +9,7 @@ vi.mock('../../core/index.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return {
     ...actual,
-    ProwlarrClient: vi.fn().mockImplementation(() => mockProwlarrClient),
+    ProwlarrClient: vi.fn().mockImplementation(function () { return mockProwlarrClient; }),
   };
 });
 

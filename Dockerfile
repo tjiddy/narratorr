@@ -14,7 +14,7 @@ RUN pnpm install --frozen-lockfile
 
 # Copy source code and configs
 COPY src/ src/
-COPY tsconfig.json tsup.config.ts vite.config.ts postcss.config.js tailwind.config.js ./
+COPY tsconfig.json tsup.config.ts vite.config.ts ./
 
 # Build application
 RUN pnpm build

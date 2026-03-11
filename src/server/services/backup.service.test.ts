@@ -407,7 +407,7 @@ describe('applyPendingRestore (startup swap)', () => {
   let tempDir: string;
   let configPath: string;
   let dbPath: string;
-  let mockLog: { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> };
+  let mockLog: { info: ReturnType<typeof vi.fn<(msg: string) => void>>; warn: ReturnType<typeof vi.fn<(msg: string) => void>> };
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'narratorr-swap-test-'));

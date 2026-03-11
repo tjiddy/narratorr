@@ -1065,9 +1065,9 @@ describe('LibraryScanService', () => {
       // in processImportsInBackground should catch and set status to 'missing'
       // Actually, getAudioStats catches its own errors and returns {fileCount:0, totalSize:0}
       // So we need to make something else fail. Let's make db.update throw for the path/size update.
-      const originalSet = (mockDb as Record<string, ReturnType<typeof vi.fn>>).set;
+      const originalSet = (mockDb as Record<string, (...args: unknown[]) => unknown>).set;
       let callCount = 0;
-      (mockDb as Record<string, ReturnType<typeof vi.fn>>).set.mockImplementation((...args: unknown[]) => {
+      ((mockDb as Record<string, ReturnType<typeof vi.fn>>).set as ReturnType<typeof vi.fn>).mockImplementation((...args: unknown[]) => {
         callCount++;
         // First set call (path/size) throws
         if (callCount === 1) {

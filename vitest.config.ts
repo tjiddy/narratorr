@@ -1,32 +1,46 @@
 import { defineConfig } from 'vitest/config';
 import path from 'path';
 
-export default defineConfig({
+const sharedConfig = {
   resolve: {
     alias: { '@': path.resolve(__dirname, 'src/client') },
   },
+};
+
+export default defineConfig({
+  ...sharedConfig,
   test: {
-    include: [
-      'src/server/**/*.test.ts',
-      'src/client/**/*.test.{ts,tsx}',
-      'src/shared/**/*.test.ts',
-      'src/core/**/*.test.ts',
-      'src/db/**/*.test.ts',
-      'scripts/**/*.test.ts',
-      'docker/**/*.test.ts',
-    ],
     passWithNoTests: true,
-    environmentMatchGlobs: [
-      ['src/client/**', 'jsdom'],
-      ['src/server/**', 'node'],
-      ['src/core/**', 'node'],
-      ['src/db/**', 'node'],
-    ],
-    setupFiles: ['src/client/__tests__/setup.ts'],
     coverage: {
-      provider: 'v8',
+      provider: 'v8' as const,
       reportsDirectory: 'coverage',
       exclude: ['scripts/**', 'src/server/index.ts', 'src/client/main.tsx'],
     },
+    projects: [
+      {
+        ...sharedConfig,
+        test: {
+          name: 'client',
+          environment: 'jsdom',
+          include: ['src/client/**/*.test.{ts,tsx}'],
+          setupFiles: ['src/client/__tests__/setup.ts'],
+        },
+      },
+      {
+        ...sharedConfig,
+        test: {
+          name: 'server',
+          environment: 'node',
+          include: [
+            'src/server/**/*.test.ts',
+            'src/shared/**/*.test.ts',
+            'src/core/**/*.test.ts',
+            'src/db/**/*.test.ts',
+            'scripts/**/*.test.ts',
+            'docker/**/*.test.ts',
+          ],
+        },
+      },
+    ],
   },
 });

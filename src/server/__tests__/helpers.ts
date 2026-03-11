@@ -4,7 +4,7 @@ import {
   validatorCompiler,
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
-import { vi } from 'vitest';
+import { vi, type Mock } from 'vitest';
 import type { Db } from '../../db/index.js';
 import { registerRoutes, type Services } from '../routes/index.js';
 import { RetryBudget } from '../services/retry-budget.js';
@@ -71,7 +71,7 @@ export function mockDbChain(result: unknown = []) {
  * Use `mockReturnValue(mockDbChain(data))` or `mockReturnValueOnce` on the
  * returned stubs to control per-call results.
  */
-export function createMockDb() {
+export function createMockDb(): Record<'select' | 'insert' | 'update' | 'delete', Mock> {
   return {
     select: vi.fn().mockReturnValue(mockDbChain()),
     insert: vi.fn().mockReturnValue(mockDbChain()),
@@ -84,7 +84,7 @@ export function createMockDb() {
  * Creates a mock Pino BaseLogger with all methods as vi.fn() stubs.
  * Use `inject<FastifyBaseLogger>(log)` when passing to service constructors.
  */
-export function createMockLogger() {
+export function createMockLogger(): Record<string, Mock | string> {
   return {
     info: vi.fn(),
     warn: vi.fn(),

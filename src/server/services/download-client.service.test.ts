@@ -294,7 +294,8 @@ describe('DownloadClientService', () => {
 
       // Spy on createAdapter to return an adapter that throws on test
       const mockAdapter = { test: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')) };
-      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
 
       const result = await service.test(1);
 
@@ -307,7 +308,8 @@ describe('DownloadClientService', () => {
       db.select.mockReturnValue(mockDbChain([throwingClient]));
 
       const mockAdapter = { test: vi.fn().mockRejectedValue('string error') };
-      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
 
       const result = await service.test(1);
 
@@ -323,7 +325,8 @@ describe('DownloadClientService', () => {
         supportsCategories: true,
         getCategories: vi.fn().mockResolvedValue(['audiobooks', 'movies']),
       };
-      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
 
       const result = await service.getCategories(1);
       expect(result.categories).toEqual(['audiobooks', 'movies']);
@@ -344,7 +347,8 @@ describe('DownloadClientService', () => {
         supportsCategories: false,
         getCategories: vi.fn(),
       };
-      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
 
       const result = await service.getCategories(1);
       expect(result.categories).toEqual([]);
@@ -357,7 +361,8 @@ describe('DownloadClientService', () => {
         supportsCategories: true,
         getCategories: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')),
       };
-      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
 
       const result = await service.getCategories(1);
       expect(result.categories).toEqual([]);
@@ -371,7 +376,8 @@ describe('DownloadClientService', () => {
         supportsCategories: true,
         getCategories: vi.fn().mockResolvedValue(['audiobooks']),
       };
-      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
 
       const result = await service.getCategoriesFromConfig({
         type: 'qbittorrent',
@@ -385,7 +391,8 @@ describe('DownloadClientService', () => {
         supportsCategories: false,
         getCategories: vi.fn(),
       };
-      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
 
       const result = await service.getCategoriesFromConfig({
         type: 'transmission',
@@ -409,7 +416,8 @@ describe('DownloadClientService', () => {
         supportsCategories: true,
         getCategories: vi.fn().mockRejectedValue(new Error('Network unreachable')),
       };
-      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
 
       const result = await service.getCategoriesFromConfig({
         type: 'qbittorrent',
@@ -423,7 +431,8 @@ describe('DownloadClientService', () => {
   describe('testConfig edge cases', () => {
     it('catches adapter.test() network error and returns failure', async () => {
       const mockAdapter = { test: vi.fn().mockRejectedValue(new Error('Network unreachable')) };
-      vi.spyOn(service as never, 'createAdapter').mockReturnValue(mockAdapter as never);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(service as any, 'createAdapter').mockReturnValue(mockAdapter as never);
 
       const result = await service.testConfig({
         type: 'qbittorrent',

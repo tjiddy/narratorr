@@ -816,7 +816,7 @@ describe('DownloadService', () => {
         expect.objectContaining({ downloadUrl: expect.stringContaining('data:application/x-bittorrent') }),
         expect.any(String),
       );
-      const debugCall = log.debug.mock.calls[0][0] as Record<string, unknown>;
+      const debugCall = (log.debug as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
       expect(debugCall.downloadUrl).not.toContain(torrentContent.toString('base64'));
       expect(debugCall.downloadUrl).toContain('KB');
     });

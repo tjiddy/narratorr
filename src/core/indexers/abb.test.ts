@@ -21,7 +21,8 @@ describe('AudioBookBayIndexer', () => {
   beforeEach(() => {
     indexer = new AudioBookBayIndexer({ hostname: ABB_HOST, pageLimit: 1 });
     // Speed up tests by removing delays
-    vi.spyOn(indexer as never, 'delay').mockResolvedValue(undefined);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.spyOn(indexer as any, 'delay').mockResolvedValue(undefined);
   });
 
   describe('properties', () => {
@@ -238,7 +239,8 @@ describe('AudioBookBayIndexer', () => {
         pageLimit: 1,
         flareSolverrUrl: PROXY_URL,
       });
-      vi.spyOn(proxiedIndexer as never, 'delay').mockResolvedValue(undefined);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(proxiedIndexer as any, 'delay').mockResolvedValue(undefined);
     });
 
     it('routes search through proxy when flareSolverrUrl configured', async () => {
@@ -489,7 +491,8 @@ describe('AudioBookBayIndexer', () => {
         pageLimit: 1,
         proxyUrl: PROXY_URL,
       });
-      vi.spyOn(proxiedIndexer as never, 'delay').mockResolvedValue(undefined);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(proxiedIndexer as any, 'delay').mockResolvedValue(undefined);
     });
 
     it('routes search through proxy when proxyUrl is set', async () => {
@@ -537,7 +540,8 @@ describe('AudioBookBayIndexer', () => {
         hostname: ABB_HOST,
         pageLimit: 1,
       });
-      vi.spyOn(directIndexer as never, 'delay').mockResolvedValue(undefined);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.spyOn(directIndexer as any, 'delay').mockResolvedValue(undefined);
 
       const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
         new Error('some random error'),

@@ -398,10 +398,10 @@ describe('ImportService', () => {
     function getEnrichmentUpdate(): Record<string, unknown> | undefined {
       const updateCalls = db.update.mock.results;
       const setCalls = updateCalls
-        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
         .filter(Boolean);
-      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
-      return allSetArgs.find(a => a.audioCodec);
+      const allSetArgs = setCalls.flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      return allSetArgs.find((a: Record<string, unknown>) => a.audioCodec);
     }
 
     it('converts duration from seconds to minutes when writing to books.duration', async () => {
@@ -756,9 +756,9 @@ describe('ImportService', () => {
       // Check that one of the update calls set book status to 'imported'
       const updateCalls = db.update.mock.results;
       const setCalls = updateCalls
-        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
         .filter(Boolean);
-      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      const allSetArgs = setCalls.flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'imported' }));
     });
 
@@ -774,9 +774,9 @@ describe('ImportService', () => {
 
       const updateCalls = db.update.mock.results;
       const setCalls = updateCalls
-        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
         .filter(Boolean);
-      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      const allSetArgs = setCalls.flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'wanted' }));
     });
 
@@ -797,9 +797,9 @@ describe('ImportService', () => {
 
       const updateCalls = db.update.mock.results;
       const setCalls = updateCalls
-        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
         .filter(Boolean);
-      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      const allSetArgs = setCalls.flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'imported' }));
     });
 
@@ -831,9 +831,9 @@ describe('ImportService', () => {
 
       const updateCalls = db.update.mock.results;
       const setCalls = updateCalls
-        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
         .filter(Boolean);
-      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      const allSetArgs = setCalls.flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
       // Should have both the 'failed' status from processing error AND 'imported' from recovery
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'imported' }));
     });
@@ -869,11 +869,11 @@ describe('ImportService', () => {
       // Verify DB revert still happened (download set to failed, book set to wanted)
       const updateCalls = db.update.mock.results;
       const setCalls = updateCalls
-        .map(r => {
+        .map((r: { value: unknown }) => {
           try { return (r.value as { set: ReturnType<typeof vi.fn> }).set; } catch { return null; }
         })
         .filter(Boolean);
-      const allSetArgs = setCalls!.flatMap(s => s!.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      const allSetArgs = setCalls!.flatMap((s: ReturnType<typeof vi.fn> | null) => s!.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'wanted' }));
     });
@@ -912,11 +912,11 @@ describe('ImportService', () => {
       // Verify DB revert still proceeded despite rm failure
       const updateCalls = db.update.mock.results;
       const setCalls = updateCalls
-        .map(r => {
+        .map((r: { value: unknown }) => {
           try { return (r.value as { set: ReturnType<typeof vi.fn> }).set; } catch { return null; }
         })
         .filter(Boolean);
-      const allSetArgs = setCalls!.flatMap(s => s!.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      const allSetArgs = setCalls!.flatMap((s: ReturnType<typeof vi.fn> | null) => s!.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'wanted' }));
     });
@@ -996,9 +996,9 @@ describe('ImportService', () => {
       // Verify book was set to 'failed' status
       const updateCalls = db.update.mock.results;
       const setCalls = updateCalls
-        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
         .filter(Boolean);
-      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      const allSetArgs = setCalls.flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
     });
 
@@ -1192,9 +1192,9 @@ describe('ImportService', () => {
       // Verify catch block still reverts download to 'failed'
       const updateCalls = db.update.mock.results;
       const setCalls = updateCalls
-        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
         .filter(Boolean);
-      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      const allSetArgs = setCalls.flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
     });
 
@@ -1248,9 +1248,9 @@ describe('ImportService', () => {
       // Verify download reverted to 'failed'
       const updateCalls = db.update.mock.results;
       const setCalls = updateCalls
-        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
+        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
         .filter(Boolean);
-      const allSetArgs = setCalls.flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      const allSetArgs = setCalls.flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
       // Book reverted to 'wanted' (no path)
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'wanted' }));
@@ -1548,8 +1548,8 @@ describe('ImportService', () => {
 
       // Third download should have been set to processing_queued
       const updateSetCalls = db.update.mock.results
-        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
-        .flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
+        .flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
 
       expect(updateSetCalls).toEqual(
         expect.arrayContaining([{ status: 'processing_queued' }]),
@@ -1604,8 +1604,8 @@ describe('ImportService', () => {
 
       // dl2 should be set to processing_queued
       const updateSetCalls = db.update.mock.results
-        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
-        .flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
+        .flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
       expect(updateSetCalls).toEqual(
         expect.arrayContaining([{ status: 'processing_queued' }]),
       );
@@ -1641,9 +1641,9 @@ describe('ImportService', () => {
 
       // dl2 and dl3 should be queued (status set to processing_queued)
       const tick1Updates = db.update.mock.results
-        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
-        .flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
-      const queuedUpdates = tick1Updates.filter(u => u.status === 'processing_queued');
+        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
+        .flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      const queuedUpdates = tick1Updates.filter((u: Record<string, unknown>) => u.status === 'processing_queued');
       expect(queuedUpdates.length).toBeGreaterThanOrEqual(2);
 
       // --- Tick 2: dl2 and dl3 still eligible (processing_queued), limit=1 ---
@@ -1818,8 +1818,8 @@ describe('ImportService', () => {
 
       // Verify download was set to failed with error message
       const updateSetCalls = db.update.mock.results
-        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
-        .flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
+        .flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
 
       expect(updateSetCalls).toEqual(
         expect.arrayContaining([
@@ -1842,8 +1842,8 @@ describe('ImportService', () => {
 
       // Book should be reverted to 'wanted' (mockBook.path is undefined)
       const updateSetCalls = db.update.mock.results
-        .map(r => (r.value as { set: ReturnType<typeof vi.fn> }).set)
-        .flatMap(s => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
+        .flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
 
       expect(updateSetCalls).toEqual(
         expect.arrayContaining([
