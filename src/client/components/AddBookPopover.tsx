@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -9,9 +10,25 @@ interface AddBookPopoverProps {
   isPending: boolean;
 }
 
+const PANEL_WIDTH = 256; // w-64 = 16rem = 256px
+
+function computePosition(triggerRect: DOMRect) {
+  const top = triggerRect.bottom + 8; // mt-2 equivalent
+  const right = triggerRect.right;
+  // Right-align: panel's right edge matches trigger's right edge
+  let left = right - PANEL_WIDTH;
+  // Clamp to viewport so panel doesn't overflow off-screen
+  const maxLeft = window.innerWidth - PANEL_WIDTH;
+  left = Math.min(left, maxLeft);
+  left = Math.max(left, 0);
+  return { top, left };
+}
+
 export function AddBookPopover({ onAdd, isPending }: AddBookPopoverProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const popoverRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState({ top: 0, left: 0 });
 
   const { data: settings } = useQuery({
     queryKey: queryKeys.settings(),
@@ -29,20 +46,33 @@ export function AddBookPopover({ onAdd, isPending }: AddBookPopoverProps) {
   const searchImmediately = searchOverride ?? qualityDefaults?.searchImmediately ?? false;
   const monitorForUpgrades = monitorOverride ?? qualityDefaults?.monitorForUpgrades ?? false;
 
+  const updatePosition = useCallback(() => {
+    if (triggerRef.current) {
+      setPosition(computePosition(triggerRef.current.getBoundingClientRect()));
+    }
+  }, []);
+
   const toggleOpen = () => {
     const next = !isOpen;
     if (next) {
       // Reset overrides so fresh open picks up current settings defaults
       setSearchOverride(null);
       setMonitorOverride(null);
+      // Compute initial position before opening
+      if (triggerRef.current) {
+        setPosition(computePosition(triggerRef.current.getBoundingClientRect()));
+      }
     }
     setIsOpen(next);
   };
 
-  // Close on outside click
+  // Close on outside click — dual-ref: close only when click is outside BOTH trigger and panel
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const insideTrigger = triggerRef.current?.contains(target);
+      const insidePanel = panelRef.current?.contains(target);
+      if (!insideTrigger && !insidePanel) {
         setIsOpen(false);
       }
     }
@@ -50,9 +80,21 @@ export function AddBookPopover({ onAdd, isPending }: AddBookPopoverProps) {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [isOpen]);
 
+  // Reposition on scroll/resize while open
+  useEffect(() => {
+    if (!isOpen) return;
+    window.addEventListener('scroll', updatePosition, true);
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      window.removeEventListener('scroll', updatePosition, true);
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [isOpen, updatePosition]);
+
   return (
-    <div className="relative" ref={popoverRef}>
+    <>
       <button
+        ref={triggerRef}
         type="button"
         onClick={toggleOpen}
         disabled={isPending}
@@ -77,8 +119,13 @@ export function AddBookPopover({ onAdd, isPending }: AddBookPopoverProps) {
         )}
       </button>
 
-      {isOpen && (
-        <div className="absolute right-0 top-full mt-2 z-50 w-64 glass-card rounded-xl p-4 shadow-lg border border-border animate-fade-in-up">
+      {isOpen && createPortal(
+        <div
+          ref={panelRef}
+          data-popover-portal
+          className="fixed z-50 w-64 glass-card rounded-xl p-4 shadow-lg border border-border animate-fade-in-up"
+          style={{ top: `${position.top}px`, left: `${position.left}px` }}
+        >
           <div className="space-y-3">
             <label className="flex items-center gap-3 cursor-pointer">
               <input
@@ -113,8 +160,9 @@ export function AddBookPopover({ onAdd, isPending }: AddBookPopoverProps) {
               Add to Library
             </button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   );
 }
