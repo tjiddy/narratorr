@@ -11,6 +11,7 @@ import {
   type SearchOptions,
 } from '../../core/index.js';
 import type { SettingsService } from './settings.service.js';
+import { encryptFields, decryptFields, isSentinel, getKey } from '../utils/secret-codec.js';
 
 type IndexerRow = typeof indexers.$inferSelect;
 type NewIndexer = typeof indexers.$inferInsert;
@@ -24,25 +25,52 @@ export class IndexerService {
     private settingsService?: SettingsService,
   ) {}
 
+  private decryptRow(row: IndexerRow): IndexerRow {
+    if (!row.settings) return row;
+    const s = { ...(row.settings as Record<string, unknown>) };
+    return { ...row, settings: decryptFields('indexer', s, getKey()) };
+  }
+
   async getAll(): Promise<IndexerRow[]> {
-    return this.db.select().from(indexers).orderBy(indexers.priority);
+    const rows = await this.db.select().from(indexers).orderBy(indexers.priority);
+    return rows.map((r) => this.decryptRow(r));
   }
 
   async getById(id: number): Promise<IndexerRow | null> {
     const results = await this.db.select().from(indexers).where(eq(indexers.id, id)).limit(1);
-    return results[0] || null;
+    const row = results[0] || null;
+    return row ? this.decryptRow(row) : null;
   }
 
   async create(data: Omit<NewIndexer, 'id' | 'createdAt'>): Promise<IndexerRow> {
-    const result = await this.db.insert(indexers).values(data).returning();
+    const toInsert = { ...data };
+    if (toInsert.settings) {
+      toInsert.settings = encryptFields('indexer', { ...(toInsert.settings as Record<string, unknown>) }, getKey());
+    }
+    const result = await this.db.insert(indexers).values(toInsert).returning();
     this.log.info({ name: data.name, type: data.type }, 'Indexer created');
-    return result[0];
+    return this.decryptRow(result[0]);
   }
 
   async update(id: number, data: Partial<NewIndexer>): Promise<IndexerRow | null> {
+    const toUpdate = { ...data };
+    if (toUpdate.settings) {
+      const settings = { ...(toUpdate.settings as Record<string, unknown>) };
+      // Handle sentinel passthrough: if a secret field is "********", preserve existing encrypted value
+      const existing = await this.db.select().from(indexers).where(eq(indexers.id, id)).limit(1);
+      if (existing[0]) {
+        const existingSettings = (existing[0].settings ?? {}) as Record<string, unknown>;
+        for (const [key, value] of Object.entries(settings)) {
+          if (typeof value === 'string' && isSentinel(value)) {
+            settings[key] = existingSettings[key]; // Keep existing (encrypted) value
+          }
+        }
+      }
+      toUpdate.settings = encryptFields('indexer', settings, getKey());
+    }
     const result = await this.db
       .update(indexers)
-      .set(data)
+      .set(toUpdate)
       .where(eq(indexers.id, id))
       .returning();
 
@@ -50,7 +78,8 @@ export class IndexerService {
     this.adapters.delete(id);
 
     this.log.info({ id }, 'Indexer updated');
-    return result[0] || null;
+    const row = result[0] || null;
+    return row ? this.decryptRow(row) : null;
   }
 
   async delete(id: number): Promise<boolean> {
@@ -70,7 +99,8 @@ export class IndexerService {
       .from(indexers)
       .where(and(eq(indexers.source, 'prowlarr'), eq(indexers.sourceIndexerId, sourceIndexerId)))
       .limit(1);
-    return results[0] || null;
+    const row = results[0] || null;
+    return row ? this.decryptRow(row) : null;
   }
 
   /** Create or upsert a Prowlarr-sourced indexer (AC7, AC9) */
@@ -127,7 +157,9 @@ export class IndexerService {
 
     if (!adapter) {
       const proxyUrl = await this.getProxyUrl();
-      adapter = this.createAdapter(indexer, proxyUrl);
+      // Ensure settings are decrypted before creating the adapter
+      const decrypted = this.decryptRow(indexer);
+      adapter = this.createAdapter(decrypted, proxyUrl);
       this.adapters.set(indexer.id, adapter);
     }
 

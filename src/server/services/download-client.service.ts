@@ -8,6 +8,7 @@ import {
   type DownloadProtocol,
 } from '../../core/index.js';
 import { DOWNLOAD_CLIENT_REGISTRY } from '../../shared/download-client-registry.js';
+import { encryptFields, decryptFields, isSentinel, getKey } from '../utils/secret-codec.js';
 
 type DownloadClientRow = typeof downloadClients.$inferSelect;
 type NewDownloadClient = typeof downloadClients.$inferInsert;
@@ -17,12 +18,19 @@ export class DownloadClientService {
 
   constructor(private db: Db, private log: FastifyBaseLogger) {}
 
+  private decryptRow(row: DownloadClientRow): DownloadClientRow {
+    if (!row.settings) return row;
+    const s = { ...(row.settings as Record<string, unknown>) };
+    return { ...row, settings: decryptFields('downloadClient', s, getKey()) };
+  }
+
   clearAdapterCache(): void {
     this.adapters.clear();
   }
 
   async getAll(): Promise<DownloadClientRow[]> {
-    return this.db.select().from(downloadClients).orderBy(downloadClients.priority);
+    const rows = await this.db.select().from(downloadClients).orderBy(downloadClients.priority);
+    return rows.map((r) => this.decryptRow(r));
   }
 
   async getById(id: number): Promise<DownloadClientRow | null> {
@@ -31,7 +39,8 @@ export class DownloadClientService {
       .from(downloadClients)
       .where(eq(downloadClients.id, id))
       .limit(1);
-    return results[0] || null;
+    const row = results[0] || null;
+    return row ? this.decryptRow(row) : null;
   }
 
   async getFirstEnabled(): Promise<DownloadClientRow | null> {
@@ -41,7 +50,8 @@ export class DownloadClientService {
       .where(eq(downloadClients.enabled, true))
       .orderBy(downloadClients.priority)
       .limit(1);
-    return results[0] || null;
+    const row = results[0] || null;
+    return row ? this.decryptRow(row) : null;
   }
 
   async getFirstEnabledForProtocol(protocol: DownloadProtocol): Promise<DownloadClientRow | null> {
@@ -60,22 +70,41 @@ export class DownloadClientService {
       return meta.protocol === protocol;
     }) || null;
     this.log.debug({ protocol, found: match?.name ?? null, candidates: results.length }, 'Download client lookup for protocol');
-    return match;
+    return match ? this.decryptRow(match) : null;
   }
 
   async create(data: Omit<NewDownloadClient, 'id' | 'createdAt'>): Promise<DownloadClientRow> {
-    const result = await this.db.insert(downloadClients).values(data).returning();
+    const toInsert = { ...data };
+    if (toInsert.settings) {
+      toInsert.settings = encryptFields('downloadClient', { ...(toInsert.settings as Record<string, unknown>) }, getKey());
+    }
+    const result = await this.db.insert(downloadClients).values(toInsert).returning();
     this.log.info({ name: data.name, type: data.type }, 'Download client created');
-    return result[0];
+    return this.decryptRow(result[0]);
   }
 
   async update(
     id: number,
     data: Partial<NewDownloadClient>
   ): Promise<DownloadClientRow | null> {
+    const toUpdate = { ...data };
+    if (toUpdate.settings) {
+      const settings = { ...(toUpdate.settings as Record<string, unknown>) };
+      // Handle sentinel passthrough: if a secret field is "********", preserve existing encrypted value
+      const existing = await this.db.select().from(downloadClients).where(eq(downloadClients.id, id)).limit(1);
+      if (existing[0]) {
+        const existingSettings = (existing[0].settings ?? {}) as Record<string, unknown>;
+        for (const [key, value] of Object.entries(settings)) {
+          if (typeof value === 'string' && isSentinel(value)) {
+            settings[key] = existingSettings[key]; // Keep existing (encrypted) value
+          }
+        }
+      }
+      toUpdate.settings = encryptFields('downloadClient', settings, getKey());
+    }
     const result = await this.db
       .update(downloadClients)
-      .set(data)
+      .set(toUpdate)
       .where(eq(downloadClients.id, id))
       .returning();
 
@@ -83,7 +112,8 @@ export class DownloadClientService {
     this.adapters.delete(id);
 
     this.log.info({ id }, 'Download client updated');
-    return result[0] || null;
+    const row = result[0] || null;
+    return row ? this.decryptRow(row) : null;
   }
 
   async delete(id: number): Promise<boolean> {

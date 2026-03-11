@@ -1,6 +1,7 @@
 import { type FastifyInstance } from 'fastify';
 import { type z, type ZodTypeAny } from 'zod';
 import { idParamSchema } from '../../shared/schemas.js';
+import { maskFields, type SecretEntity } from '../utils/secret-codec.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -20,18 +21,31 @@ interface CrudRouteOptions {
   service: CrudService;
   createSchema: ZodTypeAny;
   updateSchema: ZodTypeAny;
+  /** When set, masks secret fields in the `settings` JSON blob of API responses. */
+  secretEntity?: SecretEntity;
+}
+
+/** Mask the `settings` blob in a row if secretEntity is configured. */
+function maskRow(row: unknown, entity?: SecretEntity): unknown {
+  if (!entity || !row || typeof row !== 'object') return row;
+  const r = row as Record<string, unknown>;
+  if (r.settings && typeof r.settings === 'object') {
+    return { ...r, settings: maskFields(entity, { ...(r.settings as Record<string, unknown>) }) };
+  }
+  return row;
 }
 
 export async function registerCrudRoutes(
   app: FastifyInstance,
-  { basePath, entityName, service, createSchema, updateSchema }: CrudRouteOptions,
+  { basePath, entityName, service, createSchema, updateSchema, secretEntity }: CrudRouteOptions,
 ) {
   const lower = entityName.toLowerCase();
 
   // GET /api/<resource>
   app.get(basePath, async (request, reply) => {
     try {
-      return await service.getAll();
+      const items = await service.getAll();
+      return items.map((item) => maskRow(item, secretEntity));
     } catch (error) {
       request.log.error(error, `Failed to fetch ${lower}s`);
       return reply.status(500).send({ error: 'Internal server error' });
@@ -49,7 +63,7 @@ export async function registerCrudRoutes(
         if (!item) {
           return await reply.status(404).send({ error: `${entityName} not found` });
         }
-        return item;
+        return maskRow(item, secretEntity);
       } catch (error) {
         request.log.error(error, `Failed to fetch ${lower}`);
         return reply.status(500).send({ error: 'Internal server error' });
@@ -66,7 +80,7 @@ export async function registerCrudRoutes(
         const data = request.body;
         const item = await service.create(data);
         request.log.info({ name: data.name }, `${entityName} created`);
-        return await reply.status(201).send(item);
+        return await reply.status(201).send(maskRow(item, secretEntity));
       } catch (error) {
         request.log.error(error, `Failed to create ${lower}`);
         return reply.status(500).send({ error: 'Internal server error' });
@@ -86,7 +100,7 @@ export async function registerCrudRoutes(
           return await reply.status(404).send({ error: `${entityName} not found` });
         }
         request.log.info({ id }, `${entityName} updated`);
-        return item;
+        return maskRow(item, secretEntity);
       } catch (error) {
         request.log.error(error, `Failed to update ${lower}`);
         return reply.status(500).send({ error: 'Internal server error' });

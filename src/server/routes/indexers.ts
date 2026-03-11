@@ -10,5 +10,6 @@ export async function indexersRoutes(app: FastifyInstance, indexerService: Index
     service: indexerService,
     createSchema: createIndexerSchema,
     updateSchema: updateIndexerSchema,
+    secretEntity: 'indexer',
   });
 }

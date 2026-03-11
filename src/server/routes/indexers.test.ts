@@ -8,7 +8,7 @@ const mockIndexer = {
   type: 'abb',
   enabled: true,
   priority: 50,
-  settings: { hostname: 'audiobookbay.lu', pageLimit: 2 },
+  settings: { hostname: 'audiobookbay.lu', pageLimit: 2, apiKey: 'secret-key-123', flareSolverrUrl: 'http://flaresolverr:8191' },
   source: null,
   sourceIndexerId: null,
   createdAt: new Date(),
@@ -219,6 +219,65 @@ describe('indexers routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.success).toBe(true);
       expect(body.ip).toBe('203.0.113.42');
+    });
+  });
+
+  describe('secret field masking', () => {
+    it('GET /api/indexers masks apiKey and flareSolverrUrl in list response', async () => {
+      (services.indexer.getAll as Mock).mockResolvedValue([mockIndexer]);
+
+      const res = await app.inject({ method: 'GET', url: '/api/indexers' });
+      const body = JSON.parse(res.payload);
+
+      expect(body[0].settings.apiKey).toBe('********');
+      expect(body[0].settings.flareSolverrUrl).toBe('********');
+      expect(body[0].settings.hostname).toBe('audiobookbay.lu');
+    });
+
+    it('GET /api/indexers/:id masks secret fields in detail response', async () => {
+      (services.indexer.getById as Mock).mockResolvedValue(mockIndexer);
+
+      const res = await app.inject({ method: 'GET', url: '/api/indexers/1' });
+      const body = JSON.parse(res.payload);
+
+      expect(body.settings.apiKey).toBe('********');
+      expect(body.settings.flareSolverrUrl).toBe('********');
+      expect(body.settings.hostname).toBe('audiobookbay.lu');
+    });
+
+    it('POST /api/indexers masks secret fields in create response', async () => {
+      (services.indexer.create as Mock).mockResolvedValue(mockIndexer);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/indexers',
+        payload: {
+          name: 'AudioBookBay',
+          type: 'abb',
+          enabled: true,
+          priority: 50,
+          settings: { hostname: 'audiobookbay.lu', apiKey: 'new-key' },
+        },
+      });
+      const body = JSON.parse(res.payload);
+
+      expect(res.statusCode).toBe(201);
+      expect(body.settings.apiKey).toBe('********');
+    });
+
+    it('PUT /api/indexers/:id masks secret fields in update response', async () => {
+      (services.indexer.update as Mock).mockResolvedValue(mockIndexer);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/indexers/1',
+        payload: { name: 'Updated' },
+      });
+      const body = JSON.parse(res.payload);
+
+      expect(res.statusCode).toBe(200);
+      expect(body.settings.apiKey).toBe('********');
+      expect(body.settings.flareSolverrUrl).toBe('********');
     });
   });
 });

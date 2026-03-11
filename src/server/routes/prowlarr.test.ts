@@ -67,13 +67,16 @@ describe('prowlarr routes', () => {
   });
 
   describe('GET /api/prowlarr/config', () => {
-    it('returns config when configured', async () => {
+    it('returns config with masked apiKey when configured', async () => {
       (services.prowlarrSync.getConfig as Mock).mockResolvedValue(mockConfig);
 
       const res = await app.inject({ method: 'GET', url: '/api/prowlarr/config' });
 
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual(mockConfig);
+      const body = JSON.parse(res.payload);
+      expect(body.apiKey).toBe('********');
+      expect(body.url).toBe('https://prowlarr.test');
+      expect(body.syncMode).toBe('addOnly');
     });
 
     it('returns 404 when not configured', async () => {
@@ -86,7 +89,7 @@ describe('prowlarr routes', () => {
   });
 
   describe('PUT /api/prowlarr/config', () => {
-    it('saves and returns config', async () => {
+    it('saves and returns config with masked apiKey', async () => {
       (services.prowlarrSync.saveConfig as Mock).mockResolvedValue(undefined);
 
       const res = await app.inject({
@@ -97,6 +100,25 @@ describe('prowlarr routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(services.prowlarrSync.saveConfig).toHaveBeenCalledWith(mockConfig);
+      const body = JSON.parse(res.payload);
+      expect(body.apiKey).toBe('********');
+    });
+
+    it('preserves existing apiKey when sentinel is sent', async () => {
+      (services.prowlarrSync.getConfig as Mock).mockResolvedValue(mockConfig);
+      (services.prowlarrSync.saveConfig as Mock).mockResolvedValue(undefined);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/prowlarr/config',
+        payload: { ...mockConfig, apiKey: '********' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      // saveConfig should receive the original key, not the sentinel
+      expect(services.prowlarrSync.saveConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ apiKey: 'test-key' }),
+      );
     });
 
     it('returns 400 on invalid config', async () => {

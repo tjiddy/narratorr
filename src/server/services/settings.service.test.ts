@@ -1,16 +1,24 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { SettingsService } from './settings.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
+import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js';
+
+const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 
 describe('SettingsService', () => {
   let db: ReturnType<typeof createMockDb>;
   let service: SettingsService;
 
   beforeEach(() => {
+    initializeKey(TEST_KEY);
     db = createMockDb();
     service = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+  });
+
+  afterEach(() => {
+    _resetKey();
   });
 
   describe('get', () => {
@@ -121,6 +129,57 @@ describe('SettingsService', () => {
       expect(db.insert).toHaveBeenCalled();
       expect(result).toBeDefined();
       expect(result.library).toBeDefined();
+    });
+  });
+
+  describe('network encryption', () => {
+    it('set("network") encrypts proxyUrl before storing', async () => {
+      // For set(), first call is sentinel lookup (select), second is upsert (insert)
+      db.select.mockReturnValue(mockDbChain([])); // No existing value
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.set('network', { proxyUrl: 'http://user:pass@proxy:8080' });
+
+      // The value passed to insert().values() should have encrypted proxyUrl
+      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
+      const storedValue = chain.values.mock.calls[0][0].value;
+      expect(isEncrypted(storedValue.proxyUrl as string)).toBe(true);
+    });
+
+    it('get("network") decrypts stored encrypted proxyUrl', async () => {
+      // Manually create an encrypted value to store
+      const { encrypt } = await import('../utils/secret-codec.js');
+      const encrypted = encrypt('http://user:pass@proxy:8080', TEST_KEY);
+      db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: encrypted } }]));
+
+      const result = await service.get('network');
+
+      expect(result.proxyUrl).toBe('http://user:pass@proxy:8080');
+    });
+
+    it('getAll() decrypts network proxyUrl among other categories', async () => {
+      const { encrypt } = await import('../utils/secret-codec.js');
+      const encrypted = encrypt('http://proxy:8080', TEST_KEY);
+      db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: encrypted } }]));
+
+      const result = await service.getAll();
+
+      expect(result.network.proxyUrl).toBe('http://proxy:8080');
+    });
+
+    it('set("network") with sentinel proxyUrl preserves existing encrypted value', async () => {
+      const { encrypt } = await import('../utils/secret-codec.js');
+      const existingEncrypted = encrypt('http://real-proxy:8080', TEST_KEY);
+      // Sentinel lookup returns existing row with encrypted value
+      db.select.mockReturnValue(mockDbChain([{ key: 'network', value: { proxyUrl: existingEncrypted } }]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.set('network', { proxyUrl: '********' });
+
+      // The stored value should keep the original encrypted proxyUrl, not literal '********'
+      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
+      const storedValue = chain.values.mock.calls[0][0].value;
+      expect(storedValue.proxyUrl).toBe(existingEncrypted);
     });
   });
 });

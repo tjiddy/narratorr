@@ -13,6 +13,7 @@ import { join } from 'path';
 import { randomBytes } from 'crypto';
 import { unlink } from 'fs/promises';
 import { expect } from 'vitest';
+import { initializeKey } from '../utils/secret-codec.js';
 
 export interface E2EApp {
   app: ReturnType<typeof Fastify> & { withTypeProvider: () => unknown };
@@ -33,6 +34,10 @@ export async function createE2EApp(): Promise<E2EApp> {
 
   await runMigrations(dbFile);
   const db = createDb(dbFile);
+
+  // Initialize encryption key for e2e tests (deterministic key for test isolation)
+  const testKey = Buffer.from('a'.repeat(64), 'hex');
+  initializeKey(testKey);
 
   const app = Fastify({
     logger: false,

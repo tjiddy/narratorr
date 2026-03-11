@@ -7,6 +7,7 @@ import {
   type ProwlarrConfigInput,
   type ProwlarrSyncApplyInput,
 } from '../../shared/schemas.js';
+import { maskFields, isSentinel } from '../utils/secret-codec.js';
 
 interface TestBody {
   url: string;
@@ -42,7 +43,7 @@ export async function prowlarrRoutes(
     if (!config) {
       return reply.status(404).send({ error: 'Prowlarr not configured' });
     }
-    return config;
+    return maskFields('prowlarr', { ...config } as Record<string, unknown>);
   });
 
   // Save Prowlarr config
@@ -52,9 +53,18 @@ export async function prowlarrRoutes(
       return reply.status(400).send({ error: parsed.error.issues[0]?.message || 'Invalid input' });
     }
 
-    await prowlarrSync.saveConfig(parsed.data);
+    // Sentinel passthrough: if apiKey is '********', preserve existing encrypted value
+    const data = { ...parsed.data };
+    if (isSentinel(data.apiKey)) {
+      const existing = await prowlarrSync.getConfig();
+      if (existing) {
+        data.apiKey = existing.apiKey; // Already-decrypted value from getConfig
+      }
+    }
+
+    await prowlarrSync.saveConfig(data);
     request.log.info('Prowlarr config updated');
-    return parsed.data;
+    return maskFields('prowlarr', { ...data } as Record<string, unknown>);
   });
 
   // Preview sync (fetch from Prowlarr, diff against local)

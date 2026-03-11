@@ -16,6 +16,7 @@ export async function downloadClientsRoutes(
     service: downloadClientService,
     createSchema: createDownloadClientSchema,
     updateSchema: updateDownloadClientSchema,
+    secretEntity: 'downloadClient',
   });
 
   // POST /api/download-clients/categories — fetch categories from unsaved config

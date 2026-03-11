@@ -1,10 +1,12 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbDownloadClient } from '../__tests__/factories.js';
 import { DownloadClientService } from './download-client.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
+import { initializeKey, _resetKey } from '../utils/secret-codec.js';
 
+const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 const mockClient = createMockDbDownloadClient();
 
 describe('DownloadClientService', () => {
@@ -12,8 +14,13 @@ describe('DownloadClientService', () => {
   let service: DownloadClientService;
 
   beforeEach(() => {
+    initializeKey(TEST_KEY);
     db = createMockDb();
     service = new DownloadClientService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+  });
+
+  afterEach(() => {
+    _resetKey();
   });
 
   describe('getAll', () => {

@@ -1,8 +1,11 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { ProwlarrSyncService } from './prowlarr-sync.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
+import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js';
+
+const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 
 // Mock the ProwlarrClient
 vi.mock('../../core/index.js', async (importOriginal) => {
@@ -42,6 +45,7 @@ describe('ProwlarrSyncService', () => {
   let service: ProwlarrSyncService;
 
   beforeEach(() => {
+    initializeKey(TEST_KEY);
     vi.clearAllMocks();
     db = createMockDb();
     service = new ProwlarrSyncService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
@@ -50,6 +54,10 @@ describe('ProwlarrSyncService', () => {
     mockProwlarrClient.getIndexers.mockResolvedValue(mockRemoteIndexers);
     mockProwlarrClient.filterByCategories.mockReturnValue(mockRemoteIndexers);
     mockProwlarrClient.buildProxyIndexers.mockReturnValue(mockProxyIndexers);
+  });
+
+  afterEach(() => {
+    _resetKey();
   });
 
   describe('getConfig', () => {
@@ -261,11 +269,10 @@ describe('ProwlarrSyncService', () => {
       const updateChain = db.update.mock.results[0]?.value;
       expect(updateChain?.set?.mock?.calls?.[0]?.[0]).toBeDefined();
       const setArg = updateChain.set.mock.calls[0][0];
-      expect(setArg.settings).toEqual({
-        apiUrl: 'https://prowlarr.test/1/',
-        apiKey: 'test-key',
-        flareSolverrUrl: 'http://proxy:8191',
-      });
+      // Non-secret fields preserved as-is, secret fields encrypted
+      expect(setArg.settings.apiUrl).toBe('https://prowlarr.test/1/');
+      expect(isEncrypted(setArg.settings.apiKey)).toBe(true);
+      expect(isEncrypted(setArg.settings.flareSolverrUrl)).toBe(true);
     });
 
     it('does not include flareSolverrUrl on new insert (clean settings)', async () => {

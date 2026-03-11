@@ -26,6 +26,8 @@ import multipart from '@fastify/multipart';
 import authPlugin from './plugins/auth.js';
 import { registerStaticAndSpa, listenWithRetry } from './server-utils.js';
 import { applyPendingRestore } from './services/backup.service.js';
+import { loadEncryptionKey, initializeKey } from './utils/secret-codec.js';
+import { migrateSecretsToEncrypted } from './utils/secret-migration.js';
 
 function buildLoggerConfig(): boolean | { transport: { target: string; options: Record<string, unknown> } } {
   if (!config.isDev) return true;
@@ -90,6 +92,16 @@ async function main() {
   app.log.info({ dbPath: config.dbPath }, 'Initializing database');
   await runMigrations(config.dbPath);
   const db = createDb(config.dbPath);
+
+  // Initialize encryption key and migrate plaintext secrets
+  const keyResult = loadEncryptionKey(process.env.NARRATORR_SECRET_KEY, config.configPath);
+  initializeKey(keyResult.key);
+  if (keyResult.source === 'generated') {
+    app.log.info({ path: path.join(config.configPath, 'secret.key') }, 'Generated new encryption key');
+  } else {
+    app.log.info({ source: keyResult.source }, 'Encryption key loaded');
+  }
+  await migrateSecretsToEncrypted(db, keyResult.key, app.log);
 
   // Create services (async — reads settings from DB for provider config)
   const services = await createServices(db, app.log);

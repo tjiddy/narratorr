@@ -3,6 +3,7 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { indexers, settings } from '../../db/schema.js';
 import { ProwlarrClient, type ProwlarrConfig, type ProwlarrProxyIndexer } from '../../core/index.js';
+import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
 
 type IndexerRow = typeof indexers.$inferSelect;
 
@@ -45,16 +46,18 @@ export class ProwlarrSyncService {
       .limit(1);
 
     if (result.length === 0) return null;
-    return result[0].value as ProwlarrConfig;
+    const raw = result[0].value as Record<string, unknown>;
+    return decryptFields('prowlarr', { ...raw }, getKey()) as unknown as ProwlarrConfig;
   }
 
   async saveConfig(config: ProwlarrConfig): Promise<void> {
+    const encrypted = encryptFields('prowlarr', { ...config } as Record<string, unknown>, getKey());
     await this.db
       .insert(settings)
-      .values({ key: 'prowlarr', value: config as unknown })
+      .values({ key: 'prowlarr', value: encrypted as unknown })
       .onConflictDoUpdate({
         target: settings.key,
-        set: { value: config as unknown },
+        set: { value: encrypted as unknown },
       });
     this.log.info('Prowlarr config saved');
   }
@@ -159,12 +162,13 @@ export class ProwlarrSyncService {
         const proxy = proxyByProwlarrId.get(item.prowlarrId);
         if (!proxy) continue;
 
+        const indexerSettings = encryptFields('indexer', { apiUrl: proxy.apiUrl, apiKey: proxy.apiKey }, getKey());
         await this.db.insert(indexers).values({
           name: proxy.name,
           type: proxy.type,
           enabled: true,
           priority: 50,
-          settings: { apiUrl: proxy.apiUrl, apiKey: proxy.apiKey } as Record<string, unknown>,
+          settings: indexerSettings as Record<string, unknown>,
           source: 'prowlarr',
           sourceIndexerId: proxy.prowlarrId,
         });
@@ -191,12 +195,13 @@ export class ProwlarrSyncService {
           // Merge Prowlarr-managed fields into existing settings to preserve
           // local-only fields (e.g., flareSolverrUrl) that Prowlarr doesn't manage
           const existingSettings = (local[0].settings as Record<string, unknown>) || {};
+          const mergedSettings = encryptFields('indexer', { ...existingSettings, apiUrl: proxy.apiUrl, apiKey: proxy.apiKey }, getKey());
           await this.db
             .update(indexers)
             .set({
               name: proxy.name,
               type: proxy.type,
-              settings: { ...existingSettings, apiUrl: proxy.apiUrl, apiKey: proxy.apiKey },
+              settings: mergedSettings,
             })
             .where(eq(indexers.id, local[0].id));
           result.updated++;
@@ -230,7 +235,8 @@ export class ProwlarrSyncService {
 
   private diffIndexer(local: IndexerRow, remote: ProwlarrProxyIndexer): string[] {
     const changes: string[] = [];
-    const localSettings = local.settings as Record<string, unknown>;
+    const rawSettings = local.settings as Record<string, unknown>;
+    const localSettings = decryptFields('indexer', { ...rawSettings }, getKey());
 
     if (local.name !== remote.name) changes.push('name');
     if (local.type !== remote.type) changes.push('type');

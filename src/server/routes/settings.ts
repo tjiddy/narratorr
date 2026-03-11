@@ -5,6 +5,7 @@ import { type SettingsService, type AppSettings } from '../services';
 import { updateSettingsSchema } from '../../shared/schemas.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import { resolveProxyIp } from '../../core/indexers/proxy.js';
+import { maskFields, isSentinel, type SecretEntity } from '../utils/secret-codec.js';
 
 function redactProxyUrl(proxyUrl: string): string {
   try {
@@ -17,6 +18,24 @@ function redactProxyUrl(proxyUrl: string): string {
   } catch {
     return '<invalid-url>';
   }
+}
+
+/** Mask secret fields in settings categories that contain secrets. */
+const SETTINGS_SECRET_MAP: [string, SecretEntity][] = [
+  ['prowlarr', 'prowlarr'],
+  ['auth', 'auth'],
+  ['network', 'network'],
+];
+
+function maskSettingsResponse(all: AppSettings): AppSettings {
+  const masked = { ...all };
+  for (const [key, entity] of SETTINGS_SECRET_MAP) {
+    const cat = masked[key as keyof AppSettings];
+    if (cat && typeof cat === 'object') {
+      (masked as Record<string, unknown>)[key] = maskFields(entity, { ...(cat as Record<string, unknown>) });
+    }
+  }
+  return masked;
 }
 
 const ffmpegProbeSchema = z.object({
@@ -42,7 +61,8 @@ export async function settingsRoutes(
   // GET /api/settings
   app.get('/api/settings', async (request, reply) => {
     try {
-      return await settingsService.getAll();
+      const all = await settingsService.getAll();
+      return maskSettingsResponse(all);
     } catch (error) {
       request.log.error(error, 'Failed to fetch settings');
       return reply.status(500).send({ error: 'Internal server error' });
@@ -75,16 +95,26 @@ export async function settingsRoutes(
         }
 
         // Clear indexer adapter cache only when network settings actually changed
-        // so proxy URL changes take effect on next request
-        if (previousNetwork && indexerService &&
-            JSON.stringify(data.network) !== JSON.stringify(previousNetwork)) {
-          indexerService.clearAdapterCache();
-          request.log.info('Indexer adapter cache cleared (network settings changed)');
+        // so proxy URL changes take effect on next request.
+        // Normalize sentinel values before comparison — '********' means "unchanged",
+        // so replace sentinels with the previous values to avoid false positives.
+        if (previousNetwork && indexerService && data.network) {
+          const normalized = { ...data.network } as Record<string, unknown>;
+          const prev = previousNetwork as Record<string, unknown>;
+          for (const [k, v] of Object.entries(normalized)) {
+            if (typeof v === 'string' && isSentinel(v)) {
+              normalized[k] = prev[k];
+            }
+          }
+          if (JSON.stringify(normalized) !== JSON.stringify(previousNetwork)) {
+            indexerService.clearAdapterCache();
+            request.log.info('Indexer adapter cache cleared (network settings changed)');
+          }
         }
 
         request.log.info('Settings updated');
 
-        return result;
+        return maskSettingsResponse(result);
       } catch (error) {
         request.log.error(error, 'Failed to update settings');
         return reply.status(500).send({ error: 'Internal server error' });

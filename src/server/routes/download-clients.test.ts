@@ -8,7 +8,7 @@ const mockClient = {
   type: 'qbittorrent',
   enabled: true,
   priority: 50,
-  settings: { host: 'localhost', port: 8080, username: 'admin', password: '', useSsl: false },
+  settings: { host: 'localhost', port: 8080, username: 'admin', password: 'secret-pass', apiKey: 'client-key-456', useSsl: false },
   createdAt: new Date(),
 };
 
@@ -261,6 +261,67 @@ describe('download-clients routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload).success).toBe(true);
+    });
+  });
+
+  describe('secret field masking', () => {
+    it('GET /api/download-clients masks password and apiKey in list response', async () => {
+      (services.downloadClient.getAll as Mock).mockResolvedValue([mockClient]);
+
+      const res = await app.inject({ method: 'GET', url: '/api/download-clients' });
+      const body = JSON.parse(res.payload);
+
+      expect(body[0].settings.password).toBe('********');
+      expect(body[0].settings.apiKey).toBe('********');
+      expect(body[0].settings.host).toBe('localhost');
+      expect(body[0].settings.port).toBe(8080);
+    });
+
+    it('GET /api/download-clients/:id masks secret fields in detail response', async () => {
+      (services.downloadClient.getById as Mock).mockResolvedValue(mockClient);
+
+      const res = await app.inject({ method: 'GET', url: '/api/download-clients/1' });
+      const body = JSON.parse(res.payload);
+
+      expect(body.settings.password).toBe('********');
+      expect(body.settings.apiKey).toBe('********');
+      expect(body.settings.host).toBe('localhost');
+    });
+
+    it('POST /api/download-clients masks secret fields in create response', async () => {
+      (services.downloadClient.create as Mock).mockResolvedValue(mockClient);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients',
+        payload: {
+          name: 'qBittorrent',
+          type: 'qbittorrent',
+          enabled: true,
+          priority: 50,
+          settings: { host: 'localhost', port: 8080, password: 'new-pass' },
+        },
+      });
+      const body = JSON.parse(res.payload);
+
+      expect(res.statusCode).toBe(201);
+      expect(body.settings.password).toBe('********');
+      expect(body.settings.apiKey).toBe('********');
+    });
+
+    it('PUT /api/download-clients/:id masks secret fields in update response', async () => {
+      (services.downloadClient.update as Mock).mockResolvedValue(mockClient);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/download-clients/1',
+        payload: { name: 'Renamed' },
+      });
+      const body = JSON.parse(res.payload);
+
+      expect(res.statusCode).toBe(200);
+      expect(body.settings.password).toBe('********');
+      expect(body.settings.apiKey).toBe('********');
     });
   });
 });

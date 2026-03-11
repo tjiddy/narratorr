@@ -6,6 +6,7 @@ import { DownloadService } from '../services/download.service.js';
 import { DownloadClientService } from '../services/download-client.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
+import { initializeKey } from '../utils/secret-codec.js';
 
 const QB_BASE = 'http://localhost:8080';
 const MAGNET_HASH = 'aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d';
@@ -49,7 +50,10 @@ describe('Grab flow integration', () => {
   let clientService: DownloadClientService;
   let downloadService: DownloadService;
 
-  beforeAll(() => mswServer.listen({ onUnhandledRequest: 'error' }));
+  beforeAll(() => {
+    initializeKey(Buffer.from('a'.repeat(64), 'hex'));
+    mswServer.listen({ onUnhandledRequest: 'error' });
+  });
   afterEach(() => mswServer.resetHandlers());
   afterAll(() => mswServer.close());
 

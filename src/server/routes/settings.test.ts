@@ -329,7 +329,8 @@ describe('settings routes', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      expect(body.network.proxyUrl).toBe('http://proxy.example.com:8080');
+      // proxyUrl is masked in API response (secret field)
+      expect(body.network.proxyUrl).toBe('********');
     });
 
     it('loads saved network settings', async () => {
@@ -343,7 +344,8 @@ describe('settings routes', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      expect(body.network.proxyUrl).toBe('socks5://proxy.example.com:1080');
+      // proxyUrl is masked in API response (secret field)
+      expect(body.network.proxyUrl).toBe('********');
     });
 
     it('clears proxy URL when saving empty string', async () => {
@@ -361,7 +363,8 @@ describe('settings routes', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      expect(body.network.proxyUrl).toBe('');
+      // Empty proxyUrl is also masked (field exists in secret registry)
+      expect(body.network.proxyUrl).toBe('********');
     });
 
     it('clears indexer adapter cache when network settings actually change', async () => {
@@ -411,6 +414,23 @@ describe('settings routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(services.settings.get).toHaveBeenCalledWith('network');
+      expect(services.indexer.clearAdapterCache).not.toHaveBeenCalled();
+    });
+
+    it('does not clear indexer adapter cache when masked sentinel proxy URL is sent back unchanged', async () => {
+      const currentNetwork = { proxyUrl: 'http://proxy.example.com:8080' };
+      const updated = { ...mockSettings, network: currentNetwork };
+      (services.settings.get as Mock).mockResolvedValue(currentNetwork);
+      (services.settings.update as Mock).mockResolvedValue(updated);
+
+      // UI sends back '********' for proxyUrl (masked value from GET)
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { network: { proxyUrl: '********' } },
+      });
+
+      expect(res.statusCode).toBe(200);
       expect(services.indexer.clearAdapterCache).not.toHaveBeenCalled();
     });
   });

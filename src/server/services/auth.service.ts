@@ -4,6 +4,7 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { settings, users } from '../../db/schema.js';
 import type { AuthMode } from '../../shared/schemas.js';
+import { encryptFields, decryptFields, getKey } from '../utils/secret-codec.js';
 
 export interface AuthConfig {
   mode: AuthMode;
@@ -71,12 +72,13 @@ export class AuthService {
       localBypass: false,
     };
 
+    const encrypted = encryptFields('auth', { ...authConfig } as Record<string, unknown>, getKey());
     await this.db
       .insert(settings)
-      .values({ key: 'auth', value: authConfig as unknown })
+      .values({ key: 'auth', value: encrypted as unknown })
       .onConflictDoUpdate({
         target: settings.key,
-        set: { value: authConfig as unknown },
+        set: { value: encrypted as unknown },
       });
 
     this.log.info('Auth settings initialized with default configuration');
@@ -94,16 +96,18 @@ export class AuthService {
     if (result.length === 0) {
       throw new Error('Auth settings not initialized — call initialize() first');
     }
-    return result[0].value as AuthConfig;
+    const raw = result[0].value as Record<string, unknown>;
+    return decryptFields('auth', { ...raw }, getKey()) as unknown as AuthConfig;
   }
 
   private async setAuthConfig(config: AuthConfig): Promise<void> {
+    const encrypted = encryptFields('auth', { ...config } as Record<string, unknown>, getKey());
     await this.db
       .insert(settings)
-      .values({ key: 'auth', value: config as unknown })
+      .values({ key: 'auth', value: encrypted as unknown })
       .onConflictDoUpdate({
         target: settings.key,
-        set: { value: config as unknown },
+        set: { value: encrypted as unknown },
       });
   }
 

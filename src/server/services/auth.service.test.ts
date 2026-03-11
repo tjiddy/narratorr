@@ -1,17 +1,25 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createHmac } from 'node:crypto';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { AuthService } from './auth.service.js';
 import { createMockDb, createMockLogger, mockDbChain, inject } from '../__tests__/helpers.js';
+import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js';
+
+const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 
 describe('AuthService', () => {
   let db: ReturnType<typeof createMockDb>;
   let service: AuthService;
 
   beforeEach(() => {
+    initializeKey(TEST_KEY);
     db = createMockDb();
     service = new AuthService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+  });
+
+  afterEach(() => {
+    _resetKey();
   });
 
   describe('initialize', () => {
@@ -28,9 +36,9 @@ describe('AuthService', () => {
       expect(valuesCall.key).toBe('auth');
       const config = valuesCall.value;
       expect(config.mode).toBe('none');
-      expect(config.apiKey).toBeDefined();
-      expect(config.sessionSecret).toBeDefined();
-      expect(config.sessionSecret).toHaveLength(64); // 32 bytes hex
+      // Secret fields are encrypted before storage
+      expect(isEncrypted(config.apiKey)).toBe(true);
+      expect(isEncrypted(config.sessionSecret)).toBe(true);
       expect(config.localBypass).toBe(false);
     });
 

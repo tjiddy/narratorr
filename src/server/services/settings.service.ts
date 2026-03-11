@@ -9,8 +9,14 @@ import {
   DEFAULT_SETTINGS,
   CATEGORY_SCHEMAS,
 } from '../../shared/schemas.js';
+import { encryptFields, decryptFields, isSentinel, getKey, type SecretEntity } from '../utils/secret-codec.js';
 
 export type { AppSettings };
+
+/** Categories that contain secret fields (only categories managed by SettingsService). */
+const SECRET_CATEGORIES: Partial<Record<SettingsCategory, SecretEntity>> = {
+  network: 'network',
+};
 
 function parseCategory<K extends SettingsCategory>(
   key: K,
@@ -39,7 +45,14 @@ export class SettingsService {
       return DEFAULT_SETTINGS[key];
     }
 
-    return parseCategory(key, result[0].value, this.log);
+    let raw = result[0].value;
+    // Decrypt secret fields before Zod parsing
+    const entity = SECRET_CATEGORIES[key];
+    if (entity && raw && typeof raw === 'object') {
+      raw = decryptFields(entity, { ...(raw as Record<string, unknown>) }, getKey());
+    }
+
+    return parseCategory(key, raw, this.log);
   }
 
   async getAll(): Promise<AppSettings> {
@@ -48,20 +61,42 @@ export class SettingsService {
     const settingsMap = new Map(results.map((r) => [r.key, r.value]));
 
     return Object.fromEntries(
-      SETTINGS_CATEGORIES.map((key) => [
-        key,
-        parseCategory(key, settingsMap.get(key), this.log),
-      ]),
+      SETTINGS_CATEGORIES.map((key) => {
+        let raw = settingsMap.get(key);
+        const entity = SECRET_CATEGORIES[key];
+        if (entity && raw && typeof raw === 'object') {
+          raw = decryptFields(entity, { ...(raw as Record<string, unknown>) }, getKey());
+        }
+        return [key, parseCategory(key, raw, this.log)];
+      }),
     ) as AppSettings;
   }
 
   async set<K extends SettingsCategory>(key: K, value: AppSettings[K]): Promise<void> {
+    let dbValue: unknown = value;
+    // Handle sentinel passthrough and encryption for secret categories
+    const entity = SECRET_CATEGORIES[key];
+    if (entity && dbValue && typeof dbValue === 'object') {
+      const incoming = { ...(dbValue as Record<string, unknown>) };
+      // If any secret field is "********", preserve the existing encrypted value
+      const existing = await this.db.select().from(settings).where(eq(settings.key, key)).limit(1);
+      if (existing[0]) {
+        const existingValue = (existing[0].value ?? {}) as Record<string, unknown>;
+        for (const [field, val] of Object.entries(incoming)) {
+          if (typeof val === 'string' && isSentinel(val)) {
+            incoming[field] = existingValue[field]; // Keep existing (encrypted) value
+          }
+        }
+      }
+      dbValue = encryptFields(entity, incoming, getKey());
+    }
+
     await this.db
       .insert(settings)
-      .values({ key, value: value as unknown })
+      .values({ key, value: dbValue })
       .onConflictDoUpdate({
         target: settings.key,
-        set: { value: value as unknown },
+        set: { value: dbValue },
       });
     this.log.info({ category: key }, 'Settings updated');
   }

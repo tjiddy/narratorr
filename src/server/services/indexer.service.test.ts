@@ -1,11 +1,13 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbIndexer } from '../__tests__/factories.js';
 import { IndexerService } from './indexer.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { SettingsService } from './settings.service.js';
+import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js';
 
+const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 const mockIndexer = createMockDbIndexer();
 
 describe('IndexerService', () => {
@@ -13,8 +15,13 @@ describe('IndexerService', () => {
   let service: IndexerService;
 
   beforeEach(() => {
+    initializeKey(TEST_KEY);
     db = createMockDb();
     service = new IndexerService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+  });
+
+  afterEach(() => {
+    _resetKey();
   });
 
   describe('getAll', () => {
@@ -886,11 +893,11 @@ describe('IndexerService', () => {
         });
 
         const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0];
-        // Prowlarr-managed settings keys are updated
+        // Prowlarr-managed settings keys are updated (secret fields are encrypted)
         expect(setPayload.settings.apiUrl).toBe('http://new/');
-        expect(setPayload.settings.apiKey).toBe('newkey');
-        // Local-only settings keys are preserved from existing row
-        expect(setPayload.settings.flareSolverrUrl).toBe('http://flaresolverr:8191');
+        expect(isEncrypted(setPayload.settings.apiKey)).toBe(true);
+        // Local-only settings keys are preserved from existing row (secret fields encrypted)
+        expect(isEncrypted(setPayload.settings.flareSolverrUrl)).toBe(true);
         expect(setPayload.settings.useProxy).toBe(true);
         expect(setPayload.settings.proxyUrl).toBe('socks5://proxy:1080');
       });
