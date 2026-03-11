@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-/* eslint-disable complexity, max-lines, @typescript-eslint/no-unused-vars */
+/* eslint-disable complexity, max-lines -- standalone CLI script, not library code */
 // Workflow metrics — parses Gitea comments and git history to produce
 // trend data on review quality, round counts, and finding patterns.
 // Usage: node scripts/metrics.ts [--since <pr-number>] [--json]
 // Output: markdown to .claude/workflow-stats.md + stdout (or JSON with --json).
 // Reads yolo dispatch DB for timing/cost data if available.
 
-import { gitea as _gitea, giteaSafe, parseLinkedIssue, parseComments, parseLabels as _parseLabels } from "./lib.ts";
+import { giteaSafe, parseLinkedIssue, parseComments } from "./lib.ts";
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, resolve, dirname } from "node:path";
