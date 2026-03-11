@@ -563,6 +563,16 @@ describe('systemApi', () => {
     await systemApi.searchAllWanted();
     expect(mockFetchApi).toHaveBeenCalledWith('/system/tasks/search-all-wanted', expect.objectContaining({ method: 'POST' }));
   });
+
+  it('dismissUpdate → PUT /system/update/dismiss with version body', async () => {
+    mockFetchApi.mockResolvedValue({ ok: true });
+    const result = await systemApi.dismissUpdate('0.2.0');
+    expect(mockFetchApi).toHaveBeenCalledWith('/system/update/dismiss', {
+      method: 'PUT',
+      body: JSON.stringify({ version: '0.2.0' }),
+    });
+    expect(result).toEqual({ ok: true });
+  });
 });
 
 // ============================================================================

@@ -9,6 +9,7 @@ import { runEnrichment } from './enrichment.js';
 import { runSearchJob } from './search.js';
 import { runRssJob } from './rss.js';
 import { runBackupJob } from './backup.js';
+import { checkForUpdate } from './version-check.js';
 
 export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   const retrySearchDeps = {
@@ -47,6 +48,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   }, '0 0 * * 0');
   reg.register('recycle-cleanup', 'cron', () => services.recyclingBin.purgeExpired(), '0 2 * * *');
   reg.register('health-check', 'cron', () => services.healthCheck.runAllChecks(), '*/5 * * * *');
+  reg.register('version-check', 'cron', () => checkForUpdate(log), '0 2 * * *');
 
   // Schedule cron jobs — all go through the registry for lastRun/running tracking
   scheduleCron(reg, 'monitor', '*/30 * * * * *', log);
@@ -55,6 +57,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   scheduleCron(reg, 'housekeeping', '0 0 * * 0', log);
   scheduleCron(reg, 'recycle-cleanup', '0 2 * * *', log);
   scheduleCron(reg, 'health-check', '*/5 * * * *', log);
+  scheduleCron(reg, 'version-check', '0 2 * * *', log);
 
   // Schedule timeout-loop jobs — use registry tracking for lastRun/running/nextRun
   scheduleTimeoutLoop(reg, 'search', () => services.settings.get('search').then((s) => s.intervalMinutes), log);

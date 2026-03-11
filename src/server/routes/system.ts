@@ -6,6 +6,8 @@ import { runSearchJob, searchAllWanted } from '../jobs/search.js';
 import { runRssJob } from '../jobs/rss.js';
 import { runBackupJob } from '../jobs/backup.js';
 import { healthRoutes } from './health-routes.js';
+import { getVersion } from '../utils/version.js';
+import { getUpdateStatus } from '../jobs/version-check.js';
 import fs from 'fs';
 import fsp from 'fs/promises';
 import path from 'path';
@@ -15,10 +17,15 @@ import unzipper from 'unzipper';
 export async function systemRoutes(app: FastifyInstance, services: Services, db: Db) {
   // GET /api/system/status
   app.get('/api/system/status', async () => {
+    const systemSettings = await services.settings.get('system');
+    const dismissedVersion = systemSettings?.dismissedUpdateVersion ?? '';
+    const update = getUpdateStatus(dismissedVersion);
+
     return {
-      version: '0.1.0',
+      version: getVersion(),
       status: 'ok',
       timestamp: new Date().toISOString(),
+      ...(update ? { update } : {}),
     };
   });
 

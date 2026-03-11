@@ -32,8 +32,9 @@ async function createApp(authService: AuthService): Promise<FastifyInstance> {
   await app.register(cookie);
   await app.register(authPlugin, { authService });
 
-  // Test route behind auth
+  // Test routes behind auth
   app.get('/api/test', async () => ({ ok: true }));
+  app.put('/api/system/update/dismiss', async () => ({ ok: true }));
 
   // Non-API route (should not be intercepted)
   app.get('/healthcheck', async () => ({ ok: true }));
@@ -168,6 +169,11 @@ describe('auth middleware', () => {
       const res = await app.inject({ method: 'GET', url: '/api/test' });
       expect(res.statusCode).toBe(200);
     });
+
+    it('PUT /api/system/update/dismiss passes without credentials in mode: none', async () => {
+      const res = await app.inject({ method: 'PUT', url: '/api/system/update/dismiss', payload: { version: '1.0.0' } });
+      expect(res.statusCode).toBe(200);
+    });
   });
 
   describe('mode: basic', () => {
@@ -213,6 +219,11 @@ describe('auth middleware', () => {
       expect(res.statusCode).toBe(401);
       expect(res.headers['www-authenticate']).toBe('Basic realm="Narratorr"');
     });
+
+    it('PUT /api/system/update/dismiss returns 401 without credentials in mode: basic', async () => {
+      const res = await app.inject({ method: 'PUT', url: '/api/system/update/dismiss', payload: { version: '1.0.0' } });
+      expect(res.statusCode).toBe(401);
+    });
   });
 
   describe('mode: forms', () => {
@@ -255,6 +266,11 @@ describe('auth middleware', () => {
         url: '/api/test',
         cookies: { narratorr_session: 'expired-cookie' },
       });
+      expect(res.statusCode).toBe(401);
+    });
+
+    it('PUT /api/system/update/dismiss returns 401 without session in mode: forms', async () => {
+      const res = await app.inject({ method: 'PUT', url: '/api/system/update/dismiss', payload: { version: '1.0.0' } });
       expect(res.statusCode).toBe(401);
     });
 

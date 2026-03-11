@@ -16,6 +16,7 @@ import {
   XIcon,
 } from '@/components/icons';
 import { HealthIndicator } from './HealthIndicator';
+import { UpdateBanner } from '@/components/layout/UpdateBanner';
 
 const BANNER_DISMISSED_KEY = 'narratorr:auth-banner-dismissed';
 
@@ -43,6 +44,9 @@ export function Layout() {
   return (
     <div className="min-h-screen gradient-bg noise-overlay">
       <SSEProvider />
+      {/* Update Banner */}
+      <UpdateBanner />
+
       {/* Auth Warning Banner */}
       {mode === 'none' && !bannerDismissed && (
         <div className="bg-amber-500/15 border-b border-amber-500/30 animate-fade-in">

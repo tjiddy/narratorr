@@ -15,7 +15,7 @@ export type { BrowseResult } from './filesystem.js';
 export type { RemotePathMapping } from './remote-path-mappings.js';
 export type { BookEvent } from './event-history.js';
 export type { BackupMetadata, RestoreValidation, BackupJobResult } from './backups.js';
-export type { HealthState, HealthCheckResult, HealthSummary, TaskMetadata, SystemInfo } from './system.js';
+export type { HealthState, HealthCheckResult, HealthSummary, TaskMetadata, SystemInfo, SystemStatus } from './system.js';
 export type { RecyclingBinEntry } from './recycling-bin.js';
 
 export { formatBytes, formatProgress } from './utils.js';

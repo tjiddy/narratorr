@@ -1,7 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { IndexerService } from '../services/indexer.service.js';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { getVersion } from '../utils/version.js';
 
 // ── Types ──
 
@@ -168,21 +167,7 @@ function validateReadarrBody(body: { implementation?: string; fields?: ReadarrFi
   return null;
 }
 
-// ── Package version ──
-
-let packageVersion: string | undefined;
-function getVersion(): string {
-  if (!packageVersion) {
-    try {
-      const pkgPath = resolve(process.cwd(), 'package.json');
-      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-      packageVersion = pkg.version;
-    } catch {
-      packageVersion = '0.0.0';
-    }
-  }
-  return packageVersion!;
-}
+// ── Package version (shared util) ──
 
 // Track app start time
 const appStartTime = new Date().toISOString();

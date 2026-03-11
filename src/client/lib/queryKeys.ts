@@ -40,4 +40,5 @@ export const queryKeys = {
   },
   systemTasks: () => ['system', 'tasks'] as const,
   systemInfo: () => ['system', 'info'] as const,
+  systemStatus: () => ['systemStatus'] as const,
 } as const;

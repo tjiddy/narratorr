@@ -15,6 +15,8 @@ vi.mock('@/hooks/useAuthContext', () => ({
 vi.mock('@/lib/api', () => ({
   api: {
     getHealthSummary: vi.fn().mockResolvedValue({ state: 'healthy' }),
+    getSystemStatus: vi.fn(),
+    dismissUpdate: vi.fn(),
   },
 }));
 
@@ -170,6 +172,30 @@ describe('Layout', () => {
       await waitFor(() => {
         expect(screen.getByTestId('health-indicator')).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('update banner integration', () => {
+    it('renders update banner in the shell when API reports an available update', async () => {
+      mockCounts(0);
+      mockAuth('forms');
+      vi.mocked(api.getSystemStatus).mockResolvedValue({
+        version: '0.1.0',
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        update: {
+          latestVersion: '0.2.0',
+          releaseUrl: 'https://github.com/releases/v0.2.0',
+          dismissed: false,
+        },
+      });
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/update available/i)).toBeInTheDocument();
+      });
+      expect(screen.getByText(/0\.2\.0/)).toBeInTheDocument();
     });
   });
 });

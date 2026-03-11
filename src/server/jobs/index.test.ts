@@ -14,6 +14,7 @@ vi.mock('./enrichment.js', () => ({ runEnrichment: vi.fn() }));
 vi.mock('./search.js', () => ({ runSearchJob: vi.fn() }));
 vi.mock('./rss.js', () => ({ runRssJob: vi.fn() }));
 vi.mock('./backup.js', () => ({ runBackupJob: vi.fn() }));
+vi.mock('./version-check.js', () => ({ checkForUpdate: vi.fn() }));
 
 import cron from 'node-cron';
 
@@ -35,7 +36,7 @@ describe('startJobs', () => {
     });
   });
 
-  it('registers all 8 jobs with the task registry', async () => {
+  it('registers all jobs with the task registry', async () => {
     const { startJobs } = await import('./index.js');
     startJobs(db, services, log);
 
@@ -50,10 +51,11 @@ describe('startJobs', () => {
     expect(names).toContain('housekeeping');
     expect(names).toContain('recycle-cleanup');
     expect(names).toContain('health-check');
-    expect(tasks).toHaveLength(9);
+    expect(names).toContain('version-check');
+    expect(tasks).toHaveLength(10);
   });
 
-  it('schedules 5 cron jobs via cron.schedule', async () => {
+  it('schedules cron jobs via cron.schedule', async () => {
     const { startJobs } = await import('./index.js');
     startJobs(db, services, log);
 
@@ -63,8 +65,8 @@ describe('startJobs', () => {
     expect(expressions).toContain('*/5 * * * *');    // enrichment, health-check
     expect(expressions).toContain('*/60 * * * * *'); // import
     expect(expressions).toContain('0 0 * * 0');      // housekeeping
-    expect(expressions).toContain('0 2 * * *');      // recycle-cleanup
-    expect(cronCalls).toHaveLength(6);
+    expect(expressions).toContain('0 2 * * *');      // recycle-cleanup, version-check
+    expect(cronCalls).toHaveLength(7);
   });
 
   it('logs startup message', async () => {

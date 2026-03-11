@@ -32,7 +32,7 @@ describe('BackupScheduleForm', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockApi.getSettings.mockResolvedValue({
-      system: { backupIntervalMinutes: 10080, backupRetention: 7 },
+      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
     });
   });
 
@@ -47,7 +47,7 @@ describe('BackupScheduleForm', () => {
 
   it('calls updateSettings with system category on form submit', async () => {
     mockApi.updateSettings.mockResolvedValue({
-      system: { backupIntervalMinutes: 10080, backupRetention: 7 },
+      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
     });
 
     renderWithProviders(<BackupScheduleForm />);

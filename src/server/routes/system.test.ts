@@ -10,6 +10,17 @@ import type { Db } from '../../db/index.js';
 import { createTestApp, createMockServices, resetMockServices, inject } from '../__tests__/helpers.js';
 import { registerRoutes, type Services } from './index.js';
 
+vi.mock('../utils/version.js', () => ({
+  getVersion: () => '0.1.0',
+}));
+
+vi.mock('../jobs/version-check.js', () => ({
+  getUpdateStatus: vi.fn(),
+  checkForUpdate: vi.fn(),
+}));
+
+import { getUpdateStatus } from '../jobs/version-check.js';
+
 describe('system routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
@@ -29,6 +40,7 @@ describe('system routes', () => {
 
   describe('GET /api/system/status', () => {
     it('returns 200 with version, status, and valid ISO timestamp', async () => {
+      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
       const res = await app.inject({ method: 'GET', url: '/api/system/status' });
 
       expect(res.statusCode).toBe(200);
@@ -41,6 +53,90 @@ describe('system routes', () => {
       // Verify timestamp is a valid ISO string
       const timestamp = new Date(payload.timestamp);
       expect(timestamp.toISOString()).toBe(payload.timestamp);
+    });
+
+    it('omits update field when no update available', async () => {
+      vi.mocked(getUpdateStatus).mockReturnValue(undefined);
+      const res = await app.inject({ method: 'GET', url: '/api/system/status' });
+
+      const payload = JSON.parse(res.payload);
+      expect(payload.update).toBeUndefined();
+    });
+
+    it('includes update field when newer version available and not dismissed', async () => {
+      vi.mocked(getUpdateStatus).mockReturnValue({
+        latestVersion: '0.2.0',
+        releaseUrl: 'https://github.com/releases/v0.2.0',
+        dismissed: false,
+      });
+      (services.settings.get as Mock).mockResolvedValue({
+        backupIntervalMinutes: 10080,
+        backupRetention: 7,
+        dismissedUpdateVersion: '',
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/api/system/status' });
+
+      const payload = JSON.parse(res.payload);
+      expect(payload.update).toEqual({
+        latestVersion: '0.2.0',
+        releaseUrl: 'https://github.com/releases/v0.2.0',
+        dismissed: false,
+      });
+      expect(getUpdateStatus).toHaveBeenCalledWith('');
+    });
+
+    it('includes update with dismissed: true when version dismissed', async () => {
+      vi.mocked(getUpdateStatus).mockReturnValue({
+        latestVersion: '0.2.0',
+        releaseUrl: 'https://github.com/releases/v0.2.0',
+        dismissed: true,
+      });
+      (services.settings.get as Mock).mockResolvedValue({
+        backupIntervalMinutes: 10080,
+        backupRetention: 7,
+        dismissedUpdateVersion: '0.2.0',
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/api/system/status' });
+
+      const payload = JSON.parse(res.payload);
+      expect(payload.update.dismissed).toBe(true);
+      expect(getUpdateStatus).toHaveBeenCalledWith('0.2.0');
+    });
+  });
+
+  describe('PUT /api/system/update/dismiss', () => {
+    it('writes dismissedUpdateVersion to system settings preserving existing fields', async () => {
+      (services.settings.get as Mock).mockResolvedValue({
+        backupIntervalMinutes: 1440,
+        backupRetention: 14,
+        dismissedUpdateVersion: '',
+      });
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/system/update/dismiss',
+        payload: { version: '0.2.0' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ ok: true });
+      expect(services.settings.set as Mock).toHaveBeenCalledWith('system', {
+        backupIntervalMinutes: 1440,
+        backupRetention: 14,
+        dismissedUpdateVersion: '0.2.0',
+      });
+    });
+
+    it('returns 400 when version is missing from body', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/system/update/dismiss',
+        payload: {},
+      });
+
+      expect(res.statusCode).toBe(400);
     });
   });
 

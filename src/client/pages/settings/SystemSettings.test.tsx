@@ -48,7 +48,7 @@ describe('SystemSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockApi.getSettings.mockResolvedValue({
-      system: { backupIntervalMinutes: 10080, backupRetention: 7 },
+      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
     });
   });
 

@@ -1,4 +1,4 @@
-import type { AppSettings } from '../../../shared/schemas.js';
+import type { AppSettings, UpdateSettingsInput } from '../../../shared/schemas.js';
 import { fetchApi } from './client.js';
 
 export type Settings = AppSettings;
@@ -21,7 +21,7 @@ export interface ProxyTestResult {
 
 export const settingsApi = {
   getSettings: () => fetchApi<Settings>('/settings'),
-  updateSettings: (data: Partial<Settings>) =>
+  updateSettings: (data: UpdateSettingsInput) =>
     fetchApi<Settings>('/settings', {
       method: 'PUT',
       body: JSON.stringify(data),

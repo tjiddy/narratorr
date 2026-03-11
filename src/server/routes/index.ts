@@ -47,6 +47,7 @@ import { eventHistoryRoutes } from './event-history.js';
 import { prowlarrCompatRoutes } from './prowlarr-compat.js';
 import { eventsRoutes } from './events.js';
 import { recyclingBinRoutes } from './recycling-bin.js';
+import { updateRoutes } from './update.js';
 import { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { RecyclingBinService } from '../services/recycling-bin.service.js';
 
@@ -153,6 +154,7 @@ export async function registerRoutes(
   await metadataRoutes(app, services.metadata);
   await libraryScanRoutes(app, services.libraryScan, services.matchJob);
   await systemRoutes(app, services, db);
+  await updateRoutes(app, services.settings);
   await notifiersRoutes(app, services.notifier);
   await blacklistRoutes(app, services.blacklist, services.settings);
   await prowlarrRoutes(app, services.prowlarrSync);

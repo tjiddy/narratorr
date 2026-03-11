@@ -29,8 +29,24 @@ export interface SystemInfo {
   freeSpace: number | null;
 }
 
+export interface SystemStatus {
+  version: string;
+  status: string;
+  timestamp: string;
+  update?: {
+    latestVersion: string;
+    releaseUrl: string;
+    dismissed: boolean;
+  };
+}
+
 export const systemApi = {
-  getSystemStatus: () => fetchApi<{ version: string; status: string }>('/system/status'),
+  getSystemStatus: () => fetchApi<SystemStatus>('/system/status'),
+  dismissUpdate: (version: string) =>
+    fetchApi<{ ok: true }>('/system/update/dismiss', {
+      method: 'PUT',
+      body: JSON.stringify({ version }),
+    }),
   triggerSearch: () =>
     fetchApi<{ searched: number; grabbed: number }>('/system/tasks/search', { method: 'POST' }),
   searchAllWanted: () =>
