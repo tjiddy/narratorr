@@ -32,6 +32,7 @@ export const queryKeys = {
     all: (params?: { eventType?: string; search?: string }) => ['eventHistory', params] as const,
     byBookId: (bookId: number) => ['eventHistory', 'book', bookId] as const,
   },
+  recyclingBin: () => ['recyclingBin'] as const,
   backups: () => ['backups'] as const,
   health: {
     status: () => ['health', 'status'] as const,

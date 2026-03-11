@@ -256,6 +256,37 @@ describe('GeneralSettings', () => {
         general: { housekeepingRetentionDays: 30 },
       });
     });
+
+    it('renders recycling bin retention input defaulting to 30', async () => {
+      renderWithProviders(<GeneralSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Recycling Bin Retention (days)')).toHaveValue(30);
+      });
+    });
+
+    it('changes recycleRetentionDays and saves → payload includes general.recycleRetentionDays', async () => {
+      const user = userEvent.setup();
+      (api.updateSettings as Mock).mockResolvedValue(mockSettings);
+      renderWithProviders(<GeneralSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Recycling Bin Retention (days)')).toHaveValue(30);
+      });
+
+      const input = screen.getByLabelText('Recycling Bin Retention (days)');
+      await user.clear(input);
+      await user.type(input, '7');
+
+      await user.click(screen.getByText('Save Changes').closest('button')!);
+
+      await waitFor(() => {
+        expect(api.updateSettings).toHaveBeenCalled();
+      });
+      expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
+        general: { recycleRetentionDays: 7 },
+      });
+    });
   });
 
   it('inserts a token into folder format and updates preview', async () => {

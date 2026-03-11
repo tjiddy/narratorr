@@ -17,6 +17,7 @@ import { BackupScheduleForm } from './BackupScheduleForm';
 import { HealthDashboard } from './HealthDashboard';
 import { ScheduledTasks } from './ScheduledTasks';
 import { SystemInfo } from './SystemInfo';
+import { RecyclingBinSection } from './RecyclingBinSection';
 
 export function SystemSettings() {
   const queryClient = useQueryClient();
@@ -127,6 +128,8 @@ export function SystemSettings() {
       </SettingsSection>
 
       <SystemInfo />
+
+      <RecyclingBinSection />
 
       <ScheduledTasks />
 

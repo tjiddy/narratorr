@@ -48,8 +48,9 @@ describe('startJobs', () => {
     expect(names).toContain('rss');
     expect(names).toContain('backup');
     expect(names).toContain('housekeeping');
+    expect(names).toContain('recycle-cleanup');
     expect(names).toContain('health-check');
-    expect(tasks).toHaveLength(8);
+    expect(tasks).toHaveLength(9);
   });
 
   it('schedules 5 cron jobs via cron.schedule', async () => {
@@ -62,7 +63,8 @@ describe('startJobs', () => {
     expect(expressions).toContain('*/5 * * * *');    // enrichment, health-check
     expect(expressions).toContain('*/60 * * * * *'); // import
     expect(expressions).toContain('0 0 * * 0');      // housekeeping
-    expect(cronCalls).toHaveLength(5);
+    expect(expressions).toContain('0 2 * * *');      // recycle-cleanup
+    expect(cronCalls).toHaveLength(6);
   });
 
   it('logs startup message', async () => {

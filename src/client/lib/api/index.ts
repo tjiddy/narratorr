@@ -16,6 +16,7 @@ export type { RemotePathMapping } from './remote-path-mappings.js';
 export type { BookEvent } from './event-history.js';
 export type { BackupMetadata, RestoreValidation, BackupJobResult } from './backups.js';
 export type { HealthState, HealthCheckResult, HealthSummary, TaskMetadata, SystemInfo } from './system.js';
+export type { RecyclingBinEntry } from './recycling-bin.js';
 
 export { formatBytes, formatProgress } from './utils.js';
 
@@ -35,6 +36,7 @@ import { filesystemApi } from './filesystem.js';
 import { remotePathMappingsApi } from './remote-path-mappings.js';
 import { eventHistoryApi } from './event-history.js';
 import { backupsApi } from './backups.js';
+import { recyclingBinApi } from './recycling-bin.js';
 
 export const api = {
   ...booksApi,
@@ -53,4 +55,5 @@ export const api = {
   ...remotePathMappingsApi,
   ...eventHistoryApi,
   ...backupsApi,
+  ...recyclingBinApi,
 };

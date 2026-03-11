@@ -637,49 +637,48 @@ describe('books routes', () => {
       expect(services.book.delete).toHaveBeenCalledWith(1);
     });
 
-    it('deletes files when deleteFiles=true and book has path', async () => {
+    it('moves files to recycling bin when deleteFiles=true and book has path', async () => {
       const bookWithPath = { ...mockBook, path: '/audiobooks/Author/Book' };
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (services.settings.get as Mock).mockResolvedValue({ path: '/audiobooks', folderFormat: '{author}/{title}' });
-      (services.book.deleteBookFiles as Mock).mockResolvedValue(undefined);
+      (services.recyclingBin.moveToRecycleBin as Mock).mockResolvedValue({ id: 1 });
       (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
       (services.book.delete as Mock).mockResolvedValue(true);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
 
       expect(res.statusCode).toBe(200);
-      expect(services.book.deleteBookFiles).toHaveBeenCalledWith('/audiobooks/Author/Book', '/audiobooks');
+      expect(services.recyclingBin.moveToRecycleBin).toHaveBeenCalledWith(bookWithPath, '/audiobooks/Author/Book');
       expect(services.book.delete).toHaveBeenCalledWith(1);
     });
 
-    it('skips file deletion when deleteFiles=true but book has no path', async () => {
+    it('moves to recycling bin when deleteFiles=true but book has no path', async () => {
       const bookNoPath = { ...mockBook, path: null };
       (services.book.getById as Mock).mockResolvedValue(bookNoPath);
+      (services.recyclingBin.moveToRecycleBin as Mock).mockResolvedValue({ id: 1 });
       (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
       (services.book.delete as Mock).mockResolvedValue(true);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
 
       expect(res.statusCode).toBe(200);
-      expect(services.book.deleteBookFiles).not.toHaveBeenCalled();
+      expect(services.recyclingBin.moveToRecycleBin).toHaveBeenCalledWith(bookNoPath, null);
       expect(services.book.delete).toHaveBeenCalledWith(1);
     });
 
-    it('returns 500 and preserves DB record when file deletion fails', async () => {
+    it('returns 500 and preserves DB record when recycling bin move fails', async () => {
       const bookWithPath = { ...mockBook, path: '/audiobooks/Author/Book' };
       (services.book.getById as Mock).mockResolvedValue(bookWithPath);
-      (services.settings.get as Mock).mockResolvedValue({ path: '/audiobooks', folderFormat: '{author}/{title}' });
-      (services.book.deleteBookFiles as Mock).mockRejectedValue(new Error('EACCES: permission denied'));
+      (services.recyclingBin.moveToRecycleBin as Mock).mockRejectedValue(new Error('EACCES: permission denied'));
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1?deleteFiles=true' });
 
       expect(res.statusCode).toBe(500);
-      expect(JSON.parse(res.payload).error).toBe('Failed to delete book files from disk');
+      expect(JSON.parse(res.payload).error).toBe('Failed to move book files to recycling bin');
       expect(services.download.getActiveByBookId).not.toHaveBeenCalled();
       expect(services.book.delete).not.toHaveBeenCalled();
     });
 
-    it('does not delete files when deleteFiles param is absent', async () => {
+    it('does not move to recycling bin when deleteFiles param is absent', async () => {
       (services.book.getById as Mock).mockResolvedValue(mockBook);
       (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
       (services.book.delete as Mock).mockResolvedValue(true);
@@ -687,7 +686,7 @@ describe('books routes', () => {
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
 
       expect(res.statusCode).toBe(200);
-      expect(services.book.deleteBookFiles).not.toHaveBeenCalled();
+      expect(services.recyclingBin.moveToRecycleBin).not.toHaveBeenCalled();
     });
 
     it('returns 404 when deleteFiles=true and book not found', async () => {

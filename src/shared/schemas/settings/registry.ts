@@ -43,7 +43,7 @@ export const settingsRegistry = {
   }),
   general: defineCategory({
     schema: generalSettingsSchema,
-    defaults: { logLevel: 'info' as const, housekeepingRetentionDays: 90 },
+    defaults: { logLevel: 'info' as const, housekeepingRetentionDays: 90, recycleRetentionDays: 30 },
   }),
   metadata: defineCategory({
     schema: metadataSettingsSchema,

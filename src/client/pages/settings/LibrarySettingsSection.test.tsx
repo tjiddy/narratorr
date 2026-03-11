@@ -26,7 +26,7 @@ function Wrapper({
       search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7 },
       library: { path: '/audiobooks', folderFormat: defaultFolderFormat, fileFormat: '{author} - {title}' },
       import: { deleteAfterImport: false, minSeedTime: 60 },
-      general: { logLevel: 'info', housekeepingRetentionDays: 90 },
+      general: { logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30 },
       metadata: { audibleRegion: 'us' },
     },
   });
@@ -84,7 +84,7 @@ describe('LibrarySettingsSection', () => {
           search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7 },
           library: { path: '/audiobooks', folderFormat: '{author}/{title}' },
           import: { deleteAfterImport: false, minSeedTime: 60 },
-          general: { logLevel: 'info', housekeepingRetentionDays: 90 },
+          general: { logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30 },
           metadata: { audibleRegion: 'us' },
         },
       });

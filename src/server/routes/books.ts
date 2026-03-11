@@ -2,6 +2,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { BookService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService } from '../services';
+import type { RecyclingBinService } from '../services/recycling-bin.service.js';
 import { RenameError } from '../services/rename.service.js';
 import { filterAndRankResults } from './search.js';
 import { RetagError } from '../services/tagging.service.js';
@@ -64,7 +65,7 @@ function triggerImmediateSearch(
     });
 }
 
-async function registerDeleteBookRoute(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, eventHistory?: EventHistoryService) {
+async function registerDeleteBookRoute(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, eventHistory?: EventHistoryService, recyclingBinService?: RecyclingBinService) {
 app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
   '/api/books/:id',
   { schema: { params: idParamSchema, querystring: deleteBookQuerySchema } },
@@ -76,13 +77,20 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     // Fetch book once for file deletion + event snapshot
     const book = await bookService.getById(id);
 
-    // If deleteFiles requested, attempt file deletion BEFORE cancelling downloads or removing DB record
+    // If deleteFiles requested, move to recycling bin BEFORE cancelling downloads or removing DB record
     if (deleteFiles === 'true') {
       if (!book) {
         return await reply.status(404).send({ error: 'Book not found' });
       }
 
-      if (book.path) {
+      if (recyclingBinService) {
+        try {
+          await recyclingBinService.moveToRecycleBin(book, book.path);
+        } catch (error) {
+          request.log.error({ bookId: id, error }, 'Failed to move book to recycling bin');
+          return await reply.status(500).send({ error: 'Failed to move book files to recycling bin' });
+        }
+      } else if (book.path) {
         try {
           const librarySettings = await settingsService.get('library');
           await bookService.deleteBookFiles(book.path, librarySettings.path);
@@ -174,7 +182,7 @@ function registerBookSearchRoute(app: FastifyInstance, bookService: BookService,
   );
 }
 
-export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, renameService: RenameService, taggingService: TaggingService, eventHistory?: EventHistoryService, indexerService?: IndexerService) {
+export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, renameService: RenameService, taggingService: TaggingService, eventHistory?: EventHistoryService, indexerService?: IndexerService, recyclingBinService?: RecyclingBinService) {
   // GET /api/books
   app.get<{ Querystring: BookListQuery }>(
     '/api/books',
@@ -269,7 +277,7 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
   );
 
   await registerDeleteMissingRoute(app, bookService);
-  await registerDeleteBookRoute(app, bookService, downloadService, settingsService, eventHistory);
+  await registerDeleteBookRoute(app, bookService, downloadService, settingsService, eventHistory, recyclingBinService);
   // POST /api/books/:id/rename
   app.post<{ Params: IdParam }>(
     '/api/books/:id/rename',

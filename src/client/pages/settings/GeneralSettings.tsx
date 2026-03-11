@@ -119,6 +119,20 @@ export function GeneralSettings() {
             Events older than this many days are automatically pruned during the weekly housekeeping job. Valid range: 1–365 days.
           </p>
         </div>
+        <div>
+          <label htmlFor="recycleRetentionDays" className="block text-sm font-medium mb-2">Recycling Bin Retention (days)</label>
+          <input
+            id="recycleRetentionDays"
+            type="number"
+            min={0}
+            max={365}
+            {...register('general.recycleRetentionDays', { valueAsNumber: true })}
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+          />
+          <p className="text-sm text-muted-foreground mt-2">
+            Deleted books are permanently removed after this many days. Set to 0 to disable automatic cleanup. Valid range: 0–365 days.
+          </p>
+        </div>
       </SettingsSection>
 
       <SettingsSection

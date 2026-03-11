@@ -29,7 +29,7 @@ describe('housekeeping job', () => {
   beforeEach(() => {
     db = { run: vi.fn().mockResolvedValue(undefined) };
     settingsService = {
-      get: vi.fn().mockResolvedValue({ logLevel: 'info', housekeepingRetentionDays: 90 }),
+      get: vi.fn().mockResolvedValue({ logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30 }),
     };
     eventHistoryService = { pruneOlderThan: vi.fn().mockResolvedValue(5) };
     blacklistService = { deleteExpired: vi.fn().mockResolvedValue(3) };
@@ -93,7 +93,7 @@ describe('housekeeping job', () => {
 
   describe('event history pruning sub-task', () => {
     it('calls EventHistoryService.pruneOlderThan with retention days from settings', async () => {
-      settingsService.get.mockResolvedValue({ logLevel: 'info', housekeepingRetentionDays: 30 });
+      settingsService.get.mockResolvedValue({ logLevel: 'info', housekeepingRetentionDays: 30, recycleRetentionDays: 30 });
 
       await runHousekeeping();
 

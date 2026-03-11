@@ -20,7 +20,7 @@ const mockSettings = {
   library: { path: '/audiobooks', folderFormat: '{author}/{title}' },
   search: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 },
   import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
-  general: { logLevel: 'info', housekeepingRetentionDays: 90 },
+  general: { logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30 },
   processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
 };
 
@@ -188,7 +188,7 @@ describe('settings routes', () => {
     it('round-trips housekeepingRetentionDays through PUT and returns updated value', async () => {
       const updated = {
         ...mockSettings,
-        general: { logLevel: 'info', housekeepingRetentionDays: 30 },
+        general: { logLevel: 'info', housekeepingRetentionDays: 30, recycleRetentionDays: 30 },
       };
       (services.settings.update as Mock).mockResolvedValue(updated);
 

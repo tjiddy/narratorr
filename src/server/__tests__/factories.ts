@@ -113,6 +113,31 @@ export function createMockDbBookEvent(overrides?: Record<string, unknown>) {
   };
 }
 
+export function createMockDbRecyclingBinEntry(overrides?: Record<string, unknown>) {
+  return {
+    id: 1,
+    bookId: 1 as number | null,
+    title: 'The Way of Kings',
+    authorName: 'Brandon Sanderson' as string | null,
+    authorAsin: null as string | null,
+    narrator: 'Michael Kramer' as string | null,
+    description: 'An epic fantasy' as string | null,
+    coverUrl: null as string | null,
+    asin: null as string | null,
+    isbn: null as string | null,
+    seriesName: null as string | null,
+    seriesPosition: null as number | null,
+    duration: null as number | null,
+    publishedDate: null as string | null,
+    genres: null as string[] | null,
+    monitorForUpgrades: false,
+    originalPath: '/audiobooks/Brandon Sanderson/The Way of Kings',
+    recyclePath: './config/recycle/1',
+    deletedAt: now,
+    ...overrides,
+  };
+}
+
 export function createMockDbNotifier(overrides?: Record<string, unknown>) {
   return {
     id: 1,
