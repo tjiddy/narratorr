@@ -58,6 +58,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    ```
    Use `origin/main` (not local `main`) to avoid false positives from stale local state. The three-dot syntax shows only changes introduced on the branch.
 
+5a. **Blast radius analysis:** Run `index_repository` (codebase-memory-mcp) to force a fresh incremental reindex (~1s), then run `detect_changes` with `scope='branch'` and `base_branch='main'` to map changed symbols to their callers with risk classification (CRITICAL/HIGH/MEDIUM/LOW by call-chain depth). Use this output to prioritize where to focus deepest review in steps 5d-5e — CRITICAL-risk callers indicate high-impact changes that warrant thorough behavior enumeration.
+
 5b. **Read prior review history:** Run `gitea pr-comments <pr-number>`. Parse ALL comments containing `## Verdict:` (prior reviews) and `## Review Response` (author responses). Build a map of prior findings and their resolutions:
    - For each prior finding ID (F1, F2, etc.), note: the original finding, the author's resolution (`fixed`, `accepted`, `disputed`), and any rationale provided.
    - **This context is mandatory for re-reviews.** If this is the first review (no prior `## Verdict:` comments), skip to step 6.

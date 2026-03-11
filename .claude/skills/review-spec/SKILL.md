@@ -107,6 +107,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Edge cases are identified — empty states, boundary values, concurrent operations
    - Data flow is traceable — where does input come from, where does output go?
    - **Core design contracts:** For features involving feed/event processing, matching, or synchronization, verify the spec defines the item-to-entity matching contract (scoring, thresholds, tie-breaking, dedup). For features involving concurrency, verify the spec defines the concurrency model (locks, queues, semaphores) and which entry points are covered. These are the most expensive questions to defer — catching them in round 4 instead of round 1 wastes 3 full review cycles.
+   - **Policy exhaustiveness:** When a spec defines a classification/disposition policy (audit triage, error categorization, state machine transitions), enumerate every combination the real data can produce and verify each one has a defined outcome. Don't just check the cases the spec mentions — check for cases it *doesn't* mention. Run the actual command (`pnpm audit --json`, `pnpm outdated`, etc.) and walk every row against the policy. If any row falls through the cracks, that's a finding.
 
    **Codebase alignment checks:**
    - Assumptions about existing code are accurate (APIs exist, types match, patterns are followed)
@@ -158,6 +159,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Cross-check with Assumption Coverage table: every `unverified` row must have a corresponding finding.
    - **No umbrella findings:** If a broad finding could be "addressed" while leaving another nearby assumption in the same AC or test-plan area unresolved, split it into smaller findings or refine it until the remaining gap is explicit. The author should be able to resolve exactly what is written without guessing what else the reviewer meant.
    - **Ping-pong check:** Before finalizing a blocking finding, ask: "If the spec author updated only the text I called out, could another unmentioned assumption in the same area still remain ambiguous or wrong?" If yes, the finding is too coarse and should be refined or split before posting.
+   - **Enumerate, don't summarize:** When a finding says data in the spec is wrong or stale (audit tables, version numbers, parent paths, field names, file lists), list every specific row/claim that is wrong and what the correct value is. "Refresh this table" is an umbrella finding — the author will regenerate sloppily and you'll re-raise the same finding next round with a narrower scope. Instead: "Row X says parent is Y but audit shows Z; row A is missing entirely; row B lists the wrong severity." Give the author a punch list, not a vague direction.
+   - **Exhaust the category:** When you find one instance of a problem pattern (e.g., one wrong audit path, one missing policy case, one untested endpoint), actively look for MORE instances of the same pattern before writing the finding. A finding that says "the rollup path is wrong" when ajv and minimatch paths are also wrong will bounce back. Sweep the full surface once so you can write one comprehensive finding instead of discovering siblings in round 2.
 
 7. **Determine verdict:**
    - **`approve`**: Zero blocking findings. Spec is ready for implementation.

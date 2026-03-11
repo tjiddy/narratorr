@@ -76,6 +76,14 @@ Mechanical workflow steps live in `scripts/` as deterministic Node scripts (not 
 
 All work tracked as Gitea issues at `https://git.tjiddy.com/todd/narratorr`. Gitea CLI: `scripts/gitea.ts`. Gitea connectivity is intermittent — retry up to 3 times on ECONNREFUSED.
 
+## Codebase Knowledge Graph (MCP)
+
+Project is indexed via `codebase-memory-mcp` with auto-sync (graph stays fresh as files change). Prefer graph tools over Explore subagents for structural queries — use grep/glob for text pattern matching.
+
+- **`trace_call_path`** — "what calls X?" / "what does X call?" (blast radius, dependency chains)
+- **`detect_changes`** — map git diff to affected symbols with risk classification (`scope='branch'` for PR review)
+- **`search_graph`** — find functions/classes/modules by name with degree filtering (dead code, fan-out)
+
 ## Extended Documentation
 
 Detailed standards and workflow are in `.claude/docs/`. Skills inject only the docs they need via `!`cat`` dynamic context injection — they are NOT loaded globally.
