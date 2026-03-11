@@ -50,10 +50,11 @@ The server will start on http://localhost:3000 (API) and http://localhost:5173 (
 
 ### Docker
 
-Built on [linuxserver.io](https://www.linuxserver.io/) base image with s6-overlay for process supervision, matching the conventions used by Sonarr, Radarr, and Lidarr.
+Published to `ghcr.io/todd/narratorr` as multi-arch images (amd64/arm64). Built on [linuxserver.io](https://www.linuxserver.io/) base image with s6-overlay for process supervision, matching the conventions used by Sonarr, Radarr, and Lidarr.
 
 ```bash
-# Build and run with Docker Compose
+# Pull and run with Docker Compose
+docker compose pull
 docker compose up -d
 ```
 
@@ -68,6 +69,29 @@ volumes:
   - /path/to/audiobooks:/audiobooks     # Your audiobook library
   - /path/to/downloads:/downloads       # Download client save path
 ```
+
+**Image tags:**
+
+| Tag | Description |
+|-----|-------------|
+| `latest` | Most recent release |
+| `0.9.0` | Specific version |
+| `0.9` | Latest patch for a major.minor series |
+
+**Building from source:** To build locally instead of pulling from the registry, uncomment the `build: .` line in `docker-compose.yml` (and comment out the `image:` line), then run `docker compose up -d --build`.
+
+#### CI/CD — Docker Publish Pipeline
+
+Images are built and published automatically when a version tag (e.g., `v0.9.0`) is pushed. The pipeline runs quality gates (lint, test, typecheck, build) before building multi-arch images via `docker buildx` with QEMU emulation.
+
+**Required Gitea Actions secrets:**
+
+| Secret | Description |
+|--------|-------------|
+| `REGISTRY_USER` | GHCR username (e.g., `todd`) |
+| `REGISTRY_PASSWORD` | GHCR personal access token with `write:packages` scope |
+
+**Setup:** In your Gitea repository, go to **Settings > Actions > Secrets** and add both `REGISTRY_USER` and `REGISTRY_PASSWORD`. The workflow validates these are present before attempting to push — if either is missing, the job fails with a clear error message. Once configured, push a version tag (e.g., `git tag v0.9.0 && git push origin v0.9.0`) to trigger a build.
 
 ## Configuration
 

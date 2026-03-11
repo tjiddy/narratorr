@@ -19,7 +19,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "docker:build": "docker build -t narratorr .",
-    "docker:up": "docker-compose up -d",
+    "docker:up": "docker compose up -d",
     "lighthouse": "node --import tsx e2e/lighthouse/run.ts"
   },
   "dependencies": {
