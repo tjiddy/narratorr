@@ -103,7 +103,33 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **Granularity mirroring:** If the reviewer split a finding into sub-items (e.g., F2a, F2b, F2c), the response table must have one row per sub-item — not a single collapsed "F2: fixed" row. Fixes should line up 1:1 with findings so the re-review is verification, not reinterpretation.
    - Clean up temp file
 
-6. **Report to main agent:** "**PR #<pr-number> (issue #<id>)** — <status: ready-for-re-review | needs-human-input> — <1-line summary of resolutions>"
+6. **Prompt improvement retrospective (for `fixed` findings only):**
+   For each finding resolved as `fixed`, analyze: "Why did I miss this during implementation? What specific addition or change to a skill prompt (`/plan`, `/implement`, or CLAUDE.md) would have helped me catch this before it went out for review?"
+
+   Write a single retrospective file: `.claude/cl/reviews/pr-<issue-id>-round-<N>.md` (where N is the review round number, inferred from the number of prior `## Verdict:` comments + 1). Create `.claude/cl/reviews/` if it doesn't exist.
+
+   Format:
+   ```yaml
+   ---
+   skill: respond-to-pr-review
+   issue: <id>
+   pr: <pr-number>
+   round: <N>
+   date: <YYYY-MM-DD>
+   fixed_findings: [F1, F3, ...]
+   ---
+   ```
+   Then for each fixed finding:
+   ```
+   ### <finding-id>: <short description>
+   **What was caught:** <the finding>
+   **Why I missed it:** <root cause — was it a spec gap? explore gap? test gap? pattern I didn't know about? prompt didn't mention it?>
+   **Prompt fix:** <specific text to add/change in a specific skill prompt or CLAUDE.md that would catch this next time>
+   ```
+
+   Be specific in "Prompt fix" — "be more careful" is useless. "Add to /plan step 3: 'When modifying query filters, verify cache invalidation logic still matches'" is actionable.
+
+7. **Report to main agent:** "**PR #<pr-number> (issue #<id>)** — <status: ready-for-re-review | needs-human-input> — <1-line summary of resolutions>"
 
 ## Important
 

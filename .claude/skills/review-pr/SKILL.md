@@ -247,6 +247,34 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
     - Cross-check `Interaction Checks`: each checked intersection must map to either a finding or `verified-correct` evidence.
     - Cross-check blocking test findings for specificity: each one should point to a concrete behavior, branch, or side effect that is still unproven. If a finding could be "satisfied" by adding some tests while leaving another enumerated behavior in the same unit uncovered, split or refine the finding before posting.
 
+11b. **Reviewer self-critique (round 2+ only, when new findings exist on original code):**
+    If this is a re-review (prior `## Verdict:` comments exist) and any new findings target code that was present in the original diff (NOT code introduced by fix commits since the last review), perform a self-critique:
+
+    For each such finding, analyze: "This code was in the diff during my round 1 review. Could I have caught this then? What specific addition or change to the `/review-pr` prompt would have helped me identify this in the first round?"
+
+    Write a retrospective file: `.claude/cl/reviews/reviewer-pr-<issue-id>-round-<N>.md`. Create `.claude/cl/reviews/` if it doesn't exist.
+
+    Format:
+    ```yaml
+    ---
+    skill: review-pr
+    issue: <id>
+    pr: <pr-number>
+    round: <N>
+    date: <YYYY-MM-DD>
+    new_findings_on_original_code: [F1, F4, ...]
+    ---
+    ```
+    Then for each finding:
+    ```
+    ### <finding-id>: <short description>
+    **What I missed in round 1:** <the finding>
+    **Why I missed it:** <was it masked by other issues? did I not look deep enough at this file? did I not trace the call chain? did I not check test coverage for this specific behavior?>
+    **Prompt fix:** <specific text to add/change in `/review-pr` that would catch this class of issue in round 1>
+    ```
+
+    Skip this step if all new findings are on code introduced by fix commits (those are genuinely new issues, not round-1 misses).
+
 12. **Post review comment on PR (MANDATORY — this is a Gitea API call, not stdout):**
     - Write comment to temp file, then post via Gitea API: `gitea pr-comment <pr-number> --body-file <temp-file-path>`
     - **Verify the comment was posted** — the command should return the comment ID. If it fails, retry once.

@@ -82,7 +82,32 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      - Run: `node scripts/update-labels.ts <id> --replace "status/" "status/review-spec"`
    - If the issue does NOT have `yolo`: do not change labels (manual workflow)
 
-10. **Report readiness verdict** using this format:
+10. **Prompt improvement retrospective (for `fixed` findings only):**
+    For each finding resolved as `fixed`, analyze: "Why did I miss this when writing the spec? What specific addition or change to a skill prompt (`/spec`, `/elaborate`, or CLAUDE.md) would have helped me catch this before it went out for review?"
+
+    Write a single retrospective file: `.claude/cl/reviews/spec-<issue-id>-round-<N>.md` (where N is the review round number, inferred from the number of prior `## Spec Review` comments + 1). Create `.claude/cl/reviews/` if it doesn't exist.
+
+    Format:
+    ```yaml
+    ---
+    skill: respond-to-spec-review
+    issue: <id>
+    round: <N>
+    date: <YYYY-MM-DD>
+    fixed_findings: [F1, F3, ...]
+    ---
+    ```
+    Then for each fixed finding:
+    ```
+    ### <finding-id>: <short description>
+    **What was caught:** <the finding>
+    **Why I missed it:** <root cause — vague AC? didn't check codebase? missing test plan? scope assumption?>
+    **Prompt fix:** <specific text to add/change in a specific skill prompt or CLAUDE.md>
+    ```
+
+    Be specific in "Prompt fix" — "check more carefully" is useless. "Add to /spec AC checklist: 'For DB schema changes, verify all existing callers of affected queries'" is actionable.
+
+11. **Report readiness verdict** using this format:
 
    ```
    VERDICT: ready | filled | not-ready

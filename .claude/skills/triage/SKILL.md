@@ -59,9 +59,11 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    c. **Read "Wish I'd Known" entries:** Scan `.claude/cl/workflow-log.md` for `### Wish I'd Known` sections. Note any items that recur across multiple issues.
 
+   c2. **Read review retrospectives:** Scan all files in `.claude/cl/reviews/`. These contain specific "Prompt fix" suggestions from implementers (respond-to-*) and reviewers (review-*) identifying what prompt changes would have caught issues earlier. Group by target skill — multiple retrospectives suggesting changes to the same skill prompt are high-signal candidates for graduation.
+
    d. **Classify each cluster/item** into one of:
       - **Code fix** — a concrete change to the repo would eliminate this class of problem (e.g., "mock factories would prevent stale mock breakage"). → Suggest creating a Gitea issue. Include the proposed scope and rationale.
-      - **Workflow change** — a change to a plugin skill would catch or prevent this (e.g., "review-spec should check for catch-all blocks"). → Suggest which skill to change and what to add.
+      - **Workflow change** — a change to a skill prompt would catch or prevent this (e.g., "review-spec should check for catch-all blocks"). Review retrospectives (`.claude/cl/reviews/`) are the primary source here — they contain pre-written "Prompt fix" suggestions. When multiple retrospectives across different issues suggest the same prompt change, that's a strong signal to graduate. → Suggest which skill to change and what to add, quoting the retrospective's proposed text where available.
       - **CLAUDE.md rule** — a convention or pattern that should be documented for all contributors (e.g., "always use FastifyBaseLogger, not BaseLogger from pino"). → Suggest the specific addition.
       - **Inherent** — no action possible; this is a runtime/tooling reality that can't be fixed, only known (e.g., "jsdom doesn't support responsive breakpoints"). → No action. Learning stays in `.claude/cl/learnings/` for `/claim` to surface.
 
