@@ -138,8 +138,10 @@ describe('AuthorPage', () => {
       expect(screen.getByText('Brandon Sanderson')).toBeInTheDocument();
     });
 
-    const img = screen.getByAltText('Brandon Sanderson');
-    expect(img).toHaveAttribute('src', 'https://example.com/sanderson.jpg');
+    await waitFor(() => {
+      const img = screen.getByAltText('Brandon Sanderson');
+      expect(img).toHaveAttribute('src', 'https://example.com/sanderson.jpg');
+    });
   });
 
   it('renders genre tags', async () => {
@@ -148,7 +150,9 @@ describe('AuthorPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Fantasy')).toBeInTheDocument();
     });
-    expect(screen.getByText('Science Fiction')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Science Fiction')).toBeInTheDocument();
+    });
   });
 
   it('renders book count and series count in stats', async () => {
@@ -157,7 +161,9 @@ describe('AuthorPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/4 audiobooks/)).toBeInTheDocument();
     });
-    expect(screen.getByText(/2 series/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/2 series/)).toBeInTheDocument();
+    });
   });
 
   it('renders author bio and toggles show more/less', async () => {
@@ -172,10 +178,14 @@ describe('AuthorPage', () => {
     });
 
     await user.click(screen.getByText('Show more'));
-    expect(screen.getByText('Show less')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Show less')).toBeInTheDocument();
+    });
 
     await user.click(screen.getByText('Show less'));
-    expect(screen.getByText('Show more')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Show more')).toBeInTheDocument();
+    });
   });
 
   it('groups books by series with standalone section', async () => {
@@ -185,13 +195,15 @@ describe('AuthorPage', () => {
       expect(screen.getByText('The Stormlight Archive')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Mistborn')).toBeInTheDocument();
-    expect(screen.getByText('Standalone')).toBeInTheDocument();
-    // All book titles present
-    expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
-    expect(screen.getByText('Words of Radiance')).toBeInTheDocument();
-    expect(screen.getByText('The Final Empire')).toBeInTheDocument();
-    expect(screen.getByText('Warbreaker')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Mistborn')).toBeInTheDocument();
+      expect(screen.getByText('Standalone')).toBeInTheDocument();
+      // All book titles present
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      expect(screen.getByText('Words of Radiance')).toBeInTheDocument();
+      expect(screen.getByText('The Final Empire')).toBeInTheDocument();
+      expect(screen.getByText('Warbreaker')).toBeInTheDocument();
+    });
   });
 
   it('shows "Author not found" when author fails to load', async () => {
@@ -203,8 +215,10 @@ describe('AuthorPage', () => {
     });
 
     // Has a back-to-library link
-    const backLink = screen.getByText('Back to Library').closest('a');
-    expect(backLink).toHaveAttribute('href', '/library');
+    await waitFor(() => {
+      const backLink = screen.getByText('Back to Library').closest('a');
+      expect(backLink).toHaveAttribute('href', '/library');
+    });
   });
 
   it('renders add popover buttons for books not in library', async () => {
@@ -216,8 +230,10 @@ describe('AuthorPage', () => {
 
     // AddBookPopover renders buttons — 4 books not in library + Add All buttons
     // Each not-in-library book gets an Add popover button
-    const inLibraryIcons = screen.queryAllByLabelText('In library');
-    expect(inLibraryIcons.length).toBe(0); // no books in library by default
+    await waitFor(() => {
+      const inLibraryIcons = screen.queryAllByLabelText('In library');
+      expect(inLibraryIcons.length).toBe(0); // no books in library by default
+    });
   });
 
   it('adds a book to library via popover', async () => {
@@ -258,8 +274,10 @@ describe('AuthorPage', () => {
     });
 
     // One book in library shows check icon
-    const inLibrary = screen.getAllByLabelText('In library');
-    expect(inLibrary.length).toBe(1);
+    await waitFor(() => {
+      const inLibrary = screen.getAllByLabelText('In library');
+      expect(inLibrary.length).toBe(1);
+    });
   });
 
   it('renders back button that navigates back', async () => {
@@ -292,9 +310,11 @@ describe('AuthorPage', () => {
       expect(screen.getByText('The Stormlight Archive')).toBeInTheDocument();
     });
 
-    const addAllButtons = screen.getAllByText(/Add All/);
-    // 3 sections: Stormlight Archive, Mistborn, Standalone
-    expect(addAllButtons.length).toBe(3);
+    await waitFor(() => {
+      const addAllButtons = screen.getAllByText(/Add All/);
+      // 3 sections: Stormlight Archive, Mistborn, Standalone
+      expect(addAllButtons.length).toBe(3);
+    });
   });
 
   it('clicks Add All to add all books in a series', async () => {
@@ -323,8 +343,10 @@ describe('AuthorPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    expect(screen.getAllByText('Michael Kramer, Kate Reading').length).toBeGreaterThan(0);
-    expect(screen.getByText('45h 29m')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getAllByText('Michael Kramer, Kate Reading').length).toBeGreaterThan(0);
+      expect(screen.getByText('45h 29m')).toBeInTheDocument();
+    });
   });
 
   it('shows error toast when addBook fails', async () => {

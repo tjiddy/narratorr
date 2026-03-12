@@ -59,10 +59,10 @@ describe('SecuritySettings', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Authentication Mode')).toBeInTheDocument();
+      expect(screen.getByText('API Key')).toBeInTheDocument();
+      expect(screen.getByText('Local Network Bypass')).toBeInTheDocument();
+      expect(screen.getByText('test-api-key-12345')).toBeInTheDocument();
     });
-    expect(screen.getByText('API Key')).toBeInTheDocument();
-    expect(screen.getByText('Local Network Bypass')).toBeInTheDocument();
-    expect(screen.getByText('test-api-key-12345')).toBeInTheDocument();
   });
 
   it('forms/basic radio buttons disabled when no credentials exist', async () => {
@@ -73,14 +73,16 @@ describe('SecuritySettings', () => {
     });
 
     // Forms and Basic radios should be disabled since hasUser=false
-    const formsRadio = screen.getByLabelText('Forms (Login Page)');
-    const basicRadio = screen.getByLabelText('Basic (Browser Prompt)');
-    expect(formsRadio).toBeDisabled();
-    expect(basicRadio).toBeDisabled();
+    await waitFor(() => {
+      const formsRadio = screen.getByLabelText('Forms (Login Page)');
+      const basicRadio = screen.getByLabelText('Basic (Browser Prompt)');
+      expect(formsRadio).toBeDisabled();
+      expect(basicRadio).toBeDisabled();
 
-    // None should still be enabled
-    const noneRadio = screen.getByLabelText('None (No Authentication)');
-    expect(noneRadio).not.toBeDisabled();
+      // None should still be enabled
+      const noneRadio = screen.getByLabelText('None (No Authentication)');
+      expect(noneRadio).not.toBeDisabled();
+    });
   });
 
   it('mode change to "none" shows confirmation warning', async () => {
@@ -107,8 +109,10 @@ describe('SecuritySettings', () => {
     await user.click(noneRadio);
 
     // Confirmation should appear
-    expect(screen.getByText(/are you sure you want to disable authentication/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /disable auth/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/are you sure you want to disable authentication/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /disable auth/i })).toBeInTheDocument();
+    });
   });
 
   it('API key displayed with copy functionality', async () => {
@@ -140,7 +144,9 @@ describe('SecuritySettings', () => {
     await user.click(regenButton);
 
     // Confirmation should appear
-    expect(screen.getByText(/regenerating will invalidate/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/regenerating will invalidate/i)).toBeInTheDocument();
+    });
 
     // Confirm regeneration
     const confirmButton = screen.getByRole('button', { name: /confirm regenerate/i });
@@ -186,9 +192,11 @@ describe('SecuritySettings', () => {
     });
 
     // Should show username field pre-populated, plus password fields
-    expect(screen.getByLabelText('Username')).toHaveValue('admin');
-    expect(screen.getByLabelText('Current Password')).toBeInTheDocument();
-    expect(screen.getByLabelText('New Password')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText('Username')).toHaveValue('admin');
+      expect(screen.getByLabelText('Current Password')).toBeInTheDocument();
+      expect(screen.getByLabelText('New Password')).toBeInTheDocument();
+    });
 
     await user.type(screen.getByLabelText('Current Password'), 'oldpass');
     await user.type(screen.getByLabelText('New Password'), 'newpassword1');

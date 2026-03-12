@@ -113,8 +113,10 @@ describe('SearchReleasesModal', () => {
       expect(screen.getByText('The Way of Kings [Unabridged]')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Way of Kings (Graphic Audio)')).toBeInTheDocument();
-    expect(screen.getByText('Found 2 releases')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Way of Kings (Graphic Audio)')).toBeInTheDocument();
+      expect(screen.getByText('Found 2 releases')).toBeInTheDocument();
+    });
   });
 
   it('shows empty state when no results', async () => {
@@ -158,13 +160,15 @@ describe('SearchReleasesModal', () => {
       expect(api.grab).toHaveBeenCalledTimes(1);
     });
 
-    expect(vi.mocked(api.grab).mock.calls[0][0]).toEqual(
-      expect.objectContaining({
-        downloadUrl: 'magnet:?xt=urn:btih:abc123',
-        title: 'The Way of Kings [Unabridged]',
-        bookId: 1,
-      }),
-    );
+    await waitFor(() => {
+      expect(vi.mocked(api.grab).mock.calls[0][0]).toEqual(
+        expect.objectContaining({
+          downloadUrl: 'magnet:?xt=urn:btih:abc123',
+          title: 'The Way of Kings [Unabridged]',
+          bookId: 1,
+        }),
+      );
+    });
 
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('Download started! Check the Activity page.');
@@ -185,7 +189,9 @@ describe('SearchReleasesModal', () => {
     const backdrop = screen.getByText('Releases for: The Way of Kings').closest('.fixed') as HTMLElement;
     await user.click(backdrop);
 
-    expect(onClose).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalled();
+    });
   });
 
   it('shows protocol badges on results', async () => {
@@ -203,10 +209,12 @@ describe('SearchReleasesModal', () => {
       expect(screen.getByText('The Way of Kings [Unabridged]')).toBeInTheDocument();
     });
 
-    const badges = screen.getAllByTestId('protocol-badge');
-    expect(badges).toHaveLength(2);
-    expect(badges[0]).toHaveTextContent('Torrent');
-    expect(badges[1]).toHaveTextContent('Usenet');
+    await waitFor(() => {
+      const badges = screen.getAllByTestId('protocol-badge');
+      expect(badges).toHaveLength(2);
+      expect(badges[0]).toHaveTextContent('Torrent');
+      expect(badges[1]).toHaveTextContent('Usenet');
+    });
   });
 
   it('calls onClose when X button is clicked', async () => {
@@ -220,7 +228,9 @@ describe('SearchReleasesModal', () => {
 
     await user.click(screen.getByLabelText('Close modal'));
 
-    expect(onClose).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalled();
+    });
   });
 
   it('shows error toast when grab fails', async () => {
@@ -263,8 +273,10 @@ describe('SearchReleasesModal', () => {
 
     await screen.findByText('No URL Release');
 
-    const grabButton = screen.getByText('Grab').closest('button');
-    expect(grabButton).toBeDisabled();
+    await waitFor(() => {
+      const grabButton = screen.getByText('Grab').closest('button');
+      expect(grabButton).toBeDisabled();
+    });
   });
 
   it('renders grab button for results with long unbroken rawTitle', async () => {
@@ -291,12 +303,14 @@ describe('SearchReleasesModal', () => {
     await screen.findByText('Some Book Title');
 
     // Grab button is rendered and enabled despite long rawTitle
-    const grabButton = screen.getByText('Grab').closest('button');
-    expect(grabButton).toBeInTheDocument();
-    expect(grabButton).not.toBeDisabled();
+    await waitFor(() => {
+      const grabButton = screen.getByText('Grab').closest('button');
+      expect(grabButton).toBeInTheDocument();
+      expect(grabButton).not.toBeDisabled();
 
-    // rawTitle is rendered (truncated visually via CSS, but present in DOM)
-    expect(screen.getByTitle(longRawTitle)).toBeInTheDocument();
+      // rawTitle is rendered (truncated visually via CSS, but present in DOM)
+      expect(screen.getByTitle(longRawTitle)).toBeInTheDocument();
+    });
   });
 
   describe('quality comparison for imported books', () => {
@@ -350,7 +364,9 @@ describe('SearchReleasesModal', () => {
       );
 
       await screen.findByText('High Quality Release');
-      expect(screen.queryByText('Lower quality')).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.queryByText('Lower quality')).not.toBeInTheDocument();
+      });
     });
 
     it('does not show quality comparison for non-imported book', async () => {
@@ -361,7 +377,9 @@ describe('SearchReleasesModal', () => {
       );
 
       await screen.findByText('Low Quality Release');
-      expect(screen.queryByText('Lower quality')).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.queryByText('Lower quality')).not.toBeInTheDocument();
+      });
     });
 
     it('warning tooltip explains existing quality is better', async () => {
@@ -384,8 +402,10 @@ describe('SearchReleasesModal', () => {
       );
 
       await screen.findByText('Lower quality');
-      const grabButton = screen.getByText('Grab').closest('button');
-      expect(grabButton).not.toBeDisabled();
+      await waitFor(() => {
+        const grabButton = screen.getByText('Grab').closest('button');
+        expect(grabButton).not.toBeDisabled();
+      });
     });
 
     it('skips comparison when book has no size data', async () => {
@@ -403,7 +423,9 @@ describe('SearchReleasesModal', () => {
       );
 
       await screen.findByText('Low Quality Release');
-      expect(screen.queryByText('Lower quality')).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.queryByText('Lower quality')).not.toBeInTheDocument();
+      });
     });
 
     it('skips comparison when book has no duration data', async () => {
@@ -421,7 +443,9 @@ describe('SearchReleasesModal', () => {
       );
 
       await screen.findByText('Low Quality Release');
-      expect(screen.queryByText('Lower quality')).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.queryByText('Lower quality')).not.toBeInTheDocument();
+      });
     });
   });
 
@@ -446,8 +470,10 @@ describe('SearchReleasesModal', () => {
 
     await screen.findByText('No Hash Release');
 
-    const blacklistButton = screen.getByText('Blacklist').closest('button');
-    expect(blacklistButton).toBeDisabled();
+    await waitFor(() => {
+      const blacklistButton = screen.getByText('Blacklist').closest('button');
+      expect(blacklistButton).toBeDisabled();
+    });
   });
 
   it('shows error toast when blacklist fails', async () => {
@@ -485,7 +511,9 @@ describe('SearchReleasesModal duration unknown', () => {
     await waitFor(() => {
       expect(screen.getByText(/duration unknown/i)).toBeInTheDocument();
     });
-    expect(screen.getByText(/quality filtering is disabled/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/quality filtering is disabled/i)).toBeInTheDocument();
+    });
   });
 
   it('does not show duration unknown banner when durationUnknown is false', async () => {
@@ -499,7 +527,9 @@ describe('SearchReleasesModal duration unknown', () => {
       expect(screen.getByText('The Way of Kings [Unabridged]')).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/duration unknown/i)).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText(/duration unknown/i)).not.toBeInTheDocument();
+    });
   });
 });
 
@@ -519,7 +549,9 @@ describe('SearchReleasesModal unsupported results', () => {
     });
 
     // Titles should not be visible before expanding
-    expect(screen.queryByText('Book "1" of "3"')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText('Book "1" of "3"')).not.toBeInTheDocument();
+    });
   });
 
   it('does not render unsupported section when count is 0', async () => {
@@ -533,7 +565,9 @@ describe('SearchReleasesModal unsupported results', () => {
       expect(screen.getByText('The Way of Kings [Unabridged]')).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/unsupported format/i)).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText(/unsupported format/i)).not.toBeInTheDocument();
+    });
   });
 
   it('expands to show raw titles when clicked', async () => {
@@ -556,8 +590,10 @@ describe('SearchReleasesModal unsupported results', () => {
     await user.click(screen.getByText('Found, but unsupported format (2)'));
 
     // Titles should now be visible
-    expect(screen.getByText(unsupportedTitles[0])).toBeInTheDocument();
-    expect(screen.getByText(unsupportedTitles[1])).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(unsupportedTitles[0])).toBeInTheDocument();
+      expect(screen.getByText(unsupportedTitles[1])).toBeInTheDocument();
+    });
   });
 
   it('shows unsupported section alongside normal results', async () => {
@@ -574,6 +610,8 @@ describe('SearchReleasesModal unsupported results', () => {
       expect(screen.getByText('Found 2 releases')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Found, but unsupported format (5)')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Found, but unsupported format (5)')).toBeInTheDocument();
+    });
   });
 });

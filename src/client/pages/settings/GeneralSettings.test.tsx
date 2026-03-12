@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
@@ -46,10 +46,12 @@ describe('GeneralSettings', () => {
     await waitFor(() => {
       expect(screen.getByText('Library')).toBeInTheDocument();
     });
-    expect(screen.getByText('Search')).toBeInTheDocument();
-    expect(screen.getByText('Import')).toBeInTheDocument();
-    expect(screen.getByText('Logging')).toBeInTheDocument();
-    expect(screen.getByText('Metadata')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Search')).toBeInTheDocument();
+      expect(screen.getByText('Import')).toBeInTheDocument();
+      expect(screen.getByText('Logging')).toBeInTheDocument();
+      expect(screen.getByText('Metadata')).toBeInTheDocument();
+    });
 
     // Verify form is populated from API (wait for async form reset after query resolves)
     await waitFor(() => {
@@ -58,12 +60,17 @@ describe('GeneralSettings', () => {
     });
 
     // Save button disabled when clean
-    const saveButton = screen.getByText('Save Changes').closest('button')!;
-    expect(saveButton).toBeDisabled();
+    await waitFor(() => {
+      const saveButton = screen.getByText('Save Changes').closest('button')!;
+      expect(saveButton).toBeDisabled();
+    });
 
     // Interact to make form dirty
     await user.type(screen.getByPlaceholderText('/audiobooks'), '/x');
-    expect(saveButton).not.toBeDisabled();
+    await waitFor(() => {
+      const saveButton = screen.getByText('Save Changes').closest('button')!;
+      expect(saveButton).not.toBeDisabled();
+    });
   });
 
   it('enables save button after modifying a field', async () => {
@@ -78,8 +85,10 @@ describe('GeneralSettings', () => {
     await user.clear(pathInput);
     await user.type(pathInput, '/new-path');
 
-    const saveButton = screen.getByText('Save Changes').closest('button')!;
-    expect(saveButton).not.toBeDisabled();
+    await waitFor(() => {
+      const saveButton = screen.getByText('Save Changes').closest('button')!;
+      expect(saveButton).not.toBeDisabled();
+    });
   });
 
   it('submits updated settings and shows success toast', async () => {
@@ -100,8 +109,10 @@ describe('GeneralSettings', () => {
     await waitFor(() => {
       expect(api.updateSettings).toHaveBeenCalled();
     });
-    expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
-      library: expect.objectContaining({ path: '/new-path' }),
+    await waitFor(() => {
+      expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
+        library: expect.objectContaining({ path: '/new-path' }),
+      });
     });
 
     await waitFor(() => {
@@ -139,19 +150,24 @@ describe('GeneralSettings', () => {
     });
 
     const logSelect = screen.getByLabelText('Log Level');
-    expect(screen.getByRole('combobox', { name: 'Log Level' })).toBe(logSelect);
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Log Level' })).toBe(logSelect);
+    });
     await user.selectOptions(logSelect, 'debug');
 
-    const saveButton = screen.getByText('Save Changes').closest('button')!;
-    expect(saveButton).not.toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByText('Save Changes').closest('button')!).not.toBeDisabled();
+    });
 
-    await user.click(saveButton);
+    await user.click(screen.getByText('Save Changes').closest('button')!);
 
     await waitFor(() => {
       expect(api.updateSettings).toHaveBeenCalled();
     });
-    expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
-      general: { logLevel: 'debug' },
+    await waitFor(() => {
+      expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
+        general: { logLevel: 'debug' },
+      });
     });
   });
 
@@ -165,7 +181,9 @@ describe('GeneralSettings', () => {
     });
 
     const regionSelect = screen.getByLabelText('Audible Region');
-    expect(screen.getByRole('combobox', { name: 'Audible Region' })).toBe(regionSelect);
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Audible Region' })).toBe(regionSelect);
+    });
     await user.selectOptions(regionSelect, 'uk');
 
     await user.click(screen.getByText('Save Changes').closest('button')!);
@@ -173,8 +191,10 @@ describe('GeneralSettings', () => {
     await waitFor(() => {
       expect(api.updateSettings).toHaveBeenCalled();
     });
-    expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
-      metadata: { audibleRegion: 'uk' },
+    await waitFor(() => {
+      expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
+        metadata: { audibleRegion: 'uk' },
+      });
     });
   });
 
@@ -190,8 +210,10 @@ describe('GeneralSettings', () => {
     const searchCheckbox = screen.getByRole('checkbox', { name: 'Enable Scheduled Search' });
     await user.click(searchCheckbox);
 
-    const saveButton = screen.getByText('Save Changes').closest('button')!;
-    expect(saveButton).not.toBeDisabled();
+    await waitFor(() => {
+      const saveButton = screen.getByText('Save Changes').closest('button')!;
+      expect(saveButton).not.toBeDisabled();
+    });
   });
 
   it('shows folder format preview and updates on token click', async () => {
@@ -203,7 +225,9 @@ describe('GeneralSettings', () => {
       expect(screen.getByText('Without series')).toBeInTheDocument();
     });
     // Preview — folder path is dimmed, filename is highlighted; both previews render sample data
-    expect(screen.getAllByText(/Brandon Sanderson\/The Way of Kings\//).length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => {
+      expect(screen.getAllByText(/Brandon Sanderson\/The Way of Kings\//).length).toBeGreaterThanOrEqual(1);
+    });
 
     // Expand token panel, then click a token button
     const toggles = screen.getAllByText('Insert token');
@@ -223,7 +247,9 @@ describe('GeneralSettings', () => {
       await waitFor(() => {
         expect(screen.getByText('Housekeeping')).toBeInTheDocument();
       });
-      expect(screen.getByLabelText('Event History Retention (days)')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByLabelText('Event History Retention (days)')).toBeInTheDocument();
+      });
     });
 
     it('retention days input defaults to 90', async () => {
@@ -244,16 +270,17 @@ describe('GeneralSettings', () => {
       });
 
       const input = screen.getByLabelText('Event History Retention (days)');
-      await user.clear(input);
-      await user.type(input, '30');
+      fireEvent.change(input, { target: { value: '30' } });
 
       await user.click(screen.getByText('Save Changes').closest('button')!);
 
       await waitFor(() => {
         expect(api.updateSettings).toHaveBeenCalled();
       });
-      expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
-        general: { housekeepingRetentionDays: 30 },
+      await waitFor(() => {
+        expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
+          general: { housekeepingRetentionDays: 30 },
+        });
       });
     });
 
@@ -275,16 +302,17 @@ describe('GeneralSettings', () => {
       });
 
       const input = screen.getByLabelText('Recycling Bin Retention (days)');
-      await user.clear(input);
-      await user.type(input, '7');
+      fireEvent.change(input, { target: { value: '7' } });
 
       await user.click(screen.getByText('Save Changes').closest('button')!);
 
       await waitFor(() => {
         expect(api.updateSettings).toHaveBeenCalled();
       });
-      expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
-        general: { recycleRetentionDays: 7 },
+      await waitFor(() => {
+        expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
+          general: { recycleRetentionDays: 7 },
+        });
       });
     });
   });

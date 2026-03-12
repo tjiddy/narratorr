@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useForm, FormProvider } from 'react-hook-form';
 import { QualitySettingsSection } from './QualitySettingsSection';
@@ -64,13 +64,13 @@ describe('QualitySettingsSection', () => {
   });
 
   it('grab floor accepts numeric input', async () => {
-    const user = userEvent.setup();
     render(<TestWrapper />);
 
     const input = screen.getByLabelText('MB/hr Grab Floor');
-    await user.clear(input);
-    await user.type(input, '150');
-    expect(input).toHaveValue(150);
+    fireEvent.change(input, { target: { value: '150' } });
+    await waitFor(() => {
+      expect(input).toHaveValue(150);
+    });
   });
 
   it('renders reject words text input with placeholder', () => {
@@ -93,20 +93,24 @@ describe('QualitySettingsSection', () => {
 
     const rejectInput = screen.getByLabelText('Reject Words');
     await user.type(rejectInput, 'German, Abridged');
-    expect(rejectInput).toHaveValue('German, Abridged');
+    await waitFor(() => {
+      expect(rejectInput).toHaveValue('German, Abridged');
+    });
 
     const requiredInput = screen.getByLabelText('Required Words');
     await user.type(requiredInput, 'M4B');
-    expect(requiredInput).toHaveValue('M4B');
+    await waitFor(() => {
+      expect(requiredInput).toHaveValue('M4B');
+    });
   });
 
   it('min seeders accepts numeric input', async () => {
-    const user = userEvent.setup();
     render(<TestWrapper />);
 
     const input = screen.getByLabelText('Minimum Seeders');
-    await user.clear(input);
-    await user.type(input, '5');
-    expect(input).toHaveValue(5);
+    fireEvent.change(input, { target: { value: '5' } });
+    await waitFor(() => {
+      expect(input).toHaveValue(5);
+    });
   });
 });

@@ -93,7 +93,9 @@ describe('ProwlarrImport', () => {
     await user.type(screen.getByPlaceholderText('http://localhost:9696'), 'http://prowlarr:9696');
     await user.type(screen.getByPlaceholderText('Your Prowlarr API key'), 'key');
 
-    expect(screen.getByText('Next')).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByText('Next')).toBeDisabled();
+    });
   });
 
   it('next button is enabled after successful test', async () => {
@@ -127,7 +129,9 @@ describe('ProwlarrImport', () => {
 
     await user.type(screen.getByPlaceholderText('http://localhost:9696'), '/v2');
 
-    expect(screen.getByText('Next')).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByText('Next')).toBeDisabled();
+    });
   });
 
   it('clicking next saves config and shows preview table', async () => {
@@ -153,9 +157,11 @@ describe('ProwlarrImport', () => {
       expect(screen.getByText('NZBgeek')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Select indexers to import')).toBeInTheDocument();
-    expect(screen.getByText('New')).toBeInTheDocument();
-    expect(screen.getByText('Updated')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Select indexers to import')).toBeInTheDocument();
+      expect(screen.getByText('New')).toBeInTheDocument();
+      expect(screen.getByText('Updated')).toBeInTheDocument();
+    });
   });
 
   it('checkboxes default to selected for non-unchanged items', async () => {
@@ -175,10 +181,12 @@ describe('ProwlarrImport', () => {
     await user.click(screen.getByText('Next'));
     await waitFor(() => expect(screen.getByText('MyAnonaMouse')).toBeInTheDocument());
 
-    const checkboxes = screen.getAllByRole('checkbox');
-    expect(checkboxes).toHaveLength(2);
-    expect(checkboxes[0]).toBeChecked();
-    expect(checkboxes[1]).toBeChecked();
+    await waitFor(() => {
+      const checkboxes = screen.getAllByRole('checkbox');
+      expect(checkboxes).toHaveLength(2);
+      expect(checkboxes[0]).toBeChecked();
+      expect(checkboxes[1]).toBeChecked();
+    });
   });
 
   it('import selected sends items and closes on success', async () => {
@@ -228,8 +236,10 @@ describe('ProwlarrImport', () => {
 
     await user.click(screen.getByText('Back'));
 
-    expect(screen.getByPlaceholderText('http://localhost:9696')).toBeInTheDocument();
-    expect(screen.queryByText('MyAnonaMouse')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('http://localhost:9696')).toBeInTheDocument();
+      expect(screen.queryByText('MyAnonaMouse')).not.toBeInTheDocument();
+    });
   });
 
   it('close button calls onClose', async () => {
@@ -251,12 +261,16 @@ describe('ProwlarrImport', () => {
     const fullSyncBtn = screen.getByText('Full Sync');
     await user.click(fullSyncBtn);
 
-    expect(screen.getByText('Add, update, and remove to match Prowlarr')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Add, update, and remove to match Prowlarr')).toBeInTheDocument();
+    });
 
     const addOnlyBtn = screen.getByText('Add Only');
     await user.click(addOnlyBtn);
 
-    expect(screen.getByText('Only import new indexers')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Only import new indexers')).toBeInTheDocument();
+    });
   });
 
   it('clicking backdrop calls onClose', async () => {
@@ -371,7 +385,9 @@ describe('ProwlarrImport', () => {
     });
 
     // Should be back on the connect step
-    expect(screen.getByPlaceholderText('http://localhost:9696')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('http://localhost:9696')).toBeInTheDocument();
+    });
   });
 
   it('shows empty state when preview returns no items', async () => {
@@ -443,7 +459,9 @@ describe('ProwlarrImport', () => {
     await user.click(checkboxes[0]);
     await user.click(checkboxes[1]);
 
-    expect(screen.getByText('Import Selected').closest('button')).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByText('Import Selected').closest('button')).toBeDisabled();
+    });
   });
 
   it('shows "No changes applied" toast when sync returns all zeros', async () => {
@@ -486,7 +504,9 @@ describe('ProwlarrImport', () => {
       expect(screen.getByPlaceholderText('Your Prowlarr API key')).toHaveValue('saved-key');
       expect(screen.getByPlaceholderText('3030')).toHaveValue('3030, 3040');
     });
-    expect(screen.getByText('Add, update, and remove to match Prowlarr')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Add, update, and remove to match Prowlarr')).toBeInTheDocument();
+    });
   });
 
   it('changing API key resets test state', async () => {
@@ -505,7 +525,9 @@ describe('ProwlarrImport', () => {
 
     await user.type(screen.getByPlaceholderText('Your Prowlarr API key'), '2');
 
-    expect(screen.getByText('Next')).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByText('Next')).toBeDisabled();
+    });
   });
 
   it('test and next buttons are disabled when URL is empty', () => {
@@ -522,8 +544,10 @@ describe('ProwlarrImport', () => {
 
     await user.type(screen.getByPlaceholderText('http://localhost:9696'), 'http://prowlarr:9696');
 
-    expect(screen.getByText('Test').closest('button')).toBeDisabled();
-    expect(screen.getByText('Next').closest('button')).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByText('Test').closest('button')).toBeDisabled();
+      expect(screen.getByText('Next').closest('button')).toBeDisabled();
+    });
   });
 
   it('saves config with correctly parsed categories', async () => {
@@ -664,9 +688,11 @@ describe('ProwlarrImport', () => {
     await user.click(screen.getByText('Next'));
     await waitFor(() => expect(screen.getByText('Existing')).toBeInTheDocument());
 
-    expect(screen.getByText('Unchanged')).toBeInTheDocument();
-    // Only 2 checkboxes (not 3) because unchanged items don't have checkboxes
-    expect(screen.getAllByRole('checkbox')).toHaveLength(2);
+    await waitFor(() => {
+      expect(screen.getByText('Unchanged')).toBeInTheDocument();
+      // Only 2 checkboxes (not 3) because unchanged items don't have checkboxes
+      expect(screen.getAllByRole('checkbox')).toHaveLength(2);
+    });
   });
 
   it('shows connection failed with null message', async () => {
@@ -733,7 +759,9 @@ describe('ProwlarrImport', () => {
     await waitFor(() => expect(screen.getByText('Next')).not.toBeDisabled());
     await user.click(screen.getByText('Next'));
 
-    expect(screen.getByText('Fetching indexers from Prowlarr...')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Fetching indexers from Prowlarr...')).toBeInTheDocument();
+    });
   });
 
   it('displays singular indexer count for single item', async () => {

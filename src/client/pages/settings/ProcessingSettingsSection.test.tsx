@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
@@ -44,14 +44,13 @@ describe('ProcessingSettingsSection', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Post Processing')).toBeInTheDocument();
+      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
+      expect(screen.getByLabelText('ffmpeg Path')).toBeInTheDocument();
+      expect(screen.getByLabelText('Output Format')).toBeInTheDocument();
+      expect(screen.getByLabelText('Target Bitrate (kbps)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Keep original')).toBeInTheDocument();
+      expect(screen.getByLabelText('Merge Behavior')).toBeInTheDocument();
     });
-
-    expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
-    expect(screen.getByLabelText('ffmpeg Path')).toBeInTheDocument();
-    expect(screen.getByLabelText('Output Format')).toBeInTheDocument();
-    expect(screen.getByLabelText('Target Bitrate (kbps)')).toBeInTheDocument();
-    expect(screen.getByLabelText('Keep original')).toBeInTheDocument();
-    expect(screen.getByLabelText('Merge Behavior')).toBeInTheDocument();
   });
 
   it('disables format/bitrate/merge fields when processing is disabled', async () => {
@@ -62,11 +61,13 @@ describe('ProcessingSettingsSection', () => {
     });
 
     // Processing is disabled by default
-    expect(screen.getByLabelText('ffmpeg Path')).toBeDisabled();
-    expect(screen.getByLabelText('Output Format')).toBeDisabled();
-    expect(screen.getByLabelText('Target Bitrate (kbps)')).toBeDisabled();
-    expect(screen.getByLabelText('Keep original')).toBeDisabled();
-    expect(screen.getByLabelText('Merge Behavior')).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByLabelText('ffmpeg Path')).toBeDisabled();
+      expect(screen.getByLabelText('Output Format')).toBeDisabled();
+      expect(screen.getByLabelText('Target Bitrate (kbps)')).toBeDisabled();
+      expect(screen.getByLabelText('Keep original')).toBeDisabled();
+      expect(screen.getByLabelText('Merge Behavior')).toBeDisabled();
+    });
   });
 
   it('enables fields when processing toggle is turned on', async () => {
@@ -81,11 +82,11 @@ describe('ProcessingSettingsSection', () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText('ffmpeg Path')).not.toBeDisabled();
+      expect(screen.getByLabelText('Output Format')).not.toBeDisabled();
+      expect(screen.getByLabelText('Target Bitrate (kbps)')).not.toBeDisabled();
+      expect(screen.getByLabelText('Keep original')).not.toBeDisabled();
+      expect(screen.getByLabelText('Merge Behavior')).not.toBeDisabled();
     });
-    expect(screen.getByLabelText('Output Format')).not.toBeDisabled();
-    expect(screen.getByLabelText('Target Bitrate (kbps)')).not.toBeDisabled();
-    expect(screen.getByLabelText('Keep original')).not.toBeDisabled();
-    expect(screen.getByLabelText('Merge Behavior')).not.toBeDisabled();
   });
 
   it('disables bitrate input when "Keep original" is checked', async () => {
@@ -104,8 +105,8 @@ describe('ProcessingSettingsSection', () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText('Target Bitrate (kbps)')).toBeDisabled();
+      expect(screen.getByText('Files will be re-encoded using the original source bitrate.')).toBeInTheDocument();
     });
-    expect(screen.getByText('Files will be re-encoded using the original source bitrate.')).toBeInTheDocument();
   });
 
   it('shows ffmpeg version on successful probe', async () => {
@@ -126,8 +127,8 @@ describe('ProcessingSettingsSection', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/ffmpeg 6\.1\.1 detected/)).toBeInTheDocument();
+      expect(toast.success).toHaveBeenCalledWith('ffmpeg 6.1.1 detected');
     });
-    expect(toast.success).toHaveBeenCalledWith('ffmpeg 6.1.1 detected');
   });
 
   it('shows error toast on ffmpeg probe failure', async () => {
@@ -156,10 +157,9 @@ describe('ProcessingSettingsSection', () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText('Tag Embedding')).toBeInTheDocument();
+      expect(screen.getByLabelText('Tag Mode')).toBeInTheDocument();
+      expect(screen.getByLabelText('Embed Cover Art')).toBeInTheDocument();
     });
-
-    expect(screen.getByLabelText('Tag Mode')).toBeInTheDocument();
-    expect(screen.getByLabelText('Embed Cover Art')).toBeInTheDocument();
   });
 
   it('disables tag mode and cover when tagging is disabled', async () => {
@@ -170,7 +170,9 @@ describe('ProcessingSettingsSection', () => {
     });
 
     // Tagging is disabled by default
-    expect(screen.getByLabelText('Tag Mode')).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByLabelText('Tag Mode')).toBeDisabled();
+    });
   });
 
   it('enables tag controls when tagging toggle is turned on', async () => {
@@ -197,8 +199,8 @@ describe('ProcessingSettingsSection', () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText('Max Concurrent Jobs')).not.toBeDisabled();
+      expect(screen.getByLabelText('Max Concurrent Jobs')).toHaveValue(2);
     });
-    expect(screen.getByLabelText('Max Concurrent Jobs')).toHaveValue(2);
   });
 
   it('disables max concurrent jobs field when processing is disabled', async () => {
@@ -206,13 +208,11 @@ describe('ProcessingSettingsSection', () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText('Max Concurrent Jobs')).toBeInTheDocument();
+      expect(screen.getByLabelText('Max Concurrent Jobs')).toBeDisabled();
     });
-
-    expect(screen.getByLabelText('Max Concurrent Jobs')).toBeDisabled();
   });
 
   it('allows changing max concurrent jobs value', async () => {
-    const user = userEvent.setup();
     const settingsWithProcessing: Settings = createMockSettings({
       processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
     });
@@ -224,9 +224,10 @@ describe('ProcessingSettingsSection', () => {
     });
 
     const input = screen.getByLabelText('Max Concurrent Jobs');
-    await user.clear(input);
-    await user.type(input, '4');
-    expect(input).toHaveValue(4);
+    fireEvent.change(input, { target: { value: '4' } });
+    await waitFor(() => {
+      expect(input).toHaveValue(4);
+    });
   });
 
   it('shows mp3 chapter warning when mp3 format selected', async () => {

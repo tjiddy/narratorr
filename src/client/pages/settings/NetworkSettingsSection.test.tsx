@@ -45,8 +45,8 @@ describe('NetworkSettingsSection', () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText('Proxy URL')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('http://gluetun:8888 or socks5://localhost:1080')).toBeInTheDocument();
     });
-    expect(screen.getByPlaceholderText('http://gluetun:8888 or socks5://localhost:1080')).toBeInTheDocument();
   });
 
   it('renders empty proxy URL field on fresh install', async () => {
@@ -57,8 +57,8 @@ describe('NetworkSettingsSection', () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText('Proxy URL')).toBeInTheDocument();
+      expect(screen.getByLabelText('Proxy URL')).toHaveValue('');
     });
-    expect(screen.getByLabelText('Proxy URL')).toHaveValue('');
   });
 
   it('shows saved proxy URL value on load', async () => {
@@ -104,8 +104,8 @@ describe('NetworkSettingsSection', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: /test proxy/i })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /test proxy/i })).toBeDisabled();
       });
-      expect(screen.getByRole('button', { name: /test proxy/i })).toBeDisabled();
     });
 
     it('shows success toast with exit IP on successful test', async () => {

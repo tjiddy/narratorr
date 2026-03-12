@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BookMetadataModal } from './BookMetadataModal';
@@ -73,10 +73,12 @@ describe('BookMetadataModal', () => {
 
       await user.click(screen.getByText('Save'));
 
-      expect(onSave).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Words of Radiance' }),
-        false,
-      );
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith(
+          expect.objectContaining({ title: 'Words of Radiance' }),
+          false,
+        );
+      });
     });
 
     it('calls onSave with rename=true when checkbox is checked', async () => {
@@ -87,10 +89,12 @@ describe('BookMetadataModal', () => {
       await user.click(screen.getByLabelText(/rename files/i));
       await user.click(screen.getByText('Save'));
 
-      expect(onSave).toHaveBeenCalledWith(
-        expect.any(Object),
-        true,
-      );
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith(
+          expect.any(Object),
+          true,
+        );
+      });
     });
 
     it('prevents saving with empty title', () => {
@@ -105,7 +109,9 @@ describe('BookMetadataModal', () => {
       const titleInput = screen.getByLabelText(/title/i);
       await user.clear(titleInput);
 
-      expect(screen.getByText('Save')).toBeDisabled();
+      await waitFor(() => {
+        expect(screen.getByText('Save')).toBeDisabled();
+      });
     });
 
     it('calls onClose when Cancel is clicked', async () => {
@@ -114,7 +120,9 @@ describe('BookMetadataModal', () => {
       renderModal({ onClose });
 
       await user.click(screen.getByText('Cancel'));
-      expect(onClose).toHaveBeenCalledTimes(1);
+      await waitFor(() => {
+        expect(onClose).toHaveBeenCalledTimes(1);
+      });
     });
 
     it('hides rename checkbox when book has no path', () => {
@@ -140,10 +148,12 @@ describe('BookMetadataModal', () => {
       await user.type(posInput, '2.5');
       await user.click(screen.getByText('Save'));
 
-      expect(onSave).toHaveBeenCalledWith(
-        expect.objectContaining({ seriesPosition: 2.5 }),
-        false,
-      );
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith(
+          expect.objectContaining({ seriesPosition: 2.5 }),
+          false,
+        );
+      });
     });
 
     it('sends null seriesName when cleared', async () => {
@@ -155,10 +165,12 @@ describe('BookMetadataModal', () => {
       await user.clear(seriesInput);
       await user.click(screen.getByText('Save'));
 
-      expect(onSave).toHaveBeenCalledWith(
-        expect.objectContaining({ seriesName: null }),
-        false,
-      );
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith(
+          expect.objectContaining({ seriesName: null }),
+          false,
+        );
+      });
     });
 
     it('shows "Search Audnexus for metadata" button', () => {
@@ -182,10 +194,14 @@ describe('BookMetadataModal', () => {
 
       await user.click(screen.getByText('Save'));
 
-      expect(onSave).toHaveBeenCalledTimes(1);
-      const payload = onSave.mock.calls[0][0];
-      expect(payload.title).toBe('Changed Title');
-      expect(payload).not.toHaveProperty('seriesPosition');
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledTimes(1);
+      });
+      await waitFor(() => {
+        const payload = onSave.mock.calls[0][0];
+        expect(payload.title).toBe('Changed Title');
+        expect(payload).not.toHaveProperty('seriesPosition');
+      });
     });
 
     it('shows inline error when series position is non-numeric', async () => {
@@ -196,7 +212,9 @@ describe('BookMetadataModal', () => {
       await user.clear(posInput);
       await user.type(posInput, 'abc');
 
-      expect(screen.getByText('Must be a number')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText('Must be a number')).toBeInTheDocument();
+      });
     });
 
     it('clears error when series position is corrected to valid number', async () => {
@@ -206,11 +224,15 @@ describe('BookMetadataModal', () => {
       const posInput = screen.getByLabelText(/position/i);
       await user.clear(posInput);
       await user.type(posInput, 'abc');
-      expect(screen.getByText('Must be a number')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText('Must be a number')).toBeInTheDocument();
+      });
 
       await user.clear(posInput);
       await user.type(posInput, '3');
-      expect(screen.queryByText('Must be a number')).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.queryByText('Must be a number')).not.toBeInTheDocument();
+      });
     });
 
     it('clears error when series position is cleared', async () => {
@@ -220,10 +242,14 @@ describe('BookMetadataModal', () => {
       const posInput = screen.getByLabelText(/position/i);
       await user.clear(posInput);
       await user.type(posInput, 'abc');
-      expect(screen.getByText('Must be a number')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText('Must be a number')).toBeInTheDocument();
+      });
 
       await user.clear(posInput);
-      expect(screen.queryByText('Must be a number')).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.queryByText('Must be a number')).not.toBeInTheDocument();
+      });
     });
 
     it('shows inline error for partial parse like "1.2.3"', async () => {
@@ -234,7 +260,9 @@ describe('BookMetadataModal', () => {
       await user.clear(posInput);
       await user.type(posInput, '1.2.3');
 
-      expect(screen.getByText('Must be a number')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText('Must be a number')).toBeInTheDocument();
+      });
     });
 
     it('does not disable Save when series position is invalid', async () => {
@@ -245,7 +273,9 @@ describe('BookMetadataModal', () => {
       await user.clear(posInput);
       await user.type(posInput, 'abc');
 
-      expect(screen.getByText('Save')).not.toBeDisabled();
+      await waitFor(() => {
+        expect(screen.getByText('Save')).not.toBeDisabled();
+      });
     });
   });
 
@@ -256,8 +286,10 @@ describe('BookMetadataModal', () => {
 
       await user.click(screen.getByText('Search Audnexus for metadata'));
 
-      const searchInput = screen.getByLabelText('Search query');
-      expect(searchInput).toHaveValue('The Way of Kings Brandon Sanderson');
+      await waitFor(() => {
+        const searchInput = screen.getByLabelText('Search query');
+        expect(searchInput).toHaveValue('The Way of Kings Brandon Sanderson');
+      });
     });
 
     it('pre-fills with title only when book has no author', async () => {
@@ -267,8 +299,10 @@ describe('BookMetadataModal', () => {
 
       await user.click(screen.getByText('Search Audnexus for metadata'));
 
-      const searchInput = screen.getByLabelText('Search query');
-      expect(searchInput).toHaveValue('The Way of Kings');
+      await waitFor(() => {
+        const searchInput = screen.getByLabelText('Search query');
+        expect(searchInput).toHaveValue('The Way of Kings');
+      });
     });
 
     it('calls api.searchMetadata when search is submitted', async () => {
@@ -282,7 +316,9 @@ describe('BookMetadataModal', () => {
       await user.click(screen.getByText('Search Audnexus for metadata'));
       await user.click(screen.getByRole('button', { name: 'Search' }));
 
-      expect(searchMock).toHaveBeenCalledWith('The Way of Kings Brandon Sanderson');
+      await waitFor(() => {
+        expect(searchMock).toHaveBeenCalledWith('The Way of Kings Brandon Sanderson');
+      });
     });
 
     it('submits search on Enter key', async () => {
@@ -296,7 +332,9 @@ describe('BookMetadataModal', () => {
       await user.click(screen.getByText('Search Audnexus for metadata'));
       await user.keyboard('{Enter}');
 
-      expect(searchMock).toHaveBeenCalled();
+      await waitFor(() => {
+        expect(searchMock).toHaveBeenCalled();
+      });
     });
 
     it('renders search results with title, author, and narrator', async () => {
@@ -318,9 +356,11 @@ describe('BookMetadataModal', () => {
       await user.click(screen.getByRole('button', { name: 'Search' }));
 
       await screen.findByText('Result One');
-      expect(screen.getByText('Result Two')).toBeInTheDocument();
-      expect(screen.getByText('Author A')).toBeInTheDocument();
-      expect(screen.getByText('Narrator X')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText('Result Two')).toBeInTheDocument();
+        expect(screen.getByText('Author A')).toBeInTheDocument();
+        expect(screen.getByText('Narrator X')).toBeInTheDocument();
+      });
     });
 
     it('auto-fills fields when a search result is selected', async () => {
@@ -349,10 +389,12 @@ describe('BookMetadataModal', () => {
       await user.click(screen.getByText('Words of Radiance'));
 
       // Should return to edit view with auto-filled fields
-      expect(screen.getByLabelText(/title/i)).toHaveValue('Words of Radiance');
-      expect(screen.getByLabelText(/narrator/i)).toHaveValue('Michael Kramer, Kate Reading');
-      expect(screen.getByLabelText(/series$/i)).toHaveValue('The Stormlight Archive');
-      expect(screen.getByLabelText(/position/i)).toHaveValue('2');
+      await waitFor(() => {
+        expect(screen.getByLabelText(/title/i)).toHaveValue('Words of Radiance');
+        expect(screen.getByLabelText(/narrator/i)).toHaveValue('Michael Kramer, Kate Reading');
+        expect(screen.getByLabelText(/series$/i)).toHaveValue('The Stormlight Archive');
+        expect(screen.getByLabelText(/position/i)).toHaveValue('2');
+      });
     });
 
     it('allows editing auto-filled fields before saving', async () => {
@@ -379,10 +421,12 @@ describe('BookMetadataModal', () => {
       await user.type(titleInput, 'Modified Title');
       await user.click(screen.getByText('Save'));
 
-      expect(onSave).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Modified Title' }),
-        false,
-      );
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith(
+          expect.objectContaining({ title: 'Modified Title' }),
+          false,
+        );
+      });
     });
 
     it('does not modify form fields when search is dismissed without selecting', async () => {
@@ -405,8 +449,10 @@ describe('BookMetadataModal', () => {
       await user.click(screen.getByLabelText('Back to edit'));
 
       // Original values preserved
-      expect(screen.getByLabelText(/title/i)).toHaveValue('The Way of Kings');
-      expect(screen.getByLabelText(/narrator/i)).toHaveValue('Michael Kramer');
+      await waitFor(() => {
+        expect(screen.getByLabelText(/title/i)).toHaveValue('The Way of Kings');
+        expect(screen.getByLabelText(/narrator/i)).toHaveValue('Michael Kramer');
+      });
     });
 
     it('shows empty state when search returns no results', async () => {
@@ -436,7 +482,9 @@ describe('BookMetadataModal', () => {
       await user.click(screen.getByRole('button', { name: 'Search' }));
 
       // Search button should be disabled while loading
-      expect(screen.getByRole('button', { name: 'Search' })).toBeDisabled();
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Search' })).toBeDisabled();
+      });
     });
 
     it('shows error message when search fails', async () => {
@@ -478,15 +526,17 @@ describe('BookMetadataModal', () => {
       await user.click(screen.getByText('New Title'));
       await user.click(screen.getByText('Save'));
 
-      expect(onSave).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: 'New Title',
-          narrator: 'New Narrator',
-          seriesName: 'New Series',
-          seriesPosition: 3,
-        }),
-        false,
-      );
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: 'New Title',
+            narrator: 'New Narrator',
+            seriesName: 'New Series',
+            seriesPosition: 3,
+          }),
+          false,
+        );
+      });
     });
 
     describe('URL_BASE resolveUrl integration', () => {
@@ -544,7 +594,9 @@ describe('BookMetadataModal', () => {
       await screen.findByText('No Narrator Book');
       await user.click(screen.getByText('No Narrator Book'));
 
-      expect(screen.getByLabelText(/narrator/i)).toHaveValue('');
+      await waitFor(() => {
+        expect(screen.getByLabelText(/narrator/i)).toHaveValue('');
+      });
     });
   });
 });

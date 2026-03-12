@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import type { UserEvent } from '@testing-library/user-event';
 import { expect } from 'vitest';
 import type { Mock } from 'vitest';
@@ -11,14 +11,10 @@ export async function waitForListLoad(itemName: string) {
   });
 }
 
-/** Find the "Delete" confirm button inside a dialog. Replaces fragile querySelectorAll pattern. */
+/** Find the "Delete" confirm button inside a dialog. */
 export function getDeleteConfirmButton(): HTMLElement {
   const dialog = screen.getByRole('dialog');
-  const button = Array.from(dialog.querySelectorAll('button')).find(
-    (btn) => btn.textContent === 'Delete',
-  );
-  if (!button) throw new Error('Delete confirm button not found in dialog');
-  return button;
+  return within(dialog).getByRole('button', { name: 'Delete' });
 }
 
 /** Full delete confirmation flow: click delete → verify modal → confirm → assert API call + success toast. */

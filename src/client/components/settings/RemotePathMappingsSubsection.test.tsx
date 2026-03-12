@@ -36,7 +36,9 @@ describe('RemotePathMappingsSubsection', () => {
     await waitFor(() => {
       expect(screen.getByText(/No path mappings configured/)).toBeInTheDocument();
     });
-    expect(screen.getByText('Remote Path Mappings')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Remote Path Mappings')).toBeInTheDocument();
+    });
   });
 
   it('renders existing mappings with remote and local paths', async () => {
@@ -47,7 +49,9 @@ describe('RemotePathMappingsSubsection', () => {
     await waitFor(() => {
       expect(screen.getByText('/downloads/complete/')).toBeInTheDocument();
     });
-    expect(screen.getByText('C:\\downloads\\')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('C:\\downloads\\')).toBeInTheDocument();
+    });
   });
 
   it('does not show a client dropdown in the add form', async () => {
@@ -60,9 +64,11 @@ describe('RemotePathMappingsSubsection', () => {
 
     await user.click(screen.getByText('Add Mapping'));
 
-    expect(screen.getByLabelText('Remote Path')).toBeInTheDocument();
-    expect(screen.getByLabelText('Local Path')).toBeInTheDocument();
-    expect(screen.queryByLabelText('Download Client')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText('Remote Path')).toBeInTheDocument();
+      expect(screen.getByLabelText('Local Path')).toBeInTheDocument();
+      expect(screen.queryByLabelText('Download Client')).not.toBeInTheDocument();
+    });
   });
 
   it('creates a mapping with the implicit client ID', async () => {
@@ -83,10 +89,12 @@ describe('RemotePathMappingsSubsection', () => {
     await waitFor(() => {
       expect(api.createMapping).toHaveBeenCalled();
     });
-    expect((api.createMapping as Mock).mock.calls[0][0]).toMatchObject({
-      downloadClientId: 5,
-      remotePath: '/downloads/complete/',
-      localPath: 'C:\\downloads\\',
+    await waitFor(() => {
+      expect((api.createMapping as Mock).mock.calls[0][0]).toMatchObject({
+        downloadClientId: 5,
+        remotePath: '/downloads/complete/',
+        localPath: 'C:\\downloads\\',
+      });
     });
 
     await waitFor(() => {
@@ -127,8 +135,10 @@ describe('RemotePathMappingsSubsection', () => {
 
     await user.click(screen.getByText('Edit'));
 
-    expect(screen.getByLabelText('Remote Path')).toHaveValue('/downloads/complete/');
-    expect(screen.getByLabelText('Local Path')).toHaveValue('C:\\downloads\\');
+    await waitFor(() => {
+      expect(screen.getByLabelText('Remote Path')).toHaveValue('/downloads/complete/');
+      expect(screen.getByLabelText('Local Path')).toHaveValue('C:\\downloads\\');
+    });
 
     await user.clear(screen.getByLabelText('Remote Path'));
     await user.type(screen.getByLabelText('Remote Path'), '/new/path/');
@@ -137,7 +147,9 @@ describe('RemotePathMappingsSubsection', () => {
     await waitFor(() => {
       expect(api.updateMapping).toHaveBeenCalled();
     });
-    expect(toast.success).toHaveBeenCalledWith('Path mapping updated');
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Path mapping updated');
+    });
   });
 
   it('shows error toast when update fails', async () => {
@@ -175,14 +187,18 @@ describe('RemotePathMappingsSubsection', () => {
     await user.click(screen.getByText('Delete'));
 
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Delete Path Mapping')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(dialog).getByText('Delete Path Mapping')).toBeInTheDocument();
+    });
 
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => {
       expect((api.deleteMapping as Mock).mock.calls[0][0]).toBe(1);
     });
-    expect(toast.success).toHaveBeenCalledWith('Path mapping removed');
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Path mapping removed');
+    });
   });
 
   it('shows error toast when delete fails', async () => {
@@ -235,7 +251,9 @@ describe('RemotePathMappingsSubsection', () => {
     await waitFor(() => {
       expect(api.createMapping).toHaveBeenCalled();
     });
-    expect(parentSubmit).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(parentSubmit).not.toHaveBeenCalled();
+    });
   });
 
   it('Save button is disabled when fields are empty', async () => {
@@ -249,7 +267,9 @@ describe('RemotePathMappingsSubsection', () => {
 
     await user.click(screen.getByText('Add Mapping'));
 
-    expect(screen.getByText('Save')).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByText('Save')).toBeDisabled();
+    });
   });
 
   it('does not submit when remote path is whitespace-only', async () => {
@@ -265,7 +285,9 @@ describe('RemotePathMappingsSubsection', () => {
     await user.type(screen.getByLabelText('Remote Path'), '   ');
     await user.type(screen.getByLabelText('Local Path'), '/valid/path');
 
-    expect(screen.getByText('Save')).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByText('Save')).toBeDisabled();
+    });
   });
 
   it('does not submit when local path is whitespace-only', async () => {
@@ -281,6 +303,8 @@ describe('RemotePathMappingsSubsection', () => {
     await user.type(screen.getByLabelText('Remote Path'), '/valid/path');
     await user.type(screen.getByLabelText('Local Path'), '   ');
 
-    expect(screen.getByText('Save')).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByText('Save')).toBeDisabled();
+    });
   });
 });

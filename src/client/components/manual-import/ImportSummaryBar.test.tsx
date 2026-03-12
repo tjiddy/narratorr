@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ImportSummaryBar } from './ImportSummaryBar';
 
@@ -140,7 +140,9 @@ describe('ImportSummaryBar', () => {
       renderBar({ onModeChange });
 
       await userEvent.selectOptions(screen.getByRole('combobox'), 'move');
-      expect(onModeChange).toHaveBeenCalledWith('move');
+      await waitFor(() => {
+        expect(onModeChange).toHaveBeenCalledWith('move');
+      });
     });
   });
 
@@ -150,7 +152,9 @@ describe('ImportSummaryBar', () => {
       renderBar({ selectedCount: 3, selectedUnmatchedCount: 0, onImport });
 
       await userEvent.click(screen.getByRole('button', { name: /Import 3/ }));
-      expect(onImport).toHaveBeenCalledOnce();
+      await waitFor(() => {
+        expect(onImport).toHaveBeenCalledOnce();
+      });
     });
   });
 });

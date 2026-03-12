@@ -56,9 +56,11 @@ describe('AddBookPopover', () => {
 
     await user.click(screen.getByRole('button', { name: /add/i }));
 
-    expect(screen.getByText('Search immediately')).toBeInTheDocument();
-    expect(screen.getByText('Monitor for upgrades')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /add to library/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Search immediately')).toBeInTheDocument();
+      expect(screen.getByText('Monitor for upgrades')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /add to library/i })).toBeInTheDocument();
+    });
   });
 
   it('syncs checkbox defaults from settings when popover opens', async () => {
@@ -92,9 +94,11 @@ describe('AddBookPopover', () => {
 
     await user.click(screen.getByRole('button', { name: /add to library/i }));
 
-    expect(onAdd).toHaveBeenCalledWith({
-      searchImmediately: false,
-      monitorForUpgrades: true,
+    await waitFor(() => {
+      expect(onAdd).toHaveBeenCalledWith({
+        searchImmediately: false,
+        monitorForUpgrades: true,
+      });
     });
   });
 
@@ -103,11 +107,15 @@ describe('AddBookPopover', () => {
     renderPopover();
 
     await user.click(screen.getByRole('button', { name: /add/i }));
-    expect(screen.getByText('Search immediately')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Search immediately')).toBeInTheDocument();
+    });
 
     await user.click(screen.getByRole('button', { name: /add to library/i }));
 
-    expect(screen.queryByText('Search immediately')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText('Search immediately')).not.toBeInTheDocument();
+    });
   });
 
   it('shows Adding... text when isPending is true', () => {
@@ -136,9 +144,11 @@ describe('AddBookPopover', () => {
 
     await user.click(screen.getByRole('button', { name: /add to library/i }));
 
-    expect(onAdd).toHaveBeenCalledWith({
-      searchImmediately: true,
-      monitorForUpgrades: false,
+    await waitFor(() => {
+      expect(onAdd).toHaveBeenCalledWith({
+        searchImmediately: true,
+        monitorForUpgrades: false,
+      });
     });
   });
 
@@ -150,9 +160,11 @@ describe('AddBookPopover', () => {
     await user.click(screen.getByRole('button', { name: /add/i }));
 
     // With no settings, checkboxes stay at initial false
-    const checkboxes = screen.getAllByRole('checkbox');
-    expect(checkboxes[0]).not.toBeChecked();
-    expect(checkboxes[1]).not.toBeChecked();
+    await waitFor(() => {
+      const checkboxes = screen.getAllByRole('checkbox');
+      expect(checkboxes[0]).not.toBeChecked();
+      expect(checkboxes[1]).not.toBeChecked();
+    });
   });
 
   it('syncs defaults when settings resolve after popover is already open', async () => {
@@ -168,9 +180,11 @@ describe('AddBookPopover', () => {
     await user.click(screen.getByRole('button', { name: /add/i }));
 
     // Checkboxes should be unchecked (settings not yet loaded)
-    const checkboxes = screen.getAllByRole('checkbox');
-    expect(checkboxes[0]).not.toBeChecked();
-    expect(checkboxes[1]).not.toBeChecked();
+    await waitFor(() => {
+      const checkboxes = screen.getAllByRole('checkbox');
+      expect(checkboxes[0]).not.toBeChecked();
+      expect(checkboxes[1]).not.toBeChecked();
+    });
 
     // Now resolve settings
     resolveSettings(defaultSettings);
@@ -183,7 +197,9 @@ describe('AddBookPopover', () => {
 
     // Submit should use synced values
     await user.click(screen.getByRole('button', { name: /add to library/i }));
-    expect(onAdd).toHaveBeenCalledWith({ searchImmediately: true, monitorForUpgrades: true });
+    await waitFor(() => {
+      expect(onAdd).toHaveBeenCalledWith({ searchImmediately: true, monitorForUpgrades: true });
+    });
   });
 
   it('re-syncs defaults each time popover opens', async () => {
@@ -199,7 +215,9 @@ describe('AddBookPopover', () => {
     await user.click(screen.getAllByRole('checkbox')[0]); // uncheck searchImmediately
     await user.click(screen.getByRole('button', { name: /add to library/i }));
 
-    expect(onAdd).toHaveBeenCalledWith({ searchImmediately: false, monitorForUpgrades: true });
+    await waitFor(() => {
+      expect(onAdd).toHaveBeenCalledWith({ searchImmediately: false, monitorForUpgrades: true });
+    });
 
     // Re-open — should reset to defaults
     await user.click(screen.getByRole('button', { name: /add/i }));

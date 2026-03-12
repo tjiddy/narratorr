@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BookEditModal, type BookEditState } from './BookEditModal';
@@ -161,7 +161,9 @@ describe('BookEditModal', () => {
       const input = screen.getByDisplayValue('Book Title');
       await userEvent.clear(input);
       await userEvent.type(input, 'New Title');
-      expect(input).toHaveValue('New Title');
+      await waitFor(() => {
+        expect(input).toHaveValue('New Title');
+      });
     });
 
     it('allows editing author', async () => {
@@ -169,7 +171,9 @@ describe('BookEditModal', () => {
       const input = screen.getByDisplayValue('Author Name');
       await userEvent.clear(input);
       await userEvent.type(input, 'New Author');
-      expect(input).toHaveValue('New Author');
+      await waitFor(() => {
+        expect(input).toHaveValue('New Author');
+      });
     });
 
     it('allows editing series', async () => {
@@ -177,7 +181,9 @@ describe('BookEditModal', () => {
       const input = screen.getByDisplayValue('Series Name');
       await userEvent.clear(input);
       await userEvent.type(input, 'New Series');
-      expect(input).toHaveValue('New Series');
+      await waitFor(() => {
+        expect(input).toHaveValue('New Series');
+      });
     });
   });
 
@@ -187,11 +193,13 @@ describe('BookEditModal', () => {
       renderModal({ onSave });
 
       await userEvent.click(screen.getByText('Save'));
-      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
-        title: 'Book Title',
-        author: 'Author Name',
-        series: 'Series Name',
-      }));
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+          title: 'Book Title',
+          author: 'Author Name',
+          series: 'Series Name',
+        }));
+      });
     });
 
     it('trims whitespace from fields on save', async () => {
@@ -199,9 +207,11 @@ describe('BookEditModal', () => {
       renderModal({ onSave, initial: makeEditState({ title: '  Padded Title  ' }) });
 
       await userEvent.click(screen.getByText('Save'));
-      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
-        title: 'Padded Title',
-      }));
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+          title: 'Padded Title',
+        }));
+      });
     });
 
     it('disables Save when title is empty', async () => {
@@ -215,11 +225,13 @@ describe('BookEditModal', () => {
       renderModal({ onSave, initial: makeEditState({ metadata: meta }) });
 
       await userEvent.click(screen.getByText('Save'));
-      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
-        metadata: meta,
-        asin: 'B001',
-        coverUrl: 'https://example.com/cover.jpg',
-      }));
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+          metadata: meta,
+          asin: 'B001',
+          coverUrl: 'https://example.com/cover.jpg',
+        }));
+      });
     });
   });
 
@@ -229,7 +241,9 @@ describe('BookEditModal', () => {
       renderModal({ onClose });
 
       await userEvent.click(screen.getByText('Cancel'));
-      expect(onClose).toHaveBeenCalledOnce();
+      await waitFor(() => {
+        expect(onClose).toHaveBeenCalledOnce();
+      });
     });
 
     it('calls onClose when backdrop clicked', async () => {
@@ -239,7 +253,9 @@ describe('BookEditModal', () => {
       // The backdrop is the first child with bg-black/60
       const backdrop = document.querySelector('.bg-black\\/60');
       if (backdrop) await userEvent.click(backdrop);
-      expect(onClose).toHaveBeenCalledOnce();
+      await waitFor(() => {
+        expect(onClose).toHaveBeenCalledOnce();
+      });
     });
   });
 
@@ -270,7 +286,9 @@ describe('BookEditModal', () => {
       await screen.findByText('Search Result 1');
 
       // Title field should still have original value, NOT the search result
-      expect(screen.getByDisplayValue('Test')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByDisplayValue('Test')).toBeInTheDocument();
+      });
     });
 
     it('shows "No results found" when search returns empty', async () => {
@@ -320,8 +338,10 @@ describe('BookEditModal', () => {
       await userEvent.click(screen.getByText('Alt Book'));
 
       // Fields should update to the alternative's values
-      expect(screen.getByDisplayValue('Alt Book')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('Alt Author')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByDisplayValue('Alt Book')).toBeInTheDocument();
+        expect(screen.getByDisplayValue('Alt Author')).toBeInTheDocument();
+      });
     });
 
     it('shows duration on alternatives when available', () => {
@@ -350,8 +370,10 @@ describe('BookEditModal', () => {
       await userEvent.click(screen.getByText('Search Providers'));
 
       await screen.findByText('Result A');
-      expect(screen.getByText('Result B')).toBeInTheDocument();
-      expect(screen.getByText('Result C')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText('Result B')).toBeInTheDocument();
+        expect(screen.getByText('Result C')).toBeInTheDocument();
+      });
     });
 
     it('shows section label based on confidence', () => {

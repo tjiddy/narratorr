@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { screen, render } from '@testing-library/react';
+import { screen, render, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useForm, FormProvider } from 'react-hook-form';
 import { SearchSettingsSection } from './SearchSettingsSection';
@@ -41,12 +41,12 @@ describe('SearchSettingsSection', () => {
 
     expect(checkbox.checked).toBe(false);
     await user.click(checkbox);
-    expect(checkbox.checked).toBe(true);
+    await waitFor(() => {
+      expect(checkbox.checked).toBe(true);
+    });
   });
 
   it('allows changing the search interval', async () => {
-    const user = userEvent.setup();
-
     render(
       <Wrapper>
         {({ register, formState: { errors } }) => (
@@ -56,9 +56,10 @@ describe('SearchSettingsSection', () => {
     );
 
     const intervalInput = screen.getByPlaceholderText('360');
-    await user.clear(intervalInput);
-    await user.type(intervalInput, '120');
-    expect(intervalInput).toHaveValue(120);
+    fireEvent.change(intervalInput, { target: { value: '120' } });
+    await waitFor(() => {
+      expect(intervalInput).toHaveValue(120);
+    });
   });
 
   it('RSS toggle renders and persists enable/disable state', async () => {
@@ -79,12 +80,12 @@ describe('SearchSettingsSection', () => {
 
     expect(rssCheckbox.checked).toBe(false);
     await user.click(rssCheckbox);
-    expect(rssCheckbox.checked).toBe(true);
+    await waitFor(() => {
+      expect(rssCheckbox.checked).toBe(true);
+    });
   });
 
   it('RSS interval input renders and accepts value', async () => {
-    const user = userEvent.setup();
-
     render(
       <Wrapper>
         {({ register, formState: { errors } }) => (
@@ -95,9 +96,10 @@ describe('SearchSettingsSection', () => {
 
     expect(screen.getByText('RSS Interval (minutes)')).toBeInTheDocument();
     const rssIntervalInput = screen.getByPlaceholderText('30');
-    await user.clear(rssIntervalInput);
-    await user.type(rssIntervalInput, '60');
-    expect(rssIntervalInput).toHaveValue(60);
+    fireEvent.change(rssIntervalInput, { target: { value: '60' } });
+    await waitFor(() => {
+      expect(rssIntervalInput).toHaveValue(60);
+    });
   });
 
   it('RSS controls are separate from existing scheduled search controls', () => {
@@ -145,8 +147,6 @@ describe('SearchSettingsSection', () => {
     });
 
     it('accepts positive integer value for TTL days', async () => {
-      const user = userEvent.setup();
-
       render(
         <Wrapper>
           {({ register, formState: { errors } }) => (
@@ -156,9 +156,10 @@ describe('SearchSettingsSection', () => {
       );
 
       const ttlInput = screen.getByPlaceholderText('7');
-      await user.clear(ttlInput);
-      await user.type(ttlInput, '14');
-      expect(ttlInput).toHaveValue(14);
+      fireEvent.change(ttlInput, { target: { value: '14' } });
+      await waitFor(() => {
+        expect(ttlInput).toHaveValue(14);
+      });
     });
 
     it('has min=1 attribute to prevent TTL < 1', () => {

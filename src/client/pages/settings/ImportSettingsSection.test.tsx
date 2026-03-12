@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { screen, render } from '@testing-library/react';
+import { screen, render, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useForm, FormProvider } from 'react-hook-form';
 import { ImportSettingsSection } from './ImportSettingsSection';
@@ -38,7 +38,9 @@ describe('ImportSettingsSection', () => {
 
     expect(checkbox.checked).toBe(false);
     await user.click(checkbox);
-    expect(checkbox.checked).toBe(true);
+    await waitFor(() => {
+      expect(checkbox.checked).toBe(true);
+    });
   });
 
   it('renders minimum free space field', () => {
@@ -55,8 +57,6 @@ describe('ImportSettingsSection', () => {
   });
 
   it('allows changing minimum free space value', async () => {
-    const user = userEvent.setup();
-
     render(
       <Wrapper>
         {({ register, formState: { errors } }) => (
@@ -66,9 +66,10 @@ describe('ImportSettingsSection', () => {
     );
 
     const input = screen.getByLabelText('Minimum Free Space (GB)');
-    await user.clear(input);
-    await user.type(input, '10');
-    expect(input).toHaveValue(10);
+    fireEvent.change(input, { target: { value: '10' } });
+    await waitFor(() => {
+      expect(input).toHaveValue(10);
+    });
   });
 
   it('shows helper text for free space field', () => {
@@ -84,8 +85,6 @@ describe('ImportSettingsSection', () => {
   });
 
   it('allows changing the minimum seed time', async () => {
-    const user = userEvent.setup();
-
     render(
       <Wrapper>
         {({ register, formState: { errors } }) => (
@@ -95,8 +94,9 @@ describe('ImportSettingsSection', () => {
     );
 
     const seedTimeInput = screen.getByPlaceholderText('60');
-    await user.clear(seedTimeInput);
-    await user.type(seedTimeInput, '120');
-    expect(seedTimeInput).toHaveValue(120);
+    fireEvent.change(seedTimeInput, { target: { value: '120' } });
+    await waitFor(() => {
+      expect(seedTimeInput).toHaveValue(120);
+    });
   });
 });

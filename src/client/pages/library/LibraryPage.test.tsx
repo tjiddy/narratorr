@@ -95,10 +95,12 @@ describe('LibraryPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Your library is empty')).toBeInTheDocument();
     });
-    expect(screen.getByText('Manual Import')).toBeInTheDocument();
-    expect(screen.getByText('Manual Import').closest('a')).toHaveAttribute('href', '/import');
-    expect(screen.getByText('Discover Books')).toBeInTheDocument();
-    expect(screen.getByText('Discover Books').closest('a')).toHaveAttribute('href', '/search');
+    await waitFor(() => {
+      expect(screen.getByText('Manual Import')).toBeInTheDocument();
+      expect(screen.getByText('Manual Import').closest('a')).toHaveAttribute('href', '/import');
+      expect(screen.getByText('Discover Books')).toBeInTheDocument();
+      expect(screen.getByText('Discover Books').closest('a')).toHaveAttribute('href', '/search');
+    });
   });
 
   it('renders book cards with titles and authors', async () => {
@@ -109,11 +111,13 @@ describe('LibraryPage', () => {
     await waitFor(() => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
-    expect(screen.getByText('Project Hail Mary')).toBeInTheDocument();
-    expect(screen.getByText('Recursion')).toBeInTheDocument();
-    // Authors appear in cards and possibly dropdown, so use getAllByText
-    expect(screen.getAllByText('Andy Weir').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('Blake Crouch').length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => {
+      expect(screen.getByText('Project Hail Mary')).toBeInTheDocument();
+      expect(screen.getByText('Recursion')).toBeInTheDocument();
+      // Authors appear in cards and possibly dropdown, so use getAllByText
+      expect(screen.getAllByText('Andy Weir').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText('Blake Crouch').length).toBeGreaterThanOrEqual(1);
+    });
   });
 
   it('shows status counts in pills', async () => {
@@ -125,14 +129,16 @@ describe('LibraryPage', () => {
       expect(screen.getByText('4')).toBeInTheDocument(); // All count
     });
     // Wanted count = 2
-    const wantedPill = screen.getByRole('button', { name: /^Wanted\s*\d*$/i });
-    expect(within(wantedPill).getByText('2')).toBeInTheDocument();
-    // Downloading count = 1
-    const downloadingPill = screen.getByRole('button', { name: /Downloading/i });
-    expect(within(downloadingPill).getByText('1')).toBeInTheDocument();
-    // Imported count = 1
-    const importedPill = screen.getByRole('button', { name: /Imported/i });
-    expect(within(importedPill).getByText('1')).toBeInTheDocument();
+    await waitFor(() => {
+      const wantedPill = screen.getByRole('button', { name: /^Wanted\s*\d*$/i });
+      expect(within(wantedPill).getByText('2')).toBeInTheDocument();
+      // Downloading count = 1
+      const downloadingPill = screen.getByRole('button', { name: /Downloading/i });
+      expect(within(downloadingPill).getByText('1')).toBeInTheDocument();
+      // Imported count = 1
+      const importedPill = screen.getByRole('button', { name: /Imported/i });
+      expect(within(importedPill).getByText('1')).toBeInTheDocument();
+    });
   });
 
   it('filters by status pill click', async () => {
@@ -148,9 +154,11 @@ describe('LibraryPage', () => {
     // Click Imported tab
     await user.click(screen.getByRole('button', { name: /Imported/i }));
 
-    expect(screen.getByText('Recursion')).toBeInTheDocument();
-    expect(screen.queryByText('The Way of Kings')).not.toBeInTheDocument();
-    expect(screen.queryByText('Project Hail Mary')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Recursion')).toBeInTheDocument();
+      expect(screen.queryByText('The Way of Kings')).not.toBeInTheDocument();
+      expect(screen.queryByText('Project Hail Mary')).not.toBeInTheDocument();
+    });
   });
 
   it('toggles filter panel and filters by author', async () => {
@@ -164,7 +172,9 @@ describe('LibraryPage', () => {
     });
 
     // Filters should be collapsed by default — no author dropdown visible
-    expect(screen.queryByDisplayValue('All Authors')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByDisplayValue('All Authors')).not.toBeInTheDocument();
+    });
 
     // Open filters
     await user.click(screen.getByRole('button', { name: /Toggle filters/i }));
@@ -173,9 +183,11 @@ describe('LibraryPage', () => {
     const authorSelect = screen.getByDisplayValue('All Authors');
     await user.selectOptions(authorSelect, 'Andy Weir');
 
-    expect(screen.getByText('Project Hail Mary')).toBeInTheDocument();
-    expect(screen.queryByText('The Way of Kings')).not.toBeInTheDocument();
-    expect(screen.queryByText('Recursion')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Project Hail Mary')).toBeInTheDocument();
+      expect(screen.queryByText('The Way of Kings')).not.toBeInTheDocument();
+      expect(screen.queryByText('Recursion')).not.toBeInTheDocument();
+    });
   });
 
   it('shows active filter count badge', async () => {
@@ -194,8 +206,10 @@ describe('LibraryPage', () => {
     await user.selectOptions(authorSelect, 'Andy Weir');
 
     // Filter badge should show "1"
-    const filtersButton = screen.getByRole('button', { name: /Toggle filters/i });
-    expect(within(filtersButton).getByText('1')).toBeInTheDocument();
+    await waitFor(() => {
+      const filtersButton = screen.getByRole('button', { name: /Toggle filters/i });
+      expect(within(filtersButton).getByText('1')).toBeInTheDocument();
+    });
   });
 
   it('sorts by title when filters are open', async () => {
@@ -216,8 +230,10 @@ describe('LibraryPage', () => {
     await user.selectOptions(sortSelect, 'title');
 
     // All books still present after sort change
-    expect(screen.getByText('Recursion')).toBeInTheDocument();
-    expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Recursion')).toBeInTheDocument();
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
   });
 
   it('renders book cards as clickable links', async () => {
@@ -231,8 +247,10 @@ describe('LibraryPage', () => {
 
     // Cards should be rendered with role="link" for accessibility
     // Filter to only book cards (they have tabIndex=0), excluding nav links
-    const bookCards = screen.getAllByRole('link').filter(el => el.getAttribute('tabIndex') === '0');
-    expect(bookCards.length).toBe(mockBooks.length);
+    await waitFor(() => {
+      const bookCards = screen.getAllByRole('link').filter(el => el.getAttribute('tabIndex') === '0');
+      expect(bookCards.length).toBe(mockBooks.length);
+    });
   });
 
   it('opens context menu on three-dot click', async () => {
@@ -249,8 +267,10 @@ describe('LibraryPage', () => {
     const menuButtons = screen.getAllByLabelText('Book options');
     await user.click(menuButtons[0]);
 
-    expect(screen.getByText('Search Releases')).toBeInTheDocument();
-    expect(screen.getByText('Remove from Library')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Search Releases')).toBeInTheDocument();
+      expect(screen.getByText('Remove from Library')).toBeInTheDocument();
+    });
   });
 
   it('shows confirm modal and calls deleteBook on confirm', async () => {
@@ -270,7 +290,9 @@ describe('LibraryPage', () => {
     await user.click(screen.getByText('Remove from Library'));
 
     // Confirm modal should appear with the warning message
-    expect(screen.getByText(/Are you sure you want to remove/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/Are you sure you want to remove/)).toBeInTheDocument();
+    });
 
     // Click the destructive "Remove" button in the modal
     const modal = screen.getByText(/Are you sure you want to remove/).closest('div[class*="relative w-full"]') as HTMLElement;
@@ -312,11 +334,15 @@ describe('LibraryPage', () => {
 
     // Checkbox should be visible for book with path
     const checkbox = screen.getByLabelText('Delete files from disk');
-    expect(checkbox).not.toBeChecked();
+    await waitFor(() => {
+      expect(checkbox).not.toBeChecked();
+    });
 
     // Check the box and confirm
     await user.click(checkbox);
-    expect(checkbox).toBeChecked();
+    await waitFor(() => {
+      expect(checkbox).toBeChecked();
+    });
 
     const modal = screen.getByText(/Are you sure you want to remove/).closest('div[class*="relative w-full"]') as HTMLElement;
     await user.click(within(modal).getByRole('button', { name: 'Remove' }));
@@ -340,8 +366,10 @@ describe('LibraryPage', () => {
     await user.click(menuButtons[0]);
     await user.click(screen.getByText('Remove from Library'));
 
-    expect(screen.getByText(/Are you sure you want to remove/)).toBeInTheDocument();
-    expect(screen.queryByLabelText('Delete files from disk')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/Are you sure you want to remove/)).toBeInTheDocument();
+      expect(screen.queryByLabelText('Delete files from disk')).not.toBeInTheDocument();
+    });
   });
 
   it('shows different success toast when files are deleted', async () => {
@@ -397,9 +425,11 @@ describe('LibraryPage', () => {
     // Cancel
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    expect(api.deleteBook).not.toHaveBeenCalled();
-    // Modal should be gone
-    expect(screen.queryByText(/Are you sure you want to remove/)).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(api.deleteBook).not.toHaveBeenCalled();
+      // Modal should be gone
+      expect(screen.queryByText(/Are you sure you want to remove/)).not.toBeInTheDocument();
+    });
   });
 
   it('shows no match state when filters exclude all books', async () => {
@@ -420,7 +450,9 @@ describe('LibraryPage', () => {
     // Then switch to imported tab (Andy Weir's book is downloading, not imported)
     await user.click(screen.getByRole('button', { name: /Imported/i }));
 
-    expect(screen.getByText('No books match your filters')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('No books match your filters')).toBeInTheDocument();
+    });
   });
 
   it('renders search input', async () => {
@@ -569,7 +601,9 @@ describe('LibraryPage', () => {
     await user.click(screen.getByText('Remove from Library'));
 
     // Confirm modal should appear
-    expect(screen.getByText(/Are you sure you want to remove/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/Are you sure you want to remove/)).toBeInTheDocument();
+    });
 
     const modal = screen.getByText(/Are you sure you want to remove/).closest('div[class*="relative w-full"]') as HTMLElement;
     const removeButton = within(modal).getByRole('button', { name: 'Remove' });
@@ -602,15 +636,17 @@ describe('LibraryPage', () => {
     const sortButton = screen.getByTitle(/Sort descending/i);
     await user.click(sortButton);
 
-    const bookCardsAsc = screen.getAllByRole('link').filter(el => el.getAttribute('tabIndex') === '0');
-    const titlesAsc = bookCardsAsc.map(card => {
-      const h3 = card.querySelector('h3');
-      return h3?.textContent;
-    });
+    await waitFor(() => {
+      const bookCardsAsc = screen.getAllByRole('link').filter(el => el.getAttribute('tabIndex') === '0');
+      const titlesAsc = bookCardsAsc.map(card => {
+        const h3 = card.querySelector('h3');
+        return h3?.textContent;
+      });
 
-    // Verify titles are in ascending alphabetical order
-    const sorted = [...titlesAsc].sort((a, b) => (a ?? '').localeCompare(b ?? ''));
-    expect(titlesAsc).toEqual(sorted);
+      // Verify titles are in ascending alphabetical order
+      const sorted = [...titlesAsc].sort((a, b) => (a ?? '').localeCompare(b ?? ''));
+      expect(titlesAsc).toEqual(sorted);
+    });
   });
 
   it('shows error toast when getBooks API fails', async () => {
@@ -638,8 +674,10 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    const importLink = screen.getByText('Import');
-    expect(importLink.closest('a')).toHaveAttribute('href', '/import');
+    await waitFor(() => {
+      const importLink = screen.getByText('Import');
+      expect(importLink.closest('a')).toHaveAttribute('href', '/import');
+    });
   });
 
   describe('remove missing', () => {
@@ -680,7 +718,9 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      expect(screen.queryByText('Remove Missing')).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.queryByText('Remove Missing')).not.toBeInTheDocument();
+      });
     });
 
     it('shows confirmation modal with count when Remove Missing is clicked', async () => {
@@ -695,7 +735,9 @@ describe('LibraryPage', () => {
 
       await user.click(screen.getByText('Remove Missing'));
 
-      expect(screen.getByText('Remove 2 missing books from library?')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByText('Remove 2 missing books from library?')).toBeInTheDocument();
+      });
     });
 
     it('calls deleteMissingBooks and shows success toast on confirm', async () => {
@@ -733,8 +775,10 @@ describe('LibraryPage', () => {
       await user.click(screen.getByText('Remove Missing'));
       await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
-      expect(api.deleteMissingBooks).not.toHaveBeenCalled();
-      expect(screen.queryByText('Remove 2 missing books from library?')).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(api.deleteMissingBooks).not.toHaveBeenCalled();
+        expect(screen.queryByText('Remove 2 missing books from library?')).not.toBeInTheDocument();
+      });
     });
 
     it('shows error toast when batch delete fails', async () => {
@@ -834,9 +878,11 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      expect(screen.getByRole('group', { name: 'View mode' })).toBeInTheDocument();
-      expect(screen.getByLabelText('Grid view')).toBeInTheDocument();
-      expect(screen.getByLabelText('Table view')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByRole('group', { name: 'View mode' })).toBeInTheDocument();
+        expect(screen.getByLabelText('Grid view')).toBeInTheDocument();
+        expect(screen.getByLabelText('Table view')).toBeInTheDocument();
+      });
     });
 
     it('defaults to grid view when no localStorage value', async () => {
@@ -848,11 +894,13 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      const gridButton = screen.getByLabelText('Grid view');
-      expect(gridButton).toHaveAttribute('aria-pressed', 'true');
+      await waitFor(() => {
+        const gridButton = screen.getByLabelText('Grid view');
+        expect(gridButton).toHaveAttribute('aria-pressed', 'true');
 
-      const tableButton = screen.getByLabelText('Table view');
-      expect(tableButton).toHaveAttribute('aria-pressed', 'false');
+        const tableButton = screen.getByLabelText('Table view');
+        expect(tableButton).toHaveAttribute('aria-pressed', 'false');
+      });
     });
 
     it('clicking toggle switches from grid to table view', async () => {
@@ -867,8 +915,10 @@ describe('LibraryPage', () => {
 
       await user.click(screen.getByLabelText('Table view'));
 
-      expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByLabelText('Grid view')).toHaveAttribute('aria-pressed', 'false');
+      await waitFor(() => {
+        expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'true');
+        expect(screen.getByLabelText('Grid view')).toHaveAttribute('aria-pressed', 'false');
+      });
     });
 
     it('clicking toggle again switches back to grid', async () => {
@@ -883,12 +933,16 @@ describe('LibraryPage', () => {
 
       // Switch to table
       await user.click(screen.getByLabelText('Table view'));
-      expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'true');
+      await waitFor(() => {
+        expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'true');
+      });
 
       // Switch back to grid
       await user.click(screen.getByLabelText('Grid view'));
-      expect(screen.getByLabelText('Grid view')).toHaveAttribute('aria-pressed', 'true');
-      expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'false');
+      await waitFor(() => {
+        expect(screen.getByLabelText('Grid view')).toHaveAttribute('aria-pressed', 'true');
+        expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'false');
+      });
     });
 
     it('saves view preference to localStorage on toggle', async () => {
@@ -902,10 +956,14 @@ describe('LibraryPage', () => {
       });
 
       await user.click(screen.getByLabelText('Table view'));
-      expect(localStorage.getItem('narratorr:library-view')).toBe('table');
+      await waitFor(() => {
+        expect(localStorage.getItem('narratorr:library-view')).toBe('table');
+      });
 
       await user.click(screen.getByLabelText('Grid view'));
-      expect(localStorage.getItem('narratorr:library-view')).toBe('grid');
+      await waitFor(() => {
+        expect(localStorage.getItem('narratorr:library-view')).toBe('grid');
+      });
     });
 
     it('restores view preference from localStorage on load', async () => {
@@ -918,7 +976,9 @@ describe('LibraryPage', () => {
         expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'true');
       });
 
-      expect(screen.getByLabelText('Grid view')).toHaveAttribute('aria-pressed', 'false');
+      await waitFor(() => {
+        expect(screen.getByLabelText('Grid view')).toHaveAttribute('aria-pressed', 'false');
+      });
     });
 
     it('selection state clears when switching to grid view', async () => {
@@ -949,7 +1009,9 @@ describe('LibraryPage', () => {
       await user.click(screen.getByLabelText('Grid view'));
 
       // Bulk toolbar should be gone (no selection)
-      expect(screen.queryByText(/selected/i)).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.queryByText(/selected/i)).not.toBeInTheDocument();
+      });
     });
   });
 
@@ -1015,7 +1077,9 @@ describe('LibraryPage', () => {
 
       await user.click(screen.getByText('Cancel', { selector: 'button' }));
 
-      expect(api.searchAllWanted).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(api.searchAllWanted).not.toHaveBeenCalled();
+      });
     });
 
     it('shows summary toast on successful search completion', async () => {

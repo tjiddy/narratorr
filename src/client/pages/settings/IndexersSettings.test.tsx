@@ -55,7 +55,9 @@ describe('IndexersSettings', () => {
 
     expect(screen.getByText('Indexers')).toBeInTheDocument();
     await waitForListLoad('My ABB');
-    expect(screen.getByText('My Torznab')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('My Torznab')).toBeInTheDocument();
+    });
   });
 
   it('shows empty state when no indexers exist', async () => {
@@ -81,7 +83,9 @@ describe('IndexersSettings', () => {
     await waitForListLoad('My ABB');
 
     await user.click(screen.getByText('Prowlarr').closest('button')!);
-    expect(screen.getByText('Import from Prowlarr')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Import from Prowlarr')).toBeInTheDocument();
+    });
   });
 
   it('creates a new indexer via the add form', async () => {
@@ -99,10 +103,12 @@ describe('IndexersSettings', () => {
     await waitFor(() => {
       expect(api.createIndexer).toHaveBeenCalled();
     });
-    expect((api.createIndexer as Mock).mock.calls[0][0]).toMatchObject({
-      name: 'New Indexer',
-      type: 'abb',
-      settings: expect.objectContaining({ hostname: 'example.com' }),
+    await waitFor(() => {
+      expect((api.createIndexer as Mock).mock.calls[0][0]).toMatchObject({
+        name: 'New Indexer',
+        type: 'abb',
+        settings: expect.objectContaining({ hostname: 'example.com' }),
+      });
     });
 
     await assertSuccessToast('Indexer added successfully');
@@ -128,8 +134,10 @@ describe('IndexersSettings', () => {
     await waitForListLoad('My ABB');
 
     await user.click(screen.getByLabelText('Edit My ABB'));
-    expect(screen.getByText('Edit Indexer')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('AudioBookBay')).toHaveValue('My ABB');
+    await waitFor(() => {
+      expect(screen.getByText('Edit Indexer')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('AudioBookBay')).toHaveValue('My ABB');
+    });
   });
 
   it('updates an existing indexer', async () => {
@@ -147,9 +155,11 @@ describe('IndexersSettings', () => {
     await waitFor(() => {
       expect(api.updateIndexer).toHaveBeenCalled();
     });
-    const [id, data] = (api.updateIndexer as Mock).mock.calls[0];
-    expect(id).toBe(1);
-    expect(data).toMatchObject({ name: 'Updated ABB' });
+    await waitFor(() => {
+      const [id, data] = (api.updateIndexer as Mock).mock.calls[0];
+      expect(id).toBe(1);
+      expect(data).toMatchObject({ name: 'Updated ABB' });
+    });
 
     await assertSuccessToast('Indexer updated');
   });
@@ -203,8 +213,8 @@ describe('IndexersSettings', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Name is required')).toBeInTheDocument();
+      expect(api.createIndexer).not.toHaveBeenCalled();
     });
-    expect(api.createIndexer).not.toHaveBeenCalled();
   });
 
   it('shows validation errors when submitting empty required settings', async () => {
@@ -218,8 +228,8 @@ describe('IndexersSettings', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Hostname is required')).toBeInTheDocument();
+      expect(api.createIndexer).not.toHaveBeenCalled();
     });
-    expect(api.createIndexer).not.toHaveBeenCalled();
   });
 
   it('tests an existing indexer via the test button', async () => {
