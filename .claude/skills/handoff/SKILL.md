@@ -148,7 +148,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    ```
    PR body template (write this to the temp file):
    ```
-   Refs #<id>
+   Closes #<id>
 
    ## Summary
    - <bullet points of what changed>

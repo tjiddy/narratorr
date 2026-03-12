@@ -96,10 +96,9 @@ export function parseLinkedIssue(output: string): string | null {
   return refs ? refs[1] : null;
 }
 
-// Parse all issue IDs from closing keywords (closes #N, fixes #N, resolves #N).
-// Returns empty array for non-closing references (Refs #N).
+// Parse all linked issue IDs from PR body (closes #N, fixes #N, resolves #N, refs #N).
 export function parseClosingIssues(output: string): string[] {
-  const matches = output.matchAll(/(?:closes|fixes|resolves)\s+#(\d+)/gi);
+  const matches = output.matchAll(/(?:closes|fixes|resolves|refs)\s+#(\d+)/gi);
   return [...matches].map(m => m[1]);
 }
 
