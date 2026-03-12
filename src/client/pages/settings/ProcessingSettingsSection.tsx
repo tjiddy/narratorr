@@ -137,6 +137,58 @@ function BitrateField({ register, errors, enabled, keepOriginalBitrate }: {
   );
 }
 
+function CustomScriptSection({ register, errors }: Omit<ProcessingSettingsSectionProps, 'watch'>) {
+  return (
+    <div className="pt-6 mt-6 border-t border-border">
+      <div className="mb-4">
+        <h3 className="text-sm font-medium">Custom Script</h3>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Run a script after each successful import. The audiobook folder path is passed as the first argument.
+        </p>
+      </div>
+      <div className="space-y-5">
+        <div>
+          <label htmlFor="postProcessingScript" className="block text-sm font-medium mb-2">Post-Processing Script</label>
+          <input
+            id="postProcessingScript"
+            type="text"
+            {...register('processing.postProcessingScript')}
+            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+              errors.processing?.postProcessingScript ? 'border-destructive' : 'border-border'
+            }`}
+            placeholder="/path/to/script.sh"
+          />
+          {errors.processing?.postProcessingScript && (
+            <p className="text-sm text-destructive mt-1">{errors.processing.postProcessingScript.message}</p>
+          )}
+          <p className="text-sm text-muted-foreground mt-2">
+            Absolute path to a script. Leave empty to disable. Environment variables: <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_BOOK_TITLE</code>, <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_BOOK_AUTHOR</code>, <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_IMPORT_PATH</code>, <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_IMPORT_FILE_COUNT</code>.
+          </p>
+        </div>
+        <div>
+          <label htmlFor="postProcessingScriptTimeout" className="block text-sm font-medium mb-2">Script Timeout (seconds)</label>
+          <input
+            id="postProcessingScriptTimeout"
+            type="number"
+            {...register('processing.postProcessingScriptTimeout', { valueAsNumber: true })}
+            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+              errors.processing?.postProcessingScriptTimeout ? 'border-destructive' : 'border-border'
+            }`}
+            min={1}
+            placeholder="300"
+          />
+          {errors.processing?.postProcessingScriptTimeout && (
+            <p className="text-sm text-destructive mt-1">{errors.processing.postProcessingScriptTimeout.message}</p>
+          )}
+          <p className="text-sm text-muted-foreground mt-2">
+            Maximum time in seconds before the script is killed. Default: 300 (5 minutes).
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // eslint-disable-next-line max-lines-per-function -- linear form with ffmpeg, processing, and tagging sections
 export function ProcessingSettingsSection({ register, errors, watch }: ProcessingSettingsSectionProps) {
   const [probeResult, setProbeResult] = useState<{ version: string } | null>(null);
@@ -313,6 +365,8 @@ export function ProcessingSettingsSection({ register, errors, watch }: Processin
           </div>
         </div>
       </div>
+
+      <CustomScriptSection register={register} errors={errors} />
     </SettingsSection>
   );
 }

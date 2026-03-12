@@ -14,4 +14,22 @@ export const processingSettingsSchema = z.object({
   bitrate: z.number().int().min(32).max(512).default(128),
   mergeBehavior: mergeBehaviorSchema.default('multi-file-only'),
   maxConcurrentProcessing: z.number().int().min(1).default(2),
+  postProcessingScript: z.string().default(''),
+  postProcessingScriptTimeout: z.number().int().min(1).default(300),
+});
+
+// Form schema: timeout accepts NaN (from cleared input) as undefined;
+// conditional validation lives in the composed superRefine in registry.ts.
+const nanToUndefined = (v: unknown) => (typeof v === 'number' && Number.isNaN(v) ? undefined : v);
+
+export const processingFormSchema = z.object({
+  enabled: z.boolean(),
+  ffmpegPath: z.string(),
+  outputFormat: outputFormatSchema,
+  keepOriginalBitrate: z.boolean(),
+  bitrate: z.number().int().min(32).max(512),
+  mergeBehavior: mergeBehaviorSchema,
+  maxConcurrentProcessing: z.number().int().min(1),
+  postProcessingScript: z.string(),
+  postProcessingScriptTimeout: z.preprocess(nanToUndefined, z.number().int().min(1).optional()),
 });

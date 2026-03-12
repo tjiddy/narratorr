@@ -10,6 +10,7 @@ import {
   settingsToFormData,
   type AppSettings,
 } from './registry.js';
+import { processingSettingsSchema } from './processing.js';
 
 describe('settingsRegistry', () => {
   describe('invariants', () => {
@@ -89,7 +90,30 @@ describe('settingsRegistry', () => {
         bitrate: 128,
         mergeBehavior: 'multi-file-only',
         maxConcurrentProcessing: 2,
+        postProcessingScript: '',
+        postProcessingScriptTimeout: 300,
       });
+    });
+
+    it('postProcessingScriptTimeout defaults to 300 when omitted', () => {
+      const result = processingSettingsSchema.parse({});
+      expect(result.postProcessingScriptTimeout).toBe(300);
+    });
+
+    it('postProcessingScriptTimeout rejects zero', () => {
+      const result = processingSettingsSchema.safeParse({
+        ...DEFAULT_SETTINGS.processing,
+        postProcessingScriptTimeout: 0,
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('postProcessingScriptTimeout rejects non-integer', () => {
+      const result = processingSettingsSchema.safeParse({
+        ...DEFAULT_SETTINGS.processing,
+        postProcessingScriptTimeout: 1.5,
+      });
+      expect(result.success).toBe(false);
     });
 
     it('tagging defaults have all expected values', () => {
@@ -367,6 +391,24 @@ describe('settingsRegistry', () => {
       const data = { ...DEFAULT_SETTINGS, processing: { ...DEFAULT_SETTINGS.processing, enabled: false, ffmpegPath: '' } };
       const result = updateSettingsFormSchema.safeParse(data);
       expect(result.success).toBe(true);
+    });
+
+    it('form schema accepts NaN timeout when script path is empty', () => {
+      const data = {
+        ...DEFAULT_SETTINGS,
+        processing: { ...DEFAULT_SETTINGS.processing, postProcessingScript: '', postProcessingScriptTimeout: Number.NaN },
+      };
+      const result = updateSettingsFormSchema.safeParse(data);
+      expect(result.success).toBe(true);
+    });
+
+    it('form schema rejects NaN timeout when script path is non-empty', () => {
+      const data = {
+        ...DEFAULT_SETTINGS,
+        processing: { ...DEFAULT_SETTINGS.processing, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: Number.NaN },
+      };
+      const result = updateSettingsFormSchema.safeParse(data);
+      expect(result.success).toBe(false);
     });
 
     it('form schema folder format validation: valid template passes', () => {

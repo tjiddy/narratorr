@@ -10,6 +10,7 @@ import { renameFilesWithTemplate } from '../utils/paths.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { applyPathMapping } from '../../core/utils/path-mapping.js';
+import { runPostProcessingScript } from '../utils/post-processing-script.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
@@ -361,6 +362,24 @@ export class ImportService {
           } else {
             this.log.debug({ bookId: book.id }, 'Tag embedding enabled but ffmpeg path not configured — skipping');
           }
+        }
+      }
+
+      // 8d. Post-processing script hook (after tag embedding, before marking imported)
+      const processingSettingsForScript = await this.settingsService.get('processing');
+      if (processingSettingsForScript.postProcessingScript?.trim()) {
+        try {
+          await runPostProcessingScript({
+            scriptPath: processingSettingsForScript.postProcessingScript,
+            timeoutSeconds: processingSettingsForScript.postProcessingScriptTimeout ?? 300,
+            audiobookPath: targetPath,
+            bookTitle: book.title,
+            bookAuthor: author?.name ?? null,
+            fileCount,
+            log: this.log,
+          });
+        } catch (scriptError) {
+          this.log.warn({ error: scriptError, bookId: book.id }, 'Post-processing script failed during import — continuing');
         }
       }
 

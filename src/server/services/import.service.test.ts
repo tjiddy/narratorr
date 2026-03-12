@@ -53,10 +53,16 @@ vi.mock('../../core/utils/audio-processor.js', () => ({
   processAudioFiles: vi.fn().mockResolvedValue({ success: true, outputFiles: [] }),
 }));
 
+// Mock post-processing script
+vi.mock('../utils/post-processing-script.js', () => ({
+  runPostProcessingScript: vi.fn().mockResolvedValue({ success: true }),
+}));
+
 import { mkdir, cp, stat, readdir, writeFile, rename, rm, statfs } from 'node:fs/promises';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
+import { runPostProcessingScript } from '../utils/post-processing-script.js';
 
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 
@@ -1985,6 +1991,132 @@ describe('ImportService', () => {
 
       const result = await svc.importDownload(1);
       expect(result.downloadId).toBe(1);
+    });
+  });
+
+  describe('post-processing script hook', () => {
+    function createSettingsWithScript(scriptPath: string, timeout = 300): SettingsService {
+      return inject<SettingsService>({
+        get: vi.fn().mockImplementation((key: string) => {
+          if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+          if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
+          if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', postProcessingScript: scriptPath, postProcessingScriptTimeout: timeout });
+          if (key === 'tagging') return Promise.resolve({ enabled: false });
+          return Promise.resolve({});
+        }),
+      });
+    }
+
+    function setupSuccessfulImport() {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.update.mockReturnValue(mockDbChain());
+    }
+
+    it('calls runPostProcessingScript with correct args when script is configured', async () => {
+      const svc = new ImportService(inject<Db>(db), clientService, createSettingsWithScript('/scripts/post.sh', 60), inject<FastifyBaseLogger>(log));
+      setupSuccessfulImport();
+
+      await svc.importDownload(1);
+
+      expect(runPostProcessingScript).toHaveBeenCalledWith(expect.objectContaining({
+        scriptPath: '/scripts/post.sh',
+        timeoutSeconds: 60,
+        audiobookPath: expect.any(String),
+        bookTitle: mockBook.title,
+        bookAuthor: mockAuthor.name,
+        fileCount: expect.any(Number),
+      }));
+    });
+
+    it('skips script when postProcessingScript is empty', async () => {
+      const svc = new ImportService(inject<Db>(db), clientService, createSettingsWithScript(''), inject<FastifyBaseLogger>(log));
+      setupSuccessfulImport();
+
+      await svc.importDownload(1);
+
+      expect(runPostProcessingScript).not.toHaveBeenCalled();
+    });
+
+    it('continues import when script fails', async () => {
+      vi.mocked(runPostProcessingScript).mockResolvedValueOnce({ success: false, warning: 'exit code 1' });
+      const svc = new ImportService(inject<Db>(db), clientService, createSettingsWithScript('/scripts/post.sh'), inject<FastifyBaseLogger>(log));
+      setupSuccessfulImport();
+
+      const result = await svc.importDownload(1);
+      expect(result.downloadId).toBe(1);
+    });
+
+    it('runs script hook after tag embedding and before marking download imported', async () => {
+      const callOrder: string[] = [];
+
+      const mockTagging = inject<TaggingService>({
+        tagBook: vi.fn().mockImplementation(async () => {
+          callOrder.push('tagBook');
+          return { bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [] };
+        }),
+      });
+
+      vi.mocked(runPostProcessingScript).mockImplementation(async () => {
+        callOrder.push('runPostProcessingScript');
+        return { success: true };
+      });
+
+      // Create update chains: tracked chain for downloads table, default for others (books)
+      const defaultUpdateChain = mockDbChain();
+      const downloadsUpdateChain = mockDbChain();
+      const originalSet = downloadsUpdateChain.set as Mock;
+      (downloadsUpdateChain.set as Mock) = vi.fn().mockImplementation((values: Record<string, unknown>) => {
+        if (values.status === 'imported') {
+          callOrder.push('markImported');
+        }
+        return originalSet(values);
+      });
+
+      const orderSettings = inject<SettingsService>({
+        get: vi.fn().mockImplementation((key: string) => {
+          if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+          if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
+          if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '/usr/bin/ffmpeg', postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 300 });
+          if (key === 'tagging') return Promise.resolve({ enabled: true, mode: 'overwrite', embedCover: false });
+          return Promise.resolve({});
+        }),
+      });
+
+      // Setup: select download, select book+author
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      // Return tracked chain only for downloads table updates
+      db.update.mockImplementation((table: unknown) =>
+        table === downloads ? downloadsUpdateChain : defaultUpdateChain,
+      );
+
+      const svc = new ImportService(
+        inject<Db>(db),
+        clientService,
+        orderSettings,
+        inject<FastifyBaseLogger>(log),
+        undefined,
+        undefined,
+        mockTagging,
+      );
+
+      await svc.importDownload(1);
+
+      expect(callOrder).toEqual(['tagBook', 'runPostProcessingScript', 'markImported']);
+    });
+
+    it('continues import when script throws', async () => {
+      vi.mocked(runPostProcessingScript).mockRejectedValueOnce(new Error('unexpected'));
+      const svc = new ImportService(inject<Db>(db), clientService, createSettingsWithScript('/scripts/post.sh'), inject<FastifyBaseLogger>(log));
+      setupSuccessfulImport();
+
+      const result = await svc.importDownload(1);
+      expect(result.downloadId).toBe(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1 }),
+        expect.stringContaining('Post-processing script failed'),
+      );
     });
   });
 });

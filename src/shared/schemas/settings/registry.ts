@@ -4,7 +4,7 @@ import { searchSettingsSchema } from './search.js';
 import { importSettingsSchema } from './import.js';
 import { generalSettingsSchema } from './general.js';
 import { metadataSettingsSchema } from './metadata.js';
-import { processingSettingsSchema } from './processing.js';
+import { processingSettingsSchema, processingFormSchema } from './processing.js';
 import { taggingSettingsSchema } from './tagging.js';
 import { qualitySettingsSchema } from './quality.js';
 import { networkSettingsSchema } from './network.js';
@@ -59,7 +59,10 @@ export const settingsRegistry = {
       bitrate: 128,
       mergeBehavior: 'multi-file-only' as const,
       maxConcurrentProcessing: 2,
+      postProcessingScript: '',
+      postProcessingScriptTimeout: 300,
     },
+    formSchema: processingFormSchema,
   }),
   tagging: defineCategory({
     schema: taggingSettingsSchema,
@@ -166,12 +169,19 @@ const _formSchemaBase = z.object(
     SETTINGS_CATEGORIES.map((key) => [key, getFormSchema(settingsRegistry[key])]),
   ),
 ).superRefine((data: Record<string, unknown>, ctx) => {
-  const processing = data.processing as { enabled: boolean; ffmpegPath: string };
+  const processing = data.processing as { enabled: boolean; ffmpegPath: string; postProcessingScript: string; postProcessingScriptTimeout?: number };
   if (processing.enabled && !processing.ffmpegPath.trim()) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['processing', 'ffmpegPath'],
       message: 'ffmpeg not found at specified path',
+    });
+  }
+  if (processing.postProcessingScript?.trim() && processing.postProcessingScriptTimeout == null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['processing', 'postProcessingScriptTimeout'],
+      message: 'Timeout is required when a post-processing script is configured',
     });
   }
 });
