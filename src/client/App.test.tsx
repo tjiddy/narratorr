@@ -51,6 +51,7 @@ vi.mock('@/pages/settings', () => ({
   BlacklistSettings: () => <div>Blacklist</div>,
   SecuritySettings: () => <div>Security</div>,
   SystemSettings: () => <div>System</div>,
+  ImportListsSettings: () => <div>Import Lists</div>,
 }));
 
 function renderApp(route = '/') {

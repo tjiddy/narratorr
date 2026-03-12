@@ -19,7 +19,8 @@ export type SecretEntity =
   | 'downloadClient'
   | 'prowlarr'
   | 'auth'
-  | 'network';
+  | 'network'
+  | 'importList';
 
 const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
   indexer: ['apiKey', 'flareSolverrUrl', 'mamId'],
@@ -27,6 +28,7 @@ const SECRET_FIELDS: Record<SecretEntity, readonly string[]> = {
   prowlarr: ['apiKey'],
   auth: ['sessionSecret', 'apiKey'],
   network: ['proxyUrl'],
+  importList: ['apiKey'],
 };
 
 // ─── Low-level encrypt / decrypt ─────────────────────────────────────────────

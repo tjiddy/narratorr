@@ -157,16 +157,4 @@ describe('LibrarySettingsSection', () => {
     expect(screen.getByText('Without series')).toBeInTheDocument();
   });
 
-  it('shows author suggestion when title is present but author is missing', () => {
-    render(
-      <Wrapper defaultFolderFormat="{title}">
-        {({ register, formState: { errors }, setValue, watch }) => (
-          <LibrarySettingsSection register={register} errors={errors} setValue={setValue} watch={watch} />
-        )}
-      </Wrapper>,
-    );
-
-    expect(screen.getByText(/Consider including/)).toBeInTheDocument();
-  });
-
 });

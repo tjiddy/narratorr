@@ -1,27 +1,40 @@
-import { describe, it, expect } from 'vitest';
-import { screen, render, waitFor, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { screen, render, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useForm, FormProvider } from 'react-hook-form';
 import { ImportSettingsSection } from './ImportSettingsSection';
 import type { UpdateSettingsFormData } from '../../../shared/schemas.js';
 
-function Wrapper({ children }: { children: (props: ReturnType<typeof useForm<UpdateSettingsFormData>>) => React.ReactNode }) {
-  const methods = useForm<UpdateSettingsFormData>({
-    defaultValues: {
-      search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7 },
-      library: { path: '', folderFormat: '' },
-      import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
-      general: { logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30 },
-      metadata: { audibleRegion: 'us' },
-    },
-  });
-  return <FormProvider {...methods}>{children(methods)}</FormProvider>;
+const defaultValues: UpdateSettingsFormData = {
+  search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7 },
+  rss: { enabled: false, intervalMinutes: 30 },
+  library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+  import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
+  general: { logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30 },
+  metadata: { audibleRegion: 'us' },
+} as UpdateSettingsFormData;
+
+function Wrapper({
+  onSubmit,
+  children,
+}: {
+  onSubmit?: (data: UpdateSettingsFormData) => void;
+  children: (props: ReturnType<typeof useForm<UpdateSettingsFormData>>) => React.ReactNode;
+}) {
+  const methods = useForm<UpdateSettingsFormData>({ defaultValues });
+  return (
+    <FormProvider {...methods}>
+      <form onSubmit={methods.handleSubmit(onSubmit ?? (() => {}))}>
+        {children(methods)}
+        <button type="submit">Save</button>
+      </form>
+    </FormProvider>
+  );
 }
 
 describe('ImportSettingsSection', () => {
   it('renders all import fields and toggles delete checkbox', async () => {
     const user = userEvent.setup();
-
     render(
       <Wrapper>
         {({ register, formState: { errors } }) => (
@@ -43,7 +56,7 @@ describe('ImportSettingsSection', () => {
     });
   });
 
-  it('renders minimum free space field', () => {
+  it('renders minimum free space field with value from settings', () => {
     render(
       <Wrapper>
         {({ register, formState: { errors } }) => (
@@ -52,11 +65,11 @@ describe('ImportSettingsSection', () => {
       </Wrapper>,
     );
 
-    expect(screen.getByText('Minimum Free Space (GB)')).toBeInTheDocument();
     expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveValue(5);
   });
 
   it('allows changing minimum free space value', async () => {
+    const user = userEvent.setup();
     render(
       <Wrapper>
         {({ register, formState: { errors } }) => (
@@ -66,10 +79,10 @@ describe('ImportSettingsSection', () => {
     );
 
     const input = screen.getByLabelText('Minimum Free Space (GB)');
-    fireEvent.change(input, { target: { value: '10' } });
-    await waitFor(() => {
-      expect(input).toHaveValue(10);
-    });
+    expect(input).toHaveValue(5);
+    await user.tripleClick(input);
+    await user.keyboard('10');
+    expect(input).toHaveValue(10);
   });
 
   it('shows helper text for free space field', () => {
@@ -85,6 +98,7 @@ describe('ImportSettingsSection', () => {
   });
 
   it('allows changing the minimum seed time', async () => {
+    const user = userEvent.setup();
     render(
       <Wrapper>
         {({ register, formState: { errors } }) => (
@@ -93,10 +107,32 @@ describe('ImportSettingsSection', () => {
       </Wrapper>,
     );
 
-    const seedTimeInput = screen.getByPlaceholderText('60');
-    fireEvent.change(seedTimeInput, { target: { value: '120' } });
+    const seedTimeInput = screen.getByLabelText('Minimum Seed Time (minutes)');
+    expect(seedTimeInput).toHaveValue(60);
+    await user.tripleClick(seedTimeInput);
+    await user.keyboard('120');
+    expect(seedTimeInput).toHaveValue(120);
+  });
+
+  it('sends import category payload on save', async () => {
+    const onSubmit = vi.fn();
+    render(
+      <Wrapper onSubmit={onSubmit}>
+        {({ register, formState: { errors } }) => (
+          <ImportSettingsSection register={register} errors={errors} />
+        )}
+      </Wrapper>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: /save/i }));
+
     await waitFor(() => {
-      expect(seedTimeInput).toHaveValue(120);
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
+        }),
+        expect.anything(),
+      );
     });
   });
 });

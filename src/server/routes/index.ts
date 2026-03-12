@@ -20,6 +20,7 @@ import {
   RetryBudget,
 } from '../services';
 import { ImportService } from '../services/import.service.js';
+import { ImportListService } from '../services/import-list.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
 import { MatchJobService } from '../services/match-job.service.js';
 import { BackupService } from '../services/backup.service.js';
@@ -47,6 +48,7 @@ import { eventHistoryRoutes } from './event-history.js';
 import { prowlarrCompatRoutes } from './prowlarr-compat.js';
 import { eventsRoutes } from './events.js';
 import { recyclingBinRoutes } from './recycling-bin.js';
+import { importListsRoutes } from './import-lists.js';
 import { updateRoutes } from './update.js';
 import { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { RecyclingBinService } from '../services/recycling-bin.service.js';
@@ -76,6 +78,7 @@ export interface Services {
   healthCheck: HealthCheckService;
   taskRegistry: TaskRegistry;
   recyclingBin: RecyclingBinService;
+  importList: ImportListService;
 }
 
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
@@ -111,6 +114,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const retryBudget = new RetryBudget();
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
   const recyclingBin = new RecyclingBinService(db, log, config.configPath, settings);
+  const importList = new ImportListService(db, log, metadata);
   const taskRegistry = new TaskRegistry();
 
   // Health check service with system deps
@@ -136,7 +140,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   download.setRetrySearchDeps(retrySearchDeps);
   eventHistory.setRetrySearchDeps(retrySearchDeps);
 
-  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin };
+  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin, importList };
 }
 
 export async function registerRoutes(
@@ -165,4 +169,5 @@ export async function registerRoutes(
   await eventsRoutes(app, services.eventBroadcaster);
   await recyclingBinRoutes(app, services.recyclingBin);
   await prowlarrCompatRoutes(app, services.indexer);
+  await importListsRoutes(app, services.importList);
 }

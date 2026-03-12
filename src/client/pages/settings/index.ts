@@ -6,3 +6,4 @@ export { NotificationsSettings } from './NotificationsSettings.js';
 export { BlacklistSettings } from './BlacklistSettings.js';
 export { SecuritySettings } from './SecuritySettings.js';
 export { SystemSettings } from './SystemSettings.js';
+export { ImportListsSettings } from './ImportListsSettings.js';

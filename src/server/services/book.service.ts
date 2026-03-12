@@ -3,7 +3,7 @@ import { cleanEmptyParents } from '../utils/paths.js';
 import { eq, and, like, desc, sql } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, authors, unmatchedGenres } from '../../db/schema.js';
+import { books, authors, unmatchedGenres, importLists } from '../../db/schema.js';
 import { slugify, findUnmatchedGenres } from '../../core/index.js';
 import { type MetadataService } from './metadata.service.js';
 
@@ -13,6 +13,7 @@ type AuthorRow = typeof authors.$inferSelect;
 
 export interface BookWithAuthor extends BookRow {
   author?: AuthorRow;
+  importListName?: string | null;
 }
 
 export class BookService {
@@ -27,9 +28,11 @@ export class BookService {
       .select({
         book: books,
         author: authors,
+        importListName: importLists.name,
       })
       .from(books)
       .leftJoin(authors, eq(books.authorId, authors.id))
+      .leftJoin(importLists, eq(books.importListId, importLists.id))
       .orderBy(desc(books.createdAt));
 
     if (status) {
@@ -41,6 +44,7 @@ export class BookService {
     return results.map((r) => ({
       ...r.book,
       author: r.author || undefined,
+      importListName: r.importListName ?? null,
     }));
   }
 
@@ -49,9 +53,11 @@ export class BookService {
       .select({
         book: books,
         author: authors,
+        importListName: importLists.name,
       })
       .from(books)
       .leftJoin(authors, eq(books.authorId, authors.id))
+      .leftJoin(importLists, eq(books.importListId, importLists.id))
       .where(eq(books.id, id))
       .limit(1);
 
@@ -60,6 +66,7 @@ export class BookService {
     return {
       ...results[0].book,
       author: results[0].author || undefined,
+      importListName: results[0].importListName ?? null,
     };
   }
 

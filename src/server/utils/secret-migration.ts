@@ -19,6 +19,7 @@ function hasPlaintextSecrets(entity: SecretEntity, obj: Record<string, unknown>)
     prowlarr: ['apiKey'],
     auth: ['sessionSecret', 'apiKey'],
     network: ['proxyUrl'],
+    importList: ['apiKey'],
   };
   const fields = FIELD_MAP[entity] ?? [];
   for (const field of fields) {

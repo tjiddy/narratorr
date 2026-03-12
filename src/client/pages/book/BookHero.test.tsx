@@ -155,6 +155,18 @@ describe('BookHero', () => {
     expect(button).toHaveAttribute('title', 'Requires ffmpeg');
   });
 
+  describe('import list provenance', () => {
+    it('renders "Added via" tag when importListName is set', () => {
+      renderHero({ importListName: 'NYT Bestsellers' });
+      expect(screen.getByText('Added via NYT Bestsellers')).toBeInTheDocument();
+    });
+
+    it('does not render provenance tag when importListName is null', () => {
+      renderHero({ importListName: null });
+      expect(screen.queryByText(/Added via/)).not.toBeInTheDocument();
+    });
+  });
+
   describe('URL_BASE resolveUrl integration', () => {
     afterEach(() => {
       vi.restoreAllMocks();

@@ -22,6 +22,7 @@ interface BookHeroProps {
   isRetagging: boolean;
   retagDisabled: boolean;
   retagTooltip?: string;
+  importListName?: string | null;
   monitorForUpgrades: boolean;
   onMonitorToggle: () => void;
   isMonitorToggling: boolean;
@@ -33,7 +34,7 @@ export function BookHero({
   coverUrl, metaDots, statusLabel, statusDotClass,
   hasPath, onBackClick, onSearchClick, onEditClick, onRenameClick, isRenaming,
   onRetagClick, isRetagging, retagDisabled, retagTooltip,
-  monitorForUpgrades, onMonitorToggle, isMonitorToggling,
+  importListName, monitorForUpgrades, onMonitorToggle, isMonitorToggling,
 }: BookHeroProps) {
   return (
     <div className="relative -mx-4 sm:-mx-6 lg:-mx-8 -mt-4 sm:-mt-6 px-4 sm:px-6 lg:px-8 pt-6 pb-6 overflow-hidden">
@@ -99,6 +100,11 @@ export function BookHero({
               <span className={`w-2 h-2 rounded-full ${statusDotClass}`} />
               {statusLabel}
             </span>
+            {importListName && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium glass-card text-muted-foreground">
+                Added via {importListName}
+              </span>
+            )}
             <button
               onClick={onMonitorToggle}
               disabled={isMonitorToggling}

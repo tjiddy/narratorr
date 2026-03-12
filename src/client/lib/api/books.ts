@@ -38,6 +38,8 @@ export interface BookWithAuthor {
   audioTotalSize?: number | null;
   audioDuration?: number | null;
   monitorForUpgrades: boolean;
+  importListId?: number | null;
+  importListName?: string | null;
   createdAt: string;
   updatedAt: string;
   author?: Author;

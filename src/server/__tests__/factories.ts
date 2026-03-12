@@ -52,8 +52,25 @@ export function createMockDbBook(overrides?: Record<string, unknown>) {
     audioTotalSize: null as number | null,
     audioDuration: null as number | null,
     monitorForUpgrades: false,
+    importListId: null as number | null,
     createdAt: now,
     updatedAt: now,
+    ...overrides,
+  };
+}
+
+export function createMockDbImportList(overrides?: Record<string, unknown>) {
+  return {
+    id: 1,
+    name: 'My ABS List',
+    type: 'abs' as const,
+    enabled: true,
+    settings: { serverUrl: 'http://abs.local', apiKey: 'test-key', libraryId: 'lib-1' },
+    syncIntervalMinutes: 1440,
+    lastRunAt: null as Date | null,
+    nextRunAt: null as Date | null,
+    lastSyncError: null as string | null,
+    createdAt: now,
     ...overrides,
   };
 }

@@ -45,6 +45,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
         isRetagging={retagMutation.isPending}
         retagDisabled={!ffmpegConfigured}
         retagTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
+        importListName={libraryBook.importListName}
         monitorForUpgrades={libraryBook.monitorForUpgrades}
         onMonitorToggle={() => monitorMutation.mutate()}
         isMonitorToggling={monitorMutation.isPending}

@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import { downloadStatusSchema } from '../shared/schemas/activity.js';
 
@@ -60,6 +60,7 @@ export const books = sqliteTable('books', {
   audioTotalSize: integer('audio_total_size'),
   audioDuration: integer('audio_duration'),
   monitorForUpgrades: integer('monitor_for_upgrades', { mode: 'boolean' }).notNull().default(false),
+  importListId: integer('import_list_id').references(() => importLists.id, { onDelete: 'set null' }),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),
@@ -69,6 +70,8 @@ export const books = sqliteTable('books', {
 }, (table) => [
   index('idx_books_author_id').on(table.authorId),
   index('idx_books_status').on(table.status),
+  uniqueIndex('idx_books_asin_unique').on(table.asin).where(sql`asin IS NOT NULL`),
+  uniqueIndex('idx_books_title_author_unique').on(table.title, table.authorId),
 ]);
 
 // ============ INTEGRATIONS ============
@@ -134,6 +137,23 @@ export const notifiers = sqliteTable('notifiers', {
   index('idx_notifiers_enabled').on(table.enabled),
 ]);
 
+export const importLists = sqliteTable('import_lists', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  type: text('type', { enum: ['abs', 'nyt', 'hardcover'] }).notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
+  syncIntervalMinutes: integer('sync_interval_minutes').notNull().default(1440),
+  lastRunAt: integer('last_run_at', { mode: 'timestamp' }),
+  nextRunAt: integer('next_run_at', { mode: 'timestamp' }),
+  lastSyncError: text('last_sync_error'),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+}, (table) => [
+  index('idx_import_lists_enabled').on(table.enabled),
+]);
+
 // ============ ACTIVITY ============
 
 export const downloads = sqliteTable('downloads', {
@@ -182,7 +202,7 @@ export const bookEvents = sqliteTable('book_events', {
     ],
   }).notNull(),
   source: text('source', {
-    enum: ['manual', 'rss', 'scheduled', 'auto'],
+    enum: ['manual', 'rss', 'scheduled', 'auto', 'import_list'],
   }).notNull().default('auto'),
   reason: text('reason', { mode: 'json' }).$type<Record<string, unknown>>(),
   createdAt: integer('created_at', { mode: 'timestamp' })

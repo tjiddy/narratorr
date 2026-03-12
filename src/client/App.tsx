@@ -18,6 +18,7 @@ import {
   BlacklistSettings,
   SecuritySettings,
   SystemSettings,
+  ImportListsSettings,
 } from './pages/settings';
 
 export function App() {
@@ -45,6 +46,7 @@ export function App() {
               <Route path="notifications" element={<NotificationsSettings />} />
               <Route path="blacklist" element={<BlacklistSettings />} />
               <Route path="security" element={<SecuritySettings />} />
+              <Route path="import-lists" element={<ImportListsSettings />} />
               <Route path="system" element={<SystemSettings />} />
             </Route>
           </Route>

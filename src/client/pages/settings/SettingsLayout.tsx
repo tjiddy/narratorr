@@ -7,6 +7,7 @@ import {
   ShieldBanIcon,
   ShieldIcon,
   HardDriveIcon,
+  ListIcon,
 } from '@/components/icons';
 
 const navItems = [
@@ -16,6 +17,7 @@ const navItems = [
   { to: '/settings/notifications', label: 'Notifications', icon: BellIcon },
   { to: '/settings/blacklist', label: 'Blacklist', icon: ShieldBanIcon },
   { to: '/settings/security', label: 'Security', icon: ShieldIcon },
+  { to: '/settings/import-lists', label: 'Import Lists', icon: ListIcon },
   { to: '/settings/system', label: 'System', icon: HardDriveIcon },
 ];
 

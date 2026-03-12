@@ -1,0 +1,108 @@
+import { describe, it, expect } from 'vitest';
+import { http, HttpResponse } from 'msw';
+import { useMswServer } from '../__tests__/msw/server.js';
+import { HardcoverProvider } from './hardcover-provider.js';
+
+const GQL_URL = 'https://api.hardcover.app/v1/graphql';
+
+describe('HardcoverProvider', () => {
+  const server = useMswServer();
+
+  describe('fetchItems', () => {
+    it('fetches trending items via GraphQL and maps to ImportListItem[]', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({
+          data: {
+            trending_books: [
+              {
+                title: 'The Way of Kings',
+                contributions: [{ author: { name: 'Brandon Sanderson' } }],
+                identifiers: [{ source: { name: 'amazon' }, value: 'B003P2WO5E' }],
+              },
+              {
+                title: 'Dune',
+                contributions: [{ author: { name: 'Frank Herbert' } }],
+                identifiers: [],
+              },
+            ],
+          },
+        })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+
+      expect(items).toHaveLength(2);
+      expect(items[0]).toEqual({ title: 'The Way of Kings', author: 'Brandon Sanderson', asin: 'B003P2WO5E', isbn: undefined });
+      expect(items[1]).toEqual({ title: 'Dune', author: 'Frank Herbert', asin: undefined, isbn: undefined });
+    });
+
+    it('fetches user shelf items via GraphQL and maps to ImportListItem[]', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({
+          data: {
+            user_book_reads: [
+              {
+                book: {
+                  title: 'Project Hail Mary',
+                  contributions: [{ author: { name: 'Andy Weir' } }],
+                  identifiers: [{ source: { name: 'isbn_13' }, value: '9780593135204' }],
+                },
+              },
+            ],
+          },
+        })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'shelf', shelfId: '2' });
+      const items = await provider.fetchItems();
+
+      expect(items).toHaveLength(1);
+      expect(items[0]).toEqual({ title: 'Project Hail Mary', author: 'Andy Weir', asin: undefined, isbn: '9780593135204' });
+    });
+
+    it('returns empty array when no items', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({ data: { trending_books: [] } })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const items = await provider.fetchItems();
+      expect(items).toEqual([]);
+    });
+
+    it('handles GraphQL error response without crash', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({
+          errors: [{ message: 'Rate limited' }],
+        })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      await expect(provider.fetchItems()).rejects.toThrow('GraphQL error');
+    });
+  });
+
+  describe('test', () => {
+    it('returns success when API key is valid', async () => {
+      server.use(
+        http.post(GQL_URL, () => HttpResponse.json({ data: { __typename: 'query_root' } })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'test-key', listType: 'trending' });
+      const result = await provider.test();
+      expect(result).toEqual({ success: true });
+    });
+
+    it('returns failure for invalid API key', async () => {
+      server.use(
+        http.post(GQL_URL, () => new HttpResponse(null, { status: 401, statusText: 'Unauthorized' })),
+      );
+
+      const provider = new HardcoverProvider({ apiKey: 'bad-key', listType: 'trending' });
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('Invalid API key');
+    });
+  });
+});
