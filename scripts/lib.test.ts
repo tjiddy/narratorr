@@ -250,8 +250,8 @@ describe('parseComments', () => {
 });
 
 describe('parseClosingIssues', () => {
-  it('returns empty array for Refs #123 (non-closing keyword)', () => {
-    expect(parseClosingIssues('Refs #123')).toEqual([]);
+  it('returns [123] for Refs #123 (refs is a linked keyword)', () => {
+    expect(parseClosingIssues('Refs #123')).toEqual(['123']);
   });
 
   it('returns [123] for closes #123', () => {

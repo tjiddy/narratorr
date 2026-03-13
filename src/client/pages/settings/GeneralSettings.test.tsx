@@ -4,337 +4,119 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { GeneralSettings } from './GeneralSettings';
-import type { Mock } from 'vitest';
-import type { Settings } from '@/lib/api';
-
-vi.mock('@/lib/api', () => ({
-  api: {
-    getSettings: vi.fn(),
-    updateSettings: vi.fn(),
-  },
-}));
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-// Mock renderTemplate to avoid importing the core package
+vi.mock('@/lib/api', () => ({
+  api: {
+    getSettings: vi.fn(),
+    updateSettings: vi.fn(),
+    testProxy: vi.fn(),
+    probeFfmpeg: vi.fn(),
+  },
+}));
+
 vi.mock('../../../core/utils/index.js', () => ({
-  renderTemplate: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{authorLastFirst}', 'Sanderson, Brandon').replace('{title}', 'The Way of Kings').replace('{titleSort}', 'Way of Kings').replace('{narratorLastFirst}', 'Kramer, Michael & Reading, Kate'),
-  renderFilename: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{title}', 'The Way of Kings'),
+  renderTemplate: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
+  renderFilename: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
   toLastFirst: (name: string) => name,
   toSortTitle: (title: string) => title,
   ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
   FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
 }));
 
-import { api } from '@/lib/api';
-import { toast } from 'sonner';
-
-const mockSettings: Settings = createMockSettings();
+const { api } = await import('@/lib/api');
+const mockApi = api as unknown as {
+  getSettings: ReturnType<typeof vi.fn>;
+  updateSettings: ReturnType<typeof vi.fn>;
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
-  (api.getSettings as Mock).mockResolvedValue(mockSettings);
+  mockApi.getSettings.mockResolvedValue(createMockSettings());
 });
 
 describe('GeneralSettings', () => {
-  it('renders all sections, populates form, and save button is disabled until interaction', async () => {
-    const user = userEvent.setup();
+  it('renders all settings sections', async () => {
     renderWithProviders(<GeneralSettings />);
 
     await waitFor(() => {
       expect(screen.getByText('Library')).toBeInTheDocument();
     });
-    await waitFor(() => {
-      expect(screen.getByText('Search')).toBeInTheDocument();
-      expect(screen.getByText('Import')).toBeInTheDocument();
-      expect(screen.getByText('Logging')).toBeInTheDocument();
-      expect(screen.getByText('Metadata')).toBeInTheDocument();
-    });
-
-    // Verify form is populated from API (wait for async form reset after query resolves)
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
-      expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
-    });
-
-    // Save button disabled when clean
-    await waitFor(() => {
-      const saveButton = screen.getByText('Save Changes').closest('button')!;
-      expect(saveButton).toBeDisabled();
-    });
-
-    // Interact to make form dirty
-    await user.type(screen.getByPlaceholderText('/audiobooks'), '/x');
-    await waitFor(() => {
-      const saveButton = screen.getByText('Save Changes').closest('button')!;
-      expect(saveButton).not.toBeDisabled();
-    });
+    expect(screen.getByText('Search')).toBeInTheDocument();
+    expect(screen.getByText('Import')).toBeInTheDocument();
+    expect(screen.getByText('Quality')).toBeInTheDocument();
+    expect(screen.getByText('Post Processing')).toBeInTheDocument();
+    expect(screen.getByText('Network')).toBeInTheDocument();
+    expect(screen.getByText('Housekeeping')).toBeInTheDocument();
+    expect(screen.getByText('Logging')).toBeInTheDocument();
+    expect(screen.getByText('Metadata')).toBeInTheDocument();
   });
 
-  it('enables save button after modifying a field', async () => {
-    const user = userEvent.setup();
+  it('save buttons are hidden when all sections are clean', async () => {
     renderWithProviders(<GeneralSettings />);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
+      expect(screen.getByText('Library')).toBeInTheDocument();
     });
 
-    const pathInput = screen.getByPlaceholderText('/audiobooks');
-    await user.clear(pathInput);
-    await user.type(pathInput, '/new-path');
-
-    await waitFor(() => {
-      const saveButton = screen.getByText('Save Changes').closest('button')!;
-      expect(saveButton).not.toBeDisabled();
-    });
+    // No save buttons visible when no sections are dirty
+    expect(screen.queryAllByRole('button', { name: /save/i })).toHaveLength(0);
   });
 
-  it('submits updated settings and shows success toast', async () => {
-    const user = userEvent.setup();
-    (api.updateSettings as Mock).mockResolvedValue(mockSettings);
+  it('does not render a single global save button', async () => {
     renderWithProviders(<GeneralSettings />);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
+      expect(screen.getByText('Library')).toBeInTheDocument();
     });
 
-    const pathInput = screen.getByPlaceholderText('/audiobooks');
-    await user.clear(pathInput);
-    await user.type(pathInput, '/new-path');
-
-    await user.click(screen.getByText('Save Changes').closest('button')!);
-
-    await waitFor(() => {
-      expect(api.updateSettings).toHaveBeenCalled();
-    });
-    await waitFor(() => {
-      expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
-        library: expect.objectContaining({ path: '/new-path' }),
-      });
-    });
-
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Settings saved successfully');
-    });
+    expect(screen.queryByText('Save Changes')).not.toBeInTheDocument();
   });
 
-  it('shows error toast when save fails', async () => {
-    const user = userEvent.setup();
-    (api.updateSettings as Mock).mockRejectedValue(new Error('fail'));
-    renderWithProviders(<GeneralSettings />);
+  it('preserves dirty state in one section when another section saves', async () => {
+    const settings = createMockSettings();
+    mockApi.getSettings.mockResolvedValue(settings);
+    mockApi.updateSettings.mockResolvedValue(settings);
 
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
-    });
-
-    const pathInput = screen.getByPlaceholderText('/audiobooks');
-    await user.clear(pathInput);
-    await user.type(pathInput, '/changed');
-
-    await user.click(screen.getByText('Save Changes').closest('button')!);
-
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('fail');
-    });
-  });
-
-  it('changes log level via the select dropdown', async () => {
-    const user = userEvent.setup();
-    (api.updateSettings as Mock).mockResolvedValue(mockSettings);
-    renderWithProviders(<GeneralSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Log Level')).toBeInTheDocument();
-    });
-
-    const logSelect = screen.getByLabelText('Log Level');
-    await waitFor(() => {
-      expect(screen.getByRole('combobox', { name: 'Log Level' })).toBe(logSelect);
-    });
-    await user.selectOptions(logSelect, 'debug');
-
-    await waitFor(() => {
-      expect(screen.getByText('Save Changes').closest('button')!).not.toBeDisabled();
-    });
-
-    await user.click(screen.getByText('Save Changes').closest('button')!);
-
-    await waitFor(() => {
-      expect(api.updateSettings).toHaveBeenCalled();
-    });
-    await waitFor(() => {
-      expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
-        general: { logLevel: 'debug' },
-      });
-    });
-  });
-
-  it('changes audible region via the select dropdown', async () => {
-    const user = userEvent.setup();
-    (api.updateSettings as Mock).mockResolvedValue(mockSettings);
-    renderWithProviders(<GeneralSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Audible Region')).toBeInTheDocument();
-    });
-
-    const regionSelect = screen.getByLabelText('Audible Region');
-    await waitFor(() => {
-      expect(screen.getByRole('combobox', { name: 'Audible Region' })).toBe(regionSelect);
-    });
-    await user.selectOptions(regionSelect, 'uk');
-
-    await user.click(screen.getByText('Save Changes').closest('button')!);
-
-    await waitFor(() => {
-      expect(api.updateSettings).toHaveBeenCalled();
-    });
-    await waitFor(() => {
-      expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
-        metadata: { audibleRegion: 'uk' },
-      });
-    });
-  });
-
-  it('toggles search enabled checkbox', async () => {
-    const user = userEvent.setup();
-    (api.updateSettings as Mock).mockResolvedValue(mockSettings);
-    renderWithProviders(<GeneralSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Enable Scheduled Search')).toBeInTheDocument();
-    });
-
-    const searchCheckbox = screen.getByRole('checkbox', { name: 'Enable Scheduled Search' });
-    await user.click(searchCheckbox);
-
-    await waitFor(() => {
-      const saveButton = screen.getByText('Save Changes').closest('button')!;
-      expect(saveButton).not.toBeDisabled();
-    });
-  });
-
-  it('shows folder format preview and updates on token click', async () => {
     const user = userEvent.setup();
     renderWithProviders(<GeneralSettings />);
 
+    // Wait for sections to load
     await waitFor(() => {
-      expect(screen.getByText('With series')).toBeInTheDocument();
-      expect(screen.getByText('Without series')).toBeInTheDocument();
+      expect(screen.getByLabelText('Event History Retention (days)')).toBeInTheDocument();
     });
-    // Preview — folder path is dimmed, filename is highlighted; both previews render sample data
+
+    // Make General section dirty by changing retention days
+    const retentionInput = screen.getByLabelText('Event History Retention (days)');
+    await user.clear(retentionInput);
+    await user.type(retentionInput, '42');
+
+    // Also make Network section dirty with a valid proxy URL
+    const proxyInput = screen.getByLabelText('Proxy URL');
+    await user.type(proxyInput, 'http://proxy:8080');
+
+    // Both sections should show their save buttons
+    const saveButtons = screen.getAllByRole('button', { name: /^save$/i });
+    expect(saveButtons.length).toBeGreaterThanOrEqual(2);
+
+    // Save the Network section — click its save button and submit
+    const networkForm = proxyInput.closest('form')!;
+    fireEvent.submit(networkForm);
+
+    // Wait for Network save to complete (updateSettings called)
     await waitFor(() => {
-      expect(screen.getAllByText(/Brandon Sanderson\/The Way of Kings\//).length).toBeGreaterThanOrEqual(1);
+      expect(mockApi.updateSettings).toHaveBeenCalled();
     });
 
-    // Expand token panel, then click a token button
-    const toggles = screen.getAllByText('Insert token');
-    await user.click(toggles[0]);
-    await user.click(screen.getAllByText('{series}')[0]);
-    // Form should become dirty after token insertion
-    const saveButton = screen.getByText('Save Changes').closest('button')!;
-    await waitFor(() => {
-      expect(saveButton).not.toBeDisabled();
-    });
-  });
+    // After Network save + cache invalidation refetch, General section should
+    // still have its dirty value preserved (the !isDirty guard prevents reset)
+    expect(retentionInput).toHaveValue(42);
 
-  describe('Housekeeping section', () => {
-    it('renders Housekeeping section with retention days input', async () => {
-      renderWithProviders(<GeneralSettings />);
-
-      await waitFor(() => {
-        expect(screen.getByText('Housekeeping')).toBeInTheDocument();
-      });
-      await waitFor(() => {
-        expect(screen.getByLabelText('Event History Retention (days)')).toBeInTheDocument();
-      });
-    });
-
-    it('retention days input defaults to 90', async () => {
-      renderWithProviders(<GeneralSettings />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Event History Retention (days)')).toHaveValue(90);
-      });
-    });
-
-    it('changes retention days and saves → payload includes general.housekeepingRetentionDays', async () => {
-      const user = userEvent.setup();
-      (api.updateSettings as Mock).mockResolvedValue(mockSettings);
-      renderWithProviders(<GeneralSettings />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Event History Retention (days)')).toHaveValue(90);
-      });
-
-      const input = screen.getByLabelText('Event History Retention (days)');
-      fireEvent.change(input, { target: { value: '30' } });
-
-      await user.click(screen.getByText('Save Changes').closest('button')!);
-
-      await waitFor(() => {
-        expect(api.updateSettings).toHaveBeenCalled();
-      });
-      await waitFor(() => {
-        expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
-          general: { housekeepingRetentionDays: 30 },
-        });
-      });
-    });
-
-    it('renders recycling bin retention input defaulting to 30', async () => {
-      renderWithProviders(<GeneralSettings />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Recycling Bin Retention (days)')).toHaveValue(30);
-      });
-    });
-
-    it('changes recycleRetentionDays and saves → payload includes general.recycleRetentionDays', async () => {
-      const user = userEvent.setup();
-      (api.updateSettings as Mock).mockResolvedValue(mockSettings);
-      renderWithProviders(<GeneralSettings />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Recycling Bin Retention (days)')).toHaveValue(30);
-      });
-
-      const input = screen.getByLabelText('Recycling Bin Retention (days)');
-      fireEvent.change(input, { target: { value: '7' } });
-
-      await user.click(screen.getByText('Save Changes').closest('button')!);
-
-      await waitFor(() => {
-        expect(api.updateSettings).toHaveBeenCalled();
-      });
-      await waitFor(() => {
-        expect((api.updateSettings as Mock).mock.calls[0][0]).toMatchObject({
-          general: { recycleRetentionDays: 7 },
-        });
-      });
-    });
-  });
-
-  it('inserts a token into folder format and updates preview', async () => {
-    const user = userEvent.setup();
-    renderWithProviders(<GeneralSettings />);
-
-    await waitFor(() => {
-      expect(screen.getAllByText('Insert token').length).toBeGreaterThanOrEqual(1);
-    });
-
-    // Expand token panel, then click a token
-    const toggles = screen.getAllByText('Insert token');
-    await user.click(toggles[0]);
-    await user.click(screen.getAllByText('{series}')[0]);
-
-    // setValue updates RHF state → watch triggers preview re-render
-    await waitFor(() => {
-      const saveButton = screen.getByText('Save Changes').closest('button')!;
-      // Form should be dirty after token insertion
-      expect(saveButton).not.toBeDisabled();
-    });
+    // General section save button should still be visible (still dirty)
+    const remainingSaveButtons = screen.getAllByRole('button', { name: /^save$/i });
+    expect(remainingSaveButtons.length).toBeGreaterThanOrEqual(1);
   });
 });

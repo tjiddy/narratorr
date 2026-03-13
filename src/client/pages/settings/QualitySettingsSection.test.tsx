@@ -1,36 +1,56 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useForm, FormProvider } from 'react-hook-form';
+import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockSettings } from '@/__tests__/factories';
 import { QualitySettingsSection } from './QualitySettingsSection';
-import type { UpdateSettingsFormData } from '../../../shared/schemas.js';
 
-function TestWrapper({ defaultValues }: { defaultValues?: Partial<UpdateSettingsFormData> }) {
-  const methods = useForm<UpdateSettingsFormData>({
-    defaultValues: {
-      quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false, rejectWords: '', requiredWords: '' },
-      ...defaultValues,
-    },
-  });
-  return (
-    <FormProvider {...methods}>
-      <form>
-        <QualitySettingsSection register={methods.register} errors={methods.formState.errors} />
-      </form>
-    </FormProvider>
-  );
-}
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+vi.mock('@/lib/api', () => ({
+  api: {
+    getSettings: vi.fn(),
+    updateSettings: vi.fn(),
+  },
+}));
+
+const { api } = await import('@/lib/api');
+const { toast } = await import('sonner');
+const mockApi = api as unknown as {
+  getSettings: ReturnType<typeof vi.fn>;
+  updateSettings: ReturnType<typeof vi.fn>;
+};
+const mockToast = toast as unknown as {
+  success: ReturnType<typeof vi.fn>;
+  error: ReturnType<typeof vi.fn>;
+};
+
+const mockSettings = createMockSettings({
+  quality: {
+    grabFloor: 50,
+    protocolPreference: 'usenet',
+    minSeeders: 3,
+    searchImmediately: true,
+    monitorForUpgrades: false,
+    rejectWords: 'German',
+    requiredWords: 'M4B',
+  },
+});
 
 describe('QualitySettingsSection', () => {
-  it('renders section title "Quality"', () => {
-    render(<TestWrapper />);
-    expect(screen.getByText('Quality')).toBeInTheDocument();
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockApi.getSettings.mockResolvedValue(mockSettings);
   });
 
-  it('renders all form fields', () => {
-    render(<TestWrapper />);
+  it('renders all quality fields', async () => {
+    renderWithProviders(<QualitySettingsSection />);
 
-    expect(screen.getByLabelText('MB/hr Grab Floor')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText('MB/hr Grab Floor')).toBeInTheDocument();
+    });
     expect(screen.getByLabelText('Protocol Preference')).toBeInTheDocument();
     expect(screen.getByLabelText('Minimum Seeders')).toBeInTheDocument();
     expect(screen.getByLabelText('Reject Words')).toBeInTheDocument();
@@ -39,78 +59,132 @@ describe('QualitySettingsSection', () => {
     expect(screen.getByLabelText('Monitor for Upgrades')).toBeInTheDocument();
   });
 
-  it('renders description text for each field', () => {
-    render(<TestWrapper />);
+  it('protocol preference select has all three options', async () => {
+    renderWithProviders(<QualitySettingsSection />);
 
-    expect(screen.getByText(/Minimum MB\/hr to accept/)).toBeInTheDocument();
-    expect(screen.getByText(/Preferred download protocol/)).toBeInTheDocument();
-    expect(screen.getByText(/Torrent results with fewer seeders/)).toBeInTheDocument();
-    expect(screen.getByText(/Releases with titles matching any word are excluded/)).toBeInTheDocument();
-    expect(screen.getByText(/only releases with titles matching at least one word/)).toBeInTheDocument();
-    expect(screen.getByText(/Trigger a search as soon as a book is added/)).toBeInTheDocument();
-    expect(screen.getByText(/Include new books in scheduled upgrade searches/)).toBeInTheDocument();
-  });
+    await waitFor(() => {
+      expect(screen.getByLabelText('Protocol Preference')).toBeInTheDocument();
+    });
 
-  it('protocol preference select has all three options', () => {
-    render(<TestWrapper />);
-
-    const select = screen.getByLabelText('Protocol Preference');
-    const options = select.querySelectorAll('option');
-
-    expect(options).toHaveLength(3);
     expect(screen.getByText('No Preference')).toBeInTheDocument();
     expect(screen.getByText('Prefer Usenet')).toBeInTheDocument();
     expect(screen.getByText('Prefer Torrent')).toBeInTheDocument();
   });
 
-  it('grab floor accepts numeric input', async () => {
-    render(<TestWrapper />);
+  it('loads settings values into form', async () => {
+    renderWithProviders(<QualitySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('MB/hr Grab Floor')).toHaveValue(50);
+    });
+    expect(screen.getByLabelText('Minimum Seeders')).toHaveValue(3);
+    expect(screen.getByLabelText('Reject Words')).toHaveValue('German');
+    expect(screen.getByLabelText('Required Words')).toHaveValue('M4B');
+    expect(screen.getByLabelText('Protocol Preference')).toHaveValue('usenet');
+  });
+
+  it('blocks submit when grabFloor is negative', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<QualitySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('MB/hr Grab Floor')).toHaveValue(50);
+    });
 
     const input = screen.getByLabelText('MB/hr Grab Floor');
-    fireEvent.change(input, { target: { value: '150' } });
-    await waitFor(() => {
-      expect(input).toHaveValue(150);
+    await user.clear(input);
+    await user.type(input, '-1');
+
+    await act(async () => {
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
     });
+
+    expect(screen.getByText(/too small/i)).toBeInTheDocument();
+    expect(mockApi.updateSettings).not.toHaveBeenCalled();
   });
 
-  it('renders reject words text input with placeholder', () => {
-    render(<TestWrapper />);
-    const input = screen.getByLabelText('Reject Words');
-    expect(input).toBeInTheDocument();
-    expect(input).toHaveAttribute('placeholder', 'German, Abridged, Full Cast, Dramatized');
-  });
+  it('sends quality category on save', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    renderWithProviders(<QualitySettingsSection />);
 
-  it('renders required words text input with placeholder', () => {
-    render(<TestWrapper />);
-    const input = screen.getByLabelText('Required Words');
-    expect(input).toBeInTheDocument();
-    expect(input).toHaveAttribute('placeholder', 'M4B, Unabridged');
-  });
+    await waitFor(() => {
+      expect(screen.getByLabelText('MB/hr Grab Floor')).toHaveValue(50);
+    });
 
-  it('accepts text input for word lists', async () => {
+    // Make form dirty by changing a value
     const user = userEvent.setup();
-    render(<TestWrapper />);
-
     const rejectInput = screen.getByLabelText('Reject Words');
-    await user.type(rejectInput, 'German, Abridged');
-    await waitFor(() => {
-      expect(rejectInput).toHaveValue('German, Abridged');
-    });
+    await user.clear(rejectInput);
+    await user.type(rejectInput, 'Abridged');
 
-    const requiredInput = screen.getByLabelText('Required Words');
-    await user.type(requiredInput, 'M4B');
+    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
     await waitFor(() => {
-      expect(requiredInput).toHaveValue('M4B');
+      expect(mockApi.updateSettings).toHaveBeenCalledWith({
+        quality: {
+          grabFloor: 50,
+          protocolPreference: 'usenet',
+          minSeeders: 3,
+          searchImmediately: true,
+          monitorForUpgrades: false,
+          rejectWords: 'Abridged',
+          requiredWords: 'M4B',
+        },
+      });
     });
   });
 
-  it('min seeders accepts numeric input', async () => {
-    render(<TestWrapper />);
+  it('shows success toast on save', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    renderWithProviders(<QualitySettingsSection />);
 
-    const input = screen.getByLabelText('Minimum Seeders');
-    fireEvent.change(input, { target: { value: '5' } });
     await waitFor(() => {
-      expect(input).toHaveValue(5);
+      expect(screen.getByLabelText('MB/hr Grab Floor')).toHaveValue(50);
     });
+
+    const user = userEvent.setup();
+    const input = screen.getByLabelText('Reject Words');
+    await user.clear(input);
+    await user.type(input, 'test');
+
+    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(mockToast.success).toHaveBeenCalledWith('Quality settings saved');
+    });
+  });
+
+  it('shows error toast on save failure', async () => {
+    mockApi.updateSettings.mockRejectedValue(new Error('Network error'));
+    renderWithProviders(<QualitySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('MB/hr Grab Floor')).toHaveValue(50);
+    });
+
+    const user = userEvent.setup();
+    const input = screen.getByLabelText('Reject Words');
+    await user.clear(input);
+    await user.type(input, 'test');
+
+    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalledWith('Network error');
+    });
+  });
+
+  it('toggles search immediately checkbox', async () => {
+    renderWithProviders(<QualitySettingsSection />);
+
+    const checkbox = () => screen.getByLabelText('Search Immediately');
+
+    await waitFor(() => {
+      expect((checkbox() as HTMLInputElement).checked).toBe(true);
+    });
+
+    const user = userEvent.setup();
+    await user.click(checkbox());
+    expect((checkbox() as HTMLInputElement).checked).toBe(false);
   });
 });

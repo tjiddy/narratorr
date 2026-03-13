@@ -1,16 +1,17 @@
-import { useRef, useMemo, useState } from 'react';
-import type { UseFormRegister, UseFormSetValue, UseFormWatch, FieldErrors } from 'react-hook-form';
+import { useRef, useMemo, useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { toast } from 'sonner';
+import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { FolderIcon } from '@/components/icons';
 import { renderTemplate, renderFilename, toLastFirst, toSortTitle, ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from '../../../core/utils/index.js';
-import type { UpdateSettingsFormData } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { libraryFormSchema } from '../../../shared/schemas/settings/library.js';
 import { SettingsSection } from './SettingsSection';
 
-interface LibrarySettingsSectionProps {
-  register: UseFormRegister<UpdateSettingsFormData>;
-  errors: FieldErrors<UpdateSettingsFormData>;
-  setValue: UseFormSetValue<UpdateSettingsFormData>;
-  watch: UseFormWatch<UpdateSettingsFormData>;
-}
+type LibraryFormData = AppSettings['library'];
 
 const SAMPLE_AUTHOR = 'Brandon Sanderson';
 const SAMPLE_TITLE = 'The Way of Kings';
@@ -103,12 +104,41 @@ function TokenPanel({ tokens, extraTokens, onInsert, label }: TokenPanelProps) {
 }
 
 // eslint-disable-next-line complexity, max-lines-per-function -- folder/file format validation + token insertion + preview for both templates
-export function LibrarySettingsSection({ register, errors, setValue, watch }: LibrarySettingsSectionProps) {
+export function LibrarySettingsSection() {
+  const queryClient = useQueryClient();
   const folderFormatRef = useRef<HTMLInputElement | null>(null);
   const fileFormatRef = useRef<HTMLInputElement | null>(null);
 
-  const folderFormat = watch('library.folderFormat');
-  const fileFormat = watch('library.fileFormat');
+  const { data: settings } = useQuery({
+    queryKey: queryKeys.settings(),
+    queryFn: api.getSettings,
+  });
+
+  const { register, handleSubmit, reset, watch, setValue, formState: { errors, isDirty } } = useForm<LibraryFormData>({
+    defaultValues: DEFAULT_SETTINGS.library,
+    resolver: zodResolver(libraryFormSchema),
+  });
+
+  useEffect(() => {
+    if (settings?.library && !isDirty) {
+      reset(settings.library);
+    }
+  }, [settings, reset, isDirty]);
+
+  const mutation = useMutation({
+    mutationFn: (data: LibraryFormData) => api.updateSettings({ library: data }),
+    onSuccess: (_result, submittedData) => {
+      reset(submittedData);
+      queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
+      toast.success('Library settings saved');
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : 'Failed to save settings');
+    },
+  });
+
+  const folderFormat = watch('folderFormat');
+  const fileFormat = watch('fileFormat');
 
   const previewPath = useMemo(() => {
     if (!folderFormat) return '';
@@ -146,7 +176,7 @@ export function LibrarySettingsSection({ register, errors, setValue, watch }: Li
 
   const insertTokenAtCursor = (
     ref: React.RefObject<HTMLInputElement | null>,
-    field: 'library.folderFormat' | 'library.fileFormat',
+    field: 'folderFormat' | 'fileFormat',
     token: string,
   ) => {
     const input = ref.current;
@@ -165,11 +195,11 @@ export function LibrarySettingsSection({ register, errors, setValue, watch }: Li
   };
 
   const insertFolderToken = (token: string) => {
-    insertTokenAtCursor(folderFormatRef, 'library.folderFormat', token);
+    insertTokenAtCursor(folderFormatRef, 'folderFormat', token);
   };
 
   const insertFileToken = (token: string) => {
-    insertTokenAtCursor(fileFormatRef, 'library.fileFormat', token);
+    insertTokenAtCursor(fileFormatRef, 'fileFormat', token);
   };
 
   return (
@@ -178,143 +208,155 @@ export function LibrarySettingsSection({ register, errors, setValue, watch }: Li
       title="Library"
       description="Configure where audiobooks are stored"
     >
-      <div>
-        <label htmlFor="libraryPath" className="block text-sm font-medium mb-2">Library Path</label>
-        <input
-          id="libraryPath"
-          type="text"
-          {...register('library.path')}
-          className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-            errors.library?.path ? 'border-destructive' : 'border-border'
-          }`}
-          placeholder="/audiobooks"
-        />
-        {errors.library?.path && (
-          <p className="text-sm text-destructive mt-1">{errors.library.path.message}</p>
-        )}
-        <p className="text-sm text-muted-foreground mt-2">
-          The root folder where imported audiobooks will be stored
+      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
+        <div>
+          <label htmlFor="libraryPath" className="block text-sm font-medium mb-2">Library Path</label>
+          <input
+            id="libraryPath"
+            type="text"
+            {...register('path')}
+            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+              errors.path ? 'border-destructive' : 'border-border'
+            }`}
+            placeholder="/audiobooks"
+          />
+          {errors.path && (
+            <p className="text-sm text-destructive mt-1">{errors.path.message}</p>
+          )}
+          <p className="text-sm text-muted-foreground mt-2">
+            The root folder where imported audiobooks will be stored
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div>
+            <label htmlFor="folderFormat" className="block text-sm font-medium mb-2">Folder Format</label>
+            <input
+              id="folderFormat"
+              type="text"
+              {...(() => {
+                const { ref: rhfRef, ...rest } = register('folderFormat');
+                return {
+                  ...rest,
+                  ref: (el: HTMLInputElement | null) => {
+                    rhfRef(el);
+                    folderFormatRef.current = el;
+                  },
+                };
+              })()}
+              className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all font-mono text-sm ${
+                errors.folderFormat ? 'border-destructive' : 'border-border'
+              }`}
+              placeholder="{author}/{title}"
+            />
+            {errors.folderFormat && (
+              <p className="text-sm text-destructive mt-1">{errors.folderFormat.message}</p>
+            )}
+
+            <TokenPanel
+              tokens={ALLOWED_TOKENS}
+              onInsert={insertFolderToken}
+              label="Insert token"
+            />
+
+            {!hasTitleToken && (
+              <p className="text-sm text-destructive mt-1.5">
+                Template must include {'{title}'} or {'{titleSort}'}
+              </p>
+            )}
+            {hasTitleToken && !hasAuthorToken && (
+              <p className="text-sm text-amber-500 mt-1.5">
+                Consider including {'{author}'} for better organization
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label htmlFor="fileFormat" className="block text-sm font-medium mb-2">File Format</label>
+            <input
+              id="fileFormat"
+              type="text"
+              {...(() => {
+                const { ref: rhfRef, ...rest } = register('fileFormat');
+                return {
+                  ...rest,
+                  ref: (el: HTMLInputElement | null) => {
+                    rhfRef(el);
+                    fileFormatRef.current = el;
+                  },
+                };
+              })()}
+              className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all font-mono text-sm ${
+                errors.fileFormat ? 'border-destructive' : 'border-border'
+              }`}
+              placeholder="{author} - {title}"
+            />
+            {errors.fileFormat && (
+              <p className="text-sm text-destructive mt-1">{errors.fileFormat.message}</p>
+            )}
+
+            <TokenPanel
+              tokens={ALLOWED_TOKENS}
+              extraTokens={FILE_ONLY_TOKENS}
+              onInsert={insertFileToken}
+              label="Insert token"
+            />
+
+            {!fileTitleToken && (
+              <p className="text-sm text-destructive mt-1.5">
+                Template must include {'{title}'} or {'{titleSort}'}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <p className="text-sm text-muted-foreground -mt-2">
+          Use <code className="px-1 py-0.5 bg-muted rounded text-xs">{'{series? - }'}</code> for conditional separators
+          and <code className="px-1 py-0.5 bg-muted rounded text-xs">{'{seriesPosition:00}'}</code> for zero-padding.
+          File-specific: <code className="px-1 py-0.5 bg-muted rounded text-xs">{'{trackNumber:00}'}</code> for numbering, <code className="px-1 py-0.5 bg-muted rounded text-xs">{'{partName}'}</code> for chapter names.
         </p>
-      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        <div>
-          <label htmlFor="folderFormat" className="block text-sm font-medium mb-2">Folder Format</label>
-          <input
-            id="folderFormat"
-            type="text"
-            {...(() => {
-              const { ref: rhfRef, ...rest } = register('library.folderFormat');
-              return {
-                ...rest,
-                ref: (el: HTMLInputElement | null) => {
-                  rhfRef(el);
-                  folderFormatRef.current = el;
-                },
-              };
-            })()}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all font-mono text-sm ${
-              errors.library?.folderFormat ? 'border-destructive' : 'border-border'
-            }`}
-            placeholder="{author}/{title}"
-          />
-          {errors.library?.folderFormat && (
-            <p className="text-sm text-destructive mt-1">{errors.library.folderFormat.message}</p>
-          )}
-
-          <TokenPanel
-            tokens={ALLOWED_TOKENS}
-            onInsert={insertFolderToken}
-            label="Insert token"
-          />
-
-          {!hasTitleToken && (
-            <p className="text-sm text-destructive mt-1.5">
-              Template must include {'{title}'} or {'{titleSort}'}
-            </p>
-          )}
-          {hasTitleToken && !hasAuthorToken && (
-            <p className="text-sm text-amber-500 mt-1.5">
-              Consider including {'{author}'} for better organization
-            </p>
-          )}
-        </div>
-
-        <div>
-          <label htmlFor="fileFormat" className="block text-sm font-medium mb-2">File Format</label>
-          <input
-            id="fileFormat"
-            type="text"
-            {...(() => {
-              const { ref: rhfRef, ...rest } = register('library.fileFormat');
-              return {
-                ...rest,
-                ref: (el: HTMLInputElement | null) => {
-                  rhfRef(el);
-                  fileFormatRef.current = el;
-                },
-              };
-            })()}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all font-mono text-sm ${
-              errors.library?.fileFormat ? 'border-destructive' : 'border-border'
-            }`}
-            placeholder="{author} - {title}"
-          />
-          {errors.library?.fileFormat && (
-            <p className="text-sm text-destructive mt-1">{errors.library.fileFormat.message}</p>
-          )}
-
-          <TokenPanel
-            tokens={ALLOWED_TOKENS}
-            extraTokens={FILE_ONLY_TOKENS}
-            onInsert={insertFileToken}
-            label="Insert token"
-          />
-
-          {!fileTitleToken && (
-            <p className="text-sm text-destructive mt-1.5">
-              Template must include {'{title}'} or {'{titleSort}'}
-            </p>
-          )}
-        </div>
-      </div>
-
-      <p className="text-sm text-muted-foreground -mt-2">
-        Use <code className="px-1 py-0.5 bg-muted rounded text-xs">{'{series? - }'}</code> for conditional separators
-        and <code className="px-1 py-0.5 bg-muted rounded text-xs">{'{seriesPosition:00}'}</code> for zero-padding.
-        File-specific: <code className="px-1 py-0.5 bg-muted rounded text-xs">{'{trackNumber:00}'}</code> for numbering, <code className="px-1 py-0.5 bg-muted rounded text-xs">{'{partName}'}</code> for chapter names.
-      </p>
-
-      {(folderFormat || fileFormat) && (
-        <div className="p-3 bg-muted/50 rounded-lg border border-border space-y-2">
-          <div>
-            <p className="text-xs text-muted-foreground mb-1">With series</p>
-            <p className="text-sm font-mono break-all">
-              {previewPath ? (
-                <>
-                  <span className="text-muted-foreground">{previewPath}/</span>
-                  <span>{previewFilename ? `${previewFilename}.m4b` : ''}</span>
-                </>
-              ) : (
-                <span className="text-muted-foreground italic">Empty path</span>
-              )}
-            </p>
+        {(folderFormat || fileFormat) && (
+          <div className="p-3 bg-muted/50 rounded-lg border border-border space-y-2">
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">With series</p>
+              <p className="text-sm font-mono break-all">
+                {previewPath ? (
+                  <>
+                    <span className="text-muted-foreground">{previewPath}/</span>
+                    <span>{previewFilename ? `${previewFilename}.m4b` : ''}</span>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground italic">Empty path</span>
+                )}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1">Without series</p>
+              <p className="text-sm font-mono break-all">
+                {previewPathNoSeries ? (
+                  <>
+                    <span className="text-muted-foreground">{previewPathNoSeries}/</span>
+                    <span>{previewFilenameNoSeries ? `${previewFilenameNoSeries}.m4b` : ''}</span>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground italic">Empty path</span>
+                )}
+              </p>
+            </div>
           </div>
-          <div>
-            <p className="text-xs text-muted-foreground mb-1">Without series</p>
-            <p className="text-sm font-mono break-all">
-              {previewPathNoSeries ? (
-                <>
-                  <span className="text-muted-foreground">{previewPathNoSeries}/</span>
-                  <span>{previewFilenameNoSeries ? `${previewFilenameNoSeries}.m4b` : ''}</span>
-                </>
-              ) : (
-                <span className="text-muted-foreground italic">Empty path</span>
-              )}
-            </p>
-          </div>
-        </div>
-      )}
+        )}
+
+        {isDirty && (
+          <button
+            type="submit"
+            disabled={mutation.isPending}
+            className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+          >
+            {mutation.isPending ? 'Saving...' : 'Save'}
+          </button>
+        )}
+      </form>
     </SettingsSection>
   );
 }

@@ -1,115 +1,191 @@
-import type { UseFormRegister, FieldErrors } from 'react-hook-form';
+import { useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { toast } from 'sonner';
+import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { SearchIcon } from '@/components/icons';
-import type { UpdateSettingsFormData } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
-interface SearchSettingsSectionProps {
-  register: UseFormRegister<UpdateSettingsFormData>;
-  errors: FieldErrors<UpdateSettingsFormData>;
+const searchFormSchema = z.object({
+  searchEnabled: z.boolean(),
+  searchIntervalMinutes: z.number().int().min(5).max(1440),
+  blacklistTtlDays: z.number().int().min(1).max(365),
+  rssEnabled: z.boolean(),
+  rssIntervalMinutes: z.number().int().min(5).max(1440),
+});
+
+type SearchFormData = z.infer<typeof searchFormSchema>;
+
+function toFormData(settings: AppSettings): SearchFormData {
+  return {
+    searchEnabled: settings.search.enabled,
+    searchIntervalMinutes: settings.search.intervalMinutes,
+    blacklistTtlDays: settings.search.blacklistTtlDays,
+    rssEnabled: settings.rss.enabled,
+    rssIntervalMinutes: settings.rss.intervalMinutes,
+  };
 }
 
-export function SearchSettingsSection({ register, errors }: SearchSettingsSectionProps) {
+function toPayload(data: SearchFormData) {
+  return {
+    search: {
+      enabled: data.searchEnabled,
+      intervalMinutes: data.searchIntervalMinutes,
+      blacklistTtlDays: data.blacklistTtlDays,
+    },
+    rss: {
+      enabled: data.rssEnabled,
+      intervalMinutes: data.rssIntervalMinutes,
+    },
+  };
+}
+
+export function SearchSettingsSection() {
+  const queryClient = useQueryClient();
+
+  const { data: settings } = useQuery({
+    queryKey: queryKeys.settings(),
+    queryFn: api.getSettings,
+  });
+
+  const { register, handleSubmit, reset, formState: { errors, isDirty } } = useForm<SearchFormData>({
+    defaultValues: toFormData({ ...DEFAULT_SETTINGS } as AppSettings),
+    resolver: zodResolver(searchFormSchema),
+  });
+
+  useEffect(() => {
+    if (settings && !isDirty) {
+      reset(toFormData(settings));
+    }
+  }, [settings, reset, isDirty]);
+
+  const mutation = useMutation({
+    mutationFn: (data: SearchFormData) => api.updateSettings(toPayload(data)),
+    onSuccess: (_result, submittedData) => {
+      reset(submittedData);
+      queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
+      toast.success('Search settings saved');
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : 'Failed to save settings');
+    },
+  });
+
   return (
     <SettingsSection
       icon={<SearchIcon className="w-5 h-5 text-primary" />}
       title="Search"
       description="Automatic searching for wanted books"
     >
-      <div className="flex items-center justify-between">
-        <div>
-          <label htmlFor="searchEnabled" className="block text-sm font-medium">Enable Scheduled Search</label>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Periodically search indexers and grab the best result for wanted books
-          </p>
-        </div>
-        <label className="relative inline-flex items-center cursor-pointer">
-          <input id="searchEnabled" type="checkbox" {...register('search.enabled')} className="sr-only peer" />
-          <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
-        </label>
-      </div>
-
-      <div>
-        <label htmlFor="searchIntervalMinutes" className="block text-sm font-medium mb-2">Search Interval (minutes)</label>
-        <input
-          id="searchIntervalMinutes"
-          type="number"
-          {...register('search.intervalMinutes', { valueAsNumber: true })}
-          className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-            errors.search?.intervalMinutes ? 'border-destructive' : 'border-border'
-          }`}
-          min={5}
-          max={1440}
-          placeholder="360"
-        />
-        {errors.search?.intervalMinutes && (
-          <p className="text-sm text-destructive mt-1">{errors.search.intervalMinutes.message}</p>
-        )}
-        <p className="text-sm text-muted-foreground mt-2">
-          How often to search for new releases (5-1440 minutes)
-        </p>
-      </div>
-
-      {/* Blacklist TTL */}
-      <div>
-        <label htmlFor="blacklistTtlDays" className="block text-sm font-medium mb-2">Blacklist TTL (days)</label>
-        <input
-          id="blacklistTtlDays"
-          type="number"
-          {...register('search.blacklistTtlDays', { valueAsNumber: true })}
-          className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-            errors.search?.blacklistTtlDays ? 'border-destructive' : 'border-border'
-          }`}
-          min={1}
-          max={365}
-          placeholder="7"
-        />
-        {errors.search?.blacklistTtlDays && (
-          <p className="text-sm text-destructive mt-1">{errors.search.blacklistTtlDays.message}</p>
-        )}
-        <p className="text-sm text-muted-foreground mt-2">
-          How long temporary blacklist entries last before expiring (1-365 days)
-        </p>
-      </div>
-
-      {/* RSS Sync subsection */}
-      <div className="border-t border-border pt-6 mt-6">
-        <h4 className="text-sm font-semibold mb-4">RSS Sync</h4>
-
+      <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
         <div className="flex items-center justify-between">
           <div>
-            <label htmlFor="rssEnabled" className="block text-sm font-medium">Enable RSS Sync</label>
+            <label htmlFor="searchEnabled" className="block text-sm font-medium">Enable Scheduled Search</label>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Poll indexer RSS feeds to discover new releases and upgrades
+              Periodically search indexers and grab the best result for wanted books
             </p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
-            <input id="rssEnabled" type="checkbox" {...register('rss.enabled')} className="sr-only peer" />
+            <input id="searchEnabled" type="checkbox" {...register('searchEnabled')} className="sr-only peer" />
             <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
           </label>
         </div>
 
-        <div className="mt-4">
-          <label htmlFor="rssIntervalMinutes" className="block text-sm font-medium mb-2">RSS Interval (minutes)</label>
+        <div>
+          <label htmlFor="searchIntervalMinutes" className="block text-sm font-medium mb-2">Search Interval (minutes)</label>
           <input
-            id="rssIntervalMinutes"
+            id="searchIntervalMinutes"
             type="number"
-            {...register('rss.intervalMinutes', { valueAsNumber: true })}
+            {...register('searchIntervalMinutes', { valueAsNumber: true })}
             className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-              errors.rss?.intervalMinutes ? 'border-destructive' : 'border-border'
+              errors.searchIntervalMinutes ? 'border-destructive' : 'border-border'
             }`}
             min={5}
             max={1440}
-            placeholder="30"
+            placeholder="360"
           />
-          {errors.rss?.intervalMinutes && (
-            <p className="text-sm text-destructive mt-1">{errors.rss.intervalMinutes.message}</p>
+          {errors.searchIntervalMinutes && (
+            <p className="text-sm text-destructive mt-1">{errors.searchIntervalMinutes.message}</p>
           )}
           <p className="text-sm text-muted-foreground mt-2">
-            How often to poll RSS feeds (5-1440 minutes)
+            How often to search for new releases (5-1440 minutes)
           </p>
         </div>
-      </div>
 
+        <div>
+          <label htmlFor="blacklistTtlDays" className="block text-sm font-medium mb-2">Blacklist TTL (days)</label>
+          <input
+            id="blacklistTtlDays"
+            type="number"
+            {...register('blacklistTtlDays', { valueAsNumber: true })}
+            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+              errors.blacklistTtlDays ? 'border-destructive' : 'border-border'
+            }`}
+            min={1}
+            max={365}
+            placeholder="7"
+          />
+          {errors.blacklistTtlDays && (
+            <p className="text-sm text-destructive mt-1">{errors.blacklistTtlDays.message}</p>
+          )}
+          <p className="text-sm text-muted-foreground mt-2">
+            How long temporary blacklist entries last before expiring (1-365 days)
+          </p>
+        </div>
+
+        {/* RSS Sync subsection */}
+        <div className="border-t border-border pt-6 mt-6">
+          <h4 className="text-sm font-semibold mb-4">RSS Sync</h4>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <label htmlFor="rssEnabled" className="block text-sm font-medium">Enable RSS Sync</label>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Poll indexer RSS feeds to discover new releases and upgrades
+              </p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input id="rssEnabled" type="checkbox" {...register('rssEnabled')} className="sr-only peer" />
+              <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+            </label>
+          </div>
+
+          <div className="mt-4">
+            <label htmlFor="rssIntervalMinutes" className="block text-sm font-medium mb-2">RSS Interval (minutes)</label>
+            <input
+              id="rssIntervalMinutes"
+              type="number"
+              {...register('rssIntervalMinutes', { valueAsNumber: true })}
+              className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+                errors.rssIntervalMinutes ? 'border-destructive' : 'border-border'
+              }`}
+              min={5}
+              max={1440}
+              placeholder="30"
+            />
+            {errors.rssIntervalMinutes && (
+              <p className="text-sm text-destructive mt-1">{errors.rssIntervalMinutes.message}</p>
+            )}
+            <p className="text-sm text-muted-foreground mt-2">
+              How often to poll RSS feeds (5-1440 minutes)
+            </p>
+          </div>
+        </div>
+
+        {isDirty && (
+          <button
+            type="submit"
+            disabled={mutation.isPending}
+            className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
+          >
+            {mutation.isPending ? 'Saving...' : 'Save'}
+          </button>
+        )}
+      </form>
     </SettingsSection>
   );
 }

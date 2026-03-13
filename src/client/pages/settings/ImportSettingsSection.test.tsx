@@ -1,82 +1,73 @@
-import { describe, it, expect, vi } from 'vitest';
-import { screen, render, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useForm, FormProvider } from 'react-hook-form';
+import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockSettings } from '@/__tests__/factories';
 import { ImportSettingsSection } from './ImportSettingsSection';
-import type { UpdateSettingsFormData } from '../../../shared/schemas.js';
 
-const defaultValues: UpdateSettingsFormData = {
-  search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 7 },
-  rss: { enabled: false, intervalMinutes: 30 },
-  library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+vi.mock('@/lib/api', () => ({
+  api: {
+    getSettings: vi.fn(),
+    updateSettings: vi.fn(),
+  },
+}));
+
+const { api } = await import('@/lib/api');
+const { toast } = await import('sonner');
+const mockApi = api as unknown as {
+  getSettings: ReturnType<typeof vi.fn>;
+  updateSettings: ReturnType<typeof vi.fn>;
+};
+const mockToast = toast as unknown as {
+  success: ReturnType<typeof vi.fn>;
+  error: ReturnType<typeof vi.fn>;
+};
+
+const mockSettings = createMockSettings({
   import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
-  general: { logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30 },
-  metadata: { audibleRegion: 'us' },
-} as UpdateSettingsFormData;
-
-function Wrapper({
-  onSubmit,
-  children,
-}: {
-  onSubmit?: (data: UpdateSettingsFormData) => void;
-  children: (props: ReturnType<typeof useForm<UpdateSettingsFormData>>) => React.ReactNode;
-}) {
-  const methods = useForm<UpdateSettingsFormData>({ defaultValues });
-  return (
-    <FormProvider {...methods}>
-      <form onSubmit={methods.handleSubmit(onSubmit ?? (() => {}))}>
-        {children(methods)}
-        <button type="submit">Save</button>
-      </form>
-    </FormProvider>
-  );
-}
+});
 
 describe('ImportSettingsSection', () => {
-  it('renders all import fields and toggles delete checkbox', async () => {
-    const user = userEvent.setup();
-    render(
-      <Wrapper>
-        {({ register, formState: { errors } }) => (
-          <ImportSettingsSection register={register} errors={errors} />
-        )}
-      </Wrapper>,
-    );
-
-    expect(screen.getByText('Delete After Import')).toBeInTheDocument();
-    expect(screen.getByText('Minimum Seed Time (minutes)')).toBeInTheDocument();
-
-    const checkbox = screen.getByText('Delete After Import')
-      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
-
-    expect(checkbox.checked).toBe(false);
-    await user.click(checkbox);
-    await waitFor(() => {
-      expect(checkbox.checked).toBe(true);
-    });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockApi.getSettings.mockResolvedValue(mockSettings);
   });
 
-  it('renders minimum free space field with value from settings', () => {
-    render(
-      <Wrapper>
-        {({ register, formState: { errors } }) => (
-          <ImportSettingsSection register={register} errors={errors} />
-        )}
-      </Wrapper>,
-    );
+  it('renders all import fields and toggles delete checkbox', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ImportSettingsSection />);
 
+    await waitFor(() => {
+      expect(screen.getByText('Delete After Import')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Minimum Seed Time (minutes)')).toBeInTheDocument();
+
+    const checkbox = screen.getByRole('checkbox');
+    expect(checkbox).not.toBeChecked();
+    await user.click(checkbox);
+    expect(checkbox).toBeChecked();
+  });
+
+  it('renders minimum free space field', async () => {
+    renderWithProviders(<ImportSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Minimum Free Space (GB)')).toBeInTheDocument();
+    });
     expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveValue(5);
   });
 
   it('allows changing minimum free space value', async () => {
     const user = userEvent.setup();
-    render(
-      <Wrapper>
-        {({ register, formState: { errors } }) => (
-          <ImportSettingsSection register={register} errors={errors} />
-        )}
-      </Wrapper>,
-    );
+    renderWithProviders(<ImportSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveValue(5);
+    });
 
     const input = screen.getByLabelText('Minimum Free Space (GB)');
     expect(input).toHaveValue(5);
@@ -85,27 +76,21 @@ describe('ImportSettingsSection', () => {
     expect(input).toHaveValue(10);
   });
 
-  it('shows helper text for free space field', () => {
-    render(
-      <Wrapper>
-        {({ register, formState: { errors } }) => (
-          <ImportSettingsSection register={register} errors={errors} />
-        )}
-      </Wrapper>,
-    );
+  it('shows helper text for free space field', async () => {
+    renderWithProviders(<ImportSettingsSection />);
 
-    expect(screen.getByText(/Set to 0 to disable/)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/Set to 0 to disable/)).toBeInTheDocument();
+    });
   });
 
   it('allows changing the minimum seed time', async () => {
     const user = userEvent.setup();
-    render(
-      <Wrapper>
-        {({ register, formState: { errors } }) => (
-          <ImportSettingsSection register={register} errors={errors} />
-        )}
-      </Wrapper>,
-    );
+    renderWithProviders(<ImportSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('60')).toHaveValue(60);
+    });
 
     const seedTimeInput = screen.getByLabelText('Minimum Seed Time (minutes)');
     expect(seedTimeInput).toHaveValue(60);
@@ -114,25 +99,85 @@ describe('ImportSettingsSection', () => {
     expect(seedTimeInput).toHaveValue(120);
   });
 
-  it('sends import category payload on save', async () => {
-    const onSubmit = vi.fn();
-    render(
-      <Wrapper onSubmit={onSubmit}>
-        {({ register, formState: { errors } }) => (
-          <ImportSettingsSection register={register} errors={errors} />
-        )}
-      </Wrapper>,
-    );
-
-    await userEvent.click(screen.getByRole('button', { name: /save/i }));
+  it('blocks submit when minSeedTime is negative', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(onSubmit).toHaveBeenCalledWith(
-        expect.objectContaining({
-          import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
-        }),
-        expect.anything(),
-      );
+      expect(screen.getByPlaceholderText('60')).toHaveValue(60);
+    });
+
+    const seedTimeInput = screen.getByPlaceholderText('60');
+    await user.clear(seedTimeInput);
+    await user.type(seedTimeInput, '-1');
+
+    await act(async () => {
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    });
+
+    expect(screen.getByText(/too small/i)).toBeInTheDocument();
+    expect(mockApi.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it('sends import category on save', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<ImportSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('60')).toHaveValue(60);
+    });
+
+    const seedTimeInput = screen.getByPlaceholderText('60');
+    await user.clear(seedTimeInput);
+    await user.type(seedTimeInput, '120');
+
+    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith({
+        import: { deleteAfterImport: false, minSeedTime: 120, minFreeSpaceGB: 5 },
+      });
+    });
+  });
+
+  it('shows success toast on save', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<ImportSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('60')).toHaveValue(60);
+    });
+
+    const seedTimeInput = screen.getByPlaceholderText('60');
+    await user.clear(seedTimeInput);
+    await user.type(seedTimeInput, '120');
+
+    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(mockToast.success).toHaveBeenCalledWith('Import settings saved');
+    });
+  });
+
+  it('shows error toast on save failure', async () => {
+    mockApi.updateSettings.mockRejectedValue(new Error('Save failed'));
+    const user = userEvent.setup();
+    renderWithProviders(<ImportSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('60')).toHaveValue(60);
+    });
+
+    const seedTimeInput = screen.getByPlaceholderText('60');
+    await user.clear(seedTimeInput);
+    await user.type(seedTimeInput, '120');
+
+    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalledWith('Save failed');
     });
   });
 });
