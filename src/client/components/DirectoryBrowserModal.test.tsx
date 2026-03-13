@@ -138,8 +138,7 @@ describe('DirectoryBrowserModal', () => {
     renderModal({ onClose });
     await screen.findByText('audiobooks');
 
-    // Click the backdrop (the first child of the fixed container)
-    const backdrop = screen.getByRole('dialog').parentElement!.querySelector('.bg-black\\/60')!;
+    const backdrop = screen.getByTestId('modal-backdrop');
     await user.click(backdrop);
 
     expect(onClose).toHaveBeenCalled();
@@ -149,9 +148,7 @@ describe('DirectoryBrowserModal', () => {
     mockBrowse.mockReturnValue(new Promise(() => {})); // never resolves
     renderModal();
 
-    // Loading spinner is an svg with animate-spin class
-    const spinner = document.querySelector('.animate-spin');
-    expect(spinner).toBeInTheDocument();
+    expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
   });
 
   it('shows empty state when no subdirectories', async () => {

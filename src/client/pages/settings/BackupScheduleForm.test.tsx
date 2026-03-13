@@ -45,6 +45,16 @@ describe('BackupScheduleForm', () => {
     });
   });
 
+  it('save button is disabled when form is clean', async () => {
+    renderWithProviders(<BackupScheduleForm />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/backup interval/i)).toHaveValue(10080);
+    });
+
+    expect(screen.getByRole('button', { name: /save/i })).toBeDisabled();
+  });
+
   it('calls updateSettings with system category on form submit', async () => {
     mockApi.updateSettings.mockResolvedValue({
       system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
@@ -56,7 +66,8 @@ describe('BackupScheduleForm', () => {
       expect(screen.getByLabelText(/backup interval/i)).toHaveValue(10080);
     });
 
-    // Submit the form directly to bypass isDirty gating
+    // Direct form submit — button is disabled until isDirty, and number inputs
+    // can't be made dirty via userEvent in jsdom (same constraint as NetworkSettingsSection)
     fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
 
     await waitFor(() => {
@@ -84,7 +95,7 @@ describe('BackupScheduleForm', () => {
       expect(screen.getByLabelText(/backup retention/i)).toHaveValue(7);
     });
 
-    // Submit the form directly
+    // Direct form submit — same jsdom constraint as above
     fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
 
     await waitFor(() => {

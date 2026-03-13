@@ -11,12 +11,12 @@ function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
 describe('AudioInfo', () => {
   it('renders nothing when audioCodec is null', () => {
     const { container } = render(<AudioInfo book={makeBook()} />);
-    expect(container.innerHTML).toBe('');
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('renders nothing when audioCodec is undefined', () => {
     const { container } = render(<AudioInfo book={makeBook({ audioCodec: undefined })} />);
-    expect(container.innerHTML).toBe('');
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('renders audio quality section when audioCodec is present', () => {
@@ -172,7 +172,7 @@ describe('AudioInfo', () => {
 
     it('renders nothing in compact mode when no audioCodec', () => {
       const { container } = render(<AudioInfo book={makeBook()} compact />);
-      expect(container.innerHTML).toBe('');
+      expect(container).toBeEmptyDOMElement();
     });
   });
 });

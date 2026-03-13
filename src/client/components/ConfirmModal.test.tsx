@@ -22,7 +22,7 @@ describe('ConfirmModal', () => {
   it('does not render when closed', () => {
     const { container } = render(<ConfirmModal {...defaultProps} isOpen={false} />);
 
-    expect(container.innerHTML).toBe('');
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('shows default button labels', () => {

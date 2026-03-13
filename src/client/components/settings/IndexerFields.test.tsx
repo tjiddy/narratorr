@@ -80,7 +80,7 @@ describe('IndexerFields', () => {
 
   it('renders nothing for unknown type', () => {
     const { container } = render(<FieldWrapper type="unknown" />);
-    expect(container.innerHTML).toBe('');
+    expect(container).toBeEmptyDOMElement();
   });
 
   describe('FlareSolverr URL field', () => {

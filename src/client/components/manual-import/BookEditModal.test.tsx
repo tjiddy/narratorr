@@ -250,9 +250,8 @@ describe('BookEditModal', () => {
       const onClose = vi.fn();
       renderModal({ onClose });
 
-      // The backdrop is the first child with bg-black/60
-      const backdrop = document.querySelector('.bg-black\\/60');
-      if (backdrop) await userEvent.click(backdrop);
+      const backdrop = screen.getByTestId('modal-backdrop');
+      await userEvent.click(backdrop);
       await waitFor(() => {
         expect(onClose).toHaveBeenCalledOnce();
       });

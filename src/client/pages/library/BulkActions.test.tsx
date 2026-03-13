@@ -77,7 +77,7 @@ describe('BulkActionToolbar', () => {
 
   it('hides when no books are selected', () => {
     const { result } = renderToolbar({ selectedCount: 0 });
-    expect(result.container.innerHTML).toBe('');
+    expect(result.container).toBeEmptyDOMElement();
   });
 
   it('displays correct count of selected books', () => {

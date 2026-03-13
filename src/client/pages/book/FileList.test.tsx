@@ -95,7 +95,7 @@ describe('FileList', () => {
 
     // Wait a tick for query to settle into error state
     await new Promise(resolve => setTimeout(resolve, 100));
-    expect(container.innerHTML).toBe('');
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('renders nothing while loading', () => {
@@ -103,7 +103,7 @@ describe('FileList', () => {
 
     const { container } = renderWithProviders(<FileList bookId={1} />);
 
-    expect(container.innerHTML).toBe('');
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('shows empty state message when expanded with no files', async () => {

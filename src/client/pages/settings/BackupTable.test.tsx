@@ -19,8 +19,7 @@ describe('BackupTable', () => {
     renderWithProviders(
       <BackupTable backups={undefined} isLoading={true} onDownload={vi.fn()} />,
     );
-    // LoadingSpinner renders an SVG with animate-spin class
-    expect(document.querySelector('.animate-spin')).toBeInTheDocument();
+    expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
   });
 
   it('renders empty state when backups array is empty', () => {

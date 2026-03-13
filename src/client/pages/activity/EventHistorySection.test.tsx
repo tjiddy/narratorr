@@ -26,7 +26,7 @@ describe('EventHistorySection', () => {
     });
 
     renderWithProviders(<EventHistorySection />);
-    expect(document.querySelector('.animate-spin')).toBeInTheDocument();
+    expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
   });
 
   it('shows empty state when no events', () => {

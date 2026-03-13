@@ -253,7 +253,7 @@ describe('NotifierCard — create mode', () => {
       />,
     );
 
-    const grabCheckbox = screen.getByText('Grab').previousElementSibling as HTMLInputElement;
+    const grabCheckbox = screen.getByRole('checkbox', { name: 'Grab' });
     await user.click(grabCheckbox);
     expect(grabCheckbox).not.toBeChecked();
 
@@ -383,10 +383,10 @@ describe('NotifierCard — edit mode', () => {
       />,
     );
 
-    const grabCb = screen.getByText('Grab').previousElementSibling as HTMLInputElement;
-    const importCb = screen.getByText('Import').previousElementSibling as HTMLInputElement;
-    const downloadCb = screen.getByText('Download Complete').previousElementSibling as HTMLInputElement;
-    const failureCb = screen.getByText('Failure').previousElementSibling as HTMLInputElement;
+    const grabCb = screen.getByRole('checkbox', { name: 'Grab' });
+    const importCb = screen.getByRole('checkbox', { name: 'Import' });
+    const downloadCb = screen.getByRole('checkbox', { name: 'Download Complete' });
+    const failureCb = screen.getByRole('checkbox', { name: 'Failure' });
 
     expect(grabCb).toBeChecked();
     expect(importCb).toBeChecked();

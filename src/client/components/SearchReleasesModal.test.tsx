@@ -72,7 +72,7 @@ describe('SearchReleasesModal', () => {
       <SearchReleasesModal isOpen={false} book={mockBook} onClose={vi.fn()} />,
     );
 
-    expect(container.innerHTML).toBe('');
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('shows book title and author in header', async () => {

@@ -41,7 +41,7 @@ describe('ProwlarrImport', () => {
     const { container } = renderWithProviders(
       <ProwlarrImport isOpen={false} onClose={vi.fn()} />,
     );
-    expect(container.innerHTML).toBe('');
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('renders form fields and header when open', () => {

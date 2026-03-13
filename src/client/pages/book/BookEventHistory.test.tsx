@@ -25,8 +25,7 @@ describe('BookEventHistory', () => {
     });
 
     renderWithProviders(<BookEventHistory bookId={1} />);
-    // LoadingSpinner renders an SVG with animate-spin class
-    expect(document.querySelector('.animate-spin')).toBeInTheDocument();
+    expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
   });
 
   it('shows empty state when no events', () => {

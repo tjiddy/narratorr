@@ -214,8 +214,7 @@ describe('RecyclingBinSection', () => {
 
     renderWithProviders(<RecyclingBinSection />);
 
-    // The LoadingSpinner component renders an SVG with an animation
-    expect(document.querySelector('svg.animate-spin')).toBeInTheDocument();
+    expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
   });
 
   it('shows error toast on empty all failure', async () => {

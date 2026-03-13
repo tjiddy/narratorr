@@ -135,8 +135,7 @@ describe('ScheduledTasks', () => {
 
     await waitFor(() => {
       expect(runButton).toBeDisabled();
-      // LoadingSpinner renders an SVG with animate-spin; ZapIcon does not
-      const spinner = runButton.querySelector('svg.animate-spin');
+      const spinner = runButton.querySelector('[data-testid="loading-spinner"]');
       expect(spinner).toBeInTheDocument();
     });
 
