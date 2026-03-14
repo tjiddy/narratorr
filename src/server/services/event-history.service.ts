@@ -1,4 +1,4 @@
-import { eq, desc, like, and, lt } from 'drizzle-orm';
+import { eq, desc, like, and, lt, count as countFn } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { bookEvents, downloads } from '../../db/schema.js';
@@ -49,7 +49,10 @@ export class EventHistoryService {
     return result[0];
   }
 
-  async getAll(filters?: { eventType?: string; search?: string }): Promise<BookEventRow[]> {
+  async getAll(
+    filters?: { eventType?: string; search?: string },
+    pagination?: { limit?: number; offset?: number },
+  ): Promise<{ data: BookEventRow[]; total: number }> {
     const conditions = [];
 
     if (filters?.eventType) {
@@ -64,11 +67,28 @@ export class EventHistoryService {
       ? conditions.length === 1 ? conditions[0] : and(...conditions)
       : undefined;
 
-    return this.db
+    // Get total count (with filters, before pagination)
+    const [{ value: total }] = await this.db
+      .select({ value: countFn() })
+      .from(bookEvents)
+      .where(where);
+
+    // Get data with optional pagination
+    let query = this.db
       .select()
       .from(bookEvents)
       .where(where)
-      .orderBy(desc(bookEvents.createdAt));
+      .orderBy(desc(bookEvents.createdAt), desc(bookEvents.id));
+
+    if (pagination?.limit !== undefined) {
+      query = query.limit(pagination.limit) as typeof query;
+    }
+    if (pagination?.offset !== undefined) {
+      query = query.offset(pagination.offset) as typeof query;
+    }
+
+    const data = await query;
+    return { data, total };
   }
 
   async getByBookId(bookId: number): Promise<BookEventRow[]> {

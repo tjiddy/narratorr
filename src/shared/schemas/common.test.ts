@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { idParamSchema } from './common.js';
+import { idParamSchema, paginationParamsSchema } from './common.js';
 
 describe('idParamSchema', () => {
   it('transforms valid numeric string to number', () => {
@@ -39,5 +39,69 @@ describe('idParamSchema', () => {
     const result = idParamSchema.safeParse({ id: '3.14' });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.id).toBe(3);
+  });
+});
+
+describe('paginationParamsSchema', () => {
+  it('accepts valid limit and offset', () => {
+    const result = paginationParamsSchema.safeParse({ limit: 10, offset: 0 });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.limit).toBe(10);
+      expect(result.data.offset).toBe(0);
+    }
+  });
+
+  it('coerces string values to numbers', () => {
+    const result = paginationParamsSchema.safeParse({ limit: '10', offset: '20' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.limit).toBe(10);
+      expect(result.data.offset).toBe(20);
+    }
+  });
+
+  it('allows omitting both params', () => {
+    const result = paginationParamsSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.limit).toBeUndefined();
+      expect(result.data.offset).toBeUndefined();
+    }
+  });
+
+  it('rejects non-numeric limit', () => {
+    const result = paginationParamsSchema.safeParse({ limit: 'abc' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects limit = 0 (min 1)', () => {
+    const result = paginationParamsSchema.safeParse({ limit: 0 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects negative limit', () => {
+    const result = paginationParamsSchema.safeParse({ limit: -1 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects limit exceeding max (500)', () => {
+    const result = paginationParamsSchema.safeParse({ limit: 600 });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts limit at max boundary (500)', () => {
+    const result = paginationParamsSchema.safeParse({ limit: 500 });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects negative offset', () => {
+    const result = paginationParamsSchema.safeParse({ offset: -5 });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts offset = 0', () => {
+    const result = paginationParamsSchema.safeParse({ offset: 0 });
+    expect(result.success).toBe(true);
   });
 });

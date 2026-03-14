@@ -178,7 +178,7 @@ describe('system routes', () => {
   describe('POST /api/system/tasks/search', () => {
     it('returns 200 with search summary', async () => {
       (services.settings.get as Mock).mockResolvedValue({ enabled: false, intervalMinutes: 360 });
-      (services.book.getAll as Mock).mockResolvedValue([]);
+      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search' });
 
@@ -234,7 +234,7 @@ describe('system routes', () => {
         if (cat === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
         return Promise.resolve({ enabled: false, intervalMinutes: 360 });
       });
-      (services.book.getAll as Mock).mockResolvedValue([]);
+      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search-all-wanted' });
 
@@ -252,7 +252,7 @@ describe('system routes', () => {
         if (cat === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
         return Promise.resolve({ enabled: true, intervalMinutes: 360 });
       });
-      (services.book.getAll as Mock).mockResolvedValue([]);
+      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search-all-wanted' });
 

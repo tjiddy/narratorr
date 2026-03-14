@@ -18,7 +18,7 @@ export const eventHistoryApi = {
     if (params?.eventType) searchParams.set('eventType', params.eventType);
     if (params?.search) searchParams.set('search', params.search);
     const qs = searchParams.toString();
-    return fetchApi<BookEvent[]>(`/event-history${qs ? `?${qs}` : ''}`);
+    return fetchApi<{ data: BookEvent[]; total: number }>(`/event-history${qs ? `?${qs}` : ''}`);
   },
   getBookEventHistory: (bookId: number) =>
     fetchApi<BookEvent[]>(`/event-history/books/${bookId}`),

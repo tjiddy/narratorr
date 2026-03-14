@@ -4,6 +4,7 @@ import type { BlacklistService } from '../services';
 import type { SettingsService } from '../services/settings.service.js';
 import {
   idParamSchema,
+  paginationParamsSchema,
   createBlacklistSchema,
   toggleBlacklistTypeSchema,
   type CreateBlacklistInput,
@@ -12,12 +13,21 @@ import {
 type IdParam = z.infer<typeof idParamSchema>;
 type ToggleBody = z.infer<typeof toggleBlacklistTypeSchema>;
 
+const blacklistListQuerySchema = paginationParamsSchema;
+type BlacklistListQuery = z.infer<typeof blacklistListQuerySchema>;
+
 export async function blacklistRoutes(app: FastifyInstance, blacklistService: BlacklistService, _settingsService?: SettingsService) {
   // GET /api/blacklist
-  app.get('/api/blacklist', async (request) => {
-    request.log.debug('Fetching blacklist');
-    return blacklistService.getAll();
-  });
+  app.get<{ Querystring: BlacklistListQuery }>(
+    '/api/blacklist',
+    { schema: { querystring: blacklistListQuerySchema } },
+    async (request) => {
+      const { limit, offset } = request.query;
+      request.log.debug({ limit, offset }, 'Fetching blacklist');
+      const pagination = limit !== undefined || offset !== undefined ? { limit, offset } : undefined;
+      return blacklistService.getAll(pagination);
+    },
+  );
 
   // POST /api/blacklist
   app.post<{ Body: CreateBlacklistInput }>(

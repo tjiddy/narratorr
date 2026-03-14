@@ -582,7 +582,7 @@ describe('systemApi', () => {
 
 describe('response pass-through', () => {
   it('activityApi.getActivity returns fetchApi response', async () => {
-    const data = [{ id: 1, title: 'Test', status: 'downloading' }];
+    const data = { data: [{ id: 1, title: 'Test', status: 'downloading' }], total: 1 };
     mockFetchApi.mockResolvedValue(data);
     const result = await activityApi.getActivity();
     expect(result).toBe(data);
@@ -603,7 +603,7 @@ describe('response pass-through', () => {
   });
 
   it('booksApi.getBooks returns fetchApi response', async () => {
-    const data = [{ id: 1, title: 'Book' }];
+    const data = { data: [{ id: 1, title: 'Book' }], total: 1 };
     mockFetchApi.mockResolvedValue(data);
     const result = await booksApi.getBooks();
     expect(result).toBe(data);

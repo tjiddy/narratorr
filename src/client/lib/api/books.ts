@@ -130,7 +130,7 @@ export type SingleBookSearchResult =
 
 export const booksApi = {
   getBooks: (status?: string) =>
-    fetchApi<BookWithAuthor[]>(status ? `/books?status=${encodeURIComponent(status)}` : '/books'),
+    fetchApi<{ data: BookWithAuthor[]; total: number }>(status ? `/books?status=${encodeURIComponent(status)}` : '/books'),
   getBookById: (id: number) =>
     fetchApi<BookWithAuthor>(`/books/${id}`),
   addBook: (data: CreateBookPayload) =>

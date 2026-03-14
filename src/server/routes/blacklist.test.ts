@@ -32,11 +32,31 @@ describe('blacklist routes', () => {
   });
 
   describe('GET /api/blacklist', () => {
-    it('returns all blacklist entries', async () => {
-      vi.mocked(services.blacklist.getAll).mockResolvedValue([mockEntry]);
+    it('returns blacklist entries in { data, total } envelope', async () => {
+      vi.mocked(services.blacklist.getAll).mockResolvedValue({ data: [mockEntry], total: 1 });
       const res = await app.inject({ method: 'GET', url: '/api/blacklist' });
       expect(res.statusCode).toBe(200);
-      expect(res.json()).toHaveLength(1);
+      const body = res.json();
+      expect(body.data).toHaveLength(1);
+      expect(body.total).toBe(1);
+    });
+
+    it('forwards limit and offset to service', async () => {
+      vi.mocked(services.blacklist.getAll).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/blacklist?limit=10&offset=20' });
+
+      expect(services.blacklist.getAll).toHaveBeenCalledWith({ limit: 10, offset: 20 });
+    });
+
+    it('rejects limit=0 with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/blacklist?limit=0' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects negative offset with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/blacklist?offset=-1' });
+      expect(res.statusCode).toBe(400);
     });
   });
 

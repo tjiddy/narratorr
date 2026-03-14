@@ -41,7 +41,7 @@ describe('useEventHistory', () => {
 
   it('returns events from API', async () => {
     const mockEvents = [{ id: 1, bookId: 1, downloadId: 1, bookTitle: 'Test', authorName: 'Author', eventType: 'grab', source: 'search', reason: null, createdAt: '2026-01-01' }];
-    vi.mocked(api.getEventHistory).mockResolvedValue(mockEvents);
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: mockEvents, total: mockEvents.length });
 
     const { wrapper } = createWrapper();
     const { result } = renderHook(() => useEventHistory(), { wrapper });
@@ -55,7 +55,7 @@ describe('useEventHistory', () => {
   });
 
   it('passes filter params to API', async () => {
-    vi.mocked(api.getEventHistory).mockResolvedValue([]);
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
 
     const { wrapper } = createWrapper();
     const params = { eventType: 'grab', search: 'test' };
@@ -67,7 +67,7 @@ describe('useEventHistory', () => {
   });
 
   it('markFailed invalidates eventHistory with root prefix key', async () => {
-    vi.mocked(api.getEventHistory).mockResolvedValue([]);
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
     vi.mocked(api.markEventFailed).mockResolvedValue(undefined as never);
 
     const { wrapper, queryClient } = createWrapper();
@@ -92,7 +92,7 @@ describe('useEventHistory', () => {
   });
 
   it('markFailed shows error toast on failure', async () => {
-    vi.mocked(api.getEventHistory).mockResolvedValue([]);
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
     vi.mocked(api.markEventFailed).mockRejectedValue(new Error('Network error'));
 
     const { wrapper } = createWrapper();

@@ -3,11 +3,13 @@ import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 
 export function useLibrary() {
-  return useQuery({
+  const query = useQuery({
     queryKey: queryKeys.books(),
     queryFn: () => api.getBooks(),
     staleTime: 30_000,
+    select: (response) => response.data,
   });
+  return query;
 }
 
 export function useLibraryBook(id: number | undefined) {

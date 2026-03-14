@@ -126,7 +126,7 @@ export class RenameService {
     if (!exists) return;
 
     // Target exists on disk — check if it belongs to a different book
-    const allBooks = await this.bookService.getAll();
+    const { data: allBooks } = await this.bookService.getAll();
     const conflicting = allBooks.find(
       (b) => b.id !== bookId && b.path && normalize(resolve(b.path)) === normalize(resolve(targetPath)),
     );

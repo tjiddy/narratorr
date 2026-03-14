@@ -62,7 +62,7 @@ describe('ActivityPage', () => {
   });
 
   it('shows empty queue and history when no downloads exist', async () => {
-    vi.mocked(api.getActivity).mockResolvedValue([]);
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
 
     renderWithProviders(<ActivityPage />);
 
@@ -81,7 +81,7 @@ describe('ActivityPage', () => {
       size: 524288000,
       seeders: 12,
     });
-    vi.mocked(api.getActivity).mockResolvedValue([downloading]);
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [downloading], total: 1 });
 
     renderWithProviders(<ActivityPage />);
 
@@ -103,7 +103,7 @@ describe('ActivityPage', () => {
       progress: 1,
       size: 1048576000,
     });
-    vi.mocked(api.getActivity).mockResolvedValue([completed]);
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [completed], total: 1 });
 
     renderWithProviders(<ActivityPage />);
 
@@ -122,7 +122,7 @@ describe('ActivityPage', () => {
       status: 'failed',
       errorMessage: 'Connection timed out',
     });
-    vi.mocked(api.getActivity).mockResolvedValue([failed]);
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [failed], total: 1 });
 
     renderWithProviders(<ActivityPage />);
 
@@ -137,7 +137,7 @@ describe('ActivityPage', () => {
   it('shows cancel buttons for active downloads', async () => {
     const queued = makeDownload({ id: 4, title: 'Queued Audiobook', status: 'queued' });
     const downloading = makeDownload({ id: 5, title: 'Active Audiobook', status: 'downloading', progress: 0.3 });
-    vi.mocked(api.getActivity).mockResolvedValue([queued, downloading]);
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [queued, downloading], total: 2 });
 
     renderWithProviders(<ActivityPage />);
 
@@ -152,7 +152,7 @@ describe('ActivityPage', () => {
   it('shows protocol badges on download cards', async () => {
     const torrentDl = makeDownload({ id: 10, title: 'Torrent Book', status: 'downloading', protocol: 'torrent', progress: 0.5 });
     const usenetDl = makeDownload({ id: 11, title: 'Usenet Book', status: 'completed', protocol: 'usenet', progress: 1 });
-    vi.mocked(api.getActivity).mockResolvedValue([torrentDl, usenetDl]);
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [torrentDl, usenetDl], total: 2 });
 
     renderWithProviders(<ActivityPage />);
 
@@ -172,8 +172,8 @@ describe('ActivityPage', () => {
 
     // First call returns the downloading item, second (after invalidation) returns empty
     vi.mocked(api.getActivity)
-      .mockResolvedValueOnce([downloading])
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce({ data: [downloading], total: 1 })
+      .mockResolvedValueOnce({ data: [], total: 0 });
     vi.mocked(api.cancelDownload).mockResolvedValue({ success: true });
 
     renderWithProviders(<ActivityPage />);
@@ -203,8 +203,8 @@ describe('ActivityPage', () => {
     const retried = makeDownload({ id: 9, title: 'Retry Me', status: 'queued' });
 
     vi.mocked(api.getActivity)
-      .mockResolvedValueOnce([failed])
-      .mockResolvedValueOnce([retried]);
+      .mockResolvedValueOnce({ data: [failed], total: 1 })
+      .mockResolvedValueOnce({ data: [retried], total: 1 });
     vi.mocked(api.retryDownload).mockResolvedValue(retried);
 
     renderWithProviders(<ActivityPage />);
@@ -252,8 +252,8 @@ describe('ActivityPage', () => {
     const approved = makeDownload({ id: 20, title: 'Review Me', status: 'importing' });
 
     vi.mocked(api.getActivity)
-      .mockResolvedValueOnce([pending])
-      .mockResolvedValueOnce([approved]);
+      .mockResolvedValueOnce({ data: [pending], total: 1 })
+      .mockResolvedValueOnce({ data: [approved], total: 1 });
     vi.mocked(api.approveDownload).mockResolvedValue({ id: 20, status: 'importing' });
 
     renderWithProviders(<ActivityPage />);
@@ -294,8 +294,8 @@ describe('ActivityPage', () => {
     });
 
     vi.mocked(api.getActivity)
-      .mockResolvedValueOnce([pending])
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce({ data: [pending], total: 1 })
+      .mockResolvedValueOnce({ data: [], total: 0 });
     vi.mocked(api.rejectDownload).mockResolvedValue({ id: 21, status: 'failed' });
 
     renderWithProviders(<ActivityPage />);
@@ -324,7 +324,7 @@ describe('ActivityPage', () => {
       progress: 0.3,
       errorMessage: 'Tracker returned error',
     });
-    vi.mocked(api.getActivity).mockResolvedValue([downloading]);
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [downloading], total: 1 });
 
     renderWithProviders(<ActivityPage />);
 

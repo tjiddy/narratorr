@@ -51,7 +51,7 @@ beforeEach(() => {
 
 describe('BlacklistSettings', () => {
   it('shows empty state when no entries', async () => {
-    vi.mocked(api.getBlacklist).mockResolvedValue([]);
+    vi.mocked(api.getBlacklist).mockResolvedValue({ data: [], total: 0 });
 
     renderWithProviders(<BlacklistSettings />);
 
@@ -61,7 +61,7 @@ describe('BlacklistSettings', () => {
   });
 
   it('renders blacklist entries', async () => {
-    vi.mocked(api.getBlacklist).mockResolvedValue(mockEntries);
+    vi.mocked(api.getBlacklist).mockResolvedValue({ data: mockEntries, total: mockEntries.length });
 
     renderWithProviders(<BlacklistSettings />);
 
@@ -74,7 +74,7 @@ describe('BlacklistSettings', () => {
   });
 
   it('shows note when present', async () => {
-    vi.mocked(api.getBlacklist).mockResolvedValue(mockEntries);
+    vi.mocked(api.getBlacklist).mockResolvedValue({ data: mockEntries, total: mockEntries.length });
 
     renderWithProviders(<BlacklistSettings />);
 
@@ -84,7 +84,7 @@ describe('BlacklistSettings', () => {
   });
 
   it('shows truncated info hash', async () => {
-    vi.mocked(api.getBlacklist).mockResolvedValue(mockEntries);
+    vi.mocked(api.getBlacklist).mockResolvedValue({ data: mockEntries, total: mockEntries.length });
 
     renderWithProviders(<BlacklistSettings />);
 
@@ -94,7 +94,7 @@ describe('BlacklistSettings', () => {
   });
 
   it('opens confirm modal and deletes entry', async () => {
-    vi.mocked(api.getBlacklist).mockResolvedValue(mockEntries);
+    vi.mocked(api.getBlacklist).mockResolvedValue({ data: mockEntries, total: mockEntries.length });
     vi.mocked(api.removeFromBlacklist).mockResolvedValue({ success: true });
     const user = userEvent.setup();
 
@@ -143,7 +143,7 @@ describe('BlacklistSettings', () => {
           blacklistedAt: '2024-06-16T12:00:00Z',
         },
       ];
-      vi.mocked(api.getBlacklist).mockResolvedValue(entries);
+      vi.mocked(api.getBlacklist).mockResolvedValue({ data: entries, total: entries.length });
 
       renderWithProviders(<BlacklistSettings />);
 
@@ -154,7 +154,7 @@ describe('BlacklistSettings', () => {
     });
 
     it('shows "Permanent" in expiry column for permanent entries', async () => {
-      vi.mocked(api.getBlacklist).mockResolvedValue(mockEntries);
+      vi.mocked(api.getBlacklist).mockResolvedValue({ data: mockEntries, total: mockEntries.length });
 
       renderWithProviders(<BlacklistSettings />);
 
@@ -178,7 +178,7 @@ describe('BlacklistSettings', () => {
           blacklistedAt: '2024-06-15T12:00:00Z',
         },
       ];
-      vi.mocked(api.getBlacklist).mockResolvedValue(entries);
+      vi.mocked(api.getBlacklist).mockResolvedValue({ data: entries, total: entries.length });
 
       renderWithProviders(<BlacklistSettings />);
 
@@ -199,7 +199,7 @@ describe('BlacklistSettings', () => {
           blacklistedAt: '2024-06-15T12:00:00Z',
         },
       ];
-      vi.mocked(api.getBlacklist).mockResolvedValue(entries);
+      vi.mocked(api.getBlacklist).mockResolvedValue({ data: entries, total: entries.length });
 
       renderWithProviders(<BlacklistSettings />);
 
@@ -221,7 +221,7 @@ describe('BlacklistSettings', () => {
           blacklistedAt: '2024-06-15T12:00:00Z',
         },
       ];
-      vi.mocked(api.getBlacklist).mockResolvedValue(entries);
+      vi.mocked(api.getBlacklist).mockResolvedValue({ data: entries, total: entries.length });
 
       renderWithProviders(<BlacklistSettings />);
 
@@ -242,7 +242,7 @@ describe('BlacklistSettings', () => {
           blacklistedAt: '2024-06-15T12:00:00Z',
         },
       ];
-      vi.mocked(api.getBlacklist).mockResolvedValue(entries);
+      vi.mocked(api.getBlacklist).mockResolvedValue({ data: entries, total: entries.length });
 
       renderWithProviders(<BlacklistSettings />);
 
@@ -266,7 +266,7 @@ describe('BlacklistSettings', () => {
           blacklistedAt: '2024-06-15T12:00:00Z',
         },
       ];
-      vi.mocked(api.getBlacklist).mockResolvedValue(entries);
+      vi.mocked(api.getBlacklist).mockResolvedValue({ data: entries, total: entries.length });
       vi.mocked(api.toggleBlacklistType).mockResolvedValue({ ...entries[0], blacklistType: 'permanent', expiresAt: null });
       const user = userEvent.setup();
 
@@ -289,7 +289,7 @@ describe('BlacklistSettings', () => {
 
     it('toggle button switches permanent entry to temporary and UI updates', async () => {
       const { toast } = await import('sonner');
-      vi.mocked(api.getBlacklist).mockResolvedValue(mockEntries);
+      vi.mocked(api.getBlacklist).mockResolvedValue({ data: mockEntries, total: mockEntries.length });
       vi.mocked(api.toggleBlacklistType).mockResolvedValue({ ...mockEntries[0], blacklistType: 'temporary' });
       const user = userEvent.setup();
 
@@ -314,7 +314,7 @@ describe('BlacklistSettings', () => {
       const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-      vi.mocked(api.getBlacklist).mockResolvedValue(mockEntries);
+      vi.mocked(api.getBlacklist).mockResolvedValue({ data: mockEntries, total: mockEntries.length });
       vi.mocked(api.toggleBlacklistType).mockResolvedValue({ ...mockEntries[0], blacklistType: 'temporary' });
       const user = userEvent.setup();
 
@@ -338,7 +338,7 @@ describe('BlacklistSettings', () => {
 
     it('shows error toast when toggle API fails', async () => {
       const { toast } = await import('sonner');
-      vi.mocked(api.getBlacklist).mockResolvedValue(mockEntries);
+      vi.mocked(api.getBlacklist).mockResolvedValue({ data: mockEntries, total: mockEntries.length });
       vi.mocked(api.toggleBlacklistType).mockRejectedValue(new Error('Server error'));
       const user = userEvent.setup();
 

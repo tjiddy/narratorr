@@ -56,7 +56,7 @@ export async function createTestApp(services: Services, db?: Db) {
 export function mockDbChain(result: unknown = []) {
   const chain: Record<string, unknown> = {};
   const methods = [
-    'from', 'where', 'limit', 'orderBy', 'leftJoin', 'groupBy',
+    'from', 'where', 'limit', 'offset', 'orderBy', 'leftJoin', 'groupBy',
     'values', 'returning', 'set', 'onConflictDoUpdate',
   ];
   for (const method of methods) {

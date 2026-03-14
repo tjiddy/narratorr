@@ -39,32 +39,61 @@ describe('books routes', () => {
   });
 
   describe('GET /api/books', () => {
-    it('returns all books', async () => {
-      (services.book.getAll as Mock).mockResolvedValue([mockBook]);
+    it('returns books in { data, total } envelope', async () => {
+      (services.book.getAll as Mock).mockResolvedValue({ data: [mockBook], total: 1 });
 
       const res = await app.inject({ method: 'GET', url: '/api/books' });
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      expect(body).toHaveLength(1);
-      expect(body[0].title).toBe('The Way of Kings');
+      expect(body.data).toHaveLength(1);
+      expect(body.data[0].title).toBe('The Way of Kings');
+      expect(body.total).toBe(1);
     });
 
-    it('returns empty array when no books', async () => {
-      (services.book.getAll as Mock).mockResolvedValue([]);
+    it('returns empty data when no books', async () => {
+      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       const res = await app.inject({ method: 'GET', url: '/api/books' });
 
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual([]);
+      expect(JSON.parse(res.payload)).toEqual({ data: [], total: 0 });
     });
 
-    it('passes status query param to service', async () => {
-      (services.book.getAll as Mock).mockResolvedValue([]);
+    it('passes status and slim option to service', async () => {
+      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       await app.inject({ method: 'GET', url: '/api/books?status=wanted' });
 
-      expect(services.book.getAll).toHaveBeenCalledWith('wanted');
+      expect(services.book.getAll).toHaveBeenCalledWith('wanted', undefined, { slim: true });
+    });
+
+    it('forwards limit and offset to service', async () => {
+      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/books?limit=10&offset=20' });
+
+      expect(services.book.getAll).toHaveBeenCalledWith(undefined, { limit: 10, offset: 20 }, { slim: true });
+    });
+
+    it('rejects limit=0 with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/books?limit=0' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects limit=501 with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/books?limit=501' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects negative offset with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/books?offset=-1' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects non-integer limit with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/books?limit=abc' });
+      expect(res.statusCode).toBe(400);
     });
   });
 

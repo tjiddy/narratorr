@@ -64,7 +64,21 @@ export class DownloadService {
     }).catch((err) => this.log.warn(err, 'Failed to look up download for event'));
   }
 
-  async getAll(status?: string): Promise<DownloadWithBook[]> {
+  async getAll(
+    status?: string,
+    pagination?: { limit?: number; offset?: number },
+  ): Promise<{ data: DownloadWithBook[]; total: number }> {
+    const where = status
+      ? eq(downloads.status, status as DownloadRow['status'])
+      : undefined;
+
+    // Get total count (with filters, before pagination)
+    const [{ value: total }] = await this.db
+      .select({ value: count() })
+      .from(downloads)
+      .where(where);
+
+    // Get data with optional pagination
     let query = this.db
       .select({
         download: downloads,
@@ -72,20 +86,24 @@ export class DownloadService {
       })
       .from(downloads)
       .leftJoin(books, eq(downloads.bookId, books.id))
-      .orderBy(desc(downloads.addedAt));
+      .where(where)
+      .orderBy(desc(downloads.addedAt), desc(downloads.id));
 
-    if (status) {
-      query = query.where(
-        eq(downloads.status, status as DownloadRow['status'])
-      ) as typeof query;
+    if (pagination?.limit !== undefined) {
+      query = query.limit(pagination.limit) as typeof query;
+    }
+    if (pagination?.offset !== undefined) {
+      query = query.offset(pagination.offset) as typeof query;
     }
 
     const results = await query;
 
-    return results.map((r) => ({
+    const data = results.map((r) => ({
       ...r.download,
       book: r.book || undefined,
     }));
+
+    return { data, total };
   }
 
   async getById(id: number): Promise<DownloadWithBook | null> {

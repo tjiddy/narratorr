@@ -268,7 +268,7 @@ describe('Search → Grab flow E2E', () => {
 
     // No download record should have been created for this book
     const activityRes = await e2e.app.inject({ method: 'GET', url: '/api/activity' });
-    const downloads = activityRes.json() as { bookId: number | null }[];
+    const downloads = (activityRes.json() as { data: { bookId: number | null }[] }).data;
     expect(downloads.filter((d) => d.bookId === rejectedBookId)).toHaveLength(0);
 
     // Book status should remain 'wanted'
@@ -313,7 +313,7 @@ describe('Search → Grab flow E2E', () => {
 
     // No download record should have been created for this book
     const activityRes = await e2e.app.inject({ method: 'GET', url: '/api/activity' });
-    const downloads = activityRes.json() as { bookId: number | null }[];
+    const downloads = (activityRes.json() as { data: { bookId: number | null }[] }).data;
     expect(downloads.filter((d) => d.bookId === unreachableBookId)).toHaveLength(0);
 
     // Book should still be 'wanted'

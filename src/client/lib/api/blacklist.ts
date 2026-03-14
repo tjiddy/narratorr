@@ -13,7 +13,7 @@ export interface BlacklistEntry {
 }
 
 export const blacklistApi = {
-  getBlacklist: () => fetchApi<BlacklistEntry[]>('/blacklist'),
+  getBlacklist: () => fetchApi<{ data: BlacklistEntry[]; total: number }>('/blacklist'),
   addToBlacklist: (data: {
     infoHash: string;
     title: string;

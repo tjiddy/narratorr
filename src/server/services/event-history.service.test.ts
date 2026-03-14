@@ -50,33 +50,86 @@ describe('EventHistoryService', () => {
   });
 
   describe('getAll', () => {
-    it('returns all events ordered by createdAt desc', async () => {
+    it('returns events in { data, total } envelope', async () => {
       const events = [createMockDbBookEvent({ id: 2 }), createMockDbBookEvent({ id: 1 })];
-      db.select.mockReturnValue(mockDbChain(events));
+      // First call: count query, second call: data query
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 2 }]))
+        .mockReturnValueOnce(mockDbChain(events));
 
       const result = await service.getAll();
-      expect(result).toHaveLength(2);
+      expect(result.data).toHaveLength(2);
+      expect(result.total).toBe(2);
     });
 
     it('filters by event type', async () => {
-      db.select.mockReturnValue(mockDbChain([createMockDbBookEvent()]));
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBookEvent()]));
 
       const result = await service.getAll({ eventType: 'grabbed' });
-      expect(result).toHaveLength(1);
+      expect(result.data).toHaveLength(1);
+      expect(result.total).toBe(1);
     });
 
     it('filters by title search', async () => {
-      db.select.mockReturnValue(mockDbChain([createMockDbBookEvent()]));
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBookEvent()]));
 
       const result = await service.getAll({ search: 'Kings' });
-      expect(result).toHaveLength(1);
+      expect(result.data).toHaveLength(1);
     });
 
     it('filters by both event type and search', async () => {
-      db.select.mockReturnValue(mockDbChain([createMockDbBookEvent()]));
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBookEvent()]));
 
       const result = await service.getAll({ eventType: 'grabbed', search: 'Kings' });
-      expect(result).toHaveLength(1);
+      expect(result.data).toHaveLength(1);
+    });
+
+    it('returns empty data with total 0 when no events', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAll();
+      expect(result).toEqual({ data: [], total: 0 });
+    });
+
+    it('applies limit and offset when provided', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 50 }]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBookEvent()]));
+
+      const result = await service.getAll(undefined, { limit: 10, offset: 20 });
+      expect(result.total).toBe(50);
+      expect(result.data).toHaveLength(1);
+    });
+
+    it('returns total reflecting filtered count before limit/offset', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 25 }]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBookEvent()]));
+
+      const result = await service.getAll({ eventType: 'grabbed' }, { limit: 10, offset: 0 });
+      expect(result.total).toBe(25);
+    });
+
+    it('applies stable orderBy with createdAt DESC, id DESC', async () => {
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAll();
+
+      expect(dataChain.orderBy).toHaveBeenCalledTimes(1);
+      const args = (dataChain.orderBy as ReturnType<typeof vi.fn>).mock.calls[0];
+      // Should have two sort columns (createdAt DESC, id DESC)
+      expect(args).toHaveLength(2);
     });
   });
 
@@ -356,12 +409,14 @@ describe('EventHistoryService', () => {
         bookTitle: 'Deleted Book',
         authorName: 'Gone Author',
       });
-      db.select.mockReturnValue(mockDbChain([event]));
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([event]));
 
       const result = await service.getAll({ search: 'Deleted' });
-      expect(result).toHaveLength(1);
-      expect(result[0].bookTitle).toBe('Deleted Book');
-      expect(result[0].bookId).toBeNull();
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].bookTitle).toBe('Deleted Book');
+      expect(result.data[0].bookId).toBeNull();
     });
   });
 });
