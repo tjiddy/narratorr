@@ -14,7 +14,7 @@ export function useEventHistory(params?: { eventType?: string; search?: string }
   const markFailedMutation = useMutation({
     mutationFn: api.markEventFailed,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['eventHistory'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       queryClient.invalidateQueries({ queryKey: queryKeys.blacklist() });
       toast.success('Release blacklisted and book set to wanted');

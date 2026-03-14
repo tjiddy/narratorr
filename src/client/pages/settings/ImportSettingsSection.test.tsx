@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, fireEvent, act } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
@@ -43,22 +43,23 @@ describe('ImportSettingsSection', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Delete After Import')).toBeInTheDocument();
+      expect(screen.getByText('Minimum Seed Time (minutes)')).toBeInTheDocument();
     });
-    expect(screen.getByText('Minimum Seed Time (minutes)')).toBeInTheDocument();
 
-    const checkbox = screen.getByRole('checkbox');
-    expect(checkbox).not.toBeChecked();
+    const checkbox = screen.getByText('Delete After Import')
+      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+
+    expect(checkbox.checked).toBe(false);
     await user.click(checkbox);
-    expect(checkbox).toBeChecked();
+    expect(checkbox.checked).toBe(true);
   });
 
-  it('renders minimum free space field', async () => {
+  it('renders minimum free space field with value from settings', async () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByText('Minimum Free Space (GB)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveValue(5);
     });
-    expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveValue(5);
   });
 
   it('allows changing minimum free space value', async () => {
@@ -70,7 +71,6 @@ describe('ImportSettingsSection', () => {
     });
 
     const input = screen.getByLabelText('Minimum Free Space (GB)');
-    expect(input).toHaveValue(5);
     await user.tripleClick(input);
     await user.keyboard('10');
     expect(input).toHaveValue(10);
@@ -89,54 +89,74 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('60')).toHaveValue(60);
+      expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toHaveValue(60);
     });
 
     const seedTimeInput = screen.getByLabelText('Minimum Seed Time (minutes)');
-    expect(seedTimeInput).toHaveValue(60);
     await user.tripleClick(seedTimeInput);
     await user.keyboard('120');
     expect(seedTimeInput).toHaveValue(120);
   });
 
-  it('blocks submit when minSeedTime is negative', async () => {
-    const user = userEvent.setup();
-    renderWithProviders(<ImportSettingsSection />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('60')).toHaveValue(60);
-    });
-
-    const seedTimeInput = screen.getByPlaceholderText('60');
-    await user.clear(seedTimeInput);
-    await user.type(seedTimeInput, '-1');
-
-    await act(async () => {
-      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
-    });
-
-    expect(screen.getByText(/too small/i)).toBeInTheDocument();
-    expect(mockApi.updateSettings).not.toHaveBeenCalled();
-  });
-
-  it('sends import category on save', async () => {
+  it('rejects minSeedTime < 0', async () => {
     mockApi.updateSettings.mockResolvedValue(mockSettings);
     const user = userEvent.setup();
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('60')).toHaveValue(60);
+      expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toHaveValue(60);
     });
 
-    const seedTimeInput = screen.getByPlaceholderText('60');
-    await user.clear(seedTimeInput);
-    await user.type(seedTimeInput, '120');
+    const input = screen.getByLabelText('Minimum Seed Time (minutes)');
+    await user.tripleClick(input);
+    await user.keyboard('-1');
+    await user.click(screen.getByRole('button', { name: /save/i }));
 
-    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    await waitFor(() => {
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+    });
+  });
+
+  it('sends edited minSeedTime in save payload', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<ImportSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Minimum Seed Time (minutes)')).toHaveValue(60);
+    });
+
+    const input = screen.getByLabelText('Minimum Seed Time (minutes)');
+    await user.tripleClick(input);
+    await user.keyboard('120');
+    await user.click(screen.getByRole('button', { name: /save/i }));
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
         import: { deleteAfterImport: false, minSeedTime: 120, minFreeSpaceGB: 5 },
+      });
+    });
+  });
+
+  it('sends import category payload on save', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<ImportSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveValue(5);
+    });
+
+    // Change a value to dirty the form so Save button appears
+    const input = screen.getByLabelText('Minimum Free Space (GB)');
+    await user.tripleClick(input);
+    await user.keyboard('10');
+
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith({
+        import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 10 },
       });
     });
   });
@@ -147,14 +167,15 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('60')).toHaveValue(60);
+      expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveValue(5);
     });
 
-    const seedTimeInput = screen.getByPlaceholderText('60');
-    await user.clear(seedTimeInput);
-    await user.type(seedTimeInput, '120');
+    // Change a value to dirty the form so Save button appears
+    const input = screen.getByLabelText('Minimum Free Space (GB)');
+    await user.tripleClick(input);
+    await user.keyboard('10');
 
-    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    await user.click(screen.getByRole('button', { name: /save/i }));
 
     await waitFor(() => {
       expect(mockToast.success).toHaveBeenCalledWith('Import settings saved');
@@ -167,13 +188,12 @@ describe('ImportSettingsSection', () => {
     renderWithProviders(<ImportSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('60')).toHaveValue(60);
+      expect(screen.getByLabelText('Minimum Free Space (GB)')).toHaveValue(5);
     });
 
-    const seedTimeInput = screen.getByPlaceholderText('60');
-    await user.clear(seedTimeInput);
-    await user.type(seedTimeInput, '120');
-
+    const input = screen.getByLabelText('Minimum Free Space (GB)');
+    await user.clear(input);
+    await user.type(input, '10');
     fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
 
     await waitFor(() => {

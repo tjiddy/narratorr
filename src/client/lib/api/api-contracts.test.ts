@@ -70,26 +70,26 @@ describe('activityApi', () => {
 });
 
 describe('authApi', () => {
-  it('getStatus → GET /auth/status', async () => {
-    await authApi.getStatus();
+  it('getAuthStatus → GET /auth/status', async () => {
+    await authApi.getAuthStatus();
     expect(mockFetchApi).toHaveBeenCalledWith('/auth/status');
   });
 
-  it('login → POST /auth/login with credentials', async () => {
-    await authApi.login('admin', 'pass123');
+  it('authLogin → POST /auth/login with credentials', async () => {
+    await authApi.authLogin('admin', 'pass123');
     expect(mockFetchApi).toHaveBeenCalledWith('/auth/login', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({ username: 'admin', password: 'pass123' }),
     }));
   });
 
-  it('logout → POST /auth/logout', async () => {
-    await authApi.logout();
+  it('authLogout → POST /auth/logout', async () => {
+    await authApi.authLogout();
     expect(mockFetchApi).toHaveBeenCalledWith('/auth/logout', expect.objectContaining({ method: 'POST' }));
   });
 
-  it('setup → POST /auth/setup with credentials', async () => {
-    await authApi.setup('newuser', 'newpass');
+  it('authSetup → POST /auth/setup with credentials', async () => {
+    await authApi.authSetup('newuser', 'newpass');
     expect(mockFetchApi).toHaveBeenCalledWith('/auth/setup', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({ username: 'newuser', password: 'newpass' }),
@@ -109,24 +109,24 @@ describe('authApi', () => {
     }));
   });
 
-  it('changePassword → PUT /auth/password with passwords', async () => {
-    await authApi.changePassword('old', 'new');
+  it('authChangePassword → PUT /auth/password with passwords', async () => {
+    await authApi.authChangePassword('old', 'new');
     expect(mockFetchApi).toHaveBeenCalledWith('/auth/password', expect.objectContaining({
       method: 'PUT',
       body: JSON.stringify({ currentPassword: 'old', newPassword: 'new' }),
     }));
   });
 
-  it('changePassword with new username includes newUsername', async () => {
-    await authApi.changePassword('old', 'new', 'newadmin');
+  it('authChangePassword with new username includes newUsername', async () => {
+    await authApi.authChangePassword('old', 'new', 'newadmin');
     expect(mockFetchApi).toHaveBeenCalledWith('/auth/password', expect.objectContaining({
       method: 'PUT',
       body: JSON.stringify({ currentPassword: 'old', newPassword: 'new', newUsername: 'newadmin' }),
     }));
   });
 
-  it('regenerateApiKey → POST /auth/api-key/regenerate', async () => {
-    await authApi.regenerateApiKey();
+  it('authRegenerateApiKey → POST /auth/api-key/regenerate', async () => {
+    await authApi.authRegenerateApiKey();
     expect(mockFetchApi).toHaveBeenCalledWith('/auth/api-key/regenerate', expect.objectContaining({ method: 'POST' }));
   });
 });
@@ -426,36 +426,36 @@ describe('notifiersApi', () => {
 });
 
 describe('prowlarrApi', () => {
-  it('testConnection → POST /prowlarr/test with url and apiKey', async () => {
-    await prowlarrApi.testConnection('https://prowlarr.local', 'key123');
+  it('prowlarrTestConnection → POST /prowlarr/test with url and apiKey', async () => {
+    await prowlarrApi.prowlarrTestConnection('https://prowlarr.local', 'key123');
     expect(mockFetchApi).toHaveBeenCalledWith('/prowlarr/test', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({ url: 'https://prowlarr.local', apiKey: 'key123' }),
     }));
   });
 
-  it('getConfig → GET /prowlarr/config', async () => {
-    await prowlarrApi.getConfig();
+  it('prowlarrGetConfig → GET /prowlarr/config', async () => {
+    await prowlarrApi.prowlarrGetConfig();
     expect(mockFetchApi).toHaveBeenCalledWith('/prowlarr/config');
   });
 
-  it('saveConfig → PUT /prowlarr/config with config', async () => {
+  it('prowlarrSaveConfig → PUT /prowlarr/config with config', async () => {
     const config = { url: 'https://prowlarr.local', apiKey: 'key', syncMode: 'addOnly' as const, categories: [3030] };
-    await prowlarrApi.saveConfig(config);
+    await prowlarrApi.prowlarrSaveConfig(config);
     expect(mockFetchApi).toHaveBeenCalledWith('/prowlarr/config', expect.objectContaining({
       method: 'PUT',
       body: JSON.stringify(config),
     }));
   });
 
-  it('preview → POST /prowlarr/preview', async () => {
-    await prowlarrApi.preview();
+  it('prowlarrPreview → POST /prowlarr/preview', async () => {
+    await prowlarrApi.prowlarrPreview();
     expect(mockFetchApi).toHaveBeenCalledWith('/prowlarr/preview', expect.objectContaining({ method: 'POST' }));
   });
 
-  it('sync → POST /prowlarr/sync with request', async () => {
+  it('prowlarrSync → POST /prowlarr/sync with request', async () => {
     const request = { items: [{ prowlarrId: 1, action: 'new', selected: true }] };
-    await prowlarrApi.sync(request);
+    await prowlarrApi.prowlarrSync(request);
     expect(mockFetchApi).toHaveBeenCalledWith('/prowlarr/sync', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify(request),
@@ -464,48 +464,48 @@ describe('prowlarrApi', () => {
 });
 
 describe('remotePathMappingsApi', () => {
-  it('getMappings → GET /remote-path-mappings', async () => {
-    await remotePathMappingsApi.getMappings();
+  it('getRemotePathMappings → GET /remote-path-mappings', async () => {
+    await remotePathMappingsApi.getRemotePathMappings();
     expect(mockFetchApi).toHaveBeenCalledWith('/remote-path-mappings');
   });
 
-  it('getMappingsByClientId → GET /remote-path-mappings?downloadClientId=...', async () => {
-    await remotePathMappingsApi.getMappingsByClientId(2);
+  it('getRemotePathMappingsByClientId → GET /remote-path-mappings?downloadClientId=...', async () => {
+    await remotePathMappingsApi.getRemotePathMappingsByClientId(2);
     expect(mockFetchApi).toHaveBeenCalledWith('/remote-path-mappings?downloadClientId=2');
   });
 
-  it('createMapping → POST /remote-path-mappings with data', async () => {
+  it('createRemotePathMapping → POST /remote-path-mappings with data', async () => {
     const data = { downloadClientId: 1, remotePath: '/remote', localPath: '/local' };
-    await remotePathMappingsApi.createMapping(data);
+    await remotePathMappingsApi.createRemotePathMapping(data);
     expect(mockFetchApi).toHaveBeenCalledWith('/remote-path-mappings', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify(data),
     }));
   });
 
-  it('updateMapping → PUT /remote-path-mappings/:id with data', async () => {
+  it('updateRemotePathMapping → PUT /remote-path-mappings/:id with data', async () => {
     const data = { remotePath: '/new-remote' };
-    await remotePathMappingsApi.updateMapping(5, data);
+    await remotePathMappingsApi.updateRemotePathMapping(5, data);
     expect(mockFetchApi).toHaveBeenCalledWith('/remote-path-mappings/5', expect.objectContaining({
       method: 'PUT',
       body: JSON.stringify(data),
     }));
   });
 
-  it('deleteMapping → DELETE /remote-path-mappings/:id', async () => {
-    await remotePathMappingsApi.deleteMapping(3);
+  it('deleteRemotePathMapping → DELETE /remote-path-mappings/:id', async () => {
+    await remotePathMappingsApi.deleteRemotePathMapping(3);
     expect(mockFetchApi).toHaveBeenCalledWith('/remote-path-mappings/3', expect.objectContaining({ method: 'DELETE' }));
   });
 });
 
 describe('searchApi', () => {
-  it('search → GET /search?q=... with query', async () => {
-    await searchApi.search('tolkien');
+  it('searchBooks → GET /search?q=... with query', async () => {
+    await searchApi.searchBooks('tolkien');
     expect(mockFetchApi).toHaveBeenCalledWith('/search?q=tolkien');
   });
 
-  it('search with context → GET /search?q=...&author=...&title=...', async () => {
-    await searchApi.search('hobbit', { author: 'Tolkien', title: 'The Hobbit' });
+  it('searchBooks with context → GET /search?q=...&author=...&title=...', async () => {
+    await searchApi.searchBooks('hobbit', { author: 'Tolkien', title: 'The Hobbit' });
     expect(mockFetchApi).toHaveBeenCalledWith(expect.stringContaining('/search?'));
     const url = mockFetchApi.mock.calls[0][0] as string;
     const params = new URLSearchParams(url.split('?')[1]);
@@ -514,9 +514,9 @@ describe('searchApi', () => {
     expect(params.get('title')).toBe('The Hobbit');
   });
 
-  it('grab → POST /search/grab with params', async () => {
+  it('searchGrab → POST /search/grab with params', async () => {
     const params = { downloadUrl: 'https://example.com/dl', title: 'Book', protocol: 'torrent' as const, bookId: 1 };
-    await searchApi.grab(params);
+    await searchApi.searchGrab(params);
     expect(mockFetchApi).toHaveBeenCalledWith('/search/grab', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify(params),
@@ -588,10 +588,10 @@ describe('response pass-through', () => {
     expect(result).toBe(data);
   });
 
-  it('authApi.login returns fetchApi response', async () => {
+  it('authApi.authLogin returns fetchApi response', async () => {
     const data = { success: true };
     mockFetchApi.mockResolvedValue(data);
-    const result = await authApi.login('user', 'pass');
+    const result = await authApi.authLogin('user', 'pass');
     expect(result).toBe(data);
   });
 
@@ -644,24 +644,24 @@ describe('response pass-through', () => {
     expect(result).toBe(data);
   });
 
-  it('prowlarrApi.preview returns fetchApi response', async () => {
+  it('prowlarrApi.prowlarrPreview returns fetchApi response', async () => {
     const data = [{ action: 'new', name: 'NZBGeek' }];
     mockFetchApi.mockResolvedValue(data);
-    const result = await prowlarrApi.preview();
+    const result = await prowlarrApi.prowlarrPreview();
     expect(result).toBe(data);
   });
 
-  it('remotePathMappingsApi.getMappings returns fetchApi response', async () => {
+  it('remotePathMappingsApi.getRemotePathMappings returns fetchApi response', async () => {
     const data = [{ id: 1, remotePath: '/r', localPath: '/l' }];
     mockFetchApi.mockResolvedValue(data);
-    const result = await remotePathMappingsApi.getMappings();
+    const result = await remotePathMappingsApi.getRemotePathMappings();
     expect(result).toBe(data);
   });
 
-  it('searchApi.search returns fetchApi response', async () => {
+  it('searchApi.searchBooks returns fetchApi response', async () => {
     const data = { results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } };
     mockFetchApi.mockResolvedValue(data);
-    const result = await searchApi.search('test');
+    const result = await searchApi.searchBooks('test');
     expect(result).toBe(data);
   });
 

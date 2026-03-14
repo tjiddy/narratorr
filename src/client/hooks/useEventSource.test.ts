@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { useEventSource, isSSEConnected, useSSEConnected } from './useEventSource';
+import { queryKeys } from '@/lib/queryKeys';
 
 vi.mock('sonner', () => ({
   toast: {
@@ -211,9 +212,9 @@ describe('useEventSource', () => {
         es.simulateEvent('grab_started', { download_id: 1, book_id: 2, book_title: 'Test', release_title: 'test.torrent' });
       });
 
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity'] });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity', 'counts'] });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['eventHistory'] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activity() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
     });
 
     it('invalidates activity, activityCounts, books, book(id), eventHistory on import_complete', () => {
@@ -228,11 +229,11 @@ describe('useEventSource', () => {
         es.simulateEvent('import_complete', { download_id: 1, book_id: 7, book_title: 'My Book' });
       });
 
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity'] });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity', 'counts'] });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 7] });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['eventHistory'] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activity() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.book(7) });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
     });
 
     it('invalidates activity and activityCounts on review_needed', () => {

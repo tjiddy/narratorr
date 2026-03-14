@@ -30,9 +30,14 @@ export const queryKeys = {
     config: () => ['auth', 'config'] as const,
   },
   eventHistory: {
+    root: () => ['eventHistory'] as const,
     all: (params?: { eventType?: string; search?: string }) => ['eventHistory', params] as const,
     byBookId: (bookId: number) => ['eventHistory', 'book', bookId] as const,
   },
+  filesystem: {
+    browse: (path: string) => ['filesystem', 'browse', path] as const,
+  },
+  searchReleases: (bookId: number, query: string) => ['search-releases', bookId, query] as const,
   recyclingBin: () => ['recyclingBin'] as const,
   backups: () => ['backups'] as const,
   health: {

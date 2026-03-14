@@ -120,6 +120,27 @@ describe('LibrarySettingsSection', () => {
     expect(screen.getByText('Without series')).toBeInTheDocument();
   });
 
+  it('inserts token into folder format when token button is clicked', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<LibrarySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
+    });
+
+    // Expand folder format token panel (first toggle)
+    const toggles = screen.getAllByText('Insert token');
+    await user.click(toggles[0]);
+
+    // Click the {series} token button
+    await user.click(screen.getAllByText('{series}')[0]);
+
+    // Save button should become enabled (form is dirty from token insertion)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /save/i })).not.toBeDisabled();
+    });
+  });
+
   it('shows warning when title token is missing from folder format', async () => {
     mockApi.getSettings.mockResolvedValue(createMockSettings({
       library: { path: '/audiobooks', folderFormat: '{author}/books', fileFormat: '{author} - {title}' },

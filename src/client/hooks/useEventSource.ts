@@ -82,7 +82,7 @@ export function useEventSource(apiKey: string | null) {
       }
     }
     if (rule.eventHistory) {
-      queryClient.invalidateQueries({ queryKey: ['eventHistory'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
     }
 
     // Toast notifications

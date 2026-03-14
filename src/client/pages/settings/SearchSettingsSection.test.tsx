@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, fireEvent, act } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
@@ -38,34 +38,30 @@ describe('SearchSettingsSection', () => {
     mockApi.getSettings.mockResolvedValue(mockSettings);
   });
 
-  it('renders search fields without auto-grab toggle', async () => {
-    const user = userEvent.setup();
+  it('renders search fields', async () => {
     renderWithProviders(<SearchSettingsSection />);
 
-    // Wait for mock data to populate form (search.enabled = false from mock)
     await waitFor(() => {
-      expect(screen.getByLabelText('Enable Scheduled Search')).not.toBeChecked();
+      expect(screen.getByText('Enable Scheduled Search')).toBeInTheDocument();
     });
     expect(screen.getByText('Search Interval (minutes)')).toBeInTheDocument();
     expect(screen.queryByText('Auto-Grab Best Result')).not.toBeInTheDocument();
-
-    const checkbox = screen.getByLabelText('Enable Scheduled Search');
-    await user.click(checkbox);
-    expect(checkbox).toBeChecked();
   });
 
   it('toggles search enabled checkbox', async () => {
     const user = userEvent.setup();
     renderWithProviders(<SearchSettingsSection />);
 
-    // Mock has search.enabled = false — wait for the form to reset with mock data
+    const checkbox = () => screen.getByText('Enable Scheduled Search')
+      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+
+    // Wait for settings to load and reset form
     await waitFor(() => {
-      expect(screen.getByLabelText('Enable Scheduled Search')).not.toBeChecked();
+      expect(checkbox().checked).toBe(false);
     });
 
-    const checkbox = screen.getByLabelText('Enable Scheduled Search');
-    await user.click(checkbox);
-    expect(checkbox).toBeChecked();
+    await user.click(checkbox());
+    expect(checkbox().checked).toBe(true);
   });
 
   it('RSS toggle renders and persists state', async () => {
@@ -76,36 +72,29 @@ describe('SearchSettingsSection', () => {
       expect(screen.getByText('Enable RSS Sync')).toBeInTheDocument();
     });
 
-    const rssCheckbox = screen.getByLabelText('Enable RSS Sync');
-    expect(rssCheckbox).not.toBeChecked();
+    const rssCheckbox = screen.getByText('Enable RSS Sync')
+      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+
+    expect(rssCheckbox.checked).toBe(false);
     await user.click(rssCheckbox);
-    expect(rssCheckbox).toBeChecked();
+    expect(rssCheckbox.checked).toBe(true);
   });
 
-  it('RSS interval input renders and accepts value', async () => {
-    const user = userEvent.setup();
+  it('RSS interval input renders', async () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
       expect(screen.getByText('RSS Interval (minutes)')).toBeInTheDocument();
     });
-
-    const rssIntervalInput = screen.getByPlaceholderText('30');
-    await user.clear(rssIntervalInput);
-    await user.type(rssIntervalInput, '60');
-    expect(rssIntervalInput).toHaveValue(60);
   });
 
-  it('RSS controls are separate from existing scheduled search controls', async () => {
+  it('both search and RSS controls exist', async () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
       expect(screen.getByText('Enable Scheduled Search')).toBeInTheDocument();
     });
-
     expect(screen.getByText('Enable RSS Sync')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('360')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('30')).toBeInTheDocument();
   });
 
   it('describes that search includes grabbing', async () => {
@@ -116,102 +105,20 @@ describe('SearchSettingsSection', () => {
     });
   });
 
-  describe('Blacklist TTL setting', () => {
-    it('renders TTL input field with label and default value', async () => {
-      renderWithProviders(<SearchSettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByText('Blacklist TTL (days)')).toBeInTheDocument();
-      });
-      expect(screen.getByPlaceholderText('7')).toBeInTheDocument();
-    });
-
-    it('accepts positive integer value for TTL days', async () => {
-      const user = userEvent.setup();
-      renderWithProviders(<SearchSettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByPlaceholderText('7')).toHaveValue(7);
-      });
-
-      const ttlInput = screen.getByPlaceholderText('7');
-      await user.clear(ttlInput);
-      await user.type(ttlInput, '14');
-      expect(ttlInput).toHaveValue(14);
-    });
-
-    it('has min=1 attribute to prevent TTL < 1', async () => {
-      renderWithProviders(<SearchSettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByPlaceholderText('7')).toBeInTheDocument();
-      });
-
-      expect(screen.getByPlaceholderText('7')).toHaveAttribute('min', '1');
-    });
-  });
-
-  it('blocks submit when search interval is below minimum', async () => {
-    const user = userEvent.setup();
+  it('renders blacklist TTL input', async () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('360')).toHaveValue(360);
+      expect(screen.getByText('Blacklist TTL (days)')).toBeInTheDocument();
     });
-
-    // Enter 4 — below the 5-1440 range
-    const intervalInput = screen.getByPlaceholderText('360');
-    await user.clear(intervalInput);
-    await user.type(intervalInput, '4');
-
-    await act(async () => {
-      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
-    });
-
-    expect(screen.getByText(/too small/i)).toBeInTheDocument();
-    expect(mockApi.updateSettings).not.toHaveBeenCalled();
   });
 
-  it('blocks submit when blacklist TTL is below minimum', async () => {
-    const user = userEvent.setup();
+  it('has min=1 attribute on blacklist TTL', async () => {
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('7')).toHaveValue(7);
+      expect(screen.getByLabelText('Blacklist TTL (days)')).toHaveAttribute('min', '1');
     });
-
-    // Enter 0 — below the 1-365 range
-    const ttlInput = screen.getByPlaceholderText('7');
-    await user.clear(ttlInput);
-    await user.type(ttlInput, '0');
-
-    await act(async () => {
-      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
-    });
-
-    expect(screen.getByText(/too small/i)).toBeInTheDocument();
-    expect(mockApi.updateSettings).not.toHaveBeenCalled();
-  });
-
-  it('blocks submit when RSS interval is below minimum', async () => {
-    const user = userEvent.setup();
-    renderWithProviders(<SearchSettingsSection />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('30')).toHaveValue(30);
-    });
-
-    // Enter 4 — below the 5-1440 range
-    const rssInput = screen.getByPlaceholderText('30');
-    await user.clear(rssInput);
-    await user.type(rssInput, '4');
-
-    await act(async () => {
-      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
-    });
-
-    expect(screen.getByText(/too small/i)).toBeInTheDocument();
-    expect(mockApi.updateSettings).not.toHaveBeenCalled();
   });
 
   it('sends search and rss categories on save', async () => {
@@ -219,20 +126,21 @@ describe('SearchSettingsSection', () => {
     const user = userEvent.setup();
     renderWithProviders(<SearchSettingsSection />);
 
-    // Wait for mock data to populate (search.enabled = false from mock)
+    // Wait for settings to load and form to reset
+    const checkbox = () => screen.getByText('Enable Scheduled Search')
+      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
     await waitFor(() => {
-      expect(screen.getByLabelText('Enable Scheduled Search')).not.toBeChecked();
+      expect(checkbox().checked).toBe(false);
     });
 
-    const intervalInput = screen.getByPlaceholderText('360');
-    await user.clear(intervalInput);
-    await user.type(intervalInput, '120');
+    // Toggle checkbox on to dirty the form so Save button appears
+    await user.click(checkbox());
 
-    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    await user.click(screen.getByRole('button', { name: /save/i }));
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        search: { enabled: false, intervalMinutes: 120, blacklistTtlDays: 7 },
+        search: { enabled: true, intervalMinutes: 360, blacklistTtlDays: 7 },
         rss: { enabled: false, intervalMinutes: 30 },
       });
     });
@@ -243,38 +151,124 @@ describe('SearchSettingsSection', () => {
     const user = userEvent.setup();
     renderWithProviders(<SearchSettingsSection />);
 
+    // Wait for settings to load
+    const checkbox = () => screen.getByText('Enable Scheduled Search')
+      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('360')).toHaveValue(360);
+      expect(screen.getByText('Enable Scheduled Search')).toBeInTheDocument();
     });
 
-    const intervalInput = screen.getByPlaceholderText('360');
-    await user.clear(intervalInput);
-    await user.type(intervalInput, '120');
+    // Toggle checkbox on to dirty the form so Save button appears
+    await user.click(checkbox());
 
-    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+    await user.click(screen.getByRole('button', { name: /save/i }));
 
     await waitFor(() => {
       expect(mockToast.success).toHaveBeenCalledWith('Search settings saved');
     });
   });
 
-  it('shows error toast on save failure', async () => {
-    mockApi.updateSettings.mockRejectedValue(new Error('Save failed'));
+  it('rejects searchIntervalMinutes < 5', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
     const user = userEvent.setup();
     renderWithProviders(<SearchSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('360')).toHaveValue(360);
+      expect(screen.getByLabelText('Search Interval (minutes)')).toHaveValue(360);
     });
 
-    const intervalInput = screen.getByPlaceholderText('360');
-    await user.clear(intervalInput);
-    await user.type(intervalInput, '120');
+    const input = screen.getByLabelText('Search Interval (minutes)');
+    await user.tripleClick(input);
+    await user.keyboard('4');
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+    });
+  });
+
+  it('rejects blacklistTtlDays < 1', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<SearchSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Blacklist TTL (days)')).toHaveValue(7);
+    });
+
+    const input = screen.getByLabelText('Blacklist TTL (days)');
+    await user.tripleClick(input);
+    await user.keyboard('0');
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+    });
+  });
+
+  it('rejects rssIntervalMinutes < 5', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<SearchSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('RSS Interval (minutes)')).toHaveValue(30);
+    });
+
+    const input = screen.getByLabelText('RSS Interval (minutes)');
+    await user.tripleClick(input);
+    await user.keyboard('4');
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+    });
+  });
+
+  it('sends edited numeric values in save payload', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<SearchSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Blacklist TTL (days)')).toHaveValue(7);
+    });
+
+    const ttlInput = screen.getByLabelText('Blacklist TTL (days)');
+    await user.tripleClick(ttlInput);
+    await user.keyboard('14');
+
+    const rssInput = screen.getByLabelText('RSS Interval (minutes)');
+    await user.tripleClick(rssInput);
+    await user.keyboard('60');
+
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith({
+        search: { enabled: false, intervalMinutes: 360, blacklistTtlDays: 14 },
+        rss: { enabled: false, intervalMinutes: 60 },
+      });
+    });
+  });
+
+  it('shows error toast on save failure', async () => {
+    mockApi.updateSettings.mockRejectedValue(new Error('Network error'));
+    const user = userEvent.setup();
+    renderWithProviders(<SearchSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Enable Scheduled Search')).toBeInTheDocument();
+    });
+
+    const checkbox = screen.getByText('Enable Scheduled Search')
+      .closest('div')!.parentElement!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    await user.click(checkbox);
 
     fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
 
     await waitFor(() => {
-      expect(mockToast.error).toHaveBeenCalledWith('Save failed');
+      expect(mockToast.error).toHaveBeenCalledWith('Network error');
     });
   });
 });

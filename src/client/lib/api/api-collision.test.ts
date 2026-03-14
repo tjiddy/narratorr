@@ -14,6 +14,9 @@ import { authApi } from './auth.js';
 import { filesystemApi } from './filesystem.js';
 import { remotePathMappingsApi } from './remote-path-mappings.js';
 import { eventHistoryApi } from './event-history.js';
+import { backupsApi } from './backups.js';
+import { recyclingBinApi } from './recycling-bin.js';
+import { importListsApi } from './import-lists.js';
 
 const allModules = [
   { name: 'booksApi', api: booksApi },
@@ -31,6 +34,9 @@ const allModules = [
   { name: 'filesystemApi', api: filesystemApi },
   { name: 'remotePathMappingsApi', api: remotePathMappingsApi },
   { name: 'eventHistoryApi', api: eventHistoryApi },
+  { name: 'backupsApi', api: backupsApi },
+  { name: 'recyclingBinApi', api: recyclingBinApi },
+  { name: 'importListsApi', api: importListsApi },
 ];
 
 describe('API barrel export collision detection', () => {
@@ -49,5 +55,28 @@ describe('API barrel export collision detection', () => {
     }
 
     expect(collisions, `API method name collisions found:\n${collisions.join('\n')}`).toEqual([]);
+  });
+
+  it('detects collision when a synthetic duplicate method name is introduced', () => {
+    const modulesWithDuplicate = [
+      ...allModules,
+      { name: 'fakeApi', api: { getAuthStatus: () => {} } },
+    ];
+
+    const seen = new Map<string, string>();
+    const collisions: string[] = [];
+
+    for (const { name, api } of modulesWithDuplicate) {
+      for (const key of Object.keys(api)) {
+        if (seen.has(key)) {
+          collisions.push(`"${key}" exported by both ${seen.get(key)} and ${name}`);
+        } else {
+          seen.set(key, name);
+        }
+      }
+    }
+
+    expect(collisions.length).toBeGreaterThan(0);
+    expect(collisions[0]).toContain('getAuthStatus');
   });
 });

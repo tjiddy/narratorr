@@ -19,7 +19,7 @@ export function LoginPage() {
     setIsSubmitting(true);
 
     try {
-      await api.login(username, password);
+      await api.authLogin(username, password);
       // Invalidate auth status to refetch with new session cookie
       await queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
       navigate('/library', { replace: true });

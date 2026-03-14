@@ -7,11 +7,11 @@ import type { SyncPreviewItem } from '@/lib/api';
 
 vi.mock('@/lib/api', () => ({
   api: {
-    testConnection: vi.fn(),
-    getConfig: vi.fn(),
-    saveConfig: vi.fn(),
-    preview: vi.fn(),
-    sync: vi.fn(),
+    prowlarrTestConnection: vi.fn(),
+    prowlarrGetConfig: vi.fn(),
+    prowlarrSaveConfig: vi.fn(),
+    prowlarrPreview: vi.fn(),
+    prowlarrSync: vi.fn(),
   },
 }));
 
@@ -33,7 +33,7 @@ const mockPreviewItems: SyncPreviewItem[] = [
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(api.getConfig).mockRejectedValue(new Error('Not configured'));
+  vi.mocked(api.prowlarrGetConfig).mockRejectedValue(new Error('Not configured'));
 });
 
 describe('ProwlarrImport', () => {
@@ -55,7 +55,7 @@ describe('ProwlarrImport', () => {
   });
 
   it('test button calls testConnection with url and apiKey', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -65,13 +65,13 @@ describe('ProwlarrImport', () => {
     await user.click(screen.getByText('Test'));
 
     await waitFor(() => {
-      expect(api.testConnection).toHaveBeenCalledWith('http://prowlarr:9696', 'test-key');
+      expect(api.prowlarrTestConnection).toHaveBeenCalledWith('http://prowlarr:9696', 'test-key');
       expect(toast.success).toHaveBeenCalledWith('Connected to Prowlarr');
     });
   });
 
   it('shows error toast on failed test', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: false, message: 'Refused' });
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: false, message: 'Refused' });
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -99,7 +99,7 @@ describe('ProwlarrImport', () => {
   });
 
   it('next button is enabled after successful test', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -114,7 +114,7 @@ describe('ProwlarrImport', () => {
   });
 
   it('changing URL resets test state and disables next', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -135,11 +135,11 @@ describe('ProwlarrImport', () => {
   });
 
   it('clicking next saves config and shows preview table', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
+    vi.mocked(api.prowlarrPreview).mockResolvedValue(mockPreviewItems);
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -151,8 +151,8 @@ describe('ProwlarrImport', () => {
     await user.click(screen.getByText('Next'));
 
     await waitFor(() => {
-      expect(api.saveConfig).toHaveBeenCalled();
-      expect(api.preview).toHaveBeenCalled();
+      expect(api.prowlarrSaveConfig).toHaveBeenCalled();
+      expect(api.prowlarrPreview).toHaveBeenCalled();
       expect(screen.getByText('MyAnonaMouse')).toBeInTheDocument();
       expect(screen.getByText('NZBgeek')).toBeInTheDocument();
     });
@@ -165,11 +165,11 @@ describe('ProwlarrImport', () => {
   });
 
   it('checkboxes default to selected for non-unchanged items', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
+    vi.mocked(api.prowlarrPreview).mockResolvedValue(mockPreviewItems);
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -190,12 +190,12 @@ describe('ProwlarrImport', () => {
   });
 
   it('import selected sends items and closes on success', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
-    vi.mocked(api.sync).mockResolvedValue({ added: 1, updated: 1, removed: 0 });
+    vi.mocked(api.prowlarrPreview).mockResolvedValue(mockPreviewItems);
+    vi.mocked(api.prowlarrSync).mockResolvedValue({ added: 1, updated: 1, removed: 0 });
     const onClose = vi.fn();
     const user = userEvent.setup();
 
@@ -211,18 +211,18 @@ describe('ProwlarrImport', () => {
     await user.click(screen.getByText('Import Selected'));
 
     await waitFor(() => {
-      expect(api.sync).toHaveBeenCalled();
+      expect(api.prowlarrSync).toHaveBeenCalled();
       expect(toast.success).toHaveBeenCalledWith('Sync complete: 1 added, 1 updated');
       expect(onClose).toHaveBeenCalled();
     });
   });
 
   it('back button returns to connect step', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
+    vi.mocked(api.prowlarrPreview).mockResolvedValue(mockPreviewItems);
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -286,12 +286,12 @@ describe('ProwlarrImport', () => {
   });
 
   it('shows error toast when sync fails', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
-    vi.mocked(api.sync).mockRejectedValue(new Error('Database locked'));
+    vi.mocked(api.prowlarrPreview).mockResolvedValue(mockPreviewItems);
+    vi.mocked(api.prowlarrSync).mockRejectedValue(new Error('Database locked'));
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -311,13 +311,13 @@ describe('ProwlarrImport', () => {
   });
 
   it('disables import button while sync is pending', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
+    vi.mocked(api.prowlarrPreview).mockResolvedValue(mockPreviewItems);
     // Never resolve so sync stays pending
-    vi.mocked(api.sync).mockReturnValue(new Promise(() => {}));
+    vi.mocked(api.prowlarrSync).mockReturnValue(new Promise(() => {}));
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -338,7 +338,7 @@ describe('ProwlarrImport', () => {
   });
 
   it('shows error toast when testConnection throws (network error)', async () => {
-    vi.mocked(api.testConnection).mockRejectedValue(new Error('Network Error'));
+    vi.mocked(api.prowlarrTestConnection).mockRejectedValue(new Error('Network Error'));
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -353,7 +353,7 @@ describe('ProwlarrImport', () => {
   });
 
   it('shows error toast when testConnection fails with non-Error object', async () => {
-    vi.mocked(api.testConnection).mockRejectedValue('string error');
+    vi.mocked(api.prowlarrTestConnection).mockRejectedValue('string error');
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -368,8 +368,8 @@ describe('ProwlarrImport', () => {
   });
 
   it('shows error toast and returns to connect step when preview fails', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockRejectedValue(new Error('Save failed'));
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockRejectedValue(new Error('Save failed'));
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -391,11 +391,11 @@ describe('ProwlarrImport', () => {
   });
 
   it('shows empty state when preview returns no items', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue([]);
+    vi.mocked(api.prowlarrPreview).mockResolvedValue([]);
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -416,11 +416,11 @@ describe('ProwlarrImport', () => {
       { prowlarrId: 1, name: 'NewIndexer', type: 'torznab', action: 'new' },
       { prowlarrId: 2, name: 'OldIndexer', type: 'newznab', action: 'removed' },
     ];
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'fullSync', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue(itemsWithRemoval);
+    vi.mocked(api.prowlarrPreview).mockResolvedValue(itemsWithRemoval);
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -438,11 +438,11 @@ describe('ProwlarrImport', () => {
   });
 
   it('unchecking all items disables Import Selected button', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
+    vi.mocked(api.prowlarrPreview).mockResolvedValue(mockPreviewItems);
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -465,12 +465,12 @@ describe('ProwlarrImport', () => {
   });
 
   it('shows "No changes applied" toast when sync returns all zeros', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
-    vi.mocked(api.sync).mockResolvedValue({ added: 0, updated: 0, removed: 0 });
+    vi.mocked(api.prowlarrPreview).mockResolvedValue(mockPreviewItems);
+    vi.mocked(api.prowlarrSync).mockResolvedValue({ added: 0, updated: 0, removed: 0 });
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -490,7 +490,7 @@ describe('ProwlarrImport', () => {
   });
 
   it('pre-populates form fields from existing config', async () => {
-    vi.mocked(api.getConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrGetConfig).mockResolvedValue({
       url: 'http://saved:9696',
       apiKey: 'saved-key',
       syncMode: 'fullSync',
@@ -510,7 +510,7 @@ describe('ProwlarrImport', () => {
   });
 
   it('changing API key resets test state', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -551,11 +551,11 @@ describe('ProwlarrImport', () => {
   });
 
   it('saves config with correctly parsed categories', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030, 3040],
     });
-    vi.mocked(api.preview).mockResolvedValue([]);
+    vi.mocked(api.prowlarrPreview).mockResolvedValue([]);
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -573,7 +573,7 @@ describe('ProwlarrImport', () => {
     await user.click(screen.getByText('Next'));
 
     await waitFor(() => {
-      expect(api.saveConfig).toHaveBeenCalledWith({
+      expect(api.prowlarrSaveConfig).toHaveBeenCalledWith({
         url: 'http://prowlarr:9696',
         apiKey: 'key',
         syncMode: 'addOnly',
@@ -583,11 +583,11 @@ describe('ProwlarrImport', () => {
   });
 
   it('strips trailing slashes from URL when saving config', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue([]);
+    vi.mocked(api.prowlarrPreview).mockResolvedValue([]);
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -599,7 +599,7 @@ describe('ProwlarrImport', () => {
     await user.click(screen.getByText('Next'));
 
     await waitFor(() => {
-      expect(api.saveConfig).toHaveBeenCalledWith(
+      expect(api.prowlarrSaveConfig).toHaveBeenCalledWith(
         expect.objectContaining({ url: 'http://prowlarr:9696' }),
       );
     });
@@ -615,11 +615,11 @@ describe('ProwlarrImport', () => {
   });
 
   it('shows indexer count and change count in select step', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
+    vi.mocked(api.prowlarrPreview).mockResolvedValue(mockPreviewItems);
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -637,12 +637,12 @@ describe('ProwlarrImport', () => {
   });
 
   it('sync sends correct selected state for toggled items', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
-    vi.mocked(api.sync).mockResolvedValue({ added: 0, updated: 1, removed: 0 });
+    vi.mocked(api.prowlarrPreview).mockResolvedValue(mockPreviewItems);
+    vi.mocked(api.prowlarrSync).mockResolvedValue({ added: 0, updated: 1, removed: 0 });
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -661,7 +661,7 @@ describe('ProwlarrImport', () => {
     await user.click(screen.getByText('Import Selected'));
 
     await waitFor(() => {
-      expect(api.sync).toHaveBeenCalledWith({
+      expect(api.prowlarrSync).toHaveBeenCalledWith({
         items: [
           { prowlarrId: 1, action: 'new', selected: false },
           { prowlarrId: 2, action: 'updated', selected: true },
@@ -672,11 +672,11 @@ describe('ProwlarrImport', () => {
   });
 
   it('shows "Unchanged" badge for unchanged items without checkbox', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
+    vi.mocked(api.prowlarrPreview).mockResolvedValue(mockPreviewItems);
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -696,7 +696,7 @@ describe('ProwlarrImport', () => {
   });
 
   it('shows connection failed with null message', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: false, message: null as unknown as string });
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: false, message: null as unknown as string });
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -711,12 +711,12 @@ describe('ProwlarrImport', () => {
   });
 
   it('shows sync result with removed count', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'fullSync', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
-    vi.mocked(api.sync).mockResolvedValue({ added: 1, updated: 0, removed: 2 });
+    vi.mocked(api.prowlarrPreview).mockResolvedValue(mockPreviewItems);
+    vi.mocked(api.prowlarrSync).mockResolvedValue({ added: 1, updated: 0, removed: 2 });
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -747,8 +747,8 @@ describe('ProwlarrImport', () => {
   });
 
   it('shows loading state while fetching preview', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockReturnValue(new Promise(() => {})); // never resolves
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockReturnValue(new Promise(() => {})); // never resolves
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -768,11 +768,11 @@ describe('ProwlarrImport', () => {
     const singleItem: SyncPreviewItem[] = [
       { prowlarrId: 1, name: 'Solo', type: 'torznab', action: 'new' },
     ];
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue(singleItem);
+    vi.mocked(api.prowlarrPreview).mockResolvedValue(singleItem);
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -790,12 +790,12 @@ describe('ProwlarrImport', () => {
   });
 
   it('shows sync failed with non-Error object', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockResolvedValue({
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockResolvedValue({
       url: 'http://prowlarr:9696', apiKey: 'key', syncMode: 'addOnly', categories: [3030],
     });
-    vi.mocked(api.preview).mockResolvedValue(mockPreviewItems);
-    vi.mocked(api.sync).mockRejectedValue('raw string error');
+    vi.mocked(api.prowlarrPreview).mockResolvedValue(mockPreviewItems);
+    vi.mocked(api.prowlarrSync).mockRejectedValue('raw string error');
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);
@@ -815,8 +815,8 @@ describe('ProwlarrImport', () => {
   });
 
   it('preview failure with non-Error object shows Unknown error', async () => {
-    vi.mocked(api.testConnection).mockResolvedValue({ success: true, message: 'OK' });
-    vi.mocked(api.saveConfig).mockRejectedValue('raw error');
+    vi.mocked(api.prowlarrTestConnection).mockResolvedValue({ success: true, message: 'OK' });
+    vi.mocked(api.prowlarrSaveConfig).mockRejectedValue('raw error');
     const user = userEvent.setup();
 
     renderWithProviders(<ProwlarrImport isOpen={true} onClose={vi.fn()} />);

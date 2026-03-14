@@ -35,7 +35,7 @@ export interface SearchResponse {
 }
 
 export const searchApi = {
-  search: (query: string, context?: SearchContext) => {
+  searchBooks: (query: string, context?: SearchContext) => {
     const params = new URLSearchParams({ q: query });
     if (context?.author) params.set('author', context.author);
     if (context?.title) params.set('title', context.title);
@@ -43,7 +43,7 @@ export const searchApi = {
     return fetchApi<SearchResponse>(`/search?${params.toString()}`);
   },
 
-  grab: (params: {
+  searchGrab: (params: {
     downloadUrl: string;
     title: string;
     protocol?: 'torrent' | 'usenet';

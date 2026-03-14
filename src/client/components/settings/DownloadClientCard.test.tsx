@@ -13,7 +13,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
     ...actual,
     api: {
       ...(actual.api as Record<string, unknown>),
-      getMappingsByClientId: vi.fn().mockResolvedValue([]),
+      getRemotePathMappingsByClientId: vi.fn().mockResolvedValue([]),
     },
   };
 });

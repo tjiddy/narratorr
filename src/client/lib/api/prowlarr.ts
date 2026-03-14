@@ -32,19 +32,19 @@ export interface SyncResult {
 }
 
 export const prowlarrApi = {
-  testConnection: (url: string, apiKey: string) =>
+  prowlarrTestConnection: (url: string, apiKey: string) =>
     fetchApi<TestResult>('/prowlarr/test', {
       method: 'POST',
       body: JSON.stringify({ url, apiKey }),
     }),
-  getConfig: () => fetchApi<ProwlarrConfig>('/prowlarr/config'),
-  saveConfig: (config: ProwlarrConfig) =>
+  prowlarrGetConfig: () => fetchApi<ProwlarrConfig>('/prowlarr/config'),
+  prowlarrSaveConfig: (config: ProwlarrConfig) =>
     fetchApi<ProwlarrConfig>('/prowlarr/config', {
       method: 'PUT',
       body: JSON.stringify(config),
     }),
-  preview: () => fetchApi<SyncPreviewItem[]>('/prowlarr/preview', { method: 'POST' }),
-  sync: (request: SyncApplyRequest) =>
+  prowlarrPreview: () => fetchApi<SyncPreviewItem[]>('/prowlarr/preview', { method: 'POST' }),
+  prowlarrSync: (request: SyncApplyRequest) =>
     fetchApi<SyncResult>('/prowlarr/sync', {
       method: 'POST',
       body: JSON.stringify(request),

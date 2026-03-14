@@ -31,7 +31,7 @@ export function SecuritySettings() {
 
   const { data: authStatus } = useQuery({
     queryKey: queryKeys.auth.status(),
-    queryFn: api.getStatus,
+    queryFn: api.getAuthStatus,
   });
 
   if (isLoading || !authConfig) {
@@ -235,7 +235,7 @@ function ApiKeySection({
   const [copied, setCopied] = useState(false);
 
   const mutation = useMutation({
-    mutationFn: api.regenerateApiKey,
+    mutationFn: api.authRegenerateApiKey,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.auth.config() });
       toast.success('API key regenerated');

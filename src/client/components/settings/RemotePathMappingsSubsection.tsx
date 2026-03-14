@@ -91,11 +91,11 @@ export function RemotePathMappingsSubsection({ clientId }: RemotePathMappingsSub
 
   const { data: mappings = [], isLoading } = useQuery({
     queryKey: queryKeys.remotePathMappings(clientId),
-    queryFn: () => api.getMappingsByClientId(clientId),
+    queryFn: () => api.getRemotePathMappingsByClientId(clientId),
   });
 
   const createMutation = useMutation({
-    mutationFn: api.createMapping,
+    mutationFn: api.createRemotePathMapping,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.remotePathMappings(clientId) });
       setShowForm(false);
@@ -106,7 +106,7 @@ export function RemotePathMappingsSubsection({ clientId }: RemotePathMappingsSub
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: number; data: Partial<MappingFormData> }) =>
-      api.updateMapping(id, data),
+      api.updateRemotePathMapping(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.remotePathMappings(clientId) });
       setEditingId(null);
@@ -116,7 +116,7 @@ export function RemotePathMappingsSubsection({ clientId }: RemotePathMappingsSub
   });
 
   const deleteMutation = useMutation({
-    mutationFn: api.deleteMapping,
+    mutationFn: api.deleteRemotePathMapping,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.remotePathMappings(clientId) });
       toast.success('Path mapping removed');

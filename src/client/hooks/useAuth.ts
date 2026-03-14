@@ -19,13 +19,13 @@ export function useAuth(): AuthState {
 
   const { data, isLoading } = useQuery({
     queryKey: queryKeys.auth.status(),
-    queryFn: api.getStatus,
+    queryFn: api.getAuthStatus,
     staleTime: 30_000,
     retry: 1,
   });
 
   const logout = useCallback(async () => {
-    await api.logout();
+    await api.authLogout();
     queryClient.setQueryData(queryKeys.auth.status(), undefined);
     // Force refetch to get updated status
     await queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });

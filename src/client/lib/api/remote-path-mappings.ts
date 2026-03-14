@@ -10,19 +10,19 @@ export interface RemotePathMapping {
 }
 
 export const remotePathMappingsApi = {
-  getMappings: () => fetchApi<RemotePathMapping[]>('/remote-path-mappings'),
-  getMappingsByClientId: (clientId: number) =>
+  getRemotePathMappings: () => fetchApi<RemotePathMapping[]>('/remote-path-mappings'),
+  getRemotePathMappingsByClientId: (clientId: number) =>
     fetchApi<RemotePathMapping[]>(`/remote-path-mappings?downloadClientId=${clientId}`),
-  createMapping: (data: Omit<RemotePathMapping, 'id' | 'createdAt' | 'updatedAt'>) =>
+  createRemotePathMapping: (data: Omit<RemotePathMapping, 'id' | 'createdAt' | 'updatedAt'>) =>
     fetchApi<RemotePathMapping>('/remote-path-mappings', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  updateMapping: (id: number, data: Partial<Omit<RemotePathMapping, 'id' | 'createdAt' | 'updatedAt'>>) =>
+  updateRemotePathMapping: (id: number, data: Partial<Omit<RemotePathMapping, 'id' | 'createdAt' | 'updatedAt'>>) =>
     fetchApi<RemotePathMapping>(`/remote-path-mappings/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
-  deleteMapping: (id: number) =>
+  deleteRemotePathMapping: (id: number) =>
     fetchApi<{ success: boolean }>(`/remote-path-mappings/${id}`, { method: 'DELETE' }),
 };

@@ -6,8 +6,8 @@ import { useAuth } from './useAuth';
 
 vi.mock('@/lib/api', () => ({
   api: {
-    getStatus: vi.fn(),
-    logout: vi.fn(),
+    getAuthStatus: vi.fn(),
+    authLogout: vi.fn(),
   },
 }));
 
@@ -41,7 +41,7 @@ describe('useAuth', () => {
   });
 
   it('returns auth status from API', async () => {
-    vi.mocked(api.getStatus).mockResolvedValue({
+    vi.mocked(api.getAuthStatus).mockResolvedValue({
       mode: 'forms',
       hasUser: true,
       localBypass: false,
@@ -63,7 +63,7 @@ describe('useAuth', () => {
   });
 
   it('defaults to safe values while loading', () => {
-    vi.mocked(api.getStatus).mockReturnValue(new Promise(() => {}));
+    vi.mocked(api.getAuthStatus).mockReturnValue(new Promise(() => {}));
 
     const { result } = renderHook(() => useAuth(), {
       wrapper: createWrapper(),
@@ -75,9 +75,9 @@ describe('useAuth', () => {
     expect(result.current.isAuthenticated).toBe(false);
   });
 
-  it('logout calls API, invalidates auth cache, and redirects to /login', async () => {
+  it('authLogout calls API, invalidates auth cache, and redirects to /login', async () => {
     // First call (mount) returns authenticated, second call (post-invalidation) returns unauthenticated
-    vi.mocked(api.getStatus)
+    vi.mocked(api.getAuthStatus)
       .mockResolvedValueOnce({
         mode: 'forms',
         hasUser: true,
@@ -90,7 +90,7 @@ describe('useAuth', () => {
         localBypass: false,
         authenticated: false,
       });
-    vi.mocked(api.logout).mockResolvedValue(undefined as never);
+    vi.mocked(api.authLogout).mockResolvedValue(undefined as never);
 
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -104,23 +104,23 @@ describe('useAuth', () => {
       expect(result.current.isLoading).toBe(false);
     });
 
-    // Auth status should be cached before logout
+    // Auth status should be cached before authLogout
     expect(queryClient.getQueryData(['auth', 'status'])).toBeTruthy();
 
     await act(async () => {
       await result.current.logout();
     });
 
-    expect(api.logout).toHaveBeenCalled();
-    // invalidateQueries triggers a refetch — getStatus called again with post-logout state
-    expect(api.getStatus).toHaveBeenCalledTimes(2);
+    expect(api.authLogout).toHaveBeenCalled();
+    // invalidateQueries triggers a refetch — getAuthStatus called again with post-authLogout state
+    expect(api.getAuthStatus).toHaveBeenCalledTimes(2);
     // Cache now reflects unauthenticated state (from the refetch after invalidation)
     const cachedStatus = queryClient.getQueryData(['auth', 'status']) as { authenticated: boolean } | undefined;
     expect(cachedStatus?.authenticated).toBe(false);
     expect(window.location.href).toBe('/login');
   });
 
-  it('logout redirects to {URL_BASE}/login when URL_BASE is set', async () => {
+  it('authLogout redirects to {URL_BASE}/login when URL_BASE is set', async () => {
     // Set URL_BASE before re-importing the hook
     window.__NARRATORR_URL_BASE__ = '/narratorr';
     vi.resetModules();
@@ -128,7 +128,7 @@ describe('useAuth', () => {
     // Re-import with the new URL_BASE value
     const { useAuth: useAuthWithBase } = await import('./useAuth');
     const freshApi = (await import('@/lib/api')).api;
-    vi.mocked(freshApi.getStatus).mockResolvedValueOnce({
+    vi.mocked(freshApi.getAuthStatus).mockResolvedValueOnce({
       mode: 'forms',
       hasUser: true,
       localBypass: false,
@@ -139,7 +139,7 @@ describe('useAuth', () => {
       localBypass: false,
       authenticated: false,
     });
-    vi.mocked(freshApi.logout).mockResolvedValue(undefined as never);
+    vi.mocked(freshApi.authLogout).mockResolvedValue(undefined as never);
 
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },

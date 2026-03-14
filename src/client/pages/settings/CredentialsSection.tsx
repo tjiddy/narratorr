@@ -22,7 +22,7 @@ export function CredentialsSection({
   const [newPassword, setNewPassword] = useState('');
 
   const setupMutation = useMutation({
-    mutationFn: () => api.setup(username, password),
+    mutationFn: () => api.authSetup(username, password),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
       toast.success('Credentials created');
@@ -36,7 +36,7 @@ export function CredentialsSection({
   });
 
   const passwordMutation = useMutation({
-    mutationFn: () => api.changePassword(currentPassword, newPassword, editUsername !== currentUsername ? editUsername : undefined),
+    mutationFn: () => api.authChangePassword(currentPassword, newPassword, editUsername !== currentUsername ? editUsername : undefined),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
       toast.success('Credentials updated');

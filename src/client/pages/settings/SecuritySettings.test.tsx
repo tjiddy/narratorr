@@ -8,11 +8,11 @@ import { toast } from 'sonner';
 vi.mock('@/lib/api', () => ({
   api: {
     getAuthConfig: vi.fn(),
-    getStatus: vi.fn(),
+    getAuthStatus: vi.fn(),
     updateAuthConfig: vi.fn(),
-    setup: vi.fn(),
-    changePassword: vi.fn(),
-    regenerateApiKey: vi.fn(),
+    authSetup: vi.fn(),
+    authChangePassword: vi.fn(),
+    authRegenerateApiKey: vi.fn(),
   },
   ApiError: class ApiError extends Error {
     status: number;
@@ -51,7 +51,7 @@ describe('SecuritySettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue(mockStatus);
+    (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue(mockStatus);
   });
 
   it('renders auth mode selector, API key section, local bypass toggle', async () => {
@@ -91,7 +91,7 @@ describe('SecuritySettings', () => {
       ...mockConfig,
       mode: 'forms',
     });
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
       mode: 'forms',
       hasUser: true,
@@ -131,7 +131,7 @@ describe('SecuritySettings', () => {
   });
 
   it('regenerate API key → confirmation → new key displayed', async () => {
-    (api.regenerateApiKey as ReturnType<typeof vi.fn>).mockResolvedValue({ apiKey: 'new-key-67890' });
+    (api.authRegenerateApiKey as ReturnType<typeof vi.fn>).mockResolvedValue({ apiKey: 'new-key-67890' });
     const user = userEvent.setup();
     renderWithProviders(<SecuritySettings />);
 
@@ -153,12 +153,12 @@ describe('SecuritySettings', () => {
     await user.click(confirmButton);
 
     await waitFor(() => {
-      expect(api.regenerateApiKey).toHaveBeenCalled();
+      expect(api.authRegenerateApiKey).toHaveBeenCalled();
     });
   });
 
   it('create credentials form → success message', async () => {
-    (api.setup as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+    (api.authSetup as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
     const user = userEvent.setup();
     renderWithProviders(<SecuritySettings />);
 
@@ -172,18 +172,18 @@ describe('SecuritySettings', () => {
     await user.click(screen.getByRole('button', { name: /create credentials/i }));
 
     await waitFor(() => {
-      expect(api.setup).toHaveBeenCalledWith('admin', 'password1234');
+      expect(api.authSetup).toHaveBeenCalledWith('admin', 'password1234');
     });
   });
 
   it('change password form requires current password', async () => {
     // User exists — show change password form
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
       hasUser: true,
       username: 'admin',
     });
-    (api.changePassword as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+    (api.authChangePassword as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
     const user = userEvent.setup();
     renderWithProviders(<SecuritySettings />);
 
@@ -204,13 +204,13 @@ describe('SecuritySettings', () => {
 
     // Username unchanged → third arg is undefined
     await waitFor(() => {
-      expect(api.changePassword).toHaveBeenCalledWith('oldpass', 'newpassword1', undefined);
+      expect(api.authChangePassword).toHaveBeenCalledWith('oldpass', 'newpassword1', undefined);
     });
   });
 
   it('setup failure shows error toast', async () => {
     const { ApiError } = await import('@/lib/api');
-    (api.setup as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(409, { error: 'User already exists' }));
+    (api.authSetup as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(409, { error: 'User already exists' }));
     const user = userEvent.setup();
     renderWithProviders(<SecuritySettings />);
 
@@ -228,7 +228,7 @@ describe('SecuritySettings', () => {
   });
 
   it('setup success resets form fields', async () => {
-    (api.setup as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+    (api.authSetup as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
     const user = userEvent.setup();
     renderWithProviders(<SecuritySettings />);
 
@@ -241,7 +241,7 @@ describe('SecuritySettings', () => {
     await user.click(screen.getByRole('button', { name: /create credentials/i }));
 
     await waitFor(() => {
-      expect(api.setup).toHaveBeenCalled();
+      expect(api.authSetup).toHaveBeenCalled();
     });
 
     // Fields should be cleared after success
@@ -252,13 +252,13 @@ describe('SecuritySettings', () => {
   });
 
   it('password change failure shows error toast', async () => {
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
       hasUser: true,
       username: 'admin',
     });
     const { ApiError } = await import('@/lib/api');
-    (api.changePassword as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(401, { error: 'Current password is incorrect' }));
+    (api.authChangePassword as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(401, { error: 'Current password is incorrect' }));
     const user = userEvent.setup();
     renderWithProviders(<SecuritySettings />);
 
@@ -276,12 +276,12 @@ describe('SecuritySettings', () => {
   });
 
   it('password change with changed username passes new username', async () => {
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
       hasUser: true,
       username: 'admin',
     });
-    (api.changePassword as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+    (api.authChangePassword as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
     const user = userEvent.setup();
     renderWithProviders(<SecuritySettings />);
 
@@ -298,12 +298,12 @@ describe('SecuritySettings', () => {
     await user.click(screen.getByRole('button', { name: /change password/i }));
 
     await waitFor(() => {
-      expect(api.changePassword).toHaveBeenCalledWith('oldpass', 'newpassword1', 'newadmin');
+      expect(api.authChangePassword).toHaveBeenCalledWith('oldpass', 'newpassword1', 'newadmin');
     });
   });
 
   it('setup success shows success toast and invalidates auth queries', async () => {
-    (api.setup as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+    (api.authSetup as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
     const user = userEvent.setup();
     renderWithProviders(<SecuritySettings />);
 
@@ -312,10 +312,10 @@ describe('SecuritySettings', () => {
     });
 
     // Clear call counts after initial data load
-    (api.getStatus as ReturnType<typeof vi.fn>).mockClear();
+    (api.getAuthStatus as ReturnType<typeof vi.fn>).mockClear();
     (api.getAuthConfig as ReturnType<typeof vi.fn>).mockClear();
     // Re-apply resolved values for refetch after invalidation
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue(mockStatus);
+    (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue(mockStatus);
     (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue(mockConfig);
 
     await user.type(screen.getByLabelText('Username'), 'admin');
@@ -328,17 +328,17 @@ describe('SecuritySettings', () => {
 
     // Auth status should be refetched due to query invalidation
     await waitFor(() => {
-      expect(api.getStatus).toHaveBeenCalled();
+      expect(api.getAuthStatus).toHaveBeenCalled();
     });
   });
 
   it('password change success shows success toast, clears fields, and invalidates auth queries', async () => {
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
       hasUser: true,
       username: 'admin',
     });
-    (api.changePassword as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+    (api.authChangePassword as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
     const user = userEvent.setup();
     renderWithProviders(<SecuritySettings />);
 
@@ -347,10 +347,10 @@ describe('SecuritySettings', () => {
     });
 
     // Clear call counts after initial data load
-    (api.getStatus as ReturnType<typeof vi.fn>).mockClear();
+    (api.getAuthStatus as ReturnType<typeof vi.fn>).mockClear();
     (api.getAuthConfig as ReturnType<typeof vi.fn>).mockClear();
     // Re-apply resolved values for refetch after invalidation
-    (api.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
       hasUser: true,
       username: 'admin',
@@ -373,7 +373,7 @@ describe('SecuritySettings', () => {
 
     // Auth status should be refetched due to query invalidation
     await waitFor(() => {
-      expect(api.getStatus).toHaveBeenCalled();
+      expect(api.getAuthStatus).toHaveBeenCalled();
     });
   });
 });

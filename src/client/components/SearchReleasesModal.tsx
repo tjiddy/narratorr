@@ -46,10 +46,10 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
     error,
     refetch,
   } = useQuery({
-    queryKey: ['search-releases', book.id, searchQuery],
+    queryKey: queryKeys.searchReleases(book.id, searchQuery),
     queryFn: () => {
       const { durationSeconds } = resolveBookQualityInputs(book);
-      return api.search(searchQuery, {
+      return api.searchBooks(searchQuery, {
         title: book.title,
         author: book.author?.name,
         bookDuration: durationSeconds ?? undefined,
@@ -65,7 +65,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
     onSuccess: () => {
       toast.success('Release blacklisted');
       queryClient.invalidateQueries({ queryKey: queryKeys.blacklist() });
-      queryClient.invalidateQueries({ queryKey: ['search-releases'] });
+      queryClient.invalidateQueries({ queryKey: ['search-releases'] as const });
     },
     onError: (err: Error) => {
       toast.error(`Failed to blacklist: ${err.message}`);
@@ -85,7 +85,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
   };
 
   const grabMutation = useMutation({
-    mutationFn: api.grab,
+    mutationFn: api.searchGrab,
     onSuccess: () => {
       toast.success('Download started! Check the Activity page.');
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });

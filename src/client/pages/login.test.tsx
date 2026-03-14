@@ -6,7 +6,7 @@ import { LoginPage } from './login';
 
 vi.mock('@/lib/api', () => ({
   api: {
-    login: vi.fn(),
+    authLogin: vi.fn(),
   },
   ApiError: class ApiError extends Error {
     status: number;
@@ -36,7 +36,7 @@ describe('LoginPage', () => {
   });
 
   it('submit with valid credentials calls /api/auth/login, redirects to /library', async () => {
-    (api.login as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+    (api.authLogin as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
     const user = userEvent.setup();
 
     renderWithProviders(<LoginPage />);
@@ -46,12 +46,12 @@ describe('LoginPage', () => {
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => {
-      expect(api.login).toHaveBeenCalledWith('admin', 'password123');
+      expect(api.authLogin).toHaveBeenCalledWith('admin', 'password123');
     });
   });
 
   it('submit with invalid credentials shows error message, stays on page', async () => {
-    (api.login as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(401, { error: 'Invalid credentials' }));
+    (api.authLogin as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(401, { error: 'Invalid credentials' }));
     const user = userEvent.setup();
 
     renderWithProviders(<LoginPage />);
@@ -68,7 +68,7 @@ describe('LoginPage', () => {
   it('submit disables button while pending', async () => {
     // Make login hang until we resolve it
     let resolveLogin!: () => void;
-    (api.login as ReturnType<typeof vi.fn>).mockReturnValue(
+    (api.authLogin as ReturnType<typeof vi.fn>).mockReturnValue(
       new Promise<void>((resolve) => { resolveLogin = resolve; }),
     );
     const user = userEvent.setup();

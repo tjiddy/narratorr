@@ -16,20 +16,20 @@ export interface AuthConfig {
 }
 
 export const authApi = {
-  getStatus: () => fetchApi<AuthStatus>('/auth/status'),
+  getAuthStatus: () => fetchApi<AuthStatus>('/auth/status'),
 
-  login: (username: string, password: string) =>
+  authLogin: (username: string, password: string) =>
     fetchApi<{ success: boolean }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     }),
 
-  logout: () =>
+  authLogout: () =>
     fetchApi<{ success: boolean }>('/auth/logout', {
       method: 'POST',
     }),
 
-  setup: (username: string, password: string) =>
+  authSetup: (username: string, password: string) =>
     fetchApi<{ success: boolean }>('/auth/setup', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
@@ -43,13 +43,13 @@ export const authApi = {
       body: JSON.stringify(data),
     }),
 
-  changePassword: (currentPassword: string, newPassword: string, newUsername?: string) =>
+  authChangePassword: (currentPassword: string, newPassword: string, newUsername?: string) =>
     fetchApi<{ success: boolean }>('/auth/password', {
       method: 'PUT',
       body: JSON.stringify({ currentPassword, newPassword, ...(newUsername ? { newUsername } : {}) }),
     }),
 
-  regenerateApiKey: () =>
+  authRegenerateApiKey: () =>
     fetchApi<{ apiKey: string }>('/auth/api-key/regenerate', {
       method: 'POST',
     }),

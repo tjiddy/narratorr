@@ -74,7 +74,7 @@ export function ProwlarrImport({ isOpen, onClose }: ProwlarrImportProps) {
     queryKey: [...queryKeys.prowlarr.config(), 'form'],
     queryFn: async () => {
       try {
-        const config = await api.getConfig();
+        const config = await api.prowlarrGetConfig();
         setUrl(config.url);
         setApiKey(config.apiKey);
         setSyncMode(config.syncMode);
@@ -90,7 +90,7 @@ export function ProwlarrImport({ isOpen, onClose }: ProwlarrImportProps) {
   });
 
   const testMutation = useMutation({
-    mutationFn: () => api.testConnection(url, apiKey),
+    mutationFn: () => api.prowlarrTestConnection(url, apiKey),
     onSuccess: (result) => {
       if (result.success) {
         setTestPassed(true);
@@ -115,8 +115,8 @@ export function ProwlarrImport({ isOpen, onClose }: ProwlarrImportProps) {
         syncMode,
         categories: categories.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n)),
       };
-      await api.saveConfig(config);
-      const items = await api.preview();
+      await api.prowlarrSaveConfig(config);
+      const items = await api.prowlarrPreview();
       setPreviewItems(items);
       const defaultSelections: Record<number, boolean> = {};
       for (const item of items) {
@@ -132,7 +132,7 @@ export function ProwlarrImport({ isOpen, onClose }: ProwlarrImportProps) {
 
   const syncMutation = useMutation({
     mutationFn: () =>
-      api.sync({
+      api.prowlarrSync({
         items: previewItems.map(item => ({
           prowlarrId: item.prowlarrId,
           action: item.action,

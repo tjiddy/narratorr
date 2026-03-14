@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import {
   XIcon,
@@ -48,7 +49,7 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: Omit<Direct
   useEscapeKey(true, onClose, modalRef);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['filesystem', 'browse', currentPath],
+    queryKey: queryKeys.filesystem.browse(currentPath),
     queryFn: () => api.browseDirectory(currentPath),
     retry: false,
   });

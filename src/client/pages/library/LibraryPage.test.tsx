@@ -12,8 +12,8 @@ vi.mock('@/lib/api', () => ({
     deleteBook: vi.fn(),
     deleteMissingBooks: vi.fn(),
     rescanLibrary: vi.fn(),
-    search: vi.fn(),
-    grab: vi.fn(),
+    searchBooks: vi.fn(),
+    searchGrab: vi.fn(),
     searchAllWanted: vi.fn(),
     searchBook: vi.fn(),
     updateBook: vi.fn(),
@@ -565,7 +565,7 @@ describe('LibraryPage', () => {
 
   it('opens search releases modal when Search Releases is clicked', async () => {
     vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
-    vi.mocked(api.search).mockResolvedValue({ results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } });
+    vi.mocked(api.searchBooks).mockResolvedValue({ results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } });
     const user = userEvent.setup();
 
     renderWithProviders(<LibraryPage />);

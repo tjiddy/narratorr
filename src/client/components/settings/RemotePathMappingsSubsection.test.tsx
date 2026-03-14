@@ -8,10 +8,10 @@ import type { Mock } from 'vitest';
 
 vi.mock('@/lib/api', () => ({
   api: {
-    getMappingsByClientId: vi.fn(),
-    createMapping: vi.fn(),
-    updateMapping: vi.fn(),
-    deleteMapping: vi.fn(),
+    getRemotePathMappingsByClientId: vi.fn(),
+    createRemotePathMapping: vi.fn(),
+    updateRemotePathMapping: vi.fn(),
+    deleteRemotePathMapping: vi.fn(),
   },
 }));
 
@@ -26,7 +26,7 @@ const mockMapping = createMockRemotePathMapping({ id: 1, downloadClientId: 5 });
 
 beforeEach(() => {
   vi.clearAllMocks();
-  (api.getMappingsByClientId as Mock).mockResolvedValue([]);
+  (api.getRemotePathMappingsByClientId as Mock).mockResolvedValue([]);
 });
 
 describe('RemotePathMappingsSubsection', () => {
@@ -42,7 +42,7 @@ describe('RemotePathMappingsSubsection', () => {
   });
 
   it('renders existing mappings with remote and local paths', async () => {
-    (api.getMappingsByClientId as Mock).mockResolvedValue([mockMapping]);
+    (api.getRemotePathMappingsByClientId as Mock).mockResolvedValue([mockMapping]);
 
     renderWithProviders(<RemotePathMappingsSubsection clientId={5} />);
 
@@ -73,7 +73,7 @@ describe('RemotePathMappingsSubsection', () => {
 
   it('creates a mapping with the implicit client ID', async () => {
     const user = userEvent.setup();
-    (api.createMapping as Mock).mockResolvedValue(mockMapping);
+    (api.createRemotePathMapping as Mock).mockResolvedValue(mockMapping);
 
     renderWithProviders(<RemotePathMappingsSubsection clientId={5} />);
 
@@ -87,10 +87,10 @@ describe('RemotePathMappingsSubsection', () => {
     await user.click(screen.getByText('Save'));
 
     await waitFor(() => {
-      expect(api.createMapping).toHaveBeenCalled();
+      expect(api.createRemotePathMapping).toHaveBeenCalled();
     });
     await waitFor(() => {
-      expect((api.createMapping as Mock).mock.calls[0][0]).toMatchObject({
+      expect((api.createRemotePathMapping as Mock).mock.calls[0][0]).toMatchObject({
         downloadClientId: 5,
         remotePath: '/downloads/complete/',
         localPath: 'C:\\downloads\\',
@@ -104,7 +104,7 @@ describe('RemotePathMappingsSubsection', () => {
 
   it('shows error toast when create fails', async () => {
     const user = userEvent.setup();
-    (api.createMapping as Mock).mockRejectedValue(new Error('fail'));
+    (api.createRemotePathMapping as Mock).mockRejectedValue(new Error('fail'));
 
     renderWithProviders(<RemotePathMappingsSubsection clientId={5} />);
 
@@ -124,8 +124,8 @@ describe('RemotePathMappingsSubsection', () => {
 
   it('opens edit form with pre-filled values and submits update', async () => {
     const user = userEvent.setup();
-    (api.getMappingsByClientId as Mock).mockResolvedValue([mockMapping]);
-    (api.updateMapping as Mock).mockResolvedValue({ ...mockMapping, remotePath: '/new/path/' });
+    (api.getRemotePathMappingsByClientId as Mock).mockResolvedValue([mockMapping]);
+    (api.updateRemotePathMapping as Mock).mockResolvedValue({ ...mockMapping, remotePath: '/new/path/' });
 
     renderWithProviders(<RemotePathMappingsSubsection clientId={5} />);
 
@@ -145,7 +145,7 @@ describe('RemotePathMappingsSubsection', () => {
     await user.click(screen.getByText('Save'));
 
     await waitFor(() => {
-      expect(api.updateMapping).toHaveBeenCalled();
+      expect(api.updateRemotePathMapping).toHaveBeenCalled();
     });
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('Path mapping updated');
@@ -154,8 +154,8 @@ describe('RemotePathMappingsSubsection', () => {
 
   it('shows error toast when update fails', async () => {
     const user = userEvent.setup();
-    (api.getMappingsByClientId as Mock).mockResolvedValue([mockMapping]);
-    (api.updateMapping as Mock).mockRejectedValue(new Error('fail'));
+    (api.getRemotePathMappingsByClientId as Mock).mockResolvedValue([mockMapping]);
+    (api.updateRemotePathMapping as Mock).mockRejectedValue(new Error('fail'));
 
     renderWithProviders(<RemotePathMappingsSubsection clientId={5} />);
 
@@ -175,8 +175,8 @@ describe('RemotePathMappingsSubsection', () => {
 
   it('deletes mapping after confirmation', async () => {
     const user = userEvent.setup();
-    (api.getMappingsByClientId as Mock).mockResolvedValue([mockMapping]);
-    (api.deleteMapping as Mock).mockResolvedValue({ success: true });
+    (api.getRemotePathMappingsByClientId as Mock).mockResolvedValue([mockMapping]);
+    (api.deleteRemotePathMapping as Mock).mockResolvedValue({ success: true });
 
     renderWithProviders(<RemotePathMappingsSubsection clientId={5} />);
 
@@ -194,7 +194,7 @@ describe('RemotePathMappingsSubsection', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => {
-      expect((api.deleteMapping as Mock).mock.calls[0][0]).toBe(1);
+      expect((api.deleteRemotePathMapping as Mock).mock.calls[0][0]).toBe(1);
     });
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('Path mapping removed');
@@ -203,8 +203,8 @@ describe('RemotePathMappingsSubsection', () => {
 
   it('shows error toast when delete fails', async () => {
     const user = userEvent.setup();
-    (api.getMappingsByClientId as Mock).mockResolvedValue([mockMapping]);
-    (api.deleteMapping as Mock).mockRejectedValue(new Error('fail'));
+    (api.getRemotePathMappingsByClientId as Mock).mockResolvedValue([mockMapping]);
+    (api.deleteRemotePathMapping as Mock).mockRejectedValue(new Error('fail'));
 
     renderWithProviders(<RemotePathMappingsSubsection clientId={5} />);
 
@@ -225,13 +225,13 @@ describe('RemotePathMappingsSubsection', () => {
   it('fetches mappings scoped to the client ID', () => {
     renderWithProviders(<RemotePathMappingsSubsection clientId={5} />);
 
-    expect(api.getMappingsByClientId).toHaveBeenCalledWith(5);
+    expect(api.getRemotePathMappingsByClientId).toHaveBeenCalledWith(5);
   });
 
   it('Save button does not submit a parent form (regression #225)', async () => {
     const user = userEvent.setup();
     const parentSubmit = vi.fn((e: React.FormEvent) => e.preventDefault());
-    (api.createMapping as Mock).mockResolvedValue(mockMapping);
+    (api.createRemotePathMapping as Mock).mockResolvedValue(mockMapping);
 
     renderWithProviders(
       <form onSubmit={parentSubmit}>
@@ -249,7 +249,7 @@ describe('RemotePathMappingsSubsection', () => {
     await user.click(screen.getByText('Save'));
 
     await waitFor(() => {
-      expect(api.createMapping).toHaveBeenCalled();
+      expect(api.createRemotePathMapping).toHaveBeenCalled();
     });
     await waitFor(() => {
       expect(parentSubmit).not.toHaveBeenCalled();
