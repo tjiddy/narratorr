@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Mock } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
+import { join } from 'node:path';
+import { and, eq, isNotNull } from 'drizzle-orm';
 import { QualityGateService } from './quality-gate.service.js';
 import { inject, createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import type { Db } from '../../db/index.js';
+import { downloads } from '../../db/schema.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { DownloadClientService } from './download-client.service.js';
@@ -15,7 +19,7 @@ vi.mock('../../core/utils/audio-scanner.js', () => ({
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 
 const mockAdapter = {
-  getDownload: vi.fn().mockResolvedValue({ savePath: '/downloads/test', progress: 100, status: 'completed', size: 0 }),
+  getDownload: vi.fn().mockResolvedValue({ savePath: '/downloads', name: 'test', progress: 100, status: 'completed', size: 0 }),
   removeDownload: vi.fn().mockResolvedValue(undefined),
 };
 
@@ -72,7 +76,7 @@ function makeScan(overrides?: Partial<{ totalSize: number; totalDuration: number
 describe('QualityGateService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockAdapter.getDownload.mockResolvedValue({ savePath: '/downloads/test', progress: 100, status: 'completed', size: 0 });
+    mockAdapter.getDownload.mockResolvedValue({ savePath: '/downloads', name: 'test', progress: 100, status: 'completed', size: 0 });
     mockAdapter.removeDownload.mockResolvedValue(undefined);
   });
 
@@ -520,6 +524,54 @@ describe('QualityGateService', () => {
       db.select.mockReturnValue(mockDbChain([]));
 
       await expect(service.reject(1)).rejects.toThrow('not found');
+    });
+  });
+
+  describe('processCompletedDownloads query', () => {
+    it('WHERE clause uses isNotNull(downloads.externalId) with completed status filter', async () => {
+      const { service, db } = createService();
+      const chain = mockDbChain([]);
+      db.select.mockReturnValueOnce(chain);
+
+      await service.processCompletedDownloads();
+
+      const whereFn = (chain as Record<string, Mock>).where;
+      expect(whereFn).toHaveBeenCalledTimes(1);
+      const whereArg = whereFn.mock.calls[0][0];
+
+      const expectedWhere = and(
+        eq(downloads.status, 'completed'),
+        isNotNull(downloads.externalId),
+      );
+      expect(whereArg).toEqual(expectedWhere);
+    });
+
+    it('passes joined savePath/name to scanAudioDirectory (C-2 regression)', async () => {
+      const { service, db } = createService();
+      mockAdapter.getDownload.mockResolvedValue({ savePath: '/downloads', name: 'Specific.Release', progress: 100, status: 'completed', size: 0 });
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(makeScan());
+      db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.select.mockReturnValue(mockDbChain([{ download: baseDownload, book: baseBook }]));
+
+      await service.processCompletedDownloads();
+
+      expect(scanAudioDirectory).toHaveBeenCalledWith(
+        join('/downloads', 'Specific.Release'),
+        expect.objectContaining({ skipCover: true }),
+      );
+    });
+
+    it('runtime guard skips download with null bookId', async () => {
+      const { service, db, log } = createService();
+      db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, bookId: null }, book: null }]));
+
+      await service.processCompletedDownloads();
+
+      expect(scanAudioDirectory).not.toHaveBeenCalled();
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ id: baseDownload.id }),
+        expect.stringContaining('skipping'),
+      );
     });
   });
 

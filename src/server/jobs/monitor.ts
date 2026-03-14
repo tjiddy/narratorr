@@ -10,6 +10,7 @@ import { retrySearch, type RetrySearchDeps } from '../services/retry-search.js';
 import type { BlacklistService } from '../services';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
+import { revertBookStatus } from '../utils/book-status.js';
 
 export interface MonitorRetryDeps {
   blacklistService: BlacklistService;
@@ -282,8 +283,7 @@ async function recoverBookStatus(db: Db, bookId: number, failedDownloadId: numbe
   const [book] = await db.select().from(books).where(eq(books.id, bookId)).limit(1);
   if (!book) return;
 
-  const newStatus = book.path ? 'imported' : 'wanted';
-  await db.update(books).set({ status: newStatus, updatedAt: new Date() }).where(eq(books.id, bookId));
+  const newStatus = await revertBookStatus(db, book);
   log.info({ bookId, status: newStatus, hadPath: !!book.path }, 'Book status recovered after download failure');
 }
 

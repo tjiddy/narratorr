@@ -9,7 +9,6 @@ import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../.
 import { renameFilesWithTemplate } from '../utils/paths.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
-import { applyPathMapping } from '../../core/utils/path-mapping.js';
 import { runPostProcessingScript } from '../utils/post-processing-script.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -21,6 +20,8 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
 import { Semaphore } from '../utils/semaphore.js';
+import { revertBookStatus } from '../utils/book-status.js';
+import { resolveSavePath } from '../utils/download-path.js';
 
 type DownloadRow = typeof downloads.$inferSelect;
 type BookRow = typeof books.$inferSelect;
@@ -162,7 +163,7 @@ export class ImportService {
     let targetPath: string | undefined;
     try {
       // 3. Get save path from download client
-      const savePath = await this.resolveSavePath(download);
+      const savePath = await resolveSavePath(download, this.downloadClientService, this.remotePathMappingService);
 
       // 4. Build target path
       const [librarySettings, importSettings, processingSettings] = await Promise.all([
@@ -435,11 +436,7 @@ export class ImportService {
       }).where(eq(downloads.id, downloadId));
 
       // Recover book status based on whether it was previously imported
-      const revertStatus = book.path ? 'imported' : 'wanted';
-      await this.db.update(books).set({
-        status: revertStatus,
-        updatedAt: new Date(),
-      }).where(eq(books.id, book.id));
+      const revertStatus = await revertBookStatus(this.db, book);
 
       // SSE: download_status_change + book_status_change (failure revert)
       try {
@@ -558,38 +555,6 @@ export class ImportService {
 
     if (results.length === 0) return null;
     return { book: results[0].book, author: results[0].author ?? undefined };
-  }
-
-  private async resolveSavePath(download: DownloadRow): Promise<string> {
-    if (!download.downloadClientId || !download.externalId) {
-      throw new Error(`Download ${download.id} missing client or external ID`);
-    }
-
-    const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
-    if (!adapter) {
-      throw new Error(`Download client ${download.downloadClientId} not found`);
-    }
-
-    const item = await adapter.getDownload(download.externalId);
-    if (!item) {
-      throw new Error(`Download ${download.externalId} not found in client`);
-    }
-
-    let fullPath = join(item.savePath, item.name);
-
-    // Apply remote path mapping if configured
-    if (this.remotePathMappingService && download.downloadClientId) {
-      const mappings = await this.remotePathMappingService.getByClientId(download.downloadClientId);
-      if (mappings.length > 0) {
-        const mapped = applyPathMapping(fullPath, mappings);
-        if (mapped !== fullPath) {
-          this.log.info({ original: fullPath, mapped }, 'Applied remote path mapping');
-          fullPath = mapped;
-        }
-      }
-    }
-
-    return fullPath;
   }
 
   private async countAudioFiles(dirPath: string): Promise<number> {

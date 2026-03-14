@@ -1,5 +1,5 @@
 /* eslint-disable max-lines -- quality gate decision tree with SSE emission at each transition point */
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, desc, isNotNull } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, bookEvents } from '../../db/schema.js';
@@ -10,9 +10,10 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
-import { applyPathMapping } from '../../core/utils/path-mapping.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
+import { revertBookStatus } from '../utils/book-status.js';
+import { resolveSavePath } from '../utils/download-path.js';
 
 type DownloadRow = typeof downloads.$inferSelect;
 type BookRow = typeof books.$inferSelect;
@@ -59,7 +60,7 @@ export class QualityGateService {
       .select({ download: downloads, book: books })
       .from(downloads)
       .leftJoin(books, eq(downloads.bookId, books.id))
-      .where(and(eq(downloads.status, 'completed'), eq(downloads.externalId, downloads.externalId)));
+      .where(and(eq(downloads.status, 'completed'), isNotNull(downloads.externalId)));
 
     for (const row of completedDownloads) {
       if (!row.download.externalId || !row.download.bookId) {
@@ -106,7 +107,7 @@ export class QualityGateService {
     // Resolve save path
     let savePath: string;
     try {
-      savePath = await this.resolveSavePath(download);
+      savePath = await resolveSavePath(download, this.downloadClientService, this.remotePathMappingService);
     } catch (error) {
       this.log.error({ error, downloadId: download.id }, 'Quality gate: failed to resolve save path');
       await this.holdForReview(download, book, { probeFailure: true, holdReasons: ['probe_failed'] });
@@ -253,35 +254,6 @@ export class QualityGateService {
     return result.length > 0;
   }
 
-  /** Resolve download save path via the download client adapter. */
-  private async resolveSavePath(download: DownloadRow): Promise<string> {
-    if (!download.downloadClientId || !download.externalId) {
-      throw new Error(`Download ${download.id} missing client or external ID`);
-    }
-
-    const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
-    if (!adapter) {
-      throw new Error(`Download client ${download.downloadClientId} not found`);
-    }
-
-    const item = await adapter.getDownload(download.externalId);
-    if (!item) {
-      throw new Error(`Download ${download.externalId} not found in client`);
-    }
-
-    let savePath = item.savePath;
-
-    // Apply remote path mapping if configured
-    if (this.remotePathMappingService) {
-      const mappings = await this.remotePathMappingService.getByClientId(download.downloadClientId);
-      if (mappings.length > 0) {
-        savePath = applyPathMapping(savePath, mappings);
-      }
-    }
-
-    return savePath;
-  }
-
   /** Hold a download for review with partial reason data. */
   private async holdForReview(
     download: DownloadRow,
@@ -352,11 +324,7 @@ export class QualityGateService {
 
     // Recover book status
     if (book) {
-      const revertStatus = book.path ? 'imported' : 'wanted';
-      await this.db.update(books).set({
-        status: revertStatus as BookRow['status'],
-        updatedAt: new Date(),
-      }).where(eq(books.id, book.id));
+      const revertStatus = await revertBookStatus(this.db, book);
 
       // SSE: download_status_change + book_status_change (rejected)
       try {
@@ -507,11 +475,7 @@ export class QualityGateService {
 
     // Recover book status
     if (book) {
-      const revertStatus = book.path ? 'imported' : 'wanted';
-      await this.db.update(books).set({
-        status: revertStatus as BookRow['status'],
-        updatedAt: new Date(),
-      }).where(eq(books.id, book.id));
+      const revertStatus = await revertBookStatus(this.db, book);
 
       // SSE: download_status_change + book_status_change (rejected)
       try {

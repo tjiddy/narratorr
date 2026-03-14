@@ -11,6 +11,7 @@ import { type NotifierService } from './notifier.service.js';
 import { type EventHistoryService, type CreateEventInput } from './event-history.service.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import { type EventBroadcasterService } from './event-broadcaster.service.js';
+import { revertBookStatus } from '../utils/book-status.js';
 
 type DownloadRow = typeof downloads.$inferSelect;
 type BookRow = typeof books.$inferSelect;
@@ -403,11 +404,7 @@ export class DownloadService {
     // Reset book status if linked — revert to imported if book has a path, else wanted
     if (download.bookId) {
       const oldBookStatus = (download.book?.status ?? 'downloading') as BookStatus;
-      const revertStatus: BookStatus = download.book?.path ? 'imported' : 'wanted';
-      await this.db
-        .update(books)
-        .set({ status: revertStatus, updatedAt: new Date() })
-        .where(eq(books.id, download.bookId));
+      const revertStatus = await revertBookStatus(this.db, { id: download.bookId, path: download.book?.path ?? null });
 
       // SSE: book_status_change
       try { this.broadcaster?.emit('book_status_change', { book_id: download.bookId, old_status: oldBookStatus, new_status: revertStatus }); } catch { /* fire-and-forget */ }
