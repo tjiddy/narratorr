@@ -25,6 +25,7 @@ export function SearchResults({
   const { data: libraryBooks } = useQuery({
     queryKey: queryKeys.books(),
     queryFn: () => api.getBooks(),
+    select: (response) => response.data,
   });
 
   if (searchTerm && !isLoading && !hasResults) {

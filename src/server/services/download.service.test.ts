@@ -60,22 +60,57 @@ describe('DownloadService', () => {
   });
 
   describe('getAll', () => {
-    it('returns downloads with books', async () => {
-      db.select.mockReturnValue(
-        mockDbChain([{ download: mockDownload, book: mockBook }]),
-      );
+    it('returns downloads in { data, total } envelope', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
 
       const result = await service.getAll();
-      expect(result).toHaveLength(1);
-      expect(result[0].title).toBe('The Way of Kings');
-      expect(result[0].book?.title).toBe('The Way of Kings');
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].title).toBe('The Way of Kings');
+      expect(result.data[0].book?.title).toBe('The Way of Kings');
+      expect(result.total).toBe(1);
     });
 
-    it('returns empty array when no downloads', async () => {
-      db.select.mockReturnValue(mockDbChain([]));
+    it('returns empty data with total 0 when no downloads', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getAll();
-      expect(result).toEqual([]);
+      expect(result).toEqual({ data: [], total: 0 });
+    });
+
+    it('handles null book (orphaned download) in results', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: null }]));
+
+      const result = await service.getAll();
+      expect(result.data[0].book).toBeUndefined();
+    });
+
+    it('applies limit and offset when provided', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 50 }]))
+        .mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
+
+      const result = await service.getAll(undefined, { limit: 10, offset: 20 });
+      expect(result.total).toBe(50);
+      expect(result.data).toHaveLength(1);
+    });
+
+    it('applies stable orderBy with addedAt DESC, id DESC', async () => {
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAll();
+
+      expect(dataChain.orderBy).toHaveBeenCalledTimes(1);
+      const args = (dataChain.orderBy as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(args).toHaveLength(2);
     });
   });
 

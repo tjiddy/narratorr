@@ -39,7 +39,7 @@ export async function runRssJob(
   const qualitySettings = await settingsService.get('quality');
 
   // Load candidate books: wanted + monitored-for-upgrade
-  const wantedBooks = await bookService.getAll('wanted');
+  const { data: wantedBooks } = await bookService.getAll('wanted');
   const monitoredBooks = await bookService.getMonitoredBooks();
   const candidates: Array<BookWithAuthor & { isUpgrade: boolean }> = [
     ...wantedBooks.map((b) => ({ ...b, isUpgrade: false })),

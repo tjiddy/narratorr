@@ -10,12 +10,14 @@ export function useActivity() {
 
   const { data: downloads = [], isLoading, isError } = useQuery({
     queryKey: queryKeys.activity(),
-    queryFn: api.getActivity,
+    queryFn: () => api.getActivity(),
+    select: (response) => response.data,
     refetchInterval: (query) => {
       if (sseConnected) return false; // SSE handles real-time updates
-      const data = query.state.data;
-      if (!data) return 5000;
-      return data.some((d: Download) => isInProgressStatus(d.status)) ? 5000 : false;
+      const raw = query.state.data;
+      if (!raw) return 5000;
+      const items = raw.data;
+      return items.some((d: Download) => isInProgressStatus(d.status)) ? 5000 : false;
     },
   });
 

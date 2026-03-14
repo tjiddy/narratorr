@@ -10,14 +10,17 @@ import { type z } from 'zod';
 import {
   idParamSchema,
   bookListQuerySchema,
+  paginationParamsSchema,
   createBookBodySchema,
   updateBookBodySchema,
   deleteBookQuerySchema,
-  type BookListQuery,
   type CreateBookBody,
   type UpdateBookBody,
   type DeleteBookQuery,
 } from '../../shared/schemas.js';
+
+const booksListQuerySchema = bookListQuerySchema.merge(paginationParamsSchema);
+type BooksListQuery = z.infer<typeof booksListQuerySchema>;
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -162,14 +165,15 @@ function registerBookSearchRoute(app: FastifyInstance, bookService: BookService,
 
 export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, renameService: RenameService, taggingService: TaggingService, eventHistory?: EventHistoryService, indexerService?: IndexerService, recyclingBinService?: RecyclingBinService) {
   // GET /api/books
-  app.get<{ Querystring: BookListQuery }>(
+  app.get<{ Querystring: BooksListQuery }>(
     '/api/books',
-    { schema: { querystring: bookListQuerySchema } },
+    { schema: { querystring: booksListQuerySchema } },
     async (request, reply) => {
       try {
-        const { status } = request.query;
-        request.log.debug({ status }, 'Fetching books');
-        return await bookService.getAll(status);
+        const { status, limit, offset } = request.query;
+        request.log.debug({ status, limit, offset }, 'Fetching books');
+        const pagination = limit !== undefined || offset !== undefined ? { limit, offset } : undefined;
+        return await bookService.getAll(status, pagination, { slim: true });
       } catch (error) {
         request.log.error(error, 'Failed to fetch books');
         return reply.status(500).send({ error: 'Internal server error' });

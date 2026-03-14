@@ -36,7 +36,7 @@ describe('useLibrary', () => {
   it('calls api.getBooks and returns data', async () => {
     const mockBooks = [createMockBook({ id: 1, title: 'Test Book' })];
 
-    vi.mocked(api.getBooks).mockResolvedValue(mockBooks);
+    vi.mocked(api.getBooks).mockResolvedValue({ data: mockBooks, total: mockBooks.length });
 
     const { result } = renderHook(() => useLibrary(), {
       wrapper: createWrapper(),

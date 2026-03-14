@@ -32,31 +32,66 @@ describe('BookService', () => {
   });
 
   describe('getAll', () => {
-    it('returns books with authors', async () => {
-      db.select.mockReturnValue(
-        mockDbChain([{ book: mockBook, author: mockAuthor }]),
-      );
+    it('returns books in { data, total } envelope', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor, importListName: null }]));
 
       const result = await service.getAll();
-      expect(result).toHaveLength(1);
-      expect(result[0].title).toBe('The Way of Kings');
-      expect(result[0].author?.name).toBe('Brandon Sanderson');
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].title).toBe('The Way of Kings');
+      expect(result.data[0].author?.name).toBe('Brandon Sanderson');
+      expect(result.total).toBe(1);
     });
 
-    it('returns empty array when no books', async () => {
-      db.select.mockReturnValue(mockDbChain([]));
+    it('returns empty data with total 0 when no books', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getAll();
-      expect(result).toEqual([]);
+      expect(result).toEqual({ data: [], total: 0 });
     });
 
     it('sets author to undefined when no join match', async () => {
-      db.select.mockReturnValue(
-        mockDbChain([{ book: mockBook, author: null }]),
-      );
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: null, importListName: null }]));
 
       const result = await service.getAll();
-      expect(result[0].author).toBeUndefined();
+      expect(result.data[0].author).toBeUndefined();
+    });
+
+    it('applies limit and offset when provided', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 100 }]))
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor, importListName: null }]));
+
+      const result = await service.getAll(undefined, { limit: 10, offset: 20 });
+      expect(result.total).toBe(100);
+      expect(result.data).toHaveLength(1);
+    });
+
+    it('composes status filter with pagination', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 25 }]))
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor, importListName: null }]));
+
+      const result = await service.getAll('wanted', { limit: 10, offset: 0 });
+      expect(result.total).toBe(25);
+    });
+
+    it('applies stable orderBy with createdAt DESC, id DESC', async () => {
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAll();
+
+      expect(dataChain.orderBy).toHaveBeenCalledTimes(1);
+      const args = (dataChain.orderBy as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(args).toHaveLength(2);
     });
   });
 

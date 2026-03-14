@@ -9,6 +9,7 @@ export function useEventHistory(params?: { eventType?: string; search?: string }
   const { data: events = [], isLoading, isError } = useQuery({
     queryKey: queryKeys.eventHistory.all(params),
     queryFn: () => api.getEventHistory(params),
+    select: (response) => response.data,
   });
 
   const markFailedMutation = useMutation({

@@ -43,35 +43,56 @@ describe('activity routes', () => {
   });
 
   describe('GET /api/activity', () => {
-    it('returns all downloads', async () => {
-      (services.download.getAll as Mock).mockResolvedValue([mockDownload]);
+    it('returns downloads in { data, total } envelope', async () => {
+      (services.download.getAll as Mock).mockResolvedValue({ data: [mockDownload], total: 1 });
 
       const res = await app.inject({ method: 'GET', url: '/api/activity' });
 
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toHaveLength(1);
+      const body = JSON.parse(res.payload);
+      expect(body.data).toHaveLength(1);
+      expect(body.total).toBe(1);
     });
 
-    it('passes status filter', async () => {
-      (services.download.getAll as Mock).mockResolvedValue([]);
+    it('passes status filter and pagination', async () => {
+      (services.download.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       await app.inject({ method: 'GET', url: '/api/activity?status=downloading' });
 
-      expect(services.download.getAll).toHaveBeenCalledWith('downloading');
+      expect(services.download.getAll).toHaveBeenCalledWith('downloading', undefined);
+    });
+
+    it('forwards limit and offset to service', async () => {
+      (services.download.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/activity?limit=10&offset=20' });
+
+      expect(services.download.getAll).toHaveBeenCalledWith(undefined, { limit: 10, offset: 20 });
+    });
+
+    it('rejects limit=0 with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/activity?limit=0' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects negative offset with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/activity?offset=-1' });
+      expect(res.statusCode).toBe(400);
     });
 
     it('augments pending_review downloads with quality gate data', async () => {
       const pendingDownload = { ...mockDownload, id: 2, status: 'pending_review' };
       const gateData = { action: 'held', mbPerHour: 60, existingMbPerHour: 40 };
-      (services.download.getAll as Mock).mockResolvedValue([mockDownload, pendingDownload]);
+      (services.download.getAll as Mock).mockResolvedValue({ data: [mockDownload, pendingDownload], total: 2 });
       (services.qualityGate.getQualityGateData as Mock).mockResolvedValue(gateData);
 
       const res = await app.inject({ method: 'GET', url: '/api/activity' });
 
       const body = JSON.parse(res.payload);
-      expect(body).toHaveLength(2);
-      expect(body[0].qualityGate).toBeUndefined();
-      expect(body[1].qualityGate).toEqual(gateData);
+      expect(body.data).toHaveLength(2);
+      expect(body.data[0].qualityGate).toBeUndefined();
+      expect(body.data[1].qualityGate).toEqual(gateData);
+      expect(body.total).toBe(2);
       expect(services.qualityGate.getQualityGateData).toHaveBeenCalledWith(2);
     });
   });

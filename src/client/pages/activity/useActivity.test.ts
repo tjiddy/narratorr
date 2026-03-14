@@ -57,7 +57,7 @@ describe('useActivity', () => {
       makeDownload({ id: 6, status: 'completed' }),
       makeDownload({ id: 7, status: 'paused' }),
     ];
-    vi.mocked(api.getActivity).mockResolvedValue(downloads);
+    vi.mocked(api.getActivity).mockResolvedValue({ data: downloads, total: downloads.length });
 
     const { result } = renderHook(() => useActivity(), {
       wrapper: createWrapper(),
@@ -90,7 +90,7 @@ describe('useActivity', () => {
   });
 
   it('cancel mutation calls api and invalidates queries', async () => {
-    vi.mocked(api.getActivity).mockResolvedValue([]);
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
     vi.mocked(api.cancelDownload).mockResolvedValue(undefined as never);
 
     const { result } = renderHook(() => useActivity(), {
@@ -112,7 +112,7 @@ describe('useActivity', () => {
   });
 
   it('retry mutation calls api and invalidates queries', async () => {
-    vi.mocked(api.getActivity).mockResolvedValue([]);
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
     vi.mocked(api.retryDownload).mockResolvedValue(undefined as never);
 
     const { result } = renderHook(() => useActivity(), {
@@ -139,7 +139,7 @@ describe('useActivity', () => {
       makeDownload({ id: 2, status: 'pending_review' }),
       makeDownload({ id: 3, status: 'imported' }),
     ];
-    vi.mocked(api.getActivity).mockResolvedValue(downloads);
+    vi.mocked(api.getActivity).mockResolvedValue({ data: downloads, total: downloads.length });
 
     const { result } = renderHook(() => useActivity(), {
       wrapper: createWrapper(),
@@ -155,7 +155,7 @@ describe('useActivity', () => {
   });
 
   it('approve mutation calls api and invalidates queries', async () => {
-    vi.mocked(api.getActivity).mockResolvedValue([]);
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
     vi.mocked(api.approveDownload).mockResolvedValue(undefined as never);
 
     const { result } = renderHook(() => useActivity(), {
@@ -177,7 +177,7 @@ describe('useActivity', () => {
   });
 
   it('reject mutation calls api and invalidates queries', async () => {
-    vi.mocked(api.getActivity).mockResolvedValue([]);
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
     vi.mocked(api.rejectDownload).mockResolvedValue(undefined as never);
 
     const { result } = renderHook(() => useActivity(), {
@@ -205,7 +205,7 @@ describe('useActivity', () => {
         makeDownload({ id: 1, status: 'checking' }),
         makeDownload({ id: 2, status: 'imported' }),
       ];
-      vi.mocked(api.getActivity).mockResolvedValue(downloads);
+      vi.mocked(api.getActivity).mockResolvedValue({ data: downloads, total: downloads.length });
 
       const { result } = renderHook(() => useActivity(), {
         wrapper: createWrapper(),
@@ -236,7 +236,7 @@ describe('useActivity', () => {
         makeDownload({ id: 2, status: 'imported' }),
         makeDownload({ id: 3, status: 'failed' }),
       ];
-      vi.mocked(api.getActivity).mockResolvedValue(downloads);
+      vi.mocked(api.getActivity).mockResolvedValue({ data: downloads, total: downloads.length });
 
       const { result } = renderHook(() => useActivity(), {
         wrapper: createWrapper(),
@@ -280,7 +280,7 @@ describe('useActivity', () => {
         makeDownload({ id: 1, status: 'downloading' }),
         makeDownload({ id: 2, status: 'checking' }),
       ];
-      vi.mocked(api.getActivity).mockResolvedValue(downloads);
+      vi.mocked(api.getActivity).mockResolvedValue({ data: downloads, total: downloads.length });
 
       const { result, rerender } = renderHook(() => useActivity(), {
         wrapper: createWrapper(),

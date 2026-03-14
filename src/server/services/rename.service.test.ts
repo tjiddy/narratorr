@@ -75,7 +75,7 @@ describe('RenameService', () => {
       const { service, bookService } = createService();
       const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
       bookService.getById.mockResolvedValue(book);
-      bookService.getAll.mockResolvedValue([book]);
+      bookService.getAll.mockResolvedValue({ data: [book], total: 1 });
       bookService.update.mockResolvedValue({ ...book, path: '/library/Brandon Sanderson/The Way of Kings' });
 
       const result = await service.renameBook(1);
@@ -90,7 +90,7 @@ describe('RenameService', () => {
       const { service, bookService } = createService();
       const book = { ...mockBook, path: '/library/old-path' };
       bookService.getById.mockResolvedValue(book);
-      bookService.getAll.mockResolvedValue([book]);
+      bookService.getAll.mockResolvedValue({ data: [book], total: 1 });
       bookService.update.mockResolvedValue(book);
 
       const result = await service.renameBook(1);
@@ -104,7 +104,7 @@ describe('RenameService', () => {
       const { service, bookService } = createService();
       const book = { ...mockBook, path: '/library/wrong/path' };
       bookService.getById.mockResolvedValue(book);
-      bookService.getAll.mockResolvedValue([book]);
+      bookService.getAll.mockResolvedValue({ data: [book], total: 1 });
       bookService.update.mockResolvedValue(book);
 
       await service.renameBook(1);
@@ -147,7 +147,7 @@ describe('RenameService', () => {
       const book = { ...mockBook, id: 1, path: '/library/wrong/path' };
       const otherBook = { ...mockBook, id: 2, path: '/library/Brandon Sanderson/The Way of Kings' };
       bookService.getById.mockResolvedValue(book);
-      bookService.getAll.mockResolvedValue([book, otherBook]);
+      bookService.getAll.mockResolvedValue({ data: [book, otherBook], total: 2 });
       (stat as Mock).mockResolvedValue({ isFile: () => false, isDirectory: () => true });
 
       await expect(service.renameBook(1)).rejects.toThrow(RenameError);
@@ -170,7 +170,7 @@ describe('RenameService', () => {
       settingsService.get.mockResolvedValue({ ...librarySettings, fileFormat: '{title}' });
       const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
       bookService.getById.mockResolvedValue(book);
-      bookService.getAll.mockResolvedValue([book]);
+      bookService.getAll.mockResolvedValue({ data: [book], total: 1 });
       bookService.update.mockResolvedValue({ ...book, path: '/library/Brandon Sanderson/The Way of Kings' });
 
       // readdir returns files so renameFilesWithTemplate runs, but file rename fails
@@ -192,7 +192,7 @@ describe('RenameService', () => {
       const { service, bookService } = createService();
       const book = { ...mockBook, path: '/volume1/wrong/path' };
       bookService.getById.mockResolvedValue(book);
-      bookService.getAll.mockResolvedValue([book]);
+      bookService.getAll.mockResolvedValue({ data: [book], total: 1 });
       bookService.update.mockResolvedValue(book);
 
       // First rename call (folder move) throws EXDEV

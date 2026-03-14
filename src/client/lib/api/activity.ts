@@ -42,7 +42,12 @@ export interface ActivityCounts {
 export type RetryResponse = Download | { status: 'no_candidates' } | { status: 'retry_error' };
 
 export const activityApi = {
-  getActivity: () => fetchApi<Download[]>('/activity'),
+  getActivity: (status?: string) => {
+    const params = new URLSearchParams();
+    if (status) params.set('status', status);
+    const qs = params.toString();
+    return fetchApi<{ data: Download[]; total: number }>(`/activity${qs ? `?${qs}` : ''}`);
+  },
   getActiveDownloads: () => fetchApi<Download[]>('/activity/active'),
   getActivityCounts: () => fetchApi<ActivityCounts>('/activity/counts'),
   cancelDownload: (id: number) =>

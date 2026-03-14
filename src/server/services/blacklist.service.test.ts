@@ -57,10 +57,43 @@ describe('BlacklistService', () => {
   });
 
   describe('getAll', () => {
-    it('returns all blacklist entries', async () => {
-      db.select.mockReturnValue(mockDbChain([mockEntry, mockEntry2]));
+    it('returns entries in { data, total } envelope', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 2 }]))
+        .mockReturnValueOnce(mockDbChain([mockEntry, mockEntry2]));
       const result = await service.getAll();
-      expect(result).toHaveLength(2);
+      expect(result.data).toHaveLength(2);
+      expect(result.total).toBe(2);
+    });
+
+    it('returns empty data with total 0 when no entries', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+      const result = await service.getAll();
+      expect(result).toEqual({ data: [], total: 0 });
+    });
+
+    it('applies limit and offset when provided', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 50 }]))
+        .mockReturnValueOnce(mockDbChain([mockEntry]));
+      const result = await service.getAll({ limit: 10, offset: 20 });
+      expect(result.total).toBe(50);
+      expect(result.data).toHaveLength(1);
+    });
+
+    it('applies stable orderBy with blacklistedAt DESC, id DESC', async () => {
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAll();
+
+      expect(dataChain.orderBy).toHaveBeenCalledTimes(1);
+      const args = (dataChain.orderBy as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(args).toHaveLength(2);
     });
   });
 

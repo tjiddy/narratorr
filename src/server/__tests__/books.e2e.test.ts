@@ -15,7 +15,7 @@ describe('Books E2E', () => {
   it('GET /api/books returns empty array initially', async () => {
     const res = await e2e.app.inject({ method: 'GET', url: '/api/books' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual([]);
+    expect(res.json()).toEqual({ data: [], total: 0 });
   });
 
   it('POST /api/books creates a book and returns 201', async () => {
@@ -43,14 +43,15 @@ describe('Books E2E', () => {
   it('GET /api/books returns the created book', async () => {
     const res = await e2e.app.inject({ method: 'GET', url: '/api/books' });
     expect(res.statusCode).toBe(200);
-    const books = res.json();
+    const { data: books, total } = res.json();
     expect(books).toHaveLength(1);
+    expect(total).toBe(1);
     expect(books[0].title).toBe('The Way of Kings');
   });
 
   it('GET /api/books/:id returns a single book', async () => {
     const listRes = await e2e.app.inject({ method: 'GET', url: '/api/books' });
-    const bookId = listRes.json()[0].id;
+    const bookId = listRes.json().data[0].id;
 
     const res = await e2e.app.inject({ method: 'GET', url: `/api/books/${bookId}` });
     expect(res.statusCode).toBe(200);
@@ -64,7 +65,7 @@ describe('Books E2E', () => {
 
   it('PUT /api/books/:id updates a book', async () => {
     const listRes = await e2e.app.inject({ method: 'GET', url: '/api/books' });
-    const bookId = listRes.json()[0].id;
+    const bookId = listRes.json().data[0].id;
 
     const res = await e2e.app.inject({
       method: 'PUT',
@@ -101,7 +102,7 @@ describe('Books E2E', () => {
 
   it('DELETE /api/books/:id removes a book', async () => {
     const listRes = await e2e.app.inject({ method: 'GET', url: '/api/books' });
-    const bookId = listRes.json()[0].id;
+    const bookId = listRes.json().data[0].id;
 
     const delRes = await e2e.app.inject({ method: 'DELETE', url: `/api/books/${bookId}` });
     expect(delRes.statusCode).toBe(200);

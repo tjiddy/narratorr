@@ -2,29 +2,32 @@ import type { FastifyInstance } from 'fastify';
 import type { DownloadService } from '../services';
 import type { QualityGateService } from '../services/quality-gate.service.js';
 import type { ImportService } from '../services/import.service.js';
-import { idParamSchema } from '../../shared/schemas.js';
+import { idParamSchema, paginationParamsSchema } from '../../shared/schemas.js';
 import { z } from 'zod';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
 const activityListQuerySchema = z.object({
   status: z.string().optional(),
-});
+}).merge(paginationParamsSchema);
+
+type ActivityListQuery = z.infer<typeof activityListQuerySchema>;
 
 // eslint-disable-next-line max-lines-per-function -- linear route registration
 export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, qualityGateService: QualityGateService, importService: ImportService) {
   // GET /api/activity
-  app.get<{ Querystring: z.infer<typeof activityListQuerySchema> }>(
+  app.get<{ Querystring: ActivityListQuery }>(
     '/api/activity',
     { schema: { querystring: activityListQuerySchema } },
     async (request, reply) => {
       try {
-        const { status } = request.query;
-        request.log.debug({ status }, 'Fetching activity');
-        const downloads = await downloadService.getAll(status);
+        const { status, limit, offset } = request.query;
+        request.log.debug({ status, limit, offset }, 'Fetching activity');
+        const pagination = limit !== undefined || offset !== undefined ? { limit, offset } : undefined;
+        const result = await downloadService.getAll(status, pagination);
 
         // Augment pending_review downloads with quality gate comparison data
-        const augmented = await Promise.all(downloads.map(async (dl) => {
+        const augmented = await Promise.all(result.data.map(async (dl) => {
           if (dl.status === 'pending_review') {
             const qualityGate = await qualityGateService.getQualityGateData(dl.id);
             return { ...dl, qualityGate };
@@ -32,7 +35,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
           return dl;
         }));
 
-        return augmented;
+        return { data: augmented, total: result.total };
       } catch (error) {
         request.log.error(error, 'Failed to fetch activity');
         return reply.status(500).send({ error: 'Internal server error' });

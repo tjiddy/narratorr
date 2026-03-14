@@ -1,9 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import type { EventHistoryService } from '../services';
-import { idParamSchema, eventHistoryQuerySchema } from '../../shared/schemas.js';
+import { idParamSchema, eventHistoryQuerySchema, paginationParamsSchema } from '../../shared/schemas.js';
 import { z } from 'zod';
 
 type IdParam = z.infer<typeof idParamSchema>;
+
+const eventHistoryListQuerySchema = eventHistoryQuerySchema.merge(paginationParamsSchema);
+type EventHistoryListQuery = z.infer<typeof eventHistoryListQuerySchema>;
 
 const bookIdParamSchema = z.object({
   bookId: z.string().transform((val, ctx) => {
@@ -20,14 +23,15 @@ type BookIdParam = z.infer<typeof bookIdParamSchema>;
 
 export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryService: EventHistoryService) {
   // GET /api/event-history
-  app.get<{ Querystring: z.infer<typeof eventHistoryQuerySchema> }>(
+  app.get<{ Querystring: EventHistoryListQuery }>(
     '/api/event-history',
-    { schema: { querystring: eventHistoryQuerySchema } },
+    { schema: { querystring: eventHistoryListQuerySchema } },
     async (request, reply) => {
       try {
-        const { eventType, search } = request.query;
-        request.log.debug({ eventType, search }, 'Fetching event history');
-        return await eventHistoryService.getAll({ eventType, search });
+        const { eventType, search, limit, offset } = request.query;
+        request.log.debug({ eventType, search, limit, offset }, 'Fetching event history');
+        const pagination = limit !== undefined || offset !== undefined ? { limit, offset } : undefined;
+        return await eventHistoryService.getAll({ eventType, search }, pagination);
       } catch (error) {
         request.log.error(error, 'Failed to fetch event history');
         return reply.status(500).send({ error: 'Internal server error' });

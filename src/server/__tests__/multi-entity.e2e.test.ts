@@ -347,7 +347,7 @@ describe('Job lifecycle E2E', () => {
 
     // Verify download was created
     const activityRes = await e2e.app.inject({ method: 'GET', url: '/api/activity' });
-    const activity = activityRes.json() as { status: string }[];
+    const activity = (activityRes.json() as { data: { status: string }[] }).data;
     expect(activity.some((d) => d.status === 'downloading')).toBe(true);
   });
 

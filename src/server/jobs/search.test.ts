@@ -24,7 +24,7 @@ function createMockSettingsService(overrides?: { search?: unknown; quality?: unk
 
 function createMockBookService(books: unknown[] = [], monitoredBooks: unknown[] = []): BookService {
   return inject<BookService>({
-    getAll: vi.fn().mockResolvedValue(books),
+    getAll: vi.fn().mockResolvedValue({ data: books, total: books.length }),
     getMonitoredBooks: vi.fn().mockResolvedValue(monitoredBooks),
     getById: vi.fn(),
     create: vi.fn(),

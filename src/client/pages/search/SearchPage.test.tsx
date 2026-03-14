@@ -46,7 +46,7 @@ const mockLibraryBook = createMockBook({
 describe('SearchPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue([mockLibraryBook]);
+    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [mockLibraryBook], total: 1 });
     (api.searchMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
       books: [mockBookMetadata],
       authors: [],
@@ -59,7 +59,7 @@ describe('SearchPage', () => {
   });
 
   it('shows Add button for books not in library', async () => {
-    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [], total: 0 });
 
     renderWithProviders(<SearchPage />);
     const user = userEvent.setup();
@@ -82,7 +82,7 @@ describe('SearchPage', () => {
       title: 'The Way of Kings',
       author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' },
     };
-    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue([libraryBookWithAsin]);
+    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [libraryBookWithAsin], total: 1 });
 
     renderWithProviders(<SearchPage />);
     const user = userEvent.setup();
@@ -97,7 +97,7 @@ describe('SearchPage', () => {
   });
 
   it('calls addBook on Add button click and shows success toast', async () => {
-    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [], total: 0 });
     (api.addBook as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: 2,
       title: 'The Way of Kings',
@@ -192,7 +192,7 @@ describe('SearchPage', () => {
       books: [mockBookMetadata, secondBook],
       authors: [],
     });
-    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [], total: 0 });
 
     renderWithProviders(<SearchPage />);
     const user = userEvent.setup();
@@ -211,7 +211,7 @@ describe('SearchPage', () => {
   });
 
   it('handles 409 duplicate gracefully', async () => {
-    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (api.getBooks as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [], total: 0 });
     (api.addBook as ReturnType<typeof vi.fn>).mockRejectedValue(
       new ApiError(409, { id: 1, title: 'The Way of Kings' }),
     );

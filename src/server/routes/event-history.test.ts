@@ -21,30 +21,53 @@ describe('event-history routes', () => {
   });
 
   describe('GET /api/event-history', () => {
-    it('returns all events', async () => {
+    it('returns events in { data, total } envelope', async () => {
       const events = [createMockDbBookEvent(), createMockDbBookEvent({ id: 2 })];
-      (services.eventHistory.getAll as Mock).mockResolvedValue(events);
+      (services.eventHistory.getAll as Mock).mockResolvedValue({ data: events, total: 2 });
 
       const res = await app.inject({ method: 'GET', url: '/api/event-history' });
 
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toHaveLength(2);
+      const body = JSON.parse(res.payload);
+      expect(body.data).toHaveLength(2);
+      expect(body.total).toBe(2);
     });
 
-    it('passes eventType filter to service', async () => {
-      (services.eventHistory.getAll as Mock).mockResolvedValue([]);
+    it('passes eventType filter and pagination to service', async () => {
+      (services.eventHistory.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       await app.inject({ method: 'GET', url: '/api/event-history?eventType=grabbed' });
 
-      expect(services.eventHistory.getAll).toHaveBeenCalledWith({ eventType: 'grabbed', search: undefined });
+      expect(services.eventHistory.getAll).toHaveBeenCalledWith({ eventType: 'grabbed', search: undefined }, undefined);
     });
 
     it('passes search filter to service', async () => {
-      (services.eventHistory.getAll as Mock).mockResolvedValue([]);
+      (services.eventHistory.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       await app.inject({ method: 'GET', url: '/api/event-history?search=Kings' });
 
-      expect(services.eventHistory.getAll).toHaveBeenCalledWith({ eventType: undefined, search: 'Kings' });
+      expect(services.eventHistory.getAll).toHaveBeenCalledWith({ eventType: undefined, search: 'Kings' }, undefined);
+    });
+
+    it('forwards limit and offset to service', async () => {
+      (services.eventHistory.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/event-history?limit=10&offset=20' });
+
+      expect(services.eventHistory.getAll).toHaveBeenCalledWith(
+        { eventType: undefined, search: undefined },
+        { limit: 10, offset: 20 },
+      );
+    });
+
+    it('rejects limit=0 with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/event-history?limit=0' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('rejects negative offset with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/event-history?offset=-1' });
+      expect(res.statusCode).toBe(400);
     });
 
     it('returns 500 on service error', async () => {

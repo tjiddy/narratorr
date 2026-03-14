@@ -43,7 +43,7 @@ export async function runSearchJob(
   }
 
   const qualitySettings = await settingsService.get('quality');
-  const wantedBooks = await bookService.getAll('wanted');
+  const { data: wantedBooks } = await bookService.getAll('wanted');
   if (wantedBooks.length === 0) {
     log.debug('No wanted books to search for');
     return { searched: 0, grabbed: 0 };
@@ -83,7 +83,7 @@ export async function searchAllWanted(
   log: FastifyBaseLogger,
 ): Promise<SearchAllWantedResult> {
   const qualitySettings = await settingsService.get('quality');
-  const wantedBooks = await bookService.getAll('wanted');
+  const { data: wantedBooks } = await bookService.getAll('wanted');
 
   if (wantedBooks.length === 0) {
     log.debug('No wanted books to search for');

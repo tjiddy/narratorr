@@ -40,6 +40,7 @@ export function BlacklistSettings() {
   const { data: entries = [], isLoading } = useQuery({
     queryKey: queryKeys.blacklist(),
     queryFn: api.getBlacklist,
+    select: (response) => response.data,
   });
 
   const deleteMutation = useMutation({

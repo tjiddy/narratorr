@@ -1,4 +1,4 @@
-import { eq, inArray, and, or, gt, lte } from 'drizzle-orm';
+import { eq, inArray, and, or, gt, lte, desc, count as countFn } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { blacklist } from '../../db/schema.js';
@@ -10,8 +10,29 @@ type NewBlacklist = typeof blacklist.$inferInsert;
 export class BlacklistService {
   constructor(private db: Db, private log: FastifyBaseLogger, private settingsService?: SettingsService) {}
 
-  async getAll(): Promise<BlacklistRow[]> {
-    return this.db.select().from(blacklist);
+  async getAll(
+    pagination?: { limit?: number; offset?: number },
+  ): Promise<{ data: BlacklistRow[]; total: number }> {
+    // Get total count
+    const [{ value: total }] = await this.db
+      .select({ value: countFn() })
+      .from(blacklist);
+
+    // Get data with optional pagination and stable ordering
+    let query = this.db
+      .select()
+      .from(blacklist)
+      .orderBy(desc(blacklist.blacklistedAt), desc(blacklist.id));
+
+    if (pagination?.limit !== undefined) {
+      query = query.limit(pagination.limit) as typeof query;
+    }
+    if (pagination?.offset !== undefined) {
+      query = query.offset(pagination.offset) as typeof query;
+    }
+
+    const data = await query;
+    return { data, total };
   }
 
   async getById(id: number): Promise<BlacklistRow | null> {
