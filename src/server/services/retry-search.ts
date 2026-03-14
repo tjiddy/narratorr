@@ -6,7 +6,7 @@ import type { BlacklistService } from './blacklist.service.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { RetryBudget } from './retry-budget.js';
-import { filterAndRankResults } from '../routes/search.js';
+import { buildSearchQuery, filterAndRankResults } from './search-pipeline.js';
 
 export type RetryOutcome =
   | { outcome: 'retried'; download: DownloadWithBook }
@@ -54,7 +54,7 @@ export async function retrySearch(
       return { outcome: 'retry_error', error: 'Book not found' };
     }
 
-    const query = [book.title, book.author?.name].filter(Boolean).join(' ');
+    const query = buildSearchQuery(book);
     const rawResults = await indexerService.searchAll(query, {
       title: book.title,
       author: book.author?.name,

@@ -255,7 +255,7 @@ describe('runSearchJob', () => {
 
     const result = await runSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
-    // Outer catch handles it — search succeeded but grab failed, so searched is counted
+    // Search succeeded but grab failed — searched is still counted
     expect(result.searched).toBe(1);
     expect(result.grabbed).toBe(0);
     expect(log.warn).toHaveBeenCalledWith(
@@ -871,5 +871,25 @@ describe('searchAllWanted', () => {
 
     expect(result.skipped).toBe(1);
     expect(result.errors).toBe(0);
+  });
+
+  it('counts searched and errors when grab fails with non-duplicate error', async () => {
+    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const settings = createMockSettingsService();
+    const books = createMockBookService(wantedBooks);
+    const indexer = createMockIndexerService([mockResult(10, 'magnet:?xt=urn:btih:aaa')]);
+    const download = createMockDownloadService();
+    vi.mocked(download.grab).mockRejectedValueOnce(
+      new Error('No download client configured'),
+    );
+
+    const result = await searchAllWanted(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
+
+    // Search succeeded but grab failed — searched is counted, errors incremented
+    expect(result).toEqual({ searched: 1, grabbed: 0, skipped: 0, errors: 1 });
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ bookId: 1 }),
+      'Grab failed for book',
+    );
   });
 });

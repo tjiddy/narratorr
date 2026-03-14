@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
-import { filterAndRankResults } from './search.js';
+import { filterAndRankResults } from '../services/search-pipeline.js';
 import type { SearchResult } from '../../core/index.js';
 
 const mockSearchResult = {

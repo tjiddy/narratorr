@@ -5,7 +5,10 @@ import type { BookService } from '../services/book.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadService } from '../services/download.service.js';
 import type { RetryBudget } from '../services/retry-budget.js';
-import { filterAndRankResults } from '../routes/search.js';
+import { buildSearchQuery, filterAndRankResults, searchAndGrabForBook } from '../services/search-pipeline.js';
+
+export type { SingleBookSearchResult } from '../services/search-pipeline.js';
+export { searchAndGrabForBook } from '../services/search-pipeline.js';
 
 export interface SearchJobResult {
   searched: number;
@@ -17,71 +20,6 @@ export interface SearchAllWantedResult {
   grabbed: number;
   skipped: number;
   errors: number;
-}
-
-export type SingleBookSearchResult =
-  | { result: 'grabbed'; title: string }
-  | { result: 'no_results' }
-  | { result: 'skipped'; reason: string };
-
-/**
- * Search indexers for a single book and auto-grab the best result.
- * Extracted from searchAllWanted to enable per-book search endpoint (DRY).
- */
-export async function searchAndGrabForBook(
-  book: { id: number; title: string; duration?: number | null; author?: { name: string } | null },
-  indexerService: IndexerService,
-  downloadService: DownloadService,
-  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string },
-  log: FastifyBaseLogger,
-): Promise<SingleBookSearchResult> {
-  const query = [book.title, book.author?.name].filter(Boolean).join(' ');
-  const rawResults = await indexerService.searchAll(query, {
-    title: book.title,
-    author: book.author?.name,
-  });
-
-  if (rawResults.length === 0) {
-    log.debug({ bookId: book.id, title: book.title }, 'No results found');
-    return { result: 'no_results' };
-  }
-
-  log.info({ bookId: book.id, title: book.title, resultCount: rawResults.length }, 'Search results found');
-
-  const { results } = filterAndRankResults(
-    rawResults,
-    book.duration ?? undefined,
-    qualitySettings.grabFloor,
-    qualitySettings.minSeeders,
-    qualitySettings.protocolPreference,
-    qualitySettings.rejectWords,
-    qualitySettings.requiredWords,
-  );
-
-  const best = results.find((r) => r.downloadUrl);
-  if (!best) {
-    return { result: 'no_results' };
-  }
-
-  try {
-    await downloadService.grab({
-      downloadUrl: best.downloadUrl!,
-      title: best.title,
-      protocol: best.protocol,
-      bookId: book.id,
-      size: best.size,
-      seeders: best.seeders,
-    });
-    log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
-    return { result: 'grabbed', title: best.title };
-  } catch (grabError) {
-    const message = grabError instanceof Error ? grabError.message : String(grabError);
-    if (message.includes('already has an active download')) {
-      log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book already has active download');
-      return { result: 'skipped', reason: 'already_has_active_download' };
-    }
-    throw grabError;
-  }
 }
 
 /**
@@ -117,53 +55,12 @@ export async function runSearchJob(
   let grabbed = 0;
 
   for (const book of wantedBooks) {
-    const query = [book.title, book.author?.name].filter(Boolean).join(' ');
     try {
-      const rawResults = await indexerService.searchAll(query, {
-        title: book.title,
-        author: book.author?.name,
-      });
+      const result = await searchAndGrabForBook(book, indexerService, downloadService, qualitySettings, log);
       searched++;
-
-      if (rawResults.length === 0) {
-        log.debug({ bookId: book.id, title: book.title }, 'No results found');
-        continue;
-      }
-
-      log.info({ bookId: book.id, title: book.title, resultCount: rawResults.length }, 'Search results found');
-
-      const { results } = filterAndRankResults(
-        rawResults,
-        book.duration ?? undefined,
-        qualitySettings.grabFloor,
-        qualitySettings.minSeeders,
-        qualitySettings.protocolPreference,
-        qualitySettings.rejectWords,
-        qualitySettings.requiredWords,
-      );
-
-      // Take first downloadable result — already canonically ranked
-      const best = results.find((r) => r.downloadUrl);
-      if (best) {
-        try {
-          await downloadService.grab({
-            downloadUrl: best.downloadUrl!,
-            title: best.title,
-            protocol: best.protocol,
-            bookId: book.id,
-            size: best.size,
-            seeders: best.seeders,
-          });
-          grabbed++;
-          log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
-        } catch (grabError) {
-          const message = grabError instanceof Error ? grabError.message : String(grabError);
-          if (message.includes('already has an active download')) {
-            log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book already has active download');
-          } else {
-            throw grabError;
-          }
-        }
+      if (result.result === 'grabbed') grabbed++;
+      if (result.result === 'grab_error') {
+        log.warn({ error: result.error, bookId: book.id, title: book.title }, 'Search failed for book');
       }
     } catch (error) {
       log.warn({ error, bookId: book.id, title: book.title }, 'Search failed for book');
@@ -201,54 +98,14 @@ export async function searchAllWanted(
   let errors = 0;
 
   for (const book of wantedBooks) {
-    const query = [book.title, book.author?.name].filter(Boolean).join(' ');
     try {
-      const rawResults = await indexerService.searchAll(query, {
-        title: book.title,
-        author: book.author?.name,
-      });
+      const result = await searchAndGrabForBook(book, indexerService, downloadService, qualitySettings, log);
       searched++;
-
-      if (rawResults.length === 0) {
-        log.debug({ bookId: book.id, title: book.title }, 'No results found');
-        continue;
-      }
-
-      log.info({ bookId: book.id, title: book.title, resultCount: rawResults.length }, 'Search results found');
-
-      const { results } = filterAndRankResults(
-        rawResults,
-        book.duration ?? undefined,
-        qualitySettings.grabFloor,
-        qualitySettings.minSeeders,
-        qualitySettings.protocolPreference,
-        qualitySettings.rejectWords,
-        qualitySettings.requiredWords,
-      );
-
-      const best = results.find((r) => r.downloadUrl);
-      if (best) {
-        try {
-          await downloadService.grab({
-            downloadUrl: best.downloadUrl!,
-            title: best.title,
-            protocol: best.protocol,
-            bookId: book.id,
-            size: best.size,
-            seeders: best.seeders,
-          });
-          grabbed++;
-          log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
-        } catch (grabError) {
-          const message = grabError instanceof Error ? grabError.message : String(grabError);
-          if (message.includes('already has an active download')) {
-            skipped++;
-            log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book already has active download');
-          } else {
-            errors++;
-            log.warn({ error: grabError, bookId: book.id, title: book.title }, 'Grab failed for book');
-          }
-        }
+      if (result.result === 'grabbed') grabbed++;
+      else if (result.result === 'skipped') skipped++;
+      else if (result.result === 'grab_error') {
+        errors++;
+        log.warn({ error: result.error, bookId: book.id, title: book.title }, 'Grab failed for book');
       }
     } catch (error) {
       errors++;
@@ -300,7 +157,7 @@ export async function runUpgradeSearchJob(
       continue;
     }
 
-    const query = [book.title, book.author?.name].filter(Boolean).join(' ');
+    const query = buildSearchQuery(book);
     try {
       const rawResults = await indexerService.searchAll(query, {
         title: book.title,

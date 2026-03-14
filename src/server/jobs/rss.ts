@@ -7,7 +7,7 @@ import type { BookService, BookWithAuthor } from '../services/book.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadService } from '../services/download.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
-import { filterAndRankResults } from '../routes/search.js';
+import { filterAndRankResults } from '../services/search-pipeline.js';
 
 const MATCH_THRESHOLD = 0.7;
 

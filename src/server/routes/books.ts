@@ -1,12 +1,11 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
 import type { BookService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService } from '../services';
 import type { RecyclingBinService } from '../services/recycling-bin.service.js';
 import { RenameError } from '../services/rename.service.js';
-import { filterAndRankResults } from './search.js';
 import { RetagError } from '../services/tagging.service.js';
-import { searchAndGrabForBook } from '../jobs/search.js';
+import { searchAndGrabForBook } from '../services/search-pipeline.js';
 import { type z } from 'zod';
 import {
   idParamSchema,
@@ -30,35 +29,11 @@ function triggerImmediateSearch(
   indexerService: IndexerService,
   downloadService: DownloadService,
   settingsService: SettingsService,
-  log: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void },
+  log: FastifyBaseLogger,
 ) {
-  const query = [book.title, book.author?.name].filter(Boolean).join(' ');
   settingsService.get('quality')
     .then(async (qualitySettings) => {
-      const results = await indexerService.searchAll(query, { title: book.title, author: book.author?.name });
-      if (results.length === 0) return;
-      const { results: ranked } = filterAndRankResults(
-        results,
-        book.duration ?? undefined,
-        qualitySettings.grabFloor,
-        qualitySettings.minSeeders,
-        qualitySettings.protocolPreference,
-        qualitySettings.rejectWords,
-        qualitySettings.requiredWords,
-      );
-      // Take first downloadable result — already canonically ranked
-      const best = ranked.find((r) => r.downloadUrl);
-      if (best) {
-        await downloadService.grab({
-          downloadUrl: best.downloadUrl!,
-          title: best.title,
-          protocol: best.protocol,
-          bookId: book.id,
-          size: best.size,
-          seeders: best.seeders,
-        });
-        log.info({ bookId: book.id, title: best.title }, 'Search-immediately grab completed');
-      }
+      await searchAndGrabForBook(book, indexerService, downloadService, qualitySettings, log);
     })
     .catch((err) => {
       log.warn({ error: err, bookId: book.id }, 'Search-immediately trigger failed');
@@ -173,6 +148,9 @@ function registerBookSearchRoute(app: FastifyInstance, bookService: BookService,
           qualitySettings,
           request.log,
         );
+        if (result.result === 'grab_error') {
+          throw result.error;
+        }
         return result;
       } catch (error) {
         request.log.error(error, 'Per-book search failed');
