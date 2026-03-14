@@ -99,6 +99,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    });
    ```
 
+   **Negative and error-path stubs:** For each AC item with testable behavior (validation, error handling, state mutation, user interaction), also generate stubs for negative/error cases alongside the happy-path stub. For example, if the spec says "User submits valid configuration," also stub `it.todo('rejects invalid configuration values')` and `it.todo('shows error toast on save failure')`. Use the test plan completeness standard from `.claude/docs/testing.md` as a checklist — boundary values, null/missing data, error isolation. AC items that are purely structural (prompt changes, documentation, config wiring) are exempt.
+
    These stubs are the **minimum test coverage** — every spec interaction and system behavior must have a corresponding test. The implementer should add additional tests beyond these stubs for edge cases, error states, and implementation details discovered during development. The stubs are a floor, not a ceiling.
 
 6. **Post a plan comment** on the issue:

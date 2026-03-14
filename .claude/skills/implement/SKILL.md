@@ -55,13 +55,18 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    **a. Red — write failing tests first.**
    Convert the `it.todo()` stubs from `/plan` into real test implementations. Write the full test body (assertions, mocks, setup) against the spec requirements — not against any implementation that exists yet. Run `pnpm exec vitest run <test-file> --no-color` and **confirm the tests fail**. If a test passes before implementation exists, it's vacuous — fix the assertion so it actually tests the spec behavior.
 
+   **Test depth rule:** For each AC item with testable behavior (validation, error handling, state mutation, user interaction), write at minimum: 1 happy-path test + 1 negative/error-path test (e.g., invalid input rejected, API failure shows error, missing data shows empty state). AC items that are purely structural (prompt changes, documentation, config wiring with no runtime behavior) are exempt from this minimum.
+
    **b. Green — implement until tests pass.**
    Write the production code for that module. Follow existing patterns found during the plan phase. Run the test file again to confirm green. Fix failures before moving to the next module.
 
    **c. Commit.**
    Once the module's tests pass, commit with `#<id>` prefix (e.g., `#58 Add Newznab search adapter`).
 
-   **d. Repeat** for the next module in the plan.
+   **d. Sibling enumeration (blast radius check).**
+   After committing, check whether the change is cross-cutting (e.g., schema field added, type renamed, shared interface changed, test fixture updated). If so, grep for **all** files that reference the changed pattern and verify every one is updated. Enumerate the full list — do not use "e.g." or partial examples. If siblings are missed, fix them before moving to the next module.
+
+   **e. Repeat** for the next module in the plan.
 
    **General rules:**
    - Follow Acceptance Criteria as a checklist — each AC maps to something you must build and verify

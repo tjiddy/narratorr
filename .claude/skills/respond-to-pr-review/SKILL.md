@@ -60,6 +60,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      ```
    This feeds the same learning pipeline as implementation learnings — `/triage` can graduate recurring review-sourced gaps into process fixes.
 
+   **Sibling pattern check (blast radius):** Before committing any fix, ask: "Does this same gap exist in sibling files?" Grep for all instances of the pattern being fixed across the codebase. If the same issue exists in other files (e.g., same missing field in other test fixtures, same validation gap in other adapters, same error handling pattern in other services), fix all instances — not just the one the reviewer called out. Enumerate the full list of affected files; do not use "e.g." or partial examples.
+
    Rules:
    - Every finding MUST have an explicit resolution — nothing gets silently skipped
    - `blocking` findings can only be `fixed` or `disputed`
@@ -68,6 +70,10 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 4. **Determine flow:**
 
    **Clean flow** (no disputed blocking findings):
+   - **Fix completeness gate:** For each finding resolved as `fixed`, verify the fix is complete using this hierarchy:
+     - (a) If the finding cites a specific command or test, rerun it and confirm it passes.
+     - (b) If the finding describes a code pattern (e.g., missing assertion, wrong argument), run a targeted grep to confirm the pattern is resolved everywhere — not just in the file the reviewer flagged.
+     - (c) If no repeatable check exists (e.g., prose observation about naming or clarity), note in the response comment what manual verification was performed.
    - Run quality gates: `node scripts/verify.ts`
      - If output starts with `VERIFY: fail` → fix issues and re-run until clean
      - If output starts with `VERIFY: pass` → continue to push RIGHT NOW. You still need to push, post the response comment, and update labels.
