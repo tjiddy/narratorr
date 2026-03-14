@@ -7,7 +7,15 @@ export function FileList({ bookId }: { bookId: number }) {
   const [expanded, setExpanded] = useState(false);
   const { data: files, isLoading, isError } = useBookFiles(bookId);
 
-  if (isLoading || isError || !files) return null;
+  if (isLoading) {
+    return <p className="text-sm text-muted-foreground">Loading files…</p>;
+  }
+
+  if (isError) {
+    return <p className="text-sm text-destructive">Failed to load files</p>;
+  }
+
+  if (!files) return null;
 
   return (
     <div>

@@ -65,3 +65,46 @@ describe('AuthorsTabContent', () => {
     expect(screen.getByText('Author Two')).toBeInTheDocument();
   });
 });
+
+describe('Stable keys — duplicate data handling', () => {
+  it('renders two books with the same asin independently', () => {
+    const books = [
+      createMockBookMetadata({ title: 'Book A', asin: 'SAME_ASIN', providerId: 'prov1' }),
+      createMockBookMetadata({ title: 'Book B', asin: 'SAME_ASIN', providerId: 'prov2' }),
+    ];
+    renderBooksTab(books);
+    expect(screen.getByText('Book A')).toBeInTheDocument();
+    expect(screen.getByText('Book B')).toBeInTheDocument();
+  });
+
+  it('renders true duplicate books without React duplicate-key warning', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const books = [
+      createMockBookMetadata({ title: 'Same Book', asin: 'SAME', providerId: 'prov1' }),
+      createMockBookMetadata({ title: 'Same Book', asin: 'SAME', providerId: 'prov1' }),
+    ];
+    renderBooksTab(books);
+    expect(spy).not.toHaveBeenCalledWith(expect.stringContaining('same key'), expect.anything(), expect.anything());
+    spy.mockRestore();
+  });
+
+  it('renders two authors with the same name independently', () => {
+    const authors = [
+      createMockAuthorMetadata({ name: 'Same Author', imageUrl: 'img1.jpg' }),
+      createMockAuthorMetadata({ name: 'Same Author', imageUrl: 'img2.jpg' }),
+    ];
+    render(<AuthorsTabContent authors={authors} />);
+    expect(screen.getAllByText('Same Author')).toHaveLength(2);
+  });
+
+  it('renders true duplicate authors without React duplicate-key warning', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const authors = [
+      createMockAuthorMetadata({ name: 'Same', imageUrl: 'same.jpg' }),
+      createMockAuthorMetadata({ name: 'Same', imageUrl: 'same.jpg' }),
+    ];
+    render(<AuthorsTabContent authors={authors} />);
+    expect(spy).not.toHaveBeenCalledWith(expect.stringContaining('same key'), expect.anything(), expect.anything());
+    spy.mockRestore();
+  });
+});

@@ -4,8 +4,41 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { LibraryToolbar } from './LibraryToolbar';
 import type { StatusFilter } from './helpers';
+import type { FilterProps } from './FilterRow';
+import type { SortProps } from './SortControls';
 
-function defaultProps(overrides = {}) {
+function defaultFilterProps(overrides: Partial<FilterProps> = {}): FilterProps {
+  return {
+    authorFilter: '',
+    onAuthorFilterChange: vi.fn(),
+    uniqueAuthors: ['Author A', 'Author B'],
+    seriesFilter: '',
+    onSeriesFilterChange: vi.fn(),
+    uniqueSeries: ['Series A'],
+    narratorFilter: '',
+    onNarratorFilterChange: vi.fn(),
+    uniqueNarrators: ['Narrator A', 'Narrator B'],
+    ...overrides,
+  };
+}
+
+function defaultSortProps(overrides: Partial<SortProps> = {}): SortProps {
+  return {
+    sortField: 'createdAt' as const,
+    onSortFieldChange: vi.fn(),
+    sortDirection: 'desc' as const,
+    onSortDirectionChange: vi.fn(),
+    ...overrides,
+  };
+}
+
+function defaultProps(overrides: Record<string, unknown> = {}) {
+  const {
+    filterProps: filterOverrides,
+    sortProps: sortOverrides,
+    ...rest
+  } = overrides as { filterProps?: Partial<FilterProps>; sortProps?: Partial<SortProps>; [key: string]: unknown };
+
   return {
     searchQuery: '',
     onSearchChange: vi.fn(),
@@ -16,19 +49,8 @@ function defaultProps(overrides = {}) {
     filtersOpen: false,
     onFiltersToggle: vi.fn(),
     activeFilterCount: 0,
-    authorFilter: '',
-    onAuthorFilterChange: vi.fn(),
-    uniqueAuthors: ['Author A', 'Author B'],
-    seriesFilter: '',
-    onSeriesFilterChange: vi.fn(),
-    uniqueSeries: ['Series A'],
-    sortField: 'createdAt' as const,
-    onSortFieldChange: vi.fn(),
-    sortDirection: 'desc' as const,
-    onSortDirectionChange: vi.fn(),
-    narratorFilter: '',
-    onNarratorFilterChange: vi.fn(),
-    uniqueNarrators: ['Narrator A', 'Narrator B'],
+    filterProps: defaultFilterProps(filterOverrides),
+    sortProps: defaultSortProps(sortOverrides),
     collapseSeriesEnabled: false,
     onCollapseSeriesToggle: vi.fn(),
     viewMode: 'grid' as const,
@@ -39,7 +61,7 @@ function defaultProps(overrides = {}) {
     onRemoveMissing: vi.fn(),
     onSearchAllWanted: vi.fn(),
     isSearchingAllWanted: false,
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -205,16 +227,16 @@ describe('LibraryToolbar', () => {
       renderWithProviders(<LibraryToolbar {...props} />);
 
       await user.selectOptions(screen.getByDisplayValue('Date Added'), 'title');
-      expect(props.onSortFieldChange).toHaveBeenCalledWith('title');
+      expect(props.sortProps.onSortFieldChange).toHaveBeenCalledWith('title');
     });
 
     it('fires onSortDirectionChange when direction toggle is clicked', async () => {
       const user = userEvent.setup();
-      const props = defaultProps({ sortDirection: 'desc' as const });
+      const props = defaultProps();
       renderWithProviders(<LibraryToolbar {...props} />);
 
       await user.click(screen.getByTitle('Sort descending'));
-      expect(props.onSortDirectionChange).toHaveBeenCalledWith('asc');
+      expect(props.sortProps.onSortDirectionChange).toHaveBeenCalledWith('asc');
     });
   });
 
@@ -253,6 +275,23 @@ describe('LibraryToolbar', () => {
       renderWithProviders(<LibraryToolbar {...defaultProps()} />);
       const link = screen.getByText('Import').closest('a');
       expect(link).toHaveAttribute('href', '/import');
+    });
+  });
+
+  describe('grouped prop interface', () => {
+    it('passes filter props through to FilterRow', () => {
+      renderWithProviders(
+        <LibraryToolbar {...defaultProps({ filtersOpen: true })} />,
+      );
+      // FilterRow renders All Authors, All Series, All Narrators selects
+      expect(screen.getByText('All Authors')).toBeInTheDocument();
+      expect(screen.getByText('All Series')).toBeInTheDocument();
+      expect(screen.getByText('All Narrators')).toBeInTheDocument();
+    });
+
+    it('passes sort props through to SortControls', () => {
+      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
+      expect(screen.getByDisplayValue('Date Added')).toBeInTheDocument();
     });
   });
 });

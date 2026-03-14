@@ -30,7 +30,7 @@ export function CoverImage({ src, alt, fallback, className = '', imgClassName }:
         loading="lazy"
         onError={() => setImageError(true)}
       />
-      <div className={`absolute inset-0 ring-1 ring-inset ring-black/10 ${className}`} />
+      <div className="absolute inset-0 ring-1 ring-inset ring-black/10" />
     </div>
   );
 }

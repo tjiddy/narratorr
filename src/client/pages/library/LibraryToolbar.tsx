@@ -1,8 +1,8 @@
 import { SearchIcon, XIcon, ChevronDownIcon, LibraryIcon } from '@/components/icons';
-import { type StatusFilter, type SortField, type SortDirection } from './helpers.js';
+import { type StatusFilter } from './helpers.js';
 import { StatusPills } from './StatusPills';
-import { FilterRow } from './FilterRow';
-import { SortControls } from './SortControls';
+import { FilterRow, type FilterProps } from './FilterRow';
+import { SortControls, type SortProps } from './SortControls';
 import { ViewToggle } from './ViewToggle.js';
 import { LibraryActions } from './LibraryActions.js';
 
@@ -12,10 +12,8 @@ export function LibraryToolbar({
   searchQuery, onSearchChange, onSearchClear,
   statusFilter, onStatusFilterChange, statusCounts,
   filtersOpen, onFiltersToggle, activeFilterCount,
-  authorFilter, onAuthorFilterChange, uniqueAuthors,
-  seriesFilter, onSeriesFilterChange, uniqueSeries,
-  narratorFilter, onNarratorFilterChange, uniqueNarrators,
-  sortField, onSortFieldChange, sortDirection, onSortDirectionChange,
+  filterProps,
+  sortProps,
   collapseSeriesEnabled, onCollapseSeriesToggle,
   viewMode, onViewModeChange,
   onRescan, isRescanning,
@@ -31,19 +29,8 @@ export function LibraryToolbar({
   filtersOpen: boolean;
   onFiltersToggle: () => void;
   activeFilterCount: number;
-  authorFilter: string;
-  onAuthorFilterChange: (f: string) => void;
-  uniqueAuthors: string[];
-  seriesFilter: string;
-  onSeriesFilterChange: (f: string) => void;
-  uniqueSeries: string[];
-  narratorFilter: string;
-  onNarratorFilterChange: (f: string) => void;
-  uniqueNarrators: string[];
-  sortField: SortField;
-  onSortFieldChange: (f: SortField) => void;
-  sortDirection: SortDirection;
-  onSortDirectionChange: (d: SortDirection) => void;
+  filterProps: FilterProps;
+  sortProps: SortProps;
   collapseSeriesEnabled: boolean;
   onCollapseSeriesToggle: () => void;
   viewMode: ViewMode;
@@ -104,12 +91,7 @@ export function LibraryToolbar({
           )}
         </button>
 
-        <SortControls
-          sortField={sortField}
-          onSortFieldChange={onSortFieldChange}
-          sortDirection={sortDirection}
-          onSortDirectionChange={onSortDirectionChange}
-        />
+        <SortControls {...sortProps} />
 
         <button
           onClick={onCollapseSeriesToggle}
@@ -139,19 +121,7 @@ export function LibraryToolbar({
         />
       </div>
 
-      {filtersOpen && (
-        <FilterRow
-          authorFilter={authorFilter}
-          onAuthorFilterChange={onAuthorFilterChange}
-          uniqueAuthors={uniqueAuthors}
-          seriesFilter={seriesFilter}
-          onSeriesFilterChange={onSeriesFilterChange}
-          uniqueSeries={uniqueSeries}
-          narratorFilter={narratorFilter}
-          onNarratorFilterChange={onNarratorFilterChange}
-          uniqueNarrators={uniqueNarrators}
-        />
-      )}
+      {filtersOpen && <FilterRow {...filterProps} />}
     </div>
   );
 }

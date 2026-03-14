@@ -12,14 +12,16 @@ const sortLabels: Record<SortField, string> = {
   format: 'Format',
 };
 
-export function SortControls({
-  sortField, onSortFieldChange, sortDirection, onSortDirectionChange,
-}: {
+export interface SortProps {
   sortField: SortField;
   onSortFieldChange: (f: SortField) => void;
   sortDirection: SortDirection;
   onSortDirectionChange: (d: SortDirection) => void;
-}) {
+}
+
+export function SortControls({
+  sortField, onSortFieldChange, sortDirection, onSortDirectionChange,
+}: SortProps) {
   return (
     <div className="flex items-center gap-1.5">
       <div className="relative">

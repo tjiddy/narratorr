@@ -88,22 +88,20 @@ describe('FileList', () => {
     expect(screen.getByText('1.5 KB')).toBeInTheDocument();
   });
 
-  it('renders nothing on API error', async () => {
+  it('shows error message on API error', async () => {
     (api.getBookFiles as Mock).mockRejectedValue(new Error('Network error'));
 
-    const { container } = renderWithProviders(<FileList bookId={1} />);
+    renderWithProviders(<FileList bookId={1} />);
 
-    // Wait a tick for query to settle into error state
-    await new Promise(resolve => setTimeout(resolve, 100));
-    expect(container).toBeEmptyDOMElement();
+    await screen.findByText(/failed to load/i);
   });
 
-  it('renders nothing while loading', () => {
+  it('shows loading indicator while data is being fetched', () => {
     (api.getBookFiles as Mock).mockReturnValue(new Promise(() => {}));
 
-    const { container } = renderWithProviders(<FileList bookId={1} />);
+    renderWithProviders(<FileList bookId={1} />);
 
-    expect(container).toBeEmptyDOMElement();
+    expect(screen.getByText(/loading/i)).toBeInTheDocument();
   });
 
   it('shows empty state message when expanded with no files', async () => {

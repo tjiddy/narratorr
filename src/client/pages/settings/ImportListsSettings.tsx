@@ -1,8 +1,10 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type ImportList, type ImportListItem } from '@/lib/api';
+import { importListItemKey, deduplicateKeys } from '@/lib/stableKeys.js';
 import { queryKeys } from '@/lib/queryKeys';
+import { useCrudSettings } from '@/hooks/useCrudSettings';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import {
   LoadingSpinner,
@@ -55,6 +57,7 @@ function ImportListForm({
   const [syncInterval, setSyncInterval] = useState(defaults.syncInterval);
   const [settings, setSettings] = useState<Record<string, unknown>>(defaults.settings);
 
+  // Preview state — intentionally local (not part of generic CRUD hook)
   const [testResult, setTestResult] = useState<{ success: boolean; message?: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [previewItems, setPreviewItems] = useState<ImportListItem[] | null>(null);
@@ -165,12 +168,15 @@ function ImportListForm({
           {previewItems.length === 0 ? (
             <p className="text-sm text-muted-foreground">No items found</p>
           ) : (
-            previewItems.map((item, i) => (
-              <div key={i} className="text-sm">
-                <span className="font-medium">{item.title}</span>
-                {item.author && <span className="text-muted-foreground"> by {item.author}</span>}
-              </div>
-            ))
+            (() => {
+              const previewKeys = deduplicateKeys(previewItems.map(importListItemKey));
+              return previewItems.map((item, idx) => (
+                <div key={previewKeys[idx]} className="text-sm">
+                  <span className="font-medium">{item.title}</span>
+                  {item.author && <span className="text-muted-foreground"> by {item.author}</span>}
+                </div>
+              ));
+            })()
           )}
         </div>
       )}
@@ -234,45 +240,32 @@ function ImportListRow({
 
 export function ImportListsSettings() {
   const queryClient = useQueryClient();
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<ImportList | null>(null);
 
-  const { data: lists = [], isLoading } = useQuery({
+  const {
+    items: lists,
+    isLoading,
+    showForm,
+    editingId,
+    deleteTarget,
+    setDeleteTarget,
+    createMutation,
+    updateMutation,
+    deleteMutation,
+    handleToggleForm,
+    handleEdit,
+    handleCancelEdit,
+  } = useCrudSettings<ImportList, ImportListFormData>({
     queryKey: queryKeys.importLists(),
     queryFn: api.getImportLists,
+    createFn: api.createImportList,
+    updateFn: api.updateImportList,
+    deleteFn: api.deleteImportList,
+    testById: api.testImportList,
+    testByConfig: api.testImportListConfig,
+    entityName: 'Import list',
   });
 
-  const createMutation = useMutation({
-    mutationFn: api.createImportList,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.importLists() });
-      setShowForm(false);
-      toast.success('Import list added');
-    },
-    onError: () => toast.error('Failed to add import list'),
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: ImportListFormData }) => api.updateImportList(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.importLists() });
-      setEditingId(null);
-      toast.success('Import list updated');
-    },
-    onError: () => toast.error('Failed to update import list'),
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: api.deleteImportList,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.importLists() });
-      setDeleteTarget(null);
-      toast.success('Import list deleted');
-    },
-    onError: () => toast.error('Failed to delete import list'),
-  });
-
+  // Toggle mutation — bespoke, not part of generic CRUD hook
   const toggleMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) =>
       api.updateImportList(id, { enabled }),
@@ -295,7 +288,7 @@ export function ImportListsSettings() {
         </div>
         <button
           type="button"
-          onClick={() => setShowForm(!showForm)}
+          onClick={handleToggleForm}
           className={`flex items-center gap-2 px-4 py-2.5 font-medium rounded-xl transition-all focus-ring ${
             showForm
               ? 'bg-muted text-muted-foreground hover:bg-muted/80'
@@ -333,16 +326,25 @@ export function ImportListsSettings() {
           {lists.map((list) => (
             <div key={list.id} className="glass-card rounded-xl p-4">
               {editingId === list.id ? (
-                <ImportListForm
-                  initial={list}
-                  onSubmit={(data) => updateMutation.mutate({ id: list.id, data })}
-                  isPending={updateMutation.isPending}
-                />
+                <div className="space-y-3">
+                  <ImportListForm
+                    initial={list}
+                    onSubmit={(data) => updateMutation.mutate({ id: list.id, data })}
+                    isPending={updateMutation.isPending}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCancelEdit}
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Cancel editing
+                  </button>
+                </div>
               ) : (
                 <ImportListRow
                   list={list}
                   onToggle={() => toggleMutation.mutate({ id: list.id, enabled: !list.enabled })}
-                  onEdit={() => setEditingId(list.id)}
+                  onEdit={() => handleEdit(list.id)}
                   onDelete={() => setDeleteTarget(list)}
                 />
               )}
@@ -357,7 +359,7 @@ export function ImportListsSettings() {
         title={`Delete ${deleteTarget?.name ?? ''}?`}
         message="This will remove the import list. Books already imported will not be affected."
         confirmLabel="Delete"
-        onConfirm={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); }}
+        onConfirm={() => { if (deleteTarget) { deleteMutation.mutate(deleteTarget.id); setDeleteTarget(null); } }}
         onCancel={() => setDeleteTarget(null)}
       />
     </div>

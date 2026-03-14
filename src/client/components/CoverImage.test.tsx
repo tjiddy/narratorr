@@ -60,6 +60,30 @@ describe('CoverImage', () => {
     expect(wrapper).toBeInTheDocument();
   });
 
+  describe('className isolation', () => {
+    it('does not apply className to the inner ring overlay element', () => {
+      const { container } = renderWithProviders(
+        <CoverImage src="https://example.com/cover.jpg" alt="Test" fallback={<span>FB</span>} className="w-20 h-20" />,
+      );
+
+      // The ring overlay (absolute inset-0 ring-1) should NOT have w-20 or h-20
+      const ringElement = container.querySelector('.ring-1.ring-inset');
+      expect(ringElement).toBeInTheDocument();
+      expect(ringElement).not.toHaveClass('w-20');
+      expect(ringElement).not.toHaveClass('h-20');
+    });
+
+    it('applies className only to the outer wrapper div', () => {
+      const { container } = renderWithProviders(
+        <CoverImage src="https://example.com/cover.jpg" alt="Test" fallback={<span>FB</span>} className="w-20 h-20" />,
+      );
+
+      // The outer wrapper should have both className and its own classes
+      const outerDiv = container.firstElementChild;
+      expect(outerDiv).toHaveClass('w-20', 'h-20', 'relative', 'overflow-hidden');
+    });
+  });
+
   describe('URL_BASE resolveUrl integration', () => {
     afterEach(() => {
       vi.restoreAllMocks();

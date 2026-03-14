@@ -164,7 +164,7 @@ describe('ImportListsSettings', () => {
       expect(api.createImportList).toHaveBeenCalled();
     });
     await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Import list added');
+      expect(toast.success).toHaveBeenCalledWith('Import list added successfully');
     });
   });
 
@@ -230,8 +230,11 @@ describe('ImportListsSettings', () => {
       expect((api.deleteImportList as Mock).mock.calls[0][0]).toBe(1);
     });
     await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Import list deleted');
+      expect(toast.success).toHaveBeenCalledWith('Import list removed successfully');
     });
+
+    // Confirm modal should be dismissed after successful delete
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('shows error toast when toggle fails', async () => {
@@ -371,6 +374,35 @@ describe('ImportListsSettings', () => {
       expect(screen.getByText('Showing 1 of 5 items')).toBeInTheDocument();
     });
 
+    it('renders true duplicate preview items without React duplicate-key warning', async () => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      (api.previewImportList as Mock).mockResolvedValue({
+        items: [
+          { title: 'Same Book', author: 'Same Author' },
+          { title: 'Same Book', author: 'Same Author' },
+        ],
+        total: 2,
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No import lists configured')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+      await user.click(screen.getByRole('button', { name: /Preview Items/ }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Showing 2 of 2 items')).toBeInTheDocument();
+      });
+
+      expect(screen.getAllByText('Same Book')).toHaveLength(2);
+      expect(spy).not.toHaveBeenCalledWith(expect.stringContaining('same key'), expect.anything(), expect.anything());
+      spy.mockRestore();
+    });
+
     it('shows toast when preview fails', async () => {
       (api.getImportLists as Mock).mockResolvedValue([]);
       (api.previewImportList as Mock).mockRejectedValue(new Error('fail'));
@@ -438,6 +470,44 @@ describe('ImportListsSettings', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Failed to fetch libraries')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('useCrudSettings alignment', () => {
+    it('cancel editing button clears edit mode', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([mockList]);
+      const user = userEvent.setup();
+
+      renderWithProviders(<ImportListsSettings />);
+
+      // Enter edit mode
+      await user.click(await screen.findByText('Edit'));
+
+      // Cancel editing
+      await user.click(screen.getByText('Cancel editing'));
+
+      // Should be back in row mode — Edit button visible again
+      expect(screen.getByText('Edit')).toBeInTheDocument();
+    });
+
+    it('toast shows entity name on create success', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      (api.createImportList as Mock).mockResolvedValue(mockList);
+      const user = userEvent.setup();
+
+      renderWithProviders(<ImportListsSettings />);
+
+      await screen.findByText('No import lists configured');
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+      await user.type(screen.getByLabelText('Name'), 'Test List');
+      await user.type(screen.getByLabelText('Server URL'), 'http://abs.local');
+      await user.type(screen.getByLabelText('API Key'), 'key');
+
+      await user.click(screen.getByText('Add Import List', { selector: 'button[type="submit"]' }));
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Import list added successfully');
       });
     });
   });

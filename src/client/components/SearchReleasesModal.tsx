@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, formatBytes, type BookWithAuthor, type SearchResult } from '@/lib/api';
+import { searchResultKey, deduplicateKeys } from '@/lib/stableKeys.js';
 import { calculateQuality, compareQuality, resolveBookQualityInputs, qualityTierBg } from '../../core/utils/index.js';
 import { queryKeys } from '@/lib/queryKeys';
 import {
@@ -59,6 +60,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
   });
   const results = data?.results;
   const unsupportedResults = data?.unsupportedResults;
+  const resultKeys = useMemo(() => deduplicateKeys((results ?? []).map(searchResultKey)), [results]);
 
   const blacklistMutation = useMutation({
     mutationFn: api.addToBlacklist,
@@ -207,7 +209,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
                   const { sizeBytes: bookSize, durationSeconds: bookDuration } = resolveBookQualityInputs(book);
                   return (
                     <ReleaseCard
-                      key={result.infoHash || index}
+                      key={resultKeys[index]}
                       result={result}
                       bookDurationSeconds={bookDuration ?? undefined}
                       existingBookSizeBytes={book.status === 'imported' ? (bookSize ?? undefined) : undefined}
@@ -250,7 +252,7 @@ function UnsupportedSection({ titles, count }: { titles: string[]; count: number
       {expanded && (
         <div className="px-4 pb-3 pt-0 space-y-0.5 border-t border-border/20">
           {titles.map((title, i) => (
-            <p key={i} className="text-xs text-muted-foreground/50 font-mono truncate" title={title}>
+            <p key={`${title}-${i}`} className="text-xs text-muted-foreground/50 font-mono truncate" title={title}>
               {title}
             </p>
           ))}

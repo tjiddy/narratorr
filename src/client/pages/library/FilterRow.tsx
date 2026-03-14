@@ -1,6 +1,6 @@
 import { ChevronDownIcon } from '@/components/icons';
 
-interface FilterRowProps {
+export interface FilterProps {
   authorFilter: string;
   onAuthorFilterChange: (f: string) => void;
   uniqueAuthors: string[];
@@ -16,7 +16,7 @@ export function FilterRow({
   authorFilter, onAuthorFilterChange, uniqueAuthors,
   seriesFilter, onSeriesFilterChange, uniqueSeries,
   narratorFilter, onNarratorFilterChange, uniqueNarrators,
-}: FilterRowProps) {
+}: FilterProps) {
   return (
     <div className="flex flex-wrap items-center gap-3 animate-fade-in">
       {uniqueAuthors.length > 1 && (

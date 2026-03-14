@@ -84,6 +84,17 @@ export function LibraryPage() {
       <EmptyLibraryState />
     </div>
   );
+
+  const filterProps = {
+    authorFilter: filters.authorFilter, onAuthorFilterChange: filters.setAuthorFilter, uniqueAuthors: filters.uniqueAuthors,
+    seriesFilter: filters.seriesFilter, onSeriesFilterChange: filters.setSeriesFilter, uniqueSeries: filters.uniqueSeries,
+    narratorFilter: filters.narratorFilter, onNarratorFilterChange: filters.setNarratorFilter, uniqueNarrators: filters.uniqueNarrators,
+  };
+  const sortProps = {
+    sortField: filters.sortField, onSortFieldChange: filters.setSortField,
+    sortDirection: filters.sortDirection, onSortDirectionChange: filters.setSortDirection,
+  };
+
   return (
     <div className="space-y-5">
       <LibraryHeader subtitle={subtitle} />
@@ -98,19 +109,8 @@ export function LibraryPage() {
         filtersOpen={filters.filtersOpen}
         onFiltersToggle={() => filters.setFiltersOpen(!filters.filtersOpen)}
         activeFilterCount={filters.activeFilterCount}
-        authorFilter={filters.authorFilter}
-        onAuthorFilterChange={filters.setAuthorFilter}
-        uniqueAuthors={filters.uniqueAuthors}
-        seriesFilter={filters.seriesFilter}
-        onSeriesFilterChange={filters.setSeriesFilter}
-        uniqueSeries={filters.uniqueSeries}
-        narratorFilter={filters.narratorFilter}
-        onNarratorFilterChange={filters.setNarratorFilter}
-        uniqueNarrators={filters.uniqueNarrators}
-        sortField={filters.sortField}
-        onSortFieldChange={filters.setSortField}
-        sortDirection={filters.sortDirection}
-        onSortDirectionChange={filters.setSortDirection}
+        filterProps={filterProps}
+        sortProps={sortProps}
         collapseSeriesEnabled={filters.collapseSeriesEnabled}
         onCollapseSeriesToggle={() => filters.setCollapseSeriesEnabled(!filters.collapseSeriesEnabled)}
         viewMode={viewMode}

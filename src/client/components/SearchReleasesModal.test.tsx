@@ -614,4 +614,76 @@ describe('SearchReleasesModal unsupported results', () => {
       expect(screen.getByText('Found, but unsupported format (5)')).toBeInTheDocument();
     });
   });
+
+  describe('stable keys', () => {
+    it('renders two results without infoHash with different downloadUrl independently', async () => {
+      const usenetResults: SearchResult[] = [
+        {
+          title: 'The Way of Kings',
+          author: 'Brandon Sanderson',
+          protocol: 'usenet',
+          downloadUrl: 'https://nzb.example.com/dl1.nzb',
+          size: 5 * 1024 * 1024 * 1024,
+          indexer: 'NZBgeek',
+        },
+        {
+          title: 'The Way of Kings',
+          author: 'Brandon Sanderson',
+          protocol: 'usenet',
+          downloadUrl: 'https://nzb.example.com/dl2.nzb',
+          size: 4 * 1024 * 1024 * 1024,
+          indexer: 'NZBgeek',
+        },
+      ];
+      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(usenetResults));
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Found 2 releases')).toBeInTheDocument();
+      });
+
+      // Both results should render independently despite sharing title/author/indexer
+      const grabButtons = screen.getAllByText('Grab');
+      expect(grabButtons).toHaveLength(2);
+    });
+
+    it('renders true duplicate results without React duplicate-key warning', async () => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const dupeResults: SearchResult[] = [
+        {
+          title: 'Same Title',
+          author: 'Same Author',
+          protocol: 'usenet',
+          downloadUrl: 'https://nzb.example.com/same.nzb',
+          size: 5 * 1024 * 1024 * 1024,
+          indexer: 'NZBgeek',
+        },
+        {
+          title: 'Same Title',
+          author: 'Same Author',
+          protocol: 'usenet',
+          downloadUrl: 'https://nzb.example.com/same.nzb',
+          size: 5 * 1024 * 1024 * 1024,
+          indexer: 'NZBgeek',
+        },
+      ];
+      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(dupeResults));
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Found 2 releases')).toBeInTheDocument();
+      });
+
+      const grabButtons = screen.getAllByText('Grab');
+      expect(grabButtons).toHaveLength(2);
+      expect(spy).not.toHaveBeenCalledWith(expect.stringContaining('same key'), expect.anything(), expect.anything());
+      spy.mockRestore();
+    });
+  });
 });
