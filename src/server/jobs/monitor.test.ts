@@ -849,8 +849,9 @@ describe('monitor job', () => {
       });
     });
 
-    it('does not break when broadcaster.emit throws', async () => {
-      const broadcaster = { emit: vi.fn().mockImplementation(() => { throw new Error('SSE broken'); }) };
+    it('logs debug when broadcaster.emit throws', async () => {
+      const sseError = new Error('SSE broken');
+      const broadcaster = { emit: vi.fn().mockImplementation(() => { throw sseError; }) };
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 1 },
       ]));
@@ -860,6 +861,8 @@ describe('monitor job', () => {
       await expect(
         monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, inject<EventBroadcasterService>(broadcaster)),
       ).resolves.not.toThrow();
+
+      expect(log.debug).toHaveBeenCalledWith(sseError, 'SSE emit failed');
     });
   });
 

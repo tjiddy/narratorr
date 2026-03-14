@@ -14,6 +14,9 @@ import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getPathSize } from './import.service.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 
+/** Minimum ratio of target/source file size for copy verification to pass. */
+const COPY_VERIFICATION_THRESHOLD = 0.99;
+
 export interface DiscoveredBook {
   path: string;
   parsedTitle: string;
@@ -340,7 +343,7 @@ export class LibraryScanService {
     const sourceSize = await getPathSize(item.path);
     const targetSize = await getPathSize(targetPath);
     this.log.debug({ source: item.path, sourceSize, targetSize, ratio: sourceSize > 0 ? (targetSize / sourceSize).toFixed(4) : 'N/A' }, 'Copy verification');
-    if (targetSize < sourceSize * 0.99) {
+    if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
       throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
     }
 

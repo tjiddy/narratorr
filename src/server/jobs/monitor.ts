@@ -37,7 +37,6 @@ export function startMonitorJob(
   log.info('Download monitor job started (every 30 seconds)');
 }
 
-// eslint-disable-next-line complexity -- linear download monitoring loop with per-item error handling, status recovery, and retry orchestration
 export async function monitorDownloads(
   db: Db,
   downloadClientService: DownloadClientService,
@@ -46,7 +45,6 @@ export async function monitorDownloads(
   retryDeps?: MonitorRetryDeps,
   broadcaster?: EventBroadcasterService,
 ) {
-  // Get all active downloads
   const activeStatuses = ['downloading', 'queued', 'paused'] as const;
   const activeDownloads = await db
     .select()
@@ -75,117 +73,163 @@ export async function monitorDownloads(
 
       const item = await adapter.getDownload(download.externalId);
       if (!item) {
-        // Download not found in client - might have been removed manually
-        log.warn({ id: download.id }, 'Download not found in client');
-        await db
-          .update(downloads)
-          .set({
-            status: 'failed',
-            errorMessage: 'Download not found in download client',
-          })
-          .where(eq(downloads.id, download.id));
-
-        // Attempt retry recovery if bookId present and retry deps available
-        if (download.bookId && retryDeps) {
-          const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.title, retryDeps, log, 'download_failed', 'temporary');
-          if (outcome === 'retried') {
-            // Old download replaced — delete the failed record
-            await db.delete(downloads).where(eq(downloads.id, download.id));
-          }
-        } else if (download.bookId) {
-          // Fallback: recover book status without retry
-          await recoverBookStatus(db, download.bookId, download.id, log);
-        }
-
-        // Notify on failure
-        Promise.resolve(notifierService.notify('on_failure', {
-          event: 'on_failure',
-          book: { title: download.title },
-          error: { message: 'Download not found in download client', stage: 'download' },
-        })).catch((err) => log.warn(err, 'Failed to send failure notification'));
-
+        await handleMissingItem(db, download, notifierService, log, retryDeps);
         continue;
       }
 
-      // Calculate progress (0-1)
-      const progress = item.progress / 100;
-      const isCompleted = progress >= 1;
-      const newStatus = isCompleted ? 'completed' : mapDownloadStatus(item.status);
-
-      // Log state transitions
-      if (download.status !== newStatus) {
-        log.info({ id: download.id, status: newStatus }, 'Download state changed');
-      } else {
-        log.debug({ id: download.id, progress }, 'Download progress');
-      }
-
-      // Update download status
-      const progressChanged = progress !== download.progress;
-      await db
-        .update(downloads)
-        .set({
-          progress,
-          status: newStatus,
-          completedAt: isCompleted && !download.completedAt ? new Date() : download.completedAt,
-          ...(progressChanged ? { progressUpdatedAt: new Date() } : {}),
-        })
-        .where(eq(downloads.id, download.id));
-
-      // SSE: emit progress and status changes
-      if (download.bookId) {
-        try {
-          broadcaster?.emit('download_progress', { download_id: download.id, book_id: download.bookId, percentage: progress, speed: null, eta: null });
-          if (download.status !== newStatus) {
-            broadcaster?.emit('download_status_change', { download_id: download.id, book_id: download.bookId, old_status: download.status as DownloadStatus, new_status: newStatus as DownloadStatus });
-          }
-        } catch { /* fire-and-forget */ }
-      }
-
-      // Handle failure transitions with retry recovery
-      if (newStatus === 'failed' && download.status !== 'failed') {
-        if (download.bookId && retryDeps) {
-          const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.title, retryDeps, log, 'download_failed', 'temporary');
-          if (outcome === 'retried') {
-            await db.delete(downloads).where(eq(downloads.id, download.id));
-          }
-        } else if (download.bookId) {
-          await recoverBookStatus(db, download.bookId, download.id, log);
-        }
-      }
-
-      // Log completion — import job will handle copying files to library
-      if (isCompleted && download.status !== 'completed') {
-        log.info({ bookId: download.bookId, downloadId: download.id }, 'Download completed, queued for import');
-
-        // Notify on download complete
-        Promise.resolve(notifierService.notify('on_download_complete', {
-          event: 'on_download_complete',
-          book: { title: download.title },
-          download: {
-            path: item.savePath,
-            size: item.size,
-          },
-        })).catch((err) => log.warn(err, 'Failed to send download complete notification'));
-      }
+      await processDownloadUpdate(db, download, item, notifierService, log, retryDeps, broadcaster);
     } catch (error) {
       log.error({ error, id: download.id }, 'Error monitoring download');
-
-      // Infrastructure error — blacklist as temporary if infoHash and retryDeps available
-      if (download.infoHash && retryDeps) {
-        try {
-          await retryDeps.blacklistService.create({
-            infoHash: download.infoHash,
-            title: download.title,
-            bookId: download.bookId ?? undefined,
-            reason: 'infrastructure_error',
-            blacklistType: 'temporary',
-          });
-          log.info({ downloadId: download.id, infoHash: download.infoHash }, 'Blacklisted release as infrastructure_error (temporary)');
-        } catch (err) {
-          log.warn({ downloadId: download.id, err }, 'Failed to blacklist release on infrastructure error');
-        }
-      }
+      await blacklistOnInfraError(download, retryDeps, log);
     }
+  }
+}
+
+import type { DownloadRow } from '../services/types.js';
+
+type DownloadItem = { progress: number; status: 'downloading' | 'seeding' | 'paused' | 'completed' | 'error'; savePath: string; size: number };
+
+/** Handle a download that has been removed from the client externally. */
+async function handleMissingItem(
+  db: Db,
+  download: DownloadRow,
+  notifierService: NotifierService,
+  log: FastifyBaseLogger,
+  retryDeps?: MonitorRetryDeps,
+): Promise<void> {
+  log.warn({ id: download.id }, 'Download not found in client');
+  await db
+    .update(downloads)
+    .set({ status: 'failed', errorMessage: 'Download not found in download client' })
+    .where(eq(downloads.id, download.id));
+
+  if (download.bookId && retryDeps) {
+    const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.title, retryDeps, log, 'download_failed', 'temporary');
+    if (outcome === 'retried') {
+      await db.delete(downloads).where(eq(downloads.id, download.id));
+    }
+  } else if (download.bookId) {
+    await recoverBookStatus(db, download.bookId, download.id, log);
+  }
+
+  Promise.resolve(notifierService.notify('on_failure', {
+    event: 'on_failure',
+    book: { title: download.title },
+    error: { message: 'Download not found in download client', stage: 'download' },
+  })).catch((err) => log.warn(err, 'Failed to send failure notification'));
+}
+
+/** Update progress, emit SSE events, handle status transitions. */
+async function processDownloadUpdate(
+  db: Db,
+  download: DownloadRow,
+  item: DownloadItem,
+  notifierService: NotifierService,
+  log: FastifyBaseLogger,
+  retryDeps?: MonitorRetryDeps,
+  broadcaster?: EventBroadcasterService,
+): Promise<void> {
+  const progress = item.progress / 100;
+  const isCompleted = progress >= 1;
+  const newStatus = isCompleted ? 'completed' : mapDownloadStatus(item.status);
+
+  if (download.status !== newStatus) {
+    log.info({ id: download.id, status: newStatus }, 'Download state changed');
+  } else {
+    log.debug({ id: download.id, progress }, 'Download progress');
+  }
+
+  const progressChanged = progress !== download.progress;
+  await db
+    .update(downloads)
+    .set({
+      progress,
+      status: newStatus,
+      completedAt: isCompleted && !download.completedAt ? new Date() : download.completedAt,
+      ...(progressChanged ? { progressUpdatedAt: new Date() } : {}),
+    })
+    .where(eq(downloads.id, download.id));
+
+  emitProgressEvents(download, progress, newStatus, broadcaster, log);
+  await handleFailureTransition(db, download, newStatus, retryDeps, log);
+  handleCompletionNotification(download, item, isCompleted, notifierService, log);
+}
+
+/** Emit SSE progress and status change events. */
+function emitProgressEvents(
+  download: DownloadRow,
+  progress: number,
+  newStatus: string,
+  broadcaster: EventBroadcasterService | undefined,
+  log: FastifyBaseLogger,
+): void {
+  if (!download.bookId) return;
+  try {
+    broadcaster?.emit('download_progress', { download_id: download.id, book_id: download.bookId, percentage: progress, speed: null, eta: null });
+    if (download.status !== newStatus) {
+      broadcaster?.emit('download_status_change', { download_id: download.id, book_id: download.bookId, old_status: download.status as DownloadStatus, new_status: newStatus as DownloadStatus });
+    }
+  } catch (e) { log.debug(e, 'SSE emit failed'); }
+}
+
+/** Handle failure status transitions with retry recovery. */
+async function handleFailureTransition(
+  db: Db,
+  download: DownloadRow,
+  newStatus: string,
+  retryDeps: MonitorRetryDeps | undefined,
+  log: FastifyBaseLogger,
+): Promise<void> {
+  if (newStatus !== 'failed' || download.status === 'failed') return;
+
+  if (download.bookId && retryDeps) {
+    const outcome = await handleDownloadFailure(db, download.id, download.bookId, download.infoHash, download.title, retryDeps, log, 'download_failed', 'temporary');
+    if (outcome === 'retried') {
+      await db.delete(downloads).where(eq(downloads.id, download.id));
+    }
+  } else if (download.bookId) {
+    await recoverBookStatus(db, download.bookId, download.id, log);
+  }
+}
+
+/** Send notification when a download completes. */
+function handleCompletionNotification(
+  download: DownloadRow,
+  item: DownloadItem,
+  isCompleted: boolean,
+  notifierService: NotifierService,
+  log: FastifyBaseLogger,
+): void {
+  if (!isCompleted || download.status === 'completed') return;
+
+  log.info({ bookId: download.bookId, downloadId: download.id }, 'Download completed, queued for import');
+
+  Promise.resolve(notifierService.notify('on_download_complete', {
+    event: 'on_download_complete',
+    book: { title: download.title },
+    download: { path: item.savePath, size: item.size },
+  })).catch((err) => log.warn(err, 'Failed to send download complete notification'));
+}
+
+/** Blacklist a release on infrastructure error if retry deps are available. */
+async function blacklistOnInfraError(
+  download: DownloadRow,
+  retryDeps: MonitorRetryDeps | undefined,
+  log: FastifyBaseLogger,
+): Promise<void> {
+  if (!download.infoHash || !retryDeps) return;
+
+  try {
+    await retryDeps.blacklistService.create({
+      infoHash: download.infoHash,
+      title: download.title,
+      bookId: download.bookId ?? undefined,
+      reason: 'infrastructure_error',
+      blacklistType: 'temporary',
+    });
+    log.info({ downloadId: download.id, infoHash: download.infoHash }, 'Blacklisted release as infrastructure_error (temporary)');
+  } catch (err) {
+    log.warn({ downloadId: download.id, err }, 'Failed to blacklist release on infrastructure error');
   }
 }
 

@@ -646,14 +646,16 @@ describe('QualityGateService', () => {
       }));
     });
 
-    it('broadcaster.emit failure does not break processCompletedDownloads', async () => {
-      const { service, db, broadcaster } = createServiceWithBroadcaster();
-      broadcaster.emit.mockImplementation(() => { throw new Error('SSE broken'); });
+    it('broadcaster.emit failure logs debug in processCompletedDownloads', async () => {
+      const { service, db, broadcaster, log } = createServiceWithBroadcaster();
+      const sseError = new Error('SSE broken');
+      broadcaster.emit.mockImplementation(() => { throw sseError; });
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(makeScan({ totalSize: 600_000_000 }));
       db.update.mockReturnValue(mockDbChain([{ id: 1 }]));
       db.select.mockReturnValue(mockDbChain([{ download: baseDownload, book: baseBook }]));
 
       await expect(service.processCompletedDownloads()).resolves.not.toThrow();
+      expect(log.debug).toHaveBeenCalledWith(sseError, 'SSE emit failed');
     });
 
     it('approve emits download_status_change (pending_review → importing)', async () => {
@@ -672,15 +674,17 @@ describe('QualityGateService', () => {
       });
     });
 
-    it('approve does not break when broadcaster.emit throws', async () => {
-      const { service, db, broadcaster } = createServiceWithBroadcaster();
-      broadcaster.emit.mockImplementation(() => { throw new Error('SSE broken'); });
+    it('approve logs debug when broadcaster.emit throws', async () => {
+      const { service, db, broadcaster, log } = createServiceWithBroadcaster();
+      const sseError = new Error('SSE broken');
+      broadcaster.emit.mockImplementation(() => { throw sseError; });
       db.select.mockReturnValueOnce(mockDbChain([{ ...baseDownload, status: 'pending_review', bookId: 1 }]));
       db.select.mockReturnValueOnce(mockDbChain([baseBook]));
       db.update.mockReturnValue(mockDbChain());
       db.insert.mockReturnValue(mockDbChain());
 
       await expect(service.approve(1)).resolves.toEqual({ id: 1, status: 'importing' });
+      expect(log.debug).toHaveBeenCalledWith(sseError, 'SSE emit failed');
     });
 
     it('reject emits download_status_change and book_status_change', async () => {
@@ -703,9 +707,10 @@ describe('QualityGateService', () => {
       });
     });
 
-    it('reject does not break when broadcaster.emit throws', async () => {
-      const { service, db, broadcaster } = createServiceWithBroadcaster();
-      broadcaster.emit.mockImplementation(() => { throw new Error('SSE broken'); });
+    it('reject logs debug when broadcaster.emit throws', async () => {
+      const { service, db, broadcaster, log } = createServiceWithBroadcaster();
+      const sseError = new Error('SSE broken');
+      broadcaster.emit.mockImplementation(() => { throw sseError; });
       db.select.mockReturnValueOnce(mockDbChain([{
         download: { ...baseDownload, status: 'pending_review', bookId: 1, infoHash: null, downloadClientId: null },
         book: { ...baseBook, status: 'pending_review' },
@@ -714,6 +719,7 @@ describe('QualityGateService', () => {
       db.insert.mockReturnValue(mockDbChain());
 
       await expect(service.reject(1)).resolves.toEqual({ id: 1, status: 'failed' });
+      expect(log.debug).toHaveBeenCalledWith(sseError, 'SSE emit failed');
     });
   });
 });

@@ -1975,12 +1975,14 @@ describe('ImportService', () => {
       }));
     });
 
-    it('broadcaster.emit failure does not break import', async () => {
-      const broadcaster = { emit: vi.fn().mockImplementation(() => { throw new Error('SSE broken'); }) };
+    it('broadcaster.emit failure logs debug and does not break import', async () => {
+      const sseError = new Error('SSE broken');
+      const broadcaster = { emit: vi.fn().mockImplementation(() => { throw sseError; }) };
       const localDb = createMockDb();
+      const localLog = createMockLogger();
       const svc = new ImportService(
         inject<Db>(localDb), clientService, createNoCheckSettings(),
-        inject<FastifyBaseLogger>(log),
+        inject<FastifyBaseLogger>(localLog),
         undefined, undefined, undefined, undefined,
         inject<EventBroadcasterService>(broadcaster),
       );
@@ -1991,6 +1993,29 @@ describe('ImportService', () => {
 
       const result = await svc.importDownload(1);
       expect(result.downloadId).toBe(1);
+      expect(localLog.debug).toHaveBeenCalledWith(sseError, 'SSE emit failed');
+    });
+
+    it('failure-revert path logs debug when broadcaster.emit throws', async () => {
+      const sseError = new Error('SSE broken');
+      const broadcaster = { emit: vi.fn().mockImplementation(() => { throw sseError; }) };
+      const localDb = createMockDb();
+      const localLog = createMockLogger();
+      const svc = new ImportService(
+        inject<Db>(localDb), clientService, createNoCheckSettings(),
+        inject<FastifyBaseLogger>(localLog),
+        undefined, undefined, undefined, undefined,
+        inject<EventBroadcasterService>(broadcaster),
+      );
+      setupImportMocksForSSE(localDb);
+      localDb.update.mockReturnValue(mockDbChain());
+
+      // Force processing to fail after the importing transition by making stat throw
+      vi.mocked(stat).mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+      await expect(svc.importDownload(1)).rejects.toThrow();
+      // The failure-revert SSE catch at import.service.ts:448 should log debug
+      expect(localLog.debug).toHaveBeenCalledWith(sseError, 'SSE emit failed');
     });
   });
 

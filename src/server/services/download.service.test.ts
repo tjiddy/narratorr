@@ -1311,13 +1311,15 @@ describe('DownloadService', () => {
   describe('SSE emissions', () => {
     let svcWithBroadcaster: DownloadService;
     let broadcaster: { emit: ReturnType<typeof vi.fn> };
+    let broadcasterLog: ReturnType<typeof createMockLogger>;
 
     beforeEach(() => {
       broadcaster = { emit: vi.fn() };
+      broadcasterLog = createMockLogger();
       svcWithBroadcaster = new DownloadService(
         inject<Db>(db),
         clientService,
-        inject<FastifyBaseLogger>(createMockLogger()),
+        inject<FastifyBaseLogger>(broadcasterLog),
         undefined,
         undefined,
         inject<EventBroadcasterService>(broadcaster),
@@ -1370,12 +1372,14 @@ describe('DownloadService', () => {
       });
     });
 
-    it('broadcaster.emit failure does not break updateProgress', async () => {
-      broadcaster.emit.mockImplementation(() => { throw new Error('SSE broken'); });
+    it('broadcaster.emit failure logs debug and does not break updateProgress', async () => {
+      const sseError = new Error('SSE broken');
+      broadcaster.emit.mockImplementation(() => { throw sseError; });
       db.update.mockReturnValue(mockDbChain());
       db.select.mockReturnValue(mockDbChain([]));
 
       await expect(svcWithBroadcaster.updateProgress(1, 0.5, 2)).resolves.not.toThrow();
+      expect(broadcasterLog.debug).toHaveBeenCalledWith(sseError, 'SSE emit failed');
     });
 
     it('grab emits grab_started and book_status_change', async () => {
@@ -1404,8 +1408,9 @@ describe('DownloadService', () => {
       });
     });
 
-    it('grab does not break when broadcaster.emit throws', async () => {
-      broadcaster.emit.mockImplementation(() => { throw new Error('SSE broken'); });
+    it('grab logs debug when broadcaster.emit throws', async () => {
+      const sseError = new Error('SSE broken');
+      broadcaster.emit.mockImplementation(() => { throw sseError; });
       const mockAdapterGrab = { addDownload: vi.fn().mockResolvedValue('ext-new') };
       (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit', enabled: true });
       (clientService.getAdapter as Mock).mockResolvedValue(mockAdapterGrab);
@@ -1420,6 +1425,7 @@ describe('DownloadService', () => {
         title: 'Test',
         bookId: 5,
       })).resolves.toBeDefined();
+      expect(broadcasterLog.debug).toHaveBeenCalledWith(sseError, 'SSE emit failed');
     });
 
     it('cancel emits download_status_change and book_status_change', async () => {
@@ -1442,8 +1448,9 @@ describe('DownloadService', () => {
       });
     });
 
-    it('cancel does not break when broadcaster.emit throws', async () => {
-      broadcaster.emit.mockImplementation(() => { throw new Error('SSE broken'); });
+    it('cancel logs debug when broadcaster.emit throws', async () => {
+      const sseError = new Error('SSE broken');
+      broadcaster.emit.mockImplementation(() => { throw sseError; });
       const mockAdapterCancel = { removeDownload: vi.fn().mockResolvedValue(undefined) };
       (clientService.getAdapter as Mock).mockResolvedValue(mockAdapterCancel);
 
@@ -1453,6 +1460,7 @@ describe('DownloadService', () => {
       db.update.mockReturnValue(mockDbChain());
 
       await expect(svcWithBroadcaster.cancel(1)).resolves.toBe(true);
+      expect(broadcasterLog.debug).toHaveBeenCalledWith(sseError, 'SSE emit failed');
     });
   });
 

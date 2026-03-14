@@ -12,6 +12,7 @@ import {
   decryptFields,
   maskFields,
   redactSecrets,
+  resolveSentinelFields,
   loadEncryptionKey,
 } from './secret-codec.js';
 
@@ -198,6 +199,48 @@ describe('SecretCodec', () => {
       expect(redacted.hostname).toBe('example.com');
       expect(redacted.pageLimit).toBe(50);
     });
+  });
+});
+
+describe('resolveSentinelFields', () => {
+  it('replaces sentinel values with existing encrypted values', () => {
+    const incoming = { apiKey: '********', hostname: 'example.com' };
+    const existing = { apiKey: '$ENC$encrypted-key', hostname: 'old.com' };
+    const result = resolveSentinelFields(incoming, existing);
+    expect(result.apiKey).toBe('$ENC$encrypted-key');
+    expect(result.hostname).toBe('example.com');
+  });
+
+  it('passes through non-sentinel values unchanged', () => {
+    const incoming = { apiKey: 'new-real-key', hostname: 'new.com' };
+    const existing = { apiKey: '$ENC$old-key', hostname: 'old.com' };
+    const result = resolveSentinelFields(incoming, existing);
+    expect(result.apiKey).toBe('new-real-key');
+    expect(result.hostname).toBe('new.com');
+  });
+
+  it('handles empty incoming settings object', () => {
+    const incoming = {};
+    const existing = { apiKey: '$ENC$old-key' };
+    const result = resolveSentinelFields(incoming, existing);
+    expect(result).toEqual({});
+  });
+
+  it('handles fields present in incoming but missing in existing', () => {
+    const incoming = { apiKey: '********', newField: 'value' };
+    const existing = { hostname: 'old.com' };
+    const result = resolveSentinelFields(incoming, existing);
+    // apiKey sentinel has no match in existing — keeps undefined (existing value)
+    expect(result.apiKey).toBeUndefined();
+    expect(result.newField).toBe('value');
+  });
+
+  it('handles null/undefined existing record', () => {
+    const incoming = { apiKey: '********', hostname: 'new.com' };
+    const result = resolveSentinelFields(incoming, null);
+    // No existing record to look up — sentinel stays as undefined
+    expect(result.apiKey).toBeUndefined();
+    expect(result.hostname).toBe('new.com');
   });
 });
 

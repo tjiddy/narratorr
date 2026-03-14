@@ -1,16 +1,7 @@
 import type { CreateNotifierFormData } from './schemas.js';
+import type { RegistryEntry } from './registry-types.js';
 
-interface RequiredField {
-  path: string;
-  message: string;
-}
-
-interface NotifierTypeMetadata {
-  label: string;
-  defaultSettings: CreateNotifierFormData['settings'];
-  requiredFields: RequiredField[];
-  viewSubtitle: (settings: Record<string, unknown>) => string;
-}
+type NotifierTypeMetadata = RegistryEntry<CreateNotifierFormData['settings']>;
 
 export const NOTIFIER_REGISTRY: Record<string, NotifierTypeMetadata> = {
   webhook: {

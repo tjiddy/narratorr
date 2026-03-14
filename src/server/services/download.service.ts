@@ -13,7 +13,8 @@ import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import { type EventBroadcasterService } from './event-broadcaster.service.js';
 import { revertBookStatus } from '../utils/book-status.js';
 
-type DownloadRow = typeof downloads.$inferSelect;
+import type { DownloadRow } from './types.js';
+
 type BookRow = typeof books.$inferSelect;
 
 export interface DownloadWithBook extends DownloadRow {
@@ -308,7 +309,7 @@ export class DownloadService {
         this.broadcaster?.emit('book_status_change', {
           book_id: params.bookId, old_status: 'wanted', new_status: bookStatus,
         });
-      } catch { /* fire-and-forget */ }
+      } catch (e) { this.log.debug(e, 'SSE emit failed'); }
     }
 
     return this.getById(result[0].id) as Promise<DownloadWithBook>;
@@ -330,7 +331,7 @@ export class DownloadService {
 
     // SSE: download_progress (always emit if we have a broadcaster)
     if (bookId) {
-      try { this.broadcaster?.emit('download_progress', { download_id: id, book_id: bookId, percentage: progress, speed: null, eta: null }); } catch { /* fire-and-forget */ }
+      try { this.broadcaster?.emit('download_progress', { download_id: id, book_id: bookId, percentage: progress, speed: null, eta: null }); } catch (e) { this.log.debug(e, 'SSE emit failed'); }
     }
 
     if (progress >= 1) {
@@ -338,7 +339,7 @@ export class DownloadService {
 
       // SSE: download_status_change
       if (bookId) {
-        try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: bookId, old_status: oldStatus, new_status: status }); } catch { /* fire-and-forget */ }
+        try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: bookId, old_status: oldStatus, new_status: status }); } catch (e) { this.log.debug(e, 'SSE emit failed'); }
       }
 
       // Record download_completed event (fire-and-forget)
@@ -352,7 +353,7 @@ export class DownloadService {
 
     // SSE: download_status_change
     if (meta?.bookId && meta?.oldStatus) {
-      try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: meta.bookId, old_status: meta.oldStatus, new_status: status as DownloadStatus }); } catch { /* fire-and-forget */ }
+      try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: meta.bookId, old_status: meta.oldStatus, new_status: status as DownloadStatus }); } catch (e) { this.log.debug(e, 'SSE emit failed'); }
     }
   }
 
@@ -365,7 +366,7 @@ export class DownloadService {
 
     // SSE: download_status_change
     if (meta?.bookId && meta?.oldStatus) {
-      try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: meta.bookId, old_status: meta.oldStatus, new_status: 'failed' }); } catch { /* fire-and-forget */ }
+      try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: meta.bookId, old_status: meta.oldStatus, new_status: 'failed' }); } catch (e) { this.log.debug(e, 'SSE emit failed'); }
     }
 
     // Record download_failed event (fire-and-forget)
@@ -398,7 +399,7 @@ export class DownloadService {
 
     // SSE: download_status_change
     if (download.bookId) {
-      try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: download.bookId, old_status: oldStatus, new_status: 'failed' }); } catch { /* fire-and-forget */ }
+      try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: download.bookId, old_status: oldStatus, new_status: 'failed' }); } catch (e) { this.log.debug(e, 'SSE emit failed'); }
     }
 
     // Reset book status if linked — revert to imported if book has a path, else wanted
@@ -407,7 +408,7 @@ export class DownloadService {
       const revertStatus = await revertBookStatus(this.db, { id: download.bookId, path: download.book?.path ?? null });
 
       // SSE: book_status_change
-      try { this.broadcaster?.emit('book_status_change', { book_id: download.bookId, old_status: oldBookStatus, new_status: revertStatus }); } catch { /* fire-and-forget */ }
+      try { this.broadcaster?.emit('book_status_change', { book_id: download.bookId, old_status: oldBookStatus, new_status: revertStatus }); } catch (e) { this.log.debug(e, 'SSE emit failed'); }
     }
 
     this.log.info({ id }, 'Download cancelled');

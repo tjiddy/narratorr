@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { ImportListService } from './import-list.service.js';
-import { initializeKey, _resetKey } from '../utils/secret-codec.js';
+import { initializeKey, _resetKey, encrypt, getKey } from '../utils/secret-codec.js';
 import { randomBytes } from 'node:crypto';
 
 // Mock the adapter factories
@@ -180,6 +180,32 @@ describe('ImportListService', () => {
       // Verify nextRunAt was set by checking the values call
       const valuesCall = db.values.mock.calls[0][0];
       expect(valuesCall.nextRunAt).toBeInstanceOf(Date);
+    });
+
+    it('update preserves existing encrypted API key when sentinel is submitted', async () => {
+      const db = createChainableMockDb();
+      const encryptedApiKey = encrypt('real-api-key', getKey());
+      const existingRow = {
+        id: 1, name: 'Test', type: 'abs', enabled: true,
+        settings: { serverUrl: 'http://old.local', apiKey: encryptedApiKey, libraryId: 'lib-1' },
+      };
+
+      // select().from().where().limit() for sentinel lookup returns existing row
+      db._setSelectResult([existingRow]);
+      db.limit.mockReturnValue([existingRow]);
+      // update().set().where().returning() returns updated row
+      db.returning.mockReturnValue([existingRow]);
+
+      service = new ImportListService(db as unknown as Db, mockLog);
+
+      await service.update(1, {
+        settings: { serverUrl: 'http://new.local', apiKey: '********', libraryId: 'lib-2' },
+      });
+
+      // The .set() call must preserve the exact stored ciphertext, not re-encrypt the sentinel
+      const setArg = db.set.mock.calls[0][0] as { settings: Record<string, unknown> };
+      expect(setArg.settings.apiKey).toBe(encryptedApiKey);
+      expect(setArg.settings.libraryId).toBe('lib-2');
     });
 
     it('delete removes row from DB', async () => {

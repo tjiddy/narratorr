@@ -8,6 +8,9 @@ import type {
   MetadataSearchResults,
 } from './types.js';
 
+/** Default wait time (ms) when rate-limited without a Retry-After header. */
+const DEFAULT_RATE_LIMIT_WAIT_MS = 60_000;
+
 export interface AudibleConfig {
   region?: string;
 }
@@ -235,7 +238,7 @@ export class AudibleProvider implements MetadataProvider {
       const res = await fetch(url, { signal: controller.signal });
       if (res.status === 429) {
         const retryAfter = res.headers.get('Retry-After');
-        const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 60_000;
+        const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : DEFAULT_RATE_LIMIT_WAIT_MS;
         throw new RateLimitError(waitMs, this.name);
       }
       if (!res.ok) return null;

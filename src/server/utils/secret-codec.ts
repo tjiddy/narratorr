@@ -66,6 +66,25 @@ export function isSentinel(value: string): boolean {
   return value === SENTINEL;
 }
 
+// ─── Sentinel Passthrough ────────────────────────────────────────────────────
+
+/**
+ * Replace sentinel values ('********') in `incoming` with the corresponding
+ * values from `existing`. Non-sentinel values pass through unchanged.
+ * Mutates and returns `incoming`.
+ */
+export function resolveSentinelFields(
+  incoming: Record<string, unknown>,
+  existing: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  for (const [key, value] of Object.entries(incoming)) {
+    if (typeof value === 'string' && isSentinel(value)) {
+      incoming[key] = existing?.[key];
+    }
+  }
+  return incoming;
+}
+
 // ─── Field-level operations ──────────────────────────────────────────────────
 
 function getSecretFieldNames(entity: SecretEntity): readonly string[] {

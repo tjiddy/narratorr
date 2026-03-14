@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
-import { SettingsService } from './settings.service.js';
+import { SettingsService, type AppSettings } from './settings.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js';
@@ -180,6 +180,69 @@ describe('SettingsService', () => {
       const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
       const storedValue = chain.values.mock.calls[0][0].value;
       expect(storedValue.proxyUrl).toBe(existingEncrypted);
+    });
+  });
+
+  describe('update deep-merge', () => {
+    it('preserves other fields when updating a single field in a category', async () => {
+      const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 };
+      // First select for get() inside update, second for getAll()
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))  // get('search')
+        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))  // sentinel lookup in set()
+        .mockReturnValueOnce(mockDbChain([])); // getAll()
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.update({ search: { intervalMinutes: 120 } } as Partial<AppSettings>);
+
+      // The stored value should have merged: intervalMinutes changed, others preserved
+      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      expect(storedValue).toEqual({ intervalMinutes: 120, enabled: true, blacklistTtlDays: 7 });
+    });
+
+    it('preserves other flat fields in quality when updating minSeeders', async () => {
+      const existingQuality = { grabFloor: 10, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false, rejectWords: '', requiredWords: '' };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'quality', value: existingQuality }]))  // get('quality')
+        .mockReturnValueOnce(mockDbChain([]))  // sentinel lookup in set()
+        .mockReturnValueOnce(mockDbChain([])); // getAll()
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.update({ quality: { minSeeders: 5 } } as Partial<AppSettings>);
+
+      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      expect(storedValue).toMatchObject({ grabFloor: 10, protocolPreference: 'none', minSeeders: 5 });
+    });
+
+    it('works with a full category object (backward compat)', async () => {
+      const full = { intervalMinutes: 120, enabled: false, blacklistTtlDays: 14 };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 } }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.update({ search: full } as Partial<AppSettings>);
+
+      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      expect(storedValue).toEqual(full);
+    });
+
+    it('results in no changes for empty partial object', async () => {
+      db.select.mockReturnValue(mockDbChain([])); // getAll() only
+      await service.update({});
+
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('skips category when value is undefined', async () => {
+      db.select.mockReturnValue(mockDbChain([])); // getAll() only
+      await service.update({ search: undefined } as Partial<AppSettings>);
+
+      expect(db.insert).not.toHaveBeenCalled();
     });
   });
 });

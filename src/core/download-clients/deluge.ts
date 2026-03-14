@@ -1,4 +1,4 @@
-import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadProtocol } from './types.js';
+import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOptions, type DownloadProtocol, ETA_UPPER_BOUND_SEC } from './types.js';
 
 export interface DelugeConfig {
   host: string;
@@ -272,7 +272,7 @@ export class DelugeClient implements DownloadClientAdapter {
       ratio: t.ratio,
       seeders: t.num_seeds,
       leechers: t.num_peers,
-      eta: t.eta > 0 && t.eta < 8640000 ? t.eta : undefined,
+      eta: t.eta > 0 && t.eta < ETA_UPPER_BOUND_SEC ? t.eta : undefined,
       addedAt: new Date(t.time_added * 1000),
     };
   }

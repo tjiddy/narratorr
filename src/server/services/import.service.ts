@@ -23,7 +23,13 @@ import { Semaphore } from '../utils/semaphore.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import { resolveSavePath } from '../utils/download-path.js';
 
-type DownloadRow = typeof downloads.$inferSelect;
+import type { DownloadRow } from './types.js';
+
+/** Minimum ratio of target/source file size for copy verification to pass. */
+const COPY_VERIFICATION_THRESHOLD = 0.99;
+/** Milliseconds per minute — used for seed time calculations. */
+const MS_PER_MINUTE = 60_000;
+
 type BookRow = typeof books.$inferSelect;
 type AuthorRow = typeof authors.$inferSelect;
 
@@ -158,7 +164,7 @@ export class ImportService {
     try {
       this.broadcaster?.emit('download_status_change', { download_id: downloadId, book_id: book.id, old_status: download.status as DownloadStatus, new_status: 'importing' });
       this.broadcaster?.emit('book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: 'importing' });
-    } catch { /* fire-and-forget */ }
+    } catch (e) { this.log.debug(e, 'SSE emit failed'); }
 
     let targetPath: string | undefined;
     try {
@@ -305,7 +311,7 @@ export class ImportService {
       if (!processingSettings?.enabled) {
         const sourceSize = await getPathSize(sourcePath);
 
-        if (targetSize < sourceSize * 0.99) {
+        if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
           throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
         }
       }
@@ -396,7 +402,7 @@ export class ImportService {
         this.broadcaster?.emit('download_status_change', { download_id: downloadId, book_id: book.id, old_status: 'importing', new_status: 'imported' });
         this.broadcaster?.emit('book_status_change', { book_id: book.id, old_status: 'importing', new_status: 'imported' });
         this.broadcaster?.emit('import_complete', { download_id: downloadId, book_id: book.id, book_title: book.title });
-      } catch { /* fire-and-forget */ }
+      } catch (e) { this.log.debug(e, 'SSE emit failed'); }
 
       // 9b. Notify on import
       this.notifierService?.notify('on_import', {
@@ -442,7 +448,7 @@ export class ImportService {
       try {
         this.broadcaster?.emit('download_status_change', { download_id: downloadId, book_id: book.id, old_status: 'importing', new_status: 'failed' });
         this.broadcaster?.emit('book_status_change', { book_id: book.id, old_status: 'importing', new_status: revertStatus });
-      } catch { /* fire-and-forget */ }
+      } catch (e) { this.log.debug(e, 'SSE emit failed'); }
 
       this.log.error({ error, downloadId, bookStatus: revertStatus }, 'Import failed');
 
@@ -576,9 +582,9 @@ export class ImportService {
     // Check if min seed time has elapsed
     if (download.completedAt && minSeedTimeMinutes > 0) {
       const elapsedMs = Date.now() - download.completedAt.getTime();
-      const minSeedMs = minSeedTimeMinutes * 60_000;
+      const minSeedMs = minSeedTimeMinutes * MS_PER_MINUTE;
       if (elapsedMs < minSeedMs) {
-        this.log.info({ downloadId: download.id, remainingMinutes: Math.ceil((minSeedMs - elapsedMs) / 60_000) }, 'Skipping torrent removal — min seed time not elapsed');
+        this.log.info({ downloadId: download.id, remainingMinutes: Math.ceil((minSeedMs - elapsedMs) / MS_PER_MINUTE) }, 'Skipping torrent removal — min seed time not elapsed');
         return;
       }
     }

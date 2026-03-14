@@ -9,7 +9,7 @@ import {
   DEFAULT_SETTINGS,
   CATEGORY_SCHEMAS,
 } from '../../shared/schemas.js';
-import { encryptFields, decryptFields, isSentinel, getKey, type SecretEntity } from '../utils/secret-codec.js';
+import { encryptFields, decryptFields, resolveSentinelFields, getKey, type SecretEntity } from '../utils/secret-codec.js';
 
 export type { AppSettings };
 
@@ -78,16 +78,8 @@ export class SettingsService {
     const entity = SECRET_CATEGORIES[key];
     if (entity && dbValue && typeof dbValue === 'object') {
       const incoming = { ...(dbValue as Record<string, unknown>) };
-      // If any secret field is "********", preserve the existing encrypted value
       const existing = await this.db.select().from(settings).where(eq(settings.key, key)).limit(1);
-      if (existing[0]) {
-        const existingValue = (existing[0].value ?? {}) as Record<string, unknown>;
-        for (const [field, val] of Object.entries(incoming)) {
-          if (typeof val === 'string' && isSentinel(val)) {
-            incoming[field] = existingValue[field]; // Keep existing (encrypted) value
-          }
-        }
-      }
+      resolveSentinelFields(incoming, (existing[0]?.value ?? {}) as Record<string, unknown>);
       dbValue = encryptFields(entity, incoming, getKey());
     }
 
@@ -104,7 +96,10 @@ export class SettingsService {
   async update(partial: Partial<AppSettings>): Promise<AppSettings> {
     for (const [key, value] of Object.entries(partial)) {
       if (value !== undefined) {
-        await this.set(key as SettingsCategory, value);
+        const category = key as SettingsCategory;
+        const existing = await this.get(category);
+        const merged = { ...existing, ...value };
+        await this.set(category, merged);
       }
     }
     return this.getAll();

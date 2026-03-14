@@ -1,16 +1,7 @@
 import type { CreateImportListFormData } from './schemas.js';
+import type { RegistryEntry } from './registry-types.js';
 
-interface RequiredField {
-  path: string;
-  message: string;
-}
-
-interface ImportListTypeMetadata {
-  label: string;
-  defaultSettings: CreateImportListFormData['settings'];
-  requiredFields: RequiredField[];
-  viewSubtitle: (settings: Record<string, unknown>) => string;
-}
+type ImportListTypeMetadata = RegistryEntry<CreateImportListFormData['settings']>;
 
 export const IMPORT_LIST_REGISTRY: Record<string, ImportListTypeMetadata> = {
   abs: {

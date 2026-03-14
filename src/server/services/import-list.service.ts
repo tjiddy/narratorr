@@ -5,8 +5,11 @@ import { importLists, books, bookEvents, authors } from '../../db/schema.js';
 import { IMPORT_LIST_ADAPTER_FACTORIES } from '../../core/import-lists/index.js';
 import type { ImportListItem } from '../../core/import-lists/index.js';
 import type { MetadataService } from './metadata.service.js';
-import { encryptFields, decryptFields, isSentinel, getKey } from '../utils/secret-codec.js';
+import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
 import { slugify } from '../../core/index.js';
+
+/** Milliseconds per minute — used for sync interval calculations. */
+const MS_PER_MINUTE = 60_000;
 
 type ImportListRow = typeof importLists.$inferSelect;
 type NewImportList = typeof importLists.$inferInsert;
@@ -53,14 +56,7 @@ export class ImportListService {
     if (toUpdate.settings) {
       const settings = { ...(toUpdate.settings as Record<string, unknown>) };
       const existing = await this.db.select().from(importLists).where(eq(importLists.id, id)).limit(1);
-      if (existing[0]) {
-        const existingSettings = (existing[0].settings ?? {}) as Record<string, unknown>;
-        for (const [key, value] of Object.entries(settings)) {
-          if (typeof value === 'string' && isSentinel(value)) {
-            settings[key] = existingSettings[key];
-          }
-        }
-      }
+      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>);
       toUpdate.settings = encryptFields('importList', settings, getKey());
     }
     const result = await this.db
@@ -120,7 +116,7 @@ export class ImportListService {
     for (const list of dueLists) {
       try {
         await this.syncList(list);
-        const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * 60_000);
+        const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
         await this.db
           .update(importLists)
           .set({ lastRunAt: now, nextRunAt, lastSyncError: null })
@@ -128,7 +124,7 @@ export class ImportListService {
         this.log.info({ id: list.id, name: list.name }, 'Import list sync completed');
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
-        const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * 60_000);
+        const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
         await this.db
           .update(importLists)
           .set({ lastSyncError: message, nextRunAt })

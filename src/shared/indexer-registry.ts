@@ -1,16 +1,7 @@
 import type { CreateIndexerFormData } from './schemas.js';
+import type { RegistryEntry } from './registry-types.js';
 
-interface RequiredField {
-  path: string;
-  message: string;
-}
-
-interface IndexerTypeMetadata {
-  label: string;
-  defaultSettings: CreateIndexerFormData['settings'];
-  requiredFields: RequiredField[];
-  viewSubtitle: (settings: Record<string, unknown>) => string;
-}
+type IndexerTypeMetadata = RegistryEntry<CreateIndexerFormData['settings']>;
 
 export const INDEXER_REGISTRY: Record<string, IndexerTypeMetadata> = {
   abb: {

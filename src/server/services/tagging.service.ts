@@ -9,16 +9,12 @@ import type { FastifyBaseLogger } from 'fastify';
 import { books, authors } from '../../db/schema.js';
 import type { TagMode } from '../../shared/schemas.js';
 import type { SettingsService } from './settings.service.js';
+import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 
 const execFileAsync = promisify(execFile);
 
 /** Extensions we can write tags to via ffmpeg */
 const TAGGABLE_EXTENSIONS = new Set(['.mp3', '.m4a', '.m4b']);
-
-/** All recognized audio extensions (superset of taggable) */
-const ALL_AUDIO_EXTENSIONS = new Set([
-  '.mp3', '.m4a', '.m4b', '.flac', '.ogg', '.opus', '.wma', '.aac',
-]);
 
 export interface TagMetadata {
   artist?: string;       // author
@@ -249,7 +245,7 @@ async function warnUnsupportedFormats(
   let skipped = 0;
   for (const entry of entries) {
     const ext = extname(entry).toLowerCase();
-    if (ALL_AUDIO_EXTENSIONS.has(ext) && !TAGGABLE_EXTENSIONS.has(ext)) {
+    if (AUDIO_EXTENSIONS.has(ext) && !TAGGABLE_EXTENSIONS.has(ext)) {
       skipped++;
       const reason = `Unsupported format: ${ext}`;
       log.warn({ file: entry, reason }, 'Tag write skipped');

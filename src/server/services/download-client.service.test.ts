@@ -4,7 +4,7 @@ import { createMockDbDownloadClient } from '../__tests__/factories.js';
 import { DownloadClientService } from './download-client.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
-import { initializeKey, _resetKey } from '../utils/secret-codec.js';
+import { initializeKey, _resetKey, encrypt } from '../utils/secret-codec.js';
 
 const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
 const mockClient = createMockDbDownloadClient();
@@ -97,6 +97,32 @@ describe('DownloadClientService', () => {
       db.select.mockReturnValue(mockDbChain([mockClient]));
       const adapter2 = await service.getAdapter(1);
       expect(adapter2).not.toBe(adapter1);
+    });
+
+    it('preserves existing encrypted secret fields when sentinel values are submitted', async () => {
+      const encryptedPassword = encrypt('real-password', TEST_KEY);
+      const encryptedApiKey = encrypt('real-api-key', TEST_KEY);
+      const existingRow = {
+        ...mockClient,
+        settings: { host: 'old-host', port: 8080, password: encryptedPassword, apiKey: encryptedApiKey },
+      };
+
+      // Sentinel lookup returns existing row
+      db.select.mockReturnValue(mockDbChain([existingRow]));
+      // Update returns the row
+      const updateChain = mockDbChain([existingRow]);
+      db.update.mockReturnValue(updateChain);
+
+      await service.update(1, {
+        settings: { host: 'new-host', port: 9090, password: '********', apiKey: '********' },
+      });
+
+      // The .set() call should have preserved the exact stored encrypted values
+      const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0][0] as { settings: Record<string, unknown> };
+      expect(setArg.settings.host).toBe('new-host');
+      expect(setArg.settings.port).toBe(9090);
+      expect(setArg.settings.password).toBe(encryptedPassword);
+      expect(setArg.settings.apiKey).toBe(encryptedApiKey);
     });
   });
 

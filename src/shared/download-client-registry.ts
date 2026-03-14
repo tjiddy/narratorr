@@ -1,9 +1,5 @@
 import type { CreateDownloadClientFormData } from './schemas.js';
-
-interface RequiredField {
-  path: string;
-  message: string;
-}
+import type { RegistryEntry } from './registry-types.js';
 
 interface FieldConfig {
   username: boolean;
@@ -12,12 +8,8 @@ interface FieldConfig {
   apiKey: boolean;
 }
 
-interface DownloadClientTypeMetadata {
-  label: string;
-  defaultSettings: CreateDownloadClientFormData['settings'];
-  requiredFields: RequiredField[];
+interface DownloadClientTypeMetadata extends RegistryEntry<CreateDownloadClientFormData['settings']> {
   fieldConfig: FieldConfig;
-  viewSubtitle: (settings: Record<string, unknown>) => string;
   supportsCategories: boolean;
   protocol: 'torrent' | 'usenet' | 'per-instance';
 }

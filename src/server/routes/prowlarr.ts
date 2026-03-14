@@ -7,7 +7,7 @@ import {
   type ProwlarrConfigInput,
   type ProwlarrSyncApplyInput,
 } from '../../shared/schemas.js';
-import { maskFields, isSentinel } from '../utils/secret-codec.js';
+import { maskFields, resolveSentinelFields } from '../utils/secret-codec.js';
 
 interface TestBody {
   url: string;
@@ -53,14 +53,9 @@ export async function prowlarrRoutes(
       return reply.status(400).send({ error: parsed.error.issues[0]?.message || 'Invalid input' });
     }
 
-    // Sentinel passthrough: if apiKey is '********', preserve existing encrypted value
     const data = { ...parsed.data };
-    if (isSentinel(data.apiKey)) {
-      const existing = await prowlarrSync.getConfig();
-      if (existing) {
-        data.apiKey = existing.apiKey; // Already-decrypted value from getConfig
-      }
-    }
+    const existingConfig = await prowlarrSync.getConfig();
+    resolveSentinelFields(data as Record<string, unknown>, existingConfig as Record<string, unknown> | null);
 
     await prowlarrSync.saveConfig(data);
     request.log.info('Prowlarr config updated');

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadProtocol } from './types.js';
+import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOptions, type DownloadProtocol, ETA_UPPER_BOUND_SEC } from './types.js';
 import { qbTorrentsResponseSchema } from './schemas.js';
 
 export interface QBittorrentConfig {
@@ -328,7 +328,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
       ratio: qbt.ratio,
       seeders: qbt.num_seeds,
       leechers: qbt.num_leechs,
-      eta: qbt.eta > 0 && qbt.eta < 8640000 ? qbt.eta : undefined,
+      eta: qbt.eta > 0 && qbt.eta < ETA_UPPER_BOUND_SEC ? qbt.eta : undefined,
       addedAt: new Date(qbt.added_on * 1000),
       completedAt: qbt.completion_on > 0 ? new Date(qbt.completion_on * 1000) : undefined,
     };

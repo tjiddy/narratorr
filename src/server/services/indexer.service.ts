@@ -11,7 +11,7 @@ import {
   type SearchOptions,
 } from '../../core/index.js';
 import type { SettingsService } from './settings.service.js';
-import { encryptFields, decryptFields, isSentinel, getKey } from '../utils/secret-codec.js';
+import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
 
 type IndexerRow = typeof indexers.$inferSelect;
 type NewIndexer = typeof indexers.$inferInsert;
@@ -56,16 +56,8 @@ export class IndexerService {
     const toUpdate = { ...data };
     if (toUpdate.settings) {
       const settings = { ...(toUpdate.settings as Record<string, unknown>) };
-      // Handle sentinel passthrough: if a secret field is "********", preserve existing encrypted value
       const existing = await this.db.select().from(indexers).where(eq(indexers.id, id)).limit(1);
-      if (existing[0]) {
-        const existingSettings = (existing[0].settings ?? {}) as Record<string, unknown>;
-        for (const [key, value] of Object.entries(settings)) {
-          if (typeof value === 'string' && isSentinel(value)) {
-            settings[key] = existingSettings[key]; // Keep existing (encrypted) value
-          }
-        }
-      }
+      resolveSentinelFields(settings, (existing[0]?.settings ?? {}) as Record<string, unknown>);
       toUpdate.settings = encryptFields('indexer', settings, getKey());
     }
     const result = await this.db

@@ -24,7 +24,7 @@ type BooksListQuery = z.infer<typeof booksListQuerySchema>;
 
 type IdParam = z.infer<typeof idParamSchema>;
 
-const AUDIO_EXTENSIONS = new Set(['.mp3', '.m4a', '.m4b', '.flac', '.ogg', '.opus', '.wma', '.aac']);
+import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 
 /** Fire-and-forget: search indexers and grab the best result for a newly added book. */
 function triggerImmediateSearch(

@@ -98,6 +98,31 @@ describe('IndexerService', () => {
       const result = await service.update(999, { name: 'Nope' });
       expect(result).toBeNull();
     });
+
+    it('preserves existing encrypted secret fields when sentinel values are submitted', async () => {
+      const { encrypt } = await import('../utils/secret-codec.js');
+      const encryptedApiKey = encrypt('real-api-key', TEST_KEY);
+      const encryptedFlareSolverrUrl = encrypt('http://flaresolverr:8191', TEST_KEY);
+      const existingRow = {
+        ...mockIndexer,
+        settings: { apiKey: encryptedApiKey, hostname: 'old-host', flareSolverrUrl: encryptedFlareSolverrUrl },
+      };
+
+      // Sentinel lookup returns existing row
+      db.select.mockReturnValue(mockDbChain([existingRow]));
+      const updateChain = mockDbChain([existingRow]);
+      db.update.mockReturnValue(updateChain);
+
+      await service.update(1, {
+        settings: { apiKey: '********', hostname: 'new-host', flareSolverrUrl: '********' },
+      });
+
+      const setArg = (updateChain as { set: ReturnType<typeof vi.fn> }).set.mock.calls[0][0] as { settings: Record<string, unknown> };
+      expect(setArg.settings.hostname).toBe('new-host');
+      // Secret fields must be exactly the stored ciphertext, not re-encrypted sentinels
+      expect(setArg.settings.apiKey).toBe(encryptedApiKey);
+      expect(setArg.settings.flareSolverrUrl).toBe(encryptedFlareSolverrUrl);
+    });
   });
 
   describe('delete', () => {

@@ -2,6 +2,9 @@ import type { DownloadProtocol } from '../indexers/types.js';
 
 export type { DownloadProtocol } from '../indexers/types.js';
 
+/** ETA values >= this (in seconds) are treated as "no ETA available". */
+export const ETA_UPPER_BOUND_SEC = 8640000;
+
 export interface DownloadItemInfo {
   id: string;
   name: string;
