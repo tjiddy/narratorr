@@ -70,6 +70,8 @@ export const books = sqliteTable('books', {
 }, (table) => [
   index('idx_books_author_id').on(table.authorId),
   index('idx_books_status').on(table.status),
+  index('idx_books_path').on(table.path),
+  index('idx_books_enrichment_status').on(table.enrichmentStatus),
   uniqueIndex('idx_books_asin_unique').on(table.asin).where(sql`asin IS NOT NULL`),
   uniqueIndex('idx_books_title_author_unique').on(table.title, table.authorId),
 ]);
@@ -212,6 +214,7 @@ export const bookEvents = sqliteTable('book_events', {
   index('idx_book_events_book_id').on(table.bookId),
   index('idx_book_events_event_type').on(table.eventType),
   index('idx_book_events_created_at').on(table.createdAt),
+  index('idx_book_events_download_id_event_type').on(table.downloadId, table.eventType),
 ]);
 
 // ============ SEARCH & BLACKLIST ============
@@ -240,7 +243,10 @@ export const blacklist = sqliteTable('blacklist', {
   blacklistedAt: integer('blacklisted_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),
-});
+}, (table) => [
+  index('idx_blacklist_info_hash').on(table.infoHash),
+  index('idx_blacklist_book_id').on(table.bookId),
+]);
 
 // ============ TELEMETRY ============
 
