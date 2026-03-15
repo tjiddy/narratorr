@@ -2,7 +2,7 @@
 /* eslint-disable complexity, max-lines -- standalone CLI script, not library code */
 // Workflow metrics — parses Gitea comments and git history to produce
 // trend data on review quality, round counts, and finding patterns.
-// Usage: node scripts/metrics.ts [--since <pr-number>] [--json]
+// Usage: node scripts/metrics.ts [--since <pr-number>] [--json] [--reviews-dirs <dir1> <dir2> ...]
 // Output: markdown to .claude/workflow-stats.md + stdout (or JSON with --json).
 // Reads yolo dispatch DB for timing/cost data if available.
 
@@ -20,6 +20,17 @@ const args = process.argv.slice(2);
 const jsonOutput = args.includes("--json");
 const sinceIdx = args.indexOf("--since");
 const sincePr = sinceIdx !== -1 ? parseInt(args[sinceIdx + 1], 10) : 0;
+
+// --reviews-dirs <dir1> <dir2> ... — optional extra directories containing review retrospective files.
+// Consumes all remaining args after --reviews-dirs until the next flag (--*) or end of args.
+const reviewsDirsIdx = args.indexOf("--reviews-dirs");
+const extraReviewsDirs: string[] = [];
+if (reviewsDirsIdx !== -1) {
+  for (let i = reviewsDirsIdx + 1; i < args.length; i++) {
+    if (args[i].startsWith("--")) break;
+    extraReviewsDirs.push(resolve(args[i]));
+  }
+}
 
 // --- Types ---
 interface PRMetrics {
@@ -295,33 +306,41 @@ function collectPRMetrics(prOutput: string, prNumber: number): PRMetrics | null 
 }
 
 // --- Read retrospective files ---
-function readRetrospectives(): RetroSummary {
-  const reviewsDir = join(ROOT, ".claude", "cl", "reviews");
-  if (!existsSync(reviewsDir)) return { totalFiles: 0, bySkill: {}, topPromptFixes: [] };
+function readRetrospectives(additionalDirs: string[] = []): RetroSummary {
+  const localDir = join(ROOT, ".claude", "cl", "reviews");
+  const allDirs = [localDir, ...additionalDirs].filter(d => existsSync(d));
 
-  const files = readdirSync(reviewsDir).filter(f => f.endsWith(".md"));
+  if (allDirs.length === 0) return { totalFiles: 0, bySkill: {}, topPromptFixes: [] };
+
   const bySkill: Record<string, number> = {};
   const promptFixes: string[] = [];
+  let totalFiles = 0;
 
-  for (const file of files) {
-    const content = readFileSync(join(reviewsDir, file), "utf-8");
+  for (const dir of allDirs) {
+    const files = readdirSync(dir).filter(f => f.endsWith(".md"));
+    console.error(`  ${dir}: ${files.length} files`);
+    totalFiles += files.length;
 
-    // Parse skill from frontmatter
-    const skillMatch = content.match(/^skill:\s*(.+)$/m);
-    if (skillMatch) {
-      const skill = skillMatch[1].trim();
-      bySkill[skill] = (bySkill[skill] ?? 0) + 1;
-    }
+    for (const file of files) {
+      const content = readFileSync(join(dir, file), "utf-8");
 
-    // Extract prompt fix suggestions
-    const fixMatches = content.matchAll(/\*\*Prompt fix:\*\*\s*(.+?)(?:\n###|\n---|\n$|$)/gs);
-    for (const m of fixMatches) {
-      const fix = m[1].trim();
-      if (fix && fix.length > 10) promptFixes.push(fix);
+      // Parse skill from frontmatter
+      const skillMatch = content.match(/^skill:\s*(.+)$/m);
+      if (skillMatch) {
+        const skill = skillMatch[1].trim();
+        bySkill[skill] = (bySkill[skill] ?? 0) + 1;
+      }
+
+      // Extract prompt fix suggestions
+      const fixMatches = content.matchAll(/\*\*Prompt fix:\*\*\s*(.+?)(?:\n###|\n---|\n$|$)/gs);
+      for (const m of fixMatches) {
+        const fix = m[1].trim();
+        if (fix && fix.length > 10) promptFixes.push(fix);
+      }
     }
   }
 
-  return { totalFiles: files.length, bySkill, topPromptFixes: promptFixes.slice(0, 10) };
+  return { totalFiles, bySkill, topPromptFixes: promptFixes.slice(0, 10) };
 }
 
 // --- Compute aggregates ---
@@ -339,7 +358,7 @@ function computeAggregates(prs: PRMetrics[]): AggregateMetrics {
       findingCategoryTotals: {},
       disputeRate: 0,
       trendByWindow: [],
-      retrospectiveSummary: readRetrospectives(),
+      retrospectiveSummary: readRetrospectives(extraReviewsDirs),
     };
   }
 
@@ -401,7 +420,7 @@ function computeAggregates(prs: PRMetrics[]): AggregateMetrics {
     findingCategoryTotals: categoryTotals,
     disputeRate: totalFindings > 0 ? Math.round((totalDisputed / totalFindings) * 100) : 0,
     trendByWindow: trendWindows,
-    retrospectiveSummary: readRetrospectives(),
+    retrospectiveSummary: readRetrospectives(extraReviewsDirs),
   };
 }
 
@@ -545,6 +564,11 @@ async function main() {
   }
 
   console.error(`Analyzing ${prNumbers.length} PRs...`);
+
+  // Log review dirs being scanned
+  const localReviewsDir = join(ROOT, ".claude", "cl", "reviews");
+  const reviewDirsToScan = [localReviewsDir, ...extraReviewsDirs].filter(d => existsSync(d));
+  console.error(`Analyzing learning files from ${reviewDirsToScan.length} director${reviewDirsToScan.length === 1 ? "y" : "ies"}...`);
 
   // Collect metrics for each PR
   const allMetrics: PRMetrics[] = [];

@@ -77,6 +77,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    **General rules:**
    - Follow Acceptance Criteria as a checklist — each AC maps to something you must build and verify
+   - **AC contracts need assertion tests.** If an AC specifies a query contract (sort order, filter behavior, join behavior, pagination), write a test that asserts the contract directly — not just that data comes back in the right shape. If an AC says "sorted by date descending," the test must verify ordering, not just row count.
+   - **Derive from schema, don't build from memory.** When creating partial selects, response shapes, or form defaults, start from the actual schema/type definition and subtract — don't build include-lists from memory. Read `src/db/schema.ts` for DB columns, `src/shared/schemas/` for Zod types.
    - **Follow design principles** (CLAUDE.md § Design Principles) — single responsibility per file, DRY (extract shared patterns), extend don't modify (new files over growing lists). If the plan comment flagged design warnings, address them during implementation.
    - **Stay in scope** — if requirements expand beyond the issue spec, write `echo done > .claude/state/implement-<id>/stopped`, run `node scripts/block.ts <id> "<reason>"` and STOP
 
