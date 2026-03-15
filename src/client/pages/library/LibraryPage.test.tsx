@@ -1163,4 +1163,114 @@ describe('LibraryPage', () => {
       });
     });
   });
+
+  // #351 — Failed and Missing status pill click-through
+  describe('failed and missing status pills (#351)', () => {
+    const booksWithAllStatuses = [
+      ...mockBooks,
+      createMockBook({
+        id: 20,
+        title: 'Failed Download',
+        status: 'failed',
+        createdAt: '2024-01-20T00:00:00Z',
+        updatedAt: '2024-01-20T00:00:00Z',
+      }),
+      createMockBook({
+        id: 21,
+        title: 'Missing Audiobook',
+        status: 'missing',
+        createdAt: '2024-01-21T00:00:00Z',
+        updatedAt: '2024-01-21T00:00:00Z',
+      }),
+    ];
+
+    it('clicking Failed pill shows only failed-status books', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue({ data: booksWithAllStatuses, total: booksWithAllStatuses.length });
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed Download')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /Failed/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed Download')).toBeInTheDocument();
+        expect(screen.queryByText('The Way of Kings')).not.toBeInTheDocument();
+        expect(screen.queryByText('Missing Audiobook')).not.toBeInTheDocument();
+      });
+    });
+
+    it('clicking Missing pill shows only missing-status books', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue({ data: booksWithAllStatuses, total: booksWithAllStatuses.length });
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Missing Audiobook')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /^Missing\s*\d*$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Missing Audiobook')).toBeInTheDocument();
+        expect(screen.queryByText('The Way of Kings')).not.toBeInTheDocument();
+        expect(screen.queryByText('Failed Download')).not.toBeInTheDocument();
+      });
+    });
+
+    it('clicking Failed pill with no failed books shows NoMatchState', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue({ data: mockBooks, total: mockBooks.length });
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /Failed/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('No books match your filters')).toBeInTheDocument();
+      });
+    });
+
+    it('clicking Missing pill with no missing books shows NoMatchState', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue({ data: mockBooks, total: mockBooks.length });
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /^Missing\s*\d*$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('No books match your filters')).toBeInTheDocument();
+      });
+    });
+
+    it('status count pills show correct failed and missing counts', async () => {
+      vi.mocked(api.getBooks).mockResolvedValue({ data: booksWithAllStatuses, total: booksWithAllStatuses.length });
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed Download')).toBeInTheDocument();
+      });
+
+      await waitFor(() => {
+        const failedPill = screen.getByRole('button', { name: /^Failed\s*\d*$/i });
+        expect(within(failedPill).getByText('1')).toBeInTheDocument();
+        const missingPill = screen.getByRole('button', { name: /^Missing\s*\d*$/i });
+        expect(within(missingPill).getByText('1')).toBeInTheDocument();
+      });
+    });
+  });
 });

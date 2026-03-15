@@ -64,7 +64,7 @@ export function useLibraryFilters(books: BookWithAuthor[]) {
   }, [searchResults, statusFilter, authorFilter, seriesFilter, narratorFilter, sortField, sortDirection, collapseSeriesEnabled]);
 
   const statusCounts = useMemo(() => {
-    const counts: Record<StatusFilter, number> = { all: books.length, wanted: 0, downloading: 0, imported: 0 };
+    const counts: Record<StatusFilter, number> = { all: books.length, wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 };
     for (const tab of filterTabs) {
       if (tab.key !== 'all') counts[tab.key] = getStatusCount(books, tab.key);
     }

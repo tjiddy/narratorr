@@ -50,6 +50,8 @@ describe('useLibraryFilters', () => {
       wanted: 1,
       downloading: 2, // downloading + searching
       imported: 1,
+      failed: 0,
+      missing: 0,
     });
   });
 
@@ -404,5 +406,63 @@ describe('useLibraryFilters', () => {
     expect(result.current.authorFilter).toBe('');
     expect(result.current.seriesFilter).toBe('');
     expect(result.current.filteredBooks).toHaveLength(4);
+  });
+
+  // #351 — failed and missing status counts and filtering
+  describe('failed and missing status filters (#351)', () => {
+    const booksWithAllStatuses: BookWithAuthor[] = [
+      createMockBook({ id: 1, title: 'Wanted Book', status: 'wanted', createdAt: '2024-01-01T00:00:00Z' }),
+      createMockBook({ id: 2, title: 'Downloading Book', status: 'downloading', createdAt: '2024-01-02T00:00:00Z' }),
+      createMockBook({ id: 3, title: 'Imported Book', status: 'imported', createdAt: '2024-01-03T00:00:00Z' }),
+      createMockBook({ id: 4, title: 'Failed Book', status: 'failed', createdAt: '2024-01-04T00:00:00Z' }),
+      createMockBook({ id: 5, title: 'Missing Book', status: 'missing', createdAt: '2024-01-05T00:00:00Z' }),
+    ];
+
+    it('statusCounts includes failed and missing keys', () => {
+      const { result } = renderHook(() => useLibraryFilters(booksWithAllStatuses));
+      expect(result.current.statusCounts).toHaveProperty('failed');
+      expect(result.current.statusCounts).toHaveProperty('missing');
+    });
+
+    it('statusCounts.failed equals count of books with failed status', () => {
+      const { result } = renderHook(() => useLibraryFilters(booksWithAllStatuses));
+      expect(result.current.statusCounts.failed).toBe(1);
+    });
+
+    it('statusCounts.missing equals count of books with missing status', () => {
+      const { result } = renderHook(() => useLibraryFilters(booksWithAllStatuses));
+      expect(result.current.statusCounts.missing).toBe(1);
+    });
+
+    it('existing status count values unchanged', () => {
+      const { result } = renderHook(() => useLibraryFilters(booksWithAllStatuses));
+      expect(result.current.statusCounts.all).toBe(5);
+      expect(result.current.statusCounts.wanted).toBe(1);
+      expect(result.current.statusCounts.downloading).toBe(1);
+      expect(result.current.statusCounts.imported).toBe(1);
+    });
+
+    it('setting statusFilter to failed returns only failed books', () => {
+      const { result } = renderHook(() => useLibraryFilters(booksWithAllStatuses));
+      act(() => { result.current.setStatusFilter('failed'); });
+      expect(result.current.filteredBooks).toHaveLength(1);
+      expect(result.current.filteredBooks[0].title).toBe('Failed Book');
+    });
+
+    it('setting statusFilter to missing returns only missing books', () => {
+      const { result } = renderHook(() => useLibraryFilters(booksWithAllStatuses));
+      act(() => { result.current.setStatusFilter('missing'); });
+      expect(result.current.filteredBooks).toHaveLength(1);
+      expect(result.current.filteredBooks[0].title).toBe('Missing Book');
+    });
+
+    it('clearAllFilters resets from failed back to all', () => {
+      const { result } = renderHook(() => useLibraryFilters(booksWithAllStatuses));
+      act(() => { result.current.setStatusFilter('failed'); });
+      expect(result.current.filteredBooks).toHaveLength(1);
+      act(() => { result.current.clearAllFilters(); });
+      expect(result.current.statusFilter).toBe('all');
+      expect(result.current.filteredBooks).toHaveLength(5);
+    });
   });
 });

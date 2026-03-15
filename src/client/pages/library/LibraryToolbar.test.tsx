@@ -45,7 +45,7 @@ function defaultProps(overrides: Record<string, unknown> = {}) {
     onSearchClear: vi.fn(),
     statusFilter: 'all' as StatusFilter,
     onStatusFilterChange: vi.fn(),
-    statusCounts: { all: 25, wanted: 10, downloading: 3, imported: 12 } as Record<StatusFilter, number>,
+    statusCounts: { all: 25, wanted: 10, downloading: 3, imported: 12, failed: 2, missing: 1 } as Record<StatusFilter, number>,
     filtersOpen: false,
     onFiltersToggle: vi.fn(),
     activeFilterCount: 0,
@@ -132,9 +132,10 @@ describe('LibraryToolbar', () => {
 
     it('shows active filter count badge when count > 0', () => {
       renderWithProviders(
-        <LibraryToolbar {...defaultProps({ activeFilterCount: 2 })} />,
+        <LibraryToolbar {...defaultProps({ activeFilterCount: 3 })} />,
       );
-      expect(screen.getByText('2')).toBeInTheDocument();
+      const filtersButton = screen.getByLabelText('Toggle filters');
+      expect(filtersButton.textContent).toContain('3');
     });
 
     it('hides active filter count badge when count is 0', () => {

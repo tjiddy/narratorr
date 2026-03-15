@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sortBooks, collapseSeries, matchesStatusFilter, getStatusCount, extractNarrators, computeMbPerHour } from './helpers';
+import { sortBooks, collapseSeries, matchesStatusFilter, getStatusCount, extractNarrators, computeMbPerHour, filterTabs } from './helpers';
 import type { BookWithAuthor } from '@/lib/api';
 
 function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
@@ -179,6 +179,46 @@ describe('matchesStatusFilter', () => {
   it('imported matches both imported and importing', () => {
     expect(matchesStatusFilter('imported', 'imported')).toBe(true);
     expect(matchesStatusFilter('importing', 'imported')).toBe(true);
+  });
+
+  // #351 — failed and missing status filters
+  it('failed filter matches only failed status', () => {
+    expect(matchesStatusFilter('failed', 'failed')).toBe(true);
+  });
+
+  it('failed status does not match other non-all filters', () => {
+    expect(matchesStatusFilter('failed', 'wanted')).toBe(false);
+    expect(matchesStatusFilter('failed', 'downloading')).toBe(false);
+    expect(matchesStatusFilter('failed', 'imported')).toBe(false);
+    expect(matchesStatusFilter('failed', 'missing')).toBe(false);
+  });
+
+  it('missing filter matches only missing status', () => {
+    expect(matchesStatusFilter('missing', 'missing')).toBe(true);
+  });
+
+  it('missing status does not match other non-all filters', () => {
+    expect(matchesStatusFilter('missing', 'wanted')).toBe(false);
+    expect(matchesStatusFilter('missing', 'downloading')).toBe(false);
+    expect(matchesStatusFilter('missing', 'imported')).toBe(false);
+    expect(matchesStatusFilter('missing', 'failed')).toBe(false);
+  });
+
+  it('all filter matches failed and missing statuses', () => {
+    expect(matchesStatusFilter('failed', 'all')).toBe(true);
+    expect(matchesStatusFilter('missing', 'all')).toBe(true);
+  });
+});
+
+describe('filterTabs (#351)', () => {
+  it('includes failed and missing tab entries', () => {
+    const keys = filterTabs.map((t) => t.key);
+    expect(keys).toContain('failed');
+    expect(keys).toContain('missing');
+  });
+
+  it('has 6 entries total', () => {
+    expect(filterTabs).toHaveLength(6);
   });
 });
 

@@ -1,7 +1,7 @@
 import { toSortTitle } from '../../../core/utils/index.js';
 import type { BookWithAuthor } from '@/lib/api';
 
-export type StatusFilter = 'all' | 'wanted' | 'downloading' | 'imported';
+export type StatusFilter = 'all' | 'wanted' | 'downloading' | 'imported' | 'failed' | 'missing';
 export type SortField = 'createdAt' | 'title' | 'author' | 'narrator' | 'series' | 'quality' | 'size' | 'format';
 export type SortDirection = 'asc' | 'desc';
 
@@ -14,6 +14,8 @@ export const filterTabs: { key: StatusFilter; label: string }[] = [
   { key: 'wanted', label: 'Wanted' },
   { key: 'downloading', label: 'Downloading' },
   { key: 'imported', label: 'Imported' },
+  { key: 'failed', label: 'Failed' },
+  { key: 'missing', label: 'Missing' },
 ];
 
 
@@ -22,6 +24,8 @@ export function matchesStatusFilter(status: string, filter: StatusFilter): boole
   if (filter === 'wanted') return status === 'wanted';
   if (filter === 'downloading') return status === 'searching' || status === 'downloading';
   if (filter === 'imported') return status === 'imported' || status === 'importing';
+  if (filter === 'failed') return status === 'failed';
+  if (filter === 'missing') return status === 'missing';
   return false;
 }
 
