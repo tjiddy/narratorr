@@ -79,7 +79,14 @@ async function handleBasicAuth(
   }
 
   const decoded = Buffer.from(authHeader.slice(6), 'base64').toString();
-  const [username, password] = decoded.split(':');
+  const colonIndex = decoded.indexOf(':');
+  if (colonIndex < 1) {
+    reply.header('www-authenticate', 'Basic realm="Narratorr"');
+    reply.status(401).send({ error: 'Invalid credentials' });
+    return true;
+  }
+  const username = decoded.slice(0, colonIndex);
+  const password = decoded.slice(colonIndex + 1);
   const verified = await authService.verifyCredentials(username, password);
 
   if (!verified) {

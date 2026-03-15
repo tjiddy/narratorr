@@ -70,7 +70,12 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
 
   // POST /api/auth/logout — public, clears cookie
   app.post('/api/auth/logout', async (_request, reply) => {
-    reply.clearCookie('narratorr_session', { path: '/' });
+    reply.clearCookie('narratorr_session', {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: !config.isDev,
+      path: '/',
+    });
     return { success: true };
   });
 

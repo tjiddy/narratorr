@@ -2,14 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ScriptNotifier } from './script.js';
 import type { EventPayload } from './types.js';
 
-// Mock child_process.exec
+// Mock child_process.execFile
 vi.mock('node:child_process', () => ({
-  exec: vi.fn(),
+  execFile: vi.fn(),
 }));
 
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 
-const mockExec = vi.mocked(exec);
+const mockExecFile = vi.mocked(execFile);
 
 describe('ScriptNotifier', () => {
   beforeEach(() => {
@@ -17,10 +17,10 @@ describe('ScriptNotifier', () => {
   });
 
   it('executes script with correct environment variables', async () => {
-    mockExec.mockImplementation((_cmd, _opts, callback) => {
-      const cb = callback as (error: Error | null, stdout: string, stderr: string) => void;
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
       cb(null, '', '');
-      return {} as ReturnType<typeof exec>;
+      return {} as ReturnType<typeof execFile>;
     });
 
     const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
@@ -32,7 +32,7 @@ describe('ScriptNotifier', () => {
     const result = await notifier.send('on_grab', payload);
 
     expect(result.success).toBe(true);
-    expect(mockExec).toHaveBeenCalledWith(
+    expect(mockExecFile).toHaveBeenCalledWith(
       '/scripts/notify.sh',
       expect.objectContaining({
         timeout: 30000,
@@ -49,10 +49,10 @@ describe('ScriptNotifier', () => {
   it('passes event data as JSON on stdin', async () => {
     const mockStdin = { write: vi.fn(), end: vi.fn() };
 
-    mockExec.mockImplementation((_cmd, _opts, callback) => {
-      const cb = callback as (error: Error | null, stdout: string, stderr: string) => void;
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
       cb(null, '', '');
-      return { stdin: mockStdin } as unknown as ReturnType<typeof exec>;
+      return { stdin: mockStdin } as unknown as ReturnType<typeof execFile>;
     });
 
     const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
@@ -69,10 +69,10 @@ describe('ScriptNotifier', () => {
   });
 
   it('returns failure on script error', async () => {
-    mockExec.mockImplementation((_cmd, _opts, callback) => {
-      const cb = callback as (error: Error | null, stdout: string, stderr: string) => void;
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
       cb(new Error('Script not found'), '', '');
-      return {} as ReturnType<typeof exec>;
+      return {} as ReturnType<typeof execFile>;
     });
 
     const notifier = new ScriptNotifier({ path: '/scripts/missing.sh' });
@@ -83,12 +83,12 @@ describe('ScriptNotifier', () => {
   });
 
   it('returns timeout message when script is killed', async () => {
-    mockExec.mockImplementation((_cmd, _opts, callback) => {
-      const cb = callback as (error: Error & { killed?: boolean } | null, stdout: string, stderr: string) => void;
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
       const error = new Error('killed') as Error & { killed: boolean };
       error.killed = true;
       cb(error, '', '');
-      return {} as ReturnType<typeof exec>;
+      return {} as ReturnType<typeof execFile>;
     });
 
     const notifier = new ScriptNotifier({ path: '/scripts/slow.sh', timeout: 5 });
@@ -99,16 +99,16 @@ describe('ScriptNotifier', () => {
   });
 
   it('uses custom timeout in milliseconds', async () => {
-    mockExec.mockImplementation((_cmd, _opts, callback) => {
-      const cb = callback as (error: Error | null, stdout: string, stderr: string) => void;
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
       cb(null, '', '');
-      return {} as ReturnType<typeof exec>;
+      return {} as ReturnType<typeof execFile>;
     });
 
     const notifier = new ScriptNotifier({ path: '/scripts/notify.sh', timeout: 60 });
     await notifier.send('on_grab', { event: 'on_grab' });
 
-    expect(mockExec).toHaveBeenCalledWith(
+    expect(mockExecFile).toHaveBeenCalledWith(
       '/scripts/notify.sh',
       expect.objectContaining({ timeout: 60000 }),
       expect.any(Function),
@@ -116,10 +116,10 @@ describe('ScriptNotifier', () => {
   });
 
   it('returns success with warning when stderr has output', async () => {
-    mockExec.mockImplementation((_cmd, _opts, callback) => {
-      const cb = callback as (error: Error | null, stdout: string, stderr: string) => void;
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
       cb(null, '', 'some warning message');
-      return {} as ReturnType<typeof exec>;
+      return {} as ReturnType<typeof execFile>;
     });
 
     const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
@@ -130,17 +130,17 @@ describe('ScriptNotifier', () => {
   });
 
   it('test() sends a test payload', async () => {
-    mockExec.mockImplementation((_cmd, _opts, callback) => {
-      const cb = callback as (error: Error | null, stdout: string, stderr: string) => void;
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
       cb(null, '', '');
-      return {} as ReturnType<typeof exec>;
+      return {} as ReturnType<typeof execFile>;
     });
 
     const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
     const result = await notifier.test();
 
     expect(result.success).toBe(true);
-    expect(mockExec).toHaveBeenCalledWith(
+    expect(mockExecFile).toHaveBeenCalledWith(
       '/scripts/notify.sh',
       expect.objectContaining({
         env: expect.objectContaining({
@@ -153,10 +153,10 @@ describe('ScriptNotifier', () => {
   });
 
   it('sets upgrade event environment variables', async () => {
-    mockExec.mockImplementation((_cmd, _opts, callback) => {
-      const cb = callback as (error: Error | null, stdout: string, stderr: string) => void;
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
       cb(null, '', '');
-      return {} as ReturnType<typeof exec>;
+      return {} as ReturnType<typeof execFile>;
     });
 
     const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
@@ -166,7 +166,7 @@ describe('ScriptNotifier', () => {
       upgrade: { previousMbPerHour: 64, newMbPerHour: 128, previousCodec: 'mp3', newCodec: 'aac' },
     });
 
-    expect(mockExec).toHaveBeenCalledWith(
+    expect(mockExecFile).toHaveBeenCalledWith(
       '/scripts/notify.sh',
       expect.objectContaining({
         env: expect.objectContaining({
@@ -182,10 +182,10 @@ describe('ScriptNotifier', () => {
   });
 
   it('sets health event environment variables', async () => {
-    mockExec.mockImplementation((_cmd, _opts, callback) => {
-      const cb = callback as (error: Error | null, stdout: string, stderr: string) => void;
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
       cb(null, '', '');
-      return {} as ReturnType<typeof exec>;
+      return {} as ReturnType<typeof execFile>;
     });
 
     const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
@@ -194,7 +194,7 @@ describe('ScriptNotifier', () => {
       health: { checkName: 'Disk Space', previousState: 'healthy', currentState: 'warning', message: 'Low disk' },
     });
 
-    expect(mockExec).toHaveBeenCalledWith(
+    expect(mockExecFile).toHaveBeenCalledWith(
       '/scripts/notify.sh',
       expect.objectContaining({
         env: expect.objectContaining({
@@ -209,11 +209,32 @@ describe('ScriptNotifier', () => {
     );
   });
 
+  describe('security: execFile instead of exec', () => {
+    it('passes script path with shell metacharacters literally to execFile', async () => {
+      mockExecFile.mockImplementation((_file, _opts, callback) => {
+        const cb = callback as (...args: unknown[]) => void;
+        cb(null, '', '');
+        return {} as ReturnType<typeof execFile>;
+      });
+
+      const dangerousPath = '/scripts/notify.sh; rm -rf /';
+      const notifier = new ScriptNotifier({ path: dangerousPath });
+      await notifier.send('on_grab', { event: 'on_grab' });
+
+      // execFile passes path as first arg (file to execute), not as shell command
+      expect(mockExecFile).toHaveBeenCalledWith(
+        dangerousPath,
+        expect.any(Object),
+        expect.any(Function),
+      );
+    });
+  });
+
   it('sets failure event environment variables', async () => {
-    mockExec.mockImplementation((_cmd, _opts, callback) => {
-      const cb = callback as (error: Error | null, stdout: string, stderr: string) => void;
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
       cb(null, '', '');
-      return {} as ReturnType<typeof exec>;
+      return {} as ReturnType<typeof execFile>;
     });
 
     const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
@@ -222,7 +243,7 @@ describe('ScriptNotifier', () => {
       error: { message: 'Import failed', stage: 'import' },
     });
 
-    expect(mockExec).toHaveBeenCalledWith(
+    expect(mockExecFile).toHaveBeenCalledWith(
       '/scripts/notify.sh',
       expect.objectContaining({
         env: expect.objectContaining({

@@ -323,6 +323,86 @@ describe('system routes', () => {
       expect(JSON.parse(res.payload).error).toBe('Backup not found');
     });
 
+    it('sanitizes filename with quotes in Content-Disposition header', async () => {
+      const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-test-'));
+      const tempFile = path.join(tempDir, 'test.zip');
+      await fsp.writeFile(tempFile, 'fake');
+
+      (services.backup.getBackupPath as Mock).mockReturnValue(tempFile);
+
+      const res = await app.inject({ method: 'GET', url: '/api/system/backups/file"name.zip/download' });
+      expect(res.statusCode).toBe(200);
+      const disposition = String(res.headers['content-disposition']);
+      expect(disposition).not.toContain('"name');
+      expect(disposition).toMatch(/filename="[a-zA-Z0-9._-]+"/);
+
+      await fsp.rm(tempDir, { recursive: true }).catch(() => {});
+    });
+
+    it('sanitizes filename with path separators in Content-Disposition header', async () => {
+      const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-test-'));
+      const tempFile = path.join(tempDir, 'test.zip');
+      await fsp.writeFile(tempFile, 'fake');
+
+      // Even if getBackupPath somehow accepts a filename with separators,
+      // the Content-Disposition header must not contain them
+      (services.backup.getBackupPath as Mock).mockReturnValue(tempFile);
+
+      const res = await app.inject({ method: 'GET', url: '/api/system/backups/path%5Cfile.zip/download' });
+      expect(res.statusCode).toBe(200);
+      const disposition = String(res.headers['content-disposition']);
+      expect(disposition).not.toContain('\\');
+      expect(disposition).toMatch(/filename="[a-zA-Z0-9._-]+"/);
+
+      await fsp.rm(tempDir, { recursive: true }).catch(() => {});
+    });
+
+    it('sanitizes filename with spaces in Content-Disposition header', async () => {
+      const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-test-'));
+      const tempFile = path.join(tempDir, 'test.zip');
+      await fsp.writeFile(tempFile, 'fake');
+
+      (services.backup.getBackupPath as Mock).mockReturnValue(tempFile);
+
+      const res = await app.inject({ method: 'GET', url: '/api/system/backups/file%20name.zip/download' });
+      expect(res.statusCode).toBe(200);
+      const disposition = String(res.headers['content-disposition']);
+      expect(disposition).not.toContain(' name');
+      expect(disposition).toMatch(/filename="[a-zA-Z0-9._-]+"/);
+
+      await fsp.rm(tempDir, { recursive: true }).catch(() => {});
+    });
+
+    it('sanitizes filename with null bytes in Content-Disposition header', async () => {
+      const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-test-'));
+      const tempFile = path.join(tempDir, 'test.zip');
+      await fsp.writeFile(tempFile, 'fake');
+
+      (services.backup.getBackupPath as Mock).mockReturnValue(tempFile);
+
+      const res = await app.inject({ method: 'GET', url: '/api/system/backups/file%00name.zip/download' });
+      expect(res.statusCode).toBe(200);
+      const disposition = String(res.headers['content-disposition']);
+      expect(disposition).not.toContain('\0');
+      expect(disposition).toMatch(/filename="[a-zA-Z0-9._-]+"/);
+
+      await fsp.rm(tempDir, { recursive: true }).catch(() => {});
+    });
+
+    it('clean filename passes through unchanged', async () => {
+      const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-test-'));
+      const tempFile = path.join(tempDir, 'narratorr-backup-20260101T000000Z.zip');
+      await fsp.writeFile(tempFile, 'fake');
+
+      (services.backup.getBackupPath as Mock).mockReturnValue(tempFile);
+
+      const res = await app.inject({ method: 'GET', url: '/api/system/backups/narratorr-backup-20260101T000000Z.zip/download' });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-disposition']).toBe('attachment; filename="narratorr-backup-20260101T000000Z.zip"');
+
+      await fsp.rm(tempDir, { recursive: true }).catch(() => {});
+    });
+
     it('streams zip file for valid existing backup (200)', async () => {
       const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-test-'));
       const tempFile = path.join(tempDir, 'narratorr-backup-test.zip');

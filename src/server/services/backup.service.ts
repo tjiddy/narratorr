@@ -90,7 +90,8 @@ export class BackupService {
       // Step 1: VACUUM INTO for consistent snapshot
       const client = createClient({ url: `file:${this.dbPath}` });
       try {
-        await client.execute(`VACUUM INTO '${tempDbPath}'`);
+        const escapedPath = tempDbPath.replace(/'/g, "''");
+        await client.execute(`VACUUM INTO '${escapedPath}'`);
       } finally {
         client.close();
       }

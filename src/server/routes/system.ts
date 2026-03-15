@@ -107,9 +107,10 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
     }
 
     const stream = fs.createReadStream(filePath);
+    const safeFilename = request.params.filename.replace(/[^a-zA-Z0-9._-]/g, '-');
     return reply
       .header('Content-Type', 'application/zip')
-      .header('Content-Disposition', `attachment; filename="${request.params.filename}"`)
+      .header('Content-Disposition', `attachment; filename="${safeFilename}"`)
       .send(stream);
   });
 

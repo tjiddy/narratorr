@@ -157,6 +157,38 @@ describe('BackupService', () => {
       statSpy.mockRestore();
     });
 
+    it('escapes single quotes in VACUUM INTO path (doubles them for SQL literal safety)', async () => {
+      const pathWithQuote = "/config/it's-a-path";
+      const service = new BackupService(pathWithQuote, dbPath, createMockSettingsService(), createMockLog());
+
+      const statSpy = vi.spyOn(fs, 'stat').mockResolvedValue({ size: 100 } as unknown as Awaited<ReturnType<typeof fs.stat>>);
+
+      await service.create();
+
+      // The VACUUM INTO SQL should have the single quote doubled
+      const sqlArg = mockExecute.mock.calls[0][0] as string;
+      expect(sqlArg).toContain("it''s-a-path");
+      expect(sqlArg).not.toMatch(/it's-a-path/);
+
+      statSpy.mockRestore();
+    });
+
+    it('VACUUM INTO path is built from controlled inputs only (configPath + timestamp)', async () => {
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+
+      const statSpy = vi.spyOn(fs, 'stat').mockResolvedValue({ size: 100 } as unknown as Awaited<ReturnType<typeof fs.stat>>);
+
+      await service.create();
+
+      const sqlArg = mockExecute.mock.calls[0][0] as string;
+      // Path should start with configPath and contain backup-temp- prefix
+      expect(sqlArg).toContain(configPath.replace(/'/g, "''"));
+      expect(sqlArg).toContain('backup-temp-');
+      expect(sqlArg).toMatch(/VACUUM INTO '.*backup-temp-\d{4}-\d{2}-\d{2}T\d+Z\.db'/);
+
+      statSpy.mockRestore();
+    });
+
     it('rejects concurrent backup with "already in progress"', async () => {
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
       const statSpy = vi.spyOn(fs, 'stat').mockResolvedValue({ size: 100 } as unknown as Awaited<ReturnType<typeof fs.stat>>);

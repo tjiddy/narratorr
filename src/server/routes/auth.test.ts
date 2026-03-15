@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import {
@@ -10,6 +10,14 @@ import { createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 import { authRoutes } from './auth.js';
 import { settingsRoutes } from './settings.js';
+
+vi.mock('../config.js', () => ({
+  config: {
+    isDev: true,
+  },
+}));
+
+import { config } from '../config.js';
 
 /** Creates a test app with @fastify/cookie + auth routes + a hook that sets request.user. */
 async function createAuthTestApp(services: Services) {
@@ -147,6 +155,84 @@ describe('auth routes', () => {
       const setCookie = res.headers['set-cookie'];
       expect(setCookie).toBeDefined();
       expect(String(setCookie)).toContain('narratorr_session=');
+    });
+  });
+
+  describe('POST /api/auth/logout — cookie security', () => {
+    it('logout clears cookie with HttpOnly flag', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/auth/logout' });
+      const setCookie = String(res.headers['set-cookie']);
+      expect(setCookie).toContain('HttpOnly');
+    });
+
+    it('logout clears cookie with SameSite=Lax', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/auth/logout' });
+      const setCookie = String(res.headers['set-cookie']);
+      expect(setCookie).toContain('SameSite=Lax');
+    });
+
+    it('logout clears cookie with Path=/', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/auth/logout' });
+      const setCookie = String(res.headers['set-cookie']);
+      expect(setCookie).toContain('Path=/');
+    });
+
+    it('logout clearCookie attributes match setCookie attributes from login', async () => {
+      // Login first to get the login cookie attributes
+      (services.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
+      (services.auth.getSessionSecret as Mock).mockResolvedValue('test-secret');
+      (services.auth.createSessionCookie as Mock).mockReturnValue('signed-cookie-value');
+
+      const loginRes = await app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'admin', password: 'password123' },
+      });
+      const loginCookie = String(loginRes.headers['set-cookie']);
+
+      // Logout
+      const logoutRes = await app.inject({ method: 'POST', url: '/api/auth/logout' });
+      const logoutCookie = String(logoutRes.headers['set-cookie']);
+
+      // Both should have the same security attributes
+      for (const attr of ['HttpOnly', 'SameSite=Lax', 'Path=/']) {
+        expect(loginCookie, `login cookie missing ${attr}`).toContain(attr);
+        expect(logoutCookie, `logout cookie missing ${attr}`).toContain(attr);
+      }
+
+      // In dev mode (isDev=true), neither should have Secure
+      expect(loginCookie).not.toContain('Secure');
+      expect(logoutCookie).not.toContain('Secure');
+    });
+
+    it('logout cookie includes Secure flag in production mode', async () => {
+      // Switch to production mode
+      (config as { isDev: boolean }).isDev = false;
+
+      // Need a fresh app for the config change to take effect in route handler
+      const prodServices = createMockServices();
+      const prodApp = await createAuthTestApp(prodServices);
+
+      try {
+        // Login
+        (prodServices.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
+        (prodServices.auth.getSessionSecret as Mock).mockResolvedValue('test-secret');
+        (prodServices.auth.createSessionCookie as Mock).mockReturnValue('signed-cookie');
+
+        const loginRes = await prodApp.inject({
+          method: 'POST',
+          url: '/api/auth/login',
+          payload: { username: 'admin', password: 'pass' },
+        });
+        expect(String(loginRes.headers['set-cookie'])).toContain('Secure');
+
+        // Logout should also have Secure
+        const logoutRes = await prodApp.inject({ method: 'POST', url: '/api/auth/logout' });
+        expect(String(logoutRes.headers['set-cookie'])).toContain('Secure');
+      } finally {
+        (config as { isDev: boolean }).isDev = true;
+        await prodApp.close();
+      }
     });
   });
 

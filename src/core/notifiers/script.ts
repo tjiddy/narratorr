@@ -1,4 +1,4 @@
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.js';
 
 export interface ScriptConfig {
@@ -60,7 +60,7 @@ export class ScriptNotifier implements NotifierAdapter {
     const env = payloadToEnv(event, payload);
 
     return new Promise((resolve) => {
-      const child = exec(this.config.path, {
+      const child = execFile(this.config.path, {
         timeout: timeoutMs,
         env: { ...process.env, ...env },
       }, (error, _stdout, stderr) => {

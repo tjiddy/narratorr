@@ -189,6 +189,10 @@ describe('auth middleware', () => {
 
     afterAll(async () => { await app.close(); });
 
+    afterEach(() => {
+      (authService.verifyCredentials as ReturnType<typeof vi.fn>).mockReset();
+    });
+
     it('valid Authorization: Basic header passes', async () => {
       (authService.verifyCredentials as ReturnType<typeof vi.fn>).mockResolvedValue({ username: 'admin' });
       const encoded = Buffer.from('admin:password123').toString('base64');
@@ -218,6 +222,67 @@ describe('auth middleware', () => {
       });
       expect(res.statusCode).toBe(401);
       expect(res.headers['www-authenticate']).toBe('Basic realm="Narratorr"');
+    });
+
+    it('rejects Basic auth when decoded string has no colon — full contract: 401, challenge header, error body, no verifyCredentials', async () => {
+      const encoded = Buffer.from('useronly').toString('base64');
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/test',
+        headers: { authorization: `Basic ${encoded}` },
+      });
+      expect(res.statusCode).toBe(401);
+      expect(res.headers['www-authenticate']).toBe('Basic realm="Narratorr"');
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Invalid credentials' });
+      expect(authService.verifyCredentials).not.toHaveBeenCalled();
+    });
+
+    it('parses password with colons correctly — only splits on first colon', async () => {
+      (authService.verifyCredentials as ReturnType<typeof vi.fn>).mockResolvedValue({ username: 'admin' });
+      const encoded = Buffer.from('admin:p@ss:word:extra').toString('base64');
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/test',
+        headers: { authorization: `Basic ${encoded}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(authService.verifyCredentials).toHaveBeenCalledWith('admin', 'p@ss:word:extra');
+    });
+
+    it('rejects empty username (base64 of ":password") with 401', async () => {
+      const encoded = Buffer.from(':password').toString('base64');
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/test',
+        headers: { authorization: `Basic ${encoded}` },
+      });
+      expect(res.statusCode).toBe(401);
+      expect(authService.verifyCredentials).not.toHaveBeenCalled();
+    });
+
+    it('rejects empty decoded string with 401', async () => {
+      const encoded = Buffer.from('').toString('base64');
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/test',
+        headers: { authorization: `Basic ${encoded}` },
+      });
+      expect(res.statusCode).toBe(401);
+      expect(authService.verifyCredentials).not.toHaveBeenCalled();
+    });
+
+    it('rejects non-base64 garbage — post-decode has no colon — returns 401', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/test',
+        headers: { authorization: 'Basic !!!notbase64!!!' },
+      });
+      expect(res.statusCode).toBe(401);
+      expect(authService.verifyCredentials).not.toHaveBeenCalled();
     });
 
     it('PUT /api/system/update/dismiss returns 401 without credentials in mode: basic', async () => {
