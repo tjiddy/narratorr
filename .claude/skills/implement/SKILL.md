@@ -38,7 +38,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ### Phase 2 — Plan
 
-2. **Invoke `/plan <id>`** via the Skill tool.
+1b. **Branch guard:** Run `git branch --show-current` and verify the output matches `feature/issue-<id>-*`. If not, STOP: "Branch mismatch before /plan — expected feature/issue-<id>-*, got <actual>." Save the branch name for use in downstream invocations.
+
+2. **Invoke `/plan <id>`** via the Skill tool. Include in your message to the Skill tool: "Current branch: `<branch-name-from-step-1b>`" so the downstream skill can verify it is operating on the correct branch.
    - `/plan` explores the codebase, extracts test stubs from the spec, and posts a structured implementation plan on the issue.
    - The plan comment and test stubs feed directly into the implementation phase.
    - **When `/plan` returns → IMMEDIATELY continue to Phase 3.** Do not end your turn.
@@ -78,14 +80,18 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - If still failing after 2 attempts → run `node scripts/block.ts <id> "Quality gates failing after 2 fix attempts"` and STOP
    - If output starts with `VERIFY: pass` → continue to step 6 RIGHT NOW. You have 4 more steps to complete.
 
+5b. **Branch guard:** Run `git branch --show-current` and verify the output matches `feature/issue-<id>-*`. If not, STOP: "Branch mismatch before frontend-design — expected feature/issue-<id>-*, got <actual>." Save the branch name.
+
 6. **Frontend design pass (if applicable):** Check the issue labels or spec for frontend scope (`scope/frontend`).
-   - If the issue includes frontend work → invoke the `frontend-design` skill on each new or significantly changed UI component. The goal is production-grade polish, not just functional correctness.
+   - If the issue includes frontend work → invoke the `frontend-design` skill on each new or significantly changed UI component. Include "Current branch: `<branch-name>`" in your message. The goal is production-grade polish, not just functional correctness.
    - If the `frontend-design` skill is not available (it's an external plugin — check the skills list in system reminders), skip this step and note it in the handoff.
    - If the issue is backend-only → skip this step.
 
 ### Phase 4 — Handoff
 
-7. **Invoke `/handoff <id>`** via the Skill tool.
+6b. **Branch guard:** Run `git branch --show-current` and verify the output matches `feature/issue-<id>-*`. If not, STOP: "Branch mismatch before /handoff — expected feature/issue-<id>-*, got <actual>." Save the branch name.
+
+7. **Invoke `/handoff <id>`** via the Skill tool. Include in your message: "Current branch: `<branch-name-from-step-6b>`".
    - This pushes, creates the PR, updates labels, posts the handoff comment, updates the context cache, and appends the workflow log.
    - **When `/handoff` returns → IMMEDIATELY continue to step 8.** Do not end your turn.
 

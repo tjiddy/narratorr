@@ -3,7 +3,7 @@
 // Usage: node scripts/claim.ts <issue-id>
 // Output: "CLAIMED: #<id> — <branch>" on success, error otherwise.
 
-import { gitea, giteaSafe, git, parseLabels, replaceLabel, slugify, withTempFile, die } from "./lib.ts";
+import { gitea, giteaSafe, parseLabels, replaceLabel, slugify, withTempFile, die, checkoutOrCreateBranch } from "./lib.ts";
 
 const id = process.argv[2];
 if (!id) die("ERROR: usage: node scripts/claim.ts <issue-id>");
@@ -38,20 +38,16 @@ const titleMatch = issue.match(/^#\d+\s+\[.+?\]\s+(.+)$/m) || issue.match(/^#\d+
 const title = titleMatch?.[1] ?? `issue-${id}`;
 const branch = `feature/issue-${id}-${slugify(title)}`;
 
-// 5. Create branch
-try { git("stash", "--include-untracked"); } catch { /* no changes to stash */ }
-git("checkout", "main");
-git("pull", "origin", "main");
-git("checkout", "-b", branch);
-try { git("stash", "pop"); } catch { /* no stash to pop */ }
+// 5. Checkout existing branch or create new one
+const { branch: finalBranch, resumed } = checkoutOrCreateBranch(id, branch);
 
 // 6. Update labels
 const newLabels = replaceLabel(labels, "status/", "status/in-progress");
 gitea("issue-update", id, "labels", newLabels.join(","));
 
 // 7. Post comment
-withTempFile(`**Claiming #${id}** — branch: \`${branch}\``, (path) => {
+withTempFile(`**Claiming #${id}** — branch: \`${finalBranch}\``, (path) => {
   gitea("issue-comment", id, "--body-file", path);
 });
 
-console.log(`CLAIMED: #${id} — ${branch}`);
+console.log(`CLAIMED: #${id} — ${finalBranch}${resumed ? " (resumed)" : ""}`);

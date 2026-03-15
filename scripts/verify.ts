@@ -4,7 +4,7 @@
 // Output: "VERIFY: pass" on success, structured failures otherwise.
 
 import { readFileSync, existsSync } from "node:fs";
-import { run, git, firstLines } from "./lib.ts";
+import { run, git, firstLines, runDiffLintGate } from "./lib.ts";
 
 interface Gate { name: string; result: string }
 const gates: Gate[] = [];
@@ -15,13 +15,35 @@ function addGate(name: string, result: string, ok: boolean) {
   if (!ok) failed = true;
 }
 
-// --- Lint ---
-const lint = run("pnpm lint");
-if (lint.ok) {
-  addGate("LINT", "pass", true);
-} else {
-  const errors = firstLines(lint.stdout || lint.stderr, 5);
-  addGate("LINT", `fail\n${errors}`, false);
+// --- Lint (diff against main to ignore pre-existing violations) ---
+let lintHandled = false;
+try {
+  const result = runDiffLintGate(git, run);
+  if (result.handled) {
+    if (result.newViolations.length === 0) {
+      addGate("LINT", "pass", true);
+    } else {
+      const details = result.newViolations
+        .map(v => `  ${v.file}:${v.line}:${v.column} ${v.rule} ${v.message}`)
+        .slice(0, 10)
+        .join("\n");
+      addGate("LINT", `fail (${result.newViolations.length} new violations)\n${details}`, false);
+    }
+    lintHandled = true;
+  }
+} catch {
+  // merge-base or JSON parse failed — fall back to full lint
+}
+
+if (!lintHandled) {
+  // Fallback: full lint (on main branch or if diff approach failed)
+  const lint = run("pnpm lint");
+  if (lint.ok) {
+    addGate("LINT", "pass", true);
+  } else {
+    const errors = firstLines(lint.stdout || lint.stderr, 5);
+    addGate("LINT", `fail\n${errors}`, false);
+  }
 }
 
 // --- Test + Coverage ---

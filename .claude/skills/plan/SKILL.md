@@ -59,6 +59,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    >    - **SRP-1 (Side-Effect Breadth):** Will any new/modified function touch 3+ side-effect categories?
    >    - **ISP-1 (Fat Injection):** Will the plan pass large dependency objects where only a subset is needed?
    >
+   > 8. **Settings fixture blast radius check (trigger: plan touches `src/db/schema.ts` settings columns, `src/shared/schemas/settings*.ts`, or any file defining `*Settings*` types):**
+   >    If any planned file matches these trigger patterns, grep `**/*.test.ts` and `**/*.test.tsx` for hardcoded settings fixtures (look for `settings:`, `DEFAULT_SETTINGS`, `createMockSettings`, or inline settings objects in test setup). Enumerate every test file containing hardcoded settings fixtures in the return structure under `FIXTURE BLAST RADIUS`. If no planned files match the trigger, skip this check.
+   >
    > Return this structure:
    > ```
    > PATTERNS: <relevant existing patterns and interfaces found>
@@ -67,6 +70,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > DEPENDENCIES: <dep status, or "none">
    > KNOWN LEARNINGS: <relevant learnings from .claude/cl/learnings/ and debt items, or "none">
    > DESIGN CONCERNS: <any architecture check violations found, with check IDs (e.g., OCP-1, LSP-1), or "none">
+   > FIXTURE BLAST RADIUS: <test files with hardcoded settings fixtures, or "N/A (no settings changes)">
    > ```
 
    Use the subagent's structured output directly in the plan comment (step 5).

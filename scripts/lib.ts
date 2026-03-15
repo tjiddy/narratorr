@@ -136,6 +136,158 @@ export function slugify(title: string, maxLen = 40): string {
     .replace(/-$/, "");
 }
 
+// Find an existing branch matching the issue pattern (local or remote).
+// Returns { branch, source: "local" | "remote" } or null.
+export function findExistingBranch(
+  issueId: string,
+  gitFn: (...args: string[]) => string = git
+): { branch: string; source: "local" | "remote" } | null {
+  const pattern = `feature/issue-${issueId}-*`;
+
+  // Check local branches first
+  try {
+    const local = gitFn("branch", "--list", pattern);
+    const match = local.match(/(feature\/issue-\d+-\S+)/);
+    if (match) return { branch: match[1], source: "local" };
+  } catch { /* no local match */ }
+
+  // Check remote branches
+  try {
+    const remote = gitFn("branch", "-r", "--list", `origin/${pattern}`);
+    const match = remote.match(/origin\/(feature\/issue-\d+-\S+)/);
+    if (match) return { branch: match[1], source: "remote" };
+  } catch { /* no remote match */ }
+
+  return null;
+}
+
+// Checkout or create a branch for an issue. Returns { branch, resumed }.
+// If an existing branch is found (local or remote), checks it out.
+// Otherwise creates a new branch from main.
+export function checkoutOrCreateBranch(
+  issueId: string,
+  newBranch: string,
+  gitFn: (...args: string[]) => string = git
+): { branch: string; resumed: boolean } {
+  const existing = findExistingBranch(issueId, gitFn);
+
+  try { gitFn("stash", "--include-untracked"); } catch { /* no changes */ }
+
+  let resumed = false;
+  let finalBranch = newBranch;
+
+  if (existing) {
+    if (existing.source === "remote") {
+      gitFn("fetch", "origin", existing.branch);
+    }
+    gitFn("checkout", existing.branch);
+    resumed = true;
+    finalBranch = existing.branch;
+  } else {
+    gitFn("checkout", "main");
+    gitFn("pull", "origin", "main");
+    gitFn("checkout", "-b", newBranch);
+  }
+
+  try { gitFn("stash", "pop"); } catch { /* no stash */ }
+
+  return { branch: finalBranch, resumed };
+}
+
+// Normalized lint violation tuple for diffing.
+export interface LintViolation {
+  file: string;
+  rule: string;
+  line: number;
+  column: number;
+  message: string;
+}
+
+// Parse ESLint JSON output into normalized violation tuples.
+export function parseLintJson(jsonOutput: string): LintViolation[] {
+  const results = JSON.parse(jsonOutput) as Array<{
+    filePath: string;
+    messages: Array<{
+      ruleId: string | null;
+      line: number;
+      column: number;
+      message: string;
+      severity: number;
+    }>;
+  }>;
+  const violations: LintViolation[] = [];
+  for (const file of results) {
+    for (const msg of file.messages) {
+      if (msg.severity === 0) continue; // skip "off" rules
+      violations.push({
+        file: file.filePath.replace(/\\/g, "/"), // normalize path separators
+        rule: msg.ruleId ?? "unknown",
+        line: msg.line,
+        column: msg.column,
+        message: msg.message,
+      });
+    }
+  }
+  return violations;
+}
+
+// Diff lint violations: return only violations present in `branch` but not in `main`.
+export function diffLintViolations(
+  mainViolations: LintViolation[],
+  branchViolations: LintViolation[]
+): LintViolation[] {
+  const mainSet = new Set(
+    mainViolations.map(v => `${v.file}|${v.rule}|${v.line}|${v.column}|${v.message}`)
+  );
+  return branchViolations.filter(
+    v => !mainSet.has(`${v.file}|${v.rule}|${v.line}|${v.column}|${v.message}`)
+  );
+}
+
+// Run diff-based lint gate: lint branch and main, return only new violations.
+// Returns { handled: true, newViolations } on success, { handled: false } on fallback needed.
+export function runDiffLintGate(
+  gitFn: (...args: string[]) => string,
+  runFn: (cmd: string) => { ok: boolean; stdout: string; stderr: string }
+): { handled: true; newViolations: LintViolation[] } | { handled: false } {
+  const mergeBase = gitFn("merge-base", "HEAD", "main");
+  if (!mergeBase) return { handled: false };
+
+  const currentBranch = gitFn("branch", "--show-current");
+  if (!currentBranch || currentBranch === "main") return { handled: false };
+
+  // Lint current branch with JSON output
+  const branchLint = runFn("pnpm exec eslint . --format json --no-error-on-unmatched-pattern");
+  if (!branchLint.ok && !branchLint.stdout.trim().startsWith("[")) {
+    return { handled: false }; // ESLint failed without JSON — fallback
+  }
+  const branchJson = branchLint.stdout || "[]";
+
+  // Stash, checkout merge-base to lint, then return to branch
+  try { gitFn("stash", "--include-untracked"); } catch { /* no changes */ }
+  let mainJson = "[]";
+  let mainLintFailed = false;
+  try {
+    gitFn("checkout", mergeBase);
+    const mainLint = runFn("pnpm exec eslint . --format json --no-error-on-unmatched-pattern");
+    if (!mainLint.ok && !mainLint.stdout.trim().startsWith("[")) {
+      mainLintFailed = true;
+    } else {
+      mainJson = mainLint.stdout || "[]";
+    }
+  } finally {
+    try { gitFn("checkout", currentBranch); } catch { /* best effort */ }
+    try { gitFn("stash", "pop"); } catch { /* no stash */ }
+  }
+  if (mainLintFailed) return { handled: false };
+
+  const mainViolations = parseLintJson(mainJson);
+  const branchViolations = parseLintJson(branchJson);
+  const newViolations = diffLintViolations(mainViolations, branchViolations);
+
+  return { handled: true, newViolations };
+}
+
 // Print message and exit with code 1.
 export function die(msg: string): never {
   console.log(msg);

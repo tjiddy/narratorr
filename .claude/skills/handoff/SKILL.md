@@ -64,6 +64,15 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > - Input handling: is user input sanitized before use in shell commands, SQL, file paths?
    > - Response data: could any endpoint leak internal state or credentials?
    >
+   > **5. Infrastructure artifact check (trigger: diff contains any file matching `Dockerfile*`, `docker-compose*`, `.dockerignore`, `docker/**`, `.gitea/workflows/*`, `package.json`, `pnpm-lock.yaml`, `*.sh`, `*.config.js`, `*.config.ts`, `tsconfig*.json`):**
+   > If any changed file matches the trigger patterns above, check:
+   > - Shell scripts: execute bit set (`git ls-files -s <file>` should show 100755, not 100644)
+   > - Dockerfile: base image assumptions (Node.js availability, s6-overlay service naming conventions)
+   > - CI workflow files: syntax valid, steps reference correct scripts/commands
+   > - `.dockerignore`: new build artifacts or output directories are excluded
+   > - Config files (`*.config.js`, `*.config.ts`, `tsconfig*.json`): syntax valid, no broken references
+   > If no changed files match the trigger patterns, skip this check entirely.
+   >
    > Return ONLY this structured output:
    > ```
    > SELF-REVIEW:
@@ -71,6 +80,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    >   - [interaction] <description> → correct (evidence) | BUG: <what's wrong>
    >   - [security] <description> → clean | ISSUE: <what's wrong>
    >   - [config-combo] <description> → correct (evidence) | BUG: <what's wrong>
+   >   - [infra] <description> → correct | ISSUE: <what's wrong> (only if trigger files matched)
    >
    > RESULT: pass | fail (N issues found)
    > ```
