@@ -3,8 +3,9 @@ import { access, readdir, stat, mkdir, cp, rm } from 'node:fs/promises';
 import { join, extname, relative, resolve, isAbsolute } from 'node:path';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books } from '../../db/schema.js';
+import { books, authors } from '../../db/schema.js';
 import { eq, inArray } from 'drizzle-orm';
+import { slugify } from '../../core/utils/parse.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { discoverBooks } from '../../core/utils/book-discovery.js';
 import type { BookService } from './book.service.js';
@@ -153,29 +154,41 @@ export class LibraryScanService {
     const folders = await discoverBooks(rootPath, { log: this.log });
     this.log.info({ count: folders.length }, 'Found audio folders');
 
+    // Pre-fetch all existing book paths into a Set for O(1) duplicate check
+    const existingPathRows = await this.db
+      .select({ path: books.path })
+      .from(books);
+    const existingPaths = new Set(existingPathRows.map((r) => r.path).filter(Boolean));
+
+    // Pre-fetch all title + author slug pairs into a Set for O(1) duplicate check
+    const titleAuthorRows = await this.db
+      .select({ title: books.title, slug: authors.slug })
+      .from(books)
+      .leftJoin(authors, eq(books.authorId, authors.id));
+    const existingTitleAuthorKeys = new Set(
+      titleAuthorRows
+        .filter((r) => r.title && r.slug)
+        .map((r) => `${r.title}|${r.slug}`),
+    );
+
     const discoveries: DiscoveredBook[] = [];
     let skippedDuplicates = 0;
 
     for (const folder of folders) {
       const parsed = parseFolderStructure(folder.folderParts);
 
-      // Check for duplicates by path
-      const existingByPath = await this.db
-        .select()
-        .from(books)
-        .where(eq(books.path, folder.path))
-        .limit(1);
-
-      if (existingByPath.length > 0) {
+      // Check for duplicates by path (in-memory Set lookup)
+      if (existingPaths.has(folder.path)) {
         this.log.debug({ path: folder.path }, 'Skipping duplicate (path match)');
         skippedDuplicates++;
         continue;
       }
 
-      // Check for duplicates by title + author
-      if (parsed.title) {
-        const existing = await this.bookService.findDuplicate(parsed.title, parsed.author || undefined);
-        if (existing) {
+      // Check for duplicates by title + author slug (in-memory Set lookup)
+      if (parsed.title && parsed.author) {
+        const authorSlug = slugify(parsed.author);
+        const key = `${parsed.title}|${authorSlug}`;
+        if (existingTitleAuthorKeys.has(key)) {
           this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Skipping duplicate (title+author match)');
           skippedDuplicates++;
           continue;

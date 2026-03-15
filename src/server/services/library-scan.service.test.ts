@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { inject } from '../__tests__/helpers.js';
+import { inject, createMockDb, mockDbChain } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { BookService } from './book.service.js';
@@ -178,7 +178,9 @@ function createMockLogger() {
 
 describe('LibraryScanService', () => {
   let service: LibraryScanService;
-  let mockDb: unknown;
+  // Hybrid mock: createMockDb() for scanDirectory pre-fetch (select.mockReturnValueOnce),
+  // plus direct chain methods for other tests that use mockDb.where/limit/set directly.
+  let mockDb: ReturnType<typeof createMockDb> & Record<string, ReturnType<typeof vi.fn>>;
   let mockBookService: {
     findDuplicate: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
@@ -193,14 +195,18 @@ describe('LibraryScanService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(enrichBookFromAudio).mockResolvedValue({ enriched: true });
-    mockDb = {
-      select: vi.fn().mockReturnThis(),
+    const db = createMockDb();
+    // Add direct chain methods for backward compatibility with non-scanDirectory tests
+    const chainMethods: Record<string, ReturnType<typeof vi.fn>> = {
       from: vi.fn().mockReturnThis(),
       where: vi.fn().mockReturnThis(),
       limit: vi.fn().mockResolvedValue([]),
-      update: vi.fn().mockReturnThis(),
       set: vi.fn().mockReturnThis(),
     };
+    // select/update calls return the chain by default
+    db.select.mockReturnValue(chainMethods as never);
+    db.update.mockReturnValue(chainMethods as never);
+    mockDb = Object.assign(db, chainMethods);
     mockBookService = {
       findDuplicate: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockImplementation(async (data: { title: string }) => ({
@@ -723,8 +729,16 @@ describe('LibraryScanService', () => {
   // ============================================================================
 
   describe('scanDirectory', () => {
+    /** Helper: set up pre-fetch mocks for scanDirectory */
+    function mockPreFetch(paths: string[], titleAuthors: Array<{ title: string; slug: string }>) {
+      mockDb.select
+        .mockReturnValueOnce(mockDbChain(paths.map((p) => ({ path: p }))))
+        .mockReturnValueOnce(mockDbChain(titleAuthors));
+    }
+
     it('returns empty discoveries when no folders found', async () => {
       vi.mocked(discoverBooks).mockResolvedValue([]);
+      mockPreFetch([], []);
 
       const result = await service.scanDirectory('/audiobooks');
 
@@ -745,6 +759,7 @@ describe('LibraryScanService', () => {
           totalSize: 500_000_000,
         },
       ]);
+      mockPreFetch([], []);
 
       const result = await service.scanDirectory('/audiobooks');
 
@@ -770,8 +785,8 @@ describe('LibraryScanService', () => {
           totalSize: 100,
         },
       ]);
-      // DB returns an existing book for path match
-      (mockDb as Record<string, ReturnType<typeof vi.fn>>).limit.mockResolvedValueOnce([{ id: 1, path: '/audiobooks/Existing' }]);
+      // Pre-fetch returns path match
+      mockPreFetch(['/audiobooks/Existing'], []);
 
       const result = await service.scanDirectory('/audiobooks');
 
@@ -789,16 +804,13 @@ describe('LibraryScanService', () => {
           totalSize: 200,
         },
       ]);
-      // No path match
-      (mockDb as Record<string, ReturnType<typeof vi.fn>>).limit.mockResolvedValueOnce([]);
-      // But title+author duplicate found
-      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 1, title: 'Title' });
+      // No path match, but title+author slug match
+      mockPreFetch([], [{ title: 'Title', slug: 'author' }]);
 
       const result = await service.scanDirectory('/audiobooks');
 
       expect(result.discoveries).toHaveLength(0);
       expect(result.skippedDuplicates).toBe(1);
-      expect(mockBookService.findDuplicate).toHaveBeenCalledWith('Title', 'Author');
     });
 
     it('does not check title+author duplicate when parsed title is empty', async () => {
@@ -810,12 +822,11 @@ describe('LibraryScanService', () => {
           totalSize: 50,
         },
       ]);
-      (mockDb as Record<string, ReturnType<typeof vi.fn>>).limit.mockResolvedValueOnce([]);
+      mockPreFetch([], []);
 
       const result = await service.scanDirectory('/audiobooks');
 
-      // Empty string is falsy, so findDuplicate should NOT be called
-      expect(mockBookService.findDuplicate).not.toHaveBeenCalled();
+      // Empty string is falsy, so title+author check should be skipped
       expect(result.discoveries).toHaveLength(1);
     });
 
@@ -826,18 +837,11 @@ describe('LibraryScanService', () => {
         { path: '/audiobooks/Author/TitleDup', folderParts: ['Author', 'TitleDup'], audioFileCount: 3, totalSize: 300 },
         { path: '/audiobooks/New/Book2', folderParts: ['New', 'Book2'], audioFileCount: 4, totalSize: 400 },
       ]);
-
-      // Book1: no path dup, no title dup
-      (mockDb as Record<string, ReturnType<typeof vi.fn>>).limit.mockResolvedValueOnce([]);
-      mockBookService.findDuplicate.mockResolvedValueOnce(null);
-      // PathDup: path match
-      (mockDb as Record<string, ReturnType<typeof vi.fn>>).limit.mockResolvedValueOnce([{ id: 99 }]);
-      // TitleDup: no path match, title+author match
-      (mockDb as Record<string, ReturnType<typeof vi.fn>>).limit.mockResolvedValueOnce([]);
-      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 50, title: 'TitleDup' });
-      // Book2: no path dup, no title dup
-      (mockDb as Record<string, ReturnType<typeof vi.fn>>).limit.mockResolvedValueOnce([]);
-      mockBookService.findDuplicate.mockResolvedValueOnce(null);
+      // PathDup exists by path, TitleDup exists by title+author
+      mockPreFetch(
+        ['/audiobooks/PathDup'],
+        [{ title: 'TitleDup', slug: 'author' }],
+      );
 
       const result = await service.scanDirectory('/audiobooks');
 
@@ -846,6 +850,55 @@ describe('LibraryScanService', () => {
       expect(result.discoveries[1].parsedTitle).toBe('Book2');
       expect(result.skippedDuplicates).toBe(2);
       expect(result.totalFolders).toBe(4);
+    });
+
+    // N+1 elimination tests (issue #356)
+    describe('pre-fetch optimization', () => {
+      it('pre-fetches all book paths and title+author slugs before the folder loop', async () => {
+        vi.mocked(discoverBooks).mockResolvedValue([
+          { path: '/audiobooks/A/Book1', folderParts: ['A', 'Book1'], audioFileCount: 1, totalSize: 100 },
+          { path: '/audiobooks/B/Book2', folderParts: ['B', 'Book2'], audioFileCount: 1, totalSize: 100 },
+        ]);
+        mockPreFetch([], []);
+
+        await service.scanDirectory('/audiobooks');
+
+        // db.select should be called exactly twice (paths + title/author), NOT per folder
+        expect(mockDb.select).toHaveBeenCalledTimes(2);
+      });
+
+      it('handles empty library — all folders treated as new', async () => {
+        vi.mocked(discoverBooks).mockResolvedValue([
+          { path: '/audiobooks/A/Book', folderParts: ['A', 'Book'], audioFileCount: 1, totalSize: 100 },
+        ]);
+        mockPreFetch([], []);
+
+        const result = await service.scanDirectory('/audiobooks');
+
+        expect(result.discoveries).toHaveLength(1);
+        expect(result.skippedDuplicates).toBe(0);
+      });
+
+      it('handles scan with zero folders — pre-fetch queries still run', async () => {
+        vi.mocked(discoverBooks).mockResolvedValue([]);
+        mockPreFetch([], []);
+
+        const result = await service.scanDirectory('/audiobooks');
+
+        expect(result.discoveries).toHaveLength(0);
+        expect(mockDb.select).toHaveBeenCalledTimes(2);
+      });
+
+      it('does not call bookService.findDuplicate (uses in-memory lookup instead)', async () => {
+        vi.mocked(discoverBooks).mockResolvedValue([
+          { path: '/audiobooks/Author/Title', folderParts: ['Author', 'Title'], audioFileCount: 1, totalSize: 100 },
+        ]);
+        mockPreFetch([], [{ title: 'Title', slug: 'author' }]);
+
+        await service.scanDirectory('/audiobooks');
+
+        expect(mockBookService.findDuplicate).not.toHaveBeenCalled();
+      });
     });
   });
 

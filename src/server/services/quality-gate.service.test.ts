@@ -491,6 +491,158 @@ describe('QualityGateService', () => {
     });
   });
 
+  // N+1 elimination tests (issue #356)
+  describe('getQualityGateDataBatch', () => {
+    const batchReason = {
+      action: 'held' as const,
+      mbPerHour: 60,
+      existingMbPerHour: 40,
+      narratorMatch: false,
+      durationDelta: 0.05,
+      codec: 'AAC',
+      channels: 1,
+      probeFailure: false,
+      holdReasons: ['narrator_mismatch'],
+    };
+
+    it('returns Map of downloadId → QualityDecisionReason for multiple downloads', async () => {
+      const { service, db } = createService();
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { ...baseDownload, id: 1, bookId: 10, status: 'pending_review' },
+          { ...baseDownload, id: 2, bookId: 20, status: 'pending_review' },
+        ]))
+        .mockReturnValueOnce(mockDbChain([
+          { downloadId: 1, reason: batchReason },
+          { downloadId: 2, reason: { ...batchReason, mbPerHour: 80 } },
+        ]));
+
+      const result = await service.getQualityGateDataBatch([1, 2]);
+
+      expect(result).toBeInstanceOf(Map);
+      expect(result.get(1)).toEqual(batchReason);
+      expect(result.get(2)).toEqual(expect.objectContaining({ mbPerHour: 80 }));
+    });
+
+    it('returns null for downloads without bookId', async () => {
+      const { service, db } = createService();
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { ...baseDownload, id: 1, bookId: null, status: 'pending_review' },
+        ]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getQualityGateDataBatch([1]);
+
+      expect(result.get(1)).toBeNull();
+    });
+
+    it('returns null for downloads without held_for_review event', async () => {
+      const { service, db } = createService();
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { ...baseDownload, id: 1, bookId: 10, status: 'pending_review' },
+        ]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getQualityGateDataBatch([1]);
+
+      expect(result.get(1)).toBeNull();
+    });
+
+    it('handles empty download IDs array — returns empty Map', async () => {
+      const { service } = createService();
+
+      const result = await service.getQualityGateDataBatch([]);
+
+      expect(result).toBeInstanceOf(Map);
+      expect(result.size).toBe(0);
+    });
+
+    it('returns null for download IDs not found in DB', async () => {
+      const { service, db } = createService();
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getQualityGateDataBatch([999]);
+
+      expect(result.get(999)).toBeNull();
+    });
+
+    it('chunks download lookup at 999 and event lookup at 998 for >999 IDs', async () => {
+      const { service, db } = createService();
+      // Use exactly 999 IDs — download query fits in 1 chunk (999 ≤ 999),
+      // but event query must split into 2 chunks (999 > 998) to leave room
+      // for the extra eventType parameter.
+      const ids = Array.from({ length: 999 }, (_, i) => i + 1);
+      const allDownloads = ids.map((id) => ({ ...baseDownload, id, bookId: id * 10, status: 'pending_review' as const }));
+
+      db.select
+        // Downloads: 1 chunk (all 999 fit in DOWNLOAD_CHUNK=999)
+        .mockReturnValueOnce(mockDbChain(allDownloads))
+        // Events: 2 chunks because EVENT_CHUNK=998 < 999
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getQualityGateDataBatch(ids);
+
+      // 1 download chunk + 2 event chunks = 3 total db.select calls
+      // If EVENT_CHUNK regressed to 999, this would be 2 calls (1+1), failing the test
+      expect(db.select).toHaveBeenCalledTimes(3);
+      expect(result.size).toBe(999);
+    });
+
+    it('keeps both chunks under SQLite limit for large batches', async () => {
+      const { service, db } = createService();
+      // 2000 IDs — download: ceil(2000/999) = 3 chunks, event: ceil(2000/998) = 3 chunks
+      const ids = Array.from({ length: 2000 }, (_, i) => i + 1);
+      const allDownloads = ids.map((id) => ({ ...baseDownload, id, bookId: id * 10, status: 'pending_review' as const }));
+
+      // Split downloads into chunks matching DOWNLOAD_CHUNK=999
+      const dlChunk1 = allDownloads.slice(0, 999);
+      const dlChunk2 = allDownloads.slice(999, 1998);
+      const dlChunk3 = allDownloads.slice(1998);
+
+      db.select
+        // 3 download chunks
+        .mockReturnValueOnce(mockDbChain(dlChunk1))
+        .mockReturnValueOnce(mockDbChain(dlChunk2))
+        .mockReturnValueOnce(mockDbChain(dlChunk3))
+        // 3 event chunks (ceil(2000/998) = 3)
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getQualityGateDataBatch(ids);
+
+      // 3 download + 3 event = 6
+      expect(db.select).toHaveBeenCalledTimes(6);
+      expect(result.size).toBe(2000);
+    });
+
+    it('selects the most recent held_for_review event when multiple exist', async () => {
+      const { service, db } = createService();
+      const newestReason = { ...batchReason, mbPerHour: 100 };
+      const olderReason = { ...batchReason, mbPerHour: 50 };
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          { ...baseDownload, id: 1, bookId: 10, status: 'pending_review' },
+        ]))
+        // Events ordered by desc(id) — newest first
+        .mockReturnValueOnce(mockDbChain([
+          { downloadId: 1, reason: newestReason },
+          { downloadId: 1, reason: olderReason },
+        ]));
+
+      const result = await service.getQualityGateDataBatch([1]);
+
+      // Should keep the first (newest) event, not overwrite with older
+      expect(result.get(1)).toEqual(newestReason);
+    });
+  });
+
   describe('reject', () => {
     it('transitions pending_review download to failed and blacklists', async () => {
       const { service, db, blacklistService } = createService();

@@ -1,4 +1,5 @@
-import { eq, and, desc, isNotNull } from 'drizzle-orm';
+/* eslint-disable max-lines -- quality gate logic is cohesive; batch method extends existing patterns */
+import { eq, and, desc, isNotNull, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, bookEvents } from '../../db/schema.js';
@@ -517,5 +518,67 @@ export class QualityGateService {
     if (eventResults.length === 0) return null;
 
     return (eventResults[0].reason as QualityDecisionReason | null) ?? null;
+  }
+
+  /**
+   * Batch-fetch quality gate data for multiple downloads.
+   * Returns a Map from downloadId → QualityDecisionReason | null.
+   * Chunks IN(...) queries at 999 to respect SQLite parameter limits.
+   */
+  async getQualityGateDataBatch(downloadIds: number[]): Promise<Map<number, QualityDecisionReason | null>> {
+    const result = new Map<number, QualityDecisionReason | null>();
+    if (downloadIds.length === 0) return result;
+
+    // Initialize all IDs as null (covers not-found and no-bookId cases)
+    for (const id of downloadIds) {
+      result.set(id, null);
+    }
+
+    // SQLite max parameters = 999. Downloads query only binds IN(...) IDs.
+    // Events query binds IN(...) IDs + 1 extra for eventType, so chunk at 998.
+    const DOWNLOAD_CHUNK = 999;
+    const EVENT_CHUNK = 998;
+
+    const allDownloads: Array<typeof downloads.$inferSelect> = [];
+    for (let i = 0; i < downloadIds.length; i += DOWNLOAD_CHUNK) {
+      const chunk = downloadIds.slice(i, i + DOWNLOAD_CHUNK);
+      const rows = await this.db
+        .select()
+        .from(downloads)
+        .where(inArray(downloads.id, chunk));
+      allDownloads.push(...rows);
+    }
+
+    // Filter to downloads with bookId
+    const validIds = allDownloads
+      .filter((dl) => dl.bookId !== null)
+      .map((dl) => dl.id);
+
+    if (validIds.length === 0) return result;
+
+    // Batch-fetch held_for_review events for valid downloads
+    const allEvents: Array<{ downloadId: number | null; reason: unknown }> = [];
+    for (let i = 0; i < validIds.length; i += EVENT_CHUNK) {
+      const chunk = validIds.slice(i, i + EVENT_CHUNK);
+      const rows = await this.db
+        .select({ downloadId: bookEvents.downloadId, reason: bookEvents.reason })
+        .from(bookEvents)
+        .where(and(
+          inArray(bookEvents.downloadId, chunk),
+          eq(bookEvents.eventType, 'held_for_review'),
+        ))
+        .orderBy(desc(bookEvents.id));
+      allEvents.push(...rows);
+    }
+
+    // Map events to downloads — take the first (most recent) event per download
+    for (const event of allEvents) {
+      if (event.downloadId !== null && !result.has(event.downloadId)) continue;
+      if (event.downloadId !== null && result.get(event.downloadId) === null) {
+        result.set(event.downloadId, (event.reason as QualityDecisionReason | null) ?? null);
+      }
+    }
+
+    return result;
   }
 }

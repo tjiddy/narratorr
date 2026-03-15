@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
-import { createMockLogger, inject } from '../__tests__/helpers.js';
+import { createMockLogger, createMockDb, mockDbChain, inject } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { RenameService, RenameError } from './rename.service.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
+import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { rename, readdir, mkdir, stat, rm, cp } from 'node:fs/promises';
 
@@ -41,6 +42,7 @@ const librarySettings = {
 };
 
 function createService() {
+  const db = createMockDb();
   const bookService = {
     getById: vi.fn(),
     getAll: vi.fn(),
@@ -52,12 +54,13 @@ function createService() {
   const log = createMockLogger();
 
   const service = new RenameService(
+    inject<Db>(db),
     inject<BookService>(bookService),
     inject<SettingsService>(settingsService),
     inject<FastifyBaseLogger>(log),
   );
 
-  return { service, bookService, settingsService, log };
+  return { service, db, bookService, settingsService, log };
 }
 
 describe('RenameService', () => {
@@ -143,11 +146,12 @@ describe('RenameService', () => {
     });
 
     it('throws CONFLICT when target path belongs to a different book', async () => {
-      const { service, bookService } = createService();
+      const { service, db, bookService } = createService();
       const book = { ...mockBook, id: 1, path: '/library/wrong/path' };
-      const otherBook = { ...mockBook, id: 2, path: '/library/Brandon Sanderson/The Way of Kings' };
+      const otherBook = { ...mockBook, id: 2, title: 'The Way of Kings', path: '/library/Brandon Sanderson/The Way of Kings' };
       bookService.getById.mockResolvedValue(book);
-      bookService.getAll.mockResolvedValue({ data: [book, otherBook], total: 2 });
+      // checkConflict now uses targeted DB query
+      db.select.mockReturnValue(mockDbChain([otherBook]));
       (stat as Mock).mockResolvedValue({ isFile: () => false, isDirectory: () => true });
 
       await expect(service.renameBook(1)).rejects.toThrow(RenameError);
@@ -202,6 +206,41 @@ describe('RenameService', () => {
 
       expect(cp).toHaveBeenCalled();
       expect(rm).toHaveBeenCalled();
+    });
+  });
+
+  // N+1 elimination tests (issue #356)
+  describe('checkConflict optimization', () => {
+    it('uses targeted DB query instead of bookService.getAll()', async () => {
+      const { service, db, bookService } = createService();
+      const book = { ...mockBook, id: 1, path: '/library/wrong/path' };
+      bookService.getById.mockResolvedValue(book);
+      bookService.update.mockResolvedValue({ ...book, path: '/library/Brandon Sanderson/The Way of Kings' });
+      // stat succeeds = target exists on disk
+      (stat as Mock).mockResolvedValue({ isFile: () => false, isDirectory: () => true });
+      // DB query returns no conflict
+      db.select.mockReturnValue(mockDbChain([]));
+
+      await service.renameBook(1);
+
+      // getAll should NOT be called
+      expect(bookService.getAll).not.toHaveBeenCalled();
+      // db.select should be called for the conflict check
+      expect(db.select).toHaveBeenCalled();
+    });
+
+    it('does not query DB when target path does not exist on disk', async () => {
+      const { service, db, bookService } = createService();
+      const book = { ...mockBook, id: 1, path: '/library/wrong/path' };
+      bookService.getById.mockResolvedValue(book);
+      bookService.update.mockResolvedValue(book);
+      // stat rejects = target doesn't exist → no conflict check needed
+      (stat as Mock).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+      await service.renameBook(1);
+
+      expect(bookService.getAll).not.toHaveBeenCalled();
+      expect(db.select).not.toHaveBeenCalled();
     });
   });
 
@@ -362,6 +401,7 @@ describe('RenameService', () => {
 
   describe('event history producers', () => {
     it('records renamed event on successful rename', async () => {
+      const db = createMockDb();
       const eventHistory = { create: vi.fn().mockResolvedValue({ id: 1 }) };
       const bookService = {
         getById: vi.fn().mockResolvedValue(mockBook),
@@ -378,6 +418,7 @@ describe('RenameService', () => {
       const log = createMockLogger();
 
       const service = new RenameService(
+        inject<Db>(db),
         inject<BookService>(bookService),
         inject<SettingsService>(settingsService),
         inject<FastifyBaseLogger>(log),

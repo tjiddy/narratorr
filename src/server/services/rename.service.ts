@@ -1,6 +1,9 @@
 import { mkdir, rename, cp, rm, stat } from 'node:fs/promises';
 import { dirname, normalize, resolve } from 'node:path';
+import { and, eq, ne } from 'drizzle-orm';
 import type { FastifyBaseLogger } from 'fastify';
+import type { Db } from '../../db/index.js';
+import { books } from '../../db/schema.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -16,6 +19,7 @@ export interface RenameResult {
 
 export class RenameService {
   constructor(
+    private db: Db,
     private bookService: BookService,
     private settingsService: SettingsService,
     private log: FastifyBaseLogger,
@@ -125,15 +129,20 @@ export class RenameService {
 
     if (!exists) return;
 
-    // Target exists on disk — check if it belongs to a different book
-    const { data: allBooks } = await this.bookService.getAll();
-    const conflicting = allBooks.find(
-      (b) => b.id !== bookId && b.path && normalize(resolve(b.path)) === normalize(resolve(targetPath)),
-    );
+    // Target exists on disk — check if it belongs to a different book (targeted query)
+    const normalizedTarget = normalize(resolve(targetPath));
+    const conflicting = await this.db
+      .select({ id: books.id, title: books.title, path: books.path })
+      .from(books)
+      .where(and(
+        ne(books.id, bookId),
+        eq(books.path, normalizedTarget),
+      ))
+      .limit(1);
 
-    if (conflicting) {
+    if (conflicting.length > 0) {
       throw new RenameError(
-        `Target path already belongs to "${conflicting.title}" (book #${conflicting.id})`,
+        `Target path already belongs to "${conflicting[0].title}" (book #${conflicting[0].id})`,
         'CONFLICT',
       );
     }

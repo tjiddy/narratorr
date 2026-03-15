@@ -111,7 +111,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const prowlarrSync = new ProwlarrSyncService(db, log);
 
   const qualityGateService = new QualityGateService(db, downloadClient, eventHistory, blacklistService, log, remotePathMapping);
-  const renameService = new RenameService(book, settings, log, eventHistory);
+  const renameService = new RenameService(db, book, settings, log, eventHistory);
   const retryBudget = new RetryBudget();
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
   const recyclingBin = new RecyclingBinService(db, log, config.configPath, settings);

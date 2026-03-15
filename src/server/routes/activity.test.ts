@@ -83,11 +83,13 @@ describe('activity routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('augments pending_review downloads with quality gate data', async () => {
+    it('augments pending_review downloads with quality gate data via batch', async () => {
       const pendingDownload = { ...mockDownload, id: 2, status: 'pending_review' };
       const gateData = { action: 'held', mbPerHour: 60, existingMbPerHour: 40 };
       (services.download.getAll as Mock).mockResolvedValue({ data: [mockDownload, pendingDownload], total: 2 });
-      (services.qualityGate.getQualityGateData as Mock).mockResolvedValue(gateData);
+      (services.qualityGate.getQualityGateDataBatch as Mock).mockResolvedValue(
+        new Map([[2, gateData]]),
+      );
 
       const res = await app.inject({ method: 'GET', url: '/api/activity' });
 
@@ -96,7 +98,50 @@ describe('activity routes', () => {
       expect(body.data[0].qualityGate).toBeUndefined();
       expect(body.data[1].qualityGate).toEqual(gateData);
       expect(body.total).toBe(2);
-      expect(services.qualityGate.getQualityGateData).toHaveBeenCalledWith(2);
+      expect(services.qualityGate.getQualityGateDataBatch).toHaveBeenCalledWith([2]);
+    });
+
+    it('batch-fetches quality gate data for multiple pending_review downloads', async () => {
+      const pending1 = { ...mockDownload, id: 2, status: 'pending_review' };
+      const pending2 = { ...mockDownload, id: 3, status: 'pending_review' };
+      const gate2 = { action: 'held', mbPerHour: 60 };
+      const gate3 = { action: 'held', mbPerHour: 80 };
+      (services.download.getAll as Mock).mockResolvedValue({ data: [mockDownload, pending1, pending2], total: 3 });
+      (services.qualityGate.getQualityGateDataBatch as Mock).mockResolvedValue(
+        new Map([[2, gate2], [3, gate3]]),
+      );
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity' });
+
+      const body = JSON.parse(res.payload);
+      expect(body.data[1].qualityGate).toEqual(gate2);
+      expect(body.data[2].qualityGate).toEqual(gate3);
+      // Should be called once with all pending_review IDs, not once per download
+      expect(services.qualityGate.getQualityGateDataBatch).toHaveBeenCalledTimes(1);
+      expect(services.qualityGate.getQualityGateDataBatch).toHaveBeenCalledWith([2, 3]);
+    });
+
+    it('skips quality gate fetch when no pending_review downloads exist', async () => {
+      (services.download.getAll as Mock).mockResolvedValue({ data: [mockDownload], total: 1 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity' });
+
+      const body = JSON.parse(res.payload);
+      expect(body.data).toHaveLength(1);
+      expect(services.qualityGate.getQualityGateDataBatch).not.toHaveBeenCalled();
+    });
+
+    it('handles null quality gate data — download still appears without qualityGate field', async () => {
+      const pendingDownload = { ...mockDownload, id: 2, status: 'pending_review' };
+      (services.download.getAll as Mock).mockResolvedValue({ data: [pendingDownload], total: 1 });
+      (services.qualityGate.getQualityGateDataBatch as Mock).mockResolvedValue(
+        new Map([[2, null]]),
+      );
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity' });
+
+      const body = JSON.parse(res.payload);
+      expect(body.data[0].qualityGate).toBeUndefined();
     });
   });
 
@@ -393,8 +438,19 @@ describe('activity routes', () => {
       expect(res.statusCode).toBe(500);
     });
 
-    it('GET /api/activity returns 500 when service throws', async () => {
+    it('GET /api/activity returns 500 when downloadService.getAll throws', async () => {
       (services.download.getAll as Mock).mockRejectedValue(new Error('DB error'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/activity' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+
+    it('GET /api/activity returns 500 when getQualityGateDataBatch rejects', async () => {
+      const pendingDownload = { ...mockDownload, id: 2, status: 'pending_review' };
+      (services.download.getAll as Mock).mockResolvedValue({ data: [pendingDownload], total: 1 });
+      (services.qualityGate.getQualityGateDataBatch as Mock).mockRejectedValue(new Error('Batch query failed'));
 
       const res = await app.inject({ method: 'GET', url: '/api/activity' });
 

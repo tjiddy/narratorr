@@ -26,14 +26,19 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
         const pagination = limit !== undefined || offset !== undefined ? { limit, offset } : undefined;
         const result = await downloadService.getAll(status, pagination);
 
-        // Augment pending_review downloads with quality gate comparison data
-        const augmented = await Promise.all(result.data.map(async (dl) => {
-          if (dl.status === 'pending_review') {
-            const qualityGate = await qualityGateService.getQualityGateData(dl.id);
-            return { ...dl, qualityGate };
-          }
-          return dl;
-        }));
+        // Augment pending_review downloads with quality gate comparison data (batch)
+        const pendingIds = result.data
+          .filter((dl) => dl.status === 'pending_review')
+          .map((dl) => dl.id);
+
+        const gateMap = pendingIds.length > 0
+          ? await qualityGateService.getQualityGateDataBatch(pendingIds)
+          : new Map<number, null>();
+
+        const augmented = result.data.map((dl) => {
+          const qualityGate = gateMap.get(dl.id);
+          return qualityGate ? { ...dl, qualityGate } : dl;
+        });
 
         return { data: augmented, total: result.total };
       } catch (error) {
