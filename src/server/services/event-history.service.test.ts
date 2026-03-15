@@ -402,6 +402,61 @@ describe('EventHistoryService', () => {
     });
   });
 
+  describe('delete', () => {
+    it('deletes event by id and returns true', async () => {
+      db.select.mockReturnValue(mockDbChain([createMockDbBookEvent()]));
+      db.delete.mockReturnValue(mockDbChain([createMockDbBookEvent()]));
+
+      const result = await service.delete(1);
+
+      expect(result).toBe(true);
+      expect(db.delete).toHaveBeenCalled();
+    });
+
+    it('returns false when event does not exist', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.delete(999);
+
+      expect(result).toBe(false);
+      expect(db.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('deleteAll', () => {
+    it('deletes all events and returns count when no filter', async () => {
+      db.delete.mockReturnValue(mockDbChain([
+        createMockDbBookEvent({ id: 1 }),
+        createMockDbBookEvent({ id: 2 }),
+        createMockDbBookEvent({ id: 3 }),
+      ]));
+
+      const result = await service.deleteAll();
+
+      expect(result).toBe(3);
+      expect(db.delete).toHaveBeenCalled();
+    });
+
+    it('deletes only matching events when eventType filter provided', async () => {
+      db.delete.mockReturnValue(mockDbChain([
+        createMockDbBookEvent({ id: 1, eventType: 'download_failed' }),
+      ]));
+
+      const result = await service.deleteAll({ eventType: 'download_failed' });
+
+      expect(result).toBe(1);
+      expect(db.delete).toHaveBeenCalled();
+    });
+
+    it('returns 0 when no matching events', async () => {
+      db.delete.mockReturnValue(mockDbChain([]));
+
+      const result = await service.deleteAll({ eventType: 'download_failed' });
+
+      expect(result).toBe(0);
+    });
+  });
+
   describe('deleted book history', () => {
     it('returns events with null bookId and snapshotted title', async () => {
       const event = createMockDbBookEvent({
