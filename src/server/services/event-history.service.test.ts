@@ -402,6 +402,77 @@ describe('EventHistoryService', () => {
     });
   });
 
+  describe('delete', () => {
+    it('deletes event by id and returns true', async () => {
+      db.select.mockReturnValue(mockDbChain([createMockDbBookEvent()]));
+      db.delete.mockReturnValue(mockDbChain([createMockDbBookEvent()]));
+
+      const result = await service.delete(1);
+
+      expect(result).toBe(true);
+      expect(db.delete).toHaveBeenCalled();
+    });
+
+    it('returns false when event does not exist', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.delete(999);
+
+      expect(result).toBe(false);
+      expect(db.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('deleteAll', () => {
+    it('deletes all events and returns count when no filter', async () => {
+      const chain = mockDbChain([
+        createMockDbBookEvent({ id: 1 }),
+        createMockDbBookEvent({ id: 2 }),
+        createMockDbBookEvent({ id: 3 }),
+      ]);
+      db.delete.mockReturnValue(chain);
+
+      const result = await service.deleteAll();
+
+      expect(result).toBe(3);
+      expect(db.delete).toHaveBeenCalled();
+      // Without a filter, where() should receive undefined (no predicate)
+      const whereFn = chain.where as ReturnType<typeof vi.fn>;
+      expect(whereFn).toHaveBeenCalledWith(undefined);
+    });
+
+    it('deletes only matching events when eventType filter provided', async () => {
+      const chain = mockDbChain([
+        createMockDbBookEvent({ id: 1, eventType: 'download_failed' }),
+      ]);
+      db.delete.mockReturnValue(chain);
+
+      const result = await service.deleteAll({ eventType: 'download_failed' });
+
+      expect(result).toBe(1);
+      expect(db.delete).toHaveBeenCalled();
+
+      // Verify the where predicate targets bookEvents.eventType with eq()
+      const whereFn = chain.where as ReturnType<typeof vi.fn>;
+      expect(whereFn).toHaveBeenCalledTimes(1);
+      const predicate = whereFn.mock.calls[0][0];
+      const chunks = predicate.queryChunks;
+      // Drizzle eq() produces: [StringChunk(''), Column, StringChunk(' = '), Param(value), StringChunk('')]
+      const operatorChunk = chunks[2];
+      expect(operatorChunk.value[0]).toBe(' = ');
+      const paramChunk = chunks[3];
+      expect(paramChunk.value).toBe('download_failed');
+    });
+
+    it('returns 0 when no matching events', async () => {
+      db.delete.mockReturnValue(mockDbChain([]));
+
+      const result = await service.deleteAll({ eventType: 'download_failed' });
+
+      expect(result).toBe(0);
+    });
+  });
+
   describe('deleted book history', () => {
     it('returns events with null bookId and snapshotted title', async () => {
       const event = createMockDbBookEvent({

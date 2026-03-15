@@ -96,6 +96,36 @@ describe('EventHistoryCard', () => {
     expect(screen.queryByText(/"score": 95/)).not.toBeInTheDocument();
   });
 
+  it('renders delete button when onDelete is provided', () => {
+    const onDelete = vi.fn();
+    render(<EventHistoryCard event={createMockEvent()} onDelete={onDelete} />);
+
+    expect(screen.getByLabelText('Delete event')).toBeInTheDocument();
+  });
+
+  it('does not render delete button when onDelete is not provided', () => {
+    render(<EventHistoryCard event={createMockEvent()} />);
+
+    expect(screen.queryByLabelText('Delete event')).not.toBeInTheDocument();
+  });
+
+  it('calls onDelete with event id when delete button clicked', async () => {
+    const user = userEvent.setup();
+    const onDelete = vi.fn();
+    render(<EventHistoryCard event={createMockEvent({ id: 42 })} onDelete={onDelete} />);
+
+    await user.click(screen.getByLabelText('Delete event'));
+
+    expect(onDelete).toHaveBeenCalledWith(42);
+  });
+
+  it('disables delete button when isDeleting is true', () => {
+    const onDelete = vi.fn();
+    render(<EventHistoryCard event={createMockEvent()} onDelete={onDelete} isDeleting />);
+
+    expect(screen.getByLabelText('Delete event')).toBeDisabled();
+  });
+
   it('renders empty state for unknown event type gracefully', () => {
     render(<EventHistoryCard event={createMockEvent({ eventType: 'unknown_type' })} />);
 

@@ -10,6 +10,8 @@ vi.mock('@/lib/api', () => ({
     getEventHistory: vi.fn(),
     getBookEventHistory: vi.fn(),
     markEventFailed: vi.fn(),
+    deleteEvent: vi.fn(),
+    deleteEvents: vi.fn(),
   },
 }));
 
@@ -91,6 +93,118 @@ describe('useEventHistory', () => {
     });
   });
 
+  it('deleteMutation calls api.deleteEvent with id, invalidates root, and shows success toast', async () => {
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.deleteEvent).mockResolvedValue(undefined as never);
+
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const { result } = renderHook(() => useEventHistory(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      result.current.deleteMutation.mutate(7);
+    });
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Event deleted');
+    });
+
+    expect(api.deleteEvent).toHaveBeenCalledWith(7, expect.anything());
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
+  });
+
+  it('deleteMutation shows error toast on failure', async () => {
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.deleteEvent).mockRejectedValue(new Error('Server error'));
+
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useEventHistory(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      result.current.deleteMutation.mutate(7);
+    });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Delete failed: Server error');
+    });
+  });
+
+  it('bulkDeleteMutation calls api.deleteEvents without filter, invalidates root, and shows "Cleared all events"', async () => {
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.deleteEvents).mockResolvedValue(undefined as never);
+
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const { result } = renderHook(() => useEventHistory(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      result.current.bulkDeleteMutation.mutate(undefined);
+    });
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Cleared all events');
+    });
+
+    expect(api.deleteEvents).toHaveBeenCalledWith(undefined, expect.anything());
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
+  });
+
+  it('bulkDeleteMutation with eventType filter shows "Cleared matching events"', async () => {
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.deleteEvents).mockResolvedValue(undefined as never);
+
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useEventHistory(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      result.current.bulkDeleteMutation.mutate({ eventType: 'download_failed' });
+    });
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Cleared matching events');
+    });
+
+    expect(api.deleteEvents).toHaveBeenCalledWith({ eventType: 'download_failed' }, expect.anything());
+  });
+
+  it('bulkDeleteMutation shows error toast on failure', async () => {
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.deleteEvents).mockRejectedValue(new Error('Bulk fail'));
+
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useEventHistory(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      result.current.bulkDeleteMutation.mutate(undefined);
+    });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Clear failed: Bulk fail');
+    });
+  });
+
   it('markFailed shows error toast on failure', async () => {
     vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
     vi.mocked(api.markEventFailed).mockRejectedValue(new Error('Network error'));
@@ -130,6 +244,52 @@ describe('useBookEventHistory', () => {
 
     expect(result.current.events).toEqual(mockEvents);
     expect(api.getBookEventHistory).toHaveBeenCalledWith(42);
+  });
+
+  it('deleteMutation calls api.deleteEvent, invalidates root and book-specific keys, and shows toast', async () => {
+    vi.mocked(api.getBookEventHistory).mockResolvedValue([]);
+    vi.mocked(api.deleteEvent).mockResolvedValue(undefined as never);
+
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const { result } = renderHook(() => useBookEventHistory(42), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      result.current.deleteMutation.mutate(7);
+    });
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Event deleted');
+    });
+
+    expect(api.deleteEvent).toHaveBeenCalledWith(7, expect.anything());
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.byBookId(42) });
+  });
+
+  it('deleteMutation shows error toast on failure', async () => {
+    vi.mocked(api.getBookEventHistory).mockResolvedValue([]);
+    vi.mocked(api.deleteEvent).mockRejectedValue(new Error('Gone wrong'));
+
+    const { wrapper } = createWrapper();
+    const { result } = renderHook(() => useBookEventHistory(42), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      result.current.deleteMutation.mutate(7);
+    });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Delete failed: Gone wrong');
+    });
   });
 
   it('markFailed invalidates book-specific queries', async () => {

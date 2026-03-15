@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { BookEventHistory } from './BookEventHistory';
 
@@ -22,6 +23,7 @@ describe('BookEventHistory', () => {
       isLoading: true,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
+      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
     });
 
     renderWithProviders(<BookEventHistory bookId={1} />);
@@ -34,10 +36,31 @@ describe('BookEventHistory', () => {
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
+      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
     });
 
     renderWithProviders(<BookEventHistory bookId={1} />);
     expect(screen.getByText('No history yet')).toBeInTheDocument();
+  });
+
+  it('clicking delete button on event card calls deleteMutation.mutate with event id', async () => {
+    const user = userEvent.setup();
+    const mockDeleteMutate = vi.fn();
+    mockUseBookEventHistory.mockReturnValue({
+      events: [
+        { id: 7, bookId: 1, downloadId: 5, bookTitle: 'Test', authorName: null, eventType: 'grabbed', source: 'auto', reason: null, createdAt: new Date().toISOString() },
+      ],
+      isLoading: false,
+      isError: false,
+      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
+      deleteMutation: { mutate: mockDeleteMutate, isPending: false } as never,
+    });
+
+    renderWithProviders(<BookEventHistory bookId={1} />);
+
+    await user.click(screen.getByLabelText('Delete event'));
+
+    expect(mockDeleteMutate).toHaveBeenCalledWith(7);
   });
 
   it('renders event cards for each event', () => {
@@ -49,6 +72,7 @@ describe('BookEventHistory', () => {
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
+      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
     });
 
     renderWithProviders(<BookEventHistory bookId={1} />);
