@@ -19,23 +19,22 @@ export async function prowlarrRoutes(
   prowlarrSync: ProwlarrSyncService,
 ): Promise<void> {
   // Test Prowlarr connection
-  app.post<{ Body: TestBody }>('/api/prowlarr/test', async (request, reply) => {
-    const parsed = prowlarrTestSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues[0]?.message || 'Invalid input' });
-    }
-
-    try {
-      const result = await prowlarrSync.testConnection(parsed.data.url, parsed.data.apiKey);
-      return result;
-    } catch (error) {
-      request.log.error(error, 'Prowlarr connection test failed');
-      return reply.status(500).send({
-        success: false,
-        message: error instanceof Error ? error.message : 'Connection test failed',
-      });
-    }
-  });
+  app.post<{ Body: TestBody }>(
+    '/api/prowlarr/test',
+    { schema: { body: prowlarrTestSchema } },
+    async (request, reply) => {
+      try {
+        const result = await prowlarrSync.testConnection(request.body.url, request.body.apiKey);
+        return result;
+      } catch (error) {
+        request.log.error(error, 'Prowlarr connection test failed');
+        return reply.status(500).send({
+          success: false,
+          message: error instanceof Error ? error.message : 'Connection test failed',
+        });
+      }
+    },
+  );
 
   // Get Prowlarr config
   app.get('/api/prowlarr/config', async (_request, reply) => {
@@ -47,20 +46,19 @@ export async function prowlarrRoutes(
   });
 
   // Save Prowlarr config
-  app.put<{ Body: ProwlarrConfigInput }>('/api/prowlarr/config', async (request, reply) => {
-    const parsed = prowlarrConfigSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues[0]?.message || 'Invalid input' });
-    }
+  app.put<{ Body: ProwlarrConfigInput }>(
+    '/api/prowlarr/config',
+    { schema: { body: prowlarrConfigSchema } },
+    async (request) => {
+      const data = { ...request.body };
+      const existingConfig = await prowlarrSync.getConfig();
+      resolveSentinelFields(data as Record<string, unknown>, existingConfig as Record<string, unknown> | null);
 
-    const data = { ...parsed.data };
-    const existingConfig = await prowlarrSync.getConfig();
-    resolveSentinelFields(data as Record<string, unknown>, existingConfig as Record<string, unknown> | null);
-
-    await prowlarrSync.saveConfig(data);
-    request.log.info('Prowlarr config updated');
-    return maskFields('prowlarr', { ...data } as Record<string, unknown>);
-  });
+      await prowlarrSync.saveConfig(data);
+      request.log.info('Prowlarr config updated');
+      return maskFields('prowlarr', { ...data } as Record<string, unknown>);
+    },
+  );
 
   // Preview sync (fetch from Prowlarr, diff against local)
   app.post('/api/prowlarr/preview', async (request, reply) => {
@@ -81,26 +79,25 @@ export async function prowlarrRoutes(
   });
 
   // Apply sync (create/update/remove selected indexers)
-  app.post<{ Body: ProwlarrSyncApplyInput }>('/api/prowlarr/sync', async (request, reply) => {
-    const parsed = prowlarrSyncApplySchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.status(400).send({ error: parsed.error.issues[0]?.message || 'Invalid input' });
-    }
+  app.post<{ Body: ProwlarrSyncApplyInput }>(
+    '/api/prowlarr/sync',
+    { schema: { body: prowlarrSyncApplySchema } },
+    async (request, reply) => {
+      const config = await prowlarrSync.getConfig();
+      if (!config) {
+        return reply.status(400).send({ error: 'Prowlarr not configured' });
+      }
 
-    const config = await prowlarrSync.getConfig();
-    if (!config) {
-      return reply.status(400).send({ error: 'Prowlarr not configured' });
-    }
-
-    try {
-      const result = await prowlarrSync.apply(config, parsed.data);
-      request.log.info(result, 'Prowlarr sync completed');
-      return result;
-    } catch (error) {
-      request.log.error(error, 'Prowlarr sync failed');
-      return reply.status(500).send({
-        error: error instanceof Error ? error.message : 'Sync failed',
-      });
-    }
-  });
+      try {
+        const result = await prowlarrSync.apply(config, request.body);
+        request.log.info(result, 'Prowlarr sync completed');
+        return result;
+      } catch (error) {
+        request.log.error(error, 'Prowlarr sync failed');
+        return reply.status(500).send({
+          error: error instanceof Error ? error.message : 'Sync failed',
+        });
+      }
+    },
+  );
 }

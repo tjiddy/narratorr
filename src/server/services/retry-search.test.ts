@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { retrySearch, type RetrySearchDeps } from './retry-search.js';
+import { retrySearch, createRetrySearchDeps, type RetrySearchDeps } from './retry-search.js';
 import { RetryBudget } from './retry-budget.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
@@ -232,5 +232,30 @@ describe('retrySearch', () => {
     const result = await retrySearch(1, deps);
 
     expect(result.outcome).toBe('no_candidates');
+  });
+});
+
+describe('createRetrySearchDeps', () => {
+  it('maps service bag fields to RetrySearchDeps contract by reference', () => {
+    const indexer = {} as IndexerService;
+    const download = {} as DownloadService;
+    const blacklist = {} as BlacklistService;
+    const book = {} as BookService;
+    const settings = {} as SettingsService;
+    const retryBudget = new RetryBudget();
+    const log = inject<FastifyBaseLogger>(createMockLogger());
+
+    const result = createRetrySearchDeps(
+      { indexer, download, blacklist, book, settings, retryBudget },
+      log,
+    );
+
+    expect(result.indexerService).toBe(indexer);
+    expect(result.downloadService).toBe(download);
+    expect(result.blacklistService).toBe(blacklist);
+    expect(result.bookService).toBe(book);
+    expect(result.settingsService).toBe(settings);
+    expect(result.retryBudget).toBe(retryBudget);
+    expect(result.log).toBe(log);
   });
 });

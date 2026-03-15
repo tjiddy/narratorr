@@ -1,5 +1,5 @@
 import { fetchApi } from './client.js';
-import type { DownloadStatus } from '../../../shared/schemas/activity.js';
+import type { DownloadStatus } from '../../../shared/schemas.js';
 
 export interface Download {
   id: number;

@@ -36,7 +36,7 @@ function isPrivateIp(ip: string): boolean {
 }
 
 function setUser(request: FastifyRequest, username: string) {
-  (request as unknown as Record<string, unknown>).user = { username };
+  request.user = { username };
 }
 
 /** Try API key auth. Returns true if handled (pass or reject), false to continue. */

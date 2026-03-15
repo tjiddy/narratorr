@@ -21,16 +21,20 @@ describe('idParamSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('transforms zero', () => {
+  it('rejects zero (IDs must be positive)', () => {
     const result = idParamSchema.safeParse({ id: '0' });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.id).toBe(0);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].message).toBe('Invalid ID');
+    }
   });
 
-  it('transforms negative numbers', () => {
+  it('rejects negative numbers', () => {
     const result = idParamSchema.safeParse({ id: '-5' });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.id).toBe(-5);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].message).toBe('Invalid ID');
+    }
   });
 
   it('truncates floating point strings to integer (parseInt behavior)', () => {

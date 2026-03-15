@@ -52,6 +52,7 @@ import { importListsRoutes } from './import-lists.js';
 import { updateRoutes } from './update.js';
 import { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { RecyclingBinService } from '../services/recycling-bin.service.js';
+import { createRetrySearchDeps } from '../services/retry-search.js';
 
 export interface Services {
   settings: SettingsService;
@@ -128,15 +129,10 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   qualityGateService.setBroadcaster(eventBroadcaster);
 
   // Wire retry search dependencies into services that need them
-  const retrySearchDeps = {
-    indexerService: indexer,
-    downloadService: download,
-    blacklistService,
-    bookService: book,
-    settingsService: settings,
-    retryBudget,
+  const retrySearchDeps = createRetrySearchDeps(
+    { indexer, download, blacklist: blacklistService, book, settings, retryBudget },
     log,
-  };
+  );
   download.setRetrySearchDeps(retrySearchDeps);
   eventHistory.setRetrySearchDeps(retrySearchDeps);
 
@@ -148,7 +144,16 @@ export async function registerRoutes(
   services: Services,
   db: Db,
 ): Promise<void> {
-  await booksRoutes(app, services.book, services.download, services.settings, services.rename, services.tagging, services.eventHistory, services.indexer, services.recyclingBin);
+  await booksRoutes(app, {
+    bookService: services.book,
+    downloadService: services.download,
+    settingsService: services.settings,
+    renameService: services.rename,
+    taggingService: services.tagging,
+    eventHistory: services.eventHistory,
+    indexerService: services.indexer,
+    recyclingBinService: services.recyclingBin,
+  });
   await bookFilesRoute(app, services.book);
   await searchRoutes(app, services.indexer, services.download, services.blacklist, services.settings);
   await activityRoutes(app, services.download, services.qualityGate, services.import);
@@ -160,7 +165,7 @@ export async function registerRoutes(
   await systemRoutes(app, services, db);
   await updateRoutes(app, services.settings);
   await notifiersRoutes(app, services.notifier);
-  await blacklistRoutes(app, services.blacklist, services.settings);
+  await blacklistRoutes(app, services.blacklist);
   await prowlarrRoutes(app, services.prowlarrSync);
   await authRoutes(app, services.auth);
   await remotePathMappingRoutes(app, services.remotePathMapping);

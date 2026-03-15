@@ -1,10 +1,18 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
-import type { BookService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService } from '../services';
-import type { RecyclingBinService } from '../services/recycling-bin.service.js';
-import { RenameError } from '../services/rename.service.js';
-import { RetagError } from '../services/tagging.service.js';
+import type { BookService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService, RecyclingBinService } from '../services/index.js';
+
+export interface BookRouteDeps {
+  bookService: BookService;
+  downloadService: DownloadService;
+  settingsService: SettingsService;
+  renameService: RenameService;
+  taggingService: TaggingService;
+  eventHistory?: EventHistoryService;
+  indexerService?: IndexerService;
+  recyclingBinService?: RecyclingBinService;
+}
 import { searchAndGrabForBook } from '../services/search-pipeline.js';
 import { type z } from 'zod';
 import {
@@ -29,21 +37,19 @@ import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 /** Fire-and-forget: search indexers and grab the best result for a newly added book. */
 function triggerImmediateSearch(
   book: { id: number; title: string; duration?: number | null; author?: { name: string } | null },
-  indexerService: IndexerService,
-  downloadService: DownloadService,
-  settingsService: SettingsService,
+  deps: Pick<BookRouteDeps, 'indexerService' | 'downloadService' | 'settingsService'>,
   log: FastifyBaseLogger,
 ) {
-  settingsService.get('quality')
+  deps.settingsService.get('quality')
     .then(async (qualitySettings) => {
-      await searchAndGrabForBook(book, indexerService, downloadService, qualitySettings, log);
+      await searchAndGrabForBook(book, deps.indexerService!, deps.downloadService, qualitySettings, log);
     })
     .catch((err) => {
       log.warn({ error: err, bookId: book.id }, 'Search-immediately trigger failed');
     });
 }
 
-async function registerDeleteBookRoute(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, eventHistory?: EventHistoryService, recyclingBinService?: RecyclingBinService) {
+async function registerDeleteBookRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadService' | 'settingsService' | 'eventHistory' | 'recyclingBinService'>) {
 app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
   '/api/books/:id',
   { schema: { params: idParamSchema, querystring: deleteBookQuerySchema } },
@@ -53,7 +59,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     const { deleteFiles } = request.query;
 
     // Fetch book once for file deletion + event snapshot
-    const book = await bookService.getById(id);
+    const book = await deps.bookService.getById(id);
 
     // If deleteFiles requested, move to recycling bin BEFORE cancelling downloads or removing DB record
     if (deleteFiles === 'true') {
@@ -61,17 +67,17 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
         return await reply.status(404).send({ error: 'Book not found' });
       }
 
-      if (recyclingBinService) {
+      if (deps.recyclingBinService) {
         try {
-          await recyclingBinService.moveToRecycleBin(book, book.path);
+          await deps.recyclingBinService.moveToRecycleBin(book, book.path);
         } catch (error) {
           request.log.error({ bookId: id, error }, 'Failed to move book to recycling bin');
           return await reply.status(500).send({ error: 'Failed to move book files to recycling bin' });
         }
       } else if (book.path) {
         try {
-          const librarySettings = await settingsService.get('library');
-          await bookService.deleteBookFiles(book.path, librarySettings.path);
+          const librarySettings = await deps.settingsService.get('library');
+          await deps.bookService.deleteBookFiles(book.path, librarySettings.path);
         } catch (error) {
           request.log.error({ bookId: id, error }, 'Failed to delete book files');
           return await reply.status(500).send({ error: 'Failed to delete book files from disk' });
@@ -80,10 +86,10 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     }
 
     // Cancel any active downloads for this book
-    const activeDownloads = await downloadService.getActiveByBookId(id);
+    const activeDownloads = await deps.downloadService.getActiveByBookId(id);
     for (const download of activeDownloads) {
       try {
-        await downloadService.cancel(download.id);
+        await deps.downloadService.cancel(download.id);
       } catch (error) {
         request.log.warn({ downloadId: download.id, error }, 'Failed to cancel download during book deletion');
       }
@@ -93,8 +99,8 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     }
 
     // Record deleted event before DB deletion (snapshot preserved via event fields)
-    if (book && eventHistory) {
-      eventHistory.create({
+    if (book && deps.eventHistory) {
+      deps.eventHistory.create({
         bookId: id,
         bookTitle: book.title,
         authorName: book.author?.name,
@@ -103,7 +109,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
       }).catch((err) => request.log.warn(err, 'Failed to record deleted event'));
     }
 
-    const deleted = await bookService.delete(id);
+    const deleted = await deps.bookService.delete(id);
 
     if (!deleted) {
       return await reply.status(404).send({ error: 'Book not found' });
@@ -118,10 +124,10 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
 });
 }
 
-async function registerDeleteMissingRoute(app: FastifyInstance, bookService: BookService) {
+async function registerDeleteMissingRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService'>) {
   app.delete('/api/books/missing', async (request, reply) => {
     try {
-      const deleted = await bookService.deleteByStatus('missing');
+      const deleted = await deps.bookService.deleteByStatus('missing');
       request.log.info({ deleted }, 'Batch deleted missing books');
       return { deleted };
     } catch (error) {
@@ -131,23 +137,23 @@ async function registerDeleteMissingRoute(app: FastifyInstance, bookService: Boo
   });
 }
 
-function registerBookSearchRoute(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, indexerService: IndexerService) {
+function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadService' | 'settingsService' | 'indexerService'>) {
   app.post<{ Params: IdParam }>(
     '/api/books/:id/search',
     { schema: { params: idParamSchema } },
     async (request, reply) => {
       try {
         const { id } = request.params;
-        const book = await bookService.getById(id);
+        const book = await deps.bookService.getById(id);
         if (!book) {
           return await reply.status(404).send({ error: 'Book not found' });
         }
 
-        const qualitySettings = await settingsService.get('quality');
+        const qualitySettings = await deps.settingsService.get('quality');
         const result = await searchAndGrabForBook(
           book,
-          indexerService,
-          downloadService,
+          deps.indexerService!,
+          deps.downloadService,
           qualitySettings,
           request.log,
         );
@@ -163,7 +169,8 @@ function registerBookSearchRoute(app: FastifyInstance, bookService: BookService,
   );
 }
 
-export async function booksRoutes(app: FastifyInstance, bookService: BookService, downloadService: DownloadService, settingsService: SettingsService, renameService: RenameService, taggingService: TaggingService, eventHistory?: EventHistoryService, indexerService?: IndexerService, recyclingBinService?: RecyclingBinService) {
+export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
+  const { bookService, renameService, taggingService, indexerService } = deps;
   // GET /api/books
   app.get<{ Querystring: BooksListQuery }>(
     '/api/books',
@@ -223,7 +230,7 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
 
         // Fire-and-forget: trigger search if searchImmediately is set
         if (body.searchImmediately && book.status === 'wanted' && indexerService) {
-          triggerImmediateSearch(book, indexerService, downloadService, settingsService, request.log);
+          triggerImmediateSearch(book, deps, request.log);
         }
 
         return await reply.status(201).send(book);
@@ -258,61 +265,33 @@ export async function booksRoutes(app: FastifyInstance, bookService: BookService
     },
   );
 
-  await registerDeleteMissingRoute(app, bookService);
-  await registerDeleteBookRoute(app, bookService, downloadService, settingsService, eventHistory, recyclingBinService);
+  await registerDeleteMissingRoute(app, deps);
+  await registerDeleteBookRoute(app, deps);
   // POST /api/books/:id/rename
   app.post<{ Params: IdParam }>(
     '/api/books/:id/rename',
     { schema: { params: idParamSchema } },
-    async (request, reply) => {
-      try {
-        const { id } = request.params;
-
-        const result = await renameService.renameBook(id);
-        request.log.info({ id, oldPath: result.oldPath, newPath: result.newPath }, 'Book renamed');
-        return result;
-      } catch (error) {
-        if (error instanceof RenameError) {
-          const statusCode = error.code === 'NOT_FOUND' ? 404
-            : error.code === 'NO_PATH' ? 400
-            : error.code === 'CONFLICT' ? 409
-            : 500;
-          request.log.warn({ bookId: request.params.id, code: error.code }, `Rename rejected: ${error.message}`);
-          return reply.status(statusCode).send({ error: error.message });
-        }
-        request.log.error(error, 'Failed to rename book');
-        return reply.status(500).send({ error: 'Internal server error' });
-      }
+    async (request) => {
+      const { id } = request.params;
+      const result = await renameService.renameBook(id);
+      request.log.info({ id, oldPath: result.oldPath, newPath: result.newPath }, 'Book renamed');
+      return result;
     },
   );
 
   if (indexerService) {
-    registerBookSearchRoute(app, bookService, downloadService, settingsService, indexerService);
+    registerBookSearchRoute(app, deps);
   }
 
   // POST /api/books/:id/retag
   app.post<{ Params: IdParam }>(
     '/api/books/:id/retag',
     { schema: { params: idParamSchema } },
-    async (request, reply) => {
-      try {
-        const { id } = request.params;
-        const result = await taggingService.retagBook(id);
-        request.log.info({ id, tagged: result.tagged, skipped: result.skipped, failed: result.failed }, 'Book re-tagged');
-        return result;
-      } catch (error) {
-        if (error instanceof RetagError) {
-          const statusCode = error.code === 'NOT_FOUND' ? 404
-            : error.code === 'FFMPEG_NOT_CONFIGURED' ? 400
-            : error.code === 'NO_PATH' ? 400
-            : error.code === 'PATH_MISSING' ? 400
-            : 500;
-          request.log.warn({ bookId: request.params.id, code: error.code }, `Retag rejected: ${error.message}`);
-          return reply.status(statusCode).send({ error: error.message });
-        }
-        request.log.error(error, 'Failed to retag book');
-        return reply.status(500).send({ error: 'Internal server error' });
-      }
+    async (request) => {
+      const { id } = request.params;
+      const result = await taggingService.retagBook(id);
+      request.log.info({ id, tagged: result.tagged, skipped: result.skipped, failed: result.failed }, 'Book re-tagged');
+      return result;
     },
   );
 }

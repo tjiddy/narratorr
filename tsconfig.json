@@ -20,7 +20,8 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/client/*"]
+      "@/*": ["./src/client/*"],
+      "@core/*": ["./src/core/*"]
     }
   },
   "include": ["src/**/*", "docker/**/*"],

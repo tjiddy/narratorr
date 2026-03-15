@@ -16,7 +16,7 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
-vi.mock('../../../core/utils/index.js', () => ({
+vi.mock('@core/utils/index.js', () => ({
   renderTemplate: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{authorLastFirst}', 'Sanderson, Brandon').replace('{title}', 'The Way of Kings').replace('{titleSort}', 'Way of Kings').replace('{narratorLastFirst}', 'Kramer, Michael & Reading, Kate'),
   renderFilename: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{title}', 'The Way of Kings').replace('{trackNumber}', '1').replace('{trackTotal}', '12').replace('{partName}', 'The Way of Kings'),
   toLastFirst: (name: string) => name,

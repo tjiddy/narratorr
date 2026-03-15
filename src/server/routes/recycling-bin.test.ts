@@ -129,4 +129,43 @@ describe('recycling-bin routes', () => {
       expect(body.failed).toBe(2);
     });
   });
+
+  describe('positive-integer idParamSchema validation', () => {
+    it('rejects non-numeric id on restore with 400', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/system/recycling-bin/abc/restore' });
+      expect(res.statusCode).toBe(400);
+      expect(services.recyclingBin.restore).not.toHaveBeenCalled();
+    });
+
+    it('rejects id=0 on restore with 400', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/system/recycling-bin/0/restore' });
+      expect(res.statusCode).toBe(400);
+      expect(services.recyclingBin.restore).not.toHaveBeenCalled();
+    });
+
+    it('rejects id=-1 on restore with 400', async () => {
+      const res = await app.inject({ method: 'POST', url: '/api/system/recycling-bin/-1/restore' });
+      expect(res.statusCode).toBe(400);
+      expect(services.recyclingBin.restore).not.toHaveBeenCalled();
+    });
+
+    it('rejects non-numeric id on delete with 400', async () => {
+      const res = await app.inject({ method: 'DELETE', url: '/api/system/recycling-bin/abc' });
+      expect(res.statusCode).toBe(400);
+      expect(services.recyclingBin.purge).not.toHaveBeenCalled();
+    });
+
+    it('rejects id=0 on delete with 400', async () => {
+      const res = await app.inject({ method: 'DELETE', url: '/api/system/recycling-bin/0' });
+      expect(res.statusCode).toBe(400);
+      expect(services.recyclingBin.purge).not.toHaveBeenCalled();
+    });
+
+    it('accepts valid positive integer id on restore', async () => {
+      (services.recyclingBin.restore as Mock).mockResolvedValue({ id: 5, success: true });
+      const res = await app.inject({ method: 'POST', url: '/api/system/recycling-bin/5/restore' });
+      expect(res.statusCode).toBe(200);
+      expect(services.recyclingBin.restore).toHaveBeenCalledWith(5);
+    });
+  });
 });

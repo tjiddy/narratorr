@@ -14,3 +14,4 @@ export * from './schemas/blacklist.js';
 export * from './schemas/prowlarr.js';
 export * from './schemas/event-history.js';
 export * from './schemas/import-list.js';
+export * from './schemas/sse-events.js';

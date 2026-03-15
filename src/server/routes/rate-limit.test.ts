@@ -29,7 +29,7 @@ async function createRateLimitTestApp(services: Services) {
   // Simulate auth middleware
   app.decorateRequest('user', null);
   app.addHook('onRequest', async (request) => {
-    (request as unknown as Record<string, unknown>).user = { username: 'admin' };
+    request.user = { username: 'admin' };
   });
 
   await authRoutes(app, services.auth as Parameters<typeof authRoutes>[1]);
@@ -209,7 +209,7 @@ describe('rate limiting', () => {
       await recoveryApp.register(rateLimit, { global: false });
       recoveryApp.decorateRequest('user', null);
       recoveryApp.addHook('onRequest', async (request) => {
-        (request as unknown as Record<string, unknown>).user = { username: 'admin' };
+        request.user = { username: 'admin' };
       });
 
       // Register a simple test route with a short window

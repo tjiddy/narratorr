@@ -8,11 +8,9 @@ import { runBackupJob } from '../jobs/backup.js';
 import { healthRoutes } from './health-routes.js';
 import { getVersion } from '../utils/version.js';
 import { getUpdateStatus } from '../jobs/version-check.js';
+import { RestoreUploadError } from '../services/backup.service.js';
 import fs from 'fs';
 import fsp from 'fs/promises';
-import path from 'path';
-import os from 'os';
-import unzipper from 'unzipper';
 
 export async function systemRoutes(app: FastifyInstance, services: Services, db: Db) {
   // GET /api/system/status
@@ -122,56 +120,11 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       return reply.status(400).send({ error: 'No file uploaded' });
     }
 
-    // Extract .db from uploaded zip to a temp file
-    const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'narratorr-restore-'));
-    const tempDbPath = path.join(tempDir, 'narratorr-restore.db');
-
     try {
-      let found = false;
-
-      await new Promise<void>((resolve, reject) => {
-        const zipStream = data.file.pipe(unzipper.Parse());
-        zipStream.on('entry', (entry: { path: string; autodrain: () => void; pipe: (dest: NodeJS.WritableStream) => void }) => {
-          if (entry.path === 'narratorr.db') {
-            found = true;
-            const writeStream = fs.createWriteStream(tempDbPath);
-            entry.pipe(writeStream);
-            writeStream.on('finish', () => {});
-            writeStream.on('error', reject);
-          } else {
-            entry.autodrain();
-          }
-        });
-        zipStream.on('close', resolve);
-        zipStream.on('error', reject);
-      });
-
-      if (!found) {
-        await fsp.rm(tempDir, { recursive: true }).catch(() => {});
-        return await reply.status(400).send({ error: 'Zip does not contain narratorr.db' });
-      }
-
-      const validation = await services.backup.validateRestore(tempDbPath);
-
-      if (!validation.valid) {
-        await fsp.rm(tempDir, { recursive: true }).catch(() => {});
-        return await reply.status(400).send({ error: validation.error });
-      }
-
-      // Stage as pending restore (takes ownership of tempDbPath; confirmRestore cleans up dir)
-      await services.backup.setPendingRestore(tempDbPath);
-
-      return {
-        valid: true,
-        backupMigrationCount: validation.backupMigrationCount,
-        appMigrationCount: validation.appMigrationCount,
-      };
+      return await services.backup.processRestoreUpload(data.file);
     } catch (error) {
-      await fsp.rm(tempDir, { recursive: true }).catch(() => {});
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      // Unzipper throws on malformed/non-zip input — surface as client error
-      if (message.includes('signature') || message.includes('invalid') || message.includes('Not a valid') || message.includes('end of central directory')) {
-        return reply.status(400).send({ error: 'File is not a valid zip archive' });
+      if (error instanceof RestoreUploadError) {
+        return reply.status(400).send({ error: error.message });
       }
       request.log.error(error, 'Restore upload failed');
       return reply.status(500).send({ error: 'Failed to process restore file' });

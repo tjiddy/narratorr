@@ -29,7 +29,10 @@ describe('activity routes', () => {
 
   beforeAll(async () => {
     services = createMockServices({
-      import: { semaphore: importSemaphore },
+      import: {
+        tryAcquireSlot: () => importSemaphore.tryAcquire(),
+        releaseSlot: () => importSemaphore.release(),
+      },
     });
     app = await createTestApp(services);
   });

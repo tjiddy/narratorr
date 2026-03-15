@@ -41,6 +41,9 @@ export async function createTestApp(services: Services, db?: Db) {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
+  const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
+  await app.register(errorHandlerPlugin);
+
   const mockDb = db ?? inject<Db>({ run: vi.fn().mockResolvedValue(undefined) });
   await registerRoutes(app, services, mockDb);
   await app.ready();

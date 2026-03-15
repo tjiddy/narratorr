@@ -1,10 +1,13 @@
 import fs from 'fs/promises';
 import fss from 'fs';
 import path from 'path';
+import os from 'os';
 import archiver from 'archiver';
+import unzipper from 'unzipper';
 import { createClient } from '@libsql/client';
 import { fileURLToPath } from 'url';
 import type { FastifyBaseLogger } from 'fastify';
+import type { Readable } from 'stream';
 import type { SettingsService } from './settings.service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -192,6 +195,61 @@ export class BackupService {
     return path.join(this.backupsDir, filename);
   }
 
+  /** Process a restore file upload: extract zip, validate DB, stage for confirmation. */
+  async processRestoreUpload(fileStream: Readable): Promise<RestoreValidation & { valid: true; backupMigrationCount: number; appMigrationCount: number }> {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'narratorr-restore-'));
+    const tempDbPath = path.join(tempDir, 'narratorr-restore.db');
+
+    try {
+      let found = false;
+
+      await new Promise<void>((resolve, reject) => {
+        const zipStream = fileStream.pipe(unzipper.Parse());
+        zipStream.on('entry', (entry: { path: string; autodrain: () => void; pipe: (dest: NodeJS.WritableStream) => void }) => {
+          if (entry.path === 'narratorr.db') {
+            found = true;
+            const writeStream = fss.createWriteStream(tempDbPath);
+            entry.pipe(writeStream);
+            writeStream.on('finish', () => {});
+            writeStream.on('error', reject);
+          } else {
+            entry.autodrain();
+          }
+        });
+        zipStream.on('close', resolve);
+        zipStream.on('error', reject);
+      });
+
+      if (!found) {
+        await fs.rm(tempDir, { recursive: true }).catch(() => {});
+        throw new RestoreUploadError('Zip does not contain narratorr.db', 'MISSING_DB');
+      }
+
+      const validation = await this.validateRestore(tempDbPath);
+
+      if (!validation.valid) {
+        await fs.rm(tempDir, { recursive: true }).catch(() => {});
+        throw new RestoreUploadError(validation.error!, 'INVALID_DB');
+      }
+
+      await this.setPendingRestore(tempDbPath);
+
+      return {
+        valid: true as const,
+        backupMigrationCount: validation.backupMigrationCount!,
+        appMigrationCount: validation.appMigrationCount!,
+      };
+    } catch (error) {
+      if (error instanceof RestoreUploadError) throw error;
+      await fs.rm(tempDir, { recursive: true }).catch(() => {});
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      if (message.includes('signature') || message.includes('invalid') || message.includes('Not a valid') || message.includes('end of central directory')) {
+        throw new RestoreUploadError('File is not a valid zip archive', 'INVALID_ZIP');
+      }
+      throw error;
+    }
+  }
+
   /** Validate an uploaded restore file */
   async validateRestore(tempPath: string): Promise<RestoreValidation> {
     const appMigrationCount = await this.getAppMigrationCount();
@@ -262,6 +320,16 @@ export class BackupService {
     this._pendingRestore = null;
 
     this.log.info('Restore staged to restore-pending.db — process will exit');
+  }
+}
+
+export class RestoreUploadError extends Error {
+  constructor(
+    message: string,
+    public code: 'MISSING_DB' | 'INVALID_DB' | 'INVALID_ZIP',
+  ) {
+    super(message);
+    this.name = 'RestoreUploadError';
   }
 }
 

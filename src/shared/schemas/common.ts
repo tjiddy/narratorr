@@ -7,7 +7,7 @@ import { z } from 'zod';
 export const idParamSchema = z.object({
   id: z.string().transform((val, ctx) => {
     const parsed = parseInt(val, 10);
-    if (isNaN(parsed)) {
+    if (isNaN(parsed) || parsed < 1) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Invalid ID',

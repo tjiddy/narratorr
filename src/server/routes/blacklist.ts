@@ -1,7 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { z } from 'zod';
 import type { BlacklistService } from '../services';
-import type { SettingsService } from '../services/settings.service.js';
 import {
   idParamSchema,
   paginationParamsSchema,
@@ -16,7 +15,7 @@ type ToggleBody = z.infer<typeof toggleBlacklistTypeSchema>;
 const blacklistListQuerySchema = paginationParamsSchema;
 type BlacklistListQuery = z.infer<typeof blacklistListQuerySchema>;
 
-export async function blacklistRoutes(app: FastifyInstance, blacklistService: BlacklistService, _settingsService?: SettingsService) {
+export async function blacklistRoutes(app: FastifyInstance, blacklistService: BlacklistService) {
   // GET /api/blacklist
   app.get<{ Querystring: BlacklistListQuery }>(
     '/api/blacklist',

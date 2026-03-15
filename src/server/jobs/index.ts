@@ -4,6 +4,7 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Services } from '../routes/index.js';
 import type { TaskRegistry } from '../services/task-registry.js';
+import { createRetrySearchDeps } from '../services/retry-search.js';
 import { monitorDownloads } from './monitor.js';
 import { runEnrichment } from './enrichment.js';
 import { runSearchJob } from './search.js';
@@ -12,15 +13,10 @@ import { runBackupJob } from './backup.js';
 import { checkForUpdate } from './version-check.js';
 
 export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
-  const retrySearchDeps = {
-    indexerService: services.indexer,
-    downloadService: services.download,
-    blacklistService: services.blacklist,
-    bookService: services.book,
-    settingsService: services.settings,
-    retryBudget: services.retryBudget,
+  const retrySearchDeps = createRetrySearchDeps(
+    { indexer: services.indexer, download: services.download, blacklist: services.blacklist, book: services.book, settings: services.settings, retryBudget: services.retryBudget },
     log,
-  };
+  );
 
   const retryDeps = {
     blacklistService: services.blacklist,

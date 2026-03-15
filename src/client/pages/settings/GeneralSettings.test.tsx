@@ -18,7 +18,7 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
-vi.mock('../../../core/utils/index.js', () => ({
+vi.mock('@core/utils/index.js', () => ({
   renderTemplate: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
   renderFilename: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
   toLastFirst: (name: string) => name,

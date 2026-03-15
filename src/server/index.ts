@@ -24,6 +24,7 @@ import { createServices, registerRoutes } from './routes';
 import { startJobs } from './jobs';
 import multipart from '@fastify/multipart';
 import authPlugin from './plugins/auth.js';
+import { errorHandlerPlugin } from './plugins/error-handler.js';
 import { registerStaticAndSpa, listenWithRetry } from './server-utils.js';
 import { applyPendingRestore } from './services/backup.service.js';
 import { loadEncryptionKey, initializeKey } from './utils/secret-codec.js';
@@ -120,6 +121,7 @@ async function main() {
   await services.auth.initialize();
   await app.register(cookie);
   await app.register(authPlugin, { authService: services.auth, urlBase: config.urlBase });
+  await app.register(errorHandlerPlugin);
 
   // URL_BASE prefix — routes, static files, and SPA fallback are scoped under urlBase
   const urlBasePrefix = config.urlBase === '/' ? '' : config.urlBase;

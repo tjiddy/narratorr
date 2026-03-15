@@ -127,7 +127,17 @@ export interface ImportResult {
 }
 
 export class ImportService {
-  readonly semaphore = new Semaphore(2);
+  private readonly semaphore = new Semaphore(2);
+
+  /** Try to acquire a concurrency slot. Returns true if acquired, false if all slots are taken. */
+  tryAcquireSlot(): boolean {
+    return this.semaphore.tryAcquire();
+  }
+
+  /** Release a previously acquired concurrency slot. */
+  releaseSlot(): void {
+    this.semaphore.release();
+  }
 
   constructor(
     private db: Db,

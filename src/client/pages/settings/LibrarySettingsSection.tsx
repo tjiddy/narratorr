@@ -6,9 +6,8 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { FolderIcon } from '@/components/icons';
-import { renderTemplate, renderFilename, toLastFirst, toSortTitle, ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from '../../../core/utils/index.js';
-import { DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
-import { libraryFormSchema } from '../../../shared/schemas/settings/library.js';
+import { renderTemplate, renderFilename, toLastFirst, toSortTitle, ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from '@core/utils/index.js';
+import { DEFAULT_SETTINGS, type AppSettings, libraryFormSchema } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 type LibraryFormData = AppSettings['library'];
@@ -137,6 +136,7 @@ export function LibrarySettingsSection() {
     },
   });
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- watch() is the standard RHF API; Compiler skip is expected
   const folderFormat = watch('folderFormat');
   const fileFormat = watch('fileFormat');
 

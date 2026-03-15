@@ -45,7 +45,7 @@ describe('prowlarr routes', () => {
       expect(JSON.parse(res.payload)).toEqual({ success: true });
     });
 
-    it('returns 400 on missing url', async () => {
+    it('returns Fastify-format 400 on missing url', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/prowlarr/test',
@@ -53,9 +53,15 @@ describe('prowlarr routes', () => {
       });
 
       expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: expect.stringContaining('url'),
+      });
     });
 
-    it('returns 400 on missing apiKey', async () => {
+    it('returns Fastify-format 400 on missing apiKey', async () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/prowlarr/test',
@@ -63,6 +69,12 @@ describe('prowlarr routes', () => {
       });
 
       expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.payload);
+      expect(body).toEqual({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: expect.stringContaining('apiKey'),
+      });
     });
   });
 

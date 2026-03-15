@@ -356,7 +356,7 @@ export class QualityGateService {
         downloadId: download.id,
         eventType: 'held_for_review',
         source: 'auto',
-        reason: reason as unknown as Record<string, unknown>,
+        reason: { ...reason },
       });
     } catch (err) {
       this.log.warn({ downloadId: download.id, err }, 'Quality gate: failed to record decision event');
@@ -516,6 +516,6 @@ export class QualityGateService {
 
     if (eventResults.length === 0) return null;
 
-    return (eventResults[0].reason as unknown as QualityDecisionReason) ?? null;
+    return (eventResults[0].reason as QualityDecisionReason | null) ?? null;
   }
 }

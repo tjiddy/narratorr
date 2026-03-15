@@ -431,7 +431,7 @@ describe('POST /api/system/restore', () => {
   });
 
   it('returns 200 with validation result for valid zip containing narratorr.db', async () => {
-    (services.backup.validateRestore as Mock).mockResolvedValue({
+    (services.backup.processRestoreUpload as Mock).mockResolvedValue({
       valid: true,
       backupMigrationCount: 2,
       appMigrationCount: 3,
@@ -452,7 +452,7 @@ describe('POST /api/system/restore', () => {
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.payload);
     expect(body).toEqual({ valid: true, backupMigrationCount: 2, appMigrationCount: 3 });
-    expect(services.backup.setPendingRestore as Mock).toHaveBeenCalled();
+    expect(services.backup.processRestoreUpload as Mock).toHaveBeenCalled();
   });
 
   it('returns 400 when no file is uploaded', async () => {
@@ -478,7 +478,12 @@ describe('POST /api/system/restore', () => {
     expect(JSON.parse(res.payload).error).toBe('No file uploaded');
   });
 
-  it('returns 400 when zip does not contain narratorr.db', async () => {
+  it('returns 400 when processRestoreUpload throws RestoreUploadError', async () => {
+    const { RestoreUploadError } = await import('../services/backup.service.js');
+    (services.backup.processRestoreUpload as Mock).mockRejectedValue(
+      new RestoreUploadError('Zip does not contain narratorr.db', 'MISSING_DB'),
+    );
+
     const zipBuffer = await createZipBuffer([
       { name: 'some-other-file.txt', content: Buffer.from('not a db') },
     ]);
@@ -495,11 +500,11 @@ describe('POST /api/system/restore', () => {
     expect(JSON.parse(res.payload).error).toBe('Zip does not contain narratorr.db');
   });
 
-  it('returns 400 when validateRestore rejects the backup', async () => {
-    (services.backup.validateRestore as Mock).mockResolvedValue({
-      valid: false,
-      error: 'too new',
-    });
+  it('returns 400 when processRestoreUpload throws INVALID_DB', async () => {
+    const { RestoreUploadError } = await import('../services/backup.service.js');
+    (services.backup.processRestoreUpload as Mock).mockRejectedValue(
+      new RestoreUploadError('too new', 'INVALID_DB'),
+    );
 
     const zipBuffer = await createZipBuffer([
       { name: 'narratorr.db', content: Buffer.from('fake-sqlite-db') },
@@ -517,7 +522,12 @@ describe('POST /api/system/restore', () => {
     expect(JSON.parse(res.payload).error).toBe('too new');
   });
 
-  it('returns 400 for non-zip file', async () => {
+  it('returns 400 for non-zip file (INVALID_ZIP)', async () => {
+    const { RestoreUploadError } = await import('../services/backup.service.js');
+    (services.backup.processRestoreUpload as Mock).mockRejectedValue(
+      new RestoreUploadError('File is not a valid zip archive', 'INVALID_ZIP'),
+    );
+
     const plainText = Buffer.from('this is not a zip file at all');
     const { payload, contentType } = createMultipartPayload('backup.zip', plainText);
 
@@ -530,5 +540,24 @@ describe('POST /api/system/restore', () => {
 
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.payload).error).toBe('File is not a valid zip archive');
+  });
+
+  it('returns 500 for unexpected errors from processRestoreUpload', async () => {
+    (services.backup.processRestoreUpload as Mock).mockRejectedValue(new Error('disk full'));
+
+    const zipBuffer = await createZipBuffer([
+      { name: 'narratorr.db', content: Buffer.from('fake-sqlite-db') },
+    ]);
+    const { payload, contentType } = createMultipartPayload('backup.zip', zipBuffer);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/system/restore',
+      payload,
+      headers: { 'content-type': contentType },
+    });
+
+    expect(res.statusCode).toBe(500);
+    expect(JSON.parse(res.payload).error).toBe('Failed to process restore file');
   });
 });

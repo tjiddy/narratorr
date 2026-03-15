@@ -148,14 +148,14 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
         const result = await qualityGateService.approve(id);
 
         // Try to acquire a concurrency slot for immediate import
-        if (importService.semaphore.tryAcquire()) {
+        if (importService.tryAcquireSlot()) {
           // Slot available — fire-and-forget import with guaranteed slot release
           importService.importDownload(id)
             .catch((err) => {
               request.log.error({ id, error: err }, 'Import after approve failed');
             })
             .finally(() => {
-              importService.semaphore.release();
+              importService.releaseSlot();
             });
           return result;
         } else {

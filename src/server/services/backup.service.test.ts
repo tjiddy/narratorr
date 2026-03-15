@@ -3,8 +3,9 @@ import fs from 'fs/promises';
 import fss from 'fs';
 import path from 'path';
 import os from 'os';
+import { Readable } from 'stream';
 import { EventEmitter } from 'events';
-import { BackupService, applyPendingRestore } from './backup.service.js';
+import { BackupService, RestoreUploadError, applyPendingRestore } from './backup.service.js';
 
 // Mock archiver — finalize() triggers 'close' on the piped output stream
 vi.mock('archiver', () => ({
@@ -400,6 +401,108 @@ describe('BackupService', () => {
       // Pending should point to new file
       expect(service.pendingRestore?.tempPath).toBe(tempPath2);
     });
+  });
+});
+
+describe('processRestoreUpload', () => {
+  let tempDir: string;
+  let configPath: string;
+  let dbPath: string;
+
+  // Get the real archiver (unmocked) for creating test zip data
+  async function createZipBuffer(entries: { name: string; content: Buffer }[]): Promise<Buffer> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const archiverModule = await vi.importActual<any>('archiver');
+    const archiver = archiverModule.default;
+    return new Promise((resolve, reject) => {
+      const archive = archiver('zip', { zlib: { level: 0 } });
+      const chunks: Buffer[] = [];
+      archive.on('data', (chunk: Buffer) => chunks.push(chunk));
+      archive.on('end', () => resolve(Buffer.concat(chunks)));
+      archive.on('error', reject);
+      for (const entry of entries) {
+        archive.append(entry.content, { name: entry.name });
+      }
+      archive.finalize();
+    });
+  }
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'narratorr-upload-test-'));
+    configPath = tempDir;
+    dbPath = path.join(tempDir, 'narratorr.db');
+    await fs.writeFile(dbPath, 'test-db-content');
+    mockExecute.mockReset();
+    mockClose.mockReset();
+  });
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('returns valid result and stages pending restore for valid zip', async () => {
+    // validateRestore will call execute to get migration count
+    mockExecute.mockResolvedValue({ rows: [{ count: 2 }] });
+
+    const zipBuffer = await createZipBuffer([
+      { name: 'narratorr.db', content: Buffer.from('fake-sqlite-db') },
+    ]);
+
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const result = await service.processRestoreUpload(Readable.from(zipBuffer));
+
+    expect(result.valid).toBe(true);
+    expect(result.backupMigrationCount).toBe(2);
+    expect(service.pendingRestore).not.toBeNull();
+  });
+
+  it('throws MISSING_DB when zip does not contain narratorr.db', async () => {
+    const zipBuffer = await createZipBuffer([
+      { name: 'other-file.txt', content: Buffer.from('not a db') },
+    ]);
+
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    await expect(service.processRestoreUpload(Readable.from(zipBuffer)))
+      .rejects.toThrow(RestoreUploadError);
+    await expect(service.processRestoreUpload(Readable.from(await createZipBuffer([
+      { name: 'other.txt', content: Buffer.from('x') },
+    ]))))
+      .rejects.toThrow('Zip does not contain narratorr.db');
+  });
+
+  it('throws INVALID_DB when validateRestore rejects', async () => {
+    // Make validateRestore fail by making the "DB" fail migration query
+    mockExecute.mockRejectedValue(new Error('no such table: __drizzle_migrations'));
+
+    const zipBuffer = await createZipBuffer([
+      { name: 'narratorr.db', content: Buffer.from('not-a-real-sqlite-db') },
+    ]);
+
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    await expect(service.processRestoreUpload(Readable.from(zipBuffer)))
+      .rejects.toThrow(RestoreUploadError);
+  });
+
+  it('throws INVALID_ZIP for non-zip input', async () => {
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    await expect(service.processRestoreUpload(Readable.from(Buffer.from('this is not a zip'))))
+      .rejects.toThrow('File is not a valid zip archive');
+  });
+
+  it('cleans up temp directory on failure', async () => {
+    // Track temp dirs before test
+    const tmpBefore = (await fs.readdir(os.tmpdir())).filter(f => f.startsWith('narratorr-restore-'));
+
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+
+    // Use non-zip data to trigger INVALID_ZIP
+    try {
+      await service.processRestoreUpload(Readable.from(Buffer.from('not a zip')));
+    } catch { /* expected */ }
+
+    // No new temp dirs should remain after cleanup
+    const tmpAfter = (await fs.readdir(os.tmpdir())).filter(f => f.startsWith('narratorr-restore-'));
+    expect(tmpAfter.length).toBe(tmpBefore.length);
   });
 });
 

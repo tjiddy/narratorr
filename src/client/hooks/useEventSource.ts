@@ -9,7 +9,7 @@ import {
   type SSEEventPayloads,
   CACHE_INVALIDATION_MATRIX,
   TOAST_EVENT_CONFIG,
-} from '../../shared/schemas/sse-events.js';
+} from '../../shared/schemas.js';
 
 // ============================================================================
 // Reactive SSE connection state (F3)

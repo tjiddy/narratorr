@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, formatBytes, type BookWithAuthor, type SearchResult } from '@/lib/api';
 import { searchResultKey, deduplicateKeys } from '@/lib/stableKeys.js';
-import { calculateQuality, compareQuality, resolveBookQualityInputs, qualityTierBg } from '../../core/utils/index.js';
+import { calculateQuality, compareQuality, resolveBookQualityInputs, qualityTierBg } from '@core/utils/index.js';
 import { queryKeys } from '@/lib/queryKeys';
 import {
   SearchIcon,

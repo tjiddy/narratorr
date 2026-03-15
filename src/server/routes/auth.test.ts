@@ -23,7 +23,7 @@ async function createAuthTestApp(services: Services) {
   app.decorateRequest('user', null);
   app.addHook('onRequest', async (request) => {
     // Set a default authenticated user for all requests (simulates auth pass)
-    (request as unknown as Record<string, unknown>).user = { username: 'admin' };
+    request.user = { username: 'admin' };
   });
 
   await authRoutes(app, services.auth as Parameters<typeof authRoutes>[1]);

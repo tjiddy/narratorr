@@ -1,6 +1,5 @@
 import type { BookWithAuthor } from '@/lib/api';
-import { formatBytes } from '../../core/utils/index.js';
-import { calculateQuality, resolveBookQualityInputs, qualityTierBg } from '../../core/utils/index.js';
+import { formatBytes, calculateQuality, resolveBookQualityInputs, qualityTierBg } from '@core/utils/index.js';
 
 function formatDurationLong(seconds: number): string {
   const h = Math.floor(seconds / 3600);

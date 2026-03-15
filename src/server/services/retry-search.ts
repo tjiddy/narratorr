@@ -24,6 +24,26 @@ export interface RetrySearchDeps {
   log: FastifyBaseLogger;
 }
 
+/** Factory to build RetrySearchDeps from a Services bag + logger. Eliminates duplication across routes and jobs. */
+export function createRetrySearchDeps(services: {
+  indexer: IndexerService;
+  download: DownloadService;
+  blacklist: BlacklistService;
+  book: BookService;
+  settings: SettingsService;
+  retryBudget: RetryBudget;
+}, log: FastifyBaseLogger): RetrySearchDeps {
+  return {
+    indexerService: services.indexer,
+    downloadService: services.download,
+    blacklistService: services.blacklist,
+    bookService: services.book,
+    settingsService: services.settings,
+    retryBudget: services.retryBudget,
+    log,
+  };
+}
+
 /**
  * Shared retry-search helper used by:
  * - Monitor failure handling (handleDownloadFailure)

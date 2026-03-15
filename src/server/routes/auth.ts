@@ -134,7 +134,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
     async (request, reply) => {
       try {
         const { currentPassword, newPassword, newUsername } = request.body;
-        const user = (request as unknown as Record<string, unknown>).user as { username: string } | null;
+        const user = request.user;
 
         if (!user) {
           return await reply.status(401).send({ error: 'Authentication required' });

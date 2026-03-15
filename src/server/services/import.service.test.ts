@@ -1567,8 +1567,8 @@ describe('ImportService', () => {
       const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log));
 
       // Before: tryAcquire should succeed
-      expect(svc.semaphore.tryAcquire()).toBe(true);
-      svc.semaphore.release();
+      expect(svc.tryAcquireSlot()).toBe(true);
+      svc.releaseSlot();
 
       // Now simulate: processCompletedDownloads with a download that fails import
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
@@ -1578,8 +1578,8 @@ describe('ImportService', () => {
       await svc.processCompletedDownloads();
 
       // Semaphore should be released despite failure
-      expect(svc.semaphore.tryAcquire()).toBe(true);
-      svc.semaphore.release();
+      expect(svc.tryAcquireSlot()).toBe(true);
+      svc.releaseSlot();
     });
 
     it('download set to processing_queued when no slot available', async () => {

@@ -1,4 +1,4 @@
-import { toSortTitle } from '../../../core/utils/index.js';
+import { toSortTitle } from '@core/utils/index.js';
 import type { BookWithAuthor } from '@/lib/api';
 
 export type StatusFilter = 'all' | 'wanted' | 'downloading' | 'imported' | 'failed' | 'missing';

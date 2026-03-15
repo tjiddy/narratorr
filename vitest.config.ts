@@ -3,7 +3,10 @@ import path from 'path';
 
 const sharedConfig = {
   resolve: {
-    alias: { '@': path.resolve(__dirname, 'src/client') },
+    alias: {
+      '@core': path.resolve(__dirname, 'src/core'),
+      '@': path.resolve(__dirname, 'src/client'),
+    },
   },
 };
 
