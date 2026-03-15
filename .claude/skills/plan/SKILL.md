@@ -105,6 +105,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    **Negative and error-path stubs:** For each AC item with testable behavior (validation, error handling, state mutation, user interaction), also generate stubs for negative/error cases alongside the happy-path stub. For example, if the spec says "User submits valid configuration," also stub `it.todo('rejects invalid configuration values')` and `it.todo('shows error toast on save failure')`. Use the test plan completeness standard from `.claude/docs/testing.md` as a checklist — boundary values, null/missing data, error isolation. AC items that are purely structural (prompt changes, documentation, config wiring) are exempt.
 
+   **Route/API stubs:** When adding new query params or body fields to routes, always create stubs for: (1) happy-path param forwarding to service, (2) invalid/missing param rejection at the route boundary. When adding `zodResolver` validation to a form, always create a stub for invalid-submit rejection (not just successful submission).
+
    These stubs are the **minimum test coverage** — every spec interaction and system behavior must have a corresponding test. The implementer should add additional tests beyond these stubs for edge cases, error states, and implementation details discovered during development. The stubs are a floor, not a ceiling.
 
 6. **Post a plan comment** on the issue:

@@ -101,6 +101,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      - Append new sections (e.g., `## Implementation Notes (auto-generated)`)
      - Write updated body to a temp file, then: `gitea issue-update <id> body --body-file <temp-file-path>`
      - Clean up the temp file
+   - **Fixture blast radius (trigger: spec touches settings schema, DB schema, or shared types):** If the spec adds/removes fields on settings categories, DB tables, or shared type interfaces, add a `## Fixture Blast Radius` section listing all test files that hardcode the affected shape. Grep `**/*.test.ts` and `**/*.test.tsx` for inline fixtures of the changed type. This prevents the #1 cascade problem — implementers discovering 10+ broken test files mid-implementation.
    - Only update the body if you're adding genuinely useful durable detail — don't pad it
 
 5. **Report structured readiness verdict.** Use this format:
