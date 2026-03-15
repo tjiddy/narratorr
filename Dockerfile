@@ -1,5 +1,5 @@
 # Build stage
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 # Enable corepack for pnpm
 RUN corepack enable
@@ -26,8 +26,8 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Install Node.js and ffmpeg (LSIO base does not include Node)
-RUN apk add --no-cache nodejs ffmpeg
+# Install Node.js 22.x and ffmpeg (LSIO base does not include Node)
+RUN apk add --no-cache 'nodejs~=22' ffmpeg
 
 # Install pnpm for production dependencies
 RUN corepack enable

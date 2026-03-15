@@ -55,9 +55,9 @@ describe('s6-overlay service definition', () => {
       expect(content).toContain('FROM ghcr.io/linuxserver/baseimage-alpine:3.21');
     });
 
-    it('builder stage remains node:20-alpine', () => {
+    it('builder stage uses node:22-alpine', () => {
       const content = fs.readFileSync(dockerfile, 'utf-8');
-      expect(content).toContain('FROM node:20-alpine AS builder');
+      expect(content).toContain('FROM node:22-alpine AS builder');
     });
 
     it('ffmpeg is installed in runner image', () => {
@@ -80,9 +80,9 @@ describe('s6-overlay service definition', () => {
       expect(content).toContain('COPY docker/root/ /');
     });
 
-    it('Node.js is installed in runner image via apk', () => {
+    it('Node.js 22.x is pinned in runner image via apk', () => {
       const content = fs.readFileSync(dockerfile, 'utf-8');
-      expect(content).toContain('nodejs');
+      expect(content).toContain("'nodejs~=22'");
     });
 
     it('does not set ENTRYPOINT (LSIO s6-overlay handles init)', () => {
