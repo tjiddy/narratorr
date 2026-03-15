@@ -8,8 +8,8 @@ disable-model-invocation: true
 hooks:
   Stop:
     - hooks:
-        - type: prompt
-          prompt: "The agent is running /respond-to-pr-review (fix findings → verify → push → post response comment → update labels). Check its last message. It is DONE only if it contains 'ready-for-re-review' or 'needs-human-input' status report, or an explicit STOP/block condition. If the last message is a verify summary (OVERALL: pass/fail) or test output without a subsequent push, comment post, or label update, respond {\"ok\": false, \"reason\": \"Review response incomplete. Verify passed but you still need to: git push, post the Review Response comment on the PR, and update issue labels. Continue immediately.\"}. If complete or blocked, respond {\"ok\": true}."
+        - type: command
+          command: "node scripts/hooks/stop-gate.ts respond-to-pr-review"
 ---
 
 !`cat .claude/docs/testing.md`
@@ -27,6 +27,8 @@ Author agent reads the review, addresses each finding with an explicit resolutio
 All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Steps
+
+0. **Initialize stop-gate state:** `mkdir -p .claude/state/respond-to-pr-review-<pr-number>/`
 
 1. **Fetch PR and checkout branch:**
    - Run `gitea pr <pr-number>` to get head branch and linked issue (`Refs #<id>`)
@@ -67,6 +69,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - `blocking` findings can only be `fixed` or `disputed`
    - `suggestion` findings can be `fixed`, `accepted`, or `deferred`
 
+3b. **Write phase marker:** `echo done > .claude/state/respond-to-pr-review-<pr-number>/findings-addressed`
+
 4. **Determine flow:**
 
    **Clean flow** (no disputed blocking findings):
@@ -76,7 +80,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      - (c) If no repeatable check exists (e.g., prose observation about naming or clarity), note in the response comment what manual verification was performed.
    - Run quality gates: `node scripts/verify.ts`
      - If output starts with `VERIFY: fail` → fix issues and re-run until clean
-     - If output starts with `VERIFY: pass` → continue to push RIGHT NOW. You still need to push, post the response comment, and update labels.
+     - If output starts with `VERIFY: pass` → write phase marker: `echo done > .claude/state/respond-to-pr-review-<pr-number>/verify-complete` and continue to push RIGHT NOW. You still need to push, post the response comment, and update labels.
    - Push: `git push origin <head-branch>`
    - Post response comment (see template below)
    - **Update labels:** Set `stage/review-pr` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/review-pr"`
@@ -87,6 +91,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Post response comment with rebuttal reasoning
    - Find linked issue number from PR body (`Refs #<id>`, `closes #<id>`, or `fixes #<id>`)
    - Add `blocked` flag to issue: `node scripts/block.ts <id> "PR #<pr-number> has disputed blocking findings requiring human input. See PR comments."`
+   - Write stopped marker: `echo done > .claude/state/respond-to-pr-review-<pr-number>/stopped`
    - **STOP** — do not continue. Human must weigh in.
 
 5. **Post response comment on PR:**
@@ -135,11 +140,12 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    Be specific in "Prompt fix" — "be more careful" is useless. "Add to /plan step 3: 'When modifying query filters, verify cache invalidation logic still matches'" is actionable.
 
-7. **Report to main agent:** "**PR #<pr-number> (issue #<id>)** — <status: ready-for-re-review | needs-human-input> — <1-line summary of resolutions>"
+7. **Write final phase marker and clean up:** `echo done > .claude/state/respond-to-pr-review-<pr-number>/response-posted`
+   - Then clean up state: `rm -rf .claude/state/respond-to-pr-review-<pr-number>/`
+
+8. **Report to main agent:** "**PR #<pr-number> (issue #<id>)** — <status: ready-for-re-review | needs-human-input> — <1-line summary of resolutions>"
 
 ## Important
-
-- **Do NOT pause between steps.** This skill runs end-to-end without user interaction. When `/verify` returns, immediately continue to push and post the response comment. The Skill tool returning is a mid-flow return value, not a stopping point.
 - This skill is for the **author agent** — the one who wrote the code, not the reviewer
 - Every finding requires an explicit resolution. The response table must have one row per finding — or one row per sub-item if the reviewer enumerated them (e.g., F2a, F2b, F2c).
 - Disputed blocking findings → `needs-human-input` status → issue gets `blocked` flag → STOP

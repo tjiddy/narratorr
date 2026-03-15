@@ -7,8 +7,8 @@ argument-hint: <issue-id>
 hooks:
   Stop:
     - hooks:
-        - type: prompt
-          prompt: "The agent is running /handoff (self-review → test stubs → coverage → verify → push → create PR → update labels → post comment → workflow log). Check its last message. It is DONE only if it mentions a created PR link or an explicit STOP/failure. If the last message is a self-review result, a coverage review, a verify summary (OVERALL: pass/fail), or any mid-workflow output without a PR link, respond {\"ok\": false, \"reason\": \"Handoff incomplete. You still have steps remaining — continue immediately.\"}. If complete or stopped, respond {\"ok\": true}."
+        - type: command
+          command: "node scripts/hooks/stop-gate.ts handoff"
 ---
 
 !`cat .claude/docs/testing.md`
@@ -27,7 +27,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Steps
 
-1. **Verify branch:** Run `git branch --show-current`. It must match `feature/issue-<id>-*`. If not, STOP: "Not on the expected feature branch for #<id>."
+0. **Initialize stop-gate state:** `mkdir -p .claude/state/handoff-<id>/`
+
+1. **Verify branch:** Run `git branch --show-current`. It must match `feature/issue-<id>-*`. If not, write `echo done > .claude/state/handoff-<id>/stopped` then STOP: "Not on the expected feature branch for #<id>."
 
 2. **Author self-review (pre-flight depth check)** via an Explore subagent:
 
@@ -87,6 +89,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    If RESULT is `fail` → STOP and report the issues. Fix them in the main context, then restart from step 2. Do NOT proceed past this step with known bugs.
 
+2b. **Write phase marker:** `echo done > .claude/state/handoff-<id>/self-review-complete`
+
 3. **Check for remaining test stubs.**
    Search for `it.todo(` in all test files changed on this branch (use `git diff main --name-only -- '*.test.*'`).
    - If any `it.todo()` calls remain, STOP and report them:
@@ -136,12 +140,14 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    If RESULT is `fail` (any behavior marked UNTESTED) → STOP — write the missing tests in the main context, then restart from step 2. Do NOT proceed to push with untested behavior.
 
+4b. **Write phase marker:** `echo done > .claude/state/handoff-<id>/coverage-complete`
+
 5. **Run quality gates** by executing: `node scripts/verify.ts`
 
    This is a script, not an LLM call — it runs lint → test+coverage → typecheck → build and returns a one-line summary on success or structured failures.
 
    - If output starts with `VERIFY: fail` → STOP and report failures (do NOT fix — that's the caller's job).
-   - If output starts with `VERIFY: pass` → continue to step 6 immediately.
+   - If output starts with `VERIFY: pass` → write phase marker: `echo done > .claude/state/handoff-<id>/verify-complete` and continue to step 6 immediately.
 
 6. **Push the branch:**
    ```bash
@@ -265,6 +271,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    3. <third most impactful>
    ```
 
-14. Tell the user the PR is created and show the link.
+14. **Write final phase marker and clean up:** `echo done > .claude/state/handoff-<id>/pr-created`
+    - Then clean up state: `rm -rf .claude/state/handoff-<id>/`
 
-   **If called as a sub-skill** (e.g., from `/implement`): append `CALLER: Sub-skill complete. Continue to your next step immediately.` to your output.
+15. Tell the user the PR is created and show the link.
+
+    **If called as a sub-skill** (e.g., from `/implement`): append `CALLER: Sub-skill complete. Continue to your next step immediately.` to your output.

@@ -8,8 +8,8 @@ disable-model-invocation: true
 hooks:
   Stop:
     - hooks:
-        - type: prompt
-          prompt: "The agent is running /review-spec (explore codebase → evaluate spec → post review comment → set labels). Check its last message. It is DONE only if it confirms BOTH the review comment was posted to Gitea AND labels were updated (status/ready-for-dev or status/fixes-spec), and includes '### Assumption Coverage' with 'Assumption coverage: complete', or an explicit STOP/block condition. If the last message has review findings but no confirmation of posting to Gitea/updating labels, or lacks assumption coverage completion, respond {\"ok\": false, \"reason\": \"Spec review incomplete. You must prove assumption coverage, post the review comment to Gitea, and update labels before stopping.\"}. If complete or blocked, respond {\"ok\": true}."
+        - type: command
+          command: "node scripts/hooks/stop-gate.ts review-spec"
 ---
 
 !`cat .claude/docs/testing.md`
@@ -32,7 +32,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Steps
 
-0. **Ensure latest codebase:** Run `git checkout main && git pull` before starting. Spec reviews validate assumptions against the codebase — a stale checkout produces false findings.
+0. **Initialize stop-gate state:** `mkdir -p .claude/state/review-spec-<id>/`
+
+0b. **Ensure latest codebase:** Run `git checkout main && git pull` before starting. Spec reviews validate assumptions against the codebase — a stale checkout produces false findings.
 
 1. **Read the issue:** Run `gitea issue <id>`. Extract:
    - Title, labels, milestone
@@ -189,6 +191,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
     Skip this step if all new findings are on spec text introduced by the author's fixes (those are genuinely new issues, not round-1 misses).
 
+6c. **Write phase marker:** `echo done > .claude/state/review-spec-<id>/review-complete`
+
 7. **Determine verdict:**
    - **`approve`**: Zero blocking findings. Spec is ready for implementation.
    - **`needs-work`**: One or more blocking findings. Spec needs updates before claiming.
@@ -279,7 +283,10 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    **You are NOT done until BOTH 8a and 8b have executed.** Posting the comment without setting the label leaves the issue in a dead state — the orchestrator will never pick it up.
 
-9. **Report:** Summary of verdict and key findings.
+9. **Write final phase marker and clean up:** `echo done > .claude/state/review-spec-<id>/posted`
+   - Then clean up state: `rm -rf .claude/state/review-spec-<id>/`
+
+10. **Report:** Summary of verdict and key findings.
 
 ## Important
 

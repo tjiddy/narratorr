@@ -8,8 +8,8 @@ disable-model-invocation: true
 hooks:
   Stop:
     - hooks:
-        - type: prompt
-          prompt: "The agent is running /implement (claim → plan → implement → handoff). Check its last message. It is DONE only if it contains a completion report like '**#<id> complete** — <PR link>' or an explicit STOP/block condition. If the last message is a verify summary (OVERALL: pass/fail), a plan summary, a claim confirmation, or any mid-workflow output without a PR link or STOP, respond {\"ok\": false, \"reason\": \"Workflow incomplete. You are mid-skill — continue to the next phase immediately.\"}. If complete or blocked, respond {\"ok\": true}."
+        - type: command
+          command: "node scripts/hooks/stop-gate.ts implement"
 ---
 
 !`cat .claude/docs/testing.md`
@@ -30,11 +30,16 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Steps
 
+### Phase 0 — Initialize state tracking
+
+0. **Initialize stop-gate state:** `mkdir -p .claude/state/implement-<id>/`
+   - This directory tracks phase completion for the stop hook. The hook will block premature stops until all phases are marked complete.
+
 ### Phase 1 — Claim
 
 1. **Claim the issue** by running: `node scripts/claim.ts <id>`
-   - If output starts with `ERROR:` → the entire `/implement` STOPS. Do not continue.
-   - If output starts with `CLAIMED:` → IMMEDIATELY continue to Phase 2. Do not end your turn.
+   - If output starts with `ERROR:` → write `echo done > .claude/state/implement-<id>/stopped` then STOP. Do not continue.
+   - If output starts with `CLAIMED:` → write phase marker: `echo done > .claude/state/implement-<id>/claim-complete` and continue to Phase 2.
 
 ### Phase 2 — Plan
 
@@ -43,7 +48,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 2. **Invoke `/plan <id>`** via the Skill tool. Include in your message to the Skill tool: "Current branch: `<branch-name-from-step-1b>`" so the downstream skill can verify it is operating on the correct branch.
    - `/plan` explores the codebase, extracts test stubs from the spec, and posts a structured implementation plan on the issue.
    - The plan comment and test stubs feed directly into the implementation phase.
-   - **When `/plan` returns → IMMEDIATELY continue to Phase 3.** Do not end your turn.
+   - When `/plan` returns → write phase marker: `echo done > .claude/state/implement-<id>/plan-complete` and continue to Phase 3.
 
 ### Phase 3 — Implement
 
@@ -73,11 +78,11 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    **General rules:**
    - Follow Acceptance Criteria as a checklist — each AC maps to something you must build and verify
    - **Follow design principles** (CLAUDE.md § Design Principles) — single responsibility per file, DRY (extract shared patterns), extend don't modify (new files over growing lists). If the plan comment flagged design warnings, address them during implementation.
-   - **Stay in scope** — if requirements expand beyond the issue spec, run `node scripts/block.ts <id> "<reason>"` and STOP
+   - **Stay in scope** — if requirements expand beyond the issue spec, write `echo done > .claude/state/implement-<id>/stopped`, run `node scripts/block.ts <id> "<reason>"` and STOP
 
 5. **Run quality gates:** Execute `node scripts/verify.ts`
    - If output starts with `VERIFY: fail` → fix failures and re-run (max 2 attempts)
-   - If still failing after 2 attempts → run `node scripts/block.ts <id> "Quality gates failing after 2 fix attempts"` and STOP
+   - If still failing after 2 attempts → write `echo done > .claude/state/implement-<id>/stopped`, run `node scripts/block.ts <id> "Quality gates failing after 2 fix attempts"` and STOP
    - If output starts with `VERIFY: pass` → continue to step 6 RIGHT NOW. You have 4 more steps to complete.
 
 5b. **Branch guard:** Run `git branch --show-current` and verify the output matches `feature/issue-<id>-*`. If not, STOP: "Branch mismatch before frontend-design — expected feature/issue-<id>-*, got <actual>." Save the branch name.
@@ -86,6 +91,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - If the issue includes frontend work → invoke the `frontend-design` skill on each new or significantly changed UI component. Include "Current branch: `<branch-name>`" in your message. The goal is production-grade polish, not just functional correctness.
    - If the `frontend-design` skill is not available (it's an external plugin — check the skills list in system reminders), skip this step and note it in the handoff.
    - If the issue is backend-only → skip this step.
+
+6c. **Write phase marker:** `echo done > .claude/state/implement-<id>/implement-complete`
 
 ### Phase 4 — Handoff
 
@@ -102,11 +109,13 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
      - Run: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/review-pr"`
    - **Both checks are critical for the orchestrator pipeline** — the PR label drives review dispatch, the issue label tracks workflow state.
 
-9. **Report completion** to the user: "**#<id> complete** — <PR link> — <1-line summary of what was built>"
+9. **Write final phase marker and clean up:** `echo done > .claude/state/implement-<id>/handoff-complete`
+   - Then clean up state: `rm -rf .claude/state/implement-<id>/`
+
+10. **Report completion** to the user: "**#<id> complete** — <PR link> — <1-line summary of what was built>"
 
 ## Important
 
-- **Do NOT pause between phases or after sub-skill returns.** When `/claim`, `/plan`, or `/handoff` returns, immediately continue to the next step. Sub-skill results are mid-flow return values, not stopping points. The only valid stops are explicit STOP conditions (blocked, failures after retries, scope creep).
-- Each phase gates the next — if any phase STOPs, the whole skill STOPs
+- Each phase gates the next — if any phase STOPs, write `echo done > .claude/state/implement-<id>/stopped` first, then STOP
 - Do NOT skip claim, `/plan`, or `/handoff` — claim runs via script, `/plan` and `/handoff` via the Skill tool
-- Scope creep is a STOP condition, not a TODO — run `node scripts/block.ts` and halt
+- Scope creep is a STOP condition, not a TODO — write the stopped marker, run `node scripts/block.ts` and halt

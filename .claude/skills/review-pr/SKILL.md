@@ -8,8 +8,8 @@ disable-model-invocation: true
 hooks:
   Stop:
     - hooks:
-        - type: prompt
-          prompt: "The agent is running /review-pr (explore code → evaluate → post verdict comment → set labels → merge or stop). Check its last message. It is DONE only if it contains '## Verdict:' AND '## Exhaustiveness: complete' AND '## Depth Coverage: complete' AND confirms the comment was posted to Gitea AND labels were updated, or an explicit STOP/block condition. If the last message contains review findings or a verdict that hasn't been posted to Gitea yet (no gitea issue-comment or gitea pr-comment confirmation), or if exhaustiveness/depth coverage is missing, respond {\"ok\": false, \"reason\": \"Review incomplete. You must prove exhaustive file coverage and behavioral depth coverage, post the review comment to Gitea, and update labels before stopping.\"}. If complete or blocked, respond {\"ok\": true}."
+        - type: command
+          command: "node scripts/hooks/stop-gate.ts review-pr"
 ---
 
 !`cat .claude/docs/testing.md`
@@ -30,7 +30,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Steps
 
-0. **Ensure latest branch state:** Run `git fetch origin` to get the latest commits on all branches. If this is a re-review (you have reviewed this PR before in this session), the author has pushed fixes since your last review — you MUST re-run ALL steps from scratch against the updated branch. Do not reuse prior results from your session context.
+0. **Initialize stop-gate state:** `mkdir -p .claude/state/review-pr-<pr-number>/`
+
+0b. **Ensure latest branch state:** Run `git fetch origin` to get the latest commits on all branches. If this is a re-review (you have reviewed this PR before in this session), the author has pushed fixes since your last review — you MUST re-run ALL steps from scratch against the updated branch. Do not reuse prior results from your session context.
 
 1. **Fetch PR details:** Run `gitea pr <pr-number>`. Extract:
    - Title, body, state, head branch, base branch, **author** (`author: <login>` in output), labels
@@ -275,6 +277,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
     Skip this step if all new findings are on code introduced by fix commits (those are genuinely new issues, not round-1 misses).
 
+11c. **Write phase marker:** `echo done > .claude/state/review-pr-<pr-number>/review-complete`
+
 12. **Post review comment on PR (MANDATORY — this is a Gitea API call, not stdout):**
     - Write comment to temp file, then post via Gitea API: `gitea pr-comment <pr-number> --body-file <temp-file-path>`
     - **Verify the comment was posted** — the command should return the comment ID. If it fails, retry once.
@@ -387,7 +391,10 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
     - Verify the PR shows `stage/fixes-pr` and the issue shows `status/in-progress`
     - **STOP.** Do not attempt to fix anything — that's the author's job via `/respond-to-pr-review`
 
-14. **Report to main agent:** Overall verdict + outcome (merged or awaiting author response).
+14. **Write final phase marker and clean up:** `echo done > .claude/state/review-pr-<pr-number>/posted`
+    - Then clean up state: `rm -rf .claude/state/review-pr-<pr-number>/`
+
+15. **Report to main agent:** Overall verdict + outcome (merged or awaiting author response).
 
 ## Important
 
