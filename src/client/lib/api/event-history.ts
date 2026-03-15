@@ -24,12 +24,4 @@ export const eventHistoryApi = {
     fetchApi<BookEvent[]>(`/event-history/books/${bookId}`),
   markEventFailed: (id: number) =>
     fetchApi<{ success: boolean }>(`/event-history/${id}/mark-failed`, { method: 'POST' }),
-  deleteEvent: (id: number) =>
-    fetchApi<{ success: boolean }>(`/event-history/${id}`, { method: 'DELETE' }),
-  deleteEvents: (params?: { eventType?: string }) => {
-    const searchParams = new URLSearchParams();
-    if (params?.eventType) searchParams.set('eventType', params.eventType);
-    const qs = searchParams.toString();
-    return fetchApi<{ deleted: number }>(`/event-history${qs ? `?${qs}` : ''}`, { method: 'DELETE' });
-  },
 };

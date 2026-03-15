@@ -3,7 +3,7 @@ import { EventHistoryCard } from '@/components/EventHistoryCard';
 import { LoadingSpinner, HistoryIcon } from '@/components/icons';
 
 export function BookEventHistory({ bookId }: { bookId: number }) {
-  const { events, isLoading, markFailedMutation, deleteMutation } = useBookEventHistory(bookId);
+  const { events, isLoading, markFailedMutation } = useBookEventHistory(bookId);
 
   if (isLoading) {
     return (
@@ -33,8 +33,6 @@ export function BookEventHistory({ bookId }: { bookId: number }) {
           event={event}
           onMarkFailed={(id) => markFailedMutation.mutate(id)}
           isMarkingFailed={markFailedMutation.isPending}
-          onDelete={(id) => deleteMutation.mutate(id)}
-          isDeleting={deleteMutation.isPending}
           showBookTitle={false}
           index={idx}
         />

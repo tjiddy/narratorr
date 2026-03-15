@@ -25,30 +25,7 @@ export function useEventHistory(params?: { eventType?: string; search?: string }
     },
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: api.deleteEvent,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
-      toast.success('Event deleted');
-    },
-    onError: (error: Error) => {
-      toast.error(`Delete failed: ${error.message}`);
-    },
-  });
-
-  const bulkDeleteMutation = useMutation({
-    mutationFn: api.deleteEvents,
-    onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
-      const label = variables?.eventType ? 'matching events' : 'all events';
-      toast.success(`Cleared ${label}`);
-    },
-    onError: (error: Error) => {
-      toast.error(`Clear failed: ${error.message}`);
-    },
-  });
-
-  return { events, isLoading, isError, markFailedMutation, deleteMutation, bulkDeleteMutation };
+  return { events, isLoading, isError, markFailedMutation };
 }
 
 export function useBookEventHistory(bookId: number) {
@@ -72,16 +49,5 @@ export function useBookEventHistory(bookId: number) {
     },
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: api.deleteEvent,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.byBookId(bookId) });
-      toast.success('Event deleted');
-    },
-    onError: (error: Error) => {
-      toast.error(`Delete failed: ${error.message}`);
-    },
-  });
-
-  return { events, isLoading, isError, markFailedMutation, deleteMutation };
+  return { events, isLoading, isError, markFailedMutation };
 }

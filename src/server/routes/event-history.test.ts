@@ -98,63 +98,6 @@ describe('event-history routes', () => {
     });
   });
 
-  describe('DELETE /api/event-history/:id', () => {
-    it('deletes event and returns { success: true }', async () => {
-      (services.eventHistory.delete as Mock).mockResolvedValue(true);
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/event-history/1' });
-
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ success: true });
-      expect(services.eventHistory.delete).toHaveBeenCalledWith(1);
-    });
-
-    it('returns 404 for nonexistent event', async () => {
-      (services.eventHistory.delete as Mock).mockResolvedValue(false);
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/event-history/999' });
-
-      expect(res.statusCode).toBe(404);
-    });
-
-    it('returns 500 on service error', async () => {
-      (services.eventHistory.delete as Mock).mockRejectedValue(new Error('DB error'));
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/event-history/1' });
-
-      expect(res.statusCode).toBe(500);
-    });
-  });
-
-  describe('DELETE /api/event-history (bulk)', () => {
-    it('deletes all events and returns count', async () => {
-      (services.eventHistory.deleteAll as Mock).mockResolvedValue(5);
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/event-history' });
-
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ deleted: 5 });
-    });
-
-    it('deletes only matching eventType', async () => {
-      (services.eventHistory.deleteAll as Mock).mockResolvedValue(2);
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/event-history?eventType=download_failed' });
-
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual({ deleted: 2 });
-      expect(services.eventHistory.deleteAll).toHaveBeenCalledWith({ eventType: 'download_failed' });
-    });
-
-    it('returns 500 on service error', async () => {
-      (services.eventHistory.deleteAll as Mock).mockRejectedValue(new Error('DB error'));
-
-      const res = await app.inject({ method: 'DELETE', url: '/api/event-history' });
-
-      expect(res.statusCode).toBe(500);
-    });
-  });
-
   describe('POST /api/event-history/:id/mark-failed', () => {
     it('marks event as failed', async () => {
       (services.eventHistory.markFailed as Mock).mockResolvedValue({ success: true });

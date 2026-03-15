@@ -55,39 +55,6 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
     },
   );
 
-  // DELETE /api/event-history/:id — delete a single event
-  app.delete<{ Params: IdParam }>(
-    '/api/event-history/:id',
-    { schema: { params: idParamSchema } },
-    async (request, reply) => {
-      try {
-        const deleted = await eventHistoryService.delete(request.params.id);
-        if (!deleted) return await reply.status(404).send({ error: 'Event not found' });
-        return { success: true };
-      } catch (error) {
-        request.log.error(error, 'Failed to delete event');
-        return reply.status(500).send({ error: 'Internal server error' });
-      }
-    },
-  );
-
-  // DELETE /api/event-history — bulk delete events (optional eventType filter)
-  app.delete<{ Querystring: { eventType?: string } }>(
-    '/api/event-history',
-    { schema: { querystring: z.object({ eventType: eventHistoryQuerySchema.shape.eventType }) } },
-    async (request, reply) => {
-      try {
-        const { eventType } = request.query;
-        const filters = eventType ? { eventType } : undefined;
-        const deleted = await eventHistoryService.deleteAll(filters);
-        return { deleted };
-      } catch (error) {
-        request.log.error(error, 'Failed to bulk delete events');
-        return reply.status(500).send({ error: 'Internal server error' });
-      }
-    },
-  );
-
   // POST /api/event-history/:id/mark-failed
   app.post<{ Params: IdParam }>(
     '/api/event-history/:id/mark-failed',

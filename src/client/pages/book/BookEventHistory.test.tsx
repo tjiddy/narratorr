@@ -22,7 +22,6 @@ describe('BookEventHistory', () => {
       isLoading: true,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
     });
 
     renderWithProviders(<BookEventHistory bookId={1} />);
@@ -35,7 +34,6 @@ describe('BookEventHistory', () => {
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
     });
 
     renderWithProviders(<BookEventHistory bookId={1} />);
@@ -51,7 +49,6 @@ describe('BookEventHistory', () => {
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
     });
 
     renderWithProviders(<BookEventHistory bookId={1} />);

@@ -50,12 +50,10 @@ function formatDate(dateStr: string): string {
   return date.toLocaleDateString();
 }
 
-export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onDelete, isDeleting, showBookTitle = true, index = 0 }: {
+export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, showBookTitle = true, index = 0 }: {
   event: BookEvent;
   onMarkFailed?: (id: number) => void;
   isMarkingFailed?: boolean;
-  onDelete?: (id: number) => void;
-  isDeleting?: boolean;
   showBookTitle?: boolean;
   index?: number;
 }) {
@@ -106,28 +104,15 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onDelet
           )}
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          {isActionable && onMarkFailed && (
-            <button
-              onClick={() => onMarkFailed(event.id)}
-              disabled={isMarkingFailed}
-              className="text-xs px-3 py-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 disabled:opacity-50 font-medium transition-colors"
-            >
-              Mark Failed
-            </button>
-          )}
-          {onDelete && (
-            <button
-              type="button"
-              onClick={() => onDelete(event.id)}
-              disabled={isDeleting}
-              className="p-1.5 rounded-lg text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 disabled:opacity-50 transition-colors"
-              aria-label="Delete event"
-            >
-              <TrashIcon className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
+        {isActionable && onMarkFailed && (
+          <button
+            onClick={() => onMarkFailed(event.id)}
+            disabled={isMarkingFailed}
+            className="shrink-0 text-xs px-3 py-1.5 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 disabled:opacity-50 font-medium transition-colors"
+          >
+            Mark Failed
+          </button>
+        )}
       </div>
     </div>
   );

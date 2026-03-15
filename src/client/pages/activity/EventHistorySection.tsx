@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useEventHistory } from '@/hooks/useEventHistory';
 import { EventHistoryCard } from '@/components/EventHistoryCard';
-import { ConfirmModal } from '@/components/ConfirmModal';
-import { LoadingSpinner, HistoryIcon, SearchIcon, TrashIcon } from '@/components/icons';
+import { LoadingSpinner, HistoryIcon, SearchIcon } from '@/components/icons';
 
 const EVENT_TYPE_FILTERS = [
   { value: '', label: 'All' },
@@ -20,9 +19,8 @@ export function EventHistorySection() {
   const [eventType, setEventType] = useState('');
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
-  const [confirmAction, setConfirmAction] = useState<'errors' | 'all' | null>(null);
 
-  const { events, isLoading, markFailedMutation, deleteMutation, bulkDeleteMutation } = useEventHistory({
+  const { events, isLoading, markFailedMutation } = useEventHistory({
     eventType: eventType || undefined,
     search: search || undefined,
   });
@@ -61,28 +59,6 @@ export function EventHistorySection() {
           ))}
         </div>
 
-        {/* Bulk actions */}
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setConfirmAction('errors')}
-            disabled={bulkDeleteMutation.isPending}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-destructive/10 text-destructive hover:bg-destructive/20 disabled:opacity-50 transition-colors"
-          >
-            <TrashIcon className="w-3 h-3" />
-            Clear Errors
-          </button>
-          <button
-            type="button"
-            onClick={() => setConfirmAction('all')}
-            disabled={bulkDeleteMutation.isPending}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-muted text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
-          >
-            <TrashIcon className="w-3 h-3" />
-            Clear All
-          </button>
-        </div>
-
         {/* Search */}
         <form onSubmit={handleSearchSubmit} className="flex gap-2 sm:ml-auto">
           <div className="relative">
@@ -116,34 +92,11 @@ export function EventHistorySection() {
               event={event}
               onMarkFailed={(id) => markFailedMutation.mutate(id)}
               isMarkingFailed={markFailedMutation.isPending}
-              onDelete={(id) => deleteMutation.mutate(id)}
-              isDeleting={deleteMutation.isPending}
               index={idx}
             />
           ))}
         </div>
       )}
-      <ConfirmModal
-        isOpen={confirmAction !== null}
-        title={confirmAction === 'errors' ? 'Clear Error Events' : 'Clear All Events'}
-        message={confirmAction === 'errors'
-          ? 'This will permanently delete all failed download and import events. This cannot be undone.'
-          : 'This will permanently delete all event history. This cannot be undone.'}
-        confirmLabel={confirmAction === 'errors' ? 'Clear Errors' : 'Clear All'}
-        onConfirm={() => {
-          if (confirmAction === 'errors') {
-            bulkDeleteMutation.mutate({ eventType: 'download_failed' }, {
-              onSuccess: () => {
-                bulkDeleteMutation.mutate({ eventType: 'import_failed' });
-              },
-            });
-          } else {
-            bulkDeleteMutation.mutate(undefined);
-          }
-          setConfirmAction(null);
-        }}
-        onCancel={() => setConfirmAction(null)}
-      />
     </div>
   );
 }

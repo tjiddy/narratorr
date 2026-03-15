@@ -117,23 +117,6 @@ export class EventHistoryService {
     return deleted.length;
   }
 
-  async delete(id: number): Promise<boolean> {
-    const existing = await this.getById(id);
-    if (!existing) return false;
-    await this.db.delete(bookEvents).where(eq(bookEvents.id, id));
-    this.log.info({ id, bookTitle: existing.bookTitle }, 'Event deleted');
-    return true;
-  }
-
-  async deleteAll(filters?: { eventType?: string }): Promise<number> {
-    const where = filters?.eventType
-      ? eq(bookEvents.eventType, filters.eventType as EventType)
-      : undefined;
-    const deleted = await this.db.delete(bookEvents).where(where).returning();
-    this.log.info({ count: deleted.length, eventType: filters?.eventType ?? 'all' }, 'Events bulk deleted');
-    return deleted.length;
-  }
-
   async markFailed(eventId: number): Promise<{ success: true }> {
     const event = await this.getById(eventId);
     if (!event) {
