@@ -5,7 +5,7 @@ export interface BlacklistEntry {
   bookId?: number;
   infoHash: string;
   title: string;
-  reason?: 'wrong_content' | 'bad_quality' | 'wrong_narrator' | 'spam' | 'other' | 'download_failed' | 'infrastructure_error';
+  reason: 'wrong_content' | 'bad_quality' | 'wrong_narrator' | 'spam' | 'other' | 'download_failed' | 'infrastructure_error';
   note?: string;
   blacklistType: 'temporary' | 'permanent';
   expiresAt?: string | null;
@@ -18,7 +18,7 @@ export const blacklistApi = {
     infoHash: string;
     title: string;
     bookId?: number;
-    reason?: BlacklistEntry['reason'];
+    reason: BlacklistEntry['reason'];
     note?: string;
     blacklistType?: 'temporary' | 'permanent';
   }) =>

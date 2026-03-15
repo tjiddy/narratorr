@@ -84,6 +84,34 @@ describe('blacklist routes', () => {
       });
       expect(res.statusCode).toBe(400);
     });
+
+    // L-4: reason is now required in the blacklist contract
+    it('rejects payload with missing reason', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/blacklist',
+        payload: {
+          infoHash: 'abc123def456',
+          title: 'Bad Release [Unabridged]',
+          // no reason — should be rejected
+        },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('accepts payload with valid reason value', async () => {
+      vi.mocked(services.blacklist.create).mockResolvedValue(mockEntry);
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/blacklist',
+        payload: {
+          infoHash: 'abc123def456',
+          title: 'Bad Release [Unabridged]',
+          reason: 'bad_quality',
+        },
+      });
+      expect(res.statusCode).toBe(201);
+    });
   });
 
   describe('DELETE /api/blacklist/:id', () => {

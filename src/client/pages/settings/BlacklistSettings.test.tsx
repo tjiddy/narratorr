@@ -230,13 +230,13 @@ describe('BlacklistSettings', () => {
       });
     });
 
-    it('shows "Unknown" for entries with null reason (pre-migration)', async () => {
+    it('renders backfilled "other" reason correctly (L-4 post-migration)', async () => {
       const entries = [
         {
           id: 1,
           infoHash: 'abc123def456789',
           title: 'Old Entry',
-          reason: undefined,
+          reason: 'other' as const,
           blacklistType: 'permanent' as const,
           expiresAt: null,
           blacklistedAt: '2024-06-15T12:00:00Z',
@@ -247,7 +247,7 @@ describe('BlacklistSettings', () => {
       renderWithProviders(<BlacklistSettings />);
 
       await waitFor(() => {
-        expect(screen.getByText('Unknown')).toBeInTheDocument();
+        expect(screen.getByText('Other')).toBeInTheDocument();
       });
     });
   });

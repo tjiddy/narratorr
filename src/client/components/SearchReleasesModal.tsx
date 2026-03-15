@@ -83,6 +83,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
       infoHash: result.infoHash,
       title: result.title,
       bookId: book.id,
+      reason: 'other',
     });
   };
 

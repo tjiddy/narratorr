@@ -476,6 +476,41 @@ describe('SearchReleasesModal', () => {
     });
   });
 
+  it('blacklists a search result with reason: other and shows success toast', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    vi.mocked(api.addToBlacklist).mockResolvedValue({
+      id: 1,
+      infoHash: 'abc123',
+      title: 'The Way of Kings [Unabridged]',
+      reason: 'other',
+      blacklistType: 'permanent',
+      blacklistedAt: '2026-03-15T00:00:00Z',
+    });
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+
+    const blacklistButtons = screen.getAllByText('Blacklist');
+    await user.click(blacklistButtons[0]);
+
+    await waitFor(() => {
+      expect(api.addToBlacklist).toHaveBeenCalledWith(
+        {
+          infoHash: 'abc123',
+          title: 'The Way of Kings [Unabridged]',
+          bookId: mockBook.id,
+          reason: 'other',
+        },
+        expect.anything(), // TanStack Query mutation context
+      );
+      expect(toast.success).toHaveBeenCalledWith('Release blacklisted');
+    });
+  });
+
   it('shows error toast when blacklist fails', async () => {
     vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
     vi.mocked(api.addToBlacklist).mockRejectedValue(new Error('Server error'));

@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm';
 import type { Services } from './index.js';
 import fsp from 'fs/promises';
 import os from 'os';
+import { getVersion } from '../utils/version.js';
 
 export async function healthRoutes(app: FastifyInstance, services: Services, db: Db) {
   // GET /api/system/health/status — detailed health check results
@@ -72,7 +73,7 @@ export async function healthRoutes(app: FastifyInstance, services: Services, db:
     }
 
     return {
-      version: '0.1.0',
+      version: getVersion(),
       nodeVersion: process.version,
       os: `${os.type()} ${os.release()}`,
       dbSize,

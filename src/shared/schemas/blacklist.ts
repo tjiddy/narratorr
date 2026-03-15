@@ -12,7 +12,7 @@ export const createBlacklistSchema = z.object({
   infoHash: z.string().min(1, 'Info hash is required'),
   title: z.string().min(1, 'Title is required'),
   bookId: z.number().int().optional(),
-  reason: blacklistReasonSchema.optional(),
+  reason: blacklistReasonSchema,
   note: z.string().max(500).optional(),
   blacklistType: blacklistTypeSchema.optional(),
 });

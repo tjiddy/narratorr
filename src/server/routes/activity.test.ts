@@ -396,10 +396,10 @@ describe('activity routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({ id: 1, status: 'failed' });
-      expect(services.qualityGate.reject).toHaveBeenCalledWith(1, undefined);
+      expect(services.qualityGate.reject).toHaveBeenCalledWith(1);
     });
 
-    it('passes reason from body to service', async () => {
+    it('ignores reason in body — parameter was removed (L-11)', async () => {
       (services.qualityGate.reject as Mock).mockResolvedValue({ id: 1, status: 'failed' });
 
       const res = await app.inject({
@@ -409,7 +409,8 @@ describe('activity routes', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(services.qualityGate.reject).toHaveBeenCalledWith(1, 'Wrong narrator');
+      // reject() should only receive downloadId, not reason
+      expect(services.qualityGate.reject).toHaveBeenCalledWith(1);
     });
 
     it('returns 409 when download is not in pending_review status', async () => {

@@ -410,7 +410,7 @@ export class QualityGateService {
   /**
    * Reject a pending_review download — delete files, blacklist if infoHash, set failed.
    */
-  async reject(downloadId: number, _userReason?: string): Promise<{ id: number; status: string }> {
+  async reject(downloadId: number): Promise<{ id: number; status: string }> {
     const result = await this.db
       .select({ download: downloads, book: books })
       .from(downloads)

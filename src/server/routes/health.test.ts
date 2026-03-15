@@ -9,6 +9,10 @@ vi.mock('fs/promises', async (importOriginal) => {
   return { ...actual, default: { ...actual, statfs: vi.fn() } };
 });
 
+vi.mock('../utils/version.js', () => ({
+  getVersion: () => '99.88.77',
+}));
+
 import fsp from 'fs/promises';
 
 describe('Health routes', () => {
@@ -218,6 +222,20 @@ describe('System info routes', () => {
       const payload = JSON.parse(res.payload);
       expect(payload.libraryPath).toBeNull();
       expect(payload.freeSpace).toBeNull();
+    });
+
+    // L-14: version should come from getVersion() instead of hardcoded '0.1.0'
+    it('returns version from getVersion() instead of hardcoded string', async () => {
+      (services.settings.get as Mock).mockResolvedValue({ path: '/audiobooks' });
+      (mockDb.run as Mock).mockResolvedValue({ rows: [[10, 4096]] });
+      (fsp.statfs as unknown as Mock).mockResolvedValue({ bavail: 500, bsize: 4096 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/system/info' });
+      const payload = JSON.parse(res.payload);
+
+      // getVersion() is mocked to return '99.88.77' — if the route
+      // uses getVersion(), we'll see that; if hardcoded, we'll see '0.1.0'
+      expect(payload.version).toBe('99.88.77');
     });
   });
 });

@@ -105,7 +105,7 @@ export function BlacklistSettings() {
                   <h3 className="font-medium text-sm truncate">{entry.title}</h3>
                   <div className="flex flex-wrap items-center gap-2 mt-1.5">
                     <span className="text-xs px-2 py-0.5 bg-muted rounded-md font-medium text-muted-foreground">
-                      {entry.reason ? (REASON_LABELS[entry.reason] ?? entry.reason) : 'Unknown'}
+                      {REASON_LABELS[entry.reason] ?? entry.reason}
                     </span>
                     <span className={`text-xs px-2 py-0.5 rounded-md font-medium ${
                       entry.blacklistType === 'temporary'

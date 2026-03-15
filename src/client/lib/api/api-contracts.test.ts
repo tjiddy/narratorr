@@ -598,7 +598,7 @@ describe('response pass-through', () => {
   it('blacklistApi.addToBlacklist returns fetchApi response', async () => {
     const data = { id: 1, infoHash: 'abc', title: 'Book', blacklistedAt: '2026-01-01' };
     mockFetchApi.mockResolvedValue(data);
-    const result = await blacklistApi.addToBlacklist({ infoHash: 'abc', title: 'Book' });
+    const result = await blacklistApi.addToBlacklist({ infoHash: 'abc', title: 'Book', reason: 'other' });
     expect(result).toBe(data);
   });
 

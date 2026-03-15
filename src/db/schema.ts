@@ -236,7 +236,7 @@ export const blacklist = sqliteTable('blacklist', {
   bookId: integer('book_id').references(() => books.id, { onDelete: 'set null' }),
   infoHash: text('info_hash').notNull(),
   title: text('title').notNull(),
-  reason: text('reason', { enum: ['wrong_content', 'bad_quality', 'wrong_narrator', 'spam', 'other', 'download_failed', 'infrastructure_error'] }),
+  reason: text('reason', { enum: ['wrong_content', 'bad_quality', 'wrong_narrator', 'spam', 'other', 'download_failed', 'infrastructure_error'] }).notNull().default('other'),
   note: text('note'),
   blacklistType: text('blacklist_type', { enum: ['temporary', 'permanent'] }).notNull().default('permanent'),
   expiresAt: integer('expires_at', { mode: 'timestamp' }),

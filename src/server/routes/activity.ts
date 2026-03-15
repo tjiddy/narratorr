@@ -185,12 +185,9 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     { schema: { params: idParamSchema } },
     async (request, reply) => {
       const { id } = request.params;
-      const body = request.body as { reason?: string } | undefined;
-      const reason = body?.reason;
-
       try {
         request.log.info({ id }, 'Download rejected');
-        const result = await qualityGateService.reject(id, reason);
+        const result = await qualityGateService.reject(id);
         return result;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
