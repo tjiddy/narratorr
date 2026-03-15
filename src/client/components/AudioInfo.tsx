@@ -1,4 +1,5 @@
 import type { BookWithAuthor } from '@/lib/api';
+import { HeadphonesIcon, PackageIcon } from '@/components/icons';
 import { formatBytes, calculateQuality, resolveBookQualityInputs, qualityTierBg } from '@core/utils/index.js';
 
 function formatDurationLong(seconds: number): string {
@@ -73,14 +74,18 @@ export function AudioInfo({ book, compact }: AudioInfoProps) {
           </p>
         )}
         {techParts.length > 0 && (
-          <p className="text-sm">
-            <span className="text-muted-foreground mr-2">🎧</span>
+          <p className="text-sm flex items-center">
+            <span className="mr-2 shrink-0" aria-hidden="true">
+              <HeadphonesIcon className="w-4 h-4 text-muted-foreground" />
+            </span>
             {techParts.join(' · ')}
           </p>
         )}
         {fileParts.length > 0 && (
-          <p className="text-sm">
-            <span className="text-muted-foreground mr-2">📦</span>
+          <p className="text-sm flex items-center">
+            <span className="mr-2 shrink-0" aria-hidden="true">
+              <PackageIcon className="w-4 h-4 text-muted-foreground" />
+            </span>
             {fileParts.join(' · ')}
           </p>
         )}

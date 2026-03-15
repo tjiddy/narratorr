@@ -28,6 +28,7 @@ export function SortControls({
         <select
           value={sortField}
           onChange={(e) => onSortFieldChange(e.target.value as SortField)}
+          aria-label="Sort field"
           className="appearance-none glass-card rounded-lg pl-3 pr-7 py-1.5 text-xs font-medium text-foreground focus-ring cursor-pointer"
         >
           {Object.entries(sortLabels).map(([key, label]) => (
@@ -39,7 +40,7 @@ export function SortControls({
       <button
         onClick={() => onSortDirectionChange(sortDirection === 'asc' ? 'desc' : 'asc')}
         className="glass-card rounded-lg p-1.5 text-muted-foreground hover:text-foreground transition-colors focus-ring"
-        title={sortDirection === 'asc' ? 'Sort ascending' : 'Sort descending'}
+        aria-label={sortDirection === 'asc' ? 'Sort ascending' : 'Sort descending'}
       >
         <ArrowUpDownIcon className={`w-3.5 h-3.5 transition-transform ${sortDirection === 'asc' ? 'rotate-180' : ''}`} />
       </button>

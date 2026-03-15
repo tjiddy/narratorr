@@ -118,4 +118,30 @@ describe('FilterRow', () => {
       expect(screen.queryByText('Title')).not.toBeInTheDocument();
     });
   });
+
+  describe('accessible labels', () => {
+    it('author select has aria-label "Filter by author" when rendered', () => {
+      render(<FilterRow {...defaultProps()} />);
+      expect(screen.getByLabelText('Filter by author')).toBeInTheDocument();
+    });
+
+    it('series select has aria-label "Filter by series" when rendered', () => {
+      render(<FilterRow {...defaultProps()} />);
+      expect(screen.getByLabelText('Filter by series')).toBeInTheDocument();
+    });
+
+    it('narrator select has aria-label "Filter by narrator" when rendered', () => {
+      render(<FilterRow {...defaultProps({ uniqueNarrators: ['Michael Kramer', 'Kate Reading'] })} />);
+      expect(screen.getByLabelText('Filter by narrator')).toBeInTheDocument();
+    });
+
+    it('selecting an option still triggers onChange after adding aria-label', async () => {
+      const user = userEvent.setup();
+      const props = defaultProps();
+      render(<FilterRow {...props} />);
+
+      await user.selectOptions(screen.getByLabelText('Filter by author'), 'Brandon Sanderson');
+      expect(props.onAuthorFilterChange).toHaveBeenCalledWith('Brandon Sanderson');
+    });
+  });
 });

@@ -526,4 +526,120 @@ describe('BookDetails', () => {
       });
     });
   });
+
+  describe('tab ARIA roles and keyboard navigation', () => {
+    it('renders tab container with role="tablist" and aria-label', () => {
+      renderBookDetails();
+      const tablist = screen.getByRole('tablist');
+      expect(tablist).toHaveAttribute('aria-label');
+    });
+
+    it('renders each tab button with role="tab"', () => {
+      renderBookDetails();
+      const tabs = screen.getAllByRole('tab');
+      expect(tabs).toHaveLength(2);
+    });
+
+    it('sets aria-selected="true" on active tab and "false" on inactive', () => {
+      renderBookDetails();
+      const tabs = screen.getAllByRole('tab');
+      expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+      expect(tabs[1]).toHaveAttribute('aria-selected', 'false');
+    });
+
+    it('updates aria-selected on both tabs when clicking inactive tab', async () => {
+      const user = userEvent.setup();
+      renderBookDetails();
+      const tabs = screen.getAllByRole('tab');
+
+      await user.click(tabs[1]);
+      expect(tabs[0]).toHaveAttribute('aria-selected', 'false');
+      expect(tabs[1]).toHaveAttribute('aria-selected', 'true');
+    });
+
+    it('tab buttons have non-empty ids for ARIA linkage', () => {
+      renderBookDetails();
+      const tabs = screen.getAllByRole('tab');
+      expect(tabs[0].id).toBeTruthy();
+      expect(tabs[1].id).toBeTruthy();
+      expect(tabs[0].id).not.toBe(tabs[1].id);
+    });
+
+    it('renders tab panel with role="tabpanel" and aria-labelledby matching tab id', () => {
+      renderBookDetails();
+      const panel = screen.getByRole('tabpanel');
+      const tabs = screen.getAllByRole('tab');
+      expect(panel).toHaveAttribute('aria-labelledby', tabs[0].id);
+    });
+
+    it('switching to History tab swaps tabpanel linkage to History tab', async () => {
+      const user = userEvent.setup();
+      renderBookDetails();
+      const tabs = screen.getAllByRole('tab');
+
+      await user.click(tabs[1]);
+
+      const panel = screen.getByRole('tabpanel');
+      expect(panel).toHaveAttribute('aria-labelledby', 'tab-history');
+    });
+
+    it('pressing Right arrow on Details tab activates History tab and swaps panel', async () => {
+      const user = userEvent.setup();
+      renderBookDetails();
+      const tabs = screen.getAllByRole('tab');
+
+      tabs[0].focus();
+      await user.keyboard('{ArrowRight}');
+
+      expect(tabs[1]).toHaveAttribute('aria-selected', 'true');
+      expect(tabs[0]).toHaveAttribute('aria-selected', 'false');
+      expect(document.activeElement).toBe(tabs[1]);
+      const panel = screen.getByRole('tabpanel');
+      expect(panel).toHaveAttribute('aria-labelledby', 'tab-history');
+    });
+
+    it('pressing Left arrow on History tab activates Details tab and swaps panel back', async () => {
+      const user = userEvent.setup();
+      renderBookDetails();
+      const tabs = screen.getAllByRole('tab');
+
+      await user.click(tabs[1]);
+      tabs[1].focus();
+      await user.keyboard('{ArrowLeft}');
+
+      expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+      expect(tabs[1]).toHaveAttribute('aria-selected', 'false');
+      expect(document.activeElement).toBe(tabs[0]);
+      const panel = screen.getByRole('tabpanel');
+      expect(panel).toHaveAttribute('aria-labelledby', 'tab-details');
+    });
+
+    it('arrow keys wrap around — Right on last tab focuses first, Left on first focuses last', async () => {
+      const user = userEvent.setup();
+      renderBookDetails();
+      const tabs = screen.getAllByRole('tab');
+
+      // Right on last tab (History) → wraps to first (Details)
+      await user.click(tabs[1]);
+      tabs[1].focus();
+      await user.keyboard('{ArrowRight}');
+      expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+      expect(document.activeElement).toBe(tabs[0]);
+      expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'tab-details');
+
+      // Left on first tab (Details) → wraps to last (History)
+      tabs[0].focus();
+      await user.keyboard('{ArrowLeft}');
+      expect(tabs[1]).toHaveAttribute('aria-selected', 'true');
+      expect(document.activeElement).toBe(tabs[1]);
+      expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'tab-history');
+    });
+
+    it('aria-selected is correct on initial render before any interaction', () => {
+      renderBookDetails();
+      const tabs = screen.getAllByRole('tab');
+      expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+      expect(tabs[1]).toHaveAttribute('aria-selected', 'false');
+    });
+  });
 });

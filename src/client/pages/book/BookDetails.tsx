@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
@@ -10,6 +10,12 @@ import { BookEventHistory } from './BookEventHistory.js';
 import { mergeBookData, type MetadataBook } from './helpers.js';
 import { useBookActions } from './useBookActions.js';
 
+function getArrowTabIndex(key: string, currentIndex: number, length: number): number | null {
+  if (key === 'ArrowRight') return (currentIndex + 1) % length;
+  if (key === 'ArrowLeft') return (currentIndex - 1 + length) % length;
+  return null;
+}
+
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
   metadataBook?: MetadataBook | null;
@@ -19,9 +25,21 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [tab, setTab] = useState<'details' | 'history'>('details');
 
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const tabs = ['details', 'history'] as const;
+
   const merged = mergeBookData(libraryBook, metadataBook);
   const { renameMutation, retagMutation, monitorMutation, ffmpegConfigured, isSaving, handleSave } =
     useBookActions(libraryBook.id, libraryBook.monitorForUpgrades);
+
+  function handleTabKeyDown(e: React.KeyboardEvent<HTMLButtonElement>) {
+    const nextIndex = getArrowTabIndex(e.key, tabs.indexOf(tab), tabs.length);
+    if (nextIndex !== null) {
+      e.preventDefault();
+      setTab(tabs[nextIndex]);
+      tabRefs.current[nextIndex]?.focus();
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -53,9 +71,16 @@ export function BookDetails({ libraryBook, metadataBook }: {
 
       {/* Tab buttons */}
       <div className="flex justify-center animate-fade-in-up stagger-4">
-        <div className="inline-flex items-center glass-card rounded-xl p-1 gap-1">
+        <div role="tablist" aria-label="Book details" className="inline-flex items-center glass-card rounded-xl p-1 gap-1">
           <button
+            ref={(el) => { tabRefs.current[0] = el; }}
+            id="tab-details"
+            role="tab"
+            aria-selected={tab === 'details'}
+            aria-controls="tabpanel-details"
+            tabIndex={tab === 'details' ? 0 : -1}
             onClick={() => setTab('details')}
+            onKeyDown={handleTabKeyDown}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               tab === 'details'
                 ? 'bg-primary text-primary-foreground shadow-glow'
@@ -66,7 +91,14 @@ export function BookDetails({ libraryBook, metadataBook }: {
             Details
           </button>
           <button
+            ref={(el) => { tabRefs.current[1] = el; }}
+            id="tab-history"
+            role="tab"
+            aria-selected={tab === 'history'}
+            aria-controls="tabpanel-history"
+            tabIndex={tab === 'history' ? 0 : -1}
             onClick={() => setTab('history')}
+            onKeyDown={handleTabKeyDown}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               tab === 'history'
                 ? 'bg-primary text-primary-foreground shadow-glow'
@@ -80,10 +112,14 @@ export function BookDetails({ libraryBook, metadataBook }: {
       </div>
 
       {/* Tab content */}
-      {tab === 'details' && <BookDetailsContent libraryBook={libraryBook} merged={merged} />}
+      {tab === 'details' && (
+        <div role="tabpanel" id="tabpanel-details" aria-labelledby="tab-details">
+          <BookDetailsContent libraryBook={libraryBook} merged={merged} />
+        </div>
+      )}
 
       {tab === 'history' && (
-        <div className="animate-fade-in-up">
+        <div role="tabpanel" id="tabpanel-history" aria-labelledby="tab-history" className="animate-fade-in-up">
           <BookEventHistory bookId={libraryBook.id} />
         </div>
       )}

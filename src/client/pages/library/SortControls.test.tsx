@@ -39,7 +39,7 @@ describe('SortControls', () => {
     const props = defaultProps();
     render(<SortControls {...props} />);
 
-    await user.click(screen.getByTitle('Sort descending'));
+    await user.click(screen.getByLabelText('Sort descending'));
     expect(props.onSortDirectionChange).toHaveBeenCalledWith('asc');
   });
 
@@ -48,7 +48,24 @@ describe('SortControls', () => {
     const props = defaultProps({ sortDirection: 'asc' as const });
     render(<SortControls {...props} />);
 
-    await user.click(screen.getByTitle('Sort ascending'));
+    await user.click(screen.getByLabelText('Sort ascending'));
     expect(props.onSortDirectionChange).toHaveBeenCalledWith('desc');
+  });
+
+  describe('accessible labels', () => {
+    it('sort field select has aria-label "Sort field"', () => {
+      render(<SortControls {...defaultProps()} />);
+      expect(screen.getByLabelText('Sort field')).toBeInTheDocument();
+    });
+
+    it('direction button has aria-label "Sort descending" when desc', () => {
+      render(<SortControls {...defaultProps({ sortDirection: 'desc' as const })} />);
+      expect(screen.getByLabelText('Sort descending')).toBeInTheDocument();
+    });
+
+    it('direction button has aria-label "Sort ascending" when asc', () => {
+      render(<SortControls {...defaultProps({ sortDirection: 'asc' as const })} />);
+      expect(screen.getByLabelText('Sort ascending')).toBeInTheDocument();
+    });
   });
 });

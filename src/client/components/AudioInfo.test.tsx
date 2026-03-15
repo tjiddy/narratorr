@@ -175,4 +175,56 @@ describe('AudioInfo', () => {
       expect(container).toBeEmptyDOMElement();
     });
   });
+
+  describe('icon consistency', () => {
+    it('renders HeadphonesIcon instead of emoji for tech info', () => {
+      render(<AudioInfo book={makeBook({
+        audioCodec: 'AAC',
+        audioBitrate: 128000,
+        audioChannels: 2,
+      })} />);
+
+      // Should not contain emoji
+      expect(screen.queryByText('🎧')).not.toBeInTheDocument();
+      // Should have an SVG icon (HeadphonesIcon renders as svg)
+      const techLine = screen.getByText(/AAC/).closest('p')!;
+      expect(techLine.querySelector('svg')).toBeInTheDocument();
+    });
+
+    it('renders PackageIcon instead of emoji for file info', () => {
+      render(<AudioInfo book={makeBook({
+        audioCodec: 'AAC',
+        audioFileCount: 5,
+        audioTotalSize: 500_000_000,
+        audioDuration: 36000,
+      })} />);
+
+      // Should not contain emoji
+      expect(screen.queryByText('📦')).not.toBeInTheDocument();
+      // Should have an SVG icon in the file info line
+      const fileLine = screen.getByText(/5 files/).closest('p')!;
+      expect(fileLine.querySelector('svg')).toBeInTheDocument();
+    });
+
+    it('icons are decorative with aria-hidden="true"', () => {
+      render(<AudioInfo book={makeBook({
+        audioCodec: 'AAC',
+        audioBitrate: 128000,
+        audioChannels: 2,
+        audioFileCount: 5,
+        audioTotalSize: 500_000_000,
+        audioDuration: 36000,
+      })} />);
+
+      const techLine = screen.getByText(/AAC/).closest('p')!;
+      const techIconWrapper = techLine.querySelector('[aria-hidden="true"]')!;
+      expect(techIconWrapper).toBeInTheDocument();
+      expect(techIconWrapper.querySelector('svg')).toBeInTheDocument();
+
+      const fileLine = screen.getByText(/5 files/).closest('p')!;
+      const fileIconWrapper = fileLine.querySelector('[aria-hidden="true"]')!;
+      expect(fileIconWrapper).toBeInTheDocument();
+      expect(fileIconWrapper.querySelector('svg')).toBeInTheDocument();
+    });
+  });
 });

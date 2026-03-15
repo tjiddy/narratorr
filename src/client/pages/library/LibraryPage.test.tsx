@@ -633,7 +633,7 @@ describe('LibraryPage', () => {
 
     // Default sort direction is desc, so title desc = reverse alphabetical
     // Switch to asc for alphabetical
-    const sortButton = screen.getByTitle(/Sort descending/i);
+    const sortButton = screen.getByLabelText(/Sort descending/i);
     await user.click(sortButton);
 
     await waitFor(() => {

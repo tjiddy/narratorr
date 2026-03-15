@@ -24,6 +24,7 @@ export function FilterRow({
           <select
             value={authorFilter}
             onChange={(e) => onAuthorFilterChange(e.target.value)}
+            aria-label="Filter by author"
             className="appearance-none glass-card rounded-lg pl-3 pr-7 py-1.5 text-xs font-medium text-foreground focus-ring cursor-pointer"
           >
             <option value="">All Authors</option>
@@ -40,6 +41,7 @@ export function FilterRow({
           <select
             value={seriesFilter}
             onChange={(e) => onSeriesFilterChange(e.target.value)}
+            aria-label="Filter by series"
             className="appearance-none glass-card rounded-lg pl-3 pr-7 py-1.5 text-xs font-medium text-foreground focus-ring cursor-pointer"
           >
             <option value="">All Series</option>
@@ -56,6 +58,7 @@ export function FilterRow({
           <select
             value={narratorFilter}
             onChange={(e) => onNarratorFilterChange(e.target.value)}
+            aria-label="Filter by narrator"
             className="appearance-none glass-card rounded-lg pl-3 pr-7 py-1.5 text-xs font-medium text-foreground focus-ring cursor-pointer"
           >
             <option value="">All Narrators</option>

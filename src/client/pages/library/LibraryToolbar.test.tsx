@@ -236,7 +236,7 @@ describe('LibraryToolbar', () => {
       const props = defaultProps();
       renderWithProviders(<LibraryToolbar {...props} />);
 
-      await user.click(screen.getByTitle('Sort descending'));
+      await user.click(screen.getByLabelText('Sort descending'));
       expect(props.sortProps.onSortDirectionChange).toHaveBeenCalledWith('asc');
     });
   });

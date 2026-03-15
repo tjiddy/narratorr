@@ -109,4 +109,119 @@ describe('SearchResults', () => {
     renderResults({ searchTerm: 'fantasy', results });
     expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
   });
+
+  describe('tab ARIA roles and keyboard navigation', () => {
+    const resultsWithBoth = {
+      books: [createMockBookMetadata()],
+      authors: [createMockAuthorMetadata()],
+    };
+
+    it('renders tab container with role="tablist" and aria-label', () => {
+      renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
+      const tablist = screen.getByRole('tablist');
+      expect(tablist).toHaveAttribute('aria-label');
+    });
+
+    it('renders each tab button with role="tab"', () => {
+      renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
+      const tabs = screen.getAllByRole('tab');
+      expect(tabs).toHaveLength(2);
+    });
+
+    it('sets aria-selected="true" on active tab and "false" on inactive', () => {
+      renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
+      const tabs = screen.getAllByRole('tab');
+      expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+      expect(tabs[1]).toHaveAttribute('aria-selected', 'false');
+    });
+
+    it('renders tab panel with role="tabpanel" and aria-labelledby', () => {
+      renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
+      const panel = screen.getByRole('tabpanel');
+      const tabs = screen.getAllByRole('tab');
+      expect(panel).toHaveAttribute('aria-labelledby', tabs[0].id);
+    });
+
+    it('tab buttons have non-empty ids for ARIA linkage', () => {
+      renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
+      const tabs = screen.getAllByRole('tab');
+      expect(tabs[0].id).toBeTruthy();
+      expect(tabs[1].id).toBeTruthy();
+      expect(tabs[0].id).not.toBe(tabs[1].id);
+    });
+
+    it('switching to Authors swaps tabpanel linkage to Authors tab', async () => {
+      const user = userEvent.setup();
+      renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
+      const tabs = screen.getAllByRole('tab');
+
+      await user.click(tabs[1]);
+
+      const panel = screen.getByRole('tabpanel');
+      expect(panel).toHaveAttribute('aria-labelledby', 'tab-authors');
+    });
+
+    it('ArrowRight auto-activates Authors tab and swaps panel', async () => {
+      const user = userEvent.setup();
+      renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
+      const tabs = screen.getAllByRole('tab');
+
+      tabs[0].focus();
+      await user.keyboard('{ArrowRight}');
+
+      expect(tabs[1]).toHaveAttribute('aria-selected', 'true');
+      expect(tabs[0]).toHaveAttribute('aria-selected', 'false');
+      expect(document.activeElement).toBe(tabs[1]);
+      const panel = screen.getByRole('tabpanel');
+      expect(panel).toHaveAttribute('aria-labelledby', 'tab-authors');
+    });
+
+    it('ArrowLeft from Authors activates Books tab and swaps panel back', async () => {
+      const user = userEvent.setup();
+      renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
+      const tabs = screen.getAllByRole('tab');
+
+      // Switch to Authors first
+      await user.click(tabs[1]);
+      tabs[1].focus();
+      await user.keyboard('{ArrowLeft}');
+
+      expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+      expect(tabs[1]).toHaveAttribute('aria-selected', 'false');
+      expect(document.activeElement).toBe(tabs[0]);
+      const panel = screen.getByRole('tabpanel');
+      expect(panel).toHaveAttribute('aria-labelledby', 'tab-books');
+    });
+
+    it('arrow keys wrap around — Right on Authors wraps to Books, Left on Books wraps to Authors', async () => {
+      const user = userEvent.setup();
+      renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
+      const tabs = screen.getAllByRole('tab');
+
+      // Right on last (Authors) → wraps to first (Books)
+      await user.click(tabs[1]);
+      tabs[1].focus();
+      await user.keyboard('{ArrowRight}');
+      expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+      expect(document.activeElement).toBe(tabs[0]);
+      expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'tab-books');
+
+      // Left on first (Books) → wraps to last (Authors)
+      tabs[0].focus();
+      await user.keyboard('{ArrowLeft}');
+      expect(tabs[1]).toHaveAttribute('aria-selected', 'true');
+      expect(document.activeElement).toBe(tabs[1]);
+      expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'tab-authors');
+    });
+
+    it('tab count badges do not interfere with ARIA attributes', () => {
+      renderResults({ searchTerm: 'fantasy', results: resultsWithBoth });
+      const tabs = screen.getAllByRole('tab');
+      expect(tabs[0]).toHaveAttribute('role', 'tab');
+      expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+      expect(tabs[1]).toHaveAttribute('role', 'tab');
+      expect(tabs[1]).toHaveAttribute('aria-selected', 'false');
+      expect(screen.getAllByText('(1)')).toHaveLength(2);
+    });
+  });
 });
