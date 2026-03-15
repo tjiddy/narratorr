@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "379e1449-fad2-4438-9ba3-9f846429d70c",
+  "id": "45d13380-e6f5-4a59-90e7-298262361c89",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "authors": {
@@ -140,6 +140,21 @@
           "notNull": false,
           "autoincrement": false
         },
+        "blacklist_type": {
+          "name": "blacklist_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'permanent'"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "blacklisted_at": {
           "name": "blacklisted_at",
           "type": "integer",
@@ -149,7 +164,22 @@
           "default": "(unixepoch())"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "idx_blacklist_info_hash": {
+          "name": "idx_blacklist_info_hash",
+          "columns": [
+            "info_hash"
+          ],
+          "isUnique": false
+        },
+        "idx_blacklist_book_id": {
+          "name": "idx_blacklist_book_id",
+          "columns": [
+            "book_id"
+          ],
+          "isUnique": false
+        }
+      },
       "foreignKeys": {
         "blacklist_book_id_books_id_fk": {
           "name": "blacklist_book_id_books_id_fk",
@@ -257,6 +287,14 @@
           "name": "idx_book_events_created_at",
           "columns": [
             "created_at"
+          ],
+          "isUnique": false
+        },
+        "idx_book_events_download_id_event_type": {
+          "name": "idx_book_events_download_id_event_type",
+          "columns": [
+            "download_id",
+            "event_type"
           ],
           "isUnique": false
         }
@@ -502,6 +540,13 @@
           "autoincrement": false,
           "default": false
         },
+        "import_list_id": {
+          "name": "import_list_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -533,6 +578,36 @@
             "status"
           ],
           "isUnique": false
+        },
+        "idx_books_path": {
+          "name": "idx_books_path",
+          "columns": [
+            "path"
+          ],
+          "isUnique": false
+        },
+        "idx_books_enrichment_status": {
+          "name": "idx_books_enrichment_status",
+          "columns": [
+            "enrichment_status"
+          ],
+          "isUnique": false
+        },
+        "idx_books_asin_unique": {
+          "name": "idx_books_asin_unique",
+          "columns": [
+            "asin"
+          ],
+          "isUnique": true,
+          "where": "asin IS NOT NULL"
+        },
+        "idx_books_title_author_unique": {
+          "name": "idx_books_title_author_unique",
+          "columns": [
+            "title",
+            "author_id"
+          ],
+          "isUnique": true
         }
       },
       "foreignKeys": {
@@ -542,6 +617,19 @@
           "tableTo": "authors",
           "columnsFrom": [
             "author_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "books_import_list_id_import_lists_id_fk": {
+          "name": "books_import_list_id_import_lists_id_fk",
+          "tableFrom": "books",
+          "tableTo": "import_lists",
+          "columnsFrom": [
+            "import_list_id"
           ],
           "columnsTo": [
             "id"
@@ -742,6 +830,13 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "progress_updated_at": {
+          "name": "progress_updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -801,6 +896,97 @@
           "onUpdate": "no action"
         }
       },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "import_lists": {
+      "name": "import_lists",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "settings": {
+          "name": "settings",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "sync_interval_minutes": {
+          "name": "sync_interval_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1440
+        },
+        "last_run_at": {
+          "name": "last_run_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "next_run_at": {
+          "name": "next_run_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_sync_error": {
+          "name": "last_sync_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        }
+      },
+      "indexes": {
+        "idx_import_lists_enabled": {
+          "name": "idx_import_lists_enabled",
+          "columns": [
+            "enabled"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -949,6 +1135,159 @@
           "name": "idx_notifiers_enabled",
           "columns": [
             "enabled"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "recycling_bin": {
+      "name": "recycling_bin",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "book_id": {
+          "name": "book_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "author_name": {
+          "name": "author_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "author_asin": {
+          "name": "author_asin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "narrator": {
+          "name": "narrator",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "cover_url": {
+          "name": "cover_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "asin": {
+          "name": "asin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "isbn": {
+          "name": "isbn",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "series_name": {
+          "name": "series_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "series_position": {
+          "name": "series_position",
+          "type": "real",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "duration": {
+          "name": "duration",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "published_date": {
+          "name": "published_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "genres": {
+          "name": "genres",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "monitor_for_upgrades": {
+          "name": "monitor_for_upgrades",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "original_path": {
+          "name": "original_path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recycle_path": {
+          "name": "recycle_path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        }
+      },
+      "indexes": {
+        "idx_recycling_bin_deleted_at": {
+          "name": "idx_recycling_bin_deleted_at",
+          "columns": [
+            "deleted_at"
           ],
           "isUnique": false
         }

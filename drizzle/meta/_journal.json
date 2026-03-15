@@ -5,43 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1772852425976,
-      "tag": "0000_robust_northstar",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1773244800000,
-      "tag": "0001_blacklist_type_and_ttl",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1773360000000,
-      "tag": "0002_progress_updated_at",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1773475200000,
-      "tag": "0003_recycling_bin",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "6",
-      "when": 1773590400000,
-      "tag": "0004_import_lists",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "6",
-      "when": 1773792000000,
-      "tag": "0005_missing_indexes",
+      "when": 1773610513770,
+      "tag": "0000_mixed_sprite",
       "breakpoints": true
     }
   ]

@@ -319,13 +319,13 @@ describe('BackupService', () => {
 
   describe('validateRestore', () => {
     it('returns valid=true for DB with same migration count as app', async () => {
-      mockExecute.mockResolvedValue({ rows: [{ count: 2 }] });
+      mockExecute.mockResolvedValue({ rows: [{ count: 1 }] });
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
       const result = await service.validateRestore('/tmp/test.db');
 
       expect(result.valid).toBe(true);
-      expect(result.backupMigrationCount).toBe(2);
+      expect(result.backupMigrationCount).toBe(1);
       expect(mockClose).toHaveBeenCalled();
     });
 
@@ -474,7 +474,7 @@ describe('processRestoreUpload', () => {
 
   it('returns valid result and stages pending restore for valid zip', async () => {
     // validateRestore will call execute to get migration count
-    mockExecute.mockResolvedValue({ rows: [{ count: 2 }] });
+    mockExecute.mockResolvedValue({ rows: [{ count: 1 }] });
 
     const zipBuffer = await createZipBuffer([
       { name: 'narratorr.db', content: Buffer.from('fake-sqlite-db') },
@@ -484,7 +484,7 @@ describe('processRestoreUpload', () => {
     const result = await service.processRestoreUpload(Readable.from(zipBuffer));
 
     expect(result.valid).toBe(true);
-    expect(result.backupMigrationCount).toBe(2);
+    expect(result.backupMigrationCount).toBe(1);
     expect(service.pendingRestore).not.toBeNull();
   });
 
