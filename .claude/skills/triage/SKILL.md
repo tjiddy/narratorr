@@ -88,6 +88,8 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    g. After the user approves actions, graduated learnings can be removed from `.claude/cl/learnings/` and resolved debt items removed from `.claude/cl/debt.md`.
 
+   h. **Truncate workflow-log.md** — replace contents with just `# Workflow Log\n`. All useful items have been graduated to their destinations (debt.md, Gitea issues, skill prompt changes). Non-graduated entries are discarded. This keeps the file bounded since it's tracked in git.
+
 ## Important
 
 - This skill is **read-only** — no label changes, no comments, no branches

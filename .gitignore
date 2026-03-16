@@ -47,12 +47,16 @@ config/
 tmp/
 temp/
 
-# Claude Code — ignore everything except skills, docs, templates, and settings
+# Claude Code — ignore everything except skills, docs, templates, CL, and settings
 .claude/*
 !.claude/skills/
 !.claude/docs/
 !.claude/templates/
+!.claude/cl/
 !.claude/settings.json
+
+# CL scratch is ephemeral — deleted by /handoff
+.claude/cl/scratch.md
 
 # Stop hook runtime state (marker files)
 .claude/state/
