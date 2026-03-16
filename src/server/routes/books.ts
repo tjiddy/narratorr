@@ -1,10 +1,11 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
-import type { BookService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService, RecyclingBinService } from '../services/index.js';
+import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService, RecyclingBinService } from '../services/index.js';
 
 export interface BookRouteDeps {
   bookService: BookService;
+  bookListService: BookListService;
   downloadService: DownloadService;
   settingsService: SettingsService;
   renameService: RenameService;
@@ -171,7 +172,7 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
 }
 
 export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
-  const { bookService, renameService, taggingService, indexerService } = deps;
+  const { bookService, bookListService, renameService, taggingService, indexerService } = deps;
   // GET /api/books
   app.get<{ Querystring: BooksListQuery }>(
     '/api/books',
@@ -181,7 +182,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
         const { status, search, sortField, sortDirection, limit, offset } = request.query;
         request.log.debug({ status, search, sortField, limit, offset }, 'Fetching books');
         const pagination = { limit: limit ?? DEFAULT_LIMITS.books, offset };
-        return await bookService.getAll(status, pagination, { slim: true, search, sortField, sortDirection });
+        return await bookListService.getAll(status, pagination, { slim: true, search, sortField, sortDirection });
       } catch (error) {
         request.log.error(error, 'Failed to fetch books');
         return reply.status(500).send({ error: 'Internal server error' });
@@ -192,7 +193,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
   // GET /api/books/identifiers — lightweight list for duplicate detection (no pagination)
   app.get('/api/books/identifiers', async (request, reply) => {
     try {
-      return await bookService.getIdentifiers();
+      return await bookListService.getIdentifiers();
     } catch (error) {
       request.log.error(error, 'Failed to fetch book identifiers');
       return reply.status(500).send({ error: 'Internal server error' });
@@ -202,7 +203,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
   // GET /api/books/stats — server-side status counts and filter values
   app.get('/api/books/stats', async (request, reply) => {
     try {
-      return await bookService.getStats();
+      return await bookListService.getStats();
     } catch (error) {
       request.log.error(error, 'Failed to fetch book stats');
       return reply.status(500).send({ error: 'Internal server error' });

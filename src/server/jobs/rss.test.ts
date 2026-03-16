@@ -3,14 +3,29 @@ import { createMockLogger, inject, createMockSettingsService } from '../__tests_
 import { runRssJob, startRssJob } from './rss.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { BookService } from '../services/book.service.js';
+import type { BookListService } from '../services/book-list.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadService } from '../services/download.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SearchResult } from '../../core/index.js';
 
-function createMockBookService(wanted: unknown[] = [], monitored: unknown[] = []): BookService {
-  return inject<BookService>({
+function createMockBookListService(wanted: unknown[] = []): BookListService {
+  return inject<BookListService>({
     getAll: vi.fn().mockResolvedValue({ data: wanted, total: wanted.length }),
+    getIdentifiers: vi.fn().mockResolvedValue([]),
+    getStats: vi.fn().mockResolvedValue({ counts: {}, authors: [], series: [], narrators: [] }),
+  });
+}
+
+function createMockBookServices(wanted: unknown[] = [], monitored: unknown[] = []) {
+  return {
+    bookList: createMockBookListService(wanted),
+    book: createMockBookService(monitored),
+  };
+}
+
+function createMockBookService(monitored: unknown[] = []): BookService {
+  return inject<BookService>({
     getMonitoredBooks: vi.fn().mockResolvedValue(monitored),
     getById: vi.fn(),
     create: vi.fn(),
@@ -99,27 +114,27 @@ describe('runRssJob', () => {
 
   it('returns zeros when RSS is disabled', async () => {
     const settings = createMockSettingsService({ rss: { enabled: false, intervalMinutes: 30 } });
-    const books = createMockBookService();
+    const { bookList, book } = createMockBookServices();
     const indexer = createMockIndexerService();
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result).toEqual({ polled: 0, matched: 0, grabbed: 0 });
-    expect(books.getAll).not.toHaveBeenCalled();
+    expect(bookList.getAll).not.toHaveBeenCalled();
   });
 
   it('polls RSS-capable indexers and collects results', async () => {
     const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
     const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson')];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.polled).toBe(1);
     expect(indexer.getRssCapableIndexers).toHaveBeenCalled();
@@ -128,7 +143,7 @@ describe('runRssJob', () => {
 
   it('excludes non-RSS adapters (ABB) — only polls RSS-capable', async () => {
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService([makeWantedBook(1, 'Test', 'Author')]);
+    const { bookList, book } = createMockBookServices([makeWantedBook(1, 'Test', 'Author')]);
     const indexer = createMockIndexerService();
     (indexer.getRssCapableIndexers as Mock).mockResolvedValue([
       { id: 1, name: 'Newznab', type: 'newznab', enabled: true },
@@ -138,7 +153,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(indexer.pollRss).toHaveBeenCalledTimes(2);
   });
@@ -149,12 +164,12 @@ describe('runRssJob', () => {
     const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
     const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson')];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(1);
     expect(download.grab).toHaveBeenCalledWith(
@@ -166,12 +181,12 @@ describe('runRssJob', () => {
     const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
     const rssResults = [makeResult('Cooking with Julia Child', 'Julia Child')];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
@@ -181,12 +196,12 @@ describe('runRssJob', () => {
     const wantedBooks = [makeWantedBook(1, 'Test', 'Author')];
     const rssResults = [makeResult('', undefined, { title: '' })];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
   });
@@ -198,12 +213,12 @@ describe('runRssJob', () => {
     ];
     const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson')];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(1);
     expect(download.grab).toHaveBeenCalledWith(
@@ -217,7 +232,7 @@ describe('runRssJob', () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book', 'Author')];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     (download.grab as Mock).mockRejectedValueOnce(
@@ -225,7 +240,7 @@ describe('runRssJob', () => {
     );
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(log.debug).toHaveBeenCalledWith(
@@ -251,12 +266,12 @@ describe('runRssJob', () => {
     }];
     const rssResults = [makeResult('Monitored Book', 'Author', { size: 500 * 1024 * 1024 })];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService([], monitoredBooks);
+    const { bookList, book } = createMockBookServices([], monitoredBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(1);
     expect(download.grab).toHaveBeenCalledWith(
@@ -279,12 +294,12 @@ describe('runRssJob', () => {
     }];
     const rssResults = [makeResult('Monitored Book', 'Author', { size: 100 * 1024 * 1024 })];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService([], monitoredBooks);
+    const { bookList, book } = createMockBookServices([], monitoredBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
   });
@@ -294,7 +309,7 @@ describe('runRssJob', () => {
   it('continues polling remaining indexers when one throws', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService();
     (indexer.getRssCapableIndexers as Mock).mockResolvedValue([
       { id: 1, name: 'FailIndexer', type: 'newznab', enabled: true },
@@ -306,7 +321,7 @@ describe('runRssJob', () => {
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.polled).toBe(1);
     expect(log.warn).toHaveBeenCalledWith(
@@ -319,12 +334,12 @@ describe('runRssJob', () => {
   it('logs debug (not warn) when indexer returns empty results', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test', 'Author')];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService([]);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(log.debug).toHaveBeenCalledWith(
       expect.objectContaining({ indexer: 'TestNewznab' }),
@@ -337,13 +352,13 @@ describe('runRssJob', () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book', 'Author')];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     (download.grab as Mock).mockRejectedValueOnce(new Error('Concurrent grab conflict'));
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(log.info).toHaveBeenCalledWith(
@@ -358,12 +373,12 @@ describe('runRssJob', () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book (1/5)', 'Author', { protocol: 'usenet' })];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
@@ -373,12 +388,12 @@ describe('runRssJob', () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book', 'Author', { infoHash: 'abc123' })];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService(new Set(['abc123']));
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
     expect(download.grab).not.toHaveBeenCalled();
@@ -391,12 +406,12 @@ describe('runRssJob', () => {
       rss: { enabled: true },
       quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: '' },
     });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
   });
@@ -408,12 +423,12 @@ describe('runRssJob', () => {
       rss: { enabled: true },
       quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: 'M4B' },
     });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
   });
@@ -425,12 +440,12 @@ describe('runRssJob', () => {
       rss: { enabled: true },
       quality: { grabFloor: 0, minSeeders: 5, protocolPreference: 'none', rejectWords: '', requiredWords: '' },
     });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
   });
@@ -442,12 +457,12 @@ describe('runRssJob', () => {
       makeResult('Test Book', 'Author', { size: 500 * 1024 * 1024, downloadUrl: 'magnet:high' }),
     ];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(1);
     expect(download.grab).toHaveBeenCalledTimes(1);
@@ -463,12 +478,12 @@ describe('runRssJob', () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book', 'Author')];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(download.grab).toHaveBeenCalledWith(
       expect.objectContaining({ source: 'rss' }),
@@ -479,12 +494,12 @@ describe('runRssJob', () => {
 
   it('completes with 0 grabbed when enabled but no wanted books', async () => {
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService([], []);
+    const { bookList, book } = createMockBookServices([], []);
     const indexer = createMockIndexerService();
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result).toEqual({ polled: 0, matched: 0, grabbed: 0 });
     expect(indexer.pollRss).not.toHaveBeenCalled();
@@ -497,12 +512,12 @@ describe('runRssJob', () => {
       rss: { enabled: true },
       quality: { grabFloor: 200, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' },
     });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(0);
   });
@@ -514,12 +529,12 @@ describe('runRssJob', () => {
       rss: { enabled: true },
       quality: { grabFloor: 200, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' },
     });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     // Grab floor is skipped when no duration — result passes through
     expect(result.grabbed).toBe(1);
@@ -529,12 +544,12 @@ describe('runRssJob', () => {
     const wantedBooks = [{ ...makeWantedBook(1, 'Test Book'), author: undefined }];
     const rssResults = [makeResult('Test Book')];
     const settings = createMockSettingsService({ rss: { enabled: true } });
-    const books = createMockBookService(wantedBooks);
+    const { bookList, book } = createMockBookServices(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    const result = await runRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     expect(result.grabbed).toBe(1);
   });
@@ -554,12 +569,12 @@ describe('startRssJob', () => {
 
   it('schedules next run using intervalMinutes from settings', async () => {
     const settings = createMockSettingsService({ rss: { enabled: false, intervalMinutes: 15 } });
-    const books = createMockBookService();
+    const { bookList, book } = createMockBookServices();
     const indexer = createMockIndexerService();
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    startRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    startRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     // scheduleNext reads settings then sets a setTimeout
     await vi.advanceTimersByTimeAsync(0);
@@ -580,12 +595,12 @@ describe('startRssJob', () => {
     (settings.get as Mock).mockRejectedValueOnce(new Error('DB connection lost'));
     // Second call succeeds (for the retry)
     (settings.get as Mock).mockResolvedValueOnce({ enabled: false, intervalMinutes: 30 });
-    const books = createMockBookService();
+    const { bookList, book } = createMockBookServices();
     const indexer = createMockIndexerService();
     const download = createMockDownloadService();
     const blacklist = createMockBlacklistService();
 
-    startRssJob(settings, books, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+    startRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
 
     // Let the first scheduleNext run and fail
     await vi.advanceTimersByTimeAsync(0);

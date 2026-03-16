@@ -10,11 +10,14 @@ export type BookStatus = z.infer<typeof bookStatusSchema>;
 export const bookSortFieldSchema = z.enum(['createdAt', 'title', 'author', 'narrator', 'series', 'quality', 'size', 'format']);
 export type BookSortField = z.infer<typeof bookSortFieldSchema>;
 
+export const bookSortDirectionSchema = z.enum(['asc', 'desc']);
+export type BookSortDirection = z.infer<typeof bookSortDirectionSchema>;
+
 export const bookListQuerySchema = z.object({
   status: z.string().optional(),
   search: z.string().optional(),
   sortField: bookSortFieldSchema.optional(),
-  sortDirection: z.enum(['asc', 'desc']).optional(),
+  sortDirection: bookSortDirectionSchema.optional(),
 });
 
 export const createBookBodySchema = z.object({

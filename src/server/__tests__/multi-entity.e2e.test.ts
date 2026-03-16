@@ -335,7 +335,7 @@ describe('Job lifecycle E2E', () => {
     const { runSearchJob } = await import('../jobs/search.js');
     const result = await runSearchJob(
       e2e.services.settings,
-      e2e.services.book,
+      e2e.services.bookList,
       e2e.services.indexer,
       e2e.services.download,
       e2e.app.log,

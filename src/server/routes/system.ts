@@ -49,7 +49,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
   app.post('/api/system/tasks/search', async (request) => {
     const result = await runSearchJob(
       services.settings,
-      services.book,
+      services.bookList,
       services.indexer,
       services.download,
       request.log,
@@ -62,7 +62,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
   app.post('/api/system/tasks/search-all-wanted', async (request) => {
     const result = await searchAllWanted(
       services.settings,
-      services.book,
+      services.bookList,
       services.indexer,
       services.download,
       request.log,
@@ -74,6 +74,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
   app.post('/api/system/tasks/rss', async (request) => {
     const result = await runRssJob(
       services.settings,
+      services.bookList,
       services.book,
       services.indexer,
       services.download,

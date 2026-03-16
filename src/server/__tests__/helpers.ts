@@ -153,7 +153,7 @@ export function createMockLogger(): Record<string, Mock | string> {
  */
 export function createMockServices(overrides?: Partial<Record<keyof Services, Record<string, unknown>>>): Services {
   const serviceNames: (keyof Services)[] = [
-    'settings', 'auth', 'indexer', 'downloadClient', 'book',
+    'settings', 'auth', 'indexer', 'downloadClient', 'book', 'bookList',
     'download', 'metadata', 'import', 'libraryScan', 'matchJob', 'notifier', 'blacklist', 'prowlarrSync', 'remotePathMapping', 'rename', 'eventHistory', 'tagging', 'qualityGate', 'eventBroadcaster', 'backup', 'healthCheck', 'taskRegistry', 'recyclingBin', 'importList',
   ];
   const services: Record<string, unknown> = {};

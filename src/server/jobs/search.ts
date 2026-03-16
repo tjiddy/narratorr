@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { calculateQuality, compareQuality, resolveBookQualityInputs } from '../../core/utils/index.js';
 import type { SettingsService } from '../services/settings.service.js';
 import type { BookService } from '../services/book.service.js';
+import type { BookListService } from '../services/book-list.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadService } from '../services/download.service.js';
 import type { RetryBudget } from '../services/retry-budget.js';
@@ -27,7 +28,7 @@ export interface SearchAllWantedResult {
  */
 export async function runSearchJob(
   settingsService: SettingsService,
-  bookService: BookService,
+  bookListService: BookListService,
   indexerService: IndexerService,
   downloadService: DownloadService,
   log: FastifyBaseLogger,
@@ -43,7 +44,7 @@ export async function runSearchJob(
   }
 
   const qualitySettings = await settingsService.get('quality');
-  const { data: wantedBooks } = await bookService.getAll('wanted');
+  const { data: wantedBooks } = await bookListService.getAll('wanted');
   if (wantedBooks.length === 0) {
     log.debug('No wanted books to search for');
     return { searched: 0, grabbed: 0 };
@@ -77,13 +78,13 @@ export async function runSearchJob(
  */
 export async function searchAllWanted(
   settingsService: SettingsService,
-  bookService: BookService,
+  bookListService: BookListService,
   indexerService: IndexerService,
   downloadService: DownloadService,
   log: FastifyBaseLogger,
 ): Promise<SearchAllWantedResult> {
   const qualitySettings = await settingsService.get('quality');
-  const { data: wantedBooks } = await bookService.getAll('wanted');
+  const { data: wantedBooks } = await bookListService.getAll('wanted');
 
   if (wantedBooks.length === 0) {
     log.debug('No wanted books to search for');
@@ -226,6 +227,7 @@ export async function runUpgradeSearchJob(
  */
 export function startSearchJob(
   settingsService: SettingsService,
+  bookListService: BookListService,
   bookService: BookService,
   indexerService: IndexerService,
   downloadService: DownloadService,
@@ -239,7 +241,7 @@ export function startSearchJob(
 
       setTimeout(async () => {
         try {
-          await runSearchJob(settingsService, bookService, indexerService, downloadService, log, retryBudget);
+          await runSearchJob(settingsService, bookListService, indexerService, downloadService, log, retryBudget);
         } catch (error) {
           log.error(error, 'Search job error');
         }

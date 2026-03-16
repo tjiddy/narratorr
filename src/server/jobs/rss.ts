@@ -4,6 +4,7 @@ import { isMultiPartUsenetPost } from '../../core/utils/index.js';
 import type { SearchResult } from '../../core/index.js';
 import type { SettingsService } from '../services/settings.service.js';
 import type { BookService, BookWithAuthor } from '../services/book.service.js';
+import type { BookListService } from '../services/book-list.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadService } from '../services/download.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
@@ -24,6 +25,7 @@ export interface RssJobResult {
 // eslint-disable-next-line complexity, max-lines-per-function -- feed-first matching with per-book dedup, upgrades, and error isolation
 export async function runRssJob(
   settingsService: SettingsService,
+  bookListService: BookListService,
   bookService: BookService,
   indexerService: IndexerService,
   downloadService: DownloadService,
@@ -39,7 +41,7 @@ export async function runRssJob(
   const qualitySettings = await settingsService.get('quality');
 
   // Load candidate books: wanted + monitored-for-upgrade
-  const { data: wantedBooks } = await bookService.getAll('wanted');
+  const { data: wantedBooks } = await bookListService.getAll('wanted');
   const monitoredBooks = await bookService.getMonitoredBooks();
   const candidates: Array<BookWithAuthor & { isUpgrade: boolean }> = [
     ...wantedBooks.map((b) => ({ ...b, isUpgrade: false })),
@@ -218,6 +220,7 @@ export async function runRssJob(
  */
 export function startRssJob(
   settingsService: SettingsService,
+  bookListService: BookListService,
   bookService: BookService,
   indexerService: IndexerService,
   downloadService: DownloadService,
@@ -231,7 +234,7 @@ export function startRssJob(
 
       setTimeout(async () => {
         try {
-          await runRssJob(settingsService, bookService, indexerService, downloadService, blacklistService, log);
+          await runRssJob(settingsService, bookListService, bookService, indexerService, downloadService, blacklistService, log);
         } catch (error) {
           log.error(error, 'RSS sync job error');
         }

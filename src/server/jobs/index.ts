@@ -32,8 +32,8 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
     await services.qualityGate.processCompletedDownloads();
     await services.import.processCompletedDownloads();
   }, '*/60 * * * * *');
-  reg.register('search', 'timeout', () => runSearchJob(services.settings, services.book, services.indexer, services.download, log, services.retryBudget));
-  reg.register('rss', 'timeout', () => runRssJob(services.settings, services.book, services.indexer, services.download, services.blacklist, log));
+  reg.register('search', 'timeout', () => runSearchJob(services.settings, services.bookList, services.indexer, services.download, log, services.retryBudget));
+  reg.register('rss', 'timeout', () => runRssJob(services.settings, services.bookList, services.book, services.indexer, services.download, services.blacklist, log));
   reg.register('backup', 'timeout', () => runBackupJob(services.backup, log));
   reg.register('housekeeping', 'cron', async () => {
     await db.run(sql`VACUUM`);

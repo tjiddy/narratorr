@@ -41,7 +41,7 @@ describe('books routes', () => {
 
   describe('GET /api/books', () => {
     it('returns books in { data, total } envelope', async () => {
-      (services.book.getAll as Mock).mockResolvedValue({ data: [mockBook], total: 1 });
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [mockBook], total: 1 });
 
       const res = await app.inject({ method: 'GET', url: '/api/books' });
 
@@ -53,7 +53,7 @@ describe('books routes', () => {
     });
 
     it('returns empty data when no books', async () => {
-      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       const res = await app.inject({ method: 'GET', url: '/api/books' });
 
@@ -62,19 +62,19 @@ describe('books routes', () => {
     });
 
     it('passes status and slim option to service', async () => {
-      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       await app.inject({ method: 'GET', url: '/api/books?status=wanted' });
 
-      expect(services.book.getAll).toHaveBeenCalledWith('wanted', { limit: 100, offset: undefined }, { slim: true, search: undefined, sortField: undefined, sortDirection: undefined });
+      expect(services.bookList.getAll).toHaveBeenCalledWith('wanted', { limit: 100, offset: undefined }, { slim: true, search: undefined, sortField: undefined, sortDirection: undefined });
     });
 
     it('forwards limit and offset to service', async () => {
-      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       await app.inject({ method: 'GET', url: '/api/books?limit=10&offset=20' });
 
-      expect(services.book.getAll).toHaveBeenCalledWith(undefined, { limit: 10, offset: 20 }, { slim: true, search: undefined, sortField: undefined, sortDirection: undefined });
+      expect(services.bookList.getAll).toHaveBeenCalledWith(undefined, { limit: 10, offset: 20 }, { slim: true, search: undefined, sortField: undefined, sortDirection: undefined });
     });
 
     it('rejects limit=0 with 400', async () => {
@@ -962,7 +962,7 @@ describe('books routes', () => {
     });
 
     it('GET /api/books returns 500 when service throws', async () => {
-      (services.book.getAll as Mock).mockRejectedValue(new Error('DB error'));
+      (services.bookList.getAll as Mock).mockRejectedValue(new Error('DB error'));
 
       const res = await app.inject({ method: 'GET', url: '/api/books' });
 
@@ -1068,11 +1068,11 @@ describe('books routes', () => {
   // #372 — Default pagination enforcement
   describe('GET /api/books — default pagination', () => {
     it('applies default limit=100 when no limit param provided', async () => {
-      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       await app.inject({ method: 'GET', url: '/api/books' });
 
-      expect(services.book.getAll).toHaveBeenCalledWith(
+      expect(services.bookList.getAll).toHaveBeenCalledWith(
         undefined,
         { limit: 100, offset: undefined },
         { slim: true, search: undefined, sortField: undefined, sortDirection: undefined },
@@ -1080,11 +1080,11 @@ describe('books routes', () => {
     });
 
     it('applies default limit when offset provided without limit', async () => {
-      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       await app.inject({ method: 'GET', url: '/api/books?offset=50' });
 
-      expect(services.book.getAll).toHaveBeenCalledWith(
+      expect(services.bookList.getAll).toHaveBeenCalledWith(
         undefined,
         { limit: 100, offset: 50 },
         { slim: true, search: undefined, sortField: undefined, sortDirection: undefined },
@@ -1092,11 +1092,11 @@ describe('books routes', () => {
     });
 
     it('allows explicit limit to override default', async () => {
-      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       await app.inject({ method: 'GET', url: '/api/books?limit=10' });
 
-      expect(services.book.getAll).toHaveBeenCalledWith(
+      expect(services.bookList.getAll).toHaveBeenCalledWith(
         undefined,
         { limit: 10, offset: undefined },
         { slim: true, search: undefined, sortField: undefined, sortDirection: undefined },
@@ -1107,11 +1107,11 @@ describe('books routes', () => {
   // #372 — Server-side search/sort/filter
   describe('GET /api/books — search/sort/filter params', () => {
     it('passes search param to service', async () => {
-      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       await app.inject({ method: 'GET', url: '/api/books?search=tolkien' });
 
-      expect(services.book.getAll).toHaveBeenCalledWith(
+      expect(services.bookList.getAll).toHaveBeenCalledWith(
         undefined,
         { limit: 100, offset: undefined },
         { slim: true, search: 'tolkien', sortField: undefined, sortDirection: undefined },
@@ -1119,11 +1119,11 @@ describe('books routes', () => {
     });
 
     it('passes sortField and sortDirection to service', async () => {
-      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       await app.inject({ method: 'GET', url: '/api/books?sortField=title&sortDirection=asc' });
 
-      expect(services.book.getAll).toHaveBeenCalledWith(
+      expect(services.bookList.getAll).toHaveBeenCalledWith(
         undefined,
         { limit: 100, offset: undefined },
         { slim: true, search: undefined, sortField: 'title', sortDirection: 'asc' },
@@ -1136,11 +1136,11 @@ describe('books routes', () => {
     });
 
     it('forwards combined search, status, sort, and pagination params', async () => {
-      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       await app.inject({ method: 'GET', url: '/api/books?search=foo&status=wanted&sortField=title&sortDirection=asc&limit=10&offset=0' });
 
-      expect(services.book.getAll).toHaveBeenCalledWith(
+      expect(services.bookList.getAll).toHaveBeenCalledWith(
         'wanted',
         { limit: 10, offset: 0 },
         { slim: true, search: 'foo', sortField: 'title', sortDirection: 'asc' },
@@ -1155,7 +1155,7 @@ describe('books routes', () => {
         { asin: 'B001', title: 'Book One', authorName: 'Author A' },
         { asin: null, title: 'Book Two', authorName: null },
       ];
-      (services.book.getIdentifiers as Mock).mockResolvedValue(mockIds);
+      (services.bookList.getIdentifiers as Mock).mockResolvedValue(mockIds);
 
       const res = await app.inject({ method: 'GET', url: '/api/books/identifiers' });
 
@@ -1167,7 +1167,7 @@ describe('books routes', () => {
     });
 
     it('returns 500 when service throws', async () => {
-      (services.book.getIdentifiers as Mock).mockRejectedValue(new Error('DB error'));
+      (services.bookList.getIdentifiers as Mock).mockRejectedValue(new Error('DB error'));
 
       const res = await app.inject({ method: 'GET', url: '/api/books/identifiers' });
 
@@ -1184,7 +1184,7 @@ describe('books routes', () => {
         series: ['Series A'],
         narrators: ['Narrator A'],
       };
-      (services.book.getStats as Mock).mockResolvedValue(mockStats);
+      (services.bookList.getStats as Mock).mockResolvedValue(mockStats);
 
       const res = await app.inject({ method: 'GET', url: '/api/books/stats' });
 
@@ -1196,7 +1196,7 @@ describe('books routes', () => {
     });
 
     it('returns 500 when service throws', async () => {
-      (services.book.getStats as Mock).mockRejectedValue(new Error('DB error'));
+      (services.bookList.getStats as Mock).mockRejectedValue(new Error('DB error'));
 
       const res = await app.inject({ method: 'GET', url: '/api/books/stats' });
 

@@ -7,6 +7,7 @@ import {
   IndexerService,
   DownloadClientService,
   BookService,
+  BookListService,
   DownloadService,
   MetadataService,
   NotifierService,
@@ -60,6 +61,7 @@ export interface Services {
   indexer: IndexerService;
   downloadClient: DownloadClientService;
   book: BookService;
+  bookList: BookListService;
   download: DownloadService;
   metadata: MetadataService;
   import: ImportService;
@@ -100,6 +102,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   // EventBroadcaster and EventHistoryService created early so they can be injected into lifecycle services
   const eventBroadcaster = new EventBroadcasterService(log);
   const book = new BookService(db, log, metadata);
+  const bookList = new BookListService(db);
   const eventHistory = new EventHistoryService(db, log, blacklistService, book);
 
   const download = new DownloadService(db, downloadClient, log, notifier, eventHistory, eventBroadcaster);
@@ -136,7 +139,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   download.setRetrySearchDeps(retrySearchDeps);
   eventHistory.setRetrySearchDeps(retrySearchDeps);
 
-  return { settings, auth, indexer, downloadClient, book, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin, importList };
+  return { settings, auth, indexer, downloadClient, book, bookList, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin, importList };
 }
 
 export async function registerRoutes(
@@ -146,6 +149,7 @@ export async function registerRoutes(
 ): Promise<void> {
   await booksRoutes(app, {
     bookService: services.book,
+    bookListService: services.bookList,
     downloadService: services.download,
     settingsService: services.settings,
     renameService: services.rename,

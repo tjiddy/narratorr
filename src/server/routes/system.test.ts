@@ -170,7 +170,7 @@ describe('system routes', () => {
   describe('POST /api/system/tasks/search', () => {
     it('returns 200 with search summary', async () => {
       (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.search);
-      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search' });
 
@@ -223,7 +223,7 @@ describe('system routes', () => {
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         return Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]);
       });
-      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search-all-wanted' });
 
@@ -240,7 +240,7 @@ describe('system routes', () => {
       (services.settings.get as Mock).mockImplementation((cat: string) => {
         return Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]);
       });
-      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+      (services.bookList.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search-all-wanted' });
 
