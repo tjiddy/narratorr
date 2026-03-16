@@ -104,7 +104,7 @@ async function apiText(path: string): Promise<string> {
     console.error(`API error ${res.status}: ${text}`);
     process.exit(1);
   }
-  return await res.text();
+  return res.text();
 }
 
 /**
