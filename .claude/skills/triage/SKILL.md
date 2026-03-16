@@ -86,7 +86,16 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    f. **Do NOT auto-create issues or edit skills** — just recommend. The user decides what to act on. This step is advisory.
 
-   g. After the user approves actions, graduated learnings can be removed from `.claude/cl/learnings/` and resolved debt items removed from `.claude/cl/debt.md`.
+   g. **Prune learnings (mandatory).** For each file in `.claude/cl/learnings/`, sort into one of three buckets:
+      - **Graduate** — the insight is valuable and recurring. Capture it in a durable location (skill prompt change, CLAUDE.md rule, debt issue, or memory), then delete the file.
+      - **Keep** — genuinely useful gotcha not yet captured elsewhere. Leave it.
+      - **Delete (dogshit)** — nuke the file. Criteria for deletion:
+        - *Too specific* — fix for one test/file in one PR, not a reusable pattern
+        - *Already obvious* — restates something already in testing standards, CLAUDE.md, or skill prompts
+        - *Stale* — references code/patterns that have been refactored away
+        - *Duplicate* — same insight exists in another learning or has already been graduated
+
+      Present the three-way sort to the user for approval before deleting. Also remove resolved debt items from `.claude/cl/debt.md`.
 
    h. **Truncate workflow-log.md** — replace contents with just `# Workflow Log\n`. All useful items have been graduated to their destinations (debt.md, Gitea issues, skill prompt changes). Non-graduated entries are discarded. This keeps the file bounded since it's tracked in git.
 
