@@ -12,8 +12,19 @@ export interface BlacklistEntry {
   blacklistedAt: string;
 }
 
+export interface BlacklistListParams {
+  limit?: number;
+  offset?: number;
+}
+
 export const blacklistApi = {
-  getBlacklist: () => fetchApi<{ data: BlacklistEntry[]; total: number }>('/blacklist'),
+  getBlacklist: (params?: BlacklistListParams) => {
+    const searchParams = new URLSearchParams();
+    if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
+    if (params?.offset !== undefined) searchParams.set('offset', String(params.offset));
+    const qs = searchParams.toString();
+    return fetchApi<{ data: BlacklistEntry[]; total: number }>(`/blacklist${qs ? `?${qs}` : ''}`);
+  },
   addToBlacklist: (data: {
     infoHash: string;
     title: string;

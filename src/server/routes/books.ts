@@ -22,6 +22,7 @@ import {
   createBookBodySchema,
   updateBookBodySchema,
   deleteBookQuerySchema,
+  DEFAULT_LIMITS,
   type CreateBookBody,
   type UpdateBookBody,
   type DeleteBookQuery,
@@ -177,16 +178,36 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     { schema: { querystring: booksListQuerySchema } },
     async (request, reply) => {
       try {
-        const { status, limit, offset } = request.query;
-        request.log.debug({ status, limit, offset }, 'Fetching books');
-        const pagination = limit !== undefined || offset !== undefined ? { limit, offset } : undefined;
-        return await bookService.getAll(status, pagination, { slim: true });
+        const { status, search, sortField, sortDirection, limit, offset } = request.query;
+        request.log.debug({ status, search, sortField, limit, offset }, 'Fetching books');
+        const pagination = { limit: limit ?? DEFAULT_LIMITS.books, offset };
+        return await bookService.getAll(status, pagination, { slim: true, search, sortField, sortDirection });
       } catch (error) {
         request.log.error(error, 'Failed to fetch books');
         return reply.status(500).send({ error: 'Internal server error' });
       }
     },
   );
+
+  // GET /api/books/identifiers — lightweight list for duplicate detection (no pagination)
+  app.get('/api/books/identifiers', async (request, reply) => {
+    try {
+      return await bookService.getIdentifiers();
+    } catch (error) {
+      request.log.error(error, 'Failed to fetch book identifiers');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/books/stats — server-side status counts and filter values
+  app.get('/api/books/stats', async (request, reply) => {
+    try {
+      return await bookService.getStats();
+    } catch (error) {
+      request.log.error(error, 'Failed to fetch book stats');
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
+  });
 
   // GET /api/books/:id
   app.get<{ Params: IdParam }>(

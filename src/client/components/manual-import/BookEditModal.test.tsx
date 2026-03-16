@@ -5,9 +5,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BookEditModal, type BookEditState } from './BookEditModal';
 import type { DiscoveredBook, BookMetadata } from '@/lib/api';
 
-// Mock the useLibrary hook
+// Mock the useLibrary hook — default to empty, tests can override via mockIdentifiers
+let mockIdentifiers: { asin: string | null; title: string; authorName: string | null }[] = [];
 vi.mock('@/hooks/useLibrary', () => ({
-  useLibrary: () => ({ data: [] }),
+  useBookIdentifiers: () => ({ data: mockIdentifiers }),
 }));
 
 // Mock the useEscapeKey hook
@@ -382,6 +383,28 @@ describe('BookEditModal', () => {
         alternatives: [makeMetadata({ providerId: 'alt1' })],
       });
       expect(screen.getByText('Pick the correct match')).toBeInTheDocument();
+    });
+  });
+
+  describe('duplicate detection via identifiers', () => {
+    afterEach(() => {
+      mockIdentifiers = [];
+    });
+
+    it('shows "In library" badge when metadata ASIN matches an identifier', () => {
+      mockIdentifiers = [{ asin: 'B001', title: 'Matched Title', authorName: 'Matched Author' }];
+      const meta = makeMetadata({ asin: 'B001' });
+      renderModal({ initial: makeEditState({ metadata: meta }) });
+
+      expect(screen.getByText('In library')).toBeInTheDocument();
+    });
+
+    it('does not show "In library" badge when no identifier matches', () => {
+      mockIdentifiers = [{ asin: 'B999', title: 'Other Book', authorName: 'Other Author' }];
+      const meta = makeMetadata({ asin: 'B001' });
+      renderModal({ initial: makeEditState({ metadata: meta }) });
+
+      expect(screen.queryByText('In library')).not.toBeInTheDocument();
     });
   });
 });

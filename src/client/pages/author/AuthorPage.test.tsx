@@ -13,7 +13,7 @@ vi.mock('@/lib/api', () => ({
   api: {
     getAuthor: vi.fn(),
     getAuthorBooks: vi.fn(),
-    getBooks: vi.fn(),
+    getBookIdentifiers: vi.fn(),
     addBook: vi.fn(),
     getSettings: vi.fn(),
   },
@@ -114,7 +114,7 @@ describe('AuthorPage', () => {
     vi.clearAllMocks();
     vi.mocked(api.getAuthor).mockResolvedValue(mockAuthor);
     vi.mocked(api.getAuthorBooks).mockResolvedValue(mockBooks);
-    vi.mocked(api.getBooks).mockResolvedValue({ data: mockLibraryBooks, total: mockLibraryBooks.length });
+    vi.mocked(api.getBookIdentifiers).mockResolvedValue(mockLibraryBooks.map((b) => ({ asin: b.asin ?? null, title: b.title, authorName: b.author?.name ?? null })));
     vi.mocked(api.getSettings).mockResolvedValue({
       quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false, rejectWords: '', requiredWords: '' },
     } as never);
@@ -263,9 +263,9 @@ describe('AuthorPage', () => {
   });
 
   it('shows check icon for books already in library', async () => {
-    vi.mocked(api.getBooks).mockResolvedValue({ data: [
-      createMockBook({ id: 1, asin: 'B001' }),
-    ], total: 1 });
+    vi.mocked(api.getBookIdentifiers).mockResolvedValue([
+      { asin: 'B001', title: 'The Way of Kings', authorName: 'Brandon Sanderson' },
+    ]);
 
     renderAuthorPage();
 

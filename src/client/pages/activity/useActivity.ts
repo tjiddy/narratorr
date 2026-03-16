@@ -1,63 +1,66 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, type Download } from '@/lib/api';
+import { api, type Download, type ActivityListParams } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
-import { isInProgressStatus, isTerminalStatus } from '../../../shared/download-status-registry.js';
 import { useSSEConnected } from '@/hooks/useEventSource';
+import { isInProgressStatus } from '../../../shared/download-status-registry.js';
 
-export function useActivity() {
-  const queryClient = useQueryClient();
+function useActivitySection(section: 'queue' | 'history', params: ActivityListParams) {
   const sseConnected = useSSEConnected();
+  const fullParams = { ...params, section };
 
-  const { data: downloads = [], isLoading, isError } = useQuery({
-    queryKey: queryKeys.activity(),
-    queryFn: () => api.getActivity(),
-    select: (response) => response.data,
+  return useQuery({
+    queryKey: queryKeys.activity(fullParams),
+    queryFn: () => api.getActivity(fullParams),
     refetchInterval: (query) => {
-      if (sseConnected) return false; // SSE handles real-time updates
+      if (section === 'history') return false;
+      if (sseConnected) return false;
       const raw = query.state.data;
       if (!raw) return 5000;
-      const items = raw.data;
-      return items.some((d: Download) => isInProgressStatus(d.status)) ? 5000 : false;
+      return raw.data.some((d: Download) => isInProgressStatus(d.status)) ? 5000 : false;
     },
   });
+}
+
+export function useActivity(queueParams: ActivityListParams = {}, historyParams: ActivityListParams = {}) {
+  const queryClient = useQueryClient();
+
+  const queueQuery = useActivitySection('queue', queueParams);
+  const historyQuery = useActivitySection('history', historyParams);
+
+  const queue = queueQuery.data?.data ?? [];
+  const queueTotal = queueQuery.data?.total ?? 0;
+  const history = historyQuery.data?.data ?? [];
+  const historyTotal = historyQuery.data?.total ?? 0;
+
+  const invalidateActivity = () => {
+    queryClient.invalidateQueries({ queryKey: ['activity'] });
+  };
 
   const cancelMutation = useMutation({
     mutationFn: api.cancelDownload,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
-    },
+    onSuccess: invalidateActivity,
   });
 
   const retryMutation = useMutation({
     mutationFn: api.retryDownload,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
-    },
+    onSuccess: invalidateActivity,
   });
 
   const approveMutation = useMutation({
     mutationFn: api.approveDownload,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
-    },
+    onSuccess: invalidateActivity,
   });
 
   const rejectMutation = useMutation({
     mutationFn: (id: number) => api.rejectDownload(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
-    },
+    onSuccess: invalidateActivity,
   });
 
-  const queue = downloads.filter((d) => isInProgressStatus(d.status));
-  const history = downloads.filter((d) => isTerminalStatus(d.status));
-
   return {
-    downloads,
-    queue,
-    history,
-    isLoading,
-    isError,
+    queue, queueTotal,
+    history, historyTotal,
+    isLoading: queueQuery.isLoading || historyQuery.isLoading,
+    isError: queueQuery.isError || historyQuery.isError,
     cancelMutation,
     retryMutation,
     approveMutation,

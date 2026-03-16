@@ -65,7 +65,7 @@ describe('books routes', () => {
 
       await app.inject({ method: 'GET', url: '/api/books?status=wanted' });
 
-      expect(services.book.getAll).toHaveBeenCalledWith('wanted', undefined, { slim: true });
+      expect(services.book.getAll).toHaveBeenCalledWith('wanted', { limit: 100, offset: undefined }, { slim: true, search: undefined, sortField: undefined, sortDirection: undefined });
     });
 
     it('forwards limit and offset to service', async () => {
@@ -73,7 +73,7 @@ describe('books routes', () => {
 
       await app.inject({ method: 'GET', url: '/api/books?limit=10&offset=20' });
 
-      expect(services.book.getAll).toHaveBeenCalledWith(undefined, { limit: 10, offset: 20 }, { slim: true });
+      expect(services.book.getAll).toHaveBeenCalledWith(undefined, { limit: 10, offset: 20 }, { slim: true, search: undefined, sortField: undefined, sortDirection: undefined });
     });
 
     it('rejects limit=0 with 400', async () => {
@@ -1061,6 +1061,145 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(500);
       expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+  });
+
+  // #372 — Default pagination enforcement
+  describe('GET /api/books — default pagination', () => {
+    it('applies default limit=100 when no limit param provided', async () => {
+      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/books' });
+
+      expect(services.book.getAll).toHaveBeenCalledWith(
+        undefined,
+        { limit: 100, offset: undefined },
+        { slim: true, search: undefined, sortField: undefined, sortDirection: undefined },
+      );
+    });
+
+    it('applies default limit when offset provided without limit', async () => {
+      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/books?offset=50' });
+
+      expect(services.book.getAll).toHaveBeenCalledWith(
+        undefined,
+        { limit: 100, offset: 50 },
+        { slim: true, search: undefined, sortField: undefined, sortDirection: undefined },
+      );
+    });
+
+    it('allows explicit limit to override default', async () => {
+      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/books?limit=10' });
+
+      expect(services.book.getAll).toHaveBeenCalledWith(
+        undefined,
+        { limit: 10, offset: undefined },
+        { slim: true, search: undefined, sortField: undefined, sortDirection: undefined },
+      );
+    });
+  });
+
+  // #372 — Server-side search/sort/filter
+  describe('GET /api/books — search/sort/filter params', () => {
+    it('passes search param to service', async () => {
+      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/books?search=tolkien' });
+
+      expect(services.book.getAll).toHaveBeenCalledWith(
+        undefined,
+        { limit: 100, offset: undefined },
+        { slim: true, search: 'tolkien', sortField: undefined, sortDirection: undefined },
+      );
+    });
+
+    it('passes sortField and sortDirection to service', async () => {
+      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/books?sortField=title&sortDirection=asc' });
+
+      expect(services.book.getAll).toHaveBeenCalledWith(
+        undefined,
+        { limit: 100, offset: undefined },
+        { slim: true, search: undefined, sortField: 'title', sortDirection: 'asc' },
+      );
+    });
+
+    it('rejects invalid sortField with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/books?sortField=invalid' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('forwards combined search, status, sort, and pagination params', async () => {
+      (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/books?search=foo&status=wanted&sortField=title&sortDirection=asc&limit=10&offset=0' });
+
+      expect(services.book.getAll).toHaveBeenCalledWith(
+        'wanted',
+        { limit: 10, offset: 0 },
+        { slim: true, search: 'foo', sortField: 'title', sortDirection: 'asc' },
+      );
+    });
+  });
+
+  // #372 — Identifiers endpoint (duplicate detection)
+  describe('GET /api/books/identifiers', () => {
+    it('returns identifiers from service', async () => {
+      const mockIds = [
+        { asin: 'B001', title: 'Book One', authorName: 'Author A' },
+        { asin: null, title: 'Book Two', authorName: null },
+      ];
+      (services.book.getIdentifiers as Mock).mockResolvedValue(mockIds);
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/identifiers' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body).toHaveLength(2);
+      expect(body[0]).toEqual({ asin: 'B001', title: 'Book One', authorName: 'Author A' });
+      expect(body[1]).toEqual({ asin: null, title: 'Book Two', authorName: null });
+    });
+
+    it('returns 500 when service throws', async () => {
+      (services.book.getIdentifiers as Mock).mockRejectedValue(new Error('DB error'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/identifiers' });
+
+      expect(res.statusCode).toBe(500);
+    });
+  });
+
+  // #372 — Stats endpoint
+  describe('GET /api/books/stats', () => {
+    it('returns stats from service', async () => {
+      const mockStats = {
+        counts: { wanted: 5, downloading: 3, imported: 10, failed: 1, missing: 2 },
+        authors: ['Author A'],
+        series: ['Series A'],
+        narrators: ['Narrator A'],
+      };
+      (services.book.getStats as Mock).mockResolvedValue(mockStats);
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/stats' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.counts.wanted).toBe(5);
+      expect(body.counts.downloading).toBe(3);
+      expect(body.authors).toEqual(['Author A']);
+    });
+
+    it('returns 500 when service throws', async () => {
+      (services.book.getStats as Mock).mockRejectedValue(new Error('DB error'));
+
+      const res = await app.inject({ method: 'GET', url: '/api/books/stats' });
+
+      expect(res.statusCode).toBe(500);
     });
   });
 });

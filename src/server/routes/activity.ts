@@ -2,13 +2,14 @@ import type { FastifyInstance } from 'fastify';
 import type { DownloadService } from '../services';
 import type { QualityGateService } from '../services/quality-gate.service.js';
 import type { ImportService } from '../services/import.service.js';
-import { idParamSchema, paginationParamsSchema } from '../../shared/schemas.js';
+import { idParamSchema, paginationParamsSchema, DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { z } from 'zod';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
 const activityListQuerySchema = z.object({
   status: z.string().optional(),
+  section: z.enum(['queue', 'history']).optional(),
 }).merge(paginationParamsSchema);
 
 type ActivityListQuery = z.infer<typeof activityListQuerySchema>;
@@ -21,10 +22,10 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     { schema: { querystring: activityListQuerySchema } },
     async (request, reply) => {
       try {
-        const { status, limit, offset } = request.query;
-        request.log.debug({ status, limit, offset }, 'Fetching activity');
-        const pagination = limit !== undefined || offset !== undefined ? { limit, offset } : undefined;
-        const result = await downloadService.getAll(status, pagination);
+        const { status, section, limit, offset } = request.query;
+        request.log.debug({ status, section, limit, offset }, 'Fetching activity');
+        const pagination = { limit: limit ?? DEFAULT_LIMITS.activity, offset };
+        const result = await downloadService.getAll(status, pagination, section);
 
         // Augment pending_review downloads with quality gate comparison data (batch)
         const pendingIds = result.data

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   LoadingSpinner,
   DownloadCloudIcon,
@@ -8,9 +8,29 @@ import {
 import { DownloadCard } from './DownloadCard.js';
 import { EventHistorySection } from './EventHistorySection.js';
 import { useActivity } from './useActivity.js';
+import { usePagination } from '@/hooks/usePagination';
+import { Pagination } from '@/components/Pagination';
+import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 
+// eslint-disable-next-line max-lines-per-function -- page with independent queue/history pagination sections
 export function ActivityPage() {
-  const { queue, history, isLoading, cancelMutation, retryMutation, approveMutation, rejectMutation } = useActivity();
+  const queuePagination = usePagination(DEFAULT_LIMITS.activity);
+  const historyPagination = usePagination(DEFAULT_LIMITS.activity);
+
+  const {
+    queue, queueTotal,
+    history, historyTotal,
+    isLoading,
+    cancelMutation, retryMutation, approveMutation, rejectMutation,
+  } = useActivity(
+    { limit: queuePagination.limit, offset: queuePagination.offset },
+    { limit: historyPagination.limit, offset: historyPagination.offset },
+  );
+
+  // Clamp pages when totals shrink
+  useEffect(() => { queuePagination.clampToTotal(queueTotal); }, [queueTotal, queuePagination]);
+  useEffect(() => { historyPagination.clampToTotal(historyTotal); }, [historyTotal, historyPagination]);
+
   const [tab, setTab] = useState<'downloads' | 'events'>('downloads');
 
   if (isLoading) {
@@ -82,7 +102,7 @@ export function ActivityPage() {
               <div>
                 <h2 className="font-display text-xl font-semibold">Queue</h2>
                 <p className="text-sm text-muted-foreground">
-                  {queue.length} active download{queue.length !== 1 ? 's' : ''}
+                  {queueTotal} active download{queueTotal !== 1 ? 's' : ''}
                 </p>
               </div>
             </div>
@@ -113,6 +133,13 @@ export function ActivityPage() {
                 ))}
               </div>
             )}
+            <Pagination
+              page={queuePagination.page}
+              totalPages={queuePagination.totalPages(queueTotal)}
+              total={queueTotal}
+              limit={queuePagination.limit}
+              onPageChange={queuePagination.setPage}
+            />
           </section>
 
           {/* Download History Section */}
@@ -124,7 +151,7 @@ export function ActivityPage() {
               <div>
                 <h2 className="font-display text-xl font-semibold">History</h2>
                 <p className="text-sm text-muted-foreground">
-                  {history.length} completed download{history.length !== 1 ? 's' : ''}
+                  {historyTotal} completed download{historyTotal !== 1 ? 's' : ''}
                 </p>
               </div>
             </div>
@@ -151,6 +178,13 @@ export function ActivityPage() {
                 ))}
               </div>
             )}
+            <Pagination
+              page={historyPagination.page}
+              totalPages={historyPagination.totalPages(historyTotal)}
+              total={historyTotal}
+              limit={historyPagination.limit}
+              onPageChange={historyPagination.setPage}
+            />
           </section>
         </>
       )}

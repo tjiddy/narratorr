@@ -1,8 +1,11 @@
-import { useState } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useEventHistory } from '@/hooks/useEventHistory';
 import { EventHistoryCard } from '@/components/EventHistoryCard';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { LoadingSpinner, HistoryIcon, SearchIcon, TrashIcon } from '@/components/icons';
+import { usePagination } from '@/hooks/usePagination';
+import { Pagination } from '@/components/Pagination';
+import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 
 const EVENT_TYPE_FILTERS = [
   { value: '', label: 'All' },
@@ -17,15 +20,34 @@ const EVENT_TYPE_FILTERS = [
 ];
 
 export function EventHistorySection() {
-  const [eventType, setEventType] = useState('');
-  const [search, setSearch] = useState('');
+  const [eventType, setEventTypeState] = useState('');
+  const [search, setSearchState] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [confirmAction, setConfirmAction] = useState<'errors' | 'all' | null>(null);
+  const pagination = usePagination(DEFAULT_LIMITS.eventHistory);
 
-  const { events, isLoading, markFailedMutation, deleteMutation, bulkDeleteMutation } = useEventHistory({
+  // Reset pagination when filters change
+  const setEventType = useCallback((value: string) => {
+    setEventTypeState(value);
+    pagination.reset();
+  }, [pagination]);
+
+  const setSearch = useCallback((value: string) => {
+    setSearchState(value);
+    pagination.reset();
+  }, [pagination]);
+
+  const { events, total, isLoading, markFailedMutation, deleteMutation, bulkDeleteMutation } = useEventHistory({
     eventType: eventType || undefined,
     search: search || undefined,
+    limit: pagination.limit,
+    offset: pagination.offset,
   });
+
+  // Clamp page when total shrinks
+  useEffect(() => {
+    pagination.clampToTotal(total);
+  }, [total, pagination]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,7 +56,7 @@ export function EventHistorySection() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-24">
+      <div className="flex items-center justify-center py-24" data-testid="loading-spinner">
         <LoadingSpinner className="w-8 h-8 text-primary" />
       </div>
     );
@@ -123,6 +145,7 @@ export function EventHistorySection() {
           ))}
         </div>
       )}
+
       <ConfirmModal
         isOpen={confirmAction !== null}
         title={confirmAction === 'errors' ? 'Clear Error Events' : 'Clear All Events'}
@@ -143,6 +166,14 @@ export function EventHistorySection() {
           setConfirmAction(null);
         }}
         onCancel={() => setConfirmAction(null)}
+      />
+
+      <Pagination
+        page={pagination.page}
+        totalPages={pagination.totalPages(total)}
+        total={total}
+        limit={pagination.limit}
+        onPageChange={pagination.setPage}
       />
     </div>
   );

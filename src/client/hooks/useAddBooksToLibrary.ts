@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, type BookMetadata, type BookWithAuthor } from '@/lib/api';
+import { api, type BookMetadata, type BookIdentifier, type BookWithAuthor } from '@/lib/api';
 import { mapBookMetadataToPayload, isBookInLibrary } from '@/lib/helpers';
 import { queryKeys } from '@/lib/queryKeys';
 
@@ -10,7 +10,7 @@ export interface QualityDefaults {
   monitorForUpgrades: boolean;
 }
 
-export function useAddBooksToLibrary(libraryBooks?: BookWithAuthor[], qualityDefaults?: QualityDefaults) {
+export function useAddBooksToLibrary(libraryBooks?: (BookIdentifier | BookWithAuthor)[], qualityDefaults?: QualityDefaults) {
   const queryClient = useQueryClient();
   const [addingAsins, setAddingAsins] = useState<Set<string>>(new Set());
   const [addedAsins, setAddedAsins] = useState<Set<string>>(new Set());

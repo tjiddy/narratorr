@@ -1,8 +1,15 @@
+import type { BookListParams } from './api/books.js';
+import type { ActivityListParams } from './api/activity.js';
+import type { EventHistoryParams } from './api/event-history.js';
+import type { BlacklistListParams } from './api/blacklist.js';
+
 export const queryKeys = {
-  books: () => ['books'] as const,
+  books: (params?: BookListParams) => params ? ['books', params] as const : ['books'] as const,
+  bookStats: () => ['books', 'stats'] as const,
+  bookIdentifiers: () => ['books', 'identifiers'] as const,
   book: (id: number) => ['books', id] as const,
   bookFiles: (id: number) => ['books', id, 'files'] as const,
-  activity: () => ['activity'] as const,
+  activity: (params?: ActivityListParams) => params ? ['activity', params] as const : ['activity'] as const,
   activityCounts: () => ['activity', 'counts'] as const,
   search: (q: string) => ['search', q] as const,
   metadata: {
@@ -16,7 +23,7 @@ export const queryKeys = {
   downloadClients: () => ['downloadClients'] as const,
   notifiers: () => ['notifiers'] as const,
   importLists: () => ['importLists'] as const,
-  blacklist: () => ['blacklist'] as const,
+  blacklist: (params?: BlacklistListParams) => params ? ['blacklist', params] as const : ['blacklist'] as const,
   prowlarr: {
     config: () => ['prowlarr', 'config'] as const,
     preview: () => ['prowlarr', 'preview'] as const,
@@ -31,7 +38,7 @@ export const queryKeys = {
   },
   eventHistory: {
     root: () => ['eventHistory'] as const,
-    all: (params?: { eventType?: string; search?: string }) => ['eventHistory', params] as const,
+    all: (params?: EventHistoryParams) => ['eventHistory', params] as const,
     byBookId: (bookId: number) => ['eventHistory', 'book', bookId] as const,
   },
   filesystem: {

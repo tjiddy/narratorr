@@ -125,15 +125,18 @@ describe('useEventSource', () => {
   });
 
   describe('cache invalidation per event type', () => {
-    it('patches activity row in-place on download_progress', () => {
+    it('patches activity row in-place on download_progress across cached pages', () => {
       const { wrapper, queryClient } = createWrapper();
-      const setQueryDataSpy = vi.spyOn(queryClient, 'setQueryData');
 
-      // Seed existing activity data
-      queryClient.setQueryData(['activity'], [
-        { id: 1, bookId: 2, title: 'Book', progress: 0.1, status: 'downloading' },
-        { id: 3, bookId: 4, title: 'Other', progress: 0.9, status: 'downloading' },
-      ]);
+      // Seed a cached activity page (paginated format)
+      const queueKey = ['activity', { section: 'queue', limit: 50, offset: 0 }];
+      queryClient.setQueryData(queueKey, {
+        data: [
+          { id: 1, bookId: 2, title: 'Book', progress: 0.1, status: 'downloading' },
+          { id: 3, bookId: 4, title: 'Other', progress: 0.9, status: 'downloading' },
+        ],
+        total: 2,
+      });
 
       renderHook(() => useEventSource('key'), { wrapper });
       const es = MockEventSource.instances[0];
@@ -143,14 +146,11 @@ describe('useEventSource', () => {
         es.simulateEvent('download_progress', { download_id: 1, book_id: 2, percentage: 0.5, speed: null, eta: null });
       });
 
-      // Should call setQueryData with the activity key and an updater function
-      expect(setQueryDataSpy).toHaveBeenCalledWith(['activity'], expect.any(Function));
-
-      // Verify the data was patched correctly
-      const data = queryClient.getQueryData<{ id: number; progress: number }[]>(['activity']);
-      expect(data).toHaveLength(2);
-      expect(data![0].progress).toBe(0.5);  // patched
-      expect(data![1].progress).toBe(0.9);  // untouched
+      // Verify the data was patched correctly in the cached page
+      const cached = queryClient.getQueryData<{ data: { id: number; progress: number }[]; total: number }>(queueKey);
+      expect(cached!.data).toHaveLength(2);
+      expect(cached!.data[0].progress).toBe(0.5);  // patched
+      expect(cached!.data[1].progress).toBe(0.9);  // untouched
     });
 
     it('does not invalidate activity queries on download_progress', () => {

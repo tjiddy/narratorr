@@ -95,6 +95,12 @@ export interface MetadataSearchResults {
   series: unknown[];
 }
 
+export interface BookIdentifier {
+  asin: string | null;
+  title: string;
+  authorName: string | null;
+}
+
 export interface BookFile {
   name: string;
   size: number;
@@ -128,9 +134,44 @@ export type SingleBookSearchResult =
   | { result: 'no_results' }
   | { result: 'skipped'; reason: string };
 
+export interface BookListParams {
+  status?: string;
+  search?: string;
+  sortField?: string;
+  sortDirection?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+}
+
+export interface BookStats {
+  counts: {
+    wanted: number;
+    downloading: number;
+    imported: number;
+    failed: number;
+    missing: number;
+  };
+  authors: string[];
+  series: string[];
+  narrators: string[];
+}
+
 export const booksApi = {
-  getBooks: (status?: string) =>
-    fetchApi<{ data: BookWithAuthor[]; total: number }>(status ? `/books?status=${encodeURIComponent(status)}` : '/books'),
+  getBooks: (params?: BookListParams) => {
+    const searchParams = new URLSearchParams();
+    if (params?.status) searchParams.set('status', params.status);
+    if (params?.search) searchParams.set('search', params.search);
+    if (params?.sortField) searchParams.set('sortField', params.sortField);
+    if (params?.sortDirection) searchParams.set('sortDirection', params.sortDirection);
+    if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
+    if (params?.offset !== undefined) searchParams.set('offset', String(params.offset));
+    const qs = searchParams.toString();
+    return fetchApi<{ data: BookWithAuthor[]; total: number }>(`/books${qs ? `?${qs}` : ''}`);
+  },
+  getBookStats: () =>
+    fetchApi<BookStats>('/books/stats'),
+  getBookIdentifiers: () =>
+    fetchApi<BookIdentifier[]>('/books/identifiers'),
   getBookById: (id: number) =>
     fetchApi<BookWithAuthor>(`/books/${id}`),
   addBook: (data: CreateBookPayload) =>

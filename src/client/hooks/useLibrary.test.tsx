@@ -2,15 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
-import { useLibrary, useLibraryBook, useBookFiles } from './useLibrary';
+import { useLibrary, useLibraryBook, useBookFiles, useBookIdentifiers, useBookStats } from './useLibrary';
 import { createMockBook } from '@/__tests__/factories';
-import type { BookFile } from '@/lib/api';
+import type { BookFile, BookIdentifier, BookStats } from '@/lib/api';
 
 vi.mock('@/lib/api', () => ({
   api: {
     getBooks: vi.fn(),
     getBookById: vi.fn(),
     getBookFiles: vi.fn(),
+    getBookIdentifiers: vi.fn(),
+    getBookStats: vi.fn(),
   },
 }));
 
@@ -49,7 +51,7 @@ describe('useLibrary', () => {
     });
 
     expect(api.getBooks).toHaveBeenCalledTimes(1);
-    expect(result.current.data).toEqual(mockBooks);
+    expect(result.current.data).toEqual({ data: mockBooks, total: mockBooks.length });
   });
 
   it('handles loading state', () => {
@@ -178,5 +180,57 @@ describe('useBookFiles', () => {
     expect(api.getBookFiles).not.toHaveBeenCalled();
     expect(result.current.data).toBeUndefined();
     expect(result.current.isLoading).toBe(false);
+  });
+});
+
+describe('useBookIdentifiers', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('calls api.getBookIdentifiers and returns identifiers array', async () => {
+    const mockIds: BookIdentifier[] = [
+      { asin: 'B001', title: 'Book One', authorName: 'Author A' },
+      { asin: null, title: 'Book Two', authorName: null },
+    ];
+    vi.mocked(api.getBookIdentifiers).mockResolvedValue(mockIds);
+
+    const { result } = renderHook(() => useBookIdentifiers(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(api.getBookIdentifiers).toHaveBeenCalledTimes(1);
+    expect(result.current.data).toEqual(mockIds);
+  });
+});
+
+describe('useBookStats', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('calls api.getBookStats and returns stats object', async () => {
+    const mockStats: BookStats = {
+      counts: { wanted: 5, downloading: 3, imported: 10, failed: 1, missing: 2 },
+      authors: ['Author A', 'Author B'],
+      series: ['Series A'],
+      narrators: ['Narrator A'],
+    };
+    vi.mocked(api.getBookStats).mockResolvedValue(mockStats);
+
+    const { result } = renderHook(() => useBookStats(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(api.getBookStats).toHaveBeenCalledTimes(1);
+    expect(result.current.data).toEqual(mockStats);
   });
 });

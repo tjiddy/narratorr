@@ -1,84 +1,78 @@
-import { useState, useMemo } from 'react';
-import type { BookWithAuthor } from '@/lib/api';
-import { useLibrarySearch } from '@/hooks/useLibrarySearch';
-import { type StatusFilter, type SortField, type SortDirection, type DisplayBook, filterTabs, matchesStatusFilter, getStatusCount, sortBooks, collapseSeries, extractNarrators } from './helpers.js';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import type { BookListParams, BookWithAuthor } from '@/lib/api';
+import { type StatusFilter, type SortField, type SortDirection, type DisplayBook, filterTabs, collapseSeries, extractNarrators } from './helpers.js';
+import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
+import { usePagination } from '@/hooks/usePagination';
 
-export function useLibraryFilters(books: BookWithAuthor[]) {
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+export function useLibraryFilters() {
+  const [statusFilter, setStatusFilterState] = useState<StatusFilter>('all');
   const [authorFilter, setAuthorFilter] = useState('');
   const [seriesFilter, setSeriesFilter] = useState('');
   const [narratorFilter, setNarratorFilter] = useState('');
-  const [sortField, setSortField] = useState<SortField>('createdAt');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [sortField, setSortFieldState] = useState<SortField>('createdAt');
+  const [sortDirection, setSortDirectionState] = useState<SortDirection>('desc');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [collapseSeriesEnabled, setCollapseSeriesEnabled] = useState(false);
+  const [searchQuery, setSearchQueryState] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
 
-  const { query: searchQuery, setQuery: setSearchQuery, clearQuery: clearSearch, results: searchResults, isSearching } = useLibrarySearch(books);
+  const pagination = usePagination(DEFAULT_LIMITS.books);
 
-  const uniqueAuthors = useMemo(() => {
-    const names = new Set<string>();
-    for (const book of books) {
-      if (book.author?.name) names.add(book.author.name);
-    }
-    return Array.from(names).sort();
-  }, [books]);
+  // Debounce search to avoid rapid API calls per keystroke
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => {
+    debounceRef.current = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [searchQuery]);
 
-  const uniqueSeries = useMemo(() => {
-    const names = new Set<string>();
-    for (const book of books) {
-      if (book.seriesName) names.add(book.seriesName);
-    }
-    return Array.from(names).sort();
-  }, [books]);
+  // Reset pagination when filters change
+  const setStatusFilter = useCallback((status: StatusFilter) => {
+    setStatusFilterState(status);
+    pagination.reset();
+  }, [pagination]);
 
-  const uniqueNarrators = useMemo(() => {
-    const seen = new Map<string, string>();
-    for (const book of books) {
-      for (const narrator of extractNarrators(book.narrator)) {
-        const lower = narrator.toLowerCase();
-        if (!seen.has(lower)) seen.set(lower, narrator);
-      }
-    }
-    return Array.from(seen.values()).sort((a, b) => a.localeCompare(b));
-  }, [books]);
+  const setSortField = useCallback((field: SortField) => {
+    setSortFieldState(field);
+    pagination.reset();
+  }, [pagination]);
 
-  const filteredBooks = useMemo((): DisplayBook[] => {
-    let result: BookWithAuthor[] = searchResults.filter((b) => matchesStatusFilter(b.status, statusFilter));
-    if (authorFilter) {
-      result = result.filter((b) => b.author?.name === authorFilter);
-    }
-    if (seriesFilter) {
-      result = result.filter((b) => b.seriesName === seriesFilter);
-    }
-    if (narratorFilter) {
-      const filterLower = narratorFilter.toLowerCase();
-      result = result.filter((b) => {
-        const narrators = extractNarrators(b.narrator);
-        return narrators.some((n) => n.toLowerCase() === filterLower);
-      });
-    }
-    const toSort = collapseSeriesEnabled
-      ? collapseSeries(result, sortField, sortDirection)
-      : result;
-    return sortBooks(toSort, sortField, sortDirection);
-  }, [searchResults, statusFilter, authorFilter, seriesFilter, narratorFilter, sortField, sortDirection, collapseSeriesEnabled]);
+  const setSortDirection = useCallback((dir: SortDirection) => {
+    setSortDirectionState(dir);
+    pagination.reset();
+  }, [pagination]);
 
-  const statusCounts = useMemo(() => {
-    const counts: Record<StatusFilter, number> = { all: books.length, wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 };
-    for (const tab of filterTabs) {
-      if (tab.key !== 'all') counts[tab.key] = getStatusCount(books, tab.key);
-    }
-    return counts;
-  }, [books]);
+  const setSearchQuery = useCallback((query: string) => {
+    setSearchQueryState(query);
+    pagination.reset();
+  }, [pagination]);
+
+  const clearSearch = useCallback(() => {
+    setSearchQueryState('');
+    setDebouncedSearch(''); // Immediately clear debounced value
+    pagination.reset();
+  }, [pagination]);
+
+  // Build API params from filter state (search is debounced)
+  const apiParams: BookListParams = useMemo(() => ({
+    status: statusFilter === 'all' ? undefined : statusFilter,
+    search: debouncedSearch || undefined,
+    sortField,
+    sortDirection,
+    limit: pagination.limit,
+    offset: pagination.offset,
+  }), [statusFilter, debouncedSearch, sortField, sortDirection, pagination.limit, pagination.offset]);
 
   const activeFilterCount = (authorFilter ? 1 : 0) + (seriesFilter ? 1 : 0) + (narratorFilter ? 1 : 0);
 
   const clearAllFilters = () => {
-    setStatusFilter('all');
+    setStatusFilterState('all');
     setAuthorFilter('');
     setSeriesFilter('');
     setNarratorFilter('');
-    clearSearch();
+    setSearchQueryState('');
+    pagination.reset();
   };
 
   return {
@@ -91,9 +85,34 @@ export function useLibraryFilters(books: BookWithAuthor[]) {
     filtersOpen, setFiltersOpen,
     collapseSeriesEnabled, setCollapseSeriesEnabled,
     searchQuery, setSearchQuery, clearSearch,
-    isSearching,
-    uniqueAuthors, uniqueSeries, uniqueNarrators,
-    filteredBooks, statusCounts,
+    isSearching: !!searchQuery,
+    apiParams, pagination,
     activeFilterCount, clearAllFilters,
+    filterTabs,
   };
+}
+
+/** Apply client-side author/series/narrator filters and series collapse to page data */
+export function applyClientFilters(
+  books: BookWithAuthor[],
+  filters: { authorFilter: string; seriesFilter: string; narratorFilter: string; collapseSeriesEnabled: boolean; sortField: SortField; sortDirection: SortDirection },
+): DisplayBook[] {
+  let result = books;
+  if (filters.authorFilter) {
+    result = result.filter((b) => b.author?.name === filters.authorFilter);
+  }
+  if (filters.seriesFilter) {
+    result = result.filter((b) => b.seriesName === filters.seriesFilter);
+  }
+  if (filters.narratorFilter) {
+    const filterLower = filters.narratorFilter.toLowerCase();
+    result = result.filter((b) => {
+      const narrators = extractNarrators(b.narrator);
+      return narrators.some((n) => n.toLowerCase() === filterLower);
+    });
+  }
+  if (filters.collapseSeriesEnabled) {
+    return collapseSeries(result, filters.sortField, filters.sortDirection);
+  }
+  return result;
 }

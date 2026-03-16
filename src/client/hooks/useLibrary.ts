@@ -1,15 +1,29 @@
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, type BookListParams } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 
-export function useLibrary() {
-  const query = useQuery({
-    queryKey: queryKeys.books(),
-    queryFn: () => api.getBooks(),
+export function useLibrary(params?: BookListParams) {
+  return useQuery({
+    queryKey: queryKeys.books(params),
+    queryFn: () => api.getBooks(params),
     staleTime: 30_000,
-    select: (response) => response.data,
   });
-  return query;
+}
+
+export function useBookIdentifiers() {
+  return useQuery({
+    queryKey: queryKeys.bookIdentifiers(),
+    queryFn: () => api.getBookIdentifiers(),
+    staleTime: 30_000,
+  });
+}
+
+export function useBookStats() {
+  return useQuery({
+    queryKey: queryKeys.bookStats(),
+    queryFn: () => api.getBookStats(),
+    staleTime: 30_000,
+  });
 }
 
 export function useLibraryBook(id: number | undefined) {

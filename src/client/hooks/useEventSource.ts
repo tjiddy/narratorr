@@ -55,27 +55,32 @@ export function useEventSource(apiKey: string | null) {
   const esRef = useRef<EventSource | null>(null);
 
   const handleEvent = useCallback((type: SSEEventType, data: SSEEventPayloads[typeof type]) => {
-    // Cache invalidation
+    // Cache invalidation — uses prefix keys for paginated queries
     const rule = CACHE_INVALIDATION_MATRIX[type];
     if (rule.activity === 'invalidate') {
-      queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
+      // Invalidate ALL activity queries (all pages of queue and history)
+      queryClient.invalidateQueries({ queryKey: ['activity'] });
     } else if (rule.activity === 'patch') {
-      // Patch the specific download row in-place to avoid full refetch
+      // Patch progress in-place across all cached activity pages
       const progressData = data as SSEEventPayloads['download_progress'];
-      queryClient.setQueryData<Download[]>(queryKeys.activity(), (old) => {
-        if (!old) return old;
-        return old.map((d) =>
-          d.id === progressData.download_id
-            ? { ...d, progress: progressData.percentage }
-            : d,
-        );
-      });
+      const queryCache = queryClient.getQueryCache();
+      for (const query of queryCache.findAll({ queryKey: ['activity'] })) {
+        queryClient.setQueryData<{ data: Download[]; total: number }>(query.queryKey, (old) => {
+          if (!old?.data) return old;
+          const patched = old.data.map((d) =>
+            d.id === progressData.download_id
+              ? { ...d, progress: progressData.percentage }
+              : d,
+          );
+          return { ...old, data: patched };
+        });
+      }
     }
     if (rule.activityCounts) {
       queryClient.invalidateQueries({ queryKey: queryKeys.activityCounts() });
     }
     if (rule.books) {
-      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
+      queryClient.invalidateQueries({ queryKey: ['books'] });
       // Also invalidate individual book if we have a book_id
       if ('book_id' in data && typeof data.book_id === 'number') {
         queryClient.invalidateQueries({ queryKey: queryKeys.book(data.book_id) });

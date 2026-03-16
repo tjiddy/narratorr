@@ -54,7 +54,7 @@ vi.mock('@/hooks/useEscapeKey', () => ({
 }));
 
 vi.mock('@/hooks/useLibrary', () => ({
-  useLibrary: () => ({ data: [] }),
+  useBookIdentifiers: () => ({ data: [] }),
 }));
 
 function makeDiscoveredBook(overrides?: Partial<DiscoveredBook>): DiscoveredBook {

@@ -3,7 +3,7 @@ import { type Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '../../db/schema.js';
 import { parseInfoHash, type DownloadProtocol } from '../../core/index.js';
-import { getInProgressStatuses, getCompletedStatuses } from '../../shared/download-status-registry.js';
+import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses } from '../../shared/download-status-registry.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import type { BookStatus } from '../../shared/schemas/book.js';
 import { type DownloadClientService } from './download-client.service.js';
@@ -69,10 +69,16 @@ export class DownloadService {
   async getAll(
     status?: string,
     pagination?: { limit?: number; offset?: number },
+    section?: 'queue' | 'history',
   ): Promise<{ data: DownloadWithBook[]; total: number }> {
-    const where = status
-      ? eq(downloads.status, status as DownloadRow['status'])
-      : undefined;
+    let where;
+    if (section === 'queue') {
+      where = inArray(downloads.status, getInProgressStatuses());
+    } else if (section === 'history') {
+      where = inArray(downloads.status, getTerminalStatuses());
+    } else if (status) {
+      where = eq(downloads.status, status as DownloadRow['status']);
+    }
 
     // Get total count (with filters, before pagination)
     const [{ value: total }] = await this.db

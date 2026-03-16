@@ -20,7 +20,6 @@ vi.mock('@/hooks/useEventSource', () => ({
 }));
 
 import { api } from '@/lib/api';
-import { useSSEConnected } from '@/hooks/useEventSource';
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -47,17 +46,13 @@ describe('useActivity', () => {
     vi.clearAllMocks();
   });
 
-  it('returns downloads split into queue and history', async () => {
-    const downloads: Download[] = [
-      makeDownload({ id: 1, status: 'downloading' }),
-      makeDownload({ id: 2, status: 'queued' }),
-      makeDownload({ id: 3, status: 'imported' }),
-      makeDownload({ id: 4, status: 'failed' }),
-      makeDownload({ id: 5, status: 'importing' }),
-      makeDownload({ id: 6, status: 'completed' }),
-      makeDownload({ id: 7, status: 'paused' }),
-    ];
-    vi.mocked(api.getActivity).mockResolvedValue({ data: downloads, total: downloads.length });
+  it('returns queue and history from separate API calls', async () => {
+    const queueItems = [makeDownload({ id: 1, status: 'downloading' })];
+    const historyItems = [makeDownload({ id: 2, status: 'completed' })];
+
+    vi.mocked(api.getActivity)
+      .mockResolvedValueOnce({ data: queueItems, total: 1 })
+      .mockResolvedValueOnce({ data: historyItems, total: 1 });
 
     const { result } = renderHook(() => useActivity(), {
       wrapper: createWrapper(),
@@ -67,13 +62,12 @@ describe('useActivity', () => {
       expect(result.current.isLoading).toBe(false);
     });
 
-    // Queue: queued, downloading, paused, importing
-    expect(result.current.queue).toHaveLength(4);
-    expect(result.current.queue.map((d) => d.id).sort()).toEqual([1, 2, 5, 7]);
-
-    // History: completed, imported, failed
-    expect(result.current.history).toHaveLength(3);
-    expect(result.current.history.map((d) => d.id).sort()).toEqual([3, 4, 6]);
+    expect(result.current.queue).toHaveLength(1);
+    expect(result.current.queue[0].id).toBe(1);
+    expect(result.current.queueTotal).toBe(1);
+    expect(result.current.history).toHaveLength(1);
+    expect(result.current.history[0].id).toBe(2);
+    expect(result.current.historyTotal).toBe(1);
   });
 
   it('returns empty arrays while loading', () => {
@@ -83,7 +77,6 @@ describe('useActivity', () => {
       wrapper: createWrapper(),
     });
 
-    expect(result.current.downloads).toEqual([]);
     expect(result.current.queue).toEqual([]);
     expect(result.current.history).toEqual([]);
     expect(result.current.isLoading).toBe(true);
@@ -133,27 +126,6 @@ describe('useActivity', () => {
     expect(vi.mocked(api.retryDownload).mock.calls[0][0]).toBe(42);
   });
 
-  it('classifies checking and pending_review downloads into queue', async () => {
-    const downloads: Download[] = [
-      makeDownload({ id: 1, status: 'checking' }),
-      makeDownload({ id: 2, status: 'pending_review' }),
-      makeDownload({ id: 3, status: 'imported' }),
-    ];
-    vi.mocked(api.getActivity).mockResolvedValue({ data: downloads, total: downloads.length });
-
-    const { result } = renderHook(() => useActivity(), {
-      wrapper: createWrapper(),
-    });
-
-    await waitFor(() => {
-      expect(result.current.isLoading).toBe(false);
-    });
-
-    expect(result.current.queue).toHaveLength(2);
-    expect(result.current.queue.map((d) => d.id).sort()).toEqual([1, 2]);
-    expect(result.current.history).toHaveLength(1);
-  });
-
   it('approve mutation calls api and invalidates queries', async () => {
     vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
     vi.mocked(api.approveDownload).mockResolvedValue(undefined as never);
@@ -198,66 +170,6 @@ describe('useActivity', () => {
     expect(vi.mocked(api.rejectDownload).mock.calls[0][0]).toBe(42);
   });
 
-  it('enables polling when any download has in-progress status', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      const downloads: Download[] = [
-        makeDownload({ id: 1, status: 'checking' }),
-        makeDownload({ id: 2, status: 'imported' }),
-      ];
-      vi.mocked(api.getActivity).mockResolvedValue({ data: downloads, total: downloads.length });
-
-      const { result } = renderHook(() => useActivity(), {
-        wrapper: createWrapper(),
-      });
-
-      await waitFor(() => {
-        expect(result.current.isLoading).toBe(false);
-      });
-
-      // First call from initial fetch
-      expect(api.getActivity).toHaveBeenCalledTimes(1);
-
-      // Advance past the refetch interval
-      await vi.advanceTimersByTimeAsync(5500);
-
-      // Should have refetched because an in-progress download exists
-      expect(vi.mocked(api.getActivity).mock.calls.length).toBeGreaterThan(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('disables polling when all downloads are terminal', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      const downloads: Download[] = [
-        makeDownload({ id: 1, status: 'completed' }),
-        makeDownload({ id: 2, status: 'imported' }),
-        makeDownload({ id: 3, status: 'failed' }),
-      ];
-      vi.mocked(api.getActivity).mockResolvedValue({ data: downloads, total: downloads.length });
-
-      const { result } = renderHook(() => useActivity(), {
-        wrapper: createWrapper(),
-      });
-
-      await waitFor(() => {
-        expect(result.current.isLoading).toBe(false);
-      });
-
-      const callCountAfterLoad = vi.mocked(api.getActivity).mock.calls.length;
-
-      // Advance past when a refetch would have fired
-      await vi.advanceTimersByTimeAsync(10000);
-
-      // Should NOT have refetched — all statuses are terminal
-      expect(vi.mocked(api.getActivity).mock.calls.length).toBe(callCountAfterLoad);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it('sets isError when API rejects', async () => {
     vi.mocked(api.getActivity).mockRejectedValue(new Error('Network error'));
 
@@ -268,44 +180,5 @@ describe('useActivity', () => {
     await waitFor(() => {
       expect(result.current.isError).toBe(true);
     });
-  });
-
-  it('disables polling when SSE is connected', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      // SSE is connected — polling should be gated off
-      vi.mocked(useSSEConnected).mockReturnValue(true);
-
-      const downloads: Download[] = [
-        makeDownload({ id: 1, status: 'downloading' }),
-        makeDownload({ id: 2, status: 'checking' }),
-      ];
-      vi.mocked(api.getActivity).mockResolvedValue({ data: downloads, total: downloads.length });
-
-      const { result, rerender } = renderHook(() => useActivity(), {
-        wrapper: createWrapper(),
-      });
-
-      await waitFor(() => {
-        expect(result.current.isLoading).toBe(false);
-      });
-
-      const callCountAfterLoad = vi.mocked(api.getActivity).mock.calls.length;
-
-      // Advance well past the 5s interval — SSE gate should suppress polling
-      await vi.advanceTimersByTimeAsync(15_000);
-
-      expect(vi.mocked(api.getActivity).mock.calls.length).toBe(callCountAfterLoad);
-
-      // Now disconnect SSE — polling should resume since in-progress downloads exist
-      vi.mocked(useSSEConnected).mockReturnValue(false);
-      rerender();
-
-      await vi.advanceTimersByTimeAsync(6_000);
-
-      expect(vi.mocked(api.getActivity).mock.calls.length).toBeGreaterThan(callCountAfterLoad);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });

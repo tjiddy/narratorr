@@ -1464,4 +1464,44 @@ describe('DownloadService', () => {
     });
   });
 
+  // #372 — Section split for queue/history pagination
+  describe('getAll with section', () => {
+    it('accepts section=queue without error', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 2 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAll(undefined, undefined, 'queue');
+      expect(result.total).toBe(2);
+    });
+
+    it('accepts section=history without error', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 5 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAll(undefined, undefined, 'history');
+      expect(result.total).toBe(5);
+    });
+
+    it('returns all downloads when no section param', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 10 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAll(undefined, undefined);
+      expect(result.total).toBe(10);
+    });
+
+    it('combines section with pagination', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 20 }]))
+        .mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
+
+      const result = await service.getAll(undefined, { limit: 10, offset: 0 }, 'queue');
+      expect(result.total).toBe(20);
+      expect(result.data).toHaveLength(1);
+    });
+  });
+
 });

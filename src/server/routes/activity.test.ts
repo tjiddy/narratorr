@@ -62,7 +62,7 @@ describe('activity routes', () => {
 
       await app.inject({ method: 'GET', url: '/api/activity?status=downloading' });
 
-      expect(services.download.getAll).toHaveBeenCalledWith('downloading', undefined);
+      expect(services.download.getAll).toHaveBeenCalledWith('downloading', { limit: 50, offset: undefined }, undefined);
     });
 
     it('forwards limit and offset to service', async () => {
@@ -70,7 +70,7 @@ describe('activity routes', () => {
 
       await app.inject({ method: 'GET', url: '/api/activity?limit=10&offset=20' });
 
-      expect(services.download.getAll).toHaveBeenCalledWith(undefined, { limit: 10, offset: 20 });
+      expect(services.download.getAll).toHaveBeenCalledWith(undefined, { limit: 10, offset: 20 }, undefined);
     });
 
     it('rejects limit=0 with 400', async () => {
@@ -509,6 +509,83 @@ describe('activity routes', () => {
 
       expect(res.statusCode).toBe(201);
       expect(services.download.retry).toHaveBeenCalledWith(1);
+    });
+  });
+
+  // #372 — Default pagination enforcement and section split
+  describe('GET /api/activity — default pagination', () => {
+    it('applies default limit=50 when no limit param provided', async () => {
+      (services.download.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/activity' });
+
+      expect(services.download.getAll).toHaveBeenCalledWith(
+        undefined,
+        { limit: 50, offset: undefined },
+        undefined,
+      );
+    });
+
+    it('applies default limit when offset provided without limit', async () => {
+      (services.download.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/activity?offset=10' });
+
+      expect(services.download.getAll).toHaveBeenCalledWith(
+        undefined,
+        { limit: 50, offset: 10 },
+        undefined,
+      );
+    });
+
+    it('allows explicit limit to override default', async () => {
+      (services.download.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/activity?limit=25' });
+
+      expect(services.download.getAll).toHaveBeenCalledWith(
+        undefined,
+        { limit: 25, offset: undefined },
+        undefined,
+      );
+    });
+  });
+
+  describe('GET /api/activity — section split', () => {
+    it('passes section=queue to service', async () => {
+      (services.download.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/activity?section=queue' });
+
+      expect(services.download.getAll).toHaveBeenCalledWith(
+        undefined,
+        { limit: 50, offset: undefined },
+        'queue',
+      );
+    });
+
+    it('passes section=history to service', async () => {
+      (services.download.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/activity?section=history' });
+
+      expect(services.download.getAll).toHaveBeenCalledWith(
+        undefined,
+        { limit: 50, offset: undefined },
+        'history',
+      );
+    });
+
+    it('returns all downloads when no section param', async () => {
+      (services.download.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/activity' });
+
+      expect(services.download.getAll).toHaveBeenCalledWith(
+        undefined,
+        { limit: 50, offset: undefined },
+        undefined,
+      );
     });
   });
 });

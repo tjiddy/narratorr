@@ -5,7 +5,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useAudnexusSearch } from '@/hooks/useAudnexusSearch';
 import { resolveUrl } from '@/lib/url-utils';
 import { isBookInLibrary } from '@/lib/helpers';
-import { useLibrary } from '@/hooks/useLibrary';
+import { useBookIdentifiers } from '@/hooks/useLibrary';
 import {
   XIcon,
   SearchIcon,
@@ -37,7 +37,7 @@ interface BookEditModalProps {
 // eslint-disable-next-line max-lines-per-function, complexity -- metadata edit form with preview, search, and multi-field validation
 export function BookEditModal({ book, initial, confidence, alternatives, onSave, onClose }: BookEditModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
-  const { data: libraryBooks } = useLibrary();
+  const { data: libraryBooks } = useBookIdentifiers();
   const [title, setTitle] = useState(initial.title);
   const [author, setAuthor] = useState(initial.author);
   const [series, setSeries] = useState(initial.series);

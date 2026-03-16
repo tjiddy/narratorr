@@ -35,6 +35,7 @@ import { prowlarrApi } from './prowlarr.js';
 import { remotePathMappingsApi } from './remote-path-mappings.js';
 import { searchApi } from './search.js';
 import { settingsApi } from './settings.js';
+import { eventHistoryApi } from './event-history.js';
 import { systemApi } from './system.js';
 
 beforeEach(() => {
@@ -46,6 +47,11 @@ describe('activityApi', () => {
   it('getActivity → GET /activity', async () => {
     await activityApi.getActivity();
     expect(mockFetchApi).toHaveBeenCalledWith('/activity');
+  });
+
+  it('getActivity with section and pagination → GET /activity?section=history&limit=50&offset=100', async () => {
+    await activityApi.getActivity({ section: 'history', limit: 50, offset: 100 });
+    expect(mockFetchApi).toHaveBeenCalledWith('/activity?section=history&limit=50&offset=100');
   });
 
   it('getActiveDownloads → GET /activity/active', async () => {
@@ -137,6 +143,11 @@ describe('blacklistApi', () => {
     expect(mockFetchApi).toHaveBeenCalledWith('/blacklist');
   });
 
+  it('getBlacklist with pagination → GET /blacklist?limit=100&offset=200', async () => {
+    await blacklistApi.getBlacklist({ limit: 100, offset: 200 });
+    expect(mockFetchApi).toHaveBeenCalledWith('/blacklist?limit=100&offset=200');
+  });
+
   it('addToBlacklist → POST /blacklist with entry', async () => {
     const entry = { infoHash: 'abc', title: 'Bad Book', reason: 'spam' as const };
     await blacklistApi.addToBlacklist(entry);
@@ -167,8 +178,23 @@ describe('booksApi', () => {
   });
 
   it('getBooks with status filter → GET /books?status=...', async () => {
-    await booksApi.getBooks('missing');
+    await booksApi.getBooks({ status: 'missing' });
     expect(mockFetchApi).toHaveBeenCalledWith('/books?status=missing');
+  });
+
+  it('getBooks with all params → GET /books?status=wanted&search=tolkien&sortField=title&sortDirection=asc&limit=10&offset=20', async () => {
+    await booksApi.getBooks({ status: 'wanted', search: 'tolkien', sortField: 'title', sortDirection: 'asc', limit: 10, offset: 20 });
+    expect(mockFetchApi).toHaveBeenCalledWith('/books?status=wanted&search=tolkien&sortField=title&sortDirection=asc&limit=10&offset=20');
+  });
+
+  it('getBookStats → GET /books/stats', async () => {
+    await booksApi.getBookStats();
+    expect(mockFetchApi).toHaveBeenCalledWith('/books/stats');
+  });
+
+  it('getBookIdentifiers → GET /books/identifiers', async () => {
+    await booksApi.getBookIdentifiers();
+    expect(mockFetchApi).toHaveBeenCalledWith('/books/identifiers');
   });
 
   it('getBookById → GET /books/:id', async () => {
@@ -545,6 +571,18 @@ describe('settingsApi', () => {
       method: 'POST',
       body: JSON.stringify({ path: '/usr/bin/ffmpeg' }),
     }));
+  });
+});
+
+describe('eventHistoryApi', () => {
+  it('getEventHistory → GET /event-history', async () => {
+    await eventHistoryApi.getEventHistory();
+    expect(mockFetchApi).toHaveBeenCalledWith('/event-history');
+  });
+
+  it('getEventHistory with all params → GET /event-history?eventType=imported&search=tolkien&limit=50&offset=0', async () => {
+    await eventHistoryApi.getEventHistory({ eventType: 'imported', search: 'tolkien', limit: 50, offset: 0 });
+    expect(mockFetchApi).toHaveBeenCalledWith('/event-history?eventType=imported&search=tolkien&limit=50&offset=0');
   });
 });
 

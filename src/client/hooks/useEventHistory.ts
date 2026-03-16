@@ -1,16 +1,18 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api } from '@/lib/api';
+import { api, type EventHistoryParams } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 
-export function useEventHistory(params?: { eventType?: string; search?: string }) {
+export function useEventHistory(params?: EventHistoryParams) {
   const queryClient = useQueryClient();
 
-  const { data: events = [], isLoading, isError } = useQuery({
+  const query = useQuery({
     queryKey: queryKeys.eventHistory.all(params),
     queryFn: () => api.getEventHistory(params),
-    select: (response) => response.data,
   });
+
+  const events = query.data?.data ?? [];
+  const total = query.data?.total ?? 0;
 
   const markFailedMutation = useMutation({
     mutationFn: api.markEventFailed,
@@ -48,7 +50,7 @@ export function useEventHistory(params?: { eventType?: string; search?: string }
     },
   });
 
-  return { events, isLoading, isError, markFailedMutation, deleteMutation, bulkDeleteMutation };
+  return { events, total, isLoading: query.isLoading, isError: query.isError, markFailedMutation, deleteMutation, bulkDeleteMutation };
 }
 
 export function useBookEventHistory(bookId: number) {

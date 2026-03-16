@@ -22,6 +22,14 @@ export const idParamSchema = z.object({
 // Pagination schemas
 // ============================================================================
 
+/** Default page sizes when client omits limit param */
+export const DEFAULT_LIMITS = {
+  books: 100,
+  blacklist: 100,
+  activity: 50,
+  eventHistory: 50,
+} as const;
+
 export const paginationParamsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional(),
   offset: z.coerce.number().int().min(0).optional(),

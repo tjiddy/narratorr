@@ -12,11 +12,20 @@ export interface BookEvent {
   createdAt: string;
 }
 
+export interface EventHistoryParams {
+  eventType?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}
+
 export const eventHistoryApi = {
-  getEventHistory: (params?: { eventType?: string; search?: string }) => {
+  getEventHistory: (params?: EventHistoryParams) => {
     const searchParams = new URLSearchParams();
     if (params?.eventType) searchParams.set('eventType', params.eventType);
     if (params?.search) searchParams.set('search', params.search);
+    if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
+    if (params?.offset !== undefined) searchParams.set('offset', String(params.offset));
     const qs = searchParams.toString();
     return fetchApi<{ data: BookEvent[]; total: number }>(`/event-history${qs ? `?${qs}` : ''}`);
   },

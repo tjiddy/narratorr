@@ -20,6 +20,7 @@ describe('EventHistorySection', () => {
   it('shows loading spinner while loading', () => {
     mockUseEventHistory.mockReturnValue({
       events: [],
+      total: 0,
       isLoading: true,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
@@ -28,12 +29,13 @@ describe('EventHistorySection', () => {
     });
 
     renderWithProviders(<EventHistorySection />);
-    expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
+    expect(screen.getAllByTestId('loading-spinner').length).toBeGreaterThanOrEqual(1);
   });
 
   it('shows empty state when no events', () => {
     mockUseEventHistory.mockReturnValue({
       events: [],
+      total: 0,
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
@@ -50,6 +52,7 @@ describe('EventHistorySection', () => {
       events: [
         { id: 1, bookId: 1, downloadId: 5, bookTitle: 'The Way of Kings', authorName: 'Brandon Sanderson', eventType: 'grabbed', source: 'auto', reason: null, createdAt: new Date().toISOString() },
       ],
+      total: 1,
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
@@ -66,6 +69,7 @@ describe('EventHistorySection', () => {
   it('renders type filter pills', () => {
     mockUseEventHistory.mockReturnValue({
       events: [],
+      total: 0,
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
@@ -84,6 +88,7 @@ describe('EventHistorySection', () => {
     const user = userEvent.setup();
     mockUseEventHistory.mockReturnValue({
       events: [],
+      total: 0,
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
@@ -105,6 +110,7 @@ describe('EventHistorySection', () => {
     const user = userEvent.setup();
     mockUseEventHistory.mockReturnValue({
       events: [],
+      total: 0,
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
@@ -126,6 +132,7 @@ describe('EventHistorySection', () => {
   it('shows Clear Errors and Clear All buttons', () => {
     mockUseEventHistory.mockReturnValue({
       events: [],
+      total: 0,
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
@@ -142,6 +149,7 @@ describe('EventHistorySection', () => {
     const user = userEvent.setup();
     mockUseEventHistory.mockReturnValue({
       events: [],
+      total: 0,
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
@@ -161,6 +169,7 @@ describe('EventHistorySection', () => {
     const mockBulkDelete = vi.fn();
     mockUseEventHistory.mockReturnValue({
       events: [],
+      total: 0,
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
@@ -185,6 +194,7 @@ describe('EventHistorySection', () => {
       events: [
         { id: 42, bookId: 1, downloadId: 5, bookTitle: 'Test Book', authorName: null, eventType: 'grabbed', source: 'auto', reason: null, createdAt: new Date().toISOString() },
       ],
+      total: 1,
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
@@ -202,6 +212,7 @@ describe('EventHistorySection', () => {
     const user = userEvent.setup();
     mockUseEventHistory.mockReturnValue({
       events: [],
+      total: 0,
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
@@ -221,6 +232,7 @@ describe('EventHistorySection', () => {
     const mockBulkDelete = vi.fn();
     mockUseEventHistory.mockReturnValue({
       events: [],
+      total: 0,
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
@@ -252,6 +264,7 @@ describe('EventHistorySection', () => {
   it('shows filtered empty state message', () => {
     mockUseEventHistory.mockReturnValue({
       events: [],
+      total: 0,
       isLoading: false,
       isError: false,
       markFailedMutation: { mutate: vi.fn(), isPending: false } as never,

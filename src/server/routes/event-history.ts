@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { EventHistoryService } from '../services';
-import { idParamSchema, eventHistoryQuerySchema, paginationParamsSchema } from '../../shared/schemas.js';
+import { idParamSchema, eventHistoryQuerySchema, paginationParamsSchema, DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { z } from 'zod';
 
 type IdParam = z.infer<typeof idParamSchema>;
@@ -30,7 +30,7 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
       try {
         const { eventType, search, limit, offset } = request.query;
         request.log.debug({ eventType, search, limit, offset }, 'Fetching event history');
-        const pagination = limit !== undefined || offset !== undefined ? { limit, offset } : undefined;
+        const pagination = { limit: limit ?? DEFAULT_LIMITS.eventHistory, offset };
         return await eventHistoryService.getAll({ eventType, search }, pagination);
       } catch (error) {
         request.log.error(error, 'Failed to fetch event history');

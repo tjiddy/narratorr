@@ -38,7 +38,7 @@ describe('event-history routes', () => {
 
       await app.inject({ method: 'GET', url: '/api/event-history?eventType=grabbed' });
 
-      expect(services.eventHistory.getAll).toHaveBeenCalledWith({ eventType: 'grabbed', search: undefined }, undefined);
+      expect(services.eventHistory.getAll).toHaveBeenCalledWith({ eventType: 'grabbed', search: undefined }, { limit: 50, offset: undefined });
     });
 
     it('passes search filter to service', async () => {
@@ -46,7 +46,7 @@ describe('event-history routes', () => {
 
       await app.inject({ method: 'GET', url: '/api/event-history?search=Kings' });
 
-      expect(services.eventHistory.getAll).toHaveBeenCalledWith({ eventType: undefined, search: 'Kings' }, undefined);
+      expect(services.eventHistory.getAll).toHaveBeenCalledWith({ eventType: undefined, search: 'Kings' }, { limit: 50, offset: undefined });
     });
 
     it('forwards limit and offset to service', async () => {
@@ -199,6 +199,42 @@ describe('event-history routes', () => {
       const res = await app.inject({ method: 'POST', url: '/api/event-history/1/mark-failed' });
 
       expect(res.statusCode).toBe(400);
+    });
+  });
+
+  // #372 — Default pagination enforcement
+  describe('GET /api/event-history — default pagination', () => {
+    it('applies default limit=50 when no limit param provided', async () => {
+      (services.eventHistory.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/event-history' });
+
+      expect(services.eventHistory.getAll).toHaveBeenCalledWith(
+        { eventType: undefined, search: undefined },
+        { limit: 50, offset: undefined },
+      );
+    });
+
+    it('applies default limit when offset provided without limit', async () => {
+      (services.eventHistory.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/event-history?offset=20' });
+
+      expect(services.eventHistory.getAll).toHaveBeenCalledWith(
+        { eventType: undefined, search: undefined },
+        { limit: 50, offset: 20 },
+      );
+    });
+
+    it('allows explicit limit to override default', async () => {
+      (services.eventHistory.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/event-history?limit=10' });
+
+      expect(services.eventHistory.getAll).toHaveBeenCalledWith(
+        { eventType: undefined, search: undefined },
+        { limit: 10, offset: undefined },
+      );
     });
   });
 });

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { useLibrary } from '@/hooks/useLibrary';
+import { useLibrary, useBookStats } from '@/hooks/useLibrary';
 import { api, type BookWithAuthor } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import type { DisplayBook } from './helpers.js';
@@ -9,7 +9,7 @@ import { useDeleteConfirmation } from '@/hooks/useDeleteConfirmation';
 import { LibraryModals } from './LibraryModals.js';
 import { LoadingSpinner } from '@/components/icons';
 import { useImportPolling } from './useImportPolling.js';
-import { useLibraryFilters } from './useLibraryFilters.js';
+import { useLibraryFilters, applyClientFilters } from './useLibraryFilters.js';
 import { useLibraryMutations } from './useLibraryMutations.js';
 import { useLibraryBulkActions } from './useLibraryBulkActions.js';
 import { LibraryToolbar, type ViewMode } from './LibraryToolbar.js';
@@ -19,6 +19,7 @@ import { BulkActionToolbar } from './BulkActionToolbar.js';
 import { EmptyLibraryState } from './EmptyLibraryState.js';
 import { NoMatchState } from './NoMatchState.js';
 import { LibraryHeader } from './LibraryHeader.js';
+import { Pagination } from '@/components/Pagination';
 
 const VIEW_STORAGE_KEY = 'narratorr:library-view';
 
@@ -30,14 +31,37 @@ function getInitialViewMode(): ViewMode {
   return 'grid';
 }
 
+// eslint-disable-next-line max-lines-per-function, complexity -- page orchestrator with pagination, stats, filters, bulk actions
 export function LibraryPage() {
   const navigate = useNavigate();
-  const { data: books = [], isLoading } = useLibrary();
+  const filters = useLibraryFilters();
+  const { data: libraryResponse, isLoading } = useLibrary(filters.apiParams);
+  const { data: stats } = useBookStats();
+
+  const books = useMemo(() => libraryResponse?.data ?? [], [libraryResponse]);
+  const totalBooks = libraryResponse?.total ?? 0;
+
+  // Clamp page when total shrinks (e.g., after deleting last item on a page)
+  useEffect(() => {
+    filters.pagination.clampToTotal(totalBooks);
+  }, [totalBooks, filters.pagination]);
 
   useImportPolling(books);
-  const filters = useLibraryFilters(books);
+
+  // Apply client-side filters (author/series/narrator/collapse) to page data
+  const displayBooks = useMemo((): DisplayBook[] =>
+    applyClientFilters(books, {
+      authorFilter: filters.authorFilter,
+      seriesFilter: filters.seriesFilter,
+      narratorFilter: filters.narratorFilter,
+      collapseSeriesEnabled: filters.collapseSeriesEnabled,
+      sortField: filters.sortField,
+      sortDirection: filters.sortDirection,
+    }),
+  [books, filters.authorFilter, filters.seriesFilter, filters.narratorFilter, filters.collapseSeriesEnabled, filters.sortField, filters.sortDirection]);
+
+  const bulk = useLibraryBulkActions(displayBooks);
   const { rescanMutation, deleteMutation, deleteMissingMutation, searchAllWantedMutation } = useLibraryMutations();
-  const bulk = useLibraryBulkActions(filters.filteredBooks);
   const { data: indexers = [] } = useQuery({ queryKey: queryKeys.indexers(), queryFn: api.getIndexers });
   const deleteConfirm = useDeleteConfirmation<BookWithAuthor>();
   const [deleteFiles, setDeleteFiles] = useState(false);
@@ -53,12 +77,24 @@ export function LibraryPage() {
     if (mode === 'grid') bulk.clearSelection();
   }, [bulk]);
 
-  const missingCount = books.filter((b) => b.status === 'missing').length;
-  const wantedCount = useMemo(() => books.filter((b) => b.status === 'wanted').length, [books]);
+  // Status counts and global action counts from stats endpoint
+  const statusCounts = useMemo(() => {
+    if (!stats) return { all: 0, wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 };
+    const { counts } = stats;
+    return {
+      all: counts.wanted + counts.downloading + counts.imported + counts.failed + counts.missing,
+      ...counts,
+    };
+  }, [stats]);
+
+  const missingCount = statusCounts.missing;
+  const wantedCount = statusCounts.wanted;
   const enabledIndexerCount = useMemo(() => indexers.filter((i) => i.enabled).length, [indexers]);
-  const bp = books.length !== 1 ? 's' : '';
+  const totalAll = statusCounts.all;
+  const bp = totalAll !== 1 ? 's' : '';
   const subtitle = filters.isSearching
-    ? `${filters.filteredBooks.length} of ${books.length} book${bp}` : `${books.length} book${bp} in your collection`;
+    ? `${totalBooks} result${totalBooks !== 1 ? 's' : ''}`
+    : `${totalAll} book${bp} in your collection`;
   const searchAllWantedMessage = `Search ${wantedCount} wanted book${wantedCount !== 1 ? 's' : ''} across ${enabledIndexerCount} enabled indexer${enabledIndexerCount !== 1 ? 's' : ''} (~${wantedCount * enabledIndexerCount} API calls)?`;
   const closeMenu = useCallback(() => setOpenMenuId(null), []);
   useEffect(() => {
@@ -70,6 +106,11 @@ export function LibraryPage() {
 
   const anySelectedHasPath = bulk.selectedBooks.some((b) => b.path);
 
+  // Filter dropdowns from stats endpoint
+  const uniqueAuthors = stats?.authors ?? [];
+  const uniqueSeries = stats?.series ?? [];
+  const uniqueNarrators = stats?.narrators ?? [];
+
   if (isLoading) return (
     <div className="space-y-6">
       <LibraryHeader />
@@ -78,7 +119,7 @@ export function LibraryPage() {
       </div>
     </div>
   );
-  if (books.length === 0) return (
+  if (totalAll === 0 && !filters.isSearching && filters.statusFilter === 'all') return (
     <div className="space-y-6">
       <LibraryHeader />
       <EmptyLibraryState />
@@ -86,9 +127,9 @@ export function LibraryPage() {
   );
 
   const filterProps = {
-    authorFilter: filters.authorFilter, onAuthorFilterChange: filters.setAuthorFilter, uniqueAuthors: filters.uniqueAuthors,
-    seriesFilter: filters.seriesFilter, onSeriesFilterChange: filters.setSeriesFilter, uniqueSeries: filters.uniqueSeries,
-    narratorFilter: filters.narratorFilter, onNarratorFilterChange: filters.setNarratorFilter, uniqueNarrators: filters.uniqueNarrators,
+    authorFilter: filters.authorFilter, onAuthorFilterChange: filters.setAuthorFilter, uniqueAuthors,
+    seriesFilter: filters.seriesFilter, onSeriesFilterChange: filters.setSeriesFilter, uniqueSeries,
+    narratorFilter: filters.narratorFilter, onNarratorFilterChange: filters.setNarratorFilter, uniqueNarrators,
   };
   const sortProps = {
     sortField: filters.sortField, onSortFieldChange: filters.setSortField,
@@ -105,7 +146,7 @@ export function LibraryPage() {
         onSearchClear={filters.clearSearch}
         statusFilter={filters.statusFilter}
         onStatusFilterChange={filters.setStatusFilter}
-        statusCounts={filters.statusCounts}
+        statusCounts={statusCounts}
         filtersOpen={filters.filtersOpen}
         onFiltersToggle={() => filters.setFiltersOpen(!filters.filtersOpen)}
         activeFilterCount={filters.activeFilterCount}
@@ -136,11 +177,11 @@ export function LibraryPage() {
         />
       )}
 
-      {filters.filteredBooks.length === 0 ? (
+      {displayBooks.length === 0 ? (
         <NoMatchState onClearFilters={filters.clearAllFilters} />
       ) : viewMode === 'table' ? (
         <LibraryTableView
-          books={filters.filteredBooks}
+          books={displayBooks}
           selectedIds={bulk.selectedIds}
           onSelectionChange={bulk.setSelectedIds}
           sortField={filters.sortField}
@@ -150,7 +191,7 @@ export function LibraryPage() {
         />
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
-          {filters.filteredBooks.map((book: DisplayBook, index) => (
+          {displayBooks.map((book: DisplayBook, index) => (
             <LibraryBookCard
               key={book.id}
               book={book}
@@ -166,6 +207,14 @@ export function LibraryPage() {
           ))}
         </div>
       )}
+
+      <Pagination
+        page={filters.pagination.page}
+        totalPages={filters.pagination.totalPages(totalBooks)}
+        total={totalBooks}
+        limit={filters.pagination.limit}
+        onPageChange={filters.pagination.setPage}
+      />
 
       <LibraryModals
         deleteTarget={deleteConfirm.target}

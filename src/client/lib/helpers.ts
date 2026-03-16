@@ -1,4 +1,4 @@
-import type { BookMetadata, BookWithAuthor, CreateBookPayload } from '@/lib/api';
+import type { BookMetadata, BookWithAuthor, BookIdentifier, CreateBookPayload } from '@/lib/api';
 
 export function formatDuration(minutes?: number | null): string | null {
   if (!minutes) return null;
@@ -32,13 +32,21 @@ export function mapBookMetadataToPayload(
   };
 }
 
-export function isBookInLibrary(book: BookMetadata, libraryBooks?: BookWithAuthor[]): boolean {
+type LibraryEntry = BookIdentifier | BookWithAuthor;
+
+function getAuthorName(entry: LibraryEntry): string | null | undefined {
+  if ('authorName' in entry) return entry.authorName;
+  return (entry as BookWithAuthor).author?.name;
+}
+
+export function isBookInLibrary(book: BookMetadata, libraryBooks?: LibraryEntry[]): boolean {
   if (!libraryBooks?.length) return false;
   return libraryBooks.some((lb) => {
     if (book.asin && lb.asin && book.asin === lb.asin) return true;
     const titleMatch = lb.title.toLowerCase() === book.title.toLowerCase();
+    const authorName = getAuthorName(lb);
     const authorMatch = book.authors[0]?.name
-      && lb.author?.name?.toLowerCase() === book.authors[0].name.toLowerCase();
+      && authorName?.toLowerCase() === book.authors[0].name.toLowerCase();
     return titleMatch && authorMatch;
   });
 }

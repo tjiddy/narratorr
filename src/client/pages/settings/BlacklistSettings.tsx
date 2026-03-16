@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type BlacklistEntry } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { Pagination } from '@/components/Pagination';
+import { usePagination } from '@/hooks/usePagination';
+import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 import {
   LoadingSpinner,
   ShieldBanIcon,
@@ -36,12 +39,20 @@ function formatExpiry(entry: BlacklistEntry): string {
 export function BlacklistSettings() {
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<BlacklistEntry | null>(null);
+  const pagination = usePagination(DEFAULT_LIMITS.blacklist);
 
-  const { data: entries = [], isLoading } = useQuery({
-    queryKey: queryKeys.blacklist(),
-    queryFn: api.getBlacklist,
-    select: (response) => response.data,
+  const paginationParams = { limit: pagination.limit, offset: pagination.offset };
+  const { data: response, isLoading } = useQuery({
+    queryKey: queryKeys.blacklist(paginationParams),
+    queryFn: () => api.getBlacklist(paginationParams),
   });
+  const entries = response?.data ?? [];
+  const total = response?.total ?? 0;
+
+  // Clamp page when total shrinks (e.g., after deleting last item on a page)
+  useEffect(() => {
+    pagination.clampToTotal(total);
+  }, [total, pagination]);
 
   const deleteMutation = useMutation({
     mutationFn: api.removeFromBlacklist,
@@ -151,6 +162,14 @@ export function BlacklistSettings() {
           ))}
         </div>
       )}
+
+      <Pagination
+        page={pagination.page}
+        totalPages={pagination.totalPages(total)}
+        total={total}
+        limit={pagination.limit}
+        onPageChange={pagination.setPage}
+      />
 
       <ConfirmModal
         isOpen={deleteTarget !== null}

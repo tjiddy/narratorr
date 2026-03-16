@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import DOMPurify from 'dompurify';
 import { useAuthor, useAuthorBooks } from '@/hooks/useMetadata';
-import { useLibrary } from '@/hooks/useLibrary';
+import { useBookIdentifiers } from '@/hooks/useLibrary';
 import { useAddBooksToLibrary } from '@/hooks/useAddBooksToLibrary';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -20,7 +20,7 @@ export function AuthorPage() {
 
   const { data: author, isLoading: authorLoading, isError: authorError } = useAuthor(asin);
   const { data: books, isLoading: booksLoading } = useAuthorBooks(asin);
-  const { data: libraryBooks } = useLibrary();
+  const { data: libraryBooks } = useBookIdentifiers();
   const { data: settings } = useQuery({ queryKey: queryKeys.settings(), queryFn: api.getSettings });
   const qualityDefaults = settings?.quality
     ? { searchImmediately: settings.quality.searchImmediately, monitorForUpgrades: settings.quality.monitorForUpgrades }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 
@@ -197,6 +197,39 @@ describe('blacklist routes', () => {
       });
 
       expect(res.statusCode).toBe(400);
+    });
+  });
+
+  // #372 — Default pagination enforcement
+  describe('GET /api/blacklist — default pagination', () => {
+    it('applies default limit=100 when no limit param provided', async () => {
+      (services.blacklist.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/blacklist' });
+
+      expect(services.blacklist.getAll).toHaveBeenCalledWith(
+        { limit: 100, offset: undefined },
+      );
+    });
+
+    it('applies default limit when offset provided without limit', async () => {
+      (services.blacklist.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/blacklist?offset=50' });
+
+      expect(services.blacklist.getAll).toHaveBeenCalledWith(
+        { limit: 100, offset: 50 },
+      );
+    });
+
+    it('allows explicit limit to override default', async () => {
+      (services.blacklist.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/blacklist?limit=10' });
+
+      expect(services.blacklist.getAll).toHaveBeenCalledWith(
+        { limit: 10, offset: undefined },
+      );
     });
   });
 });
