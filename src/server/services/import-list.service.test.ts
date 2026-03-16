@@ -4,6 +4,7 @@ import type { Db } from '../../db/index.js';
 import { ImportListService } from './import-list.service.js';
 import { initializeKey, _resetKey, encrypt, getKey } from '../utils/secret-codec.js';
 import { randomBytes } from 'node:crypto';
+import { mockDbChain, createMockDb, createMockLogger, inject } from '../__tests__/helpers.js';
 
 // Mock the adapter factories
 vi.mock('../../core/import-lists/index.js', () => ({
@@ -17,60 +18,7 @@ vi.mock('../../core/import-lists/index.js', () => ({
 const { IMPORT_LIST_ADAPTER_FACTORIES } = await import('../../core/import-lists/index.js');
 const mockFactories = IMPORT_LIST_ADAPTER_FACTORIES as Record<string, ReturnType<typeof vi.fn>>;
 
-const mockLog = {
-  info: vi.fn(),
-  warn: vi.fn(),
-  error: vi.fn(),
-  debug: vi.fn(),
-  fatal: vi.fn(),
-  trace: vi.fn(),
-  child: vi.fn().mockReturnThis(),
-  silent: vi.fn(),
-  level: 'info',
-} as unknown as FastifyBaseLogger;
-
-// ─── Chainable mock DB ──────────────────────────────────────────────────────
-// Returns configurable result arrays at the end of each chain
-
-function createChainableMockDb() {
-  let selectResult: unknown[] = [];
-  let insertResult: unknown[] = [];
-
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockImplementation(() => selectResult),
-    limit: vi.fn().mockImplementation(() => selectResult.slice(0, 1)),
-    orderBy: vi.fn().mockImplementation(() => selectResult),
-    insert: vi.fn().mockReturnThis(),
-    values: vi.fn().mockReturnThis(),
-    returning: vi.fn().mockImplementation(() => insertResult),
-    onConflictDoNothing: vi.fn().mockReturnThis(),
-    update: vi.fn().mockReturnThis(),
-    set: vi.fn().mockReturnThis(),
-    delete: vi.fn().mockReturnThis(),
-  };
-
-  // Make all methods return the chain for fluent calls
-  for (const key of Object.keys(chain)) {
-    const fn = chain[key as keyof typeof chain];
-    if (key === 'where' || key === 'limit' || key === 'orderBy' || key === 'returning') continue;
-    (fn as ReturnType<typeof vi.fn>).mockReturnValue(chain);
-  }
-  // where needs to return both chain (for further chaining) and be iterable (for sync query)
-  // So we make it return the chain but override the iterator
-  chain.where.mockReturnValue(chain);
-
-  return {
-    ...chain,
-    _setSelectResult: (rows: unknown[]) => { selectResult = rows; },
-    _setInsertResult: (rows: unknown[]) => { insertResult = rows; },
-    // Override select chain to return array for sync queries
-    _makeSelectReturnArray: () => {
-      chain.where.mockImplementation(() => selectResult);
-    },
-  };
-}
+const mockLog = createMockLogger() as unknown as FastifyBaseLogger;
 
 describe('ImportListService', () => {
   let service: ImportListService;
@@ -86,8 +34,8 @@ describe('ImportListService', () => {
       const mockProvider = { test: vi.fn().mockResolvedValue({ success: true }), fetchItems: vi.fn() };
       mockFactories.abs.mockReturnValue(mockProvider);
 
-      const db = createChainableMockDb();
-      service = new ImportListService(db as unknown as Db, mockLog);
+      const db = createMockDb();
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       const result = await service.testConfig({
         type: 'abs',
@@ -98,8 +46,8 @@ describe('ImportListService', () => {
     });
 
     it('returns failure for unknown provider type', async () => {
-      const db = createChainableMockDb();
-      service = new ImportListService(db as unknown as Db, mockLog);
+      const db = createMockDb();
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       const result = await service.testConfig({ type: 'unknown', settings: {} });
       expect(result.success).toBe(false);
@@ -108,8 +56,8 @@ describe('ImportListService', () => {
 
     it('catches provider test errors', async () => {
       mockFactories.nyt.mockImplementation(() => { throw new Error('Bad config'); });
-      const db = createChainableMockDb();
-      service = new ImportListService(db as unknown as Db, mockLog);
+      const db = createMockDb();
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       const result = await service.testConfig({ type: 'nyt', settings: {} });
       expect(result.success).toBe(false);
@@ -123,8 +71,8 @@ describe('ImportListService', () => {
       const mockProvider = { fetchItems: vi.fn().mockResolvedValue(items), test: vi.fn() };
       mockFactories.nyt.mockReturnValue(mockProvider);
 
-      const db = createChainableMockDb();
-      service = new ImportListService(db as unknown as Db, mockLog);
+      const db = createMockDb();
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       const result = await service.preview({ type: 'nyt', settings: { apiKey: 'key', list: 'audio-fiction' } });
       expect(result.items).toHaveLength(10);
@@ -135,8 +83,8 @@ describe('ImportListService', () => {
       const mockProvider = { fetchItems: vi.fn().mockResolvedValue([]), test: vi.fn() };
       mockFactories.hardcover.mockReturnValue(mockProvider);
 
-      const db = createChainableMockDb();
-      service = new ImportListService(db as unknown as Db, mockLog);
+      const db = createMockDb();
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       const result = await service.preview({ type: 'hardcover', settings: { apiKey: 'key' } });
       expect(result.items).toHaveLength(0);
@@ -144,8 +92,8 @@ describe('ImportListService', () => {
     });
 
     it('throws for unknown provider type', async () => {
-      const db = createChainableMockDb();
-      service = new ImportListService(db as unknown as Db, mockLog);
+      const db = createMockDb();
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       await expect(service.preview({ type: 'unknown', settings: {} })).rejects.toThrow('Unknown provider type');
     });
@@ -153,9 +101,9 @@ describe('ImportListService', () => {
 
   describe('CRUD', () => {
     it('getAll returns all import lists', async () => {
-      const db = createChainableMockDb();
-      db._setSelectResult([{ id: 1, name: 'Test', type: 'abs', settings: {}, enabled: true }]);
-      service = new ImportListService(db as unknown as Db, mockLog);
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([{ id: 1, name: 'Test', type: 'abs', settings: {}, enabled: true }]));
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       const results = await service.getAll();
       expect(results).toHaveLength(1);
@@ -163,9 +111,10 @@ describe('ImportListService', () => {
     });
 
     it('create encrypts API key and sets nextRunAt', async () => {
-      const db = createChainableMockDb();
-      db._setInsertResult([{ id: 1, name: 'Test', type: 'abs', settings: { serverUrl: 'http://abs.local', apiKey: 'key' }, createdAt: new Date() }]);
-      service = new ImportListService(db as unknown as Db, mockLog);
+      const db = createMockDb();
+      const insertChain = mockDbChain([{ id: 1, name: 'Test', type: 'abs', settings: { serverUrl: 'http://abs.local', apiKey: 'key' }, createdAt: new Date() }]);
+      db.insert.mockReturnValue(insertChain);
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       const result = await service.create({
         name: 'Test',
@@ -178,12 +127,13 @@ describe('ImportListService', () => {
       expect(result).toBeDefined();
       expect(db.insert).toHaveBeenCalled();
       // Verify nextRunAt was set by checking the values call
-      const valuesCall = db.values.mock.calls[0][0];
-      expect(valuesCall.nextRunAt).toBeInstanceOf(Date);
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ nextRunAt: expect.any(Date) }),
+      );
     });
 
     it('update preserves existing encrypted API key when sentinel is submitted', async () => {
-      const db = createChainableMockDb();
+      const db = createMockDb();
       const encryptedApiKey = encrypt('real-api-key', getKey());
       const existingRow = {
         id: 1, name: 'Test', type: 'abs', enabled: true,
@@ -191,27 +141,32 @@ describe('ImportListService', () => {
       };
 
       // select().from().where().limit() for sentinel lookup returns existing row
-      db._setSelectResult([existingRow]);
-      db.limit.mockReturnValue([existingRow]);
+      db.select.mockReturnValue(mockDbChain([existingRow]));
       // update().set().where().returning() returns updated row
-      db.returning.mockReturnValue([existingRow]);
+      const updateChain = mockDbChain([existingRow]);
+      db.update.mockReturnValue(updateChain);
 
-      service = new ImportListService(db as unknown as Db, mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       await service.update(1, {
         settings: { serverUrl: 'http://new.local', apiKey: '********', libraryId: 'lib-2' },
       });
 
       // The .set() call must preserve the exact stored ciphertext, not re-encrypt the sentinel
-      const setArg = db.set.mock.calls[0][0] as { settings: Record<string, unknown> };
-      expect(setArg.settings.apiKey).toBe(encryptedApiKey);
-      expect(setArg.settings.libraryId).toBe('lib-2');
+      expect(updateChain.set).toHaveBeenCalledWith(
+        expect.objectContaining({
+          settings: expect.objectContaining({
+            apiKey: encryptedApiKey,
+            libraryId: 'lib-2',
+          }),
+        }),
+      );
     });
 
     it('delete removes row from DB', async () => {
-      const db = createChainableMockDb();
-      db._setSelectResult([{ id: 1, name: 'Test', type: 'abs', settings: {}, enabled: true }]);
-      service = new ImportListService(db as unknown as Db, mockLog);
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([{ id: 1, name: 'Test', type: 'abs', settings: {}, enabled: true }]));
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       const result = await service.delete(1);
       expect(result).toBe(true);
@@ -221,11 +176,10 @@ describe('ImportListService', () => {
 
   describe('syncDueLists', () => {
     it('skips disabled lists even if nextRunAt is past due', async () => {
-      const db = createChainableMockDb();
+      const db = createMockDb();
       // Query returns empty (no enabled due lists)
-      db._setSelectResult([]);
-      db.where.mockReturnValue([]);
-      service = new ImportListService(db as unknown as Db, mockLog);
+      db.select.mockReturnValue(mockDbChain([]));
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       await service.syncDueLists();
       // Should not attempt to process any lists
@@ -242,23 +196,23 @@ describe('ImportListService', () => {
       };
       mockFactories.abs.mockReturnValue(mockProvider);
 
-      const db = createChainableMockDb();
+      const db = createMockDb();
       const dueList = {
         id: 1, name: 'My ABS', type: 'abs', enabled: true,
         settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
         syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
         lastSyncError: null, createdAt: new Date(),
       };
-      // First query (due lists) returns the list
-      db.where.mockReturnValueOnce([dueList]);
+      // Due lists query
+      db.select.mockReturnValueOnce(mockDbChain([dueList]));
       // Author lookup returns empty
-      db.where.mockReturnValueOnce([]);
+      db.select.mockReturnValueOnce(mockDbChain([]));
       // Book insert
-      db._setInsertResult([{ id: 10, title: 'New Book', authorId: null }]);
-      // Update lastRunAt chain
-      db.where.mockReturnValue({ returning: vi.fn().mockReturnValue([]) });
+      db.insert.mockReturnValue(mockDbChain([{ id: 10, title: 'New Book', authorId: null }]));
+      // Update chain
+      db.update.mockReturnValue(mockDbChain([]));
 
-      service = new ImportListService(db as unknown as Db, mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       await service.syncDueLists();
       expect(mockProvider.fetchItems).toHaveBeenCalled();
@@ -268,26 +222,27 @@ describe('ImportListService', () => {
       const mockProvider = { fetchItems: vi.fn().mockResolvedValue([]), test: vi.fn() };
       mockFactories.abs.mockReturnValue(mockProvider);
 
-      const db = createChainableMockDb();
+      const db = createMockDb();
       const dueList = {
         id: 5, name: 'ABS List', type: 'abs', enabled: true,
         settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
         syncIntervalMinutes: 60, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
         lastSyncError: 'old error', createdAt: new Date(),
       };
-      db.where.mockReturnValueOnce([dueList]);
-      db.where.mockReturnValue(db); // chain for update
-      service = new ImportListService(db as unknown as Db, mockLog);
+      db.select.mockReturnValue(mockDbChain([dueList]));
+      const updateChain = mockDbChain([]);
+      db.update.mockReturnValue(updateChain);
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       await service.syncDueLists();
 
       // Find the set() call on the success path
-      const setCall = db.set.mock.calls[0][0];
+      const setCall = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
       expect(setCall.lastSyncError).toBeNull();
       expect(setCall.lastRunAt).toBeInstanceOf(Date);
       expect(setCall.nextRunAt).toBeInstanceOf(Date);
       // nextRunAt should be ~60 minutes from now
-      const diff = setCall.nextRunAt.getTime() - Date.now();
+      const diff = (setCall.nextRunAt as Date).getTime() - Date.now();
       expect(diff).toBeGreaterThan(59 * 60_000);
       expect(diff).toBeLessThan(61 * 60_000);
     });
@@ -296,20 +251,21 @@ describe('ImportListService', () => {
       const failProvider = { fetchItems: vi.fn().mockRejectedValue(new Error('Connection timeout')), test: vi.fn() };
       mockFactories.abs.mockReturnValue(failProvider);
 
-      const db = createChainableMockDb();
+      const db = createMockDb();
       const dueList = {
         id: 3, name: 'Failing List', type: 'abs', enabled: true,
         settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
         syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
         lastSyncError: null, createdAt: new Date(),
       };
-      db.where.mockReturnValueOnce([dueList]);
-      db.where.mockReturnValue(db);
-      service = new ImportListService(db as unknown as Db, mockLog);
+      db.select.mockReturnValue(mockDbChain([dueList]));
+      const updateChain = mockDbChain([]);
+      db.update.mockReturnValue(updateChain);
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       await service.syncDueLists();
 
-      const setCall = db.set.mock.calls[0][0];
+      const setCall = updateChain.set.mock.calls[0][0] as Record<string, unknown>;
       expect(setCall.lastSyncError).toBe('Connection timeout');
       expect(setCall.nextRunAt).toBeInstanceOf(Date);
     });
@@ -321,32 +277,33 @@ describe('ImportListService', () => {
       };
       mockFactories.abs.mockReturnValue(mockProvider);
 
-      const db = createChainableMockDb();
+      const db = createMockDb();
       const dueList = {
         id: 7, name: 'My List', type: 'abs', enabled: true,
         settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
         syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
         lastSyncError: null, createdAt: new Date(),
       };
-      // 1st where: due lists query (result is iterated directly, no .limit)
-      db.where.mockReturnValueOnce([dueList]);
-      // 2nd where: author lookup in resolveOrCreateAuthor — .limit(1) follows, so return chain
-      db.where.mockReturnValueOnce(db);
-      // limit returns the author result
-      db.limit.mockReturnValueOnce([{ id: 99, name: 'Author Name' }]);
-      // 1st returning: book insert → new book
-      db.returning.mockReturnValueOnce([{ id: 42, title: 'Import Book', authorId: 99 }]);
-      // 2nd returning: event insert (no returning in code, but values() chains)
-      // Remaining where calls (update chain) return chain
-      db.where.mockReturnValue(db);
-      service = new ImportListService(db as unknown as Db, mockLog);
+      // Due lists query
+      db.select.mockReturnValueOnce(mockDbChain([dueList]));
+      // Author lookup — found
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 99, name: 'Author Name' }]));
+      // Book insert
+      const bookInsertChain = mockDbChain([{ id: 42, title: 'Import Book', authorId: 99 }]);
+      db.insert.mockReturnValueOnce(bookInsertChain);
+      // Event insert
+      db.insert.mockReturnValue(mockDbChain([]));
+      // Update chain
+      db.update.mockReturnValue(mockDbChain([]));
+
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       await service.syncDueLists();
 
       // Book insert was attempted
       expect(db.insert).toHaveBeenCalled();
       // onConflictDoNothing was used for the book insert
-      expect(db.onConflictDoNothing).toHaveBeenCalled();
+      expect(bookInsertChain.onConflictDoNothing).toHaveBeenCalled();
       // Logged the book addition with correct metadata
       expect(mockLog.info).toHaveBeenCalledWith(
         expect.objectContaining({ bookId: 42, title: 'Import Book', listName: 'My List' }),
@@ -364,23 +321,24 @@ describe('ImportListService', () => {
       };
       mockFactories.abs.mockReturnValue(mockProvider);
 
-      const db = createChainableMockDb();
+      const db = createMockDb();
       const dueList = {
         id: 1, name: 'Mixed List', type: 'abs', enabled: true,
         settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
         syncIntervalMinutes: 1440, lastRunAt: null, nextRunAt: new Date(Date.now() - 60_000),
         lastSyncError: null, createdAt: new Date(),
       };
-      // 1st where: due lists query
-      db.where.mockReturnValueOnce([dueList]);
-      // 2nd where: author lookup for Valid Book — .limit(1) follows
-      db.where.mockReturnValueOnce(db);
-      db.limit.mockReturnValueOnce([{ id: 50, name: 'Author' }]);
-      // Book insert returns new book
-      db.returning.mockReturnValueOnce([{ id: 20, title: 'Valid Book', authorId: 50 }]);
-      // Remaining where calls return chain
-      db.where.mockReturnValue(db);
-      service = new ImportListService(db as unknown as Db, mockLog);
+      // Due lists query
+      db.select.mockReturnValueOnce(mockDbChain([dueList]));
+      // Author lookup for Valid Book — found
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 50, name: 'Author' }]));
+      // Book insert
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 20, title: 'Valid Book', authorId: 50 }]));
+      // Event insert + update chain
+      db.insert.mockReturnValue(mockDbChain([]));
+      db.update.mockReturnValue(mockDbChain([]));
+
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       await service.syncDueLists();
 
@@ -406,7 +364,7 @@ describe('ImportListService', () => {
       mockFactories.abs.mockReturnValue(failProvider);
       mockFactories.nyt.mockReturnValue(successProvider);
 
-      const db = createChainableMockDb();
+      const db = createMockDb();
       const list1 = {
         id: 1, name: 'Failing ABS', type: 'abs', enabled: true,
         settings: { serverUrl: 'http://abs.local', apiKey: 'key', libraryId: 'lib-1' },
@@ -420,11 +378,11 @@ describe('ImportListService', () => {
         lastSyncError: null, createdAt: new Date(),
       };
       // Due lists query returns both
-      db.where.mockReturnValueOnce([list1, list2]);
-      // Subsequent update calls need to return chain
-      db.where.mockReturnValue({ returning: vi.fn().mockReturnValue([]) });
+      db.select.mockReturnValue(mockDbChain([list1, list2]));
+      // Update chains for both lists
+      db.update.mockReturnValue(mockDbChain([]));
 
-      service = new ImportListService(db as unknown as Db, mockLog);
+      service = new ImportListService(inject<Db>(db), mockLog);
 
       await service.syncDueLists();
 

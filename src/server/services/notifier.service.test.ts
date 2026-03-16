@@ -1,39 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NotifierService } from './notifier.service.js';
-
-// Mock DB chain helper
-function mockDbChain(result: unknown = []) {
-  const chain: Record<string, unknown> = {};
-  const methods = ['from', 'where', 'limit', 'orderBy', 'values', 'returning', 'set'];
-  for (const method of methods) {
-    chain[method] = vi.fn().mockReturnValue(chain);
-  }
-  chain.then = (resolve: (v: unknown) => void) => Promise.resolve(result).then(resolve);
-  return chain;
-}
-
-function createMockDb() {
-  return {
-    select: vi.fn().mockReturnValue(mockDbChain()),
-    insert: vi.fn().mockReturnValue(mockDbChain()),
-    update: vi.fn().mockReturnValue(mockDbChain()),
-    delete: vi.fn().mockReturnValue(mockDbChain()),
-  };
-}
-
-function createMockLogger() {
-  return {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-    fatal: vi.fn(),
-    trace: vi.fn(),
-    child: vi.fn().mockReturnThis(),
-    level: 'info',
-    silent: vi.fn(),
-  };
-}
+import { mockDbChain, createMockDb, createMockLogger } from '../__tests__/helpers.js';
 
 import { createMockDbNotifier } from '../__tests__/factories.js';
 

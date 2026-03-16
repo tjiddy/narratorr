@@ -53,20 +53,58 @@ export async function createTestApp(services: Services, db?: Db) {
 
 /**
  * Creates a thenable chain that simulates Drizzle ORM query builder.
- * Every chaining method (from, where, limit, etc.) returns the same chain.
- * When awaited, resolves to `result`.
+ * Uses a Proxy to auto-generate `vi.fn()` stubs for any chained method.
+ * When awaited, resolves to `result` (or rejects with `opts.error`).
+ *
+ * Promise protocol (`then`, `catch`, `finally`) and Symbol properties are
+ * excluded from stub generation. Terminal methods (`get`, `all`, `run`,
+ * `execute`) return `Promise.resolve(result)` instead of the chain.
  */
-export function mockDbChain(result: unknown = []) {
-  const chain: Record<string, unknown> = {};
-  const methods = [
-    'from', 'where', 'limit', 'offset', 'orderBy', 'leftJoin', 'groupBy',
-    'values', 'returning', 'set', 'onConflictDoUpdate',
-  ];
-  for (const method of methods) {
-    chain[method] = vi.fn().mockReturnValue(chain);
-  }
-  chain.then = (resolve: (v: unknown) => void) => Promise.resolve(result).then(resolve);
-  return chain;
+export function mockDbChain(result: unknown = [], opts?: { error: Error }) {
+  const stubs = new Map<string, Mock>();
+  const terminals = new Set(['get', 'all', 'run', 'execute']);
+
+  const promise = opts?.error
+    ? Promise.reject(opts.error)
+    : Promise.resolve(result);
+  // Prevent unhandled rejection warnings for error chains that aren't immediately awaited
+  promise.catch(() => {});
+
+  const overrides = new Map<string, unknown>();
+
+  const chain: Record<string | symbol, unknown> = new Proxy({} as Record<string | symbol, unknown>, {
+    get(_target, prop) {
+      if (typeof prop === 'symbol') return undefined;
+
+      // Explicit overrides take priority (tests may replace stubs)
+      if (overrides.has(prop)) return overrides.get(prop);
+
+      // Promise protocol — delegate to the underlying promise
+      if (prop === 'then') return (onFulfilled?: unknown, onRejected?: unknown) =>
+        promise.then(onFulfilled as never, onRejected as never);
+      if (prop === 'catch') return (onRejected?: unknown) =>
+        promise.catch(onRejected as never);
+      if (prop === 'finally') return (onFinally?: unknown) =>
+        promise.finally(onFinally as never);
+
+      // Terminal methods — return promise, not chain
+      if (terminals.has(prop)) {
+        if (!stubs.has(prop)) stubs.set(prop, vi.fn().mockReturnValue(promise));
+        return stubs.get(prop)!;
+      }
+
+      // Chainable methods — lazily create cached vi.fn() stubs
+      if (!stubs.has(prop)) stubs.set(prop, vi.fn().mockReturnValue(chain));
+      return stubs.get(prop)!;
+    },
+    set(_target, prop, value) {
+      if (typeof prop === 'string') overrides.set(prop, value);
+      return true;
+    },
+  });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return chain as any;
 }
 
 /**

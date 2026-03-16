@@ -592,10 +592,7 @@ describe('BookService', () => {
         .mockReturnValueOnce(mockDbChain([mockAuthor]))  // retry after constraint: found
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));  // getById
 
-      const raceChain = mockDbChain();
-      raceChain.then = (resolve: unknown, reject?: (err: Error) => void) => {
-        return Promise.reject(new Error('UNIQUE constraint failed')).then(resolve as (v: unknown) => void, reject);
-      };
+      const raceChain = mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') });
 
       db.insert
         .mockReturnValueOnce(raceChain)  // author insert race condition
@@ -614,10 +611,7 @@ describe('BookService', () => {
         .mockReturnValueOnce(mockDbChain([]))  // author lookup: not found
         .mockReturnValueOnce(mockDbChain([]));  // retry: still not found
 
-      const failChain2 = mockDbChain();
-      failChain2.then = (resolve: unknown, reject?: (err: Error) => void) => {
-        return Promise.reject(new Error('UNIQUE constraint failed')).then(resolve as (v: unknown) => void, reject);
-      };
+      const failChain2 = mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') });
       db.insert.mockReturnValueOnce(failChain2);
 
       await expect(

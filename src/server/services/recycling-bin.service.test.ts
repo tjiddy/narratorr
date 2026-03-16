@@ -3,6 +3,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { RecyclingBinService, RecyclingBinError } from './recycling-bin.service.js';
 import type { SettingsService } from './settings.service.js';
 import { createMockDbRecyclingBinEntry, createMockDbBook } from '../__tests__/factories.js';
+import { mockDbChain, createMockLogger } from '../__tests__/helpers.js';
 
 vi.mock('node:fs/promises', () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
@@ -16,27 +17,16 @@ import { mkdir, rename, cp, rm, access } from 'node:fs/promises';
 
 /**
  * Queue-based mock DB. Each call to select/insert/delete takes the next result from a queue.
- * Falls back to empty array if queue is exhausted.
+ * Falls back to empty array if queue is exhausted. Uses shared mockDbChain.
  */
 function createMockDb() {
   const selectQueue: unknown[][] = [];
   const insertQueue: unknown[][] = [];
 
-  const makeChain = (queue: unknown[][]) => {
-    const result = queue.shift() ?? [];
-    const chain: Record<string, unknown> = {};
-    const methods = ['from', 'where', 'limit', 'orderBy', 'values', 'returning', 'set'];
-    for (const m of methods) {
-      chain[m] = vi.fn().mockReturnValue(chain);
-    }
-    chain.then = (resolve: (v: unknown) => void) => resolve(result);
-    return chain;
-  };
-
   return {
-    insert: vi.fn().mockImplementation(() => makeChain(insertQueue)),
-    select: vi.fn().mockImplementation(() => makeChain(selectQueue)),
-    delete: vi.fn().mockImplementation(() => makeChain([])),
+    insert: vi.fn().mockImplementation(() => mockDbChain(insertQueue.shift() ?? [])),
+    select: vi.fn().mockImplementation(() => mockDbChain(selectQueue.shift() ?? [])),
+    delete: vi.fn().mockImplementation(() => mockDbChain([])),
     /** Queue a result for the next select() call */
     onSelect(...results: unknown[][]) { selectQueue.push(...results); },
     /** Queue a result for the next insert().returning() call */
@@ -45,10 +35,7 @@ function createMockDb() {
 }
 
 function createMockLog() {
-  return {
-    info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
-    fatal: vi.fn(), trace: vi.fn(), child: vi.fn(), silent: vi.fn(), level: 'info',
-  } as unknown as FastifyBaseLogger;
+  return createMockLogger() as unknown as FastifyBaseLogger;
 }
 
 function createMockSettingsService() {
