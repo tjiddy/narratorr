@@ -6,15 +6,9 @@ description: JIT elaboration for a claimed issue — explores the codebase, extr
 argument-hint: <issue-id>
 ---
 
-!`cat .claude/docs/testing.md`
-
-!`cat .claude/docs/workflow.md`
-
-!`cat .claude/docs/design-principles.md`
-
-!`cat .claude/docs/architecture-checks.md`
-
 # /plan <id> — JIT elaboration and implementation planning
+
+> **Context note:** When called from `/implement`, extended docs (testing.md, workflow.md, design-principles.md, architecture-checks.md) are already loaded by the parent skill. When called standalone, the Explore subagent in step 3 reads these docs directly from disk — no injection needed here.
 
 Explores the codebase, extracts test stubs from the spec, and posts a structured implementation plan on the issue. Run after `/claim` creates the branch, before writing any code.
 

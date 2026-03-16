@@ -4,21 +4,21 @@ export const phases: PhaseDefinition[] = [
   {
     marker: "self-review-complete",
     prompt:
-      "Self-review complete. IMMEDIATELY continue to step 3 — check for remaining test stubs.",
+      "STOP BLOCKED: You are inside /handoff. Self-review has not been completed. Your next action: run the self-review diff check (step 2), then write the self-review-complete marker. Do NOT stop.",
   },
   {
     marker: "coverage-complete",
     prompt:
-      "Coverage review complete. IMMEDIATELY continue to step 5 — run quality gates via verify.ts.",
+      "STOP BLOCKED: You are inside /handoff. Coverage review has not been completed. Your next action: check for remaining test stubs and coverage gaps (step 3), then write the coverage-complete marker. Do NOT stop.",
   },
   {
     marker: "verify-complete",
     prompt:
-      "Quality gates passed. IMMEDIATELY continue to step 6 — push the branch, create the PR, update labels, post the handoff comment, and complete the CL retrospective.",
+      "STOP BLOCKED: You are inside /handoff. Quality gates have not been run. Your next action: run `node scripts/verify.ts`, then write the verify-complete marker. Do NOT stop.",
   },
   {
     marker: "pr-created",
     prompt:
-      "PR created and all post-PR steps complete. You may now report the result to the caller.",
+      "STOP BLOCKED: You are inside /handoff. PR has not been created. Your next action: push the branch, create the PR, update labels, post the handoff comment, and complete the CL retrospective. Do NOT stop.",
   },
 ];

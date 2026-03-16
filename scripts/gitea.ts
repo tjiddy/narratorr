@@ -21,6 +21,8 @@
 //   pr-comment <number> <body|--body-file path>
 //   pr-comments <number>       List all comments on a PR
 //   pr-merge <number> [merge|rebase|squash]  Merge a PR (default: squash)
+//   runs [branch] [--limit N]  List recent CI runs (default: 10)
+//   run-log <run-number>       Show logs for a CI run
 //   commit-status <ref>        Get combined CI status (branch/tag/SHA)
 //   whoami                     Print authenticated user's login name
 //
@@ -92,6 +94,59 @@ async function api<T = unknown>(path: string, options?: RequestInit): Promise<T>
   return (text ? JSON.parse(text) : null) as T;
 }
 
+async function apiText(path: string): Promise<string> {
+  const url = `${API}${path}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `token ${GITEA_TOKEN}` },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    console.error(`API error ${res.status}: ${text}`);
+    process.exit(1);
+  }
+  return await res.text();
+}
+
+/**
+ * Fetch JSON without process.exit on failure — returns null instead.
+ */
+async function apiSafe<T = unknown>(path: string): Promise<T | null> {
+  const url = `${API}${path}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `token ${GITEA_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+  });
+  if (!res.ok) return null;
+  const text = await res.text();
+  return (text ? JSON.parse(text) : null) as T;
+}
+
+/**
+ * Find a job matching a given SHA by scanning the runs endpoint.
+ * Gitea's tasks endpoint (workflow_runs) uses a different ID space than
+ * the runs/jobs endpoints, so we estimate the internal run_id from the
+ * task_id and fan out to find the matching SHA.
+ */
+async function findJobForSha(taskId: number, sha: string): Promise<GiteaJob | null> {
+  // The internal run_id is typically task_id minus a fixed offset.
+  // Fan out ±20 from the best estimate to account for drift.
+  const estimate = taskId - 90;
+  const candidates = [estimate];
+  for (let i = 1; i <= 20; i++) {
+    candidates.push(estimate + i, estimate - i);
+  }
+  for (const rid of candidates) {
+    if (rid < 1) continue;
+    const data = await apiSafe<GiteaJobList>(`/actions/runs/${rid}/jobs`);
+    if (!data) continue;
+    const match = data.jobs.find((j) => j.head_sha === sha);
+    if (match) return match;
+  }
+  return null;
+}
+
 async function fetchAllComments(issuePath: string): Promise<GiteaComment[]> {
   const all: GiteaComment[] = [];
   let page = 1;
@@ -157,6 +212,44 @@ interface GiteaCombinedStatus {
   sha: string;
   total_count: number;
   statuses: GiteaCommitStatus[];
+}
+
+interface GiteaWorkflowRun {
+  id: number;
+  name: string;
+  head_branch: string;
+  head_sha: string;
+  run_number: number;
+  event: string;
+  display_title: string;
+  status: string;
+  workflow_id: string;
+  url: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface GiteaWorkflowRunList {
+  workflow_runs: GiteaWorkflowRun[];
+}
+
+interface GiteaJob {
+  id: number;
+  url: string;
+  html_url: string;
+  run_id: number;
+  name: string;
+  head_sha: string;
+  status: string;
+  conclusion: string;
+  created_at: string;
+  started_at: string;
+  completed_at: string;
+}
+
+interface GiteaJobList {
+  jobs: GiteaJob[];
+  total_count: number;
 }
 
 interface GiteaComment {
@@ -239,6 +332,73 @@ function fmtPRs(prs: GiteaPR[]): void {
     console.log(`#${pr.number} [${pr.state}] ${pr.title}`);
     console.log(`   ${pr.head.label} → ${pr.base.label} | ${pr.html_url}`);
   }
+}
+
+function fmtRuns(runs: GiteaWorkflowRun[]): void {
+  if (!runs.length) {
+    console.log("No CI runs found");
+    return;
+  }
+  for (const r of runs) {
+    const icon = r.status === "success" ? "✓" : r.status === "failure" ? "✗" : "●";
+    console.log(`${icon} #${r.run_number} ${r.display_title} ${r.head_sha.slice(0, 7)}`);
+  }
+}
+
+/**
+ * Strip Gitea runner timestamps and infrastructure noise from CI logs.
+ * Extracts only the lint/typecheck/test/build output we care about.
+ */
+function stripLogNoise(raw: string): string {
+  const lines = raw.split("\n").map((line) => line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s?/, ""));
+
+  // Find where the actual build steps start (after pnpm install)
+  // and skip all checkout/setup/install noise
+  let buildStart = -1;
+  let jobResult = "";
+  for (let i = 0; i < lines.length; i++) {
+    // The first "narratorr@" line after install is the real build output
+    if (lines[i].includes("> narratorr@") && buildStart === -1) {
+      buildStart = i;
+    }
+    if (lines[i].includes("Job failed") || lines[i].includes("Job succeeded")) {
+      jobResult = lines[i];
+    }
+  }
+
+  if (buildStart === -1) {
+    // Fallback: couldn't find build start, return everything stripped
+    return lines.filter((l) => l.trim()).join("\n");
+  }
+
+  // Find where the post-job cleanup starts
+  let buildEnd = lines.length;
+  for (let i = buildStart; i < lines.length; i++) {
+    if (lines[i].includes("⭐ Run Post ") || lines[i].includes("Skipping step '")) {
+      buildEnd = i;
+      break;
+    }
+  }
+
+  const buildLines = lines.slice(buildStart, buildEnd).filter((line) => {
+    if (!line.trim()) return false;
+    if (line.startsWith("  🐳")) return false;
+    if (line.includes("evaluating expression")) return false;
+    if (line.includes("expression '") && line.includes("evaluated to")) return false;
+    if (line.includes("expression '") && line.includes("rewritten to")) return false;
+    if (line.includes("Exec command '")) return false;
+    if (line.includes("Working directory '")) return false;
+    if (line.includes("Writing entry to tarball")) return false;
+    if (line.includes("Extracting content")) return false;
+    if (line.startsWith("exitcode '")) return false;
+    return true;
+  });
+
+  if (jobResult && !buildLines[buildLines.length - 1]?.includes(jobResult)) {
+    buildLines.push(jobResult);
+  }
+
+  return buildLines.join("\n");
 }
 
 function fmtComments(comments: GiteaComment[]): void {
@@ -625,6 +785,51 @@ switch (cmd) {
     break;
   }
 
+  case "runs": {
+    let limit = 10;
+    let branch: string | undefined;
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === "--limit" && args[i + 1]) {
+        limit = parseInt(args[i + 1], 10);
+        i++;
+      } else {
+        branch = args[i];
+      }
+    }
+    const data = await api<GiteaWorkflowRunList>(`/actions/tasks?page=1&limit=${limit}`);
+    let runs = data.workflow_runs;
+    if (branch) {
+      runs = runs.filter((r) => r.head_branch === branch || r.head_branch === `#${branch}`);
+    }
+    fmtRuns(runs);
+    break;
+  }
+
+  case "run-log": {
+    const runNum = args[0];
+    if (!runNum) {
+      console.error("Usage: gitea run-log <run-number>");
+      process.exit(1);
+    }
+    // Find the run in the tasks list
+    const tasksData = await api<GiteaWorkflowRunList>("/actions/tasks?page=1&limit=50");
+    const targetRun = tasksData.workflow_runs.find((r) => r.run_number === parseInt(runNum, 10));
+    if (!targetRun) {
+      console.error(`ERROR: run #${runNum} not found in recent runs`);
+      process.exit(1);
+    }
+    // Find the job by matching SHA
+    const job = await findJobForSha(targetRun.id, targetRun.head_sha);
+    if (!job) {
+      console.error(`ERROR: could not find job for run #${runNum} (sha: ${targetRun.head_sha.slice(0, 10)})`);
+      process.exit(1);
+    }
+    const logs = await apiText(`/actions/jobs/${job.id}/logs`);
+    console.log(`--- #${runNum} ${targetRun.display_title} [${job.conclusion}] ${targetRun.head_sha.slice(0, 7)} ---`);
+    console.log(stripLogNoise(logs));
+    break;
+  }
+
   case "commit-status": {
     const ref = args[0];
     if (!ref) {
@@ -689,6 +894,8 @@ Commands:
   pr-comments <number>       List all comments on a PR
   pr-update-labels <n> <l>   Set labels on a PR
   pr-merge <n> [method]      Merge PR (merge|rebase|squash, default: squash)
+  runs [branch] [--limit N]  List recent CI runs (default: 10)
+  run-log <run-number>       Show logs for a CI run
   commit-status <ref>        Get combined CI status for a ref (branch/tag/SHA)
   whoami                     Print authenticated user's login name
 

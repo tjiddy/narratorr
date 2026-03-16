@@ -4,21 +4,21 @@ export const phases: PhaseDefinition[] = [
   {
     marker: "claim-complete",
     prompt:
-      "Claim phase complete. IMMEDIATELY continue to Phase 2 — run the branch guard and invoke /plan.",
+      "STOP BLOCKED: You are inside /implement. Claim succeeded but you have not started Phase 2. Your next action: run the branch guard (`git branch --show-current`) then invoke /plan via the Skill tool. Do NOT stop.",
   },
   {
     marker: "plan-complete",
     prompt:
-      "Plan phase complete. IMMEDIATELY continue to Phase 3 — read the issue spec and begin red/green TDD implementation.",
+      "STOP BLOCKED: You are inside /implement Phase 3. /plan returned but implementation has not started. Your next action: write the plan-complete marker, then run `gitea issue <id>` to re-read the spec, then begin red/green TDD. Do NOT stop.",
   },
   {
     marker: "implement-complete",
     prompt:
-      "Implementation phase complete. IMMEDIATELY continue to Phase 4 — run the branch guard and invoke /handoff.",
+      "STOP BLOCKED: You are inside /implement Phase 4. Code is written but handoff has not started. Your next action: run the branch guard (`git branch --show-current`) then invoke /handoff via the Skill tool. Do NOT stop.",
   },
   {
     marker: "handoff-complete",
     prompt:
-      "Handoff phase complete. IMMEDIATELY continue to step 8 — verify label transitions on both the issue and PR, then report completion.",
+      "STOP BLOCKED: You are inside /implement step 8. /handoff returned but label verification is not done. Your next action: run `gitea issue <id>` and `gitea pr <number>` to verify labels, then report completion. Do NOT stop.",
   },
 ];
