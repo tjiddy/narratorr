@@ -1,28 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
-import { createMockLogger, inject } from '../__tests__/helpers.js';
+import { createMockLogger, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { runRssJob, startRssJob } from './rss.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { SettingsService } from '../services/settings.service.js';
 import type { BookService } from '../services/book.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadService } from '../services/download.service.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SearchResult } from '../../core/index.js';
-
-function createMockSettingsService(overrides?: { rss?: unknown; quality?: unknown }): SettingsService {
-  const rssSettings = overrides?.rss ?? { enabled: true, intervalMinutes: 30 };
-  const qualitySettings = overrides?.quality ?? { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' };
-  return inject<SettingsService>({
-    get: vi.fn().mockImplementation((cat: string) => {
-      if (cat === 'quality') return Promise.resolve(qualitySettings);
-      if (cat === 'rss') return Promise.resolve(rssSettings);
-      return Promise.resolve({});
-    }),
-    getAll: vi.fn(),
-    set: vi.fn(),
-    update: vi.fn(),
-  });
-}
 
 function createMockBookService(wanted: unknown[] = [], monitored: unknown[] = []): BookService {
   return inject<BookService>({
@@ -129,7 +113,7 @@ describe('runRssJob', () => {
   it('polls RSS-capable indexers and collects results', async () => {
     const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
     const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson')];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
@@ -143,7 +127,7 @@ describe('runRssJob', () => {
   });
 
   it('excludes non-RSS adapters (ABB) — only polls RSS-capable', async () => {
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService([makeWantedBook(1, 'Test', 'Author')]);
     const indexer = createMockIndexerService();
     (indexer.getRssCapableIndexers as Mock).mockResolvedValue([
@@ -164,7 +148,7 @@ describe('runRssJob', () => {
   it('matches release to wanted book above 0.7 threshold and grabs', async () => {
     const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
     const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson')];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
@@ -181,7 +165,7 @@ describe('runRssJob', () => {
   it('skips release below 0.7 match threshold', async () => {
     const wantedBooks = [makeWantedBook(1, 'The Way of Kings', 'Brandon Sanderson')];
     const rssResults = [makeResult('Cooking with Julia Child', 'Julia Child')];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
@@ -196,7 +180,7 @@ describe('runRssJob', () => {
   it('skips release with no parseable title', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test', 'Author')];
     const rssResults = [makeResult('', undefined, { title: '' })];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
@@ -213,7 +197,7 @@ describe('runRssJob', () => {
       makeWantedBook(2, 'Words of Radiance', 'Brandon Sanderson'),
     ];
     const rssResults = [makeResult('The Way of Kings', 'Brandon Sanderson')];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
@@ -232,7 +216,7 @@ describe('runRssJob', () => {
   it('skips release already in download queue (grab mutex)', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book', 'Author')];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
@@ -266,7 +250,7 @@ describe('runRssJob', () => {
       duration: null,
     }];
     const rssResults = [makeResult('Monitored Book', 'Author', { size: 500 * 1024 * 1024 })];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService([], monitoredBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
@@ -294,7 +278,7 @@ describe('runRssJob', () => {
       duration: null,
     }];
     const rssResults = [makeResult('Monitored Book', 'Author', { size: 100 * 1024 * 1024 })];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService([], monitoredBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
@@ -309,7 +293,7 @@ describe('runRssJob', () => {
 
   it('continues polling remaining indexers when one throws', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService();
     (indexer.getRssCapableIndexers as Mock).mockResolvedValue([
@@ -334,7 +318,7 @@ describe('runRssJob', () => {
 
   it('logs debug (not warn) when indexer returns empty results', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test', 'Author')];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService([]);
     const download = createMockDownloadService();
@@ -352,7 +336,7 @@ describe('runRssJob', () => {
   it('catches concurrent grab race and logs info', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book', 'Author')];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
@@ -373,7 +357,7 @@ describe('runRssJob', () => {
   it('results pass through multipart Usenet filter', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book (1/5)', 'Author', { protocol: 'usenet' })];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
@@ -388,7 +372,7 @@ describe('runRssJob', () => {
   it('results pass through blacklist hash filter', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book', 'Author', { infoHash: 'abc123' })];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
@@ -404,6 +388,7 @@ describe('runRssJob', () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book German Edition', 'Author')];
     const settings = createMockSettingsService({
+      rss: { enabled: true },
       quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: '' },
     });
     const books = createMockBookService(wantedBooks);
@@ -420,6 +405,7 @@ describe('runRssJob', () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book MP3', 'Author')];
     const settings = createMockSettingsService({
+      rss: { enabled: true },
       quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: 'M4B' },
     });
     const books = createMockBookService(wantedBooks);
@@ -436,6 +422,7 @@ describe('runRssJob', () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book', 'Author', { seeders: 1 })];
     const settings = createMockSettingsService({
+      rss: { enabled: true },
       quality: { grabFloor: 0, minSeeders: 5, protocolPreference: 'none', rejectWords: '', requiredWords: '' },
     });
     const books = createMockBookService(wantedBooks);
@@ -454,7 +441,7 @@ describe('runRssJob', () => {
       makeResult('Test Book', 'Author', { size: 50 * 1024 * 1024, downloadUrl: 'magnet:low' }),
       makeResult('Test Book', 'Author', { size: 500 * 1024 * 1024, downloadUrl: 'magnet:high' }),
     ];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
@@ -475,7 +462,7 @@ describe('runRssJob', () => {
   it('grabs emit event-history entries with source rss', async () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book', 'Author')];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
@@ -491,7 +478,7 @@ describe('runRssJob', () => {
   // --- Edge cases ---
 
   it('completes with 0 grabbed when enabled but no wanted books', async () => {
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService([], []);
     const indexer = createMockIndexerService();
     const download = createMockDownloadService();
@@ -507,6 +494,7 @@ describe('runRssJob', () => {
     const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
     const rssResults = [makeResult('Test Book', 'Author', { size: 1000 })];
     const settings = createMockSettingsService({
+      rss: { enabled: true },
       quality: { grabFloor: 200, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' },
     });
     const books = createMockBookService(wantedBooks);
@@ -523,6 +511,7 @@ describe('runRssJob', () => {
     const wantedBooks = [{ ...makeWantedBook(1, 'Test Book', 'Author'), duration: null, audioDuration: null }];
     const rssResults = [makeResult('Test Book', 'Author')];
     const settings = createMockSettingsService({
+      rss: { enabled: true },
       quality: { grabFloor: 200, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' },
     });
     const books = createMockBookService(wantedBooks);
@@ -539,7 +528,7 @@ describe('runRssJob', () => {
   it('handles feed item matching book with no author (title-only scoring)', async () => {
     const wantedBooks = [{ ...makeWantedBook(1, 'Test Book'), author: undefined }];
     const rssResults = [makeResult('Test Book')];
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     const books = createMockBookService(wantedBooks);
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadService();
@@ -587,7 +576,7 @@ describe('startRssJob', () => {
   });
 
   it('retries in 5 minutes when settings read fails', async () => {
-    const settings = createMockSettingsService();
+    const settings = createMockSettingsService({ rss: { enabled: true } });
     (settings.get as Mock).mockRejectedValueOnce(new Error('DB connection lost'));
     // Second call succeeds (for the retry)
     (settings.get as Mock).mockResolvedValueOnce({ enabled: false, intervalMinutes: 30 });

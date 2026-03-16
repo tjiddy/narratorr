@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { buildFfmpegArgs, tagFile, TaggingService, RetagError, type TagMetadata } from './tagging.service.js';
+import { createMockSettingsService } from '../__tests__/helpers.js';
 
 // Mock child_process
 vi.mock('node:child_process', () => ({
@@ -374,15 +375,11 @@ describe('TaggingService', () => {
     };
   }
 
-  function createMockSettingsService() {
-    return {
-      get: vi.fn().mockImplementation((key: string) => {
-        if (key === 'processing') return Promise.resolve({ ffmpegPath: '/usr/bin/ffmpeg' });
-        if (key === 'tagging') return Promise.resolve({ enabled: true, mode: 'overwrite', embedCover: false });
-        return Promise.resolve({});
-      }),
-    };
-  }
+  /** Default tagging-ready settings: ffmpeg configured + tagging enabled. */
+  const taggingDefaults = {
+    processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+    tagging: { enabled: true, mode: 'overwrite' as const },
+  };
 
   function createMockLog() {
     return {
@@ -401,11 +398,9 @@ describe('TaggingService', () => {
   describe('retagBook', () => {
     it('throws FFMPEG_NOT_CONFIGURED when ffmpeg path is empty', async () => {
       const db = createMockDb();
-      const settings = createMockSettingsService();
-      settings.get.mockImplementation((key: string) => {
-        if (key === 'processing') return Promise.resolve({ ffmpegPath: '' });
-        if (key === 'tagging') return Promise.resolve({ enabled: true, mode: 'overwrite', embedCover: false });
-        return Promise.resolve({});
+      const settings = createMockSettingsService({
+        processing: { ffmpegPath: '' },
+        tagging: { enabled: true, mode: 'overwrite' },
       });
 
       const service = new TaggingService(db as never, settings as never, createMockLog() as never);
@@ -416,7 +411,7 @@ describe('TaggingService', () => {
     it('throws NOT_FOUND when book does not exist', async () => {
       const db = createMockDb();
       db.chain.limit.mockResolvedValue([]);
-      const settings = createMockSettingsService();
+      const settings = createMockSettingsService(taggingDefaults);
 
       const service = new TaggingService(db as never, settings as never, createMockLog() as never);
       await expect(service.retagBook(999)).rejects.toThrow(RetagError);
@@ -428,7 +423,7 @@ describe('TaggingService', () => {
         book: { id: 1, title: 'Test', path: null },
         author: { name: 'Author' },
       }]);
-      const settings = createMockSettingsService();
+      const settings = createMockSettingsService(taggingDefaults);
 
       const service = new TaggingService(db as never, settings as never, createMockLog() as never);
       await expect(service.retagBook(1)).rejects.toThrow(/no library path/);
@@ -440,7 +435,7 @@ describe('TaggingService', () => {
         book: { id: 1, title: 'Test', path: '/nonexistent', narrator: null, seriesName: null, seriesPosition: null, coverUrl: null },
         author: { name: 'Author' },
       }]);
-      const settings = createMockSettingsService();
+      const settings = createMockSettingsService(taggingDefaults);
       (stat as Mock).mockRejectedValueOnce(new Error('ENOENT'));
 
       const service = new TaggingService(db as never, settings as never, createMockLog() as never);
@@ -461,11 +456,9 @@ describe('TaggingService', () => {
         },
         author: { name: 'Brandon Sanderson' },
       }]);
-      const settings = createMockSettingsService();
-      settings.get.mockImplementation((key: string) => {
-        if (key === 'processing') return Promise.resolve({ ffmpegPath: '/usr/bin/ffmpeg' });
-        if (key === 'tagging') return Promise.resolve({ enabled: true, mode: 'populate_missing', embedCover: true });
-        return Promise.resolve({});
+      const settings = createMockSettingsService({
+        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        tagging: { enabled: true, mode: 'populate_missing', embedCover: true },
       });
       // stat succeeds for path existence check, then for file operations
       (stat as Mock).mockResolvedValue({ size: 1000 });
@@ -493,7 +486,7 @@ describe('TaggingService', () => {
         },
         author: null,  // LEFT JOIN returned no author
       }]);
-      const settings = createMockSettingsService();
+      const settings = createMockSettingsService(taggingDefaults);
       (stat as Mock).mockResolvedValue({ size: 1000 });
       (readdir as Mock).mockResolvedValue(['book.mp3']);
 
@@ -514,7 +507,7 @@ describe('TaggingService', () => {
     it('returns empty result when no taggable audio files found', async () => {
       (readdir as Mock).mockResolvedValue([]);
       const db = createMockDb();
-      const settings = createMockSettingsService();
+      const settings = createMockSettingsService(taggingDefaults);
       const service = new TaggingService(db as never, settings as never, createMockLog() as never);
 
       const result = await service.tagBook(1, '/books/test', {
@@ -529,7 +522,7 @@ describe('TaggingService', () => {
     it('assigns track numbers in locale-aware sort order for multi-file books', async () => {
       (readdir as Mock).mockResolvedValue(['02.mp3', '01.mp3', '10.mp3']);
       const db = createMockDb();
-      const settings = createMockSettingsService();
+      const settings = createMockSettingsService(taggingDefaults);
       const log = createMockLog();
       const service = new TaggingService(db as never, settings as never, log as never);
 
@@ -569,7 +562,7 @@ describe('TaggingService', () => {
     it('omits track number for single-file books', async () => {
       (readdir as Mock).mockResolvedValue(['book.mp3']);
       const db = createMockDb();
-      const settings = createMockSettingsService();
+      const settings = createMockSettingsService(taggingDefaults);
       const service = new TaggingService(db as never, settings as never, createMockLog() as never);
 
       const result = await service.tagBook(1, '/books/test', {
@@ -589,7 +582,7 @@ describe('TaggingService', () => {
     it('warns about unsupported audio formats in directory', async () => {
       (readdir as Mock).mockResolvedValue(['book.ogg', 'book.flac', 'cover.jpg']);
       const db = createMockDb();
-      const settings = createMockSettingsService();
+      const settings = createMockSettingsService(taggingDefaults);
       const log = createMockLog();
       const service = new TaggingService(db as never, settings as never, log as never);
 
@@ -615,7 +608,7 @@ describe('TaggingService', () => {
       // readdir is called twice: once by collectAudioFiles, once by tagBook for unsupported scan
       (readdir as Mock).mockResolvedValue(['ch01.mp3', 'bonus.ogg', 'ch02.mp3']);
       const db = createMockDb();
-      const settings = createMockSettingsService();
+      const settings = createMockSettingsService(taggingDefaults);
       const log = createMockLog();
       const service = new TaggingService(db as never, settings as never, log as never);
 
@@ -632,7 +625,7 @@ describe('TaggingService', () => {
     it('adds warning when cover embedding enabled but no cover file found', async () => {
       (readdir as Mock).mockResolvedValue(['book.mp3']);
       const db = createMockDb();
-      const settings = createMockSettingsService();
+      const settings = createMockSettingsService(taggingDefaults);
       const service = new TaggingService(db as never, settings as never, createMockLog() as never);
 
       const result = await service.tagBook(1, '/books/test', {

@@ -1,26 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createMockLogger, inject } from '../__tests__/helpers.js';
+import { createMockLogger, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { runSearchJob, runUpgradeSearchJob, searchAllWanted } from './search.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { SettingsService } from '../services/settings.service.js';
 import type { BookService } from '../services/book.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadService } from '../services/download.service.js';
 import type { SearchResult } from '../../core/index.js';
-
-function createMockSettingsService(overrides?: { search?: unknown; quality?: unknown }): SettingsService {
-  const searchSettings = overrides?.search ?? { enabled: true, intervalMinutes: 60 };
-  const qualitySettings = overrides?.quality ?? { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' };
-  return inject<SettingsService>({
-    get: vi.fn().mockImplementation((cat: string) => {
-      if (cat === 'quality') return Promise.resolve(qualitySettings);
-      return Promise.resolve(searchSettings);
-    }),
-    getAll: vi.fn(),
-    set: vi.fn(),
-    update: vi.fn(),
-  });
-}
 
 function createMockBookService(books: unknown[] = [], monitoredBooks: unknown[] = []): BookService {
   return inject<BookService>({

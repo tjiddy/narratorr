@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { eq, or, gt, and, lte, inArray } from 'drizzle-orm';
 import { BlacklistService } from './blacklist.service.js';
 import { blacklist } from '../../db/schema.js';
-import { createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 
 vi.mock('drizzle-orm', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -45,14 +45,13 @@ const mockEntry2 = {
 describe('BlacklistService', () => {
   let db: ReturnType<typeof createMockDb>;
   let log: ReturnType<typeof createMockLogger>;
-  let settingsService: { get: ReturnType<typeof vi.fn> };
+  let settingsService: ReturnType<typeof createMockSettingsService>;
   let service: BlacklistService;
 
   beforeEach(() => {
     db = createMockDb();
     log = createMockLogger();
-    settingsService = { get: vi.fn() };
-    settingsService.get.mockResolvedValue({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 });
+    settingsService = createMockSettingsService();
     service = new BlacklistService(db as never, log as never, settingsService as never);
   });
 

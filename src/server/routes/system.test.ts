@@ -8,6 +8,7 @@ import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import type { Db } from '../../db/index.js';
 import { createTestApp, createMockServices, resetMockServices, inject } from '../__tests__/helpers.js';
+import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import { registerRoutes, type Services } from './index.js';
 
 vi.mock('../utils/version.js', () => ({
@@ -69,11 +70,7 @@ describe('system routes', () => {
         releaseUrl: 'https://github.com/releases/v0.2.0',
         dismissed: false,
       });
-      (services.settings.get as Mock).mockResolvedValue({
-        backupIntervalMinutes: 10080,
-        backupRetention: 7,
-        dismissedUpdateVersion: '',
-      });
+      (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.system);
 
       const res = await app.inject({ method: 'GET', url: '/api/system/status' });
 
@@ -93,8 +90,7 @@ describe('system routes', () => {
         dismissed: true,
       });
       (services.settings.get as Mock).mockResolvedValue({
-        backupIntervalMinutes: 10080,
-        backupRetention: 7,
+        ...DEFAULT_SETTINGS.system,
         dismissedUpdateVersion: '0.2.0',
       });
 
@@ -108,11 +104,8 @@ describe('system routes', () => {
 
   describe('PUT /api/system/update/dismiss', () => {
     it('writes dismissedUpdateVersion to system settings preserving existing fields', async () => {
-      (services.settings.get as Mock).mockResolvedValue({
-        backupIntervalMinutes: 1440,
-        backupRetention: 14,
-        dismissedUpdateVersion: '',
-      });
+      const customSystem = { ...DEFAULT_SETTINGS.system, backupIntervalMinutes: 1440, backupRetention: 14 };
+      (services.settings.get as Mock).mockResolvedValue(customSystem);
 
       const res = await app.inject({
         method: 'PUT',
@@ -123,8 +116,7 @@ describe('system routes', () => {
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({ ok: true });
       expect(services.settings.set as Mock).toHaveBeenCalledWith('system', {
-        backupIntervalMinutes: 1440,
-        backupRetention: 14,
+        ...customSystem,
         dismissedUpdateVersion: '0.2.0',
       });
     });
@@ -177,7 +169,7 @@ describe('system routes', () => {
 
   describe('POST /api/system/tasks/search', () => {
     it('returns 200 with search summary', async () => {
-      (services.settings.get as Mock).mockResolvedValue({ enabled: false, intervalMinutes: 360 });
+      (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.search);
       (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/search' });
@@ -203,9 +195,7 @@ describe('system routes', () => {
   describe('POST /api/system/tasks/rss', () => {
     it('returns 200 with RSS sync summary', async () => {
       (services.settings.get as Mock).mockImplementation((cat: string) => {
-        if (cat === 'rss') return Promise.resolve({ enabled: false, intervalMinutes: 30 });
-        if (cat === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-        return Promise.resolve({});
+        return Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]);
       });
 
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/rss' });
@@ -231,8 +221,7 @@ describe('system routes', () => {
   describe('POST /api/system/tasks/search-all-wanted', () => {
     it('returns 200 with { searched, grabbed, skipped, errors } summary', async () => {
       (services.settings.get as Mock).mockImplementation((cat: string) => {
-        if (cat === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-        return Promise.resolve({ enabled: false, intervalMinutes: 360 });
+        return Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]);
       });
       (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 
@@ -249,8 +238,7 @@ describe('system routes', () => {
 
     it('returns zeros when no wanted books exist', async () => {
       (services.settings.get as Mock).mockImplementation((cat: string) => {
-        if (cat === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-        return Promise.resolve({ enabled: true, intervalMinutes: 360 });
+        return Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]);
       });
       (services.book.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
 

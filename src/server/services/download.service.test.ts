@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
-import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import { DownloadService } from './download.service.js';
 import { type DownloadClientService } from './download-client.service.js';
 import { type EventHistoryService } from './event-history.service.js';
@@ -940,7 +940,7 @@ describe('DownloadService', () => {
         downloadService: { grab: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
-        settingsService: { get: ReturnType<typeof vi.fn> };
+        settingsService: ReturnType<typeof createMockSettingsService>;
         retryBudget: unknown;
         log: ReturnType<typeof createMockLogger>;
       };
@@ -954,7 +954,7 @@ describe('DownloadService', () => {
           downloadService: { grab: vi.fn().mockResolvedValue({ id: 99, title: 'New Download', bookId: 1, book: mockBook }) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 1, title: 'The Way of Kings', duration: 3600, author: { name: 'Sanderson' } }) },
-          settingsService: { get: vi.fn().mockResolvedValue({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' }) },
+          settingsService: createMockSettingsService(),
           retryBudget,
           log: retryLog,
         };

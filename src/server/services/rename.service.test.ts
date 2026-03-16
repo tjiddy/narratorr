@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
-import { createMockLogger, createMockDb, mockDbChain, inject } from '../__tests__/helpers.js';
+import { createMockLogger, createMockDb, mockDbChain, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { RenameService, RenameError } from './rename.service.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
@@ -35,10 +35,12 @@ const mockBook = {
   author: mockAuthor,
 };
 
-const librarySettings = {
-  path: '/library',
-  folderFormat: '{author}/{title}',
-  fileFormat: '{author} - {title}',
+const libraryOverrides = {
+  library: {
+    path: '/library',
+    folderFormat: '{author}/{title}',
+    fileFormat: '{author} - {title}',
+  },
 };
 
 function createService() {
@@ -48,9 +50,7 @@ function createService() {
     getAll: vi.fn(),
     update: vi.fn(),
   };
-  const settingsService = {
-    get: vi.fn().mockResolvedValue(librarySettings),
-  };
+  const settingsService = createMockSettingsService(libraryOverrides);
   const log = createMockLogger();
 
   const service = new RenameService(
@@ -118,7 +118,7 @@ describe('RenameService', () => {
     it('returns no-op when target path matches current path and no files to rename', async () => {
       const { service, bookService, settingsService } = createService();
       // Path already matches what buildTargetPath would produce
-      settingsService.get.mockResolvedValue({ ...librarySettings, fileFormat: '' });
+      (settingsService.get as Mock).mockResolvedValue({ ...libraryOverrides.library, fileFormat: '' });
       const book = { ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' };
       bookService.getById.mockResolvedValue(book);
 
@@ -160,7 +160,7 @@ describe('RenameService', () => {
 
     it('same-book target path is a no-op, not an error', async () => {
       const { service, bookService, settingsService } = createService();
-      settingsService.get.mockResolvedValue({ ...librarySettings, fileFormat: '' });
+      (settingsService.get as Mock).mockResolvedValue({ ...libraryOverrides.library, fileFormat: '' });
       const book = { ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' };
       bookService.getById.mockResolvedValue(book);
 
@@ -171,7 +171,7 @@ describe('RenameService', () => {
 
     it('updates DB path before file rename so partial failure does not leave stale path', async () => {
       const { service, bookService, settingsService } = createService();
-      settingsService.get.mockResolvedValue({ ...librarySettings, fileFormat: '{title}' });
+      (settingsService.get as Mock).mockResolvedValue({ ...libraryOverrides.library, fileFormat: '{title}' });
       const book = { ...mockBook, path: '/library/Wrong Author/Old Title' };
       bookService.getById.mockResolvedValue(book);
       bookService.getAll.mockResolvedValue({ data: [book], total: 1 });
@@ -409,12 +409,9 @@ describe('RenameService', () => {
         update: vi.fn(),
       };
       // Use a different folder format so target path differs from current path
-      const settingsService = {
-        get: vi.fn().mockResolvedValue({
-          ...librarySettings,
-          folderFormat: '{author}/{series}/{title}',
-        }),
-      };
+      const settingsService = createMockSettingsService({
+        library: { ...libraryOverrides.library, folderFormat: '{author}/{series}/{title}' },
+      });
       const log = createMockLogger();
 
       const service = new RenameService(

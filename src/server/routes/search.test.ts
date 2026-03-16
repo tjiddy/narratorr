@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import type { Services } from './index.js';
 import { filterAndRankResults } from '../services/search-pipeline.js';
 import type { SearchResult } from '../../core/index.js';
@@ -309,10 +310,9 @@ describe('search routes', () => {
   describe('GET /api/search', () => {
     it('returns SearchResponse shape with results and unsupportedResults', async () => {
       (services.indexer.searchAll as Mock).mockResolvedValue([mockSearchResult]);
-      (services.settings.get as Mock).mockImplementation((category: string) => {
-        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-        return Promise.resolve({});
-      });
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=sanderson' });
 
@@ -337,10 +337,9 @@ describe('search routes', () => {
 
     it('returns durationUnknown: true when no bookDuration param', async () => {
       (services.indexer.searchAll as Mock).mockResolvedValue([]);
-      (services.settings.get as Mock).mockImplementation((category: string) => {
-        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-        return Promise.resolve({});
-      });
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=testquery' });
 
@@ -351,10 +350,9 @@ describe('search routes', () => {
 
     it('returns durationUnknown: false when valid bookDuration provided', async () => {
       (services.indexer.searchAll as Mock).mockResolvedValue([]);
-      (services.settings.get as Mock).mockImplementation((category: string) => {
-        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-        return Promise.resolve({});
-      });
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=testquery&bookDuration=3600' });
 
@@ -384,9 +382,9 @@ describe('search routes', () => {
       const lowSeedResult = { ...mockSearchResult, seeders: 2, title: 'Low Seeds' };
       const highSeedResult = { ...mockSearchResult, seeders: 20, title: 'High Seeds' };
       (services.indexer.searchAll as Mock).mockResolvedValue([lowSeedResult, highSeedResult]);
-      (services.settings.get as Mock).mockImplementation((category: string) => {
-        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 5, protocolPreference: 'none' });
-        return Promise.resolve({});
+      (services.settings.get as Mock).mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve({ ...DEFAULT_SETTINGS.quality, minSeeders: 5 });
+        return Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]);
       });
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=sanderson' });
@@ -411,10 +409,9 @@ describe('search routes', () => {
         },
       ];
       (services.indexer.searchAll as Mock).mockResolvedValue(results);
-      (services.settings.get as Mock).mockImplementation((category: string) => {
-        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-        return Promise.resolve({});
-      });
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=harry+potter' });
       const body = JSON.parse(res.payload);
@@ -436,10 +433,9 @@ describe('search routes', () => {
         },
       ];
       (services.indexer.searchAll as Mock).mockResolvedValue(results);
-      (services.settings.get as Mock).mockImplementation((category: string) => {
-        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-        return Promise.resolve({});
-      });
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=audiobook' });
       const body = JSON.parse(res.payload);
@@ -461,10 +457,9 @@ describe('search routes', () => {
       ];
       (services.indexer.searchAll as Mock).mockResolvedValue(results);
       (services.blacklist.getBlacklistedHashes as Mock).mockResolvedValue(new Set());
-      (services.settings.get as Mock).mockImplementation((category: string) => {
-        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-        return Promise.resolve({});
-      });
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=harry+potter' });
       const body = JSON.parse(res.payload);
@@ -483,10 +478,9 @@ describe('search routes', () => {
         },
       ];
       (services.indexer.searchAll as Mock).mockResolvedValue(results);
-      (services.settings.get as Mock).mockImplementation((category: string) => {
-        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-        return Promise.resolve({});
-      });
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=harry+potter' });
       const body = JSON.parse(res.payload);
@@ -513,10 +507,9 @@ describe('search routes', () => {
         },
       ];
       (services.indexer.searchAll as Mock).mockResolvedValue(results);
-      (services.settings.get as Mock).mockImplementation((category: string) => {
-        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-        return Promise.resolve({});
-      });
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=test' });
       const body = JSON.parse(res.payload);
@@ -534,9 +527,9 @@ describe('search routes', () => {
         { ...mockSearchResult, title: 'English Edition' },
       ];
       (services.indexer.searchAll as Mock).mockResolvedValue(results);
-      (services.settings.get as Mock).mockImplementation((category: string) => {
-        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: '' });
-        return Promise.resolve({});
+      (services.settings.get as Mock).mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve({ ...DEFAULT_SETTINGS.quality, rejectWords: 'German' });
+        return Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]);
       });
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=testquery' });
@@ -553,9 +546,9 @@ describe('search routes', () => {
         { ...mockSearchResult, title: 'Book MP3' },
       ];
       (services.indexer.searchAll as Mock).mockResolvedValue(results);
-      (services.settings.get as Mock).mockImplementation((category: string) => {
-        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: 'M4B' });
-        return Promise.resolve({});
+      (services.settings.get as Mock).mockImplementation((cat: string) => {
+        if (cat === 'quality') return Promise.resolve({ ...DEFAULT_SETTINGS.quality, requiredWords: 'M4B' });
+        return Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]);
       });
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=testquery' });
@@ -572,10 +565,9 @@ describe('search routes', () => {
         { ...mockSearchResult, title: 'Book Two' },
       ];
       (services.indexer.searchAll as Mock).mockResolvedValue(results);
-      (services.settings.get as Mock).mockImplementation((category: string) => {
-        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' });
-        return Promise.resolve({});
-      });
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=testquery' });
 
@@ -661,10 +653,9 @@ describe('search routes', () => {
       ];
       (services.indexer.searchAll as Mock).mockResolvedValue(results);
       (services.blacklist.getBlacklistedHashes as Mock).mockResolvedValue(new Set(['abc123']));
-      (services.settings.get as Mock).mockImplementation((category: string) => {
-        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-        return Promise.resolve({});
-      });
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=sanderson' });
 
@@ -680,10 +671,9 @@ describe('search routes', () => {
         { ...mockSearchResult, infoHash: null },
       ];
       (services.indexer.searchAll as Mock).mockResolvedValue(results);
-      (services.settings.get as Mock).mockImplementation((category: string) => {
-        if (category === 'quality') return Promise.resolve({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
-        return Promise.resolve({});
-      });
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
 
       const res = await app.inject({ method: 'GET', url: '/api/search?q=sanderson' });
 

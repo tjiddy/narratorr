@@ -4,7 +4,7 @@ import type { DownloadClient } from '../lib/api/download-clients.js';
 import type { Indexer } from '../lib/api/indexers.js';
 import type { Notifier } from '../lib/api/notifiers.js';
 import type { Settings } from '../lib/api/settings.js';
-import { DEFAULT_SETTINGS } from '../../shared/schemas.js';
+import { createMockSettings as _createMockSettings, type DeepPartial } from '../../shared/schemas/settings/create-mock-settings.js';
 import type { RemotePathMapping } from '../lib/api/remote-path-mappings.js';
 
 let nextId = 1;
@@ -56,8 +56,8 @@ export function createMockBook(overrides?: Partial<BookWithAuthor>): BookWithAut
   };
 }
 
-export function createMockSettings(overrides?: Partial<Settings>): Settings {
-  return { ...DEFAULT_SETTINGS, ...overrides };
+export function createMockSettings(overrides?: DeepPartial<Settings>): Settings {
+  return _createMockSettings(overrides);
 }
 
 export function createMockIndexer(overrides?: Partial<Indexer>): Indexer {

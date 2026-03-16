@@ -8,6 +8,9 @@ import { vi, type Mock } from 'vitest';
 import type { Db } from '../../db/index.js';
 import { registerRoutes, type Services } from '../routes/index.js';
 import { RetryBudget } from '../services/retry-budget.js';
+import { createMockSettings, type DeepPartial } from '../../shared/schemas/settings/create-mock-settings.js';
+import type { AppSettings, SettingsCategory } from '../../shared/schemas/settings/registry.js';
+import type { SettingsService } from '../services/settings.service.js';
 
 /**
  * Cast a mock object to a production type for dependency injection in tests.
@@ -189,4 +192,21 @@ export function resetMockServices(services: Services) {
       }
     }
   }
+}
+
+/**
+ * Creates a mock SettingsService backed by the shared createMockSettings factory.
+ * The `get(category)` method resolves to the correct category from a complete
+ * AppSettings object, so tests never hardcode category-level literal defaults.
+ *
+ * Accepts deep-partial overrides — only specify the fields you care about.
+ */
+export function createMockSettingsService(overrides?: DeepPartial<AppSettings>): SettingsService {
+  const settings = createMockSettings(overrides);
+  return inject<SettingsService>({
+    get: vi.fn().mockImplementation((cat: SettingsCategory) => Promise.resolve(settings[cat])),
+    getAll: vi.fn().mockResolvedValue(settings),
+    set: vi.fn().mockResolvedValue(undefined),
+    update: vi.fn().mockResolvedValue(undefined),
+  });
 }

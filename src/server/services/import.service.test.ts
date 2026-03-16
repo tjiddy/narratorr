@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
-import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import { ImportService, buildTargetPath } from './import.service.js';
 import { sanitizePath } from '../../core/utils/index.js';
 import type { DownloadClientService } from './download-client.service.js';
@@ -122,16 +122,6 @@ function createMockDownloadClientService(): DownloadClientService {
   });
 }
 
-function createMockSettingsService(): SettingsService {
-  return inject<SettingsService>({
-    get: vi.fn().mockImplementation((key: string) => {
-      if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-      if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 5 });
-      if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 });
-      return Promise.resolve({});
-    }),
-  });
-}
 
 describe('sanitizePath', () => {
   it('removes illegal characters', () => {
@@ -1352,14 +1342,10 @@ describe('ImportService', () => {
       const mockTagging = inject<TaggingService>({
         tagBook: vi.fn().mockResolvedValue({ bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [] }),
       });
-      const tagSettings = inject<SettingsService>({
-        get: vi.fn().mockImplementation((key: string) => {
-          if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-          if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
-          if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '/usr/bin/ffmpeg' });
-          if (key === 'tagging') return Promise.resolve({ enabled: true, mode: 'overwrite', embedCover: false });
-          return Promise.resolve({});
-        }),
+      const tagSettings = createMockSettingsService({
+        import: { minSeedTime: 0 },
+        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        tagging: { enabled: true, mode: 'overwrite' },
       });
 
       const svc = createServiceWithTagging(mockTagging, tagSettings);
@@ -1381,14 +1367,10 @@ describe('ImportService', () => {
       const mockTagging = inject<TaggingService>({
         tagBook: vi.fn().mockResolvedValue({ bookId: 1, tagged: 0, skipped: 0, failed: 0, warnings: [] }),
       });
-      const tagSettings = inject<SettingsService>({
-        get: vi.fn().mockImplementation((key: string) => {
-          if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-          if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
-          if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '/usr/bin/ffmpeg' });
-          if (key === 'tagging') return Promise.resolve({ enabled: false, mode: 'overwrite', embedCover: false });
-          return Promise.resolve({});
-        }),
+      const tagSettings = createMockSettingsService({
+        import: { minSeedTime: 0 },
+        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        tagging: { enabled: false },
       });
 
       const svc = createServiceWithTagging(mockTagging, tagSettings);
@@ -1403,14 +1385,10 @@ describe('ImportService', () => {
       const mockTagging = inject<TaggingService>({
         tagBook: vi.fn().mockRejectedValue(new Error('ffmpeg crashed')),
       });
-      const tagSettings = inject<SettingsService>({
-        get: vi.fn().mockImplementation((key: string) => {
-          if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-          if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0 });
-          if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '/usr/bin/ffmpeg' });
-          if (key === 'tagging') return Promise.resolve({ enabled: true, mode: 'overwrite', embedCover: false });
-          return Promise.resolve({});
-        }),
+      const tagSettings = createMockSettingsService({
+        import: { minSeedTime: 0 },
+        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+        tagging: { enabled: true, mode: 'overwrite' },
       });
 
       const svc = createServiceWithTagging(mockTagging, tagSettings);
@@ -1520,13 +1498,7 @@ describe('ImportService', () => {
   describe('concurrency limiting (semaphore)', () => {
     it('with limit=2, two imports run concurrently and third queues', async () => {
       // Configure limit=2
-      const settingsWithLimit = createMockSettingsService();
-      (settingsWithLimit.get as Mock).mockImplementation((key: string) => {
-        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
-        if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 });
-        return Promise.resolve({});
-      });
+      const settingsWithLimit = createMockSettingsService({ import: { minSeedTime: 0, minFreeSpaceGB: 0 } });
 
       const svc = new ImportService(inject<Db>(db), clientService, settingsWithLimit, inject<FastifyBaseLogger>(log));
 
@@ -1584,12 +1556,9 @@ describe('ImportService', () => {
 
     it('download set to processing_queued when no slot available', async () => {
       // Set limit=1, pre-fill one slot
-      const settingsWithLimit1 = createMockSettingsService();
-      (settingsWithLimit1.get as Mock).mockImplementation((key: string) => {
-        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
-        if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1 });
-        return Promise.resolve({});
+      const settingsWithLimit1 = createMockSettingsService({
+        import: { minSeedTime: 0, minFreeSpaceGB: 0 },
+        processing: { maxConcurrentProcessing: 1 },
       });
 
       const svc = new ImportService(inject<Db>(db), clientService, settingsWithLimit1, inject<FastifyBaseLogger>(log));
@@ -1619,12 +1588,9 @@ describe('ImportService', () => {
     it('queued downloads are retried on a later tick in FIFO order', async () => {
       // limit=1: first tick processes dl1, queues dl2 and dl3
       // second tick processes dl2 (oldest completedAt), queues dl3
-      const settingsWithLimit1 = createMockSettingsService();
-      (settingsWithLimit1.get as Mock).mockImplementation((key: string) => {
-        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
-        if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 1 });
-        return Promise.resolve({});
+      const settingsWithLimit1 = createMockSettingsService({
+        import: { minSeedTime: 0, minFreeSpaceGB: 0 },
+        processing: { maxConcurrentProcessing: 1 },
       });
 
       const svc = new ImportService(inject<Db>(db), clientService, settingsWithLimit1, inject<FastifyBaseLogger>(log));
@@ -1706,17 +1672,13 @@ describe('ImportService', () => {
 
   describe('disk space check', () => {
     function setupDiskCheckMocks(overrides?: { minFreeSpaceGB?: number; processingEnabled?: boolean }) {
-      const minFreeSpaceGB = overrides?.minFreeSpaceGB ?? 5;
-      const enabled = overrides?.processingEnabled ?? false;
-      const customSettings = createMockSettingsService();
-      (customSettings.get as Mock).mockImplementation((key: string) => {
-        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB });
-        if (key === 'processing') return Promise.resolve({ enabled, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 });
-        if (key === 'tagging') return Promise.resolve({ enabled: false, mode: 'populate_missing', embedCover: false });
-        return Promise.resolve({});
+      return createMockSettingsService({
+        import: { minSeedTime: 0, minFreeSpaceGB: overrides?.minFreeSpaceGB ?? 5 },
+        processing: {
+          enabled: overrides?.processingEnabled ?? false,
+          ffmpegPath: '/usr/bin/ffmpeg',
+        },
       });
-      return customSettings;
     }
 
     function setupImportMocks() {
@@ -1883,15 +1845,8 @@ describe('ImportService', () => {
 
   describe('SSE emissions', () => {
     /** Settings with minFreeSpaceGB=0 to skip disk check in SSE-focused tests. */
-    function createNoCheckSettings(): ReturnType<typeof createMockSettingsService> {
-      const s = createMockSettingsService();
-      (s.get as Mock).mockImplementation((key: string) => {
-        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
-        if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 });
-        return Promise.resolve({});
-      });
-      return s;
+    function createNoCheckSettings() {
+      return createMockSettingsService({ import: { minSeedTime: 0, minFreeSpaceGB: 0 } });
     }
 
     function setupImportMocksForSSE(db: ReturnType<typeof createMockDb>) {
@@ -2021,14 +1976,9 @@ describe('ImportService', () => {
 
   describe('post-processing script hook', () => {
     function createSettingsWithScript(scriptPath: string, timeout = 300): SettingsService {
-      return inject<SettingsService>({
-        get: vi.fn().mockImplementation((key: string) => {
-          if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-          if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
-          if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '', postProcessingScript: scriptPath, postProcessingScriptTimeout: timeout });
-          if (key === 'tagging') return Promise.resolve({ enabled: false });
-          return Promise.resolve({});
-        }),
+      return createMockSettingsService({
+        import: { minSeedTime: 0, minFreeSpaceGB: 0 },
+        processing: { postProcessingScript: scriptPath, postProcessingScriptTimeout: timeout },
       });
     }
 
@@ -2098,14 +2048,10 @@ describe('ImportService', () => {
         return originalSet(values);
       });
 
-      const orderSettings = inject<SettingsService>({
-        get: vi.fn().mockImplementation((key: string) => {
-          if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
-          if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
-          if (key === 'processing') return Promise.resolve({ enabled: false, ffmpegPath: '/usr/bin/ffmpeg', postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 300 });
-          if (key === 'tagging') return Promise.resolve({ enabled: true, mode: 'overwrite', embedCover: false });
-          return Promise.resolve({});
-        }),
+      const orderSettings = createMockSettingsService({
+        import: { minSeedTime: 0, minFreeSpaceGB: 0 },
+        processing: { ffmpegPath: '/usr/bin/ffmpeg', postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 300 },
+        tagging: { enabled: true, mode: 'overwrite' },
       });
 
       // Setup: select download, select book+author

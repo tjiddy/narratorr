@@ -1,9 +1,8 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import { RecyclingBinService, RecyclingBinError } from './recycling-bin.service.js';
-import type { SettingsService } from './settings.service.js';
 import { createMockDbRecyclingBinEntry, createMockDbBook } from '../__tests__/factories.js';
-import { mockDbChain, createMockLogger } from '../__tests__/helpers.js';
+import { mockDbChain, createMockLogger, createMockSettingsService } from '../__tests__/helpers.js';
 
 vi.mock('node:fs/promises', () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
@@ -38,11 +37,6 @@ function createMockLog() {
   return createMockLogger() as unknown as FastifyBaseLogger;
 }
 
-function createMockSettingsService() {
-  return {
-    get: vi.fn().mockResolvedValue({ logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30 }),
-  } as unknown as SettingsService;
-}
 
 describe('RecyclingBinService', () => {
   let service: RecyclingBinService;

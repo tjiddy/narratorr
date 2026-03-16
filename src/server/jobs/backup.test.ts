@@ -3,6 +3,7 @@ import { runBackupJob, startBackupJob } from './backup.js';
 import type { BackupService } from '../services/backup.service.js';
 import type { SettingsService } from '../services/index.js';
 import type { FastifyBaseLogger } from 'fastify';
+import { createMockSettingsService } from '../__tests__/helpers.js';
 
 function createMockLog(): FastifyBaseLogger {
   return {
@@ -65,9 +66,7 @@ describe('startBackupJob', () => {
   });
 
   it('reads interval from settings and schedules setTimeout', async () => {
-    const mockSettings = {
-      get: vi.fn().mockResolvedValue({ backupIntervalMinutes: 60 }),
-    } as unknown as SettingsService;
+    const mockSettings = createMockSettingsService({ system: { backupIntervalMinutes: 60 } });
     const mockBackup = {} as unknown as BackupService;
     const log = createMockLog();
 
@@ -96,9 +95,7 @@ describe('startBackupJob', () => {
   });
 
   it('fires the timer callback, runs backup job, and recursively reschedules', async () => {
-    const mockSettings = {
-      get: vi.fn().mockResolvedValue({ backupIntervalMinutes: 60 }),
-    } as unknown as SettingsService;
+    const mockSettings = createMockSettingsService({ system: { backupIntervalMinutes: 60 } });
     const mockBackup = {
       create: vi.fn().mockResolvedValue({ filename: 'test.zip', timestamp: '2026-01-01', size: 1024 }),
       prune: vi.fn().mockResolvedValue(0),
@@ -126,9 +123,7 @@ describe('startBackupJob', () => {
   });
 
   it('logs startup message', () => {
-    const mockSettings = {
-      get: vi.fn().mockResolvedValue({ backupIntervalMinutes: 60 }),
-    } as unknown as SettingsService;
+    const mockSettings = createMockSettingsService({ system: { backupIntervalMinutes: 60 } });
     const mockBackup = {} as unknown as BackupService;
     const log = createMockLog();
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { HealthCheckService } from './health-check.service.js';
-import { inject, createMockLogger } from '../__tests__/helpers.js';
+import { inject, createMockLogger, createMockSettingsService } from '../__tests__/helpers.js';
+import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadClientService } from './download-client.service.js';
@@ -29,15 +30,9 @@ function createService(overrides?: {
     test: vi.fn().mockResolvedValue({ success: true }),
     ...overrides?.downloadClient,
   };
-  const settings = {
-    get: vi.fn().mockImplementation((key: string) => {
-      if (key === 'library') return Promise.resolve({ path: '/audiobooks' });
-      if (key === 'import') return Promise.resolve({ minFreeSpaceGB: 5 });
-      if (key === 'processing') return Promise.resolve({ ffmpegPath: '/usr/bin/ffmpeg', enabled: true });
-      return Promise.resolve({});
-    }),
-    ...overrides?.settings,
-  };
+  const settings = overrides?.settings ?? createMockSettingsService({
+    processing: { ffmpegPath: '/usr/bin/ffmpeg', enabled: true },
+  });
   const notifier = {
     notify: vi.fn().mockResolvedValue(undefined),
     ...overrides?.notifier,
@@ -238,16 +233,13 @@ describe('HealthCheckService', () => {
     });
 
     it('returns warning when library path is not configured', async () => {
-      const { service } = createService({
-        settings: {
-          get: vi.fn().mockImplementation((key: string) => {
-            if (key === 'library') return Promise.resolve(null);
-            if (key === 'import') return Promise.resolve({ minFreeSpaceGB: 5 });
-            if (key === 'processing') return Promise.resolve({ ffmpegPath: '', enabled: false });
-            return Promise.resolve({});
-          }),
-        },
+      const nullLibSettings = createMockSettingsService({ library: { path: '' } });
+      // Override library.get to return null to test unconfigured path
+      (nullLibSettings.get as ReturnType<typeof vi.fn>).mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve(null);
+        return Promise.resolve(DEFAULT_SETTINGS[key as keyof typeof DEFAULT_SETTINGS]);
       });
+      const { service } = createService({ settings: nullLibSettings });
       const results = await service.runAllChecks();
       const check = results.find((r) => r.checkName === 'disk-space');
       expect(check).toMatchObject({ state: 'warning' });
@@ -285,14 +277,7 @@ describe('HealthCheckService', () => {
 
     it('skips check and returns no result when ffmpeg path is empty/unset', async () => {
       const { service } = createService({
-        settings: {
-          get: vi.fn().mockImplementation((key: string) => {
-            if (key === 'processing') return Promise.resolve({ ffmpegPath: '', enabled: false });
-            if (key === 'library') return Promise.resolve({ path: '/audiobooks' });
-            if (key === 'import') return Promise.resolve({ minFreeSpaceGB: 5 });
-            return Promise.resolve({});
-          }),
-        },
+        settings: createMockSettingsService({ processing: { ffmpegPath: '' } }),
       });
       const results = await service.runAllChecks();
       const check = results.find((r) => r.checkName === 'ffmpeg');

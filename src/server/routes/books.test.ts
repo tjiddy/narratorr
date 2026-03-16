@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { Services } from './index.js';
 import { RenameError } from '../services/rename.service.js';
@@ -196,7 +197,7 @@ describe('books routes', () => {
     it('triggers search when searchImmediately is true and status is wanted', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue(null);
       (services.book.create as Mock).mockResolvedValue(mockBook);
-      (services.settings.get as Mock).mockResolvedValue({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
+      (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.quality);
       (services.indexer.searchAll as Mock).mockResolvedValue([
         { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
       ]);
@@ -300,7 +301,7 @@ describe('books routes', () => {
     it('search trigger failure does not fail book creation', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue(null);
       (services.book.create as Mock).mockResolvedValue(mockBook);
-      (services.settings.get as Mock).mockResolvedValue({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none' });
+      (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.quality);
       (services.indexer.searchAll as Mock).mockRejectedValue(new Error('Indexer down'));
 
       const res = await app.inject({

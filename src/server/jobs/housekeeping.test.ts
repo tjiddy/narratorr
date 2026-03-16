@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createMockLogger } from '../__tests__/helpers.js';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
+import { createMockLogger, createMockSettingsService } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { SettingsService } from '../services/settings.service.js';
@@ -21,16 +21,14 @@ const { startHousekeepingJob } = await import('./housekeeping.js');
 
 describe('housekeeping job', () => {
   let db: { run: ReturnType<typeof vi.fn> };
-  let settingsService: { get: ReturnType<typeof vi.fn> };
+  let settingsService: ReturnType<typeof createMockSettingsService>;
   let eventHistoryService: { pruneOlderThan: ReturnType<typeof vi.fn> };
   let blacklistService: { deleteExpired: ReturnType<typeof vi.fn> };
   let log: ReturnType<typeof createMockLogger>;
 
   beforeEach(() => {
     db = { run: vi.fn().mockResolvedValue(undefined) };
-    settingsService = {
-      get: vi.fn().mockResolvedValue({ logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30 }),
-    };
+    settingsService = createMockSettingsService();
     eventHistoryService = { pruneOlderThan: vi.fn().mockResolvedValue(5) };
     blacklistService = { deleteExpired: vi.fn().mockResolvedValue(3) };
     log = createMockLogger();
@@ -93,7 +91,14 @@ describe('housekeeping job', () => {
 
   describe('event history pruning sub-task', () => {
     it('calls EventHistoryService.pruneOlderThan with retention days from settings', async () => {
-      settingsService.get.mockResolvedValue({ logLevel: 'info', housekeepingRetentionDays: 30, recycleRetentionDays: 30 });
+      settingsService = createMockSettingsService({ general: { housekeepingRetentionDays: 30 } });
+      startHousekeepingJob(
+        db as unknown as Db,
+        settingsService as unknown as SettingsService,
+        eventHistoryService as unknown as EventHistoryService,
+        blacklistService as unknown as BlacklistService,
+        log as unknown as FastifyBaseLogger,
+      );
 
       await runHousekeeping();
 
@@ -173,7 +178,7 @@ describe('housekeeping job', () => {
     });
 
     it('uses default 90 when setting not configured', async () => {
-      settingsService.get.mockResolvedValue({ logLevel: 'info' });
+      (settingsService.get as Mock).mockResolvedValue({ logLevel: 'info' });
 
       await runHousekeeping();
 

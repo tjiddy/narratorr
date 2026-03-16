@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { inject, createMockDb, mockDbChain } from '../__tests__/helpers.js';
+import { inject, createMockDb, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { BookService } from './book.service.js';
@@ -221,9 +221,9 @@ describe('LibraryScanService', () => {
       enrichBook: vi.fn().mockResolvedValue(null),
     };
     log = createMockLogger();
-    const mockSettingsService = {
-      get: vi.fn().mockResolvedValue({ path: '/library', folderFormat: '{author}/{title}' }),
-    };
+    const mockSettingsService = createMockSettingsService({
+      library: { path: '/library' },
+    });
     service = new LibraryScanService(
       inject<Db>(mockDb),
       inject<BookService>(mockBookService),
@@ -1436,12 +1436,12 @@ describe('LibraryScanService', () => {
     });
 
     it('throws when library path is not configured', async () => {
-      const mockSettingsService = { get: vi.fn().mockResolvedValue({ path: '' }) };
+      const emptyPathSettings = createMockSettingsService({ library: { path: '' } });
       const svc = new LibraryScanService(
         inject<Db>(mockDb),
         inject<BookService>(mockBookService),
         inject<MetadataService>(mockMetadataService),
-        inject<SettingsService>(mockSettingsService),
+        inject<SettingsService>(emptyPathSettings),
         log,
       );
 

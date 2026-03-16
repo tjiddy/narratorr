@@ -6,6 +6,7 @@ import os from 'os';
 import { Readable } from 'stream';
 import { EventEmitter } from 'events';
 import { BackupService, RestoreUploadError, applyPendingRestore } from './backup.service.js';
+import { createMockSettingsService } from '../__tests__/helpers.js';
 
 // Mock archiver — finalize() triggers 'close' on the piped output stream
 vi.mock('archiver', () => ({
@@ -32,12 +33,6 @@ vi.mock('@libsql/client', () => ({
     close: mockClose,
   })),
 }));
-
-function createMockSettingsService(retention = 7) {
-  return {
-    get: vi.fn().mockResolvedValue({ backupRetention: retention, backupIntervalMinutes: 10080 }),
-  } as never;
-}
 
 function createMockLog() {
   return {
@@ -265,7 +260,7 @@ describe('BackupService', () => {
         await new Promise(r => setTimeout(r, 20));
       }
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(3), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService({ system: { backupRetention: 3 } }), createMockLog());
       const deleted = await service.prune();
 
       expect(deleted).toBe(2);
@@ -280,7 +275,7 @@ describe('BackupService', () => {
       await fs.writeFile(path.join(backupsDir, 'narratorr-backup-20260101T000000000Z.zip'), 'data1');
       await fs.writeFile(path.join(backupsDir, 'narratorr-backup-20260102T000000000Z.zip'), 'data2');
 
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(3), createMockLog());
+      const service = new BackupService(configPath, dbPath, createMockSettingsService({ system: { backupRetention: 3 } }), createMockLog());
       const deleted = await service.prune();
 
       expect(deleted).toBe(0);

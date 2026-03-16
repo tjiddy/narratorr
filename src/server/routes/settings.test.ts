@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
+import { createMockSettings } from '../../shared/schemas/settings/create-mock-settings.js';
+import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import type { Services } from './index.js';
 
 vi.mock('../../core/utils/audio-processor.js', () => ({
@@ -16,13 +18,7 @@ import { resolveProxyIp } from '../../core/indexers/proxy.js';
 const mockProbeFfmpeg = vi.mocked(probeFfmpeg);
 const mockResolveProxyIp = vi.mocked(resolveProxyIp);
 
-const mockSettings = {
-  library: { path: '/audiobooks', folderFormat: '{author}/{title}' },
-  search: { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 },
-  import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 },
-  general: { logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30 },
-  processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
-};
+const mockSettings = createMockSettings();
 
 describe('settings routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
@@ -372,7 +368,7 @@ describe('settings routes', () => {
         ...mockSettings,
         network: { proxyUrl: 'http://proxy.example.com:8080' },
       };
-      (services.settings.get as Mock).mockResolvedValue({ proxyUrl: '' });
+      (services.settings.get as Mock).mockResolvedValue(DEFAULT_SETTINGS.network);
       (services.settings.update as Mock).mockResolvedValue(updated);
 
       const res = await app.inject({

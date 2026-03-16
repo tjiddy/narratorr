@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { retrySearch, createRetrySearchDeps, type RetrySearchDeps } from './retry-search.js';
 import { RetryBudget } from './retry-budget.js';
-import { createMockLogger, inject } from '../__tests__/helpers.js';
+import { createMockLogger, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadService, DownloadWithBook } from './download.service.js';
@@ -59,15 +59,7 @@ function createDeps(overrides?: Partial<RetrySearchDeps>): RetrySearchDeps {
     bookService: inject<BookService>({
       getById: vi.fn().mockResolvedValue(mockBook),
     }),
-    settingsService: inject<SettingsService>({
-      get: vi.fn().mockResolvedValue({
-        grabFloor: 0,
-        minSeeders: 0,
-        protocolPreference: 'none',
-        rejectWords: '',
-        requiredWords: '',
-      }),
-    }),
+    settingsService: createMockSettingsService(),
     retryBudget: new RetryBudget(),
     log: inject<FastifyBaseLogger>(createMockLogger()),
     ...overrides,

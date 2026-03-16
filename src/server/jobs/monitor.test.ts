@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { DownloadClientService } from '../services/download-client.service.js';
@@ -637,7 +637,7 @@ describe('monitor job', () => {
         downloadService: { grab: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
-        settingsService: { get: ReturnType<typeof vi.fn> };
+        settingsService: ReturnType<typeof createMockSettingsService>;
         retryBudget: RetryBudget;
         log: ReturnType<typeof createMockLogger>;
       };
@@ -652,7 +652,7 @@ describe('monitor job', () => {
           downloadService: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, author: { name: 'Author' } }) },
-          settingsService: { get: vi.fn().mockResolvedValue({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' }) },
+          settingsService: createMockSettingsService(),
           retryBudget: new RetryBudget(),
           log: createMockLogger(),
         },
@@ -874,7 +874,7 @@ describe('monitor job', () => {
         downloadService: { grab: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
-        settingsService: { get: ReturnType<typeof vi.fn> };
+        settingsService: ReturnType<typeof createMockSettingsService>;
         retryBudget: RetryBudget;
         log: ReturnType<typeof createMockLogger>;
       };
@@ -889,7 +889,7 @@ describe('monitor job', () => {
           downloadService: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, author: { name: 'Author' } }) },
-          settingsService: { get: vi.fn().mockResolvedValue({ grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: '' }) },
+          settingsService: createMockSettingsService(),
           retryBudget: new RetryBudget(),
           log: createMockLogger(),
         },

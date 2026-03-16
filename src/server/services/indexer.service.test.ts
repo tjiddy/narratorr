@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
+import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbIndexer } from '../__tests__/factories.js';
 import { IndexerService } from './indexer.service.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -630,13 +630,11 @@ describe('IndexerService', () => {
   describe('proxy integration', () => {
     let proxyDb: ReturnType<typeof createMockDb>;
     let proxyService: IndexerService;
-    let mockSettingsService: { get: ReturnType<typeof vi.fn> };
+    let mockSettingsService: ReturnType<typeof createMockSettingsService>;
 
     beforeEach(() => {
       proxyDb = createMockDb();
-      mockSettingsService = {
-        get: vi.fn().mockResolvedValue({ proxyUrl: 'socks5://proxy:1080' }),
-      };
+      mockSettingsService = createMockSettingsService({ network: { proxyUrl: 'socks5://proxy:1080' } });
       proxyService = new IndexerService(
         inject<Db>(proxyDb),
         inject<FastifyBaseLogger>(createMockLogger()),
@@ -686,7 +684,12 @@ describe('IndexerService', () => {
     });
 
     it('createAdapter omits proxyUrl when useProxy true but no global proxy URL configured', async () => {
-      mockSettingsService.get.mockResolvedValue({ proxyUrl: '' });
+      mockSettingsService = createMockSettingsService({ network: { proxyUrl: '' } });
+      proxyService = new IndexerService(
+        inject<Db>(proxyDb),
+        inject<FastifyBaseLogger>(createMockLogger()),
+        inject<SettingsService>(mockSettingsService),
+      );
       const { INDEXER_ADAPTER_FACTORIES } = await import('../../core/index.js');
       const factorySpy = vi.spyOn(INDEXER_ADAPTER_FACTORIES, 'abb');
 
