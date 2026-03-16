@@ -52,7 +52,32 @@ Uses Fastify's built-in Pino logger. Use `FastifyBaseLogger` from `fastify` for 
 
 ## Security
 
-See `docs/SECURITY.md` for full model. Filesystem browsing is intentionally unrestricted (single-user self-hosted app). All `/api/*` routes require auth except health/status/auth endpoints. Passwords use scrypt with timing-safe comparison.
+See `docs/SECURITY.md` for full model. Filesystem browsing is intentionally unrestricted (single-user self-hosted app). All `/api/*` routes require auth except health/status/auth endpoints. Passwords use scrypt with timing-safe comparison. Never use `startsWith()` for path ancestry checks — use `path.relative()` and verify the result doesn't start with `..`. Redact credentials from proxy URLs before logging. Normalize sentinel values *before* comparison, not after. Allow sentinel passthrough at schema level for validated secret fields.
+
+## Gotchas
+
+Graduated learnings from the CL system — non-obvious patterns that have caused bugs:
+
+- **SQLite NULL uniqueness:** NULL ≠ NULL in unique indexes — nullable columns don't prevent duplicates. Ensure populated before insert.
+- **SQLite 999 bind limit:** Account for ALL bound params in WHERE when chunking `IN(...)` queries, not just the list.
+- **Drizzle migrations:** Verify every CREATE INDEX at the top has a matching one at the bottom after the drop-all phase.
+- **Drizzle `$inferSelect` widens enums:** Use actual Zod enum schemas, not `z.string()`, at Drizzle-to-Zod boundaries.
+- **`rename()` is atomic:** Don't `unlink()` before `rename()` — creates a data-loss window. Just rename over the target.
+- **`mkdir` for moves:** Use `mkdir(dirname(toPath))` not `mkdir(toPath)` for directory moves.
+- **Shallow clone trap:** `{ ...obj }` shares nested refs. Use `JSON.parse(JSON.stringify(...))` for full isolation in factories.
+- **Zod `.default()` ignores empty strings:** Use `.transform(v => v || default)` to coalesce empty strings.
+- **`lte` vs `lt` for retention:** "Older than N days" means `lt` (strictly less-than), not `lte`.
+- **SSE high-frequency updates:** Use `setQueryData()` to patch rows in-place, not `invalidateQueries()`.
+- **Module-level mutable state:** Use `useSyncExternalStore` with subscribe/notify, not bare `let` variables.
+- **Derived state over copied state:** `override ?? queryDefault ?? fallback` eliminates race conditions vs copying async query data into useState.
+- **SPA fallback scope:** Reject requests whose path doesn't start with URL_BASE before serving index.html.
+- **Git executable bit on Windows:** Use `git update-index --chmod=+x` for shell scripts.
+- **Variable-length parsing:** Check most specific format first (6-part cron before 5-part).
+- **Stable keys:** Use field-based keys only; append index suffixes only at collision points via a dedup helper.
+- **FK restoration:** When restoring records, find-or-create related FK records, not just primary scalars.
+- **DB update timing:** Update the database immediately after the first irreversible filesystem step, not at end.
+- **Streaming parser errors:** Map to 4xx by checking error messages for format/validation failures, not blanket 500.
+- **Case-insensitive filters:** Deduplicate dropdown options case-insensitively (Map keyed by lowercase).
 
 ## Frontend Design Quality
 
