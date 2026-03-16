@@ -24,7 +24,7 @@ vi.mock('node:fs/promises', () => ({
   rm: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('./import.service.js', () => ({
+vi.mock('../utils/import-helpers.js', () => ({
   buildTargetPath: vi.fn().mockReturnValue('/library/Author/Title'),
   getPathSize: vi.fn().mockResolvedValue(1000),
 }));
@@ -32,7 +32,7 @@ vi.mock('./import.service.js', () => ({
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { discoverBooks } from '../../core/utils/book-discovery.js';
 import { access, readdir, stat, mkdir, cp, rm } from 'node:fs/promises';
-import { buildTargetPath, getPathSize } from './import.service.js';
+import { buildTargetPath, getPathSize } from '../utils/import-helpers.js';
 
 // ============================================================================
 // parseFolderStructure (pure function tests)

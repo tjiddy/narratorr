@@ -1,15 +1,9 @@
-/* eslint-disable max-lines -- linear import pipeline with copy, process, rename, tag, enrich steps */
 import { eq, and, inArray, isNotNull } from 'drizzle-orm';
-import { mkdir, cp, stat, readdir, rm, statfs } from 'node:fs/promises';
-import { join, extname, basename, normalize } from 'node:path';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, authors } from '../../db/schema.js';
-import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
-import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
-import { runPostProcessingScript } from '../utils/post-processing-script.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
@@ -18,113 +12,22 @@ import type { TaggingService } from './tagging.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
 import { Semaphore } from '../utils/semaphore.js';
-import { revertBookStatus } from '../utils/book-status.js';
 import { resolveSavePath } from '../utils/download-path.js';
-
+import { buildTargetPath } from '../utils/import-helpers.js';
+import {
+  validateSource, checkDiskSpace, copyToLibrary, runAudioProcessing,
+  verifyCopy, cleanupOldBookPath, embedTagsForImport,
+  runImportPostProcessing, emitImportSuccess, emitImportingStatus,
+  notifyImportComplete, recordImportEvent, handleImportFailure,
+} from '../utils/import-steps.js';
 import type { DownloadRow } from './types.js';
 
-/** Minimum ratio of target/source file size for copy verification to pass. */
-const COPY_VERIFICATION_THRESHOLD = 0.99;
+import type { ImportResult, BookRow, AuthorRow } from '../utils/import-helpers.js';
+export type { ImportResult } from '../utils/import-helpers.js';
+
 /** Milliseconds per minute — used for seed time calculations. */
 const MS_PER_MINUTE = 60_000;
-
-type BookRow = typeof books.$inferSelect;
-type AuthorRow = typeof authors.$inferSelect;
-
-/** Extract a 4-digit year from a date string like "2010-11-02" or "2010". */
-function extractYear(publishedDate: string | null | undefined): string | undefined {
-  if (!publishedDate) return undefined;
-  const match = publishedDate.match(/(\d{4})/);
-  return match ? match[1] : undefined;
-}
-
-/** Build the target directory from a folder format string and book metadata. */
-export function buildTargetPath(
-  libraryPath: string,
-  folderFormat: string,
-  book: {
-    title: string;
-    seriesName?: string | null;
-    seriesPosition?: number | null;
-    narrator?: string | null;
-    publishedDate?: string | null;
-  },
-  authorName: string | null,
-): string {
-  const author = authorName || 'Unknown Author';
-  const tokens: Record<string, string | number | undefined> = {
-    author,
-    authorLastFirst: toLastFirst(author),
-    title: book.title,
-    titleSort: toSortTitle(book.title),
-    series: book.seriesName || undefined,
-    seriesPosition: book.seriesPosition ?? undefined,
-    narrator: book.narrator || undefined,
-    narratorLastFirst: book.narrator ? toLastFirst(book.narrator) : undefined,
-    year: extractYear(book.publishedDate),
-  };
-
-  const rendered = renderTemplate(folderFormat, tokens);
-  return join(libraryPath, ...rendered.split('/'));
-}
-
-/** Recursively get total size of a path (file or directory). */
-export async function getPathSize(path: string): Promise<number> {
-  const stats = await stat(path);
-  if (stats.isFile()) return stats.size;
-
-  let total = 0;
-  const entries = await readdir(path, { withFileTypes: true });
-  for (const entry of entries) {
-    const entryPath = join(path, entry.name);
-    if (entry.isFile()) {
-      const s = await stat(entryPath);
-      total += s.size;
-    } else if (entry.isDirectory()) {
-      total += await getPathSize(entryPath);
-    }
-  }
-  return total;
-}
-
-/** Check if a path contains audio files (recursively). */
-async function containsAudioFiles(dirPath: string): Promise<boolean> {
-  const entries = await readdir(dirPath, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-      return true;
-    }
-    if (entry.isDirectory()) {
-      if (await containsAudioFiles(join(dirPath, entry.name))) return true;
-    }
-  }
-  return false;
-}
-
-/** Recursively copy only audio files from source to target, preserving directory structure. */
-async function copyAudioFiles(source: string, target: string): Promise<void> {
-  const entries = await readdir(source, { withFileTypes: true });
-  for (const entry of entries) {
-    const srcPath = join(source, entry.name);
-    const destPath = join(target, entry.name);
-    if (entry.isDirectory()) {
-      await copyAudioFiles(srcPath, destPath);
-    } else if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-      await mkdir(target, { recursive: true });
-      await cp(srcPath, destPath, { errorOnExist: false });
-    }
-  }
-}
-
-export interface ImportResult {
-  downloadId: number;
-  bookId: number;
-  targetPath: string;
-  fileCount: number;
-  totalSize: number;
-}
 
 export class ImportService {
   private readonly semaphore = new Semaphore(2);
@@ -155,332 +58,73 @@ export class ImportService {
    * Import a single completed download into the library.
    * Copies files, updates DB records, optionally removes torrent.
    */
-  // eslint-disable-next-line complexity, max-lines-per-function -- linear 10-step import pipeline with error recovery and upgrade flow
   async importDownload(downloadId: number): Promise<ImportResult> {
-    // 1. Get the download + linked book
     const download = await this.getDownload(downloadId);
     if (!download) throw new Error(`Download ${downloadId} not found`);
     if (!download.bookId) throw new Error(`Download ${downloadId} has no linked book`);
 
     const bookData = await this.getBookWithAuthor(download.bookId);
     if (!bookData) throw new Error(`Book ${download.bookId} not found`);
-
     const { book, author } = bookData;
+    const authorName = author?.name ?? null;
 
-    // 2. Mark as importing
     await this.db.update(downloads).set({ status: 'importing' }).where(eq(downloads.id, downloadId));
-
-    // SSE: download_status_change + book_status_change (importing)
-    try {
-      this.broadcaster?.emit('download_status_change', { download_id: downloadId, book_id: book.id, old_status: download.status as DownloadStatus, new_status: 'importing' });
-      this.broadcaster?.emit('book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: 'importing' });
-    } catch (e) { this.log.debug(e, 'SSE emit failed'); }
+    emitImportingStatus({ broadcaster: this.broadcaster, downloadId, book, downloadStatus: download.status as DownloadStatus, log: this.log });
 
     let targetPath: string | undefined;
     try {
-      // 3. Get save path from download client
       const savePath = await resolveSavePath(download, this.downloadClientService, this.remotePathMappingService);
-
-      // 4. Build target path
       const [librarySettings, importSettings, processingSettings] = await Promise.all([
         this.settingsService.get('library'),
         this.settingsService.get('import'),
         this.settingsService.get('processing'),
       ]);
+      const processingEnabled = !!processingSettings?.enabled;
+      targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName);
 
-      targetPath = buildTargetPath(
-        librarySettings.path,
-        librarySettings.folderFormat,
-        book,
-        author?.name ?? null,
-      );
+      const { sourcePath, fileCount, sourceStats } = await validateSource(savePath, this.remotePathMappingService, download.downloadClientId);
+      await checkDiskSpace({ sourcePath, sourceStats, libraryPath: librarySettings.path, minFreeSpaceGB: importSettings.minFreeSpaceGB, processingEnabled });
+      await copyToLibrary({ sourcePath, targetPath, sourceStats, log: this.log });
+      await runAudioProcessing({ processingSettings, librarySettings, targetPath, book, authorName: authorName || 'Unknown Author', db: this.db, log: this.log });
 
-      // 5. Determine source: could be a single file or a directory
-      let sourceStats;
-      try {
-        sourceStats = await stat(savePath);
-      } catch (statError) {
-        if ((statError as NodeJS.ErrnoException).code === 'ENOENT') {
-          const hasMapping = this.remotePathMappingService
-            ? (await this.remotePathMappingService.getByClientId(download.downloadClientId!)).length > 0
-            : false;
-          if (hasMapping) {
-            throw new Error(`Path not found: ${savePath} (mapped from download client). Check your remote path mapping configuration.`);
-          } else {
-            throw new Error(`Path not found: ${savePath}. If the download client runs in Docker or on a remote machine, add a Remote Path Mapping in Settings > Download Clients.`);
-          }
-        }
-        throw statError;
-      }
-      let sourcePath = savePath;
-      let fileCount = 0;
-
-      if (sourceStats.isDirectory()) {
-        if (!(await containsAudioFiles(savePath))) {
-          throw new Error(`No audio files found in ${savePath}`);
-        }
-        fileCount = await this.countAudioFiles(savePath);
-        sourcePath = savePath;
-      } else if (sourceStats.isFile()) {
-        fileCount = 1;
-      }
-
-      // 5b. Disk space check before copy
-      if (importSettings.minFreeSpaceGB > 0) {
-        const sourceSize = sourceStats.isDirectory() ? await getPathSize(sourcePath) : sourceStats.size;
-        const multiplier = processingSettings?.enabled ? 1.5 : 1;
-        const estimatedOutputSize = sourceSize * multiplier;
-        const requiredBytes = importSettings.minFreeSpaceGB * 1024 ** 3 + estimatedOutputSize;
-
-        let freeBytes: number;
-        try {
-          const fsStats = await statfs(librarySettings.path);
-          freeBytes = Number(fsStats.bavail) * Number(fsStats.bsize);
-        } catch (statfsError) {
-          throw new Error(`Disk space check failed: ${statfsError instanceof Error ? statfsError.message : 'unknown error'}`);
-        }
-
-        if (freeBytes < requiredBytes) {
-          const freeGB = (freeBytes / 1024 ** 3).toFixed(1);
-          const requiredGB = (requiredBytes / 1024 ** 3).toFixed(1);
-          throw new Error(`Import blocked — insufficient disk space (${freeGB} GB free, ${requiredGB} GB required)`);
-        }
-      }
-
-      // 6. Create target directory and copy
-      await mkdir(targetPath, { recursive: true });
-      this.log.info({ source: sourcePath, target: targetPath }, 'Copying files to library');
-
-      if (sourceStats.isDirectory()) {
-        await copyAudioFiles(sourcePath, targetPath);
-      } else {
-        // Single file — only copy if it's an audio file
-        if (!AUDIO_EXTENSIONS.has(extname(sourcePath).toLowerCase())) {
-          throw new Error(`Source file is not a supported audio format: ${basename(sourcePath)}`);
-        }
-        const targetFile = join(targetPath, basename(sourcePath));
-        await cp(sourcePath, targetFile, { errorOnExist: false });
-      }
-
-      // 6b. Audio processing (merge/convert) — only for download imports when enabled
-      if (processingSettings?.enabled) {
-        this.log.info({ targetPath, config: processingSettings }, 'Running audio processing');
-
-        if (processingSettings.outputFormat === 'mp3' && processingSettings.mergeBehavior !== 'never') {
-          this.log.warn('MP3 output does not support embedded chapters');
-        }
-
-        const authorName = author?.name ?? 'Unknown Author';
-        const processingResult = await processAudioFiles(
-          targetPath,
-          {
-            ffmpegPath: processingSettings.ffmpegPath,
-            outputFormat: processingSettings.outputFormat,
-            bitrate: processingSettings.keepOriginalBitrate ? undefined : processingSettings.bitrate,
-            mergeBehavior: processingSettings.mergeBehavior,
-          },
-          {
-            author: authorName,
-            title: book.title,
-            fileFormat: librarySettings.fileFormat,
-            bookTokens: {
-              authorLastFirst: toLastFirst(authorName),
-              titleSort: toSortTitle(book.title),
-              series: book.seriesName || undefined,
-              seriesPosition: book.seriesPosition ?? undefined,
-              narrator: book.narrator || undefined,
-              narratorLastFirst: book.narrator ? toLastFirst(book.narrator) : undefined,
-              year: extractYear(book.publishedDate),
-            },
-          },
-        );
-
-        if (!processingResult.success) {
-          // Set book status to 'failed', preserve source files
-          await this.db.update(books).set({
-            status: 'failed',
-            updatedAt: new Date(),
-          }).where(eq(books.id, book.id));
-
-          throw new Error(`Audio processing failed: ${processingResult.error}`);
-        }
-
-        this.log.info(
-          { outputFiles: processingResult.outputFiles.length },
-          'Audio processing completed',
-        );
-      }
-
-      // 6c. Rename files using file format template (after processing, so it applies to final output)
       if (librarySettings.fileFormat) {
-        await renameFilesWithTemplate(targetPath, librarySettings.fileFormat, book, author?.name ?? null, this.log);
+        await renameFilesWithTemplate(targetPath, librarySettings.fileFormat, book, authorName, this.log);
       }
+      const targetSize = await verifyCopy({ targetPath, sourcePath, processingEnabled });
+      await cleanupOldBookPath({ bookPath: book.path, targetPath, log: this.log });
 
-      // 7. Verify copy (skip when processing ran — merge/convert changes file sizes)
-      const targetSize = await getPathSize(targetPath);
-      if (!processingSettings?.enabled) {
-        const sourceSize = await getPathSize(sourcePath);
-
-        if (targetSize < sourceSize * COPY_VERIFICATION_THRESHOLD) {
-          throw new Error(`Copy verification failed: source ${sourceSize} bytes, target ${targetSize} bytes`);
-        }
-      }
-
-      // 7b. Upgrade: delete old files if book already had a path
-      if (book.path && normalize(targetPath) !== normalize(book.path)) {
-        try {
-          await rm(book.path, { recursive: true, force: true });
-          this.log.info({ oldPath: book.path, newPath: targetPath }, 'Deleted old book files during upgrade');
-        } catch (rmError) {
-          this.log.warn({ error: rmError, oldPath: book.path }, 'Failed to delete old book files during upgrade — continuing');
-        }
-      }
-
-      // 8. Update book: status='imported', path=targetPath
-      await this.db.update(books).set({
-        status: 'imported',
-        path: targetPath,
-        size: targetSize,
-        updatedAt: new Date(),
-      }).where(eq(books.id, book.id));
-      // 8b. File-based audio enrichment
+      await this.db.update(books).set({ status: 'imported', path: targetPath, size: targetSize, updatedAt: new Date() }).where(eq(books.id, book.id));
       await enrichBookFromAudio(book.id, targetPath, book, this.db, this.log);
 
-      // 8c. Tag embedding (after enrichment, before notification)
-      if (this.taggingService) {
-        const taggingSettings = await this.settingsService.get('tagging');
-        if (taggingSettings.enabled) {
-          const processingSettings = await this.settingsService.get('processing');
-          const ffmpegPath = processingSettings.ffmpegPath;
-          if (ffmpegPath?.trim()) {
-            try {
-              const tagResult = await this.taggingService.tagBook(
-                book.id,
-                targetPath,
-                {
-                  title: book.title,
-                  authorName: author?.name ?? null,
-                  narrator: book.narrator,
-                  seriesName: book.seriesName,
-                  seriesPosition: book.seriesPosition,
-                  coverUrl: book.coverUrl,
-                },
-                ffmpegPath,
-                taggingSettings.mode,
-                taggingSettings.embedCover,
-              );
-              this.log.info(
-                { bookId: book.id, tagged: tagResult.tagged, skipped: tagResult.skipped, failed: tagResult.failed },
-                'Tag embedding during import',
-              );
-            } catch (tagError) {
-              this.log.warn({ error: tagError, bookId: book.id }, 'Tag embedding failed during import — continuing');
-            }
-          } else {
-            this.log.debug({ bookId: book.id }, 'Tag embedding enabled but ffmpeg path not configured — skipping');
-          }
-        }
-      }
+      const taggingSettings = await this.settingsService.get('tagging');
+      const processingForTags = await this.settingsService.get('processing');
+      await embedTagsForImport({
+        taggingService: this.taggingService, taggingEnabled: taggingSettings.enabled,
+        ffmpegPath: processingForTags.ffmpegPath, taggingMode: taggingSettings.mode, embedCover: taggingSettings.embedCover,
+        bookId: book.id, targetPath, book: { title: book.title, authorName, narrator: book.narrator, seriesName: book.seriesName, seriesPosition: book.seriesPosition, coverUrl: book.coverUrl },
+        log: this.log,
+      });
 
-      // 8d. Post-processing script hook (after tag embedding, before marking imported)
-      const processingSettingsForScript = await this.settingsService.get('processing');
-      if (processingSettingsForScript.postProcessingScript?.trim()) {
-        try {
-          await runPostProcessingScript({
-            scriptPath: processingSettingsForScript.postProcessingScript,
-            timeoutSeconds: processingSettingsForScript.postProcessingScriptTimeout ?? 300,
-            audiobookPath: targetPath,
-            bookTitle: book.title,
-            bookAuthor: author?.name ?? null,
-            fileCount,
-            log: this.log,
-          });
-        } catch (scriptError) {
-          this.log.warn({ error: scriptError, bookId: book.id }, 'Post-processing script failed during import — continuing');
-        }
-      }
+      const processingForScript = await this.settingsService.get('processing');
+      await runImportPostProcessing({ postProcessingScript: processingForScript.postProcessingScript, postProcessingScriptTimeout: processingForScript.postProcessingScriptTimeout, targetPath, bookTitle: book.title, bookAuthor: authorName, fileCount, bookId: book.id, log: this.log });
 
-      // 9. Update download: status='imported'
       await this.db.update(downloads).set({ status: 'imported' }).where(eq(downloads.id, downloadId));
-      this.log.info(
-        { downloadId, bookId: book.id, targetPath, fileCount, totalSize: targetSize },
-        'Import completed successfully',
-      );
+      this.log.info({ downloadId, bookId: book.id, targetPath, fileCount, totalSize: targetSize }, 'Import completed successfully');
+      emitImportSuccess({ broadcaster: this.broadcaster, downloadId, bookId: book.id, bookTitle: book.title, log: this.log });
+      notifyImportComplete({ notifierService: this.notifierService, bookTitle: book.title, authorName, targetPath, fileCount, log: this.log });
+      recordImportEvent({ eventHistory: this.eventHistory, bookId: book.id, bookTitle: book.title, authorName, downloadId, bookPath: book.path, targetPath, fileCount, totalSize: targetSize, log: this.log });
 
-      // SSE: download_status_change (importing → imported) + book_status_change + import_complete
-      try {
-        this.broadcaster?.emit('download_status_change', { download_id: downloadId, book_id: book.id, old_status: 'importing', new_status: 'imported' });
-        this.broadcaster?.emit('book_status_change', { book_id: book.id, old_status: 'importing', new_status: 'imported' });
-        this.broadcaster?.emit('import_complete', { download_id: downloadId, book_id: book.id, book_title: book.title });
-      } catch (e) { this.log.debug(e, 'SSE emit failed'); }
-
-      // 9b. Notify on import
-      this.notifierService?.notify('on_import', {
-        event: 'on_import',
-        book: { title: book.title, author: author?.name },
-        import: { libraryPath: targetPath, fileCount },
-      }).catch((err) => this.log.warn(err, 'Failed to send import notification'));
-
-      // 9c. Record imported/upgraded event (fire-and-forget)
-      const isUpgrade = !!book.path;
-      this.eventHistory?.create({
-        bookId: book.id,
-        bookTitle: book.title,
-        authorName: author?.name,
-        downloadId: downloadId,
-        eventType: isUpgrade ? 'upgraded' : 'imported',
-        source: 'auto',
-        reason: { targetPath, fileCount, totalSize: targetSize },
-      }).catch((err) => this.log.warn(err, 'Failed to record import event'));
-
-      // 10. Handle torrent removal
       if (importSettings.deleteAfterImport) {
         await this.handleTorrentRemoval(download, importSettings.minSeedTime);
       }
       return { downloadId, bookId: book.id, targetPath, fileCount, totalSize: targetSize };
     } catch (error) {
-      // Clean up copied files to avoid orphaned data on disk
-      if (targetPath) {
-        await rm(targetPath, { recursive: true, force: true })
-          .catch((rmError) => this.log.warn({ error: rmError, targetPath }, 'Failed to clean up target path after import failure'));
-      }
-
-      // Revert download to failed so import can be retried
-      await this.db.update(downloads).set({
-        status: 'failed',
-        errorMessage: error instanceof Error ? error.message : 'Import failed',
-      }).where(eq(downloads.id, downloadId));
-
-      // Recover book status based on whether it was previously imported
-      const revertStatus = await revertBookStatus(this.db, book);
-
-      // SSE: download_status_change + book_status_change (failure revert)
-      try {
-        this.broadcaster?.emit('download_status_change', { download_id: downloadId, book_id: book.id, old_status: 'importing', new_status: 'failed' });
-        this.broadcaster?.emit('book_status_change', { book_id: book.id, old_status: 'importing', new_status: revertStatus });
-      } catch (e) { this.log.debug(e, 'SSE emit failed'); }
-
-      this.log.error({ error, downloadId, bookStatus: revertStatus }, 'Import failed');
-
-      // Notify on failure
-      this.notifierService?.notify('on_failure', {
-        event: 'on_failure',
-        book: { title: download.title },
-        error: { message: error instanceof Error ? error.message : 'Import failed', stage: 'import' },
-      }).catch((err) => this.log.warn(err, 'Failed to send failure notification'));
-
-      // Record import_failed event (fire-and-forget)
-      this.eventHistory?.create({
-        bookId: book.id,
-        bookTitle: book.title,
-        authorName: author?.name,
-        downloadId: downloadId,
-        eventType: 'import_failed',
-        source: 'auto',
-        reason: { error: error instanceof Error ? error.message : 'Import failed' },
-      }).catch((err) => this.log.warn(err, 'Failed to record import_failed event'));
-
-      throw error;
+      // handleImportFailure always rethrows — return satisfies TS control flow
+      return handleImportFailure({
+        error, targetPath, db: this.db, downloadId, downloadTitle: download.title,
+        book, authorName, broadcaster: this.broadcaster, notifierService: this.notifierService,
+        eventHistory: this.eventHistory, log: this.log,
+      });
     }
   }
 
@@ -489,7 +133,6 @@ export class ImportService {
    * Uses semaphore-based parallel admission up to maxConcurrentProcessing.
    */
   async processCompletedDownloads(): Promise<ImportResult[]> {
-    // Read concurrency limit and update semaphore
     const processingSettings = await this.settingsService.get('processing');
     this.semaphore.setMax(processingSettings.maxConcurrentProcessing);
 
@@ -509,7 +152,6 @@ export class ImportService {
     }
 
     this.log.info({ count: eligibleDownloads.length }, 'Processing completed downloads for import');
-
     const importPromises: Promise<ImportResult | null>[] = [];
 
     for (const download of eligibleDownloads) {
@@ -519,7 +161,6 @@ export class ImportService {
       }
 
       if (!this.semaphore.tryAcquire()) {
-        // No slot available — mark as processing_queued for next tick
         if (download.status !== 'processing_queued') {
           await this.db.update(downloads).set({ status: 'processing_queued' }).where(eq(downloads.id, download.id));
         }
@@ -527,7 +168,6 @@ export class ImportService {
         continue;
       }
 
-      // Slot acquired — launch import wrapped in finally to release
       importPromises.push(
         this.importDownload(download.id)
           .then((result): ImportResult => result)
@@ -535,9 +175,7 @@ export class ImportService {
             this.log.warn({ downloadId: download.id }, 'Skipping failed import, continuing with next');
             return null;
           })
-          .finally(() => {
-            this.semaphore.release();
-          }),
+          .finally(() => { this.semaphore.release(); }),
       );
     }
 
@@ -573,23 +211,9 @@ export class ImportService {
     return { book: results[0].book, author: results[0].author ?? undefined };
   }
 
-  private async countAudioFiles(dirPath: string): Promise<number> {
-    let count = 0;
-    const entries = await readdir(dirPath, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-        count++;
-      } else if (entry.isDirectory()) {
-        count += await this.countAudioFiles(join(dirPath, entry.name));
-      }
-    }
-    return count;
-  }
-
   private async handleTorrentRemoval(download: DownloadRow, minSeedTimeMinutes: number): Promise<void> {
     if (!download.downloadClientId || !download.externalId) return;
 
-    // Check if min seed time has elapsed
     if (download.completedAt && minSeedTimeMinutes > 0) {
       const elapsedMs = Date.now() - download.completedAt.getTime();
       const minSeedMs = minSeedTimeMinutes * MS_PER_MINUTE;
@@ -609,6 +233,4 @@ export class ImportService {
       this.log.error({ error, downloadId: download.id }, 'Failed to remove torrent after import');
     }
   }
-
 }
-

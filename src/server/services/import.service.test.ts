@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
-import { ImportService, buildTargetPath } from './import.service.js';
+import { ImportService } from './import.service.js';
+import { buildTargetPath } from '../utils/import-helpers.js';
 import { sanitizePath } from '../../core/utils/index.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';

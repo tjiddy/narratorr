@@ -12,7 +12,7 @@ import type { BookService } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
-import { buildTargetPath, getPathSize } from './import.service.js';
+import { buildTargetPath, getPathSize } from '../utils/import-helpers.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 
 /** Minimum ratio of target/source file size for copy verification to pass. */

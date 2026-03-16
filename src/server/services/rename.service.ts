@@ -7,7 +7,7 @@ import { books } from '../../db/schema.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
-import { buildTargetPath } from './import.service.js';
+import { buildTargetPath } from '../utils/import-helpers.js';
 import { cleanEmptyParents, renameFilesWithTemplate } from '../utils/paths.js';
 
 export interface RenameResult {
