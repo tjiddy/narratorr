@@ -8,6 +8,7 @@ import {
   type BookMetadata,
   type AuthorMetadata,
   type SeriesMetadata,
+  type SearchBooksOptions,
 } from '../../core/index.js';
 
 const DEFAULT_THROTTLE_MS = 200;
@@ -95,6 +96,8 @@ export class MetadataService {
         warnings.push(`${error.provider} rate limit reached, results may be incomplete. Try again in ${remaining}s.`);
         return [];
       }
+      const msg = error instanceof Error ? error.message : String(error);
+      warnings.push(`${provider.name} ${method} failed: ${msg}`);
       this.log.warn(error, `Metadata ${method} failed`);
       return [];
     }
@@ -106,6 +109,33 @@ export class MetadataService {
 
   async searchBooks(query: string): Promise<BookMetadata[]> {
     return this.withThrottle('searchBooks', (provider) => provider.searchBooks(query), []);
+  }
+
+  async searchBooksForDiscovery(
+    query: string,
+    options?: SearchBooksOptions,
+  ): Promise<{ books: BookMetadata[]; warnings: string[] }> {
+    const provider = this.providers[0];
+    if (!provider) {
+      return { books: [], warnings: [] };
+    }
+
+    const warnings: string[] = [];
+
+    if (this.isRateLimited(provider.name)) {
+      const remaining = this.getRateLimitRemaining(provider.name);
+      warnings.push(`${provider.name} rate limit reached, results may be incomplete. Try again in ${remaining}s.`);
+      return { books: [], warnings };
+    }
+
+    const books = await this.withThrottledSearch(
+      provider,
+      'searchBooksForDiscovery',
+      (p) => p.searchBooks(query, options),
+      warnings,
+    );
+
+    return { books, warnings };
   }
 
   async getAuthor(id: string): Promise<AuthorMetadata | null> {

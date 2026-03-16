@@ -390,4 +390,50 @@ describe('MetadataService', () => {
       expect(minService.getProviders()[0].type).toBe('audible');
     });
   });
+
+  describe('searchBooksForDiscovery', () => {
+    it('returns books and empty warnings on success', async () => {
+      const mockBooks = [{ asin: 'B001', title: 'Test Book' }];
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce(mockBooks);
+
+      const result = await service.searchBooksForDiscovery('Brandon Sanderson');
+      expect(result).toEqual({ books: mockBooks, warnings: [] });
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('Brandon Sanderson', undefined);
+    });
+
+    it('passes maxResults option to provider', async () => {
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce([]);
+
+      await service.searchBooksForDiscovery('Author Name', { maxResults: 25 });
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('Author Name', { maxResults: 25 });
+    });
+
+    it('returns warnings when rate limit error occurs mid-query', async () => {
+      mockAudibleProvider.searchBooks.mockRejectedValueOnce(
+        new RateLimitError(60000, 'Audible.com'),
+      );
+
+      const result = await service.searchBooksForDiscovery('test');
+      expect(result.books).toEqual([]);
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toContain('rate limit');
+    });
+
+    it('returns default maxResults when no options provided', async () => {
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce([]);
+
+      await service.searchBooksForDiscovery('test query');
+      // Called with query and undefined options (provider applies its own default)
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('test query', undefined);
+    });
+
+    it('surfaces non-rate-limit errors via warnings', async () => {
+      mockAudibleProvider.searchBooks.mockRejectedValueOnce(new Error('Network error'));
+
+      const result = await service.searchBooksForDiscovery('test');
+      expect(result.books).toEqual([]);
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toContain('Network error');
+    });
+  });
 });

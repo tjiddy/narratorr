@@ -1,5 +1,121 @@
 # Workflow Log
 
+## #397 Refactor: Extract list-query/stats from BookService (SRP) — 2026-03-16
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #400
+
+### Metrics
+- Files changed: 12 | Tests added/modified: 7 (29 new tests in book-list.service.test.ts, 6 test files updated)
+- Quality gate runs: 3 (pass on attempt 3 — first two caught lint errors and missed e2e wiring)
+- Fix iterations: 2 (1: lint fixes in test file; 2: missed startSearchJob and e2e test caller)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The extraction itself was mechanical and clean. The spec review had already identified the full caller surface, so wiring was mostly paint-by-numbers.
+- Friction / issues encountered: Three callers missed on first pass despite the spec enumerating them: `startSearchJob()`, `startRssJob()` (legacy scheduler functions), and the e2e test. TypeScript caught them at typecheck. The mock factory split in rss.test.ts was tedious (30+ call sites) — the `createMockBookServices()` wrapper pattern saved significant time.
+
+### Token efficiency
+- Highest-token actions: Reading the full book.service.test.ts (795 lines) and mechanical test mock updates across 6 files
+- Avoidable waste: Could have grepped for all references to `BookService` in non-test files before starting wiring to catch startSearchJob/startRssJob earlier
+- Suggestions: For service extractions, run `grep -r 'ServiceName' src/ --include='*.ts' -l` as first step to build complete caller list
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: BookListService.getAll() slim select still uses explicit column list (existing debt, now in new file)
+
+### Wish I'd Known
+1. `startSearchJob()` and `startRssJob()` are legacy wrapper functions that also call the extracted methods — not visible from the direct caller analysis
+2. The rss.test.ts mock factory pattern `createMockBookServices()` returning `{ bookList, book }` is much more efficient than splitting 30+ individual `createMockBookService()` calls
+3. `noUnusedParameters: true` in tsconfig means don't add params "for future use" — add them when actually needed
+
+## #392 Create mock settings factory to eliminate fixture cascade — 2026-03-15
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #399
+
+### Metrics
+- Files changed: 20 | Tests added/modified: 14 new + 18 migrated
+- Quality gate runs: 3 (pass on attempt 3 — two TS errors from type mismatches)
+- Fix iterations: 2 (RSS tests broke because `rss.enabled` defaults to `false`; TS type mismatch from `SettingsService` vs `{ get: Mock }`)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The shared factory pattern worked immediately — 14 tests passed on first run. Client migration was transparent (re-export, no callsite changes). The `createMockSettingsService` helper cleanly abstracted the server-side `get(category)` dispatch pattern.
+- Friction / issues encountered: Each server test file's local wrapper had subtly different defaults from `DEFAULT_SETTINGS` (RSS tests assumed `enabled: true`, tagging tests assumed `ffmpegPath` was set). These required per-file auditing during migration. Also, TS type annotations in test files that declared `settingsService: { get: Mock }` broke when the shared helper returned `SettingsService`.
+
+### Token efficiency
+- Highest-token actions: Reading and migrating 18 server test files individually
+- Avoidable waste: Could have batch-audited default mismatches (rss.enabled, tagging.ffmpegPath) before starting migration
+- Suggestions: For future fixture migrations, diff each local wrapper's defaults against DEFAULT_SETTINGS in one pass before touching any files
+
+### Infrastructure gaps
+- Repeated workarounds: `.claude/state/` directories get cleaned up between context restores — had to re-create them multiple times
+- Missing tooling / config: No automated way to detect "local wrapper defaults differ from registry defaults" — this was the #1 source of migration bugs
+- Unresolved debt: A few tests still override `.mockResolvedValue` for edge cases; settings.service.test.ts wasn't migrated (tests the service itself, not fixtures)
+
+### Wish I'd Known
+1. `DEFAULT_SETTINGS.rss.enabled` is `false` — every RSS test file's local wrapper had `enabled: true` as its default, so bare `createMockSettingsService()` calls broke 13 RSS tests silently
+2. TypeScript won't accept `SettingsService` where `{ get: Mock }` is expected — any test with explicit Mock-typed interfaces for settings needed type annotation updates
+3. The `deepMerge` function needs `=== undefined` check, not truthiness — `0`, `false`, and `''` are all valid settings values that must survive the merge
+
+## #393 Complete mockDbChain to auto-support all Drizzle chainable methods — 2026-03-15
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #398
+
+### Metrics
+- Files changed: 5 | Tests added/modified: 27 new tests + 4 test files cleaned up
+- Quality gate runs: 2 (pass on attempt 2 — first had TS errors from Proxy return type)
+- Fix iterations: 2 (Proxy set trap missing → import.service breakage; TS strict typing on Proxy returns)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The Proxy pattern had clear prior art in `createMockServices()`. Red/green TDD caught the set trap issue immediately. Notifier and recycling-bin migrations were trivial.
+- Friction / issues encountered: import-list.service.test.ts uses a flat mock pattern (all methods on one object) that's architecturally different from the shared layered `createMockDb()`. Full migration would require rewriting 20+ tests. Pragmatic solution: Proxy-ify the internals while keeping the flat API.
+
+### Token efficiency
+- Highest-token actions: Full test suite runs (82-90s each, ran 3 times)
+- Avoidable waste: First full test suite run caught the set trap issue — could have predicted this by reading import.service.test.ts more carefully during planning
+- Suggestions: When replacing plain objects with Proxies, always grep for direct property assignment (`chain.foo = `) in all consumers before committing
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: import-list.service.test.ts flat mock pattern still diverges from shared helpers (logged in debt.md)
+
+### Wish I'd Known
+1. Proxy `set` traps are required when existing code assigns to the proxied object — the default Proxy silently ignores assignments, causing subtle test failures
+2. Spreading a Proxy (`{ ...proxy }`) copies zero properties — need to return the Proxy directly
+3. The import-list.service.test.ts flat mock pattern (all methods on one object) is fundamentally different from the shared layered pattern — full migration is a separate effort
+
+## #372 Enforce Pagination Limits and Add Pagination UI (Phase 2) — 2026-03-16
+**Skill path:** /implement → /claim → /plan → /implement → /handoff → /respond-to-pr-review (x3) → /handoff (rebase)
+**Outcome:** success — PR #396
+
+### Metrics
+- Files changed: 84 | Tests added/modified: 29
+- Quality gate runs: 6 (pass on attempts 1, 3, 4, 5, 6; lint fail on attempt 2)
+- Fix iterations: 3 review rounds (R1: 4 blocking + 1 suggestion, R2: 1 blocking re-raised, R3: 3 blocking test gaps)
+- Context compactions: multiple (large issue spanning 8 modules)
+
+### Workflow experience
+- What went smoothly: Backend pagination enforcement and service-level search/sort/filter were straightforward extensions of Phase 1 patterns. The Pagination component and usePagination hook were clean abstractions that all 4 pages consumed consistently.
+- Friction / issues encountered: (1) Initial implementation used `useLibrary({ limit: 500 })` for full-library duplicate detection — reviewer correctly caught this as a band-aid, requiring a dedicated `/api/books/identifiers` endpoint. (2) Title sort used SQL REPLACE() globally instead of CASE WHEN...LIKE for leading-only article stripping. (3) createdAt sort hardcoded `desc()` in the default branch instead of using the computed direction. (4) Post-approval rebase had 4 merge conflicts with event-history delete feature that landed on main.
+
+### Token efficiency
+- Highest-token actions: 3 rounds of /respond-to-pr-review, each requiring reading full review comments + fixing + re-running verify
+- Avoidable waste: R1 issues (sort bugs, pagination clamping, full-library regression) were all catchable during implementation with better testing discipline
+- Suggestions: Test sort fields with both directions during implementation. Always check ALL callers when changing a shared hook's default behavior.
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: BookService god-service (#397), global-only stats endpoint
+
+### Wish I'd Known
+1. When adding server-side default limits to an API that previously returned all data, check ALL callers — not just the primary page. The duplicate-detection callers in BookEditModal and AuthorPage were the most impactful miss.
+2. SQL REPLACE() operates globally on the entire string — use CASE WHEN...LIKE for position-specific operations. Check existing utility functions for reference semantics before writing SQL equivalents.
+3. Every new exported hook needs at least one test, even trivial query wrappers. Every changed API client method needs an updated contract test.
+
 ## #355 Add Pagination Infrastructure to Unbounded Queries — 2026-03-13
 **Skill path:** /elaborate → /respond-to-spec-review (x4) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #373

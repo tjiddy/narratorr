@@ -25,3 +25,4 @@ export { MatchJobService } from './match-job.service.js';
 export { RecyclingBinService, RecyclingBinError } from './recycling-bin.service.js';
 export { TaskRegistry } from './task-registry.js';
 export { type RetrySearchDeps, retrySearch } from './retry-search.js';
+export { DiscoveryService, type SuggestionReason, type LibrarySignals } from './discovery.service.js';

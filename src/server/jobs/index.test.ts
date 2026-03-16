@@ -53,7 +53,8 @@ describe('startJobs', () => {
     expect(names).toContain('health-check');
     expect(names).toContain('version-check');
     expect(names).toContain('import-list-sync');
-    expect(tasks).toHaveLength(11);
+    expect(names).toContain('discovery');
+    expect(tasks).toHaveLength(12);
   });
 
   it('schedules cron jobs via cron.schedule', async () => {
@@ -76,5 +77,31 @@ describe('startJobs', () => {
     startJobs(db, services, log);
 
     expect(log.info).toHaveBeenCalledWith('Background jobs started');
+  });
+
+  it('schedules discovery timeout loop using intervalHours * 60 from discovery settings', async () => {
+    // Mock settings.get to return specific values per category
+    (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+      if (category === 'discovery') return { enabled: true, intervalHours: 12, maxSuggestionsPerAuthor: 5 };
+      if (category === 'search') return { intervalMinutes: 30 };
+      if (category === 'rss') return { intervalMinutes: 15 };
+      if (category === 'system') return { backupIntervalMinutes: 60 };
+      return {};
+    });
+
+    // Capture setTimeout calls to verify the delay
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+    const { startJobs } = await import('./index.js');
+    startJobs(db, services, log);
+
+    // Wait for all async scheduleNext() calls to resolve and call setTimeout
+    const expectedMs = 12 * 60 * 60 * 1000; // 12 hours in ms
+    await vi.waitFor(() => {
+      const discoveryTimeout = setTimeoutSpy.mock.calls.find(([, delay]) => delay === expectedMs);
+      expect(discoveryTimeout).toBeDefined();
+    });
+
+    setTimeoutSpy.mockRestore();
   });
 });

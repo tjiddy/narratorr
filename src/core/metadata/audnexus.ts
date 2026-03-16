@@ -6,6 +6,7 @@ import type {
   AuthorMetadata,
   SeriesMetadata,
   MetadataSearchResults,
+  SearchBooksOptions,
 } from './types.js';
 
 export interface AudnexusConfig {
@@ -37,7 +38,7 @@ export class AudnexusProvider implements MetadataProvider {
     };
   }
 
-  async searchBooks(_query: string): Promise<BookMetadata[]> {
+  async searchBooks(_query: string, _options?: SearchBooksOptions): Promise<BookMetadata[]> {
     // Audnexus does not support book search — use getBook(id) for direct lookup
     return [];
   }

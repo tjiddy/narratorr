@@ -11,6 +11,7 @@ import { runSearchJob } from './search.js';
 import { runRssJob } from './rss.js';
 import { runBackupJob } from './backup.js';
 import { checkForUpdate } from './version-check.js';
+import { runDiscoveryJob } from './discovery.js';
 
 export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   const retrySearchDeps = createRetrySearchDeps(
@@ -46,6 +47,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   reg.register('health-check', 'cron', () => services.healthCheck.runAllChecks(), '*/5 * * * *');
   reg.register('version-check', 'cron', () => checkForUpdate(log), '0 2 * * *');
   reg.register('import-list-sync', 'cron', () => services.importList.syncDueLists(), '* * * * *');
+  reg.register('discovery', 'timeout', () => runDiscoveryJob(services.discovery, services.settings, log));
 
   // Schedule cron jobs — all go through the registry for lastRun/running tracking
   scheduleCron(reg, 'monitor', '*/30 * * * * *', log);
@@ -61,6 +63,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   scheduleTimeoutLoop(reg, 'search', () => services.settings.get('search').then((s) => s.intervalMinutes), log);
   scheduleTimeoutLoop(reg, 'rss', () => services.settings.get('rss').then((s) => s.intervalMinutes), log);
   scheduleTimeoutLoop(reg, 'backup', () => services.settings.get('system').then((s) => s.backupIntervalMinutes), log);
+  scheduleTimeoutLoop(reg, 'discovery', () => services.settings.get('discovery').then((s) => s.intervalHours * 60), log);
 
   log.info('Background jobs started');
 }

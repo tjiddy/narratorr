@@ -10,6 +10,7 @@ import { qualitySettingsSchema } from './quality.js';
 import { networkSettingsSchema } from './network.js';
 import { rssSettingsSchema } from './rss.js';
 import { systemSettingsSchema } from './system.js';
+import { discoverySettingsSchema } from './discovery.js';
 
 // ---------------------------------------------------------------------------
 // Registry entry helper — enforces defaults match schema at compile time
@@ -91,6 +92,10 @@ export const settingsRegistry = {
   system: defineCategory({
     schema: systemSettingsSchema,
     defaults: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+  }),
+  discovery: defineCategory({
+    schema: discoverySettingsSchema,
+    defaults: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5 },
   }),
 };
 

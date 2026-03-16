@@ -300,6 +300,39 @@ export const users = sqliteTable('users', {
     .default(sql`(unixepoch())`),
 });
 
+// ============ DISCOVERY ============
+
+export const suggestions = sqliteTable('suggestions', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  asin: text('asin').notNull(),
+  title: text('title').notNull(),
+  authorName: text('author_name').notNull(),
+  narratorName: text('narrator_name'),
+  coverUrl: text('cover_url'),
+  duration: integer('duration'),
+  publishedDate: text('published_date'),
+  language: text('language'),
+  genres: text('genres', { mode: 'json' }).$type<string[]>(),
+  seriesName: text('series_name'),
+  seriesPosition: real('series_position'),
+  reason: text('reason', { enum: ['author', 'series', 'genre', 'narrator'] }).notNull(),
+  reasonContext: text('reason_context').notNull(),
+  score: real('score').notNull(),
+  status: text('status', { enum: ['pending', 'added', 'dismissed'] })
+    .notNull()
+    .default('pending'),
+  refreshedAt: integer('refreshed_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+  dismissedAt: integer('dismissed_at', { mode: 'timestamp' }),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+}, (table) => [
+  index('idx_suggestions_status_score').on(table.status, table.score),
+  uniqueIndex('idx_suggestions_asin_unique').on(table.asin),
+]);
+
 // ============ SETTINGS ============
 
 export const settings = sqliteTable('settings', {

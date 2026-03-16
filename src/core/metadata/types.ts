@@ -15,11 +15,15 @@ export type AuthorMetadata = z.infer<typeof AuthorMetadataSchema>;
 export type SeriesMetadata = z.infer<typeof SeriesMetadataSchema>;
 export type MetadataSearchResults = z.infer<typeof MetadataSearchResultsSchema>;
 
+export interface SearchBooksOptions {
+  maxResults?: number;
+}
+
 export interface MetadataProvider {
   readonly name: string;
   readonly type: string;
   search(query: string): Promise<MetadataSearchResults>;
-  searchBooks(query: string): Promise<BookMetadata[]>;
+  searchBooks(query: string, options?: SearchBooksOptions): Promise<BookMetadata[]>;
   searchAuthors(query: string): Promise<AuthorMetadata[]>;
   searchSeries(query: string): Promise<SeriesMetadata[]>;
   getBook(id: string): Promise<BookMetadata | null>;

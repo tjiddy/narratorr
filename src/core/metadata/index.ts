@@ -4,3 +4,4 @@ export { normalizeGenres, findUnmatchedGenres } from './genres.js';
 export { RateLimitError } from './errors.js';
 export { AudnexusProvider, type AudnexusConfig } from './audnexus.js';
 export { AudibleProvider, type AudibleConfig } from './audible.js';
+export { REGION_LANGUAGES } from './region-languages.js';

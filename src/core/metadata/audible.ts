@@ -1,11 +1,13 @@
 import { BookMetadataSchema, AuthorMetadataSchema, SeriesMetadataSchema } from './schemas.js';
 import { RateLimitError } from './errors.js';
+import { REGION_LANGUAGES } from './region-languages.js';
 import type {
   MetadataProvider,
   BookMetadata,
   AuthorMetadata,
   SeriesMetadata,
   MetadataSearchResults,
+  SearchBooksOptions,
 } from './types.js';
 
 /** Default wait time (ms) when rate-limited without a Retry-After header. */
@@ -28,19 +30,6 @@ const REGION_TLDS: Record<string, string> = {
   es: '.es',
 };
 
-/** Primary language for each region — used to prefer matching-language results. */
-const REGION_LANGUAGES: Record<string, string> = {
-  us: 'english',
-  ca: 'english',
-  uk: 'english',
-  au: 'english',
-  in: 'english',
-  fr: 'french',
-  de: 'german',
-  jp: 'japanese',
-  it: 'italian',
-  es: 'spanish',
-};
 
 const REQUEST_TIMEOUT_MS = 10000;
 const MAX_RESULTS = 10;
@@ -100,10 +89,10 @@ export class AudibleProvider implements MetadataProvider {
     };
   }
 
-  async searchBooks(query: string): Promise<BookMetadata[]> {
+  async searchBooks(query: string, options?: SearchBooksOptions): Promise<BookMetadata[]> {
     const params = new URLSearchParams({
       keywords: query,
-      num_results: String(MAX_RESULTS),
+      num_results: String(options?.maxResults ?? MAX_RESULTS),
       products_sort_by: 'Relevance',
       response_groups: RESPONSE_GROUPS,
       image_sizes: IMAGE_SIZES,
