@@ -164,6 +164,56 @@ describe('TaskRegistry', () => {
     });
   });
 
+  describe('runExclusive', () => {
+    it('returns the custom function result while using the task concurrency guard', async () => {
+      registry.register('discovery', 'timeout', vi.fn());
+      const result = await registry.runExclusive('discovery', async () => ({ added: 3, removed: 1 }));
+      expect(result).toEqual({ added: 3, removed: 1 });
+    });
+
+    it('sets running during execution and clears after', async () => {
+      let resolveExecution: (v: string) => void;
+      registry.register('discovery', 'timeout', vi.fn());
+
+      const promise = registry.runExclusive('discovery', () => new Promise<string>((r) => { resolveExecution = r; }));
+      expect(registry.getAll()[0].running).toBe(true);
+
+      resolveExecution!('done');
+      await promise;
+      expect(registry.getAll()[0].running).toBe(false);
+      expect(registry.getAll()[0].lastRun).not.toBeNull();
+    });
+
+    it('throws when task is already running (same guard as runTask)', async () => {
+      let resolveExecution: () => void;
+      const fn = vi.fn().mockReturnValue(new Promise<void>((r) => { resolveExecution = r; }));
+      registry.register('discovery', 'timeout', fn);
+
+      const first = registry.runTask('discovery');
+      await expect(registry.runExclusive('discovery', async () => 'nope')).rejects.toThrow(/already running/i);
+
+      resolveExecution!();
+      await first;
+    });
+
+    it('throws for unknown task name', async () => {
+      await expect(registry.runExclusive('nonexistent', async () => 'x')).rejects.toThrow(/not found/i);
+    });
+
+    it('clears running flag on failure', async () => {
+      registry.register('discovery', 'timeout', vi.fn());
+      await expect(registry.runExclusive('discovery', async () => { throw new Error('boom'); })).rejects.toThrow('boom');
+      expect(registry.getAll()[0].running).toBe(false);
+    });
+
+    it('does not call the registered fn — only the provided fn', async () => {
+      const registeredFn = vi.fn();
+      registry.register('discovery', 'timeout', registeredFn);
+      await registry.runExclusive('discovery', async () => 'custom');
+      expect(registeredFn).not.toHaveBeenCalled();
+    });
+  });
+
   describe('runTask', () => {
     it('triggers immediate execution of named task', async () => {
       const fn = vi.fn().mockResolvedValue(undefined);

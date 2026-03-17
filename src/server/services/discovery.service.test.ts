@@ -3,6 +3,7 @@ import { createMockDb, createMockLogger, mockDbChain, inject, createMockSettings
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { DiscoveryService } from './discovery.service.js';
+import { computeWeightMultipliers } from './discovery-weights.js';
 import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
 
 /** Serialize a Drizzle SQL expression to a raw SQL string for predicate assertions. */
@@ -448,8 +449,10 @@ describe('DiscoveryService', () => {
   describe('refreshSuggestions', () => {
     it('inserts new suggestions and returns added count', async () => {
       const db = createMockDb();
-      // analyzeLibrary: one imported book
       db.select
+        // dismissal stats (#406)
+        .mockReturnValueOnce(mockDbChain([]))
+        // analyzeLibrary: one imported book
         .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
         // existing books for exclusion
         .mockReturnValueOnce(mockDbChain([]))
@@ -476,6 +479,8 @@ describe('DiscoveryService', () => {
     it('preserves dismissed suggestions on refresh', async () => {
       const db = createMockDb();
       db.select
+        // dismissal stats (#406)
+        .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([]))
@@ -501,6 +506,8 @@ describe('DiscoveryService', () => {
     it('updates existing pending suggestions with new score', async () => {
       const db = createMockDb();
       db.select
+        // dismissal stats (#406)
+        .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([]))
@@ -525,6 +532,8 @@ describe('DiscoveryService', () => {
     it('deletes stale pending suggestions not regenerated', async () => {
       const db = createMockDb();
       db.select
+        // dismissal stats (#406)
+        .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([]))
@@ -818,6 +827,8 @@ describe('DiscoveryService', () => {
       const db = createMockDb();
       // Expiry delete
       db.delete.mockReturnValue(mockDbChain());
+      // dismissal stats (#406)
+      db.select.mockReturnValueOnce(mockDbChain([]));
       // analyzeLibrary — 3 books from Author A gives strength 3/5 = 0.6
       db.select.mockReturnValueOnce(mockDbChain([
         makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 }),
@@ -861,6 +872,8 @@ describe('DiscoveryService', () => {
       const db = createMockDb();
       // Expiry delete
       db.delete.mockReturnValue(mockDbChain());
+      // dismissal stats (#406)
+      db.select.mockReturnValueOnce(mockDbChain([]));
       // analyzeLibrary — 4 books narrated by "Narrator N" gives narratorAffinity count=4, strength=4/5=0.8
       // Author A has 4 books → strength 4/5=0.8
       db.select.mockReturnValueOnce(mockDbChain([
@@ -899,6 +912,8 @@ describe('DiscoveryService', () => {
       const db = createMockDb();
       // Expiry delete
       db.delete.mockReturnValue(mockDbChain());
+      // dismissal stats (#406)
+      db.select.mockReturnValueOnce(mockDbChain([]));
       // analyzeLibrary — 2 books from Author A
       db.select.mockReturnValueOnce(mockDbChain([
         makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 }),
@@ -941,6 +956,8 @@ describe('DiscoveryService', () => {
       const db = createMockDb();
       // Expiry delete
       db.delete.mockReturnValue(mockDbChain());
+      // dismissal stats (#406)
+      db.select.mockReturnValueOnce(mockDbChain([]));
       // analyzeLibrary
       db.select.mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]));
       // existing books
@@ -967,6 +984,8 @@ describe('DiscoveryService', () => {
       const db = createMockDb();
       // Expiry delete
       db.delete.mockReturnValue(mockDbChain());
+      // dismissal stats (#406)
+      db.select.mockReturnValueOnce(mockDbChain([]));
       // analyzeLibrary
       db.select.mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]));
       // existing books
@@ -1409,6 +1428,395 @@ describe('DiscoveryService', () => {
       // Should only appear once despite being returned by multiple genre queries
       const sameBookCount = diversityCandidates.filter(c => c.asin === 'SAME_BOOK').length;
       expect(sameBookCount).toBeLessThanOrEqual(1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // #406 — Dismissal ratio computation
+  // ---------------------------------------------------------------------------
+  describe('computeDismissalRatios', () => {
+    it('computes ratio with 3 dismissed, 2 added for genre → ratio = 0.6', async () => {
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([
+        { reason: 'genre', status: 'dismissed', count: 3 },
+        { reason: 'genre', status: 'added', count: 2 },
+      ]));
+      const { service } = createService(db);
+      const ratios = await service.computeDismissalRatios();
+      expect(ratios.genre).toBeCloseTo(0.6);
+    });
+
+    it('computes ratio with 5 dismissed, 1 added for author → ratio = 0.83', async () => {
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([
+        { reason: 'author', status: 'dismissed', count: 5 },
+        { reason: 'author', status: 'added', count: 1 },
+      ]));
+      const { service } = createService(db);
+      const ratios = await service.computeDismissalRatios();
+      expect(ratios.author).toBeCloseTo(5 / 6);
+    });
+
+    it('computes ratio with 0 dismissed, 5 added → ratio = 0.0', async () => {
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([
+        { reason: 'narrator', status: 'added', count: 5 },
+      ]));
+      const { service } = createService(db);
+      const ratios = await service.computeDismissalRatios();
+      expect(ratios.narrator).toBeCloseTo(0.0);
+    });
+
+    it('computes ratio with 5 dismissed, 0 added → ratio = 1.0', async () => {
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([
+        { reason: 'series', status: 'dismissed', count: 5 },
+      ]));
+      const { service } = createService(db);
+      const ratios = await service.computeDismissalRatios();
+      expect(ratios.series).toBeCloseTo(1.0);
+    });
+
+    it('returns empty record for reason with no suggestions', async () => {
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([]));
+      const { service } = createService(db);
+      const ratios = await service.computeDismissalRatios();
+      expect(ratios).toEqual({});
+    });
+
+    it('query filters to only dismissed and added statuses, grouped by reason and status', async () => {
+      const db = createMockDb();
+      const chain = mockDbChain([]);
+      db.select.mockReturnValue(chain);
+      const { service } = createService(db);
+
+      await service.computeDismissalRatios();
+
+      // Verify the where predicate uses inArray for ['dismissed', 'added'] only
+      expect(chain.where).toHaveBeenCalled();
+      const whereArg = (chain.where as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const sql = toSQL(whereArg);
+      expect(sql).toContain('"status" in (?, ?)');
+
+      // Verify groupBy is called (reason + status columns)
+      expect(chain.groupBy).toHaveBeenCalled();
+    });
+
+    it('handles multiple reasons in a single query result', async () => {
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([
+        { reason: 'author', status: 'dismissed', count: 4 },
+        { reason: 'author', status: 'added', count: 1 },
+        { reason: 'genre', status: 'dismissed', count: 2 },
+        { reason: 'genre', status: 'added', count: 3 },
+      ]));
+      const { service } = createService(db);
+      const ratios = await service.computeDismissalRatios();
+      expect(ratios.author).toBeCloseTo(0.8);
+      expect(ratios.genre).toBeCloseTo(0.4);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // #406 — Weight multiplier calculation
+  // ---------------------------------------------------------------------------
+  describe('computeWeightMultipliers', () => {
+    // Import the pure function for direct testing
+    // Ratios input: { reason: { dismissed, added, total } }
+    // The function lives on the service but is a pure computation
+
+    it('ratio at exactly 0.80 → multiplier = 1.0 (threshold is "exceeds", not "meets")', () => {
+      const result = computeWeightMultipliers({ author: { dismissed: 4, added: 1, total: 5 } });
+      expect(result.author).toBe(1.0);
+    });
+
+    it('ratio at 0.81 → multiplier = 0.98', () => {
+      // 81 dismissed, 19 added → ratio = 0.81
+      const result = computeWeightMultipliers({ author: { dismissed: 81, added: 19, total: 100 } });
+      expect(result.author).toBeCloseTo(0.98);
+    });
+
+    it('ratio at 0.90 → multiplier = 0.80', () => {
+      const result = computeWeightMultipliers({ author: { dismissed: 9, added: 1, total: 10 } });
+      expect(result.author).toBeCloseTo(0.80);
+    });
+
+    it('ratio at 0.95 → multiplier = 0.70', () => {
+      const result = computeWeightMultipliers({ author: { dismissed: 19, added: 1, total: 20 } });
+      expect(result.author).toBeCloseTo(0.70);
+    });
+
+    it('ratio at 1.0 → multiplier = 0.60', () => {
+      const result = computeWeightMultipliers({ author: { dismissed: 10, added: 0, total: 10 } });
+      expect(result.author).toBeCloseTo(0.60);
+    });
+
+    it('ratio at 0.5 → multiplier = 1.0 (below threshold)', () => {
+      const result = computeWeightMultipliers({ genre: { dismissed: 5, added: 5, total: 10 } });
+      expect(result.genre).toBe(1.0);
+    });
+
+    it('reason with only 3 total suggestions (below min-sample of 5) → multiplier stays 1.0', () => {
+      const result = computeWeightMultipliers({ genre: { dismissed: 3, added: 0, total: 3 } });
+      expect(result.genre).toBe(1.0);
+    });
+
+    it('reason with exactly 5 total suggestions → threshold met, ratio applied', () => {
+      // 5 dismissed, 0 added → ratio = 1.0 → multiplier = 0.60
+      const result = computeWeightMultipliers({ genre: { dismissed: 5, added: 0, total: 5 } });
+      expect(result.genre).toBeCloseTo(0.60);
+    });
+
+    it('reason with 0 total suggestions → multiplier stays 1.0 (division safety)', () => {
+      const result = computeWeightMultipliers({ narrator: { dismissed: 0, added: 0, total: 0 } });
+      expect(result.narrator).toBe(1.0);
+    });
+
+    it('multiple reasons above threshold simultaneously → each adjusted independently', () => {
+      const result = computeWeightMultipliers({
+        author: { dismissed: 9, added: 1, total: 10 },   // ratio 0.90 → 0.80
+        genre: { dismissed: 10, added: 0, total: 10 },    // ratio 1.00 → 0.60
+        series: { dismissed: 3, added: 7, total: 10 },    // ratio 0.30 → 1.0
+      });
+      expect(result.author).toBeCloseTo(0.80);
+      expect(result.genre).toBeCloseTo(0.60);
+      expect(result.series).toBe(1.0);
+      // Unmentioned reasons default to 1.0
+      expect(result.narrator).toBe(1.0);
+      expect(result.diversity).toBe(1.0);
+    });
+
+    it('clamp guards: multiplier never goes below 0.25', () => {
+      // This can't happen with valid ratios (max ratio is 1.0 → 0.60),
+      // but the clamp guards against floating-point edge cases
+      // We test the formula boundary directly
+      const result = computeWeightMultipliers({ author: { dismissed: 10, added: 0, total: 10 } });
+      expect(result.author).toBeGreaterThanOrEqual(0.25);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // #406 — scoreCandidate with weight multiplier
+  // ---------------------------------------------------------------------------
+  describe('scoreCandidate with multiplier (via generateCandidates)', () => {
+    function setupScoringTest() {
+      const db = createMockDb();
+      db.select
+        .mockReturnValueOnce(mockDbChain([
+          makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 }),
+          makeBookRow({ id: 2, genres: ['Fantasy'], duration: 1000 }),
+          makeBookRow({ id: 3, genres: ['Fantasy'], duration: 1000 }),
+        ]))
+        .mockReturnValueOnce(mockDbChain([]))  // existing books
+        .mockReturnValueOnce(mockDbChain([])); // dismissed suggestions
+      return db;
+    }
+
+    it('score with default multiplier (1.0) matches current behavior', async () => {
+      const db = setupScoringTest();
+      mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+        books: [{ asin: 'NEW1', title: 'New Book', authors: [{ name: 'Author A' }], language: 'English' }],
+        warnings: [],
+      });
+      const { service } = createService(db);
+      const signals = await service.analyzeLibrary();
+      const defaultMultipliers = { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 };
+
+      const candidatesDefault = await service.generateCandidates(signals, defaultMultipliers);
+      const candidatesNoArg = await service.generateCandidates(signals);
+
+      const scoreDefault = candidatesDefault.find(c => c.asin === 'NEW1')?.score;
+      const scoreNoArg = candidatesNoArg.find(c => c.asin === 'NEW1')?.score;
+      expect(scoreDefault).toBeDefined();
+      expect(scoreDefault).toBe(scoreNoArg);
+    });
+
+    it('score with author multiplier at 0.5 → author base weight effectively halved', async () => {
+      const db = setupScoringTest();
+      mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+        books: [{ asin: 'NEW1', title: 'New Book', authors: [{ name: 'Author A' }], language: 'English' }],
+        warnings: [],
+      });
+      const { service } = createService(db);
+      const signals = await service.analyzeLibrary();
+
+      const full = await service.generateCandidates(signals, { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 });
+      const half = await service.generateCandidates(signals, { author: 0.5, series: 1, genre: 1, narrator: 1, diversity: 1 });
+
+      const fullScore = full.find(c => c.asin === 'NEW1' && c.reason === 'author')?.score ?? 0;
+      const halfScore = half.find(c => c.asin === 'NEW1' && c.reason === 'author')?.score ?? 0;
+      // The base weight portion should be halved, but bonuses remain the same
+      expect(halfScore).toBeLessThan(fullScore);
+    });
+
+    it('score with multiplier at floor (0.25) → base weight reduced but bonuses still apply', async () => {
+      const db = setupScoringTest();
+      const recentDate = new Date();
+      recentDate.setMonth(recentDate.getMonth() - 6);
+      mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+        books: [{ asin: 'NEW1', title: 'New Book', authors: [{ name: 'Author A' }], language: 'English', publishedDate: recentDate.toISOString(), duration: 1000 }],
+        warnings: [],
+      });
+      const { service } = createService(db);
+      const signals = await service.analyzeLibrary();
+      const candidates = await service.generateCandidates(signals, { author: 0.25, series: 0.25, genre: 0.25, narrator: 0.25, diversity: 0.25 });
+      const scored = candidates.find(c => c.asin === 'NEW1');
+      expect(scored).toBeDefined();
+      // Score should be > 0 because bonuses (recency, duration) still apply even with floor multiplier
+      expect(scored!.score).toBeGreaterThan(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // #406 — refreshSuggestions with weight tuning
+  // ---------------------------------------------------------------------------
+  describe('refreshSuggestions weight tuning integration', () => {
+    function setupRefreshTest(ratioRows: Array<{ reason: string; status: string; count: number }> = []) {
+      const db = createMockDb();
+      // Call order in refreshSuggestions:
+      // 1. expireSuggestions: db.delete
+      // 2. computeDismissalStats: db.select (dismissal counts — #406)
+      // 3. analyzeLibrary: db.select (imported books)
+      // 4. generateCandidates: db.select (existing books), db.select (dismissed asins)
+      // 5. currentPending: db.select
+      // Then upsert loop + stale deletion
+
+      // expireSuggestions delete
+      db.delete.mockReturnValue(mockDbChain({ rowsAffected: 0 }));
+      // computeDismissalStats query (#406)
+      db.select
+        .mockReturnValueOnce(mockDbChain(ratioRows))
+        // analyzeLibrary
+        .mockReturnValueOnce(mockDbChain([]))
+        // existing books for exclusion
+        .mockReturnValueOnce(mockDbChain([]))
+        // dismissed suggestions
+        .mockReturnValueOnce(mockDbChain([]))
+        // currentPending
+        .mockReturnValueOnce(mockDbChain([]));
+
+      return db;
+    }
+
+    it('full refresh with no dismissal history → all multipliers default to 1.0', async () => {
+      const db = setupRefreshTest([]);
+      const { service, settingsService } = createService(db);
+
+      await service.refreshSuggestions();
+
+      expect(settingsService.set).toHaveBeenCalledWith('discovery', expect.objectContaining({
+        weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
+      }));
+    });
+
+    it('refresh stores computed multipliers via settings.set with full 5-key record', async () => {
+      const db = setupRefreshTest([
+        { reason: 'author', status: 'dismissed', count: 9 },
+        { reason: 'author', status: 'added', count: 1 },
+      ]);
+      const { service, settingsService } = createService(db);
+
+      await service.refreshSuggestions();
+
+      const setCall = (settingsService.set as ReturnType<typeof vi.fn>).mock.calls.find(
+        (c: unknown[]) => c[0] === 'discovery',
+      );
+      expect(setCall).toBeDefined();
+      const multipliers = setCall![1].weightMultipliers;
+      // All 5 keys must be present
+      expect(Object.keys(multipliers).sort()).toEqual(['author', 'diversity', 'genre', 'narrator', 'series']);
+      // Author should be reduced (ratio 0.9 → multiplier 0.80)
+      expect(multipliers.author).toBeCloseTo(0.80);
+      // Others should be 1.0
+      expect(multipliers.series).toBe(1);
+      expect(multipliers.genre).toBe(1);
+      expect(multipliers.narrator).toBe(1);
+      expect(multipliers.diversity).toBe(1);
+    });
+
+    it('DB error during ratio computation → refresh continues with default weights (1.0)', async () => {
+      const db = createMockDb();
+      db.delete.mockReturnValue(mockDbChain({ rowsAffected: 0 }));
+      // computeDismissalStats throws
+      db.select
+        .mockReturnValueOnce(mockDbChain([], { error: new Error('DB connection lost') }))
+        // analyzeLibrary
+        .mockReturnValueOnce(mockDbChain([]))
+        // existing books
+        .mockReturnValueOnce(mockDbChain([]))
+        // dismissed
+        .mockReturnValueOnce(mockDbChain([]))
+        // currentPending
+        .mockReturnValueOnce(mockDbChain([]));
+      const { service, settingsService } = createService(db);
+
+      // Should not throw
+      await expect(service.refreshSuggestions()).resolves.toBeDefined();
+
+      // Should still write default multipliers
+      expect(settingsService.set).toHaveBeenCalledWith('discovery', expect.objectContaining({
+        weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
+      }));
+    });
+
+    it('settings write failure for multipliers → refresh continues, logs warning', async () => {
+      const db = setupRefreshTest([]);
+      const { service, settingsService, log } = createService(db);
+      (settingsService.set as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('Settings DB error'));
+
+      // Should not throw — refresh continues
+      await expect(service.refreshSuggestions()).resolves.toBeDefined();
+
+      // Should log warning
+      expect(log.warn).toHaveBeenCalled();
+    });
+
+    it('resurfaced snoozed rows are rescored with computed non-default multipliers', async () => {
+      const pastSnooze = new Date(Date.now() - 86400000); // 1 day ago
+      const snoozedRow = {
+        id: 42, asin: 'SNOOZED1', snoozeUntil: pastSnooze,
+        reason: 'author', reasonContext: 'Same author',
+        authorName: 'Unknown Author', narratorName: null,
+        duration: null, publishedDate: null,
+        seriesName: null, seriesPosition: null,
+      };
+
+      const db = createMockDb();
+      // expireSuggestions
+      db.delete.mockReturnValue(mockDbChain({ rowsAffected: 0 }));
+      db.select
+        // computeDismissalStats: 90% author dismissal → multiplier 0.80
+        .mockReturnValueOnce(mockDbChain([
+          { reason: 'author', status: 'dismissed', count: 9 },
+          { reason: 'author', status: 'added', count: 1 },
+        ]))
+        // analyzeLibrary: empty → no affinity signals
+        .mockReturnValueOnce(mockDbChain([]))
+        // existing books for exclusion
+        .mockReturnValueOnce(mockDbChain([]))
+        // dismissed suggestions
+        .mockReturnValueOnce(mockDbChain([]))
+        // currentPending: includes the snoozed row
+        .mockReturnValueOnce(mockDbChain([snoozedRow]));
+      // resurfaceSnoozedRows will call db.update
+      db.update.mockReturnValue(mockDbChain({ rowsAffected: 1 }));
+
+      const { service } = createService(db);
+      await service.refreshSuggestions();
+
+      // Verify db.update was called for the resurfaced row with a reduced score
+      expect(db.update).toHaveBeenCalled();
+      const updateChain = db.update.mock.results[0].value;
+      expect(updateChain.set).toHaveBeenCalled();
+      const setArg = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+      // With author multiplier 0.80 and default strength 0.5:
+      // score = SIGNAL_WEIGHTS.author * 0.80 * 0.5 = 40 * 0.80 * 0.5 = 16
+      // Without multiplier it would be 40 * 1.0 * 0.5 = 20
+      expect(setArg.score).toBe(16);
+      expect(setArg.score).not.toBe(20); // Would be 20 with default multiplier
+      expect(setArg.snoozeUntil).toBeNull(); // Snooze cleared on resurface
     });
   });
 });

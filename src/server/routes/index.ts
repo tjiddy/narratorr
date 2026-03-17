@@ -186,5 +186,6 @@ export async function registerRoutes(
   await discoverRoutes(app, {
     discoveryService: services.discovery,
     settingsService: services.settings,
+    taskRegistry: services.taskRegistry,
   });
 }

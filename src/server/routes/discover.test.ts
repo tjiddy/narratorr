@@ -116,26 +116,18 @@ describe('Discover Routes', () => {
   });
 
   describe('POST /api/discover/refresh', () => {
-    it('triggers manual refresh and returns 200', async () => {
+    it('triggers manual refresh via task registry and returns refresh summary', async () => {
+      const refreshResult = { added: 3, removed: 1, warnings: ['some warning'] };
       (services.settings.get as Mock).mockResolvedValueOnce({ enabled: true });
-      (services.discovery.refreshSuggestions as Mock).mockResolvedValueOnce({ added: 0, removed: 0, warnings: [] });
-
-      const res = await app.inject({ method: 'POST', url: '/api/discover/refresh' });
-      expect(res.statusCode).toBe(200);
-    });
-
-    it('returns warnings array in response body when refresh has warnings', async () => {
-      (services.settings.get as Mock).mockResolvedValueOnce({ enabled: true });
-      (services.discovery.refreshSuggestions as Mock).mockResolvedValueOnce({
-        added: 3, removed: 1, warnings: ['Expiry step failed — continuing with candidate generation'],
-      });
+      (services.taskRegistry.runExclusive as Mock).mockResolvedValueOnce(refreshResult);
 
       const res = await app.inject({ method: 'POST', url: '/api/discover/refresh' });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      expect(body.warnings).toEqual(['Expiry step failed — continuing with candidate generation']);
+      expect(body).toEqual(refreshResult);
       expect(body.added).toBe(3);
       expect(body.removed).toBe(1);
+      expect(body.warnings).toEqual(['some warning']);
     });
 
     it('returns 409 when discovery.enabled is false', async () => {
@@ -281,7 +273,7 @@ describe('Discover Routes', () => {
 
     it('returns 500 when refreshSuggestions throws', async () => {
       (services.settings.get as Mock).mockResolvedValueOnce({ enabled: true });
-      (services.discovery.refreshSuggestions as Mock).mockRejectedValueOnce(new Error('Provider unreachable'));
+      (services.taskRegistry.runExclusive as Mock).mockRejectedValueOnce(new Error('Provider unreachable'));
 
       const res = await app.inject({ method: 'POST', url: '/api/discover/refresh' });
       expect(res.statusCode).toBe(500);
@@ -307,6 +299,7 @@ describe('Discover Routes', () => {
       await discoverRoutes(authApp, {
         discoveryService: services.discovery as never,
         settingsService: services.settings as never,
+        taskRegistry: services.taskRegistry as never,
       });
       await authApp.ready();
 
@@ -333,6 +326,43 @@ describe('Discover Routes', () => {
     it('rejects invalid reason value with 400', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/discover/suggestions?reason=invalid' });
       expect(res.statusCode).toBe(400);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // #406 — Concurrent refresh protection
+  // ---------------------------------------------------------------------------
+  describe('POST /api/discover/refresh concurrency (AC7)', () => {
+    it('returns 409 when task registry reports discovery is already running', async () => {
+      (services.settings.get as Mock).mockResolvedValueOnce({ enabled: true });
+      (services.taskRegistry.runExclusive as Mock).mockRejectedValueOnce(new Error('Task "discovery" is already running'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/discover/refresh' });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error).toContain('already running');
+    });
+
+    it('calls taskRegistry.runExclusive("discovery") with a callback that invokes refreshSuggestions', async () => {
+      const refreshResult = { added: 2, removed: 0, warnings: [] };
+      (services.settings.get as Mock).mockResolvedValueOnce({ enabled: true });
+      (services.discovery.refreshSuggestions as Mock).mockResolvedValueOnce(refreshResult);
+      (services.taskRegistry.runExclusive as Mock).mockImplementationOnce(
+        async (_name: string, fn: () => Promise<unknown>) => fn(),
+      );
+
+      const res = await app.inject({ method: 'POST', url: '/api/discover/refresh' });
+      expect(res.statusCode).toBe(200);
+      expect(services.taskRegistry.runExclusive).toHaveBeenCalledWith('discovery', expect.any(Function));
+      expect(services.discovery.refreshSuggestions).toHaveBeenCalledOnce();
+      expect(JSON.parse(res.payload)).toEqual(refreshResult);
+    });
+
+    it('still returns 409 when discovery is disabled (before hitting task registry)', async () => {
+      (services.settings.get as Mock).mockResolvedValueOnce({ enabled: false });
+
+      const res = await app.inject({ method: 'POST', url: '/api/discover/refresh' });
+      expect(res.statusCode).toBe(409);
+      expect(services.taskRegistry.runExclusive).not.toHaveBeenCalled();
     });
   });
 });

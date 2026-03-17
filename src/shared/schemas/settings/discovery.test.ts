@@ -17,6 +17,7 @@ describe('Discovery Settings Schema', () => {
       maxSuggestionsPerAuthor: 10,
       expiryDays: 60,
       snoozeDays: 14,
+      weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
     });
   });
 
@@ -28,6 +29,7 @@ describe('Discovery Settings Schema', () => {
       maxSuggestionsPerAuthor: 5,
       expiryDays: 90,
       snoozeDays: 30,
+      weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
     });
   });
 
@@ -51,6 +53,7 @@ describe('Discovery Settings Schema', () => {
       maxSuggestionsPerAuthor: 5,
       expiryDays: 90,
       snoozeDays: 30,
+      weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
     });
   });
 
@@ -61,6 +64,7 @@ describe('Discovery Settings Schema', () => {
       maxSuggestionsPerAuthor: 5,
       expiryDays: 90,
       snoozeDays: 30,
+      weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 },
     });
   });
 

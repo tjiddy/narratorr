@@ -48,6 +48,26 @@ export class TaskRegistry {
   }
 
   /**
+   * Run a custom function under a registered task's concurrency guard.
+   * Uses the task's running flag for mutual exclusion but executes the provided
+   * function instead of the registered one — useful when callers need the return value.
+   */
+  async runExclusive<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    const task = this.tasks.get(name);
+    if (!task) throw new Error(`Task "${name}" not found`);
+    if (task.running) throw new Error(`Task "${name}" is already running`);
+
+    task.running = true;
+    try {
+      const result = await fn();
+      task.lastRun = new Date();
+      return result;
+    } finally {
+      task.running = false;
+    }
+  }
+
+  /**
    * Execute a task with tracking (for live schedulers).
    * Unlike runTask(), silently skips if already running (no queueing, no error).
    */

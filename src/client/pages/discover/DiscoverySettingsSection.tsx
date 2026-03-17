@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ZapIcon } from '@/components/icons';
-import { DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS } from '../../../shared/schemas.js';
 import { SettingsSection } from '../settings/SettingsSection';
 
 const discoveryFormSchema = z.object({
@@ -18,7 +18,7 @@ const discoveryFormSchema = z.object({
   snoozeDays: z.number().int().min(1),
 });
 
-type DiscoveryFormData = AppSettings['discovery'];
+type DiscoveryFormData = z.infer<typeof discoveryFormSchema>;
 
 export function DiscoverySettingsSection() {
   const queryClient = useQueryClient();

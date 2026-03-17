@@ -1,10 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { DiscoveryService, SettingsService } from '../services/index.js';
+import type { TaskRegistry } from '../services/task-registry.js';
 
 export interface DiscoverRouteDeps {
   discoveryService: DiscoveryService;
   settingsService: SettingsService;
+  taskRegistry: TaskRegistry;
 }
 
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
@@ -17,7 +19,7 @@ const suggestionsQuerySchema = z.object({
 type SuggestionsQuery = z.infer<typeof suggestionsQuerySchema>;
 
 export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDeps) {
-  const { discoveryService, settingsService } = deps;
+  const { discoveryService, settingsService, taskRegistry } = deps;
 
   // GET /api/discover/suggestions
   app.get<{ Querystring: SuggestionsQuery }>(
@@ -89,8 +91,16 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
     if (!settings.enabled) {
       return reply.status(409).send({ error: 'Discovery is disabled' });
     }
-    const result = await discoveryService.refreshSuggestions();
-    return result;
+    try {
+      const result = await taskRegistry.runExclusive('discovery', () => discoveryService.refreshSuggestions());
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      if (message.includes('already running')) {
+        return reply.status(409).send({ error: message });
+      }
+      return reply.status(500).send({ error: message });
+    }
   });
 
   // GET /api/discover/stats

@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- discovery service is cohesive: signals, candidates, scoring, and refresh pipeline */
 import { eq, and, desc, sql, inArray, lt, isNull, or, lte as drizzleLte } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -8,6 +9,7 @@ import type { MetadataService } from './metadata.service.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
 import { extractSignals } from './discovery-signals.js';
+import { computeWeightMultipliers, DEFAULT_MULTIPLIERS, type DismissalStats, type WeightMultipliers } from './discovery-weights.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -75,7 +77,7 @@ export class DiscoveryService {
     return extractSignals(rows);
   }
 
-  async generateCandidates(signals: LibrarySignals): Promise<ScoredCandidate[]> {
+  async generateCandidates(signals: LibrarySignals, multipliers?: WeightMultipliers): Promise<ScoredCandidate[]> {
     const settings = await this.settingsService.get('discovery');
     const metadataSettings = await this.settingsService.get('metadata');
     const regionLang = REGION_LANGUAGES[metadataSettings.audibleRegion] ?? 'english';
@@ -87,7 +89,8 @@ export class DiscoveryService {
     const dismissedRows = await this.db.select({ asin: suggestions.asin }).from(suggestions).where(eq(suggestions.status, 'dismissed'));
     const dismissedAsins = new Set(dismissedRows.map(s => s.asin));
 
-    const ctx = { regionLang, existingAsins, existingTitleAuthors, dismissedAsins, maxPerAuthor: settings.maxSuggestionsPerAuthor, signals, warnings, queriedAuthor: undefined as string | undefined };
+    const effectiveMultipliers = multipliers ?? DEFAULT_MULTIPLIERS;
+    const ctx = { regionLang, existingAsins, existingTitleAuthors, dismissedAsins, maxPerAuthor: settings.maxSuggestionsPerAuthor, signals, warnings, queriedAuthor: undefined as string | undefined, multipliers: effectiveMultipliers };
     const map = new Map<string, ScoredCandidate>();
 
     await this.queryAuthorCandidates(signals, ctx, map);
@@ -114,9 +117,26 @@ export class DiscoveryService {
     // Step 1: Expire old pending suggestions (AC1, AC5, AC8)
     const expired = await this.expireSuggestions(warnings);
 
+    // Step 1b: Compute dismissal-based weight multipliers (#406)
+    let multipliers = { ...DEFAULT_MULTIPLIERS };
+    try {
+      const stats = await this.computeDismissalStats();
+      multipliers = computeWeightMultipliers(stats);
+    } catch (error) {
+      this.log.warn(error, 'Discovery: dismissal ratio computation failed — using default weights');
+    }
+
+    // Store computed multipliers in settings
+    try {
+      const currentSettings = await this.settingsService.get('discovery');
+      await this.settingsService.set('discovery', { ...currentSettings, weightMultipliers: multipliers });
+    } catch (error) {
+      this.log.warn(error, 'Discovery: failed to persist weight multipliers — continuing with in-memory values');
+    }
+
     // Step 2: Generate candidates
     const signals = await this.analyzeLibrary();
-    const candidates = await this.generateCandidates(signals);
+    const candidates = await this.generateCandidates(signals, multipliers);
     const currentPending = await this.db.select({
       id: suggestions.id,
       asin: suggestions.asin,
@@ -157,7 +177,7 @@ export class DiscoveryService {
     const resurfacedSnoozed = currentPending.filter(p =>
       !regeneratedAsins.has(p.asin) && p.snoozeUntil != null && p.snoozeUntil <= now,
     );
-    await this.resurfaceSnoozedRows(resurfacedSnoozed, signals, now);
+    await this.resurfaceSnoozedRows(resurfacedSnoozed, signals, now, multipliers);
     const resurfacedIds = new Set(resurfacedSnoozed.map(r => r.id));
 
     // Step 5: Delete stale pending suggestions (exclude resurfaced + still-snoozed ones)
@@ -189,7 +209,7 @@ export class DiscoveryService {
 
   private async resurfaceSnoozedRows(
     rows: Array<{ id: number; asin: string; reason: string; authorName: string; narratorName: string | null; duration: number | null; publishedDate: string | null; seriesName: string | null; seriesPosition: number | null }>,
-    signals: LibrarySignals, now: Date,
+    signals: LibrarySignals, now: Date, multipliers: WeightMultipliers = DEFAULT_MULTIPLIERS,
   ) {
     for (const row of rows) {
       const reason = row.reason as SuggestionReason;
@@ -200,7 +220,7 @@ export class DiscoveryService {
         duration: row.duration ?? undefined, publishedDate: row.publishedDate ?? undefined,
         series: row.seriesName ? [{ name: row.seriesName, position: row.seriesPosition ?? undefined }] : undefined,
       } as BookMetadata;
-      const score = this.scoreCandidate(pseudoBook, reason, strength, signals);
+      const score = this.scoreCandidate(pseudoBook, reason, strength, signals, multipliers);
       await this.db.update(suggestions).set({ score, refreshedAt: now, snoozeUntil: null }).where(eq(suggestions.id, row.id));
     }
   }
@@ -261,6 +281,50 @@ export class DiscoveryService {
     const book = await this.bookService.create({ title: row.title, authorName: row.authorName, asin: row.asin });
     await this.db.update(suggestions).set({ status: 'added' }).where(eq(suggestions.id, id));
     return { suggestion: { ...row, status: 'added' }, book };
+  }
+
+  private async queryDismissalCounts(): Promise<Array<{ reason: string; status: string; count: number }>> {
+    return this.db
+      .select({
+        reason: suggestions.reason,
+        status: suggestions.status,
+        count: sql<number>`count(*)`,
+      })
+      .from(suggestions)
+      .where(inArray(suggestions.status, ['dismissed', 'added']))
+      .groupBy(suggestions.reason, suggestions.status);
+  }
+
+  private parseDismissalCounts(rows: Array<{ reason: string; status: string; count: number }>): Map<string, { dismissed: number; added: number }> {
+    const counts = new Map<string, { dismissed: number; added: number }>();
+    for (const row of rows) {
+      const entry = counts.get(row.reason) ?? { dismissed: 0, added: 0 };
+      if (row.status === 'dismissed') entry.dismissed = Number(row.count);
+      else if (row.status === 'added') entry.added = Number(row.count);
+      counts.set(row.reason, entry);
+    }
+    return counts;
+  }
+
+  async computeDismissalRatios(): Promise<Partial<Record<SuggestionReason, number>>> {
+    const rows = await this.queryDismissalCounts();
+    const counts = this.parseDismissalCounts(rows);
+    const ratios: Partial<Record<SuggestionReason, number>> = {};
+    for (const [reason, { dismissed, added }] of counts) {
+      const total = dismissed + added;
+      ratios[reason as SuggestionReason] = total > 0 ? dismissed / total : 0;
+    }
+    return ratios;
+  }
+
+  private async computeDismissalStats(): Promise<Partial<Record<SuggestionReason, DismissalStats>>> {
+    const rows = await this.queryDismissalCounts();
+    const counts = this.parseDismissalCounts(rows);
+    const stats: Partial<Record<SuggestionReason, DismissalStats>> = {};
+    for (const [reason, { dismissed, added }] of counts) {
+      stats[reason as SuggestionReason] = { dismissed, added, total: dismissed + added };
+    }
+    return stats;
   }
 
   async getStats(): Promise<Record<string, number>> {
@@ -348,7 +412,7 @@ export class DiscoveryService {
         const eligible = results.filter(b => this.isEligibleCandidate(b, ctx, cap));
         for (const book of eligible) {
           if (seenAsins.has(book.asin!)) continue;
-          const score = this.scoreCandidate(book, 'diversity', 0.3, ctx.signals);
+          const score = this.scoreCandidate(book, 'diversity', 0.3, ctx.signals, ctx.multipliers);
           candidates.push(this.toScoredCandidate(book, 'diversity', `Something different — explore ${genre}`, score));
           seenAsins.add(book.asin!);
           break; // one candidate per genre
@@ -369,7 +433,7 @@ export class DiscoveryService {
   ) {
     const eligible = results.filter(b => this.isEligibleCandidate(b, ctx, authorCap));
     for (const book of eligible) {
-      const score = this.scoreCandidate(book, reason, strength, ctx.signals);
+      const score = this.scoreCandidate(book, reason, strength, ctx.signals, ctx.multipliers);
       const existing = map.get(book.asin!);
       if (!existing || score > existing.score) {
         map.set(book.asin!, this.toScoredCandidate(book, reason, contextFn(book), score));
@@ -420,8 +484,8 @@ export class DiscoveryService {
     };
   }
 
-  private scoreCandidate(book: BookMetadata, reason: SuggestionReason, strength: number, signals: LibrarySignals): number {
-    let score = SIGNAL_WEIGHTS[reason] * strength;
+  private scoreCandidate(book: BookMetadata, reason: SuggestionReason, strength: number, signals: LibrarySignals, multipliers: WeightMultipliers = DEFAULT_MULTIPLIERS): number {
+    let score = SIGNAL_WEIGHTS[reason] * (multipliers[reason] ?? 1) * strength;
 
     if (signals.durationStats && book.duration) {
       if (Math.abs(book.duration - signals.durationStats.median) <= signals.durationStats.stddev) score += 5;
@@ -449,4 +513,5 @@ interface CandidateContext {
   signals: LibrarySignals;
   warnings: string[];
   queriedAuthor?: string;
+  multipliers: WeightMultipliers;
 }
