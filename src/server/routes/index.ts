@@ -87,6 +87,41 @@ export interface Services {
   discovery: DiscoveryService;
 }
 
+/**
+ * Runtime list of all service keys, kept in sync with the Services interface.
+ * The `satisfies` clause ensures TS errors if a key is added to Services but
+ * not listed here — `Record<keyof Services, true>` requires every key present.
+ */
+export const SERVICE_KEYS = Object.keys({
+  settings: true,
+  auth: true,
+  indexer: true,
+  downloadClient: true,
+  book: true,
+  bookList: true,
+  download: true,
+  metadata: true,
+  import: true,
+  libraryScan: true,
+  matchJob: true,
+  notifier: true,
+  blacklist: true,
+  prowlarrSync: true,
+  remotePathMapping: true,
+  rename: true,
+  eventHistory: true,
+  tagging: true,
+  qualityGate: true,
+  retryBudget: true,
+  eventBroadcaster: true,
+  backup: true,
+  healthCheck: true,
+  taskRegistry: true,
+  recyclingBin: true,
+  importList: true,
+  discovery: true,
+} satisfies Record<keyof Services, true>) as (keyof Services)[];
+
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
   const settings = new SettingsService(db, log);
   const auth = new AuthService(db, log);
