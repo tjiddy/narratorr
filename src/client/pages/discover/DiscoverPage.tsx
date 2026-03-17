@@ -9,7 +9,7 @@ import { SuggestionCard } from './SuggestionCard.js';
 import { DiscoverEmpty } from './DiscoverEmpty.js';
 import { DiscoverSkeleton } from './DiscoverSkeleton.js';
 
-type ReasonFilter = 'all' | 'author' | 'series' | 'genre' | 'narrator';
+type ReasonFilter = 'all' | 'author' | 'series' | 'genre' | 'narrator' | 'diversity';
 
 const FILTER_OPTIONS: { value: ReasonFilter; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -17,6 +17,7 @@ const FILTER_OPTIONS: { value: ReasonFilter; label: string }[] = [
   { value: 'series', label: 'Series' },
   { value: 'genre', label: 'Genre' },
   { value: 'narrator', label: 'Narrator' },
+  { value: 'diversity', label: 'Diversity' },
 ];
 
 export function DiscoverPage() {

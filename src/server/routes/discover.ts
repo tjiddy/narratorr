@@ -11,7 +11,7 @@ const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
 type IdParam = z.infer<typeof idParamSchema>;
 
 const suggestionsQuerySchema = z.object({
-  reason: z.enum(['author', 'series', 'genre', 'narrator']).optional(),
+  reason: z.enum(['author', 'series', 'genre', 'narrator', 'diversity']).optional(),
   author: z.string().optional(),
 });
 type SuggestionsQuery = z.infer<typeof suggestionsQuerySchema>;

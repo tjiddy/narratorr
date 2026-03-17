@@ -316,4 +316,23 @@ describe('Discover Routes', () => {
       await authApp.close();
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Diversity reason filter (#407)
+  // -------------------------------------------------------------------------
+
+  describe('diversity reason query param', () => {
+    it('GET /api/discover/suggestions?reason=diversity returns 200 and forwards to service', async () => {
+      (services.discovery.getSuggestions as Mock).mockResolvedValueOnce([]);
+
+      const res = await app.inject({ method: 'GET', url: '/api/discover/suggestions?reason=diversity' });
+      expect(res.statusCode).toBe(200);
+      expect(services.discovery.getSuggestions).toHaveBeenCalledWith({ reason: 'diversity' });
+    });
+
+    it('rejects invalid reason value with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/discover/suggestions?reason=invalid' });
+      expect(res.statusCode).toBe(400);
+    });
+  });
 });

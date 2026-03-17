@@ -425,4 +425,41 @@ describe('DiscoverPage', () => {
       expect(toast.error).toHaveBeenCalledWith('Failed to dismiss suggestion');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Diversity filter (#407)
+  // -------------------------------------------------------------------------
+
+  describe('diversity filter option', () => {
+    it('renders Diversity option in filter dropdown', async () => {
+      mockApi.getDiscoverSuggestions.mockResolvedValue([]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
+
+      renderWithProviders(<DiscoverPage />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Diversity' })).toBeInTheDocument();
+      });
+    });
+
+    it('filters suggestions to only diversity reason when Diversity selected', async () => {
+      mockApi.getDiscoverSuggestions.mockResolvedValue([
+        makeSuggestion({ id: 1, title: 'Author Book', reason: 'author' }),
+        makeSuggestion({ id: 2, title: 'Diverse Book', reason: 'diversity', reasonContext: 'Something different — explore Mystery' }),
+      ]);
+      mockApi.getBookStats.mockResolvedValue(makeStats());
+
+      renderWithProviders(<DiscoverPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Author Book')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Diverse Book')).toBeInTheDocument();
+
+      await userEvent.click(screen.getByRole('button', { name: 'Diversity' }));
+
+      expect(screen.getByText('Diverse Book')).toBeInTheDocument();
+      expect(screen.queryByText('Author Book')).not.toBeInTheDocument();
+    });
+  });
 });

@@ -315,7 +315,7 @@ export const suggestions = sqliteTable('suggestions', {
   genres: text('genres', { mode: 'json' }).$type<string[]>(),
   seriesName: text('series_name'),
   seriesPosition: real('series_position'),
-  reason: text('reason', { enum: ['author', 'series', 'genre', 'narrator'] }).notNull(),
+  reason: text('reason', { enum: ['author', 'series', 'genre', 'narrator', 'diversity'] }).notNull(),
   reasonContext: text('reason_context').notNull(),
   score: real('score').notNull(),
   status: text('status', { enum: ['pending', 'added', 'dismissed'] })

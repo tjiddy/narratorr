@@ -13,7 +13,7 @@ export interface SuggestionRow {
   genres: string[] | null;
   seriesName: string | null;
   seriesPosition: number | null;
-  reason: 'author' | 'series' | 'genre' | 'narrator';
+  reason: 'author' | 'series' | 'genre' | 'narrator' | 'diversity';
   reasonContext: string;
   score: number;
   status: 'pending' | 'added' | 'dismissed';
@@ -28,6 +28,7 @@ export interface DiscoverStats {
   series?: number;
   genre?: number;
   narrator?: number;
+  diversity?: number;
 }
 
 export interface AddSuggestionResult {

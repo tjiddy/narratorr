@@ -15,7 +15,7 @@ import { extractSignals } from './discovery-signals.js';
 
 type SuggestionRow = typeof suggestions.$inferSelect;
 
-export type SuggestionReason = 'author' | 'series' | 'genre' | 'narrator';
+export type SuggestionReason = 'author' | 'series' | 'genre' | 'narrator' | 'diversity';
 
 export interface LibrarySignals {
   authorAffinity: Map<string, { count: number; strength: number; name: string }>;
@@ -42,8 +42,16 @@ export interface ScoredCandidate {
   score: number;
 }
 
-const SIGNAL_WEIGHTS = { author: 40, series: 50, genre: 25, narrator: 20 } as const;
+const SIGNAL_WEIGHTS = { author: 40, series: 50, genre: 25, narrator: 20, diversity: 15 } as const;
 const MAX_STRENGTH_BOOKS = 5;
+const DIVERSITY_TARGET = 2;
+
+/** Broad Audible genre categories for diversity candidate sourcing. */
+export const DIVERSITY_GENRES = [
+  'Mystery', 'Thriller', 'Science Fiction', 'Fantasy', 'Romance',
+  'Horror', 'Biography', 'History', 'Business', 'Self-Help',
+  'True Crime', 'Comedy', 'Health & Wellness', 'Philosophy', 'Travel',
+] as const;
 
 // ---------------------------------------------------------------------------
 // Service
@@ -86,6 +94,15 @@ export class DiscoveryService {
     await this.querySeriesCandidates(signals, ctx, map);
     await this.queryGenreCandidates(signals, ctx, map);
     await this.queryNarratorCandidates(signals, ctx, map);
+
+    // Diversity: generate separately, resolve ASIN collisions, append survivors
+    const diversityCandidates = await this.queryDiversityCandidates(signals, ctx);
+    for (const dc of diversityCandidates) {
+      if (!map.has(dc.asin)) {
+        map.set(dc.asin, dc);
+      }
+      // ASIN collision with affinity → skip (affinity wins), next diversity candidate already in list
+    }
 
     for (const w of warnings) this.log.warn({ warning: w }, 'Discovery: metadata search warning');
     return [...map.values()];
@@ -197,6 +214,7 @@ export class DiscoveryService {
         const count = signals.narratorAffinity.get(authorName) ?? 0;
         return Math.min(count / MAX_STRENGTH_BOOKS, 1.0);
       }
+      case 'diversity': return 0.3;
     }
   }
 
@@ -309,6 +327,36 @@ export class DiscoveryService {
         this.filterAndScore(results, 'narrator', () => `Narrated by ${name} — you've enjoyed ${count} of their performances`, Math.min(count / MAX_STRENGTH_BOOKS, 1.0), ctx, map);
       } catch (e) { this.log.warn(e, `Discovery: narrator query failed for ${name}`); }
     }
+  }
+
+  private async queryDiversityCandidates(signals: LibrarySignals, ctx: CandidateContext): Promise<ScoredCandidate[]> {
+    const libraryGenresLower = new Set([...signals.genreDistribution.keys()].map(g => g.toLowerCase()));
+    const missingGenres = DIVERSITY_GENRES.filter(g => !libraryGenresLower.has(g.toLowerCase()));
+    if (missingGenres.length === 0) return [];
+
+    // Shuffle and pick up to DIVERSITY_TARGET genres to query
+    const shuffled = [...missingGenres].sort(() => Math.random() - 0.5);
+    const picks = shuffled.slice(0, DIVERSITY_TARGET);
+    const candidates: ScoredCandidate[] = [];
+    const seenAsins = new Set<string>();
+    const cap = new Map<string, number>();
+
+    for (const genre of picks) {
+      try {
+        const { books: results, warnings } = await this.metadataService.searchBooksForDiscovery(genre);
+        ctx.warnings.push(...warnings);
+        const eligible = results.filter(b => this.isEligibleCandidate(b, ctx, cap));
+        for (const book of eligible) {
+          if (seenAsins.has(book.asin!)) continue;
+          const score = this.scoreCandidate(book, 'diversity', 0.3, ctx.signals);
+          candidates.push(this.toScoredCandidate(book, 'diversity', `Something different — explore ${genre}`, score));
+          seenAsins.add(book.asin!);
+          break; // one candidate per genre
+        }
+      } catch (e) { this.log.warn(e, `Discovery: diversity query failed for ${genre}`); }
+    }
+
+    return candidates;
   }
 
   // -----------------------------------------------------------------------
