@@ -11,6 +11,7 @@ import { networkSettingsSchema } from './network.js';
 import { rssSettingsSchema } from './rss.js';
 import { systemSettingsSchema } from './system.js';
 import { discoverySettingsSchema } from './discovery.js';
+import { SUGGESTION_REASONS } from '../discovery.js';
 
 // ---------------------------------------------------------------------------
 // Registry entry helper — enforces defaults match schema at compile time
@@ -95,7 +96,7 @@ export const settingsRegistry = {
   }),
   discovery: defineCategory({
     schema: discoverySettingsSchema,
-    defaults: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, snoozeDays: 30, weightMultipliers: { author: 1, series: 1, genre: 1, narrator: 1, diversity: 1 } },
+    defaults: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, snoozeDays: 30, weightMultipliers: Object.fromEntries(SUGGESTION_REASONS.map((r) => [r, 1])) as Record<string, number> },
   }),
 };
 

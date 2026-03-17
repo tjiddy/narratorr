@@ -1,6 +1,7 @@
 import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import { downloadStatusSchema } from '../shared/schemas/activity';
+import { SUGGESTION_REASONS } from '../shared/schemas/discovery';
 
 // ============ LIBRARY ============
 
@@ -315,7 +316,7 @@ export const suggestions = sqliteTable('suggestions', {
   genres: text('genres', { mode: 'json' }).$type<string[]>(),
   seriesName: text('series_name'),
   seriesPosition: real('series_position'),
-  reason: text('reason', { enum: ['author', 'series', 'genre', 'narrator', 'diversity'] }).notNull(),
+  reason: text('reason', { enum: SUGGESTION_REASONS as unknown as [string, ...string[]] }).notNull(),
   reasonContext: text('reason_context').notNull(),
   score: real('score').notNull(),
   status: text('status', { enum: ['pending', 'added', 'dismissed'] })

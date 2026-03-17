@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { suggestionReasonSchema } from '../../shared/schemas/discovery.js';
 import type { DiscoveryService, SettingsService } from '../services/index.js';
 import type { TaskRegistry } from '../services/task-registry.js';
 
@@ -13,7 +14,7 @@ const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
 type IdParam = z.infer<typeof idParamSchema>;
 
 const suggestionsQuerySchema = z.object({
-  reason: z.enum(['author', 'series', 'genre', 'narrator', 'diversity']).optional(),
+  reason: suggestionReasonSchema.optional(),
   author: z.string().optional(),
 });
 type SuggestionsQuery = z.infer<typeof suggestionsQuerySchema>;

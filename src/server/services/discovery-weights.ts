@@ -1,4 +1,4 @@
-import type { SuggestionReason } from './discovery.service.js';
+import type { SuggestionReason } from '../../shared/schemas/discovery.js';
 
 // ---------------------------------------------------------------------------
 // Pure functions — dismissal weight tuning (#406)

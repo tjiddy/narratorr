@@ -5,19 +5,16 @@ import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useBookStats } from '@/hooks/useLibrary';
 import { RefreshIcon, LoadingSpinner, AlertCircleIcon } from '@/components/icons';
+import { SUGGESTION_REASONS, SUGGESTION_REASON_REGISTRY, type SuggestionReason } from '../../../shared/schemas/discovery.js';
 import { SuggestionCard } from './SuggestionCard.js';
 import { DiscoverEmpty } from './DiscoverEmpty.js';
 import { DiscoverSkeleton } from './DiscoverSkeleton.js';
 
-type ReasonFilter = 'all' | 'author' | 'series' | 'genre' | 'narrator' | 'diversity';
+type ReasonFilter = 'all' | SuggestionReason;
 
 const FILTER_OPTIONS: { value: ReasonFilter; label: string }[] = [
   { value: 'all', label: 'All' },
-  { value: 'author', label: 'Author' },
-  { value: 'series', label: 'Series' },
-  { value: 'genre', label: 'Genre' },
-  { value: 'narrator', label: 'Narrator' },
-  { value: 'diversity', label: 'Diversity' },
+  ...SUGGESTION_REASONS.map((r) => ({ value: r as ReasonFilter, label: SUGGESTION_REASON_REGISTRY[r].label })),
 ];
 
 export function DiscoverPage() {

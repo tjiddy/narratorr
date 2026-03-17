@@ -1,3 +1,4 @@
+import type { SuggestionReason } from '../../../shared/schemas/discovery.js';
 import { fetchApi } from './client.js';
 
 export interface SuggestionRow {
@@ -13,7 +14,7 @@ export interface SuggestionRow {
   genres: string[] | null;
   seriesName: string | null;
   seriesPosition: number | null;
-  reason: 'author' | 'series' | 'genre' | 'narrator' | 'diversity';
+  reason: SuggestionReason;
   reasonContext: string;
   score: number;
   status: 'pending' | 'added' | 'dismissed';
@@ -23,13 +24,7 @@ export interface SuggestionRow {
   createdAt: string;
 }
 
-export interface DiscoverStats {
-  author?: number;
-  series?: number;
-  genre?: number;
-  narrator?: number;
-  diversity?: number;
-}
+export type DiscoverStats = Partial<Record<SuggestionReason, number>>;
 
 export interface AddSuggestionResult {
   suggestion: SuggestionRow;

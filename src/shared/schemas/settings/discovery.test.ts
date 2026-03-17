@@ -45,6 +45,20 @@ describe('Discovery Settings Schema', () => {
     expect(() => discoverySettingsSchema.parse({ intervalHours: 2.5 })).toThrow();
   });
 
+  it('preserves caller-provided weightMultipliers and strips unknown keys', () => {
+    const result = discoverySettingsSchema.parse({
+      weightMultipliers: { author: 0.5, series: 0.6, genre: 0.7, narrator: 0.8, diversity: 0.9, bogus: 1 },
+    });
+    expect(result.weightMultipliers).toEqual({
+      author: 0.5,
+      series: 0.6,
+      genre: 0.7,
+      narrator: 0.8,
+      diversity: 0.9,
+    });
+    expect(result.weightMultipliers).not.toHaveProperty('bogus');
+  });
+
   it('is registered in settingsRegistry with correct defaults', () => {
     expect(settingsRegistry.discovery).toBeDefined();
     expect(settingsRegistry.discovery.defaults).toEqual({

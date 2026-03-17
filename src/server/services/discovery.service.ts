@@ -8,6 +8,7 @@ import { diceCoefficient } from '../../core/utils/similarity.js';
 import type { MetadataService } from './metadata.service.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { SuggestionReason } from '../../shared/schemas/discovery.js';
 import { extractSignals } from './discovery-signals.js';
 import { computeWeightMultipliers, DEFAULT_MULTIPLIERS, type DismissalStats, type WeightMultipliers } from './discovery-weights.js';
 
@@ -17,7 +18,7 @@ import { computeWeightMultipliers, DEFAULT_MULTIPLIERS, type DismissalStats, typ
 
 type SuggestionRow = typeof suggestions.$inferSelect;
 
-export type SuggestionReason = 'author' | 'series' | 'genre' | 'narrator' | 'diversity';
+export type { SuggestionReason };
 
 export interface LibrarySignals {
   authorAffinity: Map<string, { count: number; strength: number; name: string }>;
