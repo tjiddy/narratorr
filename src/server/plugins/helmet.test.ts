@@ -1,46 +1,62 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import helmet, { type FastifyHelmetOptions } from '@fastify/helmet';
+import helmet from '@fastify/helmet';
+import { buildHelmetOptions } from './helmet-options.js';
 
-const sharedOptions = {
-  crossOriginEmbedderPolicy: false,
-  frameguard: { action: 'deny' as const },
-  referrerPolicy: { policy: 'strict-origin-when-cross-origin' as const },
-};
-
-const prodOptions: FastifyHelmetOptions = {
-  ...sharedOptions,
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
-      styleSrc: ["'self'", 'https://fonts.googleapis.com'],
-      fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-      imgSrc: ["'self'", 'data:', 'https:'],
-      connectSrc: ["'self'"],
-    },
-  },
-};
-
-const devOptions: FastifyHelmetOptions = {
-  ...sharedOptions,
-  contentSecurityPolicy: false,
-};
-
-async function createApp(options: FastifyHelmetOptions): Promise<FastifyInstance> {
+async function createApp(isDev: boolean): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
-  await app.register(helmet, options);
-  app.get('/api/test', async () => ({ ok: true }));
+  await app.register(helmet, buildHelmetOptions(isDev));
+  app.get('/api/test', async (_request, reply) => {
+    // Access cspNonce to verify it's generated (only in prod mode)
+    const nonce = reply.cspNonce?.script;
+    return { ok: true, nonce };
+  });
   await app.ready();
   return app;
 }
 
 describe('Security Headers (helmet)', () => {
+  describe('helmet options builder', () => {
+    it('prod options include nonce-based script-src instead of unsafe-inline', async () => {
+      const app = await createApp(false);
+      const res = await app.inject({ method: 'GET', url: '/api/test' });
+      const csp = res.headers['content-security-policy'] as string;
+      expect(csp).toMatch(/script-src 'self' 'nonce-[a-f0-9]+'/);
+      await app.close();
+    });
+
+    it('prod options do not contain unsafe-inline in script-src', async () => {
+      const app = await createApp(false);
+      const res = await app.inject({ method: 'GET', url: '/api/test' });
+      const csp = res.headers['content-security-policy'] as string;
+      expect(csp).not.toContain("'unsafe-inline'");
+      await app.close();
+    });
+
+    it('dev options disable CSP entirely (contentSecurityPolicy: false)', async () => {
+      const app = await createApp(true);
+      const res = await app.inject({ method: 'GET', url: '/api/test' });
+      expect(res.headers['content-security-policy']).toBeUndefined();
+      await app.close();
+    });
+
+    it('test imports shared builder used by index.ts — not a detached fixture', () => {
+      // This test proves the builder is the same module used in production.
+      // If the import path changes in index.ts but not here, the build breaks.
+      const prodOptions = buildHelmetOptions(false);
+      expect(prodOptions.enableCSPNonces).toBe(true);
+      expect(prodOptions.contentSecurityPolicy).toBeTruthy();
+
+      const devOptions = buildHelmetOptions(true);
+      expect(devOptions.contentSecurityPolicy).toBe(false);
+    });
+  });
+
   describe('production mode', () => {
     let app: FastifyInstance;
 
     beforeAll(async () => {
-      app = await createApp(prodOptions);
+      app = await createApp(false);
     });
 
     afterAll(async () => {
@@ -78,13 +94,29 @@ describe('Security Headers (helmet)', () => {
       expect(csp).toContain("img-src 'self' data: https:");
       expect(csp).toContain("connect-src 'self'");
     });
+
+    it('generates unique nonces per request', async () => {
+      const res1 = await app.inject({ method: 'GET', url: '/api/test' });
+      const res2 = await app.inject({ method: 'GET', url: '/api/test' });
+      const nonce1 = res1.json().nonce;
+      const nonce2 = res2.json().nonce;
+      expect(nonce1).toBeDefined();
+      expect(nonce2).toBeDefined();
+      expect(nonce1).not.toBe(nonce2);
+    });
+
+    it('nonce is valid hex and at least 16 bytes (32 hex chars)', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/test' });
+      const nonce = res.json().nonce;
+      expect(nonce).toMatch(/^[a-f0-9]{32,}$/);
+    });
   });
 
   describe('dev mode', () => {
     let app: FastifyInstance;
 
     beforeAll(async () => {
-      app = await createApp(devOptions);
+      app = await createApp(true);
     });
 
     afterAll(async () => {

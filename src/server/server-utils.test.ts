@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import Fastify from 'fastify';
+import helmet from '@fastify/helmet';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { listenWithRetry, registerStaticAndSpa } from './server-utils.js';
+import { buildHelmetOptions } from './plugins/helmet-options.js';
 
 function createMockApp() {
   return {
@@ -15,6 +17,15 @@ function createMockApp() {
       debug: vi.fn(),
     },
   } as unknown as Parameters<typeof listenWithRetry>[0];
+}
+
+/** Create a Fastify app with helmet (prod mode) + registerStaticAndSpa */
+async function createAppWithHelmet(urlBasePrefix: string, clientPath: string) {
+  const app = Fastify({ logger: false });
+  await app.register(helmet, buildHelmetOptions(false));
+  await registerStaticAndSpa(app, urlBasePrefix, clientPath);
+  await app.ready();
+  return app;
 }
 
 describe('listenWithRetry', () => {
@@ -113,6 +124,310 @@ describe('registerStaticAndSpa', () => {
       const res = await app.inject({ method: 'GET', url: '/books/123' });
       expect(res.statusCode).toBe(200);
       expect(res.body).toContain('<div id="root">');
+      await app.close();
+    });
+  });
+
+  describe('direct static entry routes (root URL_BASE)', () => {
+    it('serves injected HTML with config script at / (root)', async () => {
+      const app = Fastify({ logger: false });
+      await registerStaticAndSpa(app, '', tmpDir);
+      await app.ready();
+
+      const res = await app.inject({ method: 'GET', url: '/' });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/html');
+      expect(res.body).toContain('window.__NARRATORR_URL_BASE__=""');
+      expect(res.body).toContain('<div id="root">');
+      await app.close();
+    });
+
+    it('serves injected HTML with config script at /index.html (root)', async () => {
+      const app = Fastify({ logger: false });
+      await registerStaticAndSpa(app, '', tmpDir);
+      await app.ready();
+
+      const res = await app.inject({ method: 'GET', url: '/index.html' });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/html');
+      expect(res.body).toContain('window.__NARRATORR_URL_BASE__=""');
+      expect(res.body).toContain('<div id="root">');
+      await app.close();
+    });
+
+    it('includes nonce attribute in injected script tag at / (root)', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toMatch(/<script nonce="[a-f0-9]+">/);
+      expect(res.body).toContain('window.__NARRATORR_URL_BASE__=""');
+      await app.close();
+    });
+
+    it('includes nonce attribute in injected script tag at /index.html (root)', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/index.html' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toMatch(/<script nonce="[a-f0-9]+">/);
+      expect(res.body).toContain('window.__NARRATORR_URL_BASE__=""');
+      await app.close();
+    });
+  });
+
+  describe('direct static entry routes (prefixed URL_BASE)', () => {
+    const prefix = '/narratorr';
+
+    it('serves injected HTML with config script at /<urlBase>/', async () => {
+      const app = Fastify({ logger: false });
+      await registerStaticAndSpa(app, prefix, tmpDir);
+      await app.ready();
+
+      const res = await app.inject({ method: 'GET', url: '/narratorr/' });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/html');
+      expect(res.body).toContain('window.__NARRATORR_URL_BASE__="/narratorr"');
+      expect(res.body).toContain('<div id="root">');
+      await app.close();
+    });
+
+    it('serves injected HTML with config script at /<urlBase>/index.html', async () => {
+      const app = Fastify({ logger: false });
+      await registerStaticAndSpa(app, prefix, tmpDir);
+      await app.ready();
+
+      const res = await app.inject({ method: 'GET', url: '/narratorr/index.html' });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/html');
+      expect(res.body).toContain('window.__NARRATORR_URL_BASE__="/narratorr"');
+      expect(res.body).toContain('<div id="root">');
+      await app.close();
+    });
+
+    it('includes nonce attribute in injected script tag at /<urlBase>/', async () => {
+      const app = await createAppWithHelmet(prefix, tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/narratorr/' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toMatch(/<script nonce="[a-f0-9]+">/);
+      expect(res.body).toContain('window.__NARRATORR_URL_BASE__="/narratorr"');
+      await app.close();
+    });
+
+    it('includes nonce attribute in injected script tag at /<urlBase>/index.html', async () => {
+      const app = await createAppWithHelmet(prefix, tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/narratorr/index.html' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toMatch(/<script nonce="[a-f0-9]+">/);
+      expect(res.body).toContain('window.__NARRATORR_URL_BASE__="/narratorr"');
+      await app.close();
+    });
+  });
+
+  describe('nonce injection', () => {
+    it('nonce appears in injected <script nonce="..."> tag in SPA fallback HTML', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/dashboard' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toMatch(/<script nonce="[a-f0-9]+">/);
+      expect(res.body).toContain('window.__NARRATORR_URL_BASE__=""');
+      await app.close();
+    });
+
+    it('successive requests produce different nonces', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res1 = await app.inject({ method: 'GET', url: '/' });
+      const res2 = await app.inject({ method: 'GET', url: '/' });
+
+      const nonce1 = res1.body.match(/nonce="([a-f0-9]+)"/)?.[1];
+      const nonce2 = res2.body.match(/nonce="([a-f0-9]+)"/)?.[1];
+
+      expect(nonce1).toBeDefined();
+      expect(nonce2).toBeDefined();
+      expect(nonce1).not.toBe(nonce2);
+      await app.close();
+    });
+
+    it('nonce is valid hex and at least 16 bytes (32 hex chars)', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/' });
+      const nonce = res.body.match(/nonce="([a-f0-9]+)"/)?.[1];
+
+      expect(nonce).toBeDefined();
+      expect(nonce!.length).toBeGreaterThanOrEqual(32);
+      expect(nonce).toMatch(/^[a-f0-9]+$/);
+      await app.close();
+    });
+
+    it('HTML script nonce matches CSP header nonce on direct-entry route', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/' });
+      const csp = res.headers['content-security-policy'] as string;
+      const headerNonce = csp.match(/'nonce-([a-f0-9]+)'/)?.[1];
+      const htmlNonce = res.body.match(/nonce="([a-f0-9]+)"/)?.[1];
+
+      expect(headerNonce).toBeDefined();
+      expect(htmlNonce).toBeDefined();
+      expect(htmlNonce).toBe(headerNonce);
+      await app.close();
+    });
+
+    it('HTML script nonce matches CSP header nonce on SPA fallback route', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/dashboard' });
+      const csp = res.headers['content-security-policy'] as string;
+      const headerNonce = csp.match(/'nonce-([a-f0-9]+)'/)?.[1];
+      const htmlNonce = res.body.match(/nonce="([a-f0-9]+)"/)?.[1];
+
+      expect(headerNonce).toBeDefined();
+      expect(htmlNonce).toBeDefined();
+      expect(htmlNonce).toBe(headerNonce);
+      await app.close();
+    });
+
+    it('HTML script nonce matches CSP header nonce on prefixed direct-entry route', async () => {
+      const app = await createAppWithHelmet('/narratorr', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/narratorr/' });
+      const csp = res.headers['content-security-policy'] as string;
+      const headerNonce = csp.match(/'nonce-([a-f0-9]+)'/)?.[1];
+      const htmlNonce = res.body.match(/nonce="([a-f0-9]+)"/)?.[1];
+
+      expect(headerNonce).toBeDefined();
+      expect(htmlNonce).toBeDefined();
+      expect(htmlNonce).toBe(headerNonce);
+      await app.close();
+    });
+
+    it('HTML script nonce matches CSP header nonce on prefixed SPA fallback route', async () => {
+      const app = await createAppWithHelmet('/narratorr', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/narratorr/dashboard' });
+      const csp = res.headers['content-security-policy'] as string;
+      const headerNonce = csp.match(/'nonce-([a-f0-9]+)'/)?.[1];
+      const htmlNonce = res.body.match(/nonce="([a-f0-9]+)"/)?.[1];
+
+      expect(headerNonce).toBeDefined();
+      expect(htmlNonce).toBeDefined();
+      expect(htmlNonce).toBe(headerNonce);
+      await app.close();
+    });
+  });
+
+  describe('static asset pass-through', () => {
+    it('serves a JS asset file at root prefix instead of HTML fallback', async () => {
+      // Create a temp asset file alongside index.html
+      const assetContent = 'console.log("app");';
+      fs.writeFileSync(path.join(tmpDir, 'app.js'), assetContent);
+
+      const app = Fastify({ logger: false });
+      await registerStaticAndSpa(app, '', tmpDir);
+      await app.ready();
+
+      const res = await app.inject({ method: 'GET', url: '/app.js' });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('application/javascript');
+      expect(res.body).toBe(assetContent);
+      await app.close();
+
+      fs.unlinkSync(path.join(tmpDir, 'app.js'));
+    });
+
+    it('serves a JS asset file at prefixed URL instead of HTML fallback', async () => {
+      const assetContent = 'console.log("prefixed-app");';
+      fs.writeFileSync(path.join(tmpDir, 'app.js'), assetContent);
+
+      const app = Fastify({ logger: false });
+      await registerStaticAndSpa(app, '/narratorr', tmpDir);
+      await app.ready();
+
+      const res = await app.inject({ method: 'GET', url: '/narratorr/app.js' });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('application/javascript');
+      expect(res.body).toBe(assetContent);
+      await app.close();
+
+      fs.unlinkSync(path.join(tmpDir, 'app.js'));
+    });
+
+    it('serves a CSS asset file instead of HTML fallback', async () => {
+      const assetContent = 'body { margin: 0; }';
+      fs.writeFileSync(path.join(tmpDir, 'style.css'), assetContent);
+
+      const app = Fastify({ logger: false });
+      await registerStaticAndSpa(app, '', tmpDir);
+      await app.ready();
+
+      const res = await app.inject({ method: 'GET', url: '/style.css' });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/css');
+      expect(res.body).toBe(assetContent);
+      await app.close();
+
+      fs.unlinkSync(path.join(tmpDir, 'style.css'));
+    });
+  });
+
+  describe('edge cases', () => {
+    it('returns no routes when clientPath does not exist', async () => {
+      const app = Fastify({ logger: false });
+      await registerStaticAndSpa(app, '', '/nonexistent/path');
+      await app.ready();
+
+      // Without static routes, Fastify returns its default 404
+      const res = await app.inject({ method: 'GET', url: '/' });
+      expect(res.statusCode).toBe(404);
+      await app.close();
+    });
+
+    it('serves HTML without config script when index.html has no </head> tag', async () => {
+      const noHeadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'narratorr-nohead-'));
+      fs.writeFileSync(
+        path.join(noHeadDir, 'index.html'),
+        '<html><body><div id="root"></div></body></html>',
+      );
+
+      const app = Fastify({ logger: false });
+      await registerStaticAndSpa(app, '', noHeadDir);
+      await app.ready();
+
+      const res = await app.inject({ method: 'GET', url: '/' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).not.toContain('window.__NARRATORR_URL_BASE__');
+      expect(res.body).toContain('<div id="root">');
+
+      await app.close();
+      fs.rmSync(noHeadDir, { recursive: true, force: true });
+    });
+
+    it('strips query string before SPA path matching', async () => {
+      const app = Fastify({ logger: false });
+      await registerStaticAndSpa(app, '/narratorr', tmpDir);
+      await app.ready();
+
+      const res = await app.inject({ method: 'GET', url: '/narratorr/library?page=2' });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/html');
+      expect(res.body).toContain('window.__NARRATORR_URL_BASE__="/narratorr"');
+      await app.close();
+    });
+
+    it('serves SPA fallback for exact prefix match without trailing slash (/narratorr)', async () => {
+      const app = Fastify({ logger: false });
+      await registerStaticAndSpa(app, '/narratorr', tmpDir);
+      await app.ready();
+
+      const res = await app.inject({ method: 'GET', url: '/narratorr' });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toContain('text/html');
+      expect(res.body).toContain('window.__NARRATORR_URL_BASE__="/narratorr"');
       await app.close();
     });
   });

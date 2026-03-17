@@ -511,4 +511,44 @@ describe('ImportListsSettings', () => {
       });
     });
   });
+
+  describe('a11y label pairing', () => {
+    it('Enabled checkbox input has id="il-enabled"', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await screen.findByText('No import lists configured');
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+
+      const checkbox = screen.getByRole('checkbox');
+      expect(checkbox).toHaveAttribute('id', 'il-enabled');
+    });
+
+    it('Enabled checkbox label has htmlFor="il-enabled"', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      const user = userEvent.setup();
+      const { container } = renderWithProviders(<ImportListsSettings />);
+
+      await screen.findByText('No import lists configured');
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+
+      const label = container.querySelector('label[for="il-enabled"]');
+      expect(label).not.toBeNull();
+      expect(label!.textContent).toContain('Enabled');
+    });
+
+    it('existing labels (il-name, il-type, il-syncInterval) remain accessible via getByLabelText', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await screen.findByText('No import lists configured');
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+
+      expect(screen.getByLabelText('Name')).toBeInTheDocument();
+      expect(screen.getByLabelText('Provider Type')).toBeInTheDocument();
+      expect(screen.getByLabelText('Sync Interval (minutes)')).toBeInTheDocument();
+    });
+  });
 });

@@ -1,7 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import fastifyStatic from '@fastify/static';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -14,18 +14,37 @@ export async function registerStaticAndSpa(
   const clientPath = clientPathOverride ?? path.join(__dirname, '../client');
   if (!fs.existsSync(clientPath)) return;
 
-  // Read index.html once and inject URL_BASE config for the frontend
+  // Read index.html once — nonce injection happens per-request
   const indexHtmlPath = path.join(clientPath, 'index.html');
   const rawIndexHtml = fs.readFileSync(indexHtmlPath, 'utf-8');
-  const configScript = `<script>window.__NARRATORR_URL_BASE__=${JSON.stringify(urlBasePrefix)};</script>`;
-  const indexHtml = rawIndexHtml.replace('</head>', `${configScript}\n</head>`);
 
+  function sendIndexHtml(reply: FastifyReply) {
+    const nonce = reply.cspNonce?.script;
+    const nonceAttr = nonce ? ` nonce="${nonce}"` : '';
+    const configScript = `<script${nonceAttr}>window.__NARRATORR_URL_BASE__=${JSON.stringify(urlBasePrefix)};</script>`;
+    const html = rawIndexHtml.replace('</head>', `${configScript}\n</head>`);
+    return reply.type('text/html').send(html);
+  }
+
+  // Register explicit routes for HTML entry points — these take priority
+  // over @fastify/static's wildcard, ensuring config script + nonce injection
+  const entryPaths = urlBasePrefix
+    ? [`${urlBasePrefix}/`, `${urlBasePrefix}/index.html`]
+    : ['/', '/index.html'];
+
+  for (const entryPath of entryPaths) {
+    app.get(entryPath, (_request, reply) => sendIndexHtml(reply));
+  }
+
+  // Serve static assets (JS, CSS, images, etc.)
   await app.register(fastifyStatic, {
     root: clientPath,
     prefix: urlBasePrefix || '/',
+    index: false,
+    wildcard: true,
   });
 
-  // SPA fallback - serve index.html for in-scope non-API routes only
+  // SPA fallback — serve index.html for in-scope non-API routes only
   app.setNotFoundHandler((request, reply) => {
     const urlPath = request.url.split('?')[0];
     const apiPrefix = urlBasePrefix ? `${urlBasePrefix}/api/` : '/api/';
@@ -40,7 +59,7 @@ export async function registerStaticAndSpa(
       return reply.status(404).send({ error: 'Not found' });
     }
 
-    return reply.type('text/html').send(indexHtml);
+    return sendIndexHtml(reply);
   });
 }
 

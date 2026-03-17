@@ -12,6 +12,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
+import { buildHelmetOptions } from './plugins/helmet-options.js';
 import rateLimit from '@fastify/rate-limit';
 import {
   serializerCompiler,
@@ -56,23 +57,7 @@ async function main() {
   });
 
   // Security headers
-  await app.register(helmet, {
-    contentSecurityPolicy: config.isDev
-      ? false
-      : {
-          directives: {
-            defaultSrc: ["'self'"],
-            scriptSrc: ["'self'", "'unsafe-inline'"],
-            styleSrc: ["'self'", 'https://fonts.googleapis.com'],
-            fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-            imgSrc: ["'self'", 'data:', 'https:'],
-            connectSrc: ["'self'"],
-          },
-        },
-    crossOriginEmbedderPolicy: false,
-    frameguard: { action: 'deny' as const },
-    referrerPolicy: { policy: 'strict-origin-when-cross-origin' as const },
-  });
+  await app.register(helmet, buildHelmetOptions(config.isDev));
 
   // Rate limiting (per-route only — global: false prevents auto-applying to all routes)
   await app.register(rateLimit, { global: false });

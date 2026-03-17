@@ -182,8 +182,8 @@ function ImportListForm({
       )}
 
       <div className="flex items-center justify-between pt-2">
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="sr-only peer" />
+        <label htmlFor="il-enabled" className="flex items-center gap-2 cursor-pointer">
+          <input id="il-enabled" type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="sr-only peer" />
           <div className="w-9 h-5 bg-muted rounded-full peer peer-checked:bg-primary transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4 relative" />
           <span className="text-sm">Enabled</span>
         </label>
