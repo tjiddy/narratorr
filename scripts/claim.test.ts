@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { findExistingBranch, checkoutOrCreateBranch } from './lib.ts';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { findExistingBranch, checkoutOrCreateBranch, UnmergedFilesError } from './lib.ts';
 
 describe('findExistingBranch', () => {
   describe('local branch detection', () => {
@@ -47,6 +47,176 @@ describe('findExistingBranch', () => {
       expect(result?.source).toBe('local');
       expect(mockGit).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe('checkoutOrCreateBranch — unmerged file detection', () => {
+  function makeMockGit(statusOutput: string) {
+    const calls: string[][] = [];
+    const mockGit = vi.fn((...args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'status' && args[1] === '--porcelain') return statusOutput;
+      if (args[0] === 'branch' && args[1] === '--list') return '';
+      if (args[0] === 'branch' && args[1] === '-r') return '';
+      return '';
+    });
+    return { mockGit, calls };
+  }
+
+  it('throws UnmergedFilesError for single UU file', () => {
+    const { mockGit } = makeMockGit('UU some/file.ts');
+    expect(() => checkoutOrCreateBranch('42', 'feature/issue-42-test', mockGit))
+      .toThrow(UnmergedFilesError);
+    try {
+      checkoutOrCreateBranch('42', 'feature/issue-42-test', mockGit);
+    } catch (e) {
+      expect(e).toBeInstanceOf(UnmergedFilesError);
+      expect((e as UnmergedFilesError).files).toEqual(['some/file.ts']);
+    }
+  });
+
+  it('throws UnmergedFilesError listing all conflicted files for multiple UU files', () => {
+    const { mockGit } = makeMockGit('UU file1.ts\nUU file2.ts');
+    try {
+      checkoutOrCreateBranch('42', 'feature/issue-42-test', mockGit);
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(UnmergedFilesError);
+      expect((e as UnmergedFilesError).files).toEqual(['file1.ts', 'file2.ts']);
+    }
+  });
+
+  it('detects all unmerged status codes (AA, AU, UA, DD, UD, DU), not just UU', () => {
+    const statuses = ['AA', 'AU', 'UA', 'DD', 'UD', 'DU'];
+    for (const status of statuses) {
+      const { mockGit } = makeMockGit(`${status} file-${status}.ts`);
+      expect(() => checkoutOrCreateBranch('42', 'feature/issue-42-test', mockGit))
+        .toThrow(UnmergedFilesError);
+    }
+  });
+
+  it('does not throw for clean working tree (empty git status)', () => {
+    const { mockGit } = makeMockGit('');
+    expect(() => checkoutOrCreateBranch('42', 'feature/issue-42-test', mockGit))
+      .not.toThrow();
+  });
+
+  it('does not throw for dirty but non-conflicted tree (M and ?? statuses)', () => {
+    const { mockGit } = makeMockGit(' M modified.ts\n?? untracked.ts');
+    expect(() => checkoutOrCreateBranch('42', 'feature/issue-42-test', mockGit))
+      .not.toThrow();
+  });
+
+  it('runs git status --porcelain before git stash --include-untracked', () => {
+    const { mockGit, calls } = makeMockGit('');
+    checkoutOrCreateBranch('42', 'feature/issue-42-test', mockGit);
+    const statusIdx = calls.findIndex(c => c[0] === 'status' && c[1] === '--porcelain');
+    const stashIdx = calls.findIndex(c => c[0] === 'stash' && c[1] === '--include-untracked');
+    expect(statusIdx).toBeGreaterThanOrEqual(0);
+    expect(stashIdx).toBeGreaterThan(statusIdx);
+  });
+
+  it('propagates git status --porcelain failure cleanly (not swallowed)', () => {
+    const mockGit = vi.fn((...args: string[]) => {
+      if (args[0] === 'status') throw new Error('git status failed');
+      return '';
+    });
+    expect(() => checkoutOrCreateBranch('42', 'feature/issue-42-test', mockGit))
+      .toThrow('git status failed');
+  });
+
+  it('catch + die produces clean CLI error listing conflicted files and resolution guidance', () => {
+    const error = new UnmergedFilesError(['src/a.ts', 'src/b.ts']);
+    // Verify error has the right structure for claim.ts to format
+    expect(error).toBeInstanceOf(Error);
+    expect(error.files).toEqual(['src/a.ts', 'src/b.ts']);
+    expect(error.message).toContain('src/a.ts');
+    expect(error.message).toContain('src/b.ts');
+    // Message should include resolution guidance
+    expect(error.message.toLowerCase()).toMatch(/resolve|conflict/);
+  });
+
+  it('UnmergedFilesError is distinguishable from generic Error via instanceof', () => {
+    const unmergedErr = new UnmergedFilesError(['file.ts']);
+    const genericErr = new Error('some other error');
+    expect(unmergedErr instanceof UnmergedFilesError).toBe(true);
+    expect(genericErr instanceof UnmergedFilesError).toBe(false);
+  });
+
+  it('non-UnmergedFilesError exceptions propagate through checkoutOrCreateBranch', () => {
+    const mockGit = vi.fn((...args: string[]) => {
+      if (args[0] === 'status') return ''; // clean status
+      if (args[0] === 'branch' && args[1] === '--list') return '';
+      if (args[0] === 'branch' && args[1] === '-r') return '';
+      if (args[0] === 'stash') return '';
+      if (args[0] === 'checkout' && args[1] === 'main') throw new Error('checkout failed');
+      return '';
+    });
+    expect(() => checkoutOrCreateBranch('42', 'feature/issue-42-test', mockGit))
+      .toThrow('checkout failed');
+  });
+});
+
+describe('claim.ts script — error handling integration', () => {
+  const originalArgv2 = process.argv[2];
+
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    process.argv[2] = originalArgv2;
+    vi.doUnmock('./lib.ts');
+  });
+
+  function mockLib(overrides: Record<string, unknown> = {}) {
+    const defaults = {
+      gitea: vi.fn(() => '#42 [open] Test issue\nlabels: status/ready-for-dev'),
+      giteaSafe: vi.fn(() => ({ ok: true, output: '' })),
+      parseLabels: vi.fn(() => ['status/ready-for-dev']),
+      replaceLabel: vi.fn(() => ['status/in-progress']),
+      slugify: vi.fn(() => 'test-issue'),
+      withTempFile: vi.fn(),
+      die: vi.fn(() => { throw new Error('die-called'); }),
+      checkoutOrCreateBranch: vi.fn(() => ({ branch: 'feature/issue-42-test', resumed: false })),
+      UnmergedFilesError,
+    };
+    vi.doMock('./lib.ts', () => ({ ...defaults, ...overrides }));
+  }
+
+  it('catches UnmergedFilesError and calls die() with conflicted file list and resolution guidance', async () => {
+    const dieMock = vi.fn(() => { throw new Error('die-called'); });
+    mockLib({
+      checkoutOrCreateBranch: vi.fn(() => {
+        throw new UnmergedFilesError(['src/a.ts', 'src/b.ts']);
+      }),
+      die: dieMock,
+    });
+    process.argv[2] = '42';
+
+    await expect(() => import('./claim.ts')).rejects.toThrow('die-called');
+
+    expect(dieMock).toHaveBeenCalledOnce();
+    expect(dieMock).toHaveBeenCalledWith(
+      expect.stringContaining('Unmerged files detected'),
+    );
+    expect(dieMock).toHaveBeenCalledWith(expect.stringContaining('src/a.ts'));
+    expect(dieMock).toHaveBeenCalledWith(expect.stringContaining('src/b.ts'));
+    expect(dieMock).toHaveBeenCalledWith(expect.stringContaining('git add'));
+  });
+
+  it('rethrows non-UnmergedFilesError exceptions without calling die()', async () => {
+    const dieMock = vi.fn(() => { throw new Error('die-called'); });
+    mockLib({
+      checkoutOrCreateBranch: vi.fn(() => {
+        throw new Error('checkout failed');
+      }),
+      die: dieMock,
+    });
+    process.argv[2] = '42';
+
+    await expect(() => import('./claim.ts')).rejects.toThrow('checkout failed');
+    expect(dieMock).not.toHaveBeenCalled();
   });
 });
 

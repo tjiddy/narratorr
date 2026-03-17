@@ -161,6 +161,22 @@ export function findExistingBranch(
   return null;
 }
 
+// Unmerged porcelain status codes — covers all conflict states from git status --porcelain.
+const UNMERGED_CODES = new Set(["UU", "AA", "AU", "UA", "DD", "UD", "DU"]);
+
+// Thrown when checkoutOrCreateBranch detects unmerged files in the working tree.
+export class UnmergedFilesError extends Error {
+  readonly files: string[];
+  constructor(files: string[]) {
+    const list = files.map(f => `  ${f}`).join("\n");
+    super(
+      `Unmerged files detected — resolve each conflict, then stage with \`git add\`:\n${list}`
+    );
+    this.name = "UnmergedFilesError";
+    this.files = files;
+  }
+}
+
 // Checkout or create a branch for an issue. Returns { branch, resumed }.
 // If an existing branch is found (local or remote), checks it out.
 // Otherwise creates a new branch from main.
@@ -169,6 +185,17 @@ export function checkoutOrCreateBranch(
   newBranch: string,
   gitFn: (...args: string[]) => string = git
 ): { branch: string; resumed: boolean } {
+  // Pre-flight: detect unmerged files before any stash/checkout/pull operations
+  const status = gitFn("status", "--porcelain");
+  if (status) {
+    const unmerged = status.split("\n")
+      .filter(line => UNMERGED_CODES.has(line.slice(0, 2)))
+      .map(line => line.slice(3));
+    if (unmerged.length > 0) {
+      throw new UnmergedFilesError(unmerged);
+    }
+  }
+
   const existing = findExistingBranch(issueId, gitFn);
 
   try { gitFn("stash", "--include-untracked"); } catch { /* no changes */ }
