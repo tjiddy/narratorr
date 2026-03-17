@@ -9,6 +9,16 @@ import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 
 type BookEventRow = typeof bookEvents.$inferSelect;
 
+export class EventHistoryServiceError extends Error {
+  constructor(
+    message: string,
+    public code: 'NOT_FOUND' | 'UNSUPPORTED_EVENT_TYPE' | 'NO_DOWNLOAD' | 'DOWNLOAD_NOT_FOUND',
+  ) {
+    super(message);
+    this.name = 'EventHistoryServiceError';
+  }
+}
+
 export interface CreateEventInput {
   bookId: number;
   bookTitle: string;
@@ -137,15 +147,15 @@ export class EventHistoryService {
   async markFailed(eventId: number): Promise<{ success: true }> {
     const event = await this.getById(eventId);
     if (!event) {
-      throw new Error('Event not found');
+      throw new EventHistoryServiceError('Event not found', 'NOT_FOUND');
     }
 
     if (!actionableEventTypes.includes(event.eventType as EventType)) {
-      throw new Error(`Event type '${event.eventType}' does not support mark-as-failed`);
+      throw new EventHistoryServiceError(`Event type '${event.eventType}' does not support mark-as-failed`, 'UNSUPPORTED_EVENT_TYPE');
     }
 
     if (!event.downloadId) {
-      throw new Error('Event has no associated download');
+      throw new EventHistoryServiceError('Event has no associated download', 'NO_DOWNLOAD');
     }
 
     // Look up download for infoHash
@@ -157,7 +167,7 @@ export class EventHistoryService {
 
     const download = downloadRows[0];
     if (!download) {
-      throw new Error('Associated download not found');
+      throw new EventHistoryServiceError('Associated download not found', 'DOWNLOAD_NOT_FOUND');
     }
 
     // Blacklist the release if infoHash present; skip for Usenet (no infoHash)

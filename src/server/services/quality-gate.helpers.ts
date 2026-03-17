@@ -1,0 +1,83 @@
+import type { books } from '../../db/schema.js';
+import { resolveBookQualityInputs } from '../../core/utils/quality.js';
+import type { QualityDecisionReason } from './quality-gate.types.js';
+import { DURATION_TOLERANCE } from './quality-gate.types.js';
+
+type BookRow = typeof books.$inferSelect;
+
+interface ScanResult {
+  totalSize: number;
+  totalDuration: number;
+  tagNarrator?: string;
+  codec?: string;
+  channels?: number;
+}
+
+/**
+ * Pure quality assessment: compares scan results against existing book data
+ * and returns the decision reason (without the final action, which depends on
+ * side-effect branches in the caller).
+ */
+// eslint-disable-next-line complexity -- linear quality assessment with null-guarded branches
+export function buildQualityAssessment(
+  scanResult: ScanResult,
+  book: BookRow | null,
+): QualityDecisionReason {
+  const holdReasons: string[] = [];
+  const newSizeBytes = scanResult.totalSize;
+  const newDurationSeconds = scanResult.totalDuration;
+  const newMbPerHour = newDurationSeconds > 0
+    ? (newSizeBytes / (1024 * 1024)) / (newDurationSeconds / 3600)
+    : null;
+
+  // Resolve existing book quality
+  let existingMbPerHour: number | null = null;
+  if (book) {
+    const existing = resolveBookQualityInputs(book);
+    if (existing.sizeBytes && existing.durationSeconds && existing.durationSeconds > 0) {
+      existingMbPerHour = (existing.sizeBytes / (1024 * 1024)) / (existing.durationSeconds / 3600);
+    }
+  }
+
+  // Check narrator match
+  let narratorMatch: boolean | null = null;
+  if (scanResult.tagNarrator && book?.narrator) {
+    const existingNarrators = book.narrator.split(/[,;&]/).map(n => n.trim().toLowerCase());
+    const downloadNarrator = scanResult.tagNarrator.trim().toLowerCase();
+    narratorMatch = existingNarrators.some(n => n === downloadNarrator);
+    if (!narratorMatch) {
+      holdReasons.push('narrator_mismatch');
+    }
+  }
+
+  // Check duration delta
+  let durationDelta: number | null = null;
+  if (book) {
+    const existingInputs = resolveBookQualityInputs(book);
+    if (existingInputs.durationSeconds && existingInputs.durationSeconds > 0 && newDurationSeconds > 0) {
+      durationDelta = (newDurationSeconds - existingInputs.durationSeconds) / existingInputs.durationSeconds;
+      // Hold if delta exceeds ±15% (boundary exclusive: exactly ±15% is OK)
+      if (Math.abs(durationDelta) > DURATION_TOLERANCE) {
+        holdReasons.push('duration_delta');
+      }
+    }
+  }
+
+  // Check if existing book has no quality data
+  const noExistingQuality = existingMbPerHour === null;
+  if (noExistingQuality && book) {
+    holdReasons.push('no_quality_data');
+  }
+
+  return {
+    action: 'held', // caller overrides based on decision tree
+    mbPerHour: newMbPerHour,
+    existingMbPerHour,
+    narratorMatch,
+    durationDelta,
+    codec: scanResult.codec || null,
+    channels: scanResult.channels || null,
+    probeFailure: false,
+    holdReasons,
+  };
+}

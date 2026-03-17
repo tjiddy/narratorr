@@ -89,6 +89,38 @@ describe('BookListService', () => {
       expect(result.total).toBe(25);
     });
 
+    it('slim mode excludes description and genres but retains other book columns', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor, importListName: null }]));
+
+      await service.getAll(undefined, undefined, { slim: true });
+
+      // Second db.select call is the data query (first is count)
+      const selectArg = db.select.mock.calls[1][0];
+      const bookColumns = selectArg.book;
+      expect(bookColumns).not.toHaveProperty('description');
+      expect(bookColumns).not.toHaveProperty('genres');
+      // Retained columns
+      expect(bookColumns).toHaveProperty('title');
+      expect(bookColumns).toHaveProperty('audioDuration');
+      expect(bookColumns).toHaveProperty('updatedAt');
+    });
+
+    it('non-slim mode uses the full books table selection', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor, importListName: null }]));
+
+      await service.getAll(undefined, undefined, { slim: false });
+
+      const selectArg = db.select.mock.calls[1][0];
+      const bookColumns = selectArg.book;
+      expect(bookColumns).toHaveProperty('description');
+      expect(bookColumns).toHaveProperty('genres');
+      expect(bookColumns).toHaveProperty('title');
+    });
+
     it('applies stable orderBy with createdAt DESC, id DESC', async () => {
       const dataChain = mockDbChain([]);
       db.select

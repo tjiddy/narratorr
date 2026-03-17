@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import { createMockDbBookEvent } from '../__tests__/factories.js';
 import type { Services } from './index.js';
+import { EventHistoryServiceError } from '../services/event-history.service.js';
 
 describe('event-history routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
@@ -174,7 +175,7 @@ describe('event-history routes', () => {
     });
 
     it('returns 404 when event not found', async () => {
-      (services.eventHistory.markFailed as Mock).mockRejectedValue(new Error('Event not found'));
+      (services.eventHistory.markFailed as Mock).mockRejectedValue(new EventHistoryServiceError('Event not found', 'NOT_FOUND'));
 
       const res = await app.inject({ method: 'POST', url: '/api/event-history/999/mark-failed' });
 
@@ -183,7 +184,7 @@ describe('event-history routes', () => {
 
     it('returns 400 on non-actionable event type', async () => {
       (services.eventHistory.markFailed as Mock).mockRejectedValue(
-        new Error("Event type 'deleted' does not support mark-as-failed"),
+        new EventHistoryServiceError("Event type 'deleted' does not support mark-as-failed", 'UNSUPPORTED_EVENT_TYPE'),
       );
 
       const res = await app.inject({ method: 'POST', url: '/api/event-history/1/mark-failed' });
@@ -193,12 +194,31 @@ describe('event-history routes', () => {
 
     it('returns 400 when event has no associated download', async () => {
       (services.eventHistory.markFailed as Mock).mockRejectedValue(
-        new Error('Event has no associated download'),
+        new EventHistoryServiceError('Event has no associated download', 'NO_DOWNLOAD'),
       );
 
       const res = await app.inject({ method: 'POST', url: '/api/event-history/1/mark-failed' });
 
       expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 404 when associated download not found', async () => {
+      (services.eventHistory.markFailed as Mock).mockRejectedValue(
+        new EventHistoryServiceError('Associated download not found', 'DOWNLOAD_NOT_FOUND'),
+      );
+
+      const res = await app.inject({ method: 'POST', url: '/api/event-history/1/mark-failed' });
+
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 500 when markFailed throws an untyped error', async () => {
+      (services.eventHistory.markFailed as Mock).mockRejectedValue(new Error('boom'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/event-history/1/mark-failed' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
     });
   });
 

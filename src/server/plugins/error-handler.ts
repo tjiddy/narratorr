@@ -4,8 +4,11 @@ import { RenameError } from '../services/rename.service.js';
 import { RetagError } from '../services/tagging.service.js';
 import { RecyclingBinError } from '../services/recycling-bin.service.js';
 import { RestoreUploadError } from '../services/backup.service.js';
+import { QualityGateServiceError } from '../services/quality-gate.service.js';
+import { EventHistoryServiceError } from '../services/event-history.service.js';
 
 /** Maps typed error codes to HTTP status codes. */
+// eslint-disable-next-line complexity -- linear error-class→status mapping, one block per service
 function getStatusForError(error: unknown): number | null {
   if (error instanceof RenameError) {
     switch (error.code) {
@@ -34,6 +37,22 @@ function getStatusForError(error: unknown): number | null {
 
   if (error instanceof RestoreUploadError) {
     return 400;
+  }
+
+  if (error instanceof QualityGateServiceError) {
+    switch (error.code) {
+      case 'NOT_FOUND': return 404;
+      case 'INVALID_STATUS': return 409;
+    }
+  }
+
+  if (error instanceof EventHistoryServiceError) {
+    switch (error.code) {
+      case 'NOT_FOUND':
+      case 'DOWNLOAD_NOT_FOUND': return 404;
+      case 'UNSUPPORTED_EVENT_TYPE':
+      case 'NO_DOWNLOAD': return 400;
+    }
   }
 
   return null;

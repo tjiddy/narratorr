@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 import { Semaphore } from '../utils/semaphore.js';
+import { QualityGateServiceError } from '../services/quality-gate.service.js';
 
 const mockDownload = {
   id: 1,
@@ -314,7 +315,7 @@ describe('activity routes', () => {
     });
 
     it('returns 409 when download is not in pending_review status', async () => {
-      (services.qualityGate.approve as Mock).mockRejectedValue(new Error('not pending_review'));
+      (services.qualityGate.approve as Mock).mockRejectedValue(new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
 
@@ -322,11 +323,20 @@ describe('activity routes', () => {
     });
 
     it('returns 404 when download not found', async () => {
-      (services.qualityGate.approve as Mock).mockRejectedValue(new Error('not found'));
+      (services.qualityGate.approve as Mock).mockRejectedValue(new QualityGateServiceError('Download not found', 'NOT_FOUND'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/999/approve' });
 
       expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 500 when approve throws an untyped error', async () => {
+      (services.qualityGate.approve as Mock).mockRejectedValue(new Error('unexpected DB failure'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
     });
   });
 
@@ -414,7 +424,7 @@ describe('activity routes', () => {
     });
 
     it('returns 409 when download is not in pending_review status', async () => {
-      (services.qualityGate.reject as Mock).mockRejectedValue(new Error('not pending_review'));
+      (services.qualityGate.reject as Mock).mockRejectedValue(new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/reject' });
 
@@ -422,11 +432,20 @@ describe('activity routes', () => {
     });
 
     it('returns 404 when download not found', async () => {
-      (services.qualityGate.reject as Mock).mockRejectedValue(new Error('not found'));
+      (services.qualityGate.reject as Mock).mockRejectedValue(new QualityGateServiceError('Download not found', 'NOT_FOUND'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/999/reject' });
 
       expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 500 when reject throws an untyped error', async () => {
+      (services.qualityGate.reject as Mock).mockRejectedValue(new Error('unexpected DB failure'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/reject' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
     });
   });
 

@@ -26,9 +26,13 @@ vi.mock('music-metadata', () => ({
 }));
 
 // Mock drizzle-orm
-vi.mock('drizzle-orm', () => ({
-  eq: vi.fn((col, val) => ({ col, val })),
-}));
+vi.mock('drizzle-orm', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...(actual as Record<string, unknown>),
+    eq: vi.fn((col, val) => ({ col, val })),
+  };
+});
 
 // Mock db schema
 vi.mock('../../db/schema.js', () => ({

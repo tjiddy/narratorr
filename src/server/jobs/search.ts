@@ -8,9 +8,6 @@ import type { DownloadService } from '../services/download.service.js';
 import type { RetryBudget } from '../services/retry-budget.js';
 import { buildSearchQuery, filterAndRankResults, searchAndGrabForBook } from '../services/search-pipeline.js';
 
-export type { SingleBookSearchResult } from '../services/search-pipeline.js';
-export { searchAndGrabForBook } from '../services/search-pipeline.js';
-
 export interface SearchJobResult {
   searched: number;
   grabbed: number;

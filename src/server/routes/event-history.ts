@@ -92,21 +92,11 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
   app.post<{ Params: IdParam }>(
     '/api/event-history/:id/mark-failed',
     { schema: { params: idParamSchema } },
-    async (request, reply) => {
+    async (request) => {
       const { id } = request.params;
 
-      try {
-        request.log.info({ id }, 'Marking event as failed');
-        return await eventHistoryService.markFailed(id);
-      } catch (error) {
-        request.log.error({ id, error }, 'Mark as failed error');
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        if (message.includes('not found')) return reply.status(404).send({ error: message });
-        if (message.includes('does not support') || message.includes('no associated') || message.includes('no info hash')) {
-          return reply.status(400).send({ error: message });
-        }
-        return reply.status(500).send({ error: message });
-      }
+      request.log.info({ id }, 'Marking event as failed');
+      return eventHistoryService.markFailed(id);
     },
   );
 }

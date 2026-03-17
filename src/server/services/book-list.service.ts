@@ -1,10 +1,16 @@
-import { eq, and, like, desc, asc, sql, count as countFn, inArray, or, type SQL } from 'drizzle-orm';
+import { eq, and, like, desc, asc, sql, count as countFn, inArray, or, getTableColumns, type SQL } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import { books, authors, importLists } from '../../db/schema.js';
 import type { BookSortField, BookSortDirection } from '../../shared/schemas/book.js';
 import type { BookWithAuthor } from './book.service.js';
 
 type BookRow = typeof books.$inferSelect;
+
+/** Slim select: all book columns except heavy text fields excluded from list views. */
+function getSlimBookColumns() {
+  const { description: _description, genres: _genres, ...rest } = getTableColumns(books);
+  return rest;
+}
 
 export interface BookListOptions {
   slim?: boolean;
@@ -79,38 +85,7 @@ export class BookListService {
     // Build select — slim mode excludes description, genres for list views
     const selectFields = options?.slim
       ? {
-          book: {
-            id: books.id,
-            title: books.title,
-            authorId: books.authorId,
-            status: books.status,
-            path: books.path,
-            coverUrl: books.coverUrl,
-            goodreadsId: books.goodreadsId,
-            audibleId: books.audibleId,
-            asin: books.asin,
-            isbn: books.isbn,
-            narrator: books.narrator,
-            seriesName: books.seriesName,
-            seriesPosition: books.seriesPosition,
-            duration: books.duration,
-            publishedDate: books.publishedDate,
-            size: books.size,
-            audioCodec: books.audioCodec,
-            audioBitrate: books.audioBitrate,
-            audioSampleRate: books.audioSampleRate,
-            audioChannels: books.audioChannels,
-            audioBitrateMode: books.audioBitrateMode,
-            audioFileFormat: books.audioFileFormat,
-            audioFileCount: books.audioFileCount,
-            audioTotalSize: books.audioTotalSize,
-            audioDuration: books.audioDuration,
-            monitorForUpgrades: books.monitorForUpgrades,
-            importListId: books.importListId,
-            enrichmentStatus: books.enrichmentStatus,
-            createdAt: books.createdAt,
-            updatedAt: books.updatedAt,
-          },
+          book: getSlimBookColumns(),
           author: authors,
           importListName: importLists.name,
         }

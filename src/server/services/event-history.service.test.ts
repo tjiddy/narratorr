@@ -3,7 +3,7 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBookEvent } from '../__tests__/factories.js';
-import { EventHistoryService } from './event-history.service.js';
+import { EventHistoryService, EventHistoryServiceError } from './event-history.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { BookService } from './book.service.js';
 
@@ -194,23 +194,26 @@ describe('EventHistoryService', () => {
       );
     });
 
-    it('throws when event not found', async () => {
+    it('throws EventHistoryServiceError NOT_FOUND when event not found', async () => {
       db.select.mockReturnValue(mockDbChain([]));
-      await expect(service.markFailed(999)).rejects.toThrow('Event not found');
+      await expect(service.markFailed(999)).rejects.toThrow(EventHistoryServiceError);
+      await expect(service.markFailed(999)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
 
-    it('throws on non-actionable event type', async () => {
+    it('throws EventHistoryServiceError UNSUPPORTED_EVENT_TYPE on non-actionable event type', async () => {
       const event = createMockDbBookEvent({ eventType: 'deleted' });
       db.select.mockReturnValue(mockDbChain([event]));
 
-      await expect(service.markFailed(1)).rejects.toThrow("does not support mark-as-failed");
+      await expect(service.markFailed(1)).rejects.toThrow(EventHistoryServiceError);
+      await expect(service.markFailed(1)).rejects.toMatchObject({ code: 'UNSUPPORTED_EVENT_TYPE' });
     });
 
-    it('throws when event has no download_id', async () => {
+    it('throws EventHistoryServiceError NO_DOWNLOAD when event has no download_id', async () => {
       const event = createMockDbBookEvent({ downloadId: null });
       db.select.mockReturnValue(mockDbChain([event]));
 
-      await expect(service.markFailed(1)).rejects.toThrow('no associated download');
+      await expect(service.markFailed(1)).rejects.toThrow(EventHistoryServiceError);
+      await expect(service.markFailed(1)).rejects.toMatchObject({ code: 'NO_DOWNLOAD' });
     });
 
     it('skips blacklist and reverts book when download has no infoHash (Usenet)', async () => {
@@ -232,13 +235,15 @@ describe('EventHistoryService', () => {
       expect(bookService.updateStatus).toHaveBeenCalledWith(1, 'wanted');
     });
 
-    it('throws when download not found', async () => {
+    it('throws EventHistoryServiceError DOWNLOAD_NOT_FOUND when download not found', async () => {
       const event = createMockDbBookEvent({ downloadId: 5 });
       db.select
         .mockReturnValueOnce(mockDbChain([event]))
         .mockReturnValueOnce(mockDbChain([]));
 
-      await expect(service.markFailed(1)).rejects.toThrow('Associated download not found');
+      const error = await service.markFailed(1).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(EventHistoryServiceError);
+      expect(error).toMatchObject({ code: 'DOWNLOAD_NOT_FOUND' });
     });
 
     it('handles deleted book (null bookId) without calling updateStatus', async () => {

@@ -11,6 +11,8 @@ import { RenameError } from '../services/rename.service.js';
 import { RetagError } from '../services/tagging.service.js';
 import { RecyclingBinError } from '../services/recycling-bin.service.js';
 import { RestoreUploadError } from '../services/backup.service.js';
+import { QualityGateServiceError } from '../services/quality-gate.service.js';
+import { EventHistoryServiceError } from '../services/event-history.service.js';
 
 function createTestApp() {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
@@ -27,6 +29,12 @@ function createTestApp() {
   app.get('/throw-recycling-conflict', async () => { throw new RecyclingBinError('Path conflict', 'CONFLICT'); });
   app.get('/throw-recycling-filesystem', async () => { throw new RecyclingBinError('Disk error', 'FILESYSTEM'); });
   app.get('/throw-restore-invalid', async () => { throw new RestoreUploadError('Not a valid zip', 'INVALID_ZIP'); });
+  app.get('/throw-qg-not-found', async () => { throw new QualityGateServiceError('Download not found', 'NOT_FOUND'); });
+  app.get('/throw-qg-invalid-status', async () => { throw new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS'); });
+  app.get('/throw-eh-not-found', async () => { throw new EventHistoryServiceError('Event not found', 'NOT_FOUND'); });
+  app.get('/throw-eh-unsupported', async () => { throw new EventHistoryServiceError('Event type does not support mark-as-failed', 'UNSUPPORTED_EVENT_TYPE'); });
+  app.get('/throw-eh-no-download', async () => { throw new EventHistoryServiceError('Event has no associated download', 'NO_DOWNLOAD'); });
+  app.get('/throw-eh-download-not-found', async () => { throw new EventHistoryServiceError('Associated download not found', 'DOWNLOAD_NOT_FOUND'); });
   app.get('/throw-generic', async () => { throw new Error('disk full'); });
   app.get('/throw-non-error', async () => { throw 'string error'; });
   app.get('/success', async () => ({ ok: true }));
@@ -93,6 +101,42 @@ describe('error-handler plugin', () => {
       const res = await app.inject({ method: 'GET', url: '/throw-restore-invalid' });
       expect(res.statusCode).toBe(400);
       expect(JSON.parse(res.payload)).toEqual({ error: 'Not a valid zip' });
+    });
+
+    it('maps QualityGateServiceError NOT_FOUND to 404', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-qg-not-found' });
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Download not found' });
+    });
+
+    it('maps QualityGateServiceError INVALID_STATUS to 409', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-qg-invalid-status' });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Download is not pending review' });
+    });
+
+    it('maps EventHistoryServiceError NOT_FOUND to 404', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-eh-not-found' });
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Event not found' });
+    });
+
+    it('maps EventHistoryServiceError UNSUPPORTED_EVENT_TYPE to 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-eh-unsupported' });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Event type does not support mark-as-failed' });
+    });
+
+    it('maps EventHistoryServiceError NO_DOWNLOAD to 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-eh-no-download' });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Event has no associated download' });
+    });
+
+    it('maps EventHistoryServiceError DOWNLOAD_NOT_FOUND to 404', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-eh-download-not-found' });
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Associated download not found' });
     });
   });
 

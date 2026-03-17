@@ -14,7 +14,6 @@ const activityListQuerySchema = z.object({
 
 type ActivityListQuery = z.infer<typeof activityListQuerySchema>;
 
-// eslint-disable-next-line max-lines-per-function -- linear route registration
 export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, qualityGateService: QualityGateService, importService: ImportService) {
   // GET /api/activity
   app.get<{ Querystring: ActivityListQuery }>(
@@ -146,36 +145,28 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
   app.post<{ Params: IdParam }>(
     '/api/activity/:id/approve',
     { schema: { params: idParamSchema } },
-    async (request, reply) => {
+    async (request) => {
       const { id } = request.params;
 
-      try {
-        request.log.info({ id }, 'Download approved');
-        const result = await qualityGateService.approve(id);
+      request.log.info({ id }, 'Download approved');
+      const result = await qualityGateService.approve(id);
 
-        // Try to acquire a concurrency slot for immediate import
-        if (importService.tryAcquireSlot()) {
-          // Slot available — fire-and-forget import with guaranteed slot release
-          importService.importDownload(id)
-            .catch((err) => {
-              request.log.error({ id, error: err }, 'Import after approve failed');
-            })
-            .finally(() => {
-              importService.releaseSlot();
-            });
-          return result;
-        } else {
-          // No slot available — queue for next tick
-          request.log.info({ id }, 'Concurrency limit reached, queuing approved download');
-          await importService.setProcessingQueued(id);
-          return { ...result, status: 'processing_queued' };
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        if (message === 'not found') return reply.status(404).send({ error: 'Download not found' });
-        if (message === 'not pending_review') return reply.status(409).send({ error: 'Download is not pending review' });
-        request.log.error({ id, error }, 'Approve failed');
-        return reply.status(500).send({ error: 'Internal server error' });
+      // Try to acquire a concurrency slot for immediate import
+      if (importService.tryAcquireSlot()) {
+        // Slot available — fire-and-forget import with guaranteed slot release
+        importService.importDownload(id)
+          .catch((err) => {
+            request.log.error({ id, error: err }, 'Import after approve failed');
+          })
+          .finally(() => {
+            importService.releaseSlot();
+          });
+        return result;
+      } else {
+        // No slot available — queue for next tick
+        request.log.info({ id }, 'Concurrency limit reached, queuing approved download');
+        await importService.setProcessingQueued(id);
+        return { ...result, status: 'processing_queued' };
       }
     },
   );
@@ -184,19 +175,11 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
   app.post<{ Params: IdParam }>(
     '/api/activity/:id/reject',
     { schema: { params: idParamSchema } },
-    async (request, reply) => {
+    async (request) => {
       const { id } = request.params;
-      try {
-        request.log.info({ id }, 'Download rejected');
-        const result = await qualityGateService.reject(id);
-        return result;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        if (message === 'not found') return reply.status(404).send({ error: 'Download not found' });
-        if (message === 'not pending_review') return reply.status(409).send({ error: 'Download is not pending review' });
-        request.log.error({ id, error }, 'Reject failed');
-        return reply.status(500).send({ error: 'Internal server error' });
-      }
+
+      request.log.info({ id }, 'Download rejected');
+      return qualityGateService.reject(id);
     },
   );
 }

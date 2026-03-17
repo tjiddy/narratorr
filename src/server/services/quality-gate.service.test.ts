@@ -3,7 +3,7 @@ import type { Mock } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import { join } from 'node:path';
 import { and, eq, isNotNull } from 'drizzle-orm';
-import { QualityGateService } from './quality-gate.service.js';
+import { QualityGateService, QualityGateServiceError } from './quality-gate.service.js';
 import { inject, createMockDb, createMockLogger, mockDbChain } from '../__tests__/helpers.js';
 import type { Db } from '../../db/index.js';
 import { downloads } from '../../db/schema.js';
@@ -427,18 +427,20 @@ describe('QualityGateService', () => {
       expect(result).toEqual({ id: 1, status: 'importing' });
     });
 
-    it('throws when download is not in pending_review status', async () => {
+    it('throws QualityGateServiceError INVALID_STATUS when download is not in pending_review status', async () => {
       const { service, db } = createService();
       db.select.mockReturnValue(mockDbChain([{ ...baseDownload, status: 'downloading' }]));
 
-      await expect(service.approve(1)).rejects.toThrow('not pending_review');
+      await expect(service.approve(1)).rejects.toThrow(QualityGateServiceError);
+      await expect(service.approve(1)).rejects.toMatchObject({ code: 'INVALID_STATUS' });
     });
 
-    it('throws when download not found', async () => {
+    it('throws QualityGateServiceError NOT_FOUND when download not found', async () => {
       const { service, db } = createService();
       db.select.mockReturnValue(mockDbChain([]));
 
-      await expect(service.approve(1)).rejects.toThrow('not found');
+      await expect(service.approve(1)).rejects.toThrow(QualityGateServiceError);
+      await expect(service.approve(1)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
   });
 
@@ -664,18 +666,20 @@ describe('QualityGateService', () => {
       expect(log.info).toHaveBeenCalledWith(expect.objectContaining({ downloadId: 1 }), expect.stringContaining('no infoHash'));
     });
 
-    it('throws when download is not in pending_review status', async () => {
+    it('throws QualityGateServiceError INVALID_STATUS when download is not in pending_review status', async () => {
       const { service, db } = createService();
       db.select.mockReturnValue(mockDbChain([{ download: { ...baseDownload, status: 'downloading' }, book: baseBook }]));
 
-      await expect(service.reject(1)).rejects.toThrow('not pending_review');
+      await expect(service.reject(1)).rejects.toThrow(QualityGateServiceError);
+      await expect(service.reject(1)).rejects.toMatchObject({ code: 'INVALID_STATUS' });
     });
 
-    it('throws when download not found', async () => {
+    it('throws QualityGateServiceError NOT_FOUND when download not found', async () => {
       const { service, db } = createService();
       db.select.mockReturnValue(mockDbChain([]));
 
-      await expect(service.reject(1)).rejects.toThrow('not found');
+      await expect(service.reject(1)).rejects.toThrow(QualityGateServiceError);
+      await expect(service.reject(1)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
   });
 
