@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
-import { SettingsService, type AppSettings } from './settings.service.js';
+import { SettingsService } from './settings.service.js';
+import type { UpdateSettingsInput } from '../../shared/schemas/settings/registry.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js';
@@ -193,7 +194,7 @@ describe('SettingsService', () => {
         .mockReturnValueOnce(mockDbChain([])); // getAll()
       db.insert.mockReturnValue(mockDbChain());
 
-      await service.update({ search: { intervalMinutes: 120 } } as Partial<AppSettings>);
+      await service.update({ search: { intervalMinutes: 120 } });
 
       // The stored value should have merged: intervalMinutes changed, others preserved
       const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
@@ -209,7 +210,7 @@ describe('SettingsService', () => {
         .mockReturnValueOnce(mockDbChain([])); // getAll()
       db.insert.mockReturnValue(mockDbChain());
 
-      await service.update({ quality: { minSeeders: 5 } } as Partial<AppSettings>);
+      await service.update({ quality: { minSeeders: 5 } });
 
       const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
       const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
@@ -224,7 +225,7 @@ describe('SettingsService', () => {
         .mockReturnValueOnce(mockDbChain([]));
       db.insert.mockReturnValue(mockDbChain());
 
-      await service.update({ search: full } as Partial<AppSettings>);
+      await service.update({ search: full });
 
       const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
       const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
@@ -240,9 +241,137 @@ describe('SettingsService', () => {
 
     it('skips category when value is undefined', async () => {
       db.select.mockReturnValue(mockDbChain([])); // getAll() only
-      await service.update({ search: undefined } as Partial<AppSettings>);
+      await service.update({ search: undefined });
 
       expect(db.insert).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('patch', () => {
+    it('preserves existing intervalMinutes and blacklistTtlDays when patching enabled', async () => {
+      const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))  // get('search')
+        .mockReturnValueOnce(mockDbChain([]));  // sentinel lookup in set()
+      db.insert.mockReturnValue(mockDbChain());
+
+      const result = await service.patch('search', { enabled: false });
+
+      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7 });
+      expect(result).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7 });
+    });
+
+    it('preserves existing deleteAfterImport and minSeedTime when patching minFreeSpaceGB', async () => {
+      const existingImport = { deleteAfterImport: true, minSeedTime: 120, minFreeSpaceGB: 5 };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'import', value: existingImport }]))
+        .mockReturnValueOnce(mockDbChain([]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      const result = await service.patch('import', { minFreeSpaceGB: 10 });
+
+      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      expect(storedValue).toEqual({ deleteAfterImport: true, minSeedTime: 120, minFreeSpaceGB: 10 });
+      expect(result).toEqual({ deleteAfterImport: true, minSeedTime: 120, minFreeSpaceGB: 10 });
+    });
+
+    it('stores falsy value 0, not the default', async () => {
+      const existingImport = { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'import', value: existingImport }]))
+        .mockReturnValueOnce(mockDbChain([]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      const result = await service.patch('import', { minFreeSpaceGB: 0 });
+
+      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      expect(storedValue.minFreeSpaceGB).toBe(0);
+      expect(result.minFreeSpaceGB).toBe(0);
+    });
+
+    it('stores falsy value false, not the default', async () => {
+      const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))
+        .mockReturnValueOnce(mockDbChain([]));
+      db.insert.mockReturnValue(mockDbChain());
+
+      const result = await service.patch('search', { enabled: false });
+
+      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      expect(storedValue.enabled).toBe(false);
+      expect(result.enabled).toBe(false);
+    });
+
+    it('empty partial is a no-op — returns existing values unchanged without DB write', async () => {
+      const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]));
+
+      const result = await service.patch('search', {});
+
+      expect(result).toEqual(existingSearch);
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('merges into defaults when no existing DB row', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // get() returns default
+        .mockReturnValueOnce(mockDbChain([]));  // sentinel lookup
+      db.insert.mockReturnValue(mockDbChain());
+
+      const result = await service.patch('search', { enabled: false });
+
+      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7 });
+      expect(result).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7 });
+    });
+
+    it('sentinel passthrough preserves existing encrypted value', async () => {
+      const { encrypt } = await import('../utils/secret-codec.js');
+      const existingEncrypted = encrypt('http://real-proxy:8080', TEST_KEY);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'network', value: { proxyUrl: existingEncrypted } }]))  // get() decrypts
+        .mockReturnValueOnce(mockDbChain([{ key: 'network', value: { proxyUrl: existingEncrypted } }]));  // sentinel lookup in set()
+      db.insert.mockReturnValue(mockDbChain());
+
+      await service.patch('network', { proxyUrl: '********' });
+
+      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: Record<string, unknown> }>> } } };
+      const storedValue = chain.values.mock.calls[0][0].value;
+      expect(storedValue.proxyUrl).toBe(existingEncrypted);
+    });
+  });
+
+  describe('update with UpdateSettingsInput', () => {
+    it('accepts partial category values via UpdateSettingsInput', async () => {
+      const existingSearch = { intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'search', value: existingSearch }]))  // get('search') in patch
+        .mockReturnValueOnce(mockDbChain([]))  // sentinel lookup in set()
+        .mockReturnValueOnce(mockDbChain([])); // getAll()
+      db.insert.mockReturnValue(mockDbChain());
+
+      const input: UpdateSettingsInput = { search: { enabled: false } };
+      await service.update(input);
+
+      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      expect(storedValue).toEqual({ intervalMinutes: 360, enabled: false, blacklistTtlDays: 7 });
+    });
+
+    it('returns all settings without DB writes for empty input', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      const result = await service.update({});
+
+      expect(db.insert).not.toHaveBeenCalled();
+      expect(result).toBeDefined();
     });
   });
 });

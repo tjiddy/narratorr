@@ -8,8 +8,7 @@ export async function updateRoutes(app: FastifyInstance, settings: SettingsServi
     if (!version || typeof version !== 'string') {
       return reply.status(400).send({ error: 'version is required' });
     }
-    const current = await settings.get('system');
-    await settings.set('system', { ...current, dismissedUpdateVersion: version });
+    await settings.patch('system', { dismissedUpdateVersion: version });
     return { ok: true };
   });
 }

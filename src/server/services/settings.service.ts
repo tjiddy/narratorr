@@ -5,6 +5,7 @@ import { settings } from '../../db/schema.js';
 import {
   type AppSettings,
   type SettingsCategory,
+  type UpdateSettingsInput,
   SETTINGS_CATEGORIES,
   DEFAULT_SETTINGS,
   CATEGORY_SCHEMAS,
@@ -93,13 +94,19 @@ export class SettingsService {
     this.log.info({ category: key }, 'Settings updated');
   }
 
-  async update(partial: Partial<AppSettings>): Promise<AppSettings> {
+  async patch<K extends SettingsCategory>(category: K, partial: Partial<AppSettings[K]>): Promise<AppSettings[K]> {
+    const existing = await this.get(category);
+    if (Object.keys(partial).length === 0) return existing;
+    const merged = { ...existing, ...partial } as AppSettings[K];
+    await this.set(category, merged);
+    return merged;
+  }
+
+  async update(partial: UpdateSettingsInput): Promise<AppSettings> {
     for (const [key, value] of Object.entries(partial)) {
       if (value !== undefined) {
         const category = key as SettingsCategory;
-        const existing = await this.get(category);
-        const merged = { ...existing, ...value };
-        await this.set(category, merged);
+        await this.patch(category, value as Partial<AppSettings[typeof category]>);
       }
     }
     return this.getAll();

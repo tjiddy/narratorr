@@ -207,6 +207,7 @@ export function createMockSettingsService(overrides?: DeepPartial<AppSettings>):
     get: vi.fn().mockImplementation((cat: SettingsCategory) => Promise.resolve(settings[cat])),
     getAll: vi.fn().mockResolvedValue(settings),
     set: vi.fn().mockResolvedValue(undefined),
+    patch: vi.fn().mockResolvedValue(undefined),
     update: vi.fn().mockResolvedValue(undefined),
   });
 }

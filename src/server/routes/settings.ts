@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { type FastifyInstance } from 'fastify';
 import { probeFfmpeg } from '../../core/utils/audio-processor.js';
 import { type SettingsService, type AppSettings } from '../services';
-import { updateSettingsSchema } from '../../shared/schemas.js';
+import { updateSettingsSchema, type UpdateSettingsInput } from '../../shared/schemas.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import { resolveProxyIp } from '../../core/indexers/proxy.js';
 import { maskFields, isSentinel, type SecretEntity } from '../utils/secret-codec.js';
@@ -70,7 +70,7 @@ export async function settingsRoutes(
   });
 
   // PUT /api/settings
-  app.put<{ Body: Partial<AppSettings> }>(
+  app.put<{ Body: UpdateSettingsInput }>(
     '/api/settings',
     {
       schema: {

@@ -103,10 +103,7 @@ describe('system routes', () => {
   });
 
   describe('PUT /api/system/update/dismiss', () => {
-    it('writes dismissedUpdateVersion to system settings preserving existing fields', async () => {
-      const customSystem = { ...DEFAULT_SETTINGS.system, backupIntervalMinutes: 1440, backupRetention: 14 };
-      (services.settings.get as Mock).mockResolvedValue(customSystem);
-
+    it('writes dismissedUpdateVersion to system settings via patch', async () => {
       const res = await app.inject({
         method: 'PUT',
         url: '/api/system/update/dismiss',
@@ -115,8 +112,7 @@ describe('system routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({ ok: true });
-      expect(services.settings.set as Mock).toHaveBeenCalledWith('system', {
-        ...customSystem,
+      expect(services.settings.patch as Mock).toHaveBeenCalledWith('system', {
         dismissedUpdateVersion: '0.2.0',
       });
     });
