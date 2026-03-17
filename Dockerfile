@@ -1,5 +1,5 @@
 # Build stage
-FROM node:22-alpine AS builder
+FROM node:24-alpine AS builder
 
 # Enable corepack for pnpm
 RUN corepack enable
@@ -12,12 +12,24 @@ COPY pnpm-lock.yaml package.json ./
 # Install dependencies
 RUN pnpm install --frozen-lockfile
 
-# Copy source code and configs
+# Copy source code, configs, and migration files
 COPY src/ src/
+COPY drizzle/ drizzle/
 COPY tsconfig.json tsup.config.ts vite.config.ts ./
 
 # Build application
 RUN pnpm build
+
+# Production dependencies stage
+FROM node:24-alpine AS deps
+
+RUN corepack enable
+
+WORKDIR /app
+
+COPY pnpm-lock.yaml package.json ./
+
+RUN pnpm install --prod --frozen-lockfile
 
 # Production stage — linuxserver.io base image with s6-overlay
 FROM ghcr.io/linuxserver/baseimage-alpine:3.21 AS runner
@@ -26,23 +38,23 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Install Node.js 22.x and ffmpeg (LSIO base does not include Node)
-RUN apk add --no-cache 'nodejs~=22' ffmpeg
+# Install ffmpeg (LSIO base does not include it)
+RUN apk add --no-cache ffmpeg
 
-# Install pnpm for production dependencies
-RUN corepack enable
+# Copy Node.js binary from builder (Alpine 3.21 does not ship Node 24 packages)
+COPY --from=builder /usr/local/bin/node /usr/local/bin/node
 
-# Copy package files for production install
-COPY pnpm-lock.yaml package.json ./
-
-# Install production dependencies only
-RUN pnpm install --prod --frozen-lockfile
+# Copy production dependencies from deps stage
+COPY --from=deps /app/node_modules ./node_modules
 
 # Copy built application
 COPY --from=builder /app/dist ./dist
 
 # Copy migration files (not bundled, loaded at runtime)
 COPY --from=builder /app/drizzle ./drizzle
+
+# Copy package files for production install
+COPY pnpm-lock.yaml package.json ./
 
 # Copy s6-overlay service definition
 COPY docker/root/ /

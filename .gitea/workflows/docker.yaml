@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -137,7 +137,7 @@ jobs:
 
           HTTP_STATUS=$(curl -sf -o /dev/null -w '%{http_code}' http://localhost:3199/api/health)
 
-          # Verify runtime Node version is 22.x
+          # Verify runtime Node version is 24.x
           NODE_VERSION=$(docker exec smoke-test node --version)
           echo "Container Node version: $NODE_VERSION"
 
@@ -149,8 +149,8 @@ jobs:
             exit 1
           fi
 
-          if ! echo "$NODE_VERSION" | grep -q '^v22\.'; then
-            echo "::error::Node version mismatch — expected v22.*, got $NODE_VERSION"
+          if ! echo "$NODE_VERSION" | grep -q '^v24\.'; then
+            echo "::error::Node version mismatch — expected v24.*, got $NODE_VERSION"
             exit 1
           fi
 

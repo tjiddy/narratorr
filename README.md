@@ -25,7 +25,7 @@ The UI includes:
 
 ### Prerequisites
 
-- Node.js 22+
+- Node.js 24+
 - pnpm 9+
 - qBittorrent with WebUI enabled
 
@@ -132,7 +132,7 @@ Go to **Settings > General**:
 | Layer | Technology |
 |-------|------------|
 | Monorepo | Turborepo + pnpm |
-| Backend | Node.js 22, Fastify |
+| Backend | Node.js 24, Fastify |
 | Database | SQLite (libSQL) + Drizzle ORM |
 | Frontend | React 18 + Vite |
 | Data Fetching | TanStack Query |

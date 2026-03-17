@@ -55,9 +55,9 @@ describe('s6-overlay service definition', () => {
       expect(content).toContain('FROM ghcr.io/linuxserver/baseimage-alpine:3.21');
     });
 
-    it('builder stage uses node:22-alpine', () => {
+    it('builder stage uses node:24-alpine', () => {
       const content = fs.readFileSync(dockerfile, 'utf-8');
-      expect(content).toContain('FROM node:22-alpine AS builder');
+      expect(content).toContain('FROM node:24-alpine AS builder');
     });
 
     it('ffmpeg is installed in runner image', () => {
@@ -80,9 +80,48 @@ describe('s6-overlay service definition', () => {
       expect(content).toContain('COPY docker/root/ /');
     });
 
-    it('Node.js 22.x is pinned in runner image via apk', () => {
+    it('deps stage uses node:24-alpine', () => {
       const content = fs.readFileSync(dockerfile, 'utf-8');
-      expect(content).toContain("'nodejs~=22'");
+      expect(content).toContain('FROM node:24-alpine AS deps');
+    });
+
+    it('runner copies Node binary from builder stage', () => {
+      const content = fs.readFileSync(dockerfile, 'utf-8');
+      expect(content).toContain('COPY --from=builder /usr/local/bin/node /usr/local/bin/node');
+    });
+
+    it('runner copies node_modules from deps stage', () => {
+      const content = fs.readFileSync(dockerfile, 'utf-8');
+      expect(content).toContain('COPY --from=deps /app/node_modules ./node_modules');
+    });
+
+    it('builder stage copies drizzle/ migration files', () => {
+      const content = fs.readFileSync(dockerfile, 'utf-8');
+      const builderSection = content.split('AS deps')[0];
+      expect(builderSection).toContain('COPY drizzle/ drizzle/');
+    });
+
+    it('runner copies drizzle/ from builder stage', () => {
+      const content = fs.readFileSync(dockerfile, 'utf-8');
+      expect(content).toContain('COPY --from=builder /app/drizzle ./drizzle');
+    });
+
+    it('runner does NOT use apk to install nodejs', () => {
+      const content = fs.readFileSync(dockerfile, 'utf-8');
+      expect(content).not.toMatch(/apk\s.*nodejs/);
+    });
+
+    it('runner does NOT run corepack enable in runner stage', () => {
+      const content = fs.readFileSync(dockerfile, 'utf-8');
+      // corepack enable should only appear in builder/deps stages, not after the runner FROM
+      const runnerSection = content.split('AS runner')[1];
+      expect(runnerSection).not.toContain('corepack enable');
+    });
+
+    it('runner does NOT run pnpm install in runner stage', () => {
+      const content = fs.readFileSync(dockerfile, 'utf-8');
+      const runnerSection = content.split('AS runner')[1];
+      expect(runnerSection).not.toContain('pnpm install');
     });
 
     it('does not set ENTRYPOINT (LSIO s6-overlay handles init)', () => {
