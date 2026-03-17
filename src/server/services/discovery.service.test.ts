@@ -1819,4 +1819,394 @@ describe('DiscoveryService', () => {
       expect(setArg.snoozeUntil).toBeNull(); // Snooze cleared on resurface
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // #404 — Series Completion Intelligence
+  // ---------------------------------------------------------------------------
+
+  describe('series completion intelligence (#404)', () => {
+    /**
+     * Sets up generateCandidates mocks with a library containing series books.
+     * Returns db so callers can customize metadata responses.
+     */
+    function setupSeriesTest(libraryBooks: ReturnType<typeof makeBookRow>[]) {
+      const db = createMockDb();
+      db.select
+        // analyzeLibrary (imported books)
+        .mockReturnValueOnce(mockDbChain(libraryBooks))
+        // existing books for ASIN exclusion
+        .mockReturnValueOnce(mockDbChain([]))
+        // dismissed suggestions
+        .mockReturnValueOnce(mockDbChain([]));
+      return db;
+    }
+
+    describe('AC1 — series gap detection', () => {
+      it('detects gap at position 3 when user owns [1, 2, 4] and metadata returns a book at position 3', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
+          makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
+          makeBookRow({ id: 3, seriesName: 'Stormlight', seriesPosition: 4 }),
+        ]);
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'SERIES3', title: 'Oathbringer', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 3 }] },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        const seriesCandidate = candidates.find(c => c.asin === 'SERIES3');
+        expect(seriesCandidate).toBeDefined();
+        expect(seriesCandidate!.reason).toBe('series');
+      });
+
+      it('detects multiple gaps [2, 4] when user owns [1, 3, 5]', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Wheel', seriesPosition: 1 }),
+          makeBookRow({ id: 2, seriesName: 'Wheel', seriesPosition: 3 }),
+          makeBookRow({ id: 3, seriesName: 'Wheel', seriesPosition: 5 }),
+        ]);
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'GAP2', title: 'Book 2', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Wheel', position: 2 }] },
+            { asin: 'GAP4', title: 'Book 4', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Wheel', position: 4 }] },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        expect(candidates.find(c => c.asin === 'GAP2')).toBeDefined();
+        expect(candidates.find(c => c.asin === 'GAP4')).toBeDefined();
+      });
+    });
+
+    describe('AC2 — series continuation', () => {
+      it('suggests next position (4) when user owns [1, 2, 3] and metadata returns a book at position 4', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Mistborn', seriesPosition: 1 }),
+          makeBookRow({ id: 2, seriesName: 'Mistborn', seriesPosition: 2 }),
+          makeBookRow({ id: 3, seriesName: 'Mistborn', seriesPosition: 3 }),
+        ]);
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'NEXT4', title: 'Alloy of Law', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Mistborn', position: 4 }] },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        const continuation = candidates.find(c => c.asin === 'NEXT4');
+        expect(continuation).toBeDefined();
+        expect(continuation!.reason).toBe('series');
+      });
+
+      it('suggests position 2 when user owns only [1]', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Kingkiller', seriesPosition: 1 }),
+        ]);
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'NEXT2', title: 'Wise Mans Fear', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Kingkiller', position: 2 }] },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        const continuation = candidates.find(c => c.asin === 'NEXT2');
+        expect(continuation).toBeDefined();
+        expect(continuation!.reason).toBe('series');
+      });
+    });
+
+    describe('AC3 — query construction', () => {
+      it('calls searchBooksForDiscovery with exact string "${seriesName} ${authorName}"', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
+          makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
+        ]);
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        await service.generateCandidates(signals);
+
+        // Find the call for the series query (author queries happen first)
+        const calls = mockMetadataService.searchBooksForDiscovery.mock.calls.map((c: string[]) => c[0]);
+        expect(calls).toContain('"Stormlight Author A"');
+      });
+
+      it('filters metadata results to only books matching the series name (case-insensitive)', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
+          makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
+        ]);
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'MATCH', title: 'Book 3', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'stormlight', position: 3 }] },
+            { asin: 'WRONG_SERIES', title: 'Other', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Mistborn', position: 3 }] },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        expect(candidates.find(c => c.asin === 'MATCH' && c.reason === 'series')).toBeDefined();
+        expect(candidates.find(c => c.asin === 'WRONG_SERIES' && c.reason === 'series')).toBeUndefined();
+      });
+
+      it('filters metadata results to only books at missing positions', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
+          makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
+        ]);
+        // Position 3 = continuation (maxOwned+1), position 5 = not in missingPositions
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'POS3', title: 'Book 3', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 3 }] },
+            { asin: 'POS5', title: 'Book 5', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 5 }] },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        expect(candidates.find(c => c.asin === 'POS3' && c.reason === 'series')).toBeDefined();
+        expect(candidates.find(c => c.asin === 'POS5' && c.reason === 'series')).toBeUndefined();
+      });
+    });
+
+    describe('AC4 — series scoring precedence', () => {
+      it('series candidates score at base weight 50 (highest signal weight)', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
+          makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
+          makeBookRow({ id: 3, seriesName: 'Stormlight', seriesPosition: 4 }),
+        ]);
+        // Return a gap book at position 3 (not continuation, so no +20 bonus)
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'SCORE_TEST', title: 'Gap Book', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 3 }] },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        const seriesCandidate = candidates.find(c => c.asin === 'SCORE_TEST' && c.reason === 'series');
+        expect(seriesCandidate).toBeDefined();
+        // Base: SIGNAL_WEIGHTS.series(50) * multiplier(1) * strength(1.0) = 50
+        expect(seriesCandidate!.score).toBe(50);
+      });
+
+      it('series candidates outscore author candidates under equal conditions', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
+          makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
+          makeBookRow({ id: 3, seriesName: 'Stormlight', seriesPosition: 4 }),
+        ]);
+        // Return two different books: one matching series gap, one for author
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'SERIES_BOOK', title: 'Series Gap', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 3 }] },
+            { asin: 'AUTHOR_BOOK', title: 'Author Book', authors: [{ name: 'Author A' }], language: 'English' },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        const seriesScore = candidates.find(c => c.asin === 'SERIES_BOOK')?.score ?? 0;
+        const authorScore = candidates.find(c => c.asin === 'AUTHOR_BOOK' && c.reason === 'author')?.score ?? 0;
+        expect(seriesScore).toBeGreaterThan(authorScore);
+      });
+
+      it('applies +20 next-position bonus when position === maxOwned + 1', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
+          makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
+        ]);
+        // Position 3 = maxOwned(2) + 1 → gets +20 bonus
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'NEXT_POS', title: 'Next Book', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 3 }] },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        const nextCandidate = candidates.find(c => c.asin === 'NEXT_POS');
+        expect(nextCandidate).toBeDefined();
+        // Base 50 + next-position bonus 20 = 70
+        expect(nextCandidate!.score).toBe(70);
+      });
+
+      it('does not apply next-position bonus for gap positions (not maxOwned + 1)', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
+          makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
+          makeBookRow({ id: 3, seriesName: 'Stormlight', seriesPosition: 4 }),
+        ]);
+        // Position 3 = gap (not maxOwned+1=5) → no bonus
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'GAP_BOOK', title: 'Gap Book', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 3 }] },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        const gapCandidate = candidates.find(c => c.asin === 'GAP_BOOK');
+        expect(gapCandidate).toBeDefined();
+        // Base 50 only, no +20 bonus (position 3 !== maxOwned+1=5)
+        expect(gapCandidate!.score).toBe(50);
+      });
+
+      it('dismissed series suggestions score 50 * 0.25 = 12.5 at floor multiplier', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
+          makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
+          makeBookRow({ id: 3, seriesName: 'Stormlight', seriesPosition: 4 }),
+        ]);
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'FLOOR_BOOK', title: 'Floor', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 3 }] },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        // Floor all multipliers so author query doesn't outscore series in the dedup map
+        const candidates = await service.generateCandidates(signals, { author: 0.25, series: 0.25, genre: 0.25, narrator: 0.25, diversity: 0.25 });
+
+        const floorCandidate = candidates.find(c => c.asin === 'FLOOR_BOOK');
+        expect(floorCandidate).toBeDefined();
+        // series: 50 * 0.25 * 1.0 = 12.5 vs author: 40 * 0.25 * 0.6 = 6 → series wins dedup
+        expect(floorCandidate!.reason).toBe('series');
+        expect(floorCandidate!.score).toBe(12.5);
+      });
+    });
+
+    describe('AC5 — edge cases', () => {
+      it('skips books with null seriesPosition during signal extraction', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: null }),
+          makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 1 }),
+        ]);
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+
+        // Only position 1 should be tracked; null position book is skipped
+        expect(signals.seriesGaps).toHaveLength(1);
+        expect(signals.seriesGaps[0].maxOwned).toBe(1);
+        // missingPositions should be [2] (continuation only, since only position 1 exists)
+        expect(signals.seriesGaps[0].missingPositions).toEqual([2]);
+      });
+
+      it('accepts fractional positions — [1.5, 2.5] yields missingPositions [3.5] only (no integer gaps)', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Fractional', seriesPosition: 1.5 }),
+          makeBookRow({ id: 2, seriesName: 'Fractional', seriesPosition: 2.5 }),
+        ]);
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+
+        const gap = signals.seriesGaps.find(g => g.seriesName === 'Fractional');
+        expect(gap).toBeDefined();
+        // Loop starts at 1.5, increments by 1 → visits 1.5, 2.5. Never hits integer 2.
+        // Only continuation at maxOwned+1 = 3.5
+        expect(gap!.missingPositions).toEqual([3.5]);
+        expect(gap!.maxOwned).toBe(2.5);
+      });
+
+      it('generates no suggestion when metadata search returns no candidate at any missing position', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
+          makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
+        ]);
+        // Metadata returns a book but NOT at position 3 (the missing one)
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'WRONG_POS', title: 'Wrong', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 7 }] },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        const seriesCandidates = candidates.filter(c => c.reason === 'series');
+        expect(seriesCandidates).toHaveLength(0);
+      });
+
+      it('excludes metadata result with null position from series candidate filtering', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
+          makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
+        ]);
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'NULL_POS', title: 'No Position', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: null }] },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        expect(candidates.find(c => c.asin === 'NULL_POS' && c.reason === 'series')).toBeUndefined();
+      });
+
+      it('excludes metadata result whose position is not in missingPositions', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
+          makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
+        ]);
+        // Position 10 is not in missingPositions [3]
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'FAR_POS', title: 'Far Away', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Stormlight', position: 10 }] },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        expect(candidates.find(c => c.asin === 'FAR_POS' && c.reason === 'series')).toBeUndefined();
+      });
+
+      it('does not crash when metadata search fails for a series query', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
+          makeBookRow({ id: 2, seriesName: 'Stormlight', seriesPosition: 2 }),
+        ]);
+        mockMetadataService.searchBooksForDiscovery.mockRejectedValue(new Error('Network error'));
+        const { service, log } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        // Should not throw, just log warning
+        expect(Array.isArray(candidates)).toBe(true);
+        expect(log.warn).toHaveBeenCalled();
+      });
+    });
+  });
 });
