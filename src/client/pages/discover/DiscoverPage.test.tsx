@@ -55,6 +55,7 @@ function makeSuggestion(overrides: Partial<SuggestionRow> = {}): SuggestionRow {
     status: 'pending',
     refreshedAt: '2026-01-01T00:00:00Z',
     dismissedAt: null,
+    snoozeUntil: null,
     createdAt: '2026-01-01T00:00:00Z',
     ...overrides,
   };

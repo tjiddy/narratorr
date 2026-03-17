@@ -25,7 +25,7 @@ const mockApi = api as unknown as {
 
 function makeSettings(overrides = {}) {
   return {
-    discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5 },
+    discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, snoozeDays: 30 },
     library: { rootFolder: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{title}' },
     search: { enabled: true, intervalMinutes: 30, blacklistTtlDays: 30 },
     import: { deleteAfterImport: false, importMode: 'copy' as const },
@@ -198,6 +198,112 @@ describe('DiscoverySettingsSection', () => {
     });
 
     invalidateSpy.mockRestore();
+  });
+
+  // --- #408: Expiry & Snooze settings fields ---
+
+  describe('expiryDays field', () => {
+    it('renders expiry days input with default value', async () => {
+      renderWithProviders(<DiscoverySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/suggestion expiry/i)).toBeInTheDocument();
+      });
+
+      expect(screen.getByLabelText(/suggestion expiry/i)).toHaveValue(90);
+    });
+
+    it('changing expiry days persists via settings mutation', async () => {
+      mockApi.updateSettings.mockResolvedValue(makeSettings({
+        discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 60, snoozeDays: 30 },
+      }));
+
+      renderWithProviders(<DiscoverySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/suggestion expiry/i)).toBeInTheDocument();
+      });
+
+      const expiryInput = screen.getByLabelText(/suggestion expiry/i);
+      await userEvent.clear(expiryInput);
+      await userEvent.type(expiryInput, '60');
+      await userEvent.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith({
+          discovery: expect.objectContaining({ expiryDays: 60 }),
+        });
+      });
+    });
+
+    it('does not submit when expiryDays is 0 (below min)', async () => {
+      renderWithProviders(<DiscoverySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/suggestion expiry/i)).toBeInTheDocument();
+      });
+
+      const expiryInput = screen.getByLabelText(/suggestion expiry/i);
+      await userEvent.clear(expiryInput);
+      await userEvent.type(expiryInput, '0');
+      await userEvent.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('snoozeDays field', () => {
+    it('renders snooze days input with default value', async () => {
+      renderWithProviders(<DiscoverySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/default snooze duration/i)).toBeInTheDocument();
+      });
+
+      expect(screen.getByLabelText(/default snooze duration/i)).toHaveValue(30);
+    });
+
+    it('changing snooze days persists via settings mutation', async () => {
+      mockApi.updateSettings.mockResolvedValue(makeSettings({
+        discovery: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, snoozeDays: 14 },
+      }));
+
+      renderWithProviders(<DiscoverySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/default snooze duration/i)).toBeInTheDocument();
+      });
+
+      const snoozeInput = screen.getByLabelText(/default snooze duration/i);
+      await userEvent.clear(snoozeInput);
+      await userEvent.type(snoozeInput, '14');
+      await userEvent.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith({
+          discovery: expect.objectContaining({ snoozeDays: 14 }),
+        });
+      });
+    });
+
+    it('does not submit when snoozeDays is 0 (below min)', async () => {
+      renderWithProviders(<DiscoverySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText(/default snooze duration/i)).toBeInTheDocument();
+      });
+
+      const snoozeInput = screen.getByLabelText(/default snooze duration/i);
+      await userEvent.clear(snoozeInput);
+      await userEvent.type(snoozeInput, '0');
+      await userEvent.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).not.toHaveBeenCalled();
+      });
+    });
   });
 
   it('save failure shows error toast', async () => {

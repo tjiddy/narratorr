@@ -8,20 +8,26 @@ describe('Discovery Settings Schema', () => {
       enabled: true,
       intervalHours: 12,
       maxSuggestionsPerAuthor: 10,
+      expiryDays: 60,
+      snoozeDays: 14,
     });
     expect(result).toEqual({
       enabled: true,
       intervalHours: 12,
       maxSuggestionsPerAuthor: 10,
+      expiryDays: 60,
+      snoozeDays: 14,
     });
   });
 
-  it('applies correct defaults (enabled=false, intervalHours=24, maxSuggestionsPerAuthor=5)', () => {
+  it('applies correct defaults', () => {
     const result = discoverySettingsSchema.parse({});
     expect(result).toEqual({
       enabled: false,
       intervalHours: 24,
       maxSuggestionsPerAuthor: 5,
+      expiryDays: 90,
+      snoozeDays: 30,
     });
   });
 
@@ -43,6 +49,8 @@ describe('Discovery Settings Schema', () => {
       enabled: false,
       intervalHours: 24,
       maxSuggestionsPerAuthor: 5,
+      expiryDays: 90,
+      snoozeDays: 30,
     });
   });
 
@@ -51,6 +59,50 @@ describe('Discovery Settings Schema', () => {
       enabled: false,
       intervalHours: 24,
       maxSuggestionsPerAuthor: 5,
+      expiryDays: 90,
+      snoozeDays: 30,
+    });
+  });
+
+  // --- #408: Expiry & Snooze settings ---
+
+  describe('expiryDays', () => {
+    it('defaults to 90 when omitted', () => {
+      const result = discoverySettingsSchema.parse({});
+      expect(result.expiryDays).toBe(90);
+    });
+
+    it('accepts valid integer (e.g. 30)', () => {
+      const result = discoverySettingsSchema.parse({ expiryDays: 30 });
+      expect(result.expiryDays).toBe(30);
+    });
+
+    it('rejects expiryDays: 0 (min 1)', () => {
+      expect(() => discoverySettingsSchema.parse({ expiryDays: 0 })).toThrow();
+    });
+
+    it('rejects non-integer expiryDays (e.g. 2.5)', () => {
+      expect(() => discoverySettingsSchema.parse({ expiryDays: 2.5 })).toThrow();
+    });
+  });
+
+  describe('snoozeDays', () => {
+    it('defaults to 30 when omitted', () => {
+      const result = discoverySettingsSchema.parse({});
+      expect(result.snoozeDays).toBe(30);
+    });
+
+    it('accepts valid integer (e.g. 14)', () => {
+      const result = discoverySettingsSchema.parse({ snoozeDays: 14 });
+      expect(result.snoozeDays).toBe(14);
+    });
+
+    it('rejects snoozeDays: 0 (min 1)', () => {
+      expect(() => discoverySettingsSchema.parse({ snoozeDays: 0 })).toThrow();
+    });
+
+    it('rejects non-integer snoozeDays (e.g. 1.5)', () => {
+      expect(() => discoverySettingsSchema.parse({ snoozeDays: 1.5 })).toThrow();
     });
   });
 });

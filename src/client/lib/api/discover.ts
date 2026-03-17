@@ -19,6 +19,7 @@ export interface SuggestionRow {
   status: 'pending' | 'added' | 'dismissed';
   refreshedAt: string;
   dismissedAt: string | null;
+  snoozeUntil: string | null;
   createdAt: string;
 }
 
@@ -53,6 +54,13 @@ export const discoverApi = {
   dismissDiscoverSuggestion: (id: number) =>
     fetchApi<SuggestionRow>(`/discover/suggestions/${id}/dismiss`, {
       method: 'POST',
+    }),
+
+  snoozeDiscoverSuggestion: (id: number, durationDays: number) =>
+    fetchApi<SuggestionRow>(`/discover/suggestions/${id}/snooze`, {
+      method: 'POST',
+      body: JSON.stringify({ durationDays }),
+      headers: { 'Content-Type': 'application/json' },
     }),
 
   refreshDiscover: () =>

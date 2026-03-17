@@ -14,6 +14,8 @@ const discoveryFormSchema = z.object({
   enabled: z.boolean(),
   intervalHours: z.number().int().min(1).max(168),
   maxSuggestionsPerAuthor: z.number().int().min(1).max(50),
+  expiryDays: z.number().int().min(1),
+  snoozeDays: z.number().int().min(1),
 });
 
 type DiscoveryFormData = AppSettings['discovery'];
@@ -100,6 +102,44 @@ export function DiscoverySettingsSection() {
           />
           {errors.maxSuggestionsPerAuthor && (
             <p className="text-xs text-destructive mt-1">{errors.maxSuggestionsPerAuthor.message}</p>
+          )}
+        </div>
+
+        {/* Suggestion Expiry */}
+        <div>
+          <label htmlFor="discovery-expiry" className="text-sm font-medium">
+            Suggestion Expiry (days)
+          </label>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Auto-expire pending suggestions older than this many days
+          </p>
+          <input
+            id="discovery-expiry"
+            type="number"
+            {...register('expiryDays', { valueAsNumber: true })}
+            className="mt-1 w-full px-3 py-2 rounded-lg bg-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+          />
+          {errors.expiryDays && (
+            <p className="text-xs text-destructive mt-1">{errors.expiryDays.message}</p>
+          )}
+        </div>
+
+        {/* Default Snooze Duration */}
+        <div>
+          <label htmlFor="discovery-snooze" className="text-sm font-medium">
+            Default Snooze Duration (days)
+          </label>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            How long snoozed suggestions stay hidden before resurfacing
+          </p>
+          <input
+            id="discovery-snooze"
+            type="number"
+            {...register('snoozeDays', { valueAsNumber: true })}
+            className="mt-1 w-full px-3 py-2 rounded-lg bg-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+          />
+          {errors.snoozeDays && (
+            <p className="text-xs text-destructive mt-1">{errors.snoozeDays.message}</p>
           )}
         </div>
 

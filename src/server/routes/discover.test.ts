@@ -124,6 +124,20 @@ describe('Discover Routes', () => {
       expect(res.statusCode).toBe(200);
     });
 
+    it('returns warnings array in response body when refresh has warnings', async () => {
+      (services.settings.get as Mock).mockResolvedValueOnce({ enabled: true });
+      (services.discovery.refreshSuggestions as Mock).mockResolvedValueOnce({
+        added: 3, removed: 1, warnings: ['Expiry step failed — continuing with candidate generation'],
+      });
+
+      const res = await app.inject({ method: 'POST', url: '/api/discover/refresh' });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.warnings).toEqual(['Expiry step failed — continuing with candidate generation']);
+      expect(body.added).toBe(3);
+      expect(body.removed).toBe(1);
+    });
+
     it('returns 409 when discovery.enabled is false', async () => {
       (services.settings.get as Mock).mockResolvedValueOnce({ enabled: false });
 
@@ -157,6 +171,86 @@ describe('Discover Routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/discover/suggestions?reason=author&author=Sanderson' });
       expect(res.statusCode).toBe(200);
       expect(services.discovery.getSuggestions).toHaveBeenCalledWith({ reason: 'author', author: 'Sanderson' });
+    });
+  });
+
+  // --- #408: Snooze route ---
+
+  describe('POST /api/discover/suggestions/:id/snooze', () => {
+    it('returns 200 with updated SuggestionRow including snoozeUntil', async () => {
+      const snoozeUntil = new Date(Date.now() + 7 * 86400000);
+      (services.discovery.snoozeSuggestion as Mock).mockResolvedValueOnce({
+        id: 1, asin: 'B001', status: 'pending', snoozeUntil,
+      });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/snooze',
+        payload: { durationDays: 7 },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.status).toBe('pending');
+      expect(body.snoozeUntil).toBeDefined();
+      expect(services.discovery.snoozeSuggestion).toHaveBeenCalledWith(1, 7);
+    });
+
+    it('returns 400 for invalid body (missing durationDays)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/snooze',
+        payload: {},
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 400 for non-integer durationDays (float)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/snooze',
+        payload: { durationDays: 2.5 },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 400 for durationDays < 1', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/snooze',
+        payload: { durationDays: 0 },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 400 for durationDays > 365', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/snooze',
+        payload: { durationDays: 400 },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 404 for non-existent suggestion ID', async () => {
+      (services.discovery.snoozeSuggestion as Mock).mockResolvedValueOnce(null);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/999/snooze',
+        payload: { durationDays: 7 },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 409 for suggestion not in pending status', async () => {
+      (services.discovery.snoozeSuggestion as Mock).mockResolvedValueOnce('conflict');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/discover/suggestions/1/snooze',
+        payload: { durationDays: 7 },
+      });
+      expect(res.statusCode).toBe(409);
     });
   });
 

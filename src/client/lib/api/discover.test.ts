@@ -40,6 +40,17 @@ describe('discoverApi', () => {
     });
   });
 
+  // --- #408: Snooze API method ---
+
+  it('snoozeDiscoverSuggestion calls POST /discover/suggestions/:id/snooze with durationDays', async () => {
+    await discoverApi.snoozeDiscoverSuggestion(5, 14);
+    expect(mockFetchApi).toHaveBeenCalledWith('/discover/suggestions/5/snooze', {
+      method: 'POST',
+      body: JSON.stringify({ durationDays: 14 }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+  });
+
   it('getDiscoverStats calls GET /discover/stats', async () => {
     await discoverApi.getDiscoverStats();
     expect(mockFetchApi).toHaveBeenCalledWith('/discover/stats');

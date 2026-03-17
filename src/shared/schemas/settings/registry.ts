@@ -95,7 +95,7 @@ export const settingsRegistry = {
   }),
   discovery: defineCategory({
     schema: discoverySettingsSchema,
-    defaults: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5 },
+    defaults: { enabled: false, intervalHours: 24, maxSuggestionsPerAuthor: 5, expiryDays: 90, snoozeDays: 30 },
   }),
 };
 

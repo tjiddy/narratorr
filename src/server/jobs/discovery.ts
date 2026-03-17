@@ -19,6 +19,9 @@ export async function runDiscoveryJob(
       { added: result.added, removed: result.removed },
       'Discovery refresh complete',
     );
+    for (const warning of result.warnings) {
+      log.warn({ warning }, 'Discovery refresh warning');
+    }
   } catch (error) {
     log.error(error, 'Discovery refresh failed');
   }

@@ -3,6 +3,14 @@ import { createMockDb, createMockLogger, mockDbChain, inject, createMockSettings
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { DiscoveryService } from './discovery.service.js';
+import { SQLiteSyncDialect } from 'drizzle-orm/sqlite-core';
+
+/** Serialize a Drizzle SQL expression to a raw SQL string for predicate assertions. */
+const dialect = new SQLiteSyncDialect();
+function toSQL(expr: unknown): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return dialect.sqlToQuery((expr as any).getSQL()).sql;
+}
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -556,6 +564,29 @@ describe('DiscoveryService', () => {
       const result = await service.getSuggestions();
       expect(result).toEqual([]);
     });
+
+    it('excludes future-snoozed rows and includes past/null snoozeUntil rows', async () => {
+      const pastDate = new Date(Date.now() - 86400000);
+      const mockData = [
+        { id: 1, asin: 'B001', score: 80, status: 'pending', snoozeUntil: null },
+        { id: 2, asin: 'B002', score: 60, status: 'pending', snoozeUntil: pastDate },
+      ];
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain(mockData));
+      const { service } = createService(db);
+
+      const result = await service.getSuggestions();
+      expect(result).toEqual(mockData);
+
+      // Verify the WHERE predicate encodes: status = 'pending' AND (snoozeUntil IS NULL OR snoozeUntil <= ?)
+      const chain = db.select.mock.results[0].value;
+      expect(chain.where).toHaveBeenCalled();
+      const whereArg = (chain.where as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const sql = toSQL(whereArg);
+      expect(sql).toContain('"status" = ?');
+      expect(sql).toContain('"snooze_until" is null');
+      expect(sql).toContain('"snooze_until" <= ?');
+    });
   });
 
   describe('dismissSuggestion', () => {
@@ -631,6 +662,290 @@ describe('DiscoveryService', () => {
 
       const result = await service.addSuggestion(999);
       expect(result).toBeNull();
+    });
+  });
+
+  // --- #408: Expiry ---
+
+  describe('expireSuggestions (within refreshSuggestions)', () => {
+    it('deletes pending suggestions older than expiryDays with correct predicate', async () => {
+      const deleteChain = mockDbChain({ rowsAffected: 2 });
+      const db = createMockDb();
+      // Expiry delete
+      db.delete.mockReturnValueOnce(deleteChain);
+      // analyzeLibrary
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // existing books
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // dismissed suggestions
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // currentPending
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // stale delete
+      db.delete.mockReturnValue(mockDbChain());
+
+      mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
+
+      const { service, log } = createService(db);
+      await service.refreshSuggestions();
+
+      // Expiry delete should be called with status='pending' AND createdAt < cutoff (strict lt, not lte)
+      expect(db.delete).toHaveBeenCalled();
+      expect(deleteChain.where).toHaveBeenCalled();
+      const whereArg = (deleteChain.where as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const sql = toSQL(whereArg);
+      // Must have status = 'pending' guard for race safety
+      expect(sql).toContain('"status" = ?');
+      // Must use strict < (lt), not <= (lte), for the "older than N days" cutoff
+      expect(sql).toContain('"created_at" < ?');
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ expired: 2 }),
+        expect.stringContaining('expired'),
+      );
+    });
+
+    it('appends warning on expiry failure but does not throw', async () => {
+      const db = createMockDb();
+      // Expiry delete throws
+      db.delete.mockReturnValueOnce(mockDbChain([], { error: new Error('DB locked') }));
+      // analyzeLibrary
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // existing books
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // dismissed suggestions
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // currentPending
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // stale delete (no stale)
+      db.delete.mockReturnValue(mockDbChain());
+
+      mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
+
+      const { service, log } = createService(db);
+      const result = await service.refreshSuggestions();
+
+      expect(result.warnings).toEqual(expect.arrayContaining([expect.stringContaining('Expiry')]));
+      expect(log.warn).toHaveBeenCalled();
+    });
+
+    it('continues candidate generation after expiry failure', async () => {
+      const db = createMockDb();
+      // Expiry delete throws
+      db.delete.mockReturnValueOnce(mockDbChain([], { error: new Error('DB locked') }));
+      // analyzeLibrary
+      db.select.mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]));
+      // existing books
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // dismissed
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // currentPending
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // per-candidate lookup
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.insert.mockReturnValue(mockDbChain());
+      // stale delete
+      db.delete.mockReturnValue(mockDbChain());
+
+      mockMetadataService.searchBooksForDiscovery.mockResolvedValueOnce({
+        books: [{ asin: 'NEW1', title: 'New', authors: [{ name: 'Author A' }], language: 'English' }],
+        warnings: [],
+      }).mockResolvedValue({ books: [], warnings: [] });
+
+      const { service } = createService(db);
+      const result = await service.refreshSuggestions();
+
+      // Should still insert new candidates despite expiry failure
+      expect(result.added).toBeGreaterThanOrEqual(1);
+      expect(result.warnings.length).toBeGreaterThan(0);
+    });
+  });
+
+  // --- #408: Snooze ---
+
+  describe('snoozeSuggestion', () => {
+    it('sets snoozeUntil timestamp and returns updated row', async () => {
+      const existing = { id: 1, asin: 'B001', status: 'pending', snoozeUntil: null };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      db.update.mockReturnValue(mockDbChain());
+      const { service } = createService(db);
+
+      const result = await service.snoozeSuggestion(1, 7);
+      expect(result).not.toBeNull();
+      expect(result).not.toBe('conflict');
+      if (result && result !== 'conflict') {
+        expect(result.snoozeUntil).toBeDefined();
+        expect(result.status).toBe('pending');
+      }
+    });
+
+    it('returns null for unknown suggestion ID', async () => {
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([]));
+      const { service } = createService(db);
+
+      const result = await service.snoozeSuggestion(999, 7);
+      expect(result).toBeNull();
+    });
+
+    it('returns "conflict" for dismissed suggestion', async () => {
+      const existing = { id: 1, asin: 'B001', status: 'dismissed' };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      const { service } = createService(db);
+
+      const result = await service.snoozeSuggestion(1, 7);
+      expect(result).toBe('conflict');
+    });
+
+    it('returns "conflict" for added suggestion', async () => {
+      const existing = { id: 1, asin: 'B001', status: 'added' };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      const { service } = createService(db);
+
+      const result = await service.snoozeSuggestion(1, 7);
+      expect(result).toBe('conflict');
+    });
+  });
+
+  // --- #408: Resurfaced snoozed suggestion preservation (AC6) ---
+
+  describe('refreshSuggestions (AC6 — snoozed preservation)', () => {
+    it('preserves reason and reasonContext for resurfaced snoozed rows, clears snoozeUntil, and uses real scoring', async () => {
+      const pastDate = new Date(Date.now() - 86400000); // yesterday
+      const updateChain = mockDbChain();
+      const db = createMockDb();
+      // Expiry delete
+      db.delete.mockReturnValue(mockDbChain());
+      // analyzeLibrary — 3 books from Author A gives strength 3/5 = 0.6
+      db.select.mockReturnValueOnce(mockDbChain([
+        makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 }),
+        makeBookRow({ id: 2, genres: ['Fantasy'], duration: 1000 }),
+        makeBookRow({ id: 3, genres: ['Fantasy'], duration: 1000 }),
+      ]));
+      // existing books
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // dismissed
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // currentPending — includes a resurfaced snoozed suggestion NOT in candidates
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 5, asin: 'SNOOZED1', snoozeUntil: pastDate, reason: 'author', reasonContext: 'Original context', authorName: 'Author A', duration: null, publishedDate: null, seriesName: null, seriesPosition: null },
+      ]));
+      db.update.mockReturnValue(updateChain);
+
+      mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
+
+      const { service } = createService(db);
+      await service.refreshSuggestions();
+
+      // The resurfaced snoozed row should be updated: score from real algorithm, snoozeUntil cleared, NO reason/reasonContext overwrite
+      expect(updateChain.set).toHaveBeenCalledWith(
+        expect.objectContaining({
+          score: expect.any(Number),
+          refreshedAt: expect.any(Date),
+          snoozeUntil: null,
+        }),
+      );
+      // Verify reason/reasonContext are NOT in the set payload (preserved by omission)
+      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      expect(setPayload).not.toHaveProperty('reason');
+      expect(setPayload).not.toHaveProperty('reasonContext');
+      // Score should use real scoring: author weight (40) * strength (0.6) = 24, clamped 0-100
+      expect(setPayload.score).toBe(24);
+    });
+
+    it('resurfaced narrator-snoozed rows use narrator affinity for scoring, not author name', async () => {
+      const pastDate = new Date(Date.now() - 86400000);
+      const updateChain = mockDbChain();
+      const db = createMockDb();
+      // Expiry delete
+      db.delete.mockReturnValue(mockDbChain());
+      // analyzeLibrary — 4 books narrated by "Narrator N" gives narratorAffinity count=4, strength=4/5=0.8
+      // Author A has 4 books → strength 4/5=0.8
+      db.select.mockReturnValueOnce(mockDbChain([
+        makeBookRow({ id: 1, narrator: 'Narrator N', genres: ['Fantasy'], duration: 1000 }),
+        makeBookRow({ id: 2, narrator: 'Narrator N', genres: ['Fantasy'], duration: 1000 }),
+        makeBookRow({ id: 3, narrator: 'Narrator N', genres: ['Fantasy'], duration: 1000 }),
+        makeBookRow({ id: 4, narrator: 'Narrator N', genres: ['Fantasy'], duration: 1000 }),
+      ]));
+      // existing books
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // dismissed
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // currentPending — resurfaced narrator suggestion where authorName ≠ narratorName
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 7, asin: 'NARRATOR_SNOOZED', snoozeUntil: pastDate, reason: 'narrator', reasonContext: 'Narrated by Narrator N', authorName: 'Some Other Author', narratorName: 'Narrator N', duration: null, publishedDate: null, seriesName: null, seriesPosition: null },
+      ]));
+      db.update.mockReturnValue(updateChain);
+
+      mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
+
+      const { service } = createService(db);
+      await service.refreshSuggestions();
+
+      // Score should use narrator weight (20) * narrator strength (4/5 = 0.8) = 16
+      const setPayload = (updateChain.set as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+      expect(setPayload.score).toBe(16);
+      expect(setPayload.snoozeUntil).toBeNull();
+      // reason/reasonContext preserved by omission
+      expect(setPayload).not.toHaveProperty('reason');
+      expect(setPayload).not.toHaveProperty('reasonContext');
+    });
+
+    it('still-snoozed rows survive refresh without being deleted or resurfaced', async () => {
+      const futureDate = new Date(Date.now() + 7 * 86400000); // 7 days from now
+      const db = createMockDb();
+      // Expiry delete
+      db.delete.mockReturnValue(mockDbChain());
+      // analyzeLibrary
+      db.select.mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]));
+      // existing books
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // dismissed
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // currentPending — future-snoozed row NOT regenerated by pipeline
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 5, asin: 'SNOOZED_FUTURE', snoozeUntil: futureDate, reason: 'author', reasonContext: 'Original', authorName: 'Author A', duration: null, publishedDate: null, seriesName: null, seriesPosition: null },
+      ]));
+
+      mockMetadataService.searchBooksForDiscovery.mockResolvedValue({ books: [], warnings: [] });
+
+      const { service } = createService(db);
+      const result = await service.refreshSuggestions();
+
+      // Should NOT be deleted (removed count should be 0)
+      expect(result.removed).toBe(0);
+      // Should NOT be updated (no resurfacing update issued)
+      expect(db.update).not.toHaveBeenCalled();
+    });
+
+    it('overwrites reason and reasonContext for normal regenerated pending suggestions', async () => {
+      const db = createMockDb();
+      // Expiry delete
+      db.delete.mockReturnValue(mockDbChain());
+      // analyzeLibrary
+      db.select.mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]));
+      // existing books
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // dismissed
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // currentPending
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING' }]));
+      // per-candidate lookup: existing pending row with no snoozeUntil
+      db.select.mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING', status: 'pending', score: 30, snoozeUntil: null }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      mockMetadataService.searchBooksForDiscovery.mockResolvedValueOnce({
+        books: [{ asin: 'EXISTING_PENDING', title: 'Updated', authors: [{ name: 'Author A' }], language: 'English' }],
+        warnings: [],
+      }).mockResolvedValue({ books: [], warnings: [] });
+
+      const { service } = createService(db);
+      await service.refreshSuggestions();
+
+      // Normal pending rows get full update including reason/reasonContext
+      expect(db.update).toHaveBeenCalled();
     });
   });
 

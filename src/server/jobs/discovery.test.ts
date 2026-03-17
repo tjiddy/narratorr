@@ -29,6 +29,33 @@ describe('Discovery Job', () => {
     expect(mockDiscoveryService.refreshSuggestions).not.toHaveBeenCalled();
   });
 
+  // --- #408: Warning logging ---
+
+  it('logs warnings from refresh result when non-empty', async () => {
+    const settingsService = createMockSettingsService({ discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5 } });
+    const log = createMockLogger();
+    mockDiscoveryService.refreshSuggestions.mockResolvedValueOnce({
+      added: 1, removed: 0, warnings: ['Expiry step failed — continuing with candidate generation'],
+    });
+
+    await runDiscoveryJob(inject(mockDiscoveryService), inject(settingsService), inject<FastifyBaseLogger>(log));
+
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ warning: expect.stringContaining('Expiry') }),
+      expect.any(String),
+    );
+  });
+
+  it('does not log warnings when array is empty', async () => {
+    const settingsService = createMockSettingsService({ discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5 } });
+    const log = createMockLogger();
+    mockDiscoveryService.refreshSuggestions.mockResolvedValueOnce({ added: 0, removed: 0, warnings: [] });
+
+    await runDiscoveryJob(inject(mockDiscoveryService), inject(settingsService), inject<FastifyBaseLogger>(log));
+
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
   it('handles refresh errors without crashing', async () => {
     const settingsService = createMockSettingsService({ discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5 } });
     const log = createMockLogger();

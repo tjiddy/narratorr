@@ -325,6 +325,7 @@ export const suggestions = sqliteTable('suggestions', {
     .notNull()
     .default(sql`(unixepoch())`),
   dismissedAt: integer('dismissed_at', { mode: 'timestamp' }),
+  snoozeUntil: integer('snooze_until', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),
