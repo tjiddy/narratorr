@@ -123,9 +123,13 @@ describe('BackupService', () => {
   describe('create', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let createWriteStreamSpy: any;
+    let mkdirSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
       mockExecute.mockResolvedValue({ rows: [] });
+
+      // Mock mkdir so tests don't depend on filesystem permissions
+      mkdirSpy = vi.spyOn(fs, 'mkdir').mockResolvedValue(undefined);
 
       // Mock createWriteStream to return an EventEmitter (archiver mock triggers 'close' on it)
       const mockStream = new EventEmitter();
@@ -134,6 +138,7 @@ describe('BackupService', () => {
 
     afterEach(() => {
       createWriteStreamSpy.mockRestore();
+      mkdirSpy.mockRestore();
     });
 
     it('creates backup zip and returns metadata', async () => {
