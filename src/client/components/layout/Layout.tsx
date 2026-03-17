@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Outlet, NavLink, useLocation, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useTheme } from '@/hooks/useTheme';
 import { useActivityCounts } from '@/hooks/useActivityCounts';
 import { useAuthContext } from '@/hooks/useAuthContext';
 import { SSEProvider } from '@/components/SSEProvider';
+import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import {
   HeadphonesIcon,
   SearchIcon,
@@ -12,6 +15,7 @@ import {
   SunIcon,
   MoonIcon,
   LibraryIcon,
+  CompassIcon,
   AlertTriangleIcon,
   XIcon,
 } from '@/components/icons';
@@ -20,18 +24,39 @@ import { UpdateBanner } from '@/components/layout/UpdateBanner';
 
 const BANNER_DISMISSED_KEY = 'narratorr:auth-banner-dismissed';
 
-const navItems = [
+type NavItem = { to: string; label: string; icon: React.ComponentType<{ className?: string }> };
+
+const baseNavItems: NavItem[] = [
   { to: '/library', label: 'Library', icon: LibraryIcon },
   { to: '/search', label: 'Search', icon: SearchIcon },
+];
+
+const postDiscoverNavItems: NavItem[] = [
   { to: '/activity', label: 'Activity', icon: ActivityIcon },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },
 ];
+
+const discoverNavItem: NavItem = { to: '/discover', label: 'Discover', icon: CompassIcon };
 
 export function Layout() {
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const { active: activeDownloadCount } = useActivityCounts();
   const { mode } = useAuthContext();
+
+  const { data: settings } = useQuery({
+    queryKey: queryKeys.settings(),
+    queryFn: api.getSettings,
+    staleTime: 60_000,
+  });
+
+  const navItems = useMemo(() => {
+    if (settings?.discovery?.enabled) {
+      return [...baseNavItems, discoverNavItem, ...postDiscoverNavItems];
+    }
+    return [...baseNavItems, ...postDiscoverNavItems];
+  }, [settings?.discovery?.enabled]);
+
   const [bannerDismissed, setBannerDismissed] = useState(
     () => localStorage.getItem(BANNER_DISMISSED_KEY) === 'true',
   );

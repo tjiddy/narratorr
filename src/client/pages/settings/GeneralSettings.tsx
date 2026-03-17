@@ -6,6 +6,7 @@ import { ProcessingSettingsSection } from './ProcessingSettingsSection';
 import { NetworkSettingsSection } from './NetworkSettingsSection';
 import { GeneralSettingsForm } from './GeneralSettingsForm';
 import { MetadataSettingsForm } from './MetadataSettingsForm';
+import { DiscoverySettingsSection } from '../discover/DiscoverySettingsSection';
 
 export function GeneralSettings() {
   return (
@@ -16,6 +17,7 @@ export function GeneralSettings() {
       <QualitySettingsSection />
       <ProcessingSettingsSection />
       <NetworkSettingsSection />
+      <DiscoverySettingsSection />
       <GeneralSettingsForm />
       <MetadataSettingsForm />
     </div>

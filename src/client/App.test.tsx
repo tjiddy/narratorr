@@ -42,6 +42,10 @@ vi.mock('@/pages/activity', () => ({
   ActivityPage: () => <div data-testid="activity-page">Activity Page</div>,
 }));
 
+vi.mock('@/pages/discover', () => ({
+  DiscoverPage: () => <div data-testid="discover-page">Discover Page</div>,
+}));
+
 vi.mock('@/pages/settings', () => ({
   SettingsLayout: () => <div data-testid="settings-page">Settings Page<Outlet /></div>,
   GeneralSettings: () => <div>General</div>,
@@ -97,6 +101,12 @@ describe('App', () => {
     renderApp('/activity');
 
     expect(screen.getByTestId('activity-page')).toBeInTheDocument();
+  });
+
+  it('renders discover page at /discover', () => {
+    renderApp('/discover');
+
+    expect(screen.getByTestId('discover-page')).toBeInTheDocument();
   });
 
   it('renders settings page at /settings', () => {

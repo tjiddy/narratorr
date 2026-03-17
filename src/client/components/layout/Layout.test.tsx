@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
+import { createMockSettings } from '@/__tests__/factories';
 import { Layout } from '@/components/layout/Layout';
 
 vi.mock('@/hooks/useActivityCounts', () => ({
@@ -17,6 +18,7 @@ vi.mock('@/lib/api', () => ({
     getHealthSummary: vi.fn().mockResolvedValue({ state: 'healthy' }),
     getSystemStatus: vi.fn(),
     dismissUpdate: vi.fn(),
+    getSettings: vi.fn(),
   },
 }));
 
@@ -28,6 +30,7 @@ const mockApi = api as unknown as { getHealthSummary: ReturnType<typeof vi.fn> }
 describe('Layout', () => {
   beforeEach(() => {
     localStorage.clear();
+    vi.mocked(api.getSettings).mockResolvedValue(createMockSettings());
   });
 
   function mockCounts(active: number) {
@@ -172,6 +175,62 @@ describe('Layout', () => {
       await waitFor(() => {
         expect(screen.getByTestId('health-indicator')).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('discover nav integration', () => {
+    it('shows Discover nav item when discovery setting is enabled', async () => {
+      mockCounts(0);
+      mockAuth('forms');
+      vi.mocked(api.getSettings).mockResolvedValue(createMockSettings({ discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5 } }));
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Discover')).toBeInTheDocument();
+      });
+    });
+
+    it('renders Discover nav item between Search and Activity when enabled', async () => {
+      mockCounts(0);
+      mockAuth('forms');
+      vi.mocked(api.getSettings).mockResolvedValue(createMockSettings({ discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5 } }));
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Discover')).toBeInTheDocument();
+      });
+
+      const navLabels = screen.getAllByRole('link')
+        .map((el) => el.textContent?.trim())
+        .filter((t) => ['Library', 'Search', 'Discover', 'Activity', 'Settings'].includes(t ?? ''));
+
+      expect(navLabels).toEqual(['Library', 'Search', 'Discover', 'Activity', 'Settings']);
+    });
+
+    it('hides Discover nav item when discovery setting is disabled', async () => {
+      mockCounts(0);
+      mockAuth('forms');
+      vi.mocked(api.getSettings).mockResolvedValue(createMockSettings());
+
+      renderWithProviders(<Layout />);
+
+      // Wait for settings query to settle
+      await waitFor(() => {
+        expect(screen.getByText('Library')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Discover')).not.toBeInTheDocument();
+    });
+
+    it('hides Discover nav item when settings query is still loading', () => {
+      mockCounts(0);
+      mockAuth('forms');
+      vi.mocked(api.getSettings).mockReturnValue(new Promise(() => {})); // never resolves
+
+      renderWithProviders(<Layout />);
+
+      expect(screen.queryByText('Discover')).not.toBeInTheDocument();
     });
   });
 

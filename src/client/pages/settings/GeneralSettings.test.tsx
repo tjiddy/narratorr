@@ -46,6 +46,7 @@ describe('GeneralSettings', () => {
       expect(screen.getByText('Library')).toBeInTheDocument();
     });
     expect(screen.getByText('Search')).toBeInTheDocument();
+    expect(screen.getByText('Discovery')).toBeInTheDocument();
     expect(screen.getByText('Import')).toBeInTheDocument();
     expect(screen.getByText('Quality')).toBeInTheDocument();
     expect(screen.getByText('Post Processing')).toBeInTheDocument();

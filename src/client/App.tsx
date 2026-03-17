@@ -6,6 +6,7 @@ import { LoginPage } from './pages/login';
 import { LibraryPage } from './pages/library';
 import { SearchPage } from './pages/search';
 import { ActivityPage } from './pages/activity';
+import { DiscoverPage } from './pages/discover';
 import { BookPage } from './pages/book';
 import { AuthorPage } from './pages/author';
 import { ManualImportPage } from './pages/manual-import';
@@ -36,6 +37,7 @@ export function App() {
             <Route path="library" element={<LibraryPage />} />
             <Route path="import" element={<ManualImportPage />} />
             <Route path="search" element={<SearchPage />} />
+            <Route path="discover" element={<DiscoverPage />} />
             <Route path="activity" element={<ActivityPage />} />
             <Route path="books/:id" element={<BookPage />} />
             <Route path="authors/:asin" element={<AuthorPage />} />

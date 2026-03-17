@@ -18,6 +18,7 @@ export type { BackupMetadata, RestoreValidation, BackupJobResult } from './backu
 export type { HealthState, HealthCheckResult, HealthSummary, TaskMetadata, SystemInfo, SystemStatus } from './system.js';
 export type { RecyclingBinEntry } from './recycling-bin.js';
 export type { ImportList, ImportListItem, ImportListPreview } from './import-lists.js';
+export type { SuggestionRow, DiscoverStats, AddSuggestionResult, RefreshResult } from './discover.js';
 
 export { formatBytes, formatProgress } from './utils.js';
 
@@ -39,6 +40,7 @@ import { eventHistoryApi } from './event-history.js';
 import { backupsApi } from './backups.js';
 import { recyclingBinApi } from './recycling-bin.js';
 import { importListsApi } from './import-lists.js';
+import { discoverApi } from './discover.js';
 
 export const api = {
   ...booksApi,
@@ -59,4 +61,5 @@ export const api = {
   ...backupsApi,
   ...recyclingBinApi,
   ...importListsApi,
+  ...discoverApi,
 };
