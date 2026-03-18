@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #448 Housekeeping: Clear remaining debt log — 2026-03-18
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #449
+
+### Metrics
+- Files changed: 16 | Tests added/modified: 3 files (error-handler stubs, job error paths, discover fixtures)
+- Quality gate runs: 2 (pass on attempt 2 — first failed on return-await lint)
+- Fix iterations: 2 (return-await lint violations + auth/discover test fixture updates)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Error-handler registry refactor was clean — 21 existing tests validated behavior preservation immediately. Discovery extraction was straightforward with 102 tests confirming no regressions.
+- Friction / issues encountered: sendInternalError removal had two hidden blast radius items: auth.test.ts uses its own Fastify app without errorHandlerPlugin, and discover.test.ts mock data lacked Date objects for timestamp fields. Both caused 500s that only surfaced at test runtime.
+
+### Token efficiency
+- Highest-token actions: sendInternalError deletion subagent (9 files, ~50 call sites) and self-review exploration
+- Avoidable waste: Could have anticipated the return-await lint issue
+- Suggestions: When doing bulk try/catch removal, also strip await from bare returns in the same pass
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: scheduleCron/scheduleTimeoutLoop item addressed in this PR. No new debt.
+
+### Wish I'd Known
+1. Removing sendInternalError try/catch blocks has hidden test blast radius — route tests with custom app factories need errorHandlerPlugin, partial mock data needs Date objects for mapper functions.
+2. Drizzle $inferSelect widens text enum columns to string — shared response types with literal unions need explicit casts at the mapper boundary.
+3. return await inside catch blocks is correct per CLAUDE.md, but once the catch is removed, the await becomes a lint violation.
+
 ## #437 Architecture review: DIP, ISP, modularity, and DRY fixes — 2026-03-18
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #447
