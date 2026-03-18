@@ -188,6 +188,51 @@ describe('NotifierService', () => {
 
       fetchSpy.mockRestore();
     });
+
+    it('skips notifier with empty events array — never matches any event type', async () => {
+      const emptyEventsNotifier = createMockDbNotifier({ events: [] });
+      db.select.mockReturnValue(mockDbChain([emptyEventsNotifier]));
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      await service.notify('on_grab', { event: 'on_grab' });
+
+      // Empty array never includes any event — notifier is skipped
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ event: 'on_grab' }),
+        'No notifiers configured for event',
+      );
+      fetchSpy.mockRestore();
+    });
+
+    it('resolves without throwing when all matching notifiers fail simultaneously', async () => {
+      const notifier1 = createMockDbNotifier({ id: 1, name: 'Webhook 1', events: ['on_grab'] });
+      const notifier2 = createMockDbNotifier({ id: 2, name: 'Webhook 2', events: ['on_grab'] });
+      const notifier3 = createMockDbNotifier({ id: 3, name: 'Webhook 3', events: ['on_grab'] });
+      db.select.mockReturnValue(mockDbChain([notifier1, notifier2, notifier3]));
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network down'));
+
+      // Should resolve — Promise.allSettled catches all failures
+      await service.notify('on_grab', { event: 'on_grab' });
+
+      // All 3 notifiers attempted and logged
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+      expect(log.warn).toHaveBeenCalledTimes(3);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ notifier: 'Webhook 1' }),
+        'Notification error',
+      );
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ notifier: 'Webhook 2' }),
+        'Notification error',
+      );
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ notifier: 'Webhook 3' }),
+        'Notification error',
+      );
+      fetchSpy.mockRestore();
+    });
   });
 
   describe('test', () => {

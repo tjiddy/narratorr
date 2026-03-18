@@ -1,3 +1,4 @@
+import type { EnrichmentStatus } from '../../../shared/schemas.js';
 import { fetchApi } from './client.js';
 
 export interface Author {
@@ -26,7 +27,7 @@ export interface BookWithAuthor {
   status: string;
   path?: string | null;
   size?: number | null;
-  enrichmentStatus?: string | null;
+  enrichmentStatus?: EnrichmentStatus | null;
   // Audio technical info
   audioCodec?: string | null;
   audioBitrate?: number | null;

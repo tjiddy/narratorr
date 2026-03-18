@@ -7,6 +7,9 @@ import { z } from 'zod';
 export const bookStatusSchema = z.enum(['wanted', 'searching', 'downloading', 'importing', 'imported', 'missing', 'failed']);
 export type BookStatus = z.infer<typeof bookStatusSchema>;
 
+export const enrichmentStatusSchema = z.enum(['pending', 'enriched', 'failed', 'skipped', 'file-enriched']);
+export type EnrichmentStatus = z.infer<typeof enrichmentStatusSchema>;
+
 export const bookSortFieldSchema = z.enum(['createdAt', 'title', 'author', 'narrator', 'series', 'quality', 'size', 'format']);
 export type BookSortField = z.infer<typeof bookSortFieldSchema>;
 

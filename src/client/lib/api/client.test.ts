@@ -143,6 +143,8 @@ describe('fetchApi with URL_BASE', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    delete window.__NARRATORR_URL_BASE__;
+    vi.resetModules();
   });
 
   it('prepends URL_BASE to API requests when set', async () => {
@@ -162,10 +164,6 @@ describe('fetchApi with URL_BASE', () => {
       '/narratorr/api/books',
       expect.objectContaining({ credentials: 'include' }),
     );
-
-    // Clean up
-    delete window.__NARRATORR_URL_BASE__;
-    vi.resetModules();
   });
 
   it('exports URL_BASE from window injection', () => {

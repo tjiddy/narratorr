@@ -38,6 +38,8 @@ describe('useAuth', () => {
       writable: true,
       value: originalLocation,
     });
+    delete window.__NARRATORR_URL_BASE__;
+    vi.resetModules();
   });
 
   it('returns auth status from API', async () => {
@@ -158,9 +160,5 @@ describe('useAuth', () => {
     });
 
     expect(window.location.href).toBe('/narratorr/login');
-
-    // Clean up
-    delete window.__NARRATORR_URL_BASE__;
-    vi.resetModules();
   });
 });

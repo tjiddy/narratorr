@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi, afterEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
@@ -200,7 +200,13 @@ describe('rate limiting', () => {
   });
 
   describe('recovery', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it('allows requests again after time window expires', async () => {
+      vi.useFakeTimers();
+
       // Create a separate app with a very short time window for recovery testing
       const recoveryApp = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
       recoveryApp.setValidatorCompiler(validatorCompiler);
@@ -240,8 +246,8 @@ describe('rate limiting', () => {
         });
         expect(limitedRes.statusCode).toBe(429);
 
-        // Wait for window to expire
-        await new Promise((resolve) => setTimeout(resolve, TEST_WINDOW_MS + 50));
+        // Advance past the rate-limit window using fake timers
+        await vi.advanceTimersByTimeAsync(TEST_WINDOW_MS + 1);
 
         // Should be allowed again
         const recoveredRes = await recoveryApp.inject({
