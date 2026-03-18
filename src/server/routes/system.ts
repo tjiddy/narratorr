@@ -8,6 +8,7 @@ import { runBackupJob } from '../jobs/backup.js';
 import { healthRoutes } from './health-routes.js';
 import { getVersion } from '../utils/version.js';
 import { getUpdateStatus } from '../jobs/version-check.js';
+import { getErrorMessage } from '../utils/error-message.js';
 import { RestoreUploadError } from '../services/backup.service.js';
 import fs from 'fs';
 import fsp from 'fs/promises';
@@ -40,7 +41,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       return reply.status(503).send({
         status: 'error',
         timestamp: new Date().toISOString(),
-        error: error instanceof Error ? error.message : 'Database unreachable',
+        error: getErrorMessage(error, 'Database unreachable'),
       });
     }
   });
@@ -152,7 +153,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
 
       return await reply;
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
+      const message = getErrorMessage(error);
       return reply.status(400).send({ error: message });
     }
   });

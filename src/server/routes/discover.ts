@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { suggestionReasonSchema } from '../../shared/schemas/discovery.js';
 import type { DiscoveryService, SettingsService } from '../services/index.js';
 import type { TaskRegistry } from '../services/task-registry.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 export interface DiscoverRouteDeps {
   discoveryService: DiscoveryService;
@@ -96,7 +97,7 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
       const result = await taskRegistry.runExclusive('discovery', () => discoveryService.refreshSuggestions());
       return result;
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
+      const message = getErrorMessage(error);
       if (message.includes('already running')) {
         return reply.status(409).send({ error: message });
       }

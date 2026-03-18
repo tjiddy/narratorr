@@ -5,6 +5,8 @@ import type {
   AddDownloadOptions,
   DownloadProtocol,
 } from './types.js';
+import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 
 /**
  * SABnzbd's `storage` is the full destination path (e.g., `/downloads/complete/BookTitle`).
@@ -22,8 +24,6 @@ export interface SABnzbdConfig {
   apiKey: string;
   useSsl: boolean;
 }
-
-const REQUEST_TIMEOUT_MS = 15000;
 
 interface SABnzbdQueueSlot {
   nzo_id: string;
@@ -228,27 +228,18 @@ export class SABnzbdClient implements DownloadClientAdapter {
       url.searchParams.set(key, value);
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const response = await fetchWithTimeout(url.toString(), {}, DEFAULT_REQUEST_TIMEOUT_MS);
 
-    try {
-      const response = await fetch(url.toString(), {
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const contentType = response.headers.get('content-type') ?? '';
-      if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
-        throw new Error(`Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
-      }
-
-      return (await response.json()) as T;
-    } finally {
-      clearTimeout(timeoutId);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
+
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
+      throw new Error(`Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
+    }
+
+    return (await response.json()) as T;
   }
 
   private mapQueueSlot(slot: SABnzbdQueueSlot): DownloadItemInfo {

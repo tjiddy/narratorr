@@ -1,8 +1,2 @@
-import { z } from 'zod';
-
-// ============================================================================
-// Enrichment schemas
-// ============================================================================
-
-export const enrichmentStatusSchema = z.enum(['pending', 'enriched', 'failed', 'skipped', 'file-enriched']);
-export type EnrichmentStatus = z.infer<typeof enrichmentStatusSchema>;
+// Re-export from canonical location to avoid duplicate export in barrel.
+export { enrichmentStatusSchema, type EnrichmentStatus } from './book.js';

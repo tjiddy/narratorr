@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { NZBGetClient } from './nzbget.js';
@@ -501,8 +501,6 @@ describe('NZBGetClient', () => {
     });
 
     it('throws on request timeout', async () => {
-      vi.useFakeTimers();
-
       server.use(
         http.post(RPC_URL, async () => {
           await delay('infinite');
@@ -510,12 +508,12 @@ describe('NZBGetClient', () => {
         }),
       );
 
-      const promise = client.getCategories();
-      const assertion = expect(promise).rejects.toThrow();
-      await vi.advanceTimersByTimeAsync(16000);
-      await assertion;
+      const originalTimeout = AbortSignal.timeout;
+      AbortSignal.timeout = () => AbortSignal.abort(new DOMException('The operation was aborted', 'TimeoutError'));
 
-      vi.useRealTimers();
+      await expect(client.getCategories()).rejects.toThrow();
+
+      AbortSignal.timeout = originalTimeout;
     });
 
     it('has supportsCategories = true', () => {

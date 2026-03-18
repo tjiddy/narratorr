@@ -3,6 +3,7 @@ import { join, extname } from 'node:path';
 import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService, RecyclingBinService } from '../services/index.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
+import { sendInternalError } from '../utils/route-helpers.js';
 
 export interface BookRouteDeps {
   bookService: BookService;
@@ -123,7 +124,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     return { success: true };
   } catch (error) {
     request.log.error(error, 'Failed to delete book');
-    return reply.status(500).send({ error: 'Internal server error' });
+    return sendInternalError(reply);
   }
 });
 }
@@ -136,7 +137,7 @@ async function registerDeleteMissingRoute(app: FastifyInstance, deps: Pick<BookR
       return { deleted };
     } catch (error) {
       request.log.error(error, 'Failed to batch delete missing books');
-      return reply.status(500).send({ error: 'Internal server error' });
+      return sendInternalError(reply);
     }
   });
 }
@@ -167,7 +168,7 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
         return result;
       } catch (error) {
         request.log.error(error, 'Per-book search failed');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -187,7 +188,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
         return await bookListService.getAll(status, pagination, { slim: true, search, sortField, sortDirection });
       } catch (error) {
         request.log.error(error, 'Failed to fetch books');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -198,7 +199,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       return await bookListService.getIdentifiers();
     } catch (error) {
       request.log.error(error, 'Failed to fetch book identifiers');
-      return reply.status(500).send({ error: 'Internal server error' });
+      return sendInternalError(reply);
     }
   });
 
@@ -208,7 +209,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       return await bookListService.getStats();
     } catch (error) {
       request.log.error(error, 'Failed to fetch book stats');
-      return reply.status(500).send({ error: 'Internal server error' });
+      return sendInternalError(reply);
     }
   });
 
@@ -228,7 +229,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
         return book;
       } catch (error) {
         request.log.error(error, 'Failed to fetch book');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -260,7 +261,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
         return await reply.status(201).send(book);
       } catch (error) {
         request.log.error(error, 'Failed to create book');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -284,7 +285,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
         return book;
       } catch (error) {
         request.log.error(error, 'Failed to update book');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -352,7 +353,7 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
           .send(data);
       } catch (error) {
         request.log.error(error, 'Failed to serve cover image');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -391,7 +392,7 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
         return files;
       } catch (error) {
         request.log.error(error, 'Failed to list book files');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );

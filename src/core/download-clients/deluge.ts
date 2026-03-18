@@ -1,4 +1,6 @@
 import { type DownloadClientAdapter, type DownloadItemInfo, type AddDownloadOptions, type DownloadProtocol, ETA_UPPER_BOUND_SEC } from './types.js';
+import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 
 export interface DelugeConfig {
   host: string;
@@ -7,8 +9,6 @@ export interface DelugeConfig {
   useSsl: boolean;
   onWarn?: (msg: string) => void;
 }
-
-const REQUEST_TIMEOUT_MS = 15000;
 
 interface DelugeRpcResponse {
   id: number;
@@ -61,100 +61,84 @@ export class DelugeClient implements DownloadClientAdapter {
     }
 
     const id = ++this.requestId;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.sessionCookie) {
+      headers.Cookie = this.sessionCookie;
+    }
 
+    const response = await fetchWithTimeout(`${this.baseUrl}/json`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ method, params, id }),
+    }, DEFAULT_REQUEST_TIMEOUT_MS);
+
+    if ((response.status === 401 || response.status === 403) && !retried) {
+      this.authenticated = false;
+      await this.login();
+      return this.rpc(method, params, true);
+    }
+
+    if (!response.ok) {
+      throw new Error(`Deluge request failed: HTTP ${response.status}`);
+    }
+
+    let data: DelugeRpcResponse;
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (this.sessionCookie) {
-        headers.Cookie = this.sessionCookie;
-      }
+      data = await response.json() as DelugeRpcResponse;
+    } catch {
+      throw new Error('Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy that may be intercepting requests.');
+    }
 
-      const response = await fetch(`${this.baseUrl}/json`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ method, params, id }),
-        signal: controller.signal,
-      });
-
-      if ((response.status === 401 || response.status === 403) && !retried) {
+    if (data.error) {
+      // Session expired — auth error from Deluge itself
+      if (!retried && data.error.code === 1) {
         this.authenticated = false;
         await this.login();
-        return await this.rpc(method, params, true);
+        return this.rpc(method, params, true);
       }
-
-      if (!response.ok) {
-        throw new Error(`Deluge request failed: HTTP ${response.status}`);
-      }
-
-      let data: DelugeRpcResponse;
-      try {
-        data = await response.json() as DelugeRpcResponse;
-      } catch {
-        throw new Error('Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy that may be intercepting requests.');
-      }
-
-      if (data.error) {
-        // Session expired — auth error from Deluge itself
-        if (!retried && data.error.code === 1) {
-          this.authenticated = false;
-          await this.login();
-          return await this.rpc(method, params, true);
-        }
-        throw new Error(`Deluge RPC error: ${data.error.message}`);
-      }
-
-      return data.result;
-    } finally {
-      clearTimeout(timeoutId);
+      throw new Error(`Deluge RPC error: ${data.error.message}`);
     }
+
+    return data.result;
   }
 
   private async login(): Promise<void> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const response = await fetchWithTimeout(`${this.baseUrl}/json`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        method: 'auth.login',
+        params: [this.config.password],
+        id: ++this.requestId,
+      }),
+    }, DEFAULT_REQUEST_TIMEOUT_MS);
 
-    try {
-      const response = await fetch(`${this.baseUrl}/json`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          method: 'auth.login',
-          params: [this.config.password],
-          id: ++this.requestId,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`Deluge login failed: HTTP ${response.status}`);
-      }
-
-      let data: DelugeRpcResponse;
-      try {
-        data = await response.json() as DelugeRpcResponse;
-      } catch {
-        throw new Error('Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy that may be intercepting requests.');
-      }
-
-      if (data.error) {
-        throw new Error(`Deluge login error: ${data.error.message}`);
-      }
-
-      if (data.result !== true) {
-        throw new Error('Deluge login failed: Invalid password');
-      }
-
-      // Persist session cookie for subsequent authenticated requests
-      const setCookie = response.headers.get('set-cookie');
-      if (setCookie) {
-        this.sessionCookie = setCookie.split(';')[0];
-      }
-
-      this.authenticated = true;
-    } finally {
-      clearTimeout(timeoutId);
+    if (!response.ok) {
+      throw new Error(`Deluge login failed: HTTP ${response.status}`);
     }
+
+    let data: DelugeRpcResponse;
+    try {
+      data = await response.json() as DelugeRpcResponse;
+    } catch {
+      throw new Error('Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy that may be intercepting requests.');
+    }
+
+    if (data.error) {
+      throw new Error(`Deluge login error: ${data.error.message}`);
+    }
+
+    if (data.result !== true) {
+      throw new Error('Deluge login failed: Invalid password');
+    }
+
+    // Persist session cookie for subsequent authenticated requests
+    const setCookie = response.headers.get('set-cookie');
+    if (setCookie) {
+      this.sessionCookie = setCookie.split(';')[0];
+    }
+
+    this.authenticated = true;
   }
 
   async addDownload(url: string, options?: AddDownloadOptions): Promise<string> {

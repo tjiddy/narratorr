@@ -137,7 +137,7 @@ export class AuthService {
     if (mode !== 'none') {
       const userCount = await this.db.select().from(users).limit(1);
       if (userCount.length === 0) {
-        throw new Error('Cannot enable auth mode without credentials configured');
+        throw new AuthConfigError();
       }
     }
 
@@ -177,7 +177,7 @@ export class AuthService {
       .limit(1);
 
     if (existing.length > 0) {
-      throw new Error('User already exists');
+      throw new UserExistsError();
     }
 
     const salt = randomBytes(16);
@@ -223,7 +223,7 @@ export class AuthService {
   async changePassword(username: string, currentPassword: string, newPassword: string, newUsername?: string): Promise<void> {
     const verified = await this.verifyCredentials(username, currentPassword);
     if (!verified) {
-      throw new Error('Current password is incorrect');
+      throw new IncorrectPasswordError();
     }
 
     const salt = randomBytes(16);
@@ -317,5 +317,31 @@ export class AuthService {
     const shouldRenew = elapsed > SESSION_TTL_MS / 2;
 
     return { payload, shouldRenew };
+  }
+}
+
+// ─── Typed Error Classes ──────────────────────────────────────────────
+
+export class UserExistsError extends Error {
+  readonly code = 'USER_EXISTS' as const;
+  constructor() {
+    super('User already exists');
+    this.name = 'UserExistsError';
+  }
+}
+
+export class AuthConfigError extends Error {
+  readonly code = 'NO_CREDENTIALS' as const;
+  constructor() {
+    super('Cannot enable auth mode without credentials configured');
+    this.name = 'AuthConfigError';
+  }
+}
+
+export class IncorrectPasswordError extends Error {
+  readonly code = 'INCORRECT_PASSWORD' as const;
+  constructor() {
+    super('Current password is incorrect');
+    this.name = 'IncorrectPasswordError';
   }
 }

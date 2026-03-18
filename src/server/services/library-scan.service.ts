@@ -79,7 +79,7 @@ export class LibraryScanService {
    */
   async rescanLibrary(): Promise<RescanResult> {
     if (this.scanning) {
-      throw new Error('Scan already in progress');
+      throw new ScanInProgressError();
     }
     this.scanning = true;
 
@@ -87,14 +87,14 @@ export class LibraryScanService {
       const librarySettings = await this.settingsService.get('library');
       const libraryRoot = librarySettings?.path;
       if (!libraryRoot) {
-        throw new Error('Library path is not configured');
+        throw new LibraryPathError('Library path is not configured');
       }
 
       // Verify the library root is accessible
       try {
         await access(libraryRoot);
       } catch {
-        throw new Error(`Library path is not accessible: ${libraryRoot}`);
+        throw new LibraryPathError(`Library path is not accessible: ${libraryRoot}`);
       }
       const resolvedRoot = resolve(libraryRoot);
 
@@ -733,4 +733,22 @@ function cleanName(name: string): string {
     .replace(/\s*\(\d{4}\)$/, '') // Remove trailing year like "(2020)"
     .replace(/\s*\[\d{4}\]$/, '') // Remove trailing year like "[2020]"
     .trim();
+}
+
+// ─── Typed Error Classes ──────────────────────────────────────────────
+
+export class ScanInProgressError extends Error {
+  readonly code = 'SCAN_IN_PROGRESS' as const;
+  constructor() {
+    super('Scan already in progress');
+    this.name = 'ScanInProgressError';
+  }
+}
+
+export class LibraryPathError extends Error {
+  readonly code = 'LIBRARY_PATH' as const;
+  constructor(message: string) {
+    super(message);
+    this.name = 'LibraryPathError';
+  }
 }

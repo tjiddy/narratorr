@@ -9,12 +9,13 @@ import {
 } from '../../core/index.js';
 import { DOWNLOAD_CLIENT_REGISTRY } from '../../shared/download-client-registry.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
+import { AdapterCache } from '../utils/adapter-cache.js';
 
 type DownloadClientRow = typeof downloadClients.$inferSelect;
 type NewDownloadClient = typeof downloadClients.$inferInsert;
 
 export class DownloadClientService {
-  private adapters: Map<number, DownloadClientAdapter> = new Map();
+  private adapters = new AdapterCache<DownloadClientAdapter>();
 
   constructor(private db: Db, private log: FastifyBaseLogger) {}
 

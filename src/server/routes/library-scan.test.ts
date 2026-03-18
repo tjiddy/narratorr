@@ -1,6 +1,7 @@
 import { describe, it, expect, type vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
+import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
 
 describe('library-scan routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
@@ -554,7 +555,7 @@ describe('library-scan routes', () => {
 
     it('returns 409 when scan is already in progress', async () => {
       (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
-        .mockRejectedValue(new Error('Scan already in progress'));
+        .mockRejectedValue(new ScanInProgressError());
 
       const res = await app.inject({
         method: 'POST',
@@ -568,7 +569,7 @@ describe('library-scan routes', () => {
 
     it('returns 400 when library path is not configured', async () => {
       (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
-        .mockRejectedValue(new Error('Library path is not configured'));
+        .mockRejectedValue(new LibraryPathError('Library path is not configured'));
 
       const res = await app.inject({
         method: 'POST',
@@ -582,7 +583,7 @@ describe('library-scan routes', () => {
 
     it('returns 400 when library path is not accessible', async () => {
       (services.libraryScan.rescanLibrary as ReturnType<typeof vi.fn>)
-        .mockRejectedValue(new Error('Library path is not accessible: /audiobooks'));
+        .mockRejectedValue(new LibraryPathError('Library path is not accessible: /audiobooks'));
 
       const res = await app.inject({
         method: 'POST',

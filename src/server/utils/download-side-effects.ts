@@ -4,6 +4,7 @@ import type { BookStatus } from '../../shared/schemas/book.js';
 import type { NotifierService } from '../services/notifier.service.js';
 import type { EventHistoryService, CreateEventInput } from '../services/event-history.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
+import { fireAndForget } from './fire-and-forget.js';
 
 // ── emitGrabStarted ─────────────────────────────────────────────────────
 
@@ -125,11 +126,15 @@ export interface NotifyGrabArgs {
 export function notifyGrab(args: NotifyGrabArgs): void {
   const { notifierService, title, size, log } = args;
   if (!notifierService) return;
-  Promise.resolve(notifierService.notify('on_grab', {
-    event: 'on_grab',
-    book: { title },
-    release: { title, size },
-  })).catch((err: unknown) => log.warn(err, 'Failed to send grab notification'));
+  fireAndForget(
+    notifierService.notify('on_grab', {
+      event: 'on_grab',
+      book: { title },
+      release: { title, size },
+    }),
+    log,
+    'Failed to send grab notification',
+  );
 }
 
 // ── recordGrabbedEvent ──────────────────────────────────────────────────

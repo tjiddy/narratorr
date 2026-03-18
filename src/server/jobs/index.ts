@@ -5,6 +5,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { Services } from '../routes/index.js';
 import type { TaskRegistry } from '../services/task-registry.js';
 import { createRetrySearchDeps } from '../services/retry-search.js';
+import { MONITOR_CRON_INTERVAL } from './constants.js';
 import { monitorDownloads } from './monitor.js';
 import { runEnrichment } from './enrichment.js';
 import { runSearchJob } from './search.js';
@@ -27,7 +28,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   const reg = services.taskRegistry;
 
   // Register all jobs with the task registry for the dashboard
-  reg.register('monitor', 'cron', () => monitorDownloads(db, services.downloadClient, services.notifier, log, retryDeps, services.eventBroadcaster), '*/30 * * * * *');
+  reg.register('monitor', 'cron', () => monitorDownloads(db, services.downloadClient, services.notifier, log, retryDeps, services.eventBroadcaster), MONITOR_CRON_INTERVAL);
   reg.register('enrichment', 'cron', () => runEnrichment(db, services.metadata, log), '*/5 * * * *');
   reg.register('import', 'cron', async () => {
     await services.qualityGateOrchestrator.processCompletedDownloads();
@@ -50,7 +51,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   reg.register('discovery', 'timeout', () => runDiscoveryJob(services.discovery, services.settings, log));
 
   // Schedule cron jobs — all go through the registry for lastRun/running tracking
-  scheduleCron(reg, 'monitor', '*/30 * * * * *', log);
+  scheduleCron(reg, 'monitor', MONITOR_CRON_INTERVAL, log);
   scheduleCron(reg, 'enrichment', '*/5 * * * *', log);
   scheduleCron(reg, 'import', '*/60 * * * * *', log);
   scheduleCron(reg, 'housekeeping', '0 0 * * 0', log);

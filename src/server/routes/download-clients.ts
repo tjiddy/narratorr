@@ -3,6 +3,7 @@ import { type z } from 'zod';
 import { type DownloadClientService } from '../services';
 import { createDownloadClientSchema, updateDownloadClientSchema, idParamSchema, type CreateDownloadClientInput } from '../../shared/schemas.js';
 import { registerCrudRoutes } from './crud-routes.js';
+import { sendInternalError } from '../utils/route-helpers.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -38,7 +39,7 @@ export async function downloadClientsRoutes(
         return result;
       } catch (error) {
         request.log.error(error, 'Category fetch from config error');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -59,7 +60,7 @@ export async function downloadClientsRoutes(
         return result;
       } catch (error) {
         request.log.error(error, 'Category fetch error');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );

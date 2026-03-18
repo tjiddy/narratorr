@@ -2,6 +2,8 @@ import { type FastifyInstance } from 'fastify';
 import { type z, type ZodTypeAny } from 'zod';
 import { idParamSchema } from '../../shared/schemas.js';
 import { maskFields, type SecretEntity } from '../utils/secret-codec.js';
+import { sendInternalError } from '../utils/route-helpers.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -48,7 +50,7 @@ export async function registerCrudRoutes(
       return items.map((item) => maskRow(item, secretEntity));
     } catch (error) {
       request.log.error(error, `Failed to fetch ${lower}s`);
-      return reply.status(500).send({ error: 'Internal server error' });
+      return sendInternalError(reply);
     }
   });
 
@@ -66,7 +68,7 @@ export async function registerCrudRoutes(
         return maskRow(item, secretEntity);
       } catch (error) {
         request.log.error(error, `Failed to fetch ${lower}`);
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -83,7 +85,7 @@ export async function registerCrudRoutes(
         return await reply.status(201).send(maskRow(item, secretEntity));
       } catch (error) {
         request.log.error(error, `Failed to create ${lower}`);
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -103,7 +105,7 @@ export async function registerCrudRoutes(
         return maskRow(item, secretEntity);
       } catch (error) {
         request.log.error(error, `Failed to update ${lower}`);
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -124,7 +126,7 @@ export async function registerCrudRoutes(
       } catch (error) {
         request.log.error({ id, error }, `Failed to delete ${lower}`);
         return reply.status(500).send({
-          error: error instanceof Error ? error.message : 'Failed to delete',
+          error: getErrorMessage(error, 'Failed to delete'),
         });
       }
     },
@@ -149,7 +151,7 @@ export async function registerCrudRoutes(
         return result;
       } catch (error) {
         request.log.error(error, `${entityName} config test error`);
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -170,7 +172,7 @@ export async function registerCrudRoutes(
         return result;
       } catch (error) {
         request.log.error(error, `${entityName} test error`);
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );

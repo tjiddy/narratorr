@@ -18,6 +18,7 @@ vi.mock('../config.js', () => ({
 }));
 
 import { config } from '../config.js';
+import { UserExistsError, AuthConfigError, IncorrectPasswordError } from '../services/auth.service.js';
 
 /** Creates a test app with @fastify/cookie + auth routes + a hook that sets request.user. */
 async function createAuthTestApp(services: Services) {
@@ -252,7 +253,7 @@ describe('auth routes', () => {
     });
 
     it('requires auth when user already exists', async () => {
-      (services.auth.createUser as Mock).mockRejectedValue(new Error('User already exists'));
+      (services.auth.createUser as Mock).mockRejectedValue(new UserExistsError());
 
       const res = await app.inject({
         method: 'POST',
@@ -302,7 +303,7 @@ describe('auth routes', () => {
 
     it('rejects forms/basic mode when no credentials exist', async () => {
       (services.auth.updateConfig as Mock).mockRejectedValue(
-        new Error('Cannot enable auth mode without credentials configured'),
+        new AuthConfigError(),
       );
 
       const res = await app.inject({
@@ -319,7 +320,7 @@ describe('auth routes', () => {
   describe('PUT /api/auth/password', () => {
     it('requires auth, validates current password', async () => {
       (services.auth.changePassword as Mock).mockRejectedValue(
-        new Error('Current password is incorrect'),
+        new IncorrectPasswordError(),
       );
 
       const res = await app.inject({

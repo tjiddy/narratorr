@@ -2,6 +2,8 @@ import { type FastifyInstance } from 'fastify';
 import { type z } from 'zod';
 import { type RemotePathMappingService } from '../services/remote-path-mapping.service.js';
 import { createRemotePathMappingSchema, updateRemotePathMappingSchema, idParamSchema, type CreateRemotePathMappingInput, type UpdateRemotePathMappingInput } from '../../shared/schemas.js';
+import { sendInternalError } from '../utils/route-helpers.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -24,7 +26,7 @@ export async function remotePathMappingRoutes(
         return await remotePathMappingService.getAll();
       } catch (error) {
         request.log.error(error, 'Failed to fetch remote path mappings');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -43,7 +45,7 @@ export async function remotePathMappingRoutes(
         return item;
       } catch (error) {
         request.log.error(error, 'Failed to fetch remote path mapping');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -60,7 +62,7 @@ export async function remotePathMappingRoutes(
         return await reply.status(201).send(item);
       } catch (error) {
         request.log.error(error, 'Failed to create remote path mapping');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -80,7 +82,7 @@ export async function remotePathMappingRoutes(
         return item;
       } catch (error) {
         request.log.error(error, 'Failed to update remote path mapping');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -101,7 +103,7 @@ export async function remotePathMappingRoutes(
       } catch (error) {
         request.log.error({ id, error }, 'Failed to delete remote path mapping');
         return reply.status(500).send({
-          error: error instanceof Error ? error.message : 'Failed to delete',
+          error: getErrorMessage(error, 'Failed to delete'),
         });
       }
     },

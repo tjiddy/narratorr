@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { z } from 'zod';
 import type { BlacklistService } from '../services';
+import { getErrorMessage } from '../utils/error-message.js';
 import {
   idParamSchema,
   paginationParamsSchema,
@@ -42,7 +43,7 @@ export async function blacklistRoutes(app: FastifyInstance, blacklistService: Bl
         return await reply.status(201).send(entry);
       } catch (error) {
         request.log.error(error, 'Failed to add to blacklist');
-        const message = error instanceof Error ? error.message : 'Unknown error';
+        const message = getErrorMessage(error);
         return reply.status(500).send({ error: message });
       }
     },
@@ -66,7 +67,7 @@ export async function blacklistRoutes(app: FastifyInstance, blacklistService: Bl
         return updated;
       } catch (error) {
         request.log.error(error, 'Failed to toggle blacklist type');
-        const message = error instanceof Error ? error.message : 'Unknown error';
+        const message = getErrorMessage(error);
         return reply.status(500).send({ error: message });
       }
     },

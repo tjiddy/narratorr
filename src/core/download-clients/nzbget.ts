@@ -5,6 +5,8 @@ import type {
   AddDownloadOptions,
   DownloadProtocol,
 } from './types.js';
+import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 
 export interface NZBGetConfig {
   host: string;
@@ -13,8 +15,6 @@ export interface NZBGetConfig {
   password: string;
   useSsl: boolean;
 }
-
-const REQUEST_TIMEOUT_MS = 15000;
 
 import { z } from 'zod';
 
@@ -146,47 +146,39 @@ export class NZBGetClient implements DownloadClientAdapter {
   }
 
   private async rpc<T>(method: string, params: unknown[] = []): Promise<T> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const response = await fetchWithTimeout(this.rpcUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: this.authHeader,
+      },
+      body: JSON.stringify({
+        method,
+        params,
+      }),
+    }, DEFAULT_REQUEST_TIMEOUT_MS);
 
-    try {
-      const response = await fetch(this.rpcUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: this.authHeader,
-        },
-        body: JSON.stringify({
-          method,
-          params,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const contentType = response.headers.get('content-type') ?? '';
-      if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
-        throw new Error(`Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
-      }
-
-      const json = await response.json();
-      const parsed = nzbgetRpcResponseSchema.safeParse(json);
-
-      if (!parsed.success) {
-        throw new Error(`NZBGet returned unexpected response: ${parsed.error.message}`);
-      }
-
-      if (parsed.data.error) {
-        throw new Error(`NZBGet RPC error: ${parsed.data.error}`);
-      }
-
-      return parsed.data.result as T;
-    } finally {
-      clearTimeout(timeoutId);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
+
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
+      throw new Error(`Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
+    }
+
+    const json = await response.json();
+    const parsed = nzbgetRpcResponseSchema.safeParse(json);
+
+    if (!parsed.success) {
+      throw new Error(`NZBGet returned unexpected response: ${parsed.error.message}`);
+    }
+
+    if (parsed.data.error) {
+      throw new Error(`NZBGet RPC error: ${parsed.data.error}`);
+    }
+
+    return parsed.data.result as T;
   }
 
   private mapGroup(group: NZBGetGroup): DownloadItemInfo {

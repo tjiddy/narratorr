@@ -5,6 +5,7 @@ import type { Services } from './index.js';
 import fsp from 'fs/promises';
 import os from 'os';
 import { getVersion } from '../utils/version.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 export async function healthRoutes(app: FastifyInstance, services: Services, db: Db) {
   // GET /api/system/health/status — detailed health check results
@@ -33,7 +34,7 @@ export async function healthRoutes(app: FastifyInstance, services: Services, db:
       await services.taskRegistry.runTask(request.params.name);
       return { ok: true };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
+      const message = getErrorMessage(error);
       if (message.includes('not found')) {
         return reply.status(404).send({ error: message });
       }

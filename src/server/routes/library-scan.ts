@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import type { LibraryScanService } from '../services/library-scan.service.js';
 import type { ImportConfirmItem } from '../services/library-scan.service.js';
+import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
 import type { MatchJobService } from '../services/match-job.service.js';
+import { getErrorMessage } from '../utils/error-message.js';
 import { type z } from 'zod';
 import {
   scanSingleBodySchema,
@@ -39,7 +41,7 @@ export async function libraryScanRoutes(
       } catch (error) {
         request.log.warn({ error, path }, 'Single book scan failed');
         return reply.status(400).send({
-          error: error instanceof Error ? error.message : 'Scan failed',
+          error: getErrorMessage(error, 'Scan failed'),
         });
       }
     },
@@ -60,7 +62,7 @@ export async function libraryScanRoutes(
       } catch (error) {
         request.log.error(error, 'Single book import failed');
         return reply.status(500).send({
-          error: error instanceof Error ? error.message : 'Import failed',
+          error: getErrorMessage(error, 'Import failed'),
         });
       }
     },
@@ -73,15 +75,15 @@ export async function libraryScanRoutes(
       const result = await libraryScan.rescanLibrary();
       return result;
     } catch (error) {
-      if (error instanceof Error && error.message === 'Scan already in progress') {
+      if (error instanceof ScanInProgressError) {
         return reply.status(409).send({ error: error.message });
       }
-      if (error instanceof Error && (error.message.startsWith('Library path is not') || error.message === 'Library path is not configured')) {
+      if (error instanceof LibraryPathError) {
         return reply.status(400).send({ error: error.message });
       }
       request.log.error(error, 'Library rescan failed');
       return reply.status(500).send({
-        error: error instanceof Error ? error.message : 'Rescan failed',
+        error: getErrorMessage(error, 'Rescan failed'),
       });
     }
   });
@@ -101,7 +103,7 @@ export async function libraryScanRoutes(
       } catch (error) {
         request.log.error(error, 'Directory scan failed');
         return reply.status(500).send({
-          error: error instanceof Error ? error.message : 'Scan failed',
+          error: getErrorMessage(error, 'Scan failed'),
         });
       }
     },
@@ -122,7 +124,7 @@ export async function libraryScanRoutes(
       } catch (error) {
         request.log.error(error, 'Import confirmation failed');
         return reply.status(500).send({
-          error: error instanceof Error ? error.message : 'Import failed',
+          error: getErrorMessage(error, 'Import failed'),
         });
       }
     },

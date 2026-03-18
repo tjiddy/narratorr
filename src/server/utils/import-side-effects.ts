@@ -4,6 +4,8 @@ import type { BookStatus } from '../../shared/schemas/book.js';
 import type { NotifierService } from '../services/notifier.service.js';
 import type { EventHistoryService } from '../services/event-history.service.js';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
+import { fireAndForget } from './fire-and-forget.js';
+import { getErrorMessage } from './error-message.js';
 
 // ── emitDownloadImporting ────────────────────────────────────────────────
 
@@ -80,11 +82,15 @@ export interface NotifyImportCompleteArgs {
 export function notifyImportComplete(args: NotifyImportCompleteArgs): void {
   const { notifierService, bookTitle, authorName, targetPath, fileCount, log } = args;
   if (!notifierService) return;
-  notifierService.notify('on_import', {
-    event: 'on_import',
-    book: { title: bookTitle, author: authorName ?? undefined },
-    import: { libraryPath: targetPath, fileCount },
-  }).catch((err: unknown) => log.warn(err, 'Failed to send import notification'));
+  fireAndForget(
+    notifierService.notify('on_import', {
+      event: 'on_import',
+      book: { title: bookTitle, author: authorName ?? undefined },
+      import: { libraryPath: targetPath, fileCount },
+    }),
+    log,
+    'Failed to send import notification',
+  );
 }
 
 // ── recordImportEvent ───────────────────────────────────────────────────
@@ -149,11 +155,15 @@ export interface NotifyImportFailureArgs {
 export function notifyImportFailure(args: NotifyImportFailureArgs): void {
   const { notifierService, downloadTitle, error, log } = args;
   if (!notifierService) return;
-  notifierService.notify('on_failure', {
-    event: 'on_failure',
-    book: { title: downloadTitle },
-    error: { message: error instanceof Error ? error.message : 'Import failed', stage: 'import' },
-  }).catch((err: unknown) => log.warn(err, 'Failed to send failure notification'));
+  fireAndForget(
+    notifierService.notify('on_failure', {
+      event: 'on_failure',
+      book: { title: downloadTitle },
+      error: { message: getErrorMessage(error, 'Import failed'), stage: 'import' },
+    }),
+    log,
+    'Failed to send failure notification',
+  );
 }
 
 export interface RecordImportFailedEventArgs {
@@ -177,6 +187,6 @@ export function recordImportFailedEvent(args: RecordImportFailedEventArgs): void
     downloadId,
     eventType: 'import_failed',
     source: 'auto',
-    reason: { error: error instanceof Error ? error.message : 'Import failed' },
+    reason: { error: getErrorMessage(error, 'Import failed') },
   }).catch((err: unknown) => log.warn(err, 'Failed to record import_failed event'));
 }

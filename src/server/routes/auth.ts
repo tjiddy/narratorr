@@ -1,7 +1,9 @@
 import { type FastifyInstance } from 'fastify';
 import type { AuthService } from '../services/auth.service.js';
+import { UserExistsError, AuthConfigError, IncorrectPasswordError } from '../services/auth.service.js';
 import { loginSchema, setupCredentialsSchema, changePasswordSchema, updateAuthConfigSchema, type LoginInput, type SetupCredentialsInput, type ChangePasswordInput, type UpdateAuthConfigInput } from '../../shared/schemas.js';
 import { config } from '../config.js';
+import { sendInternalError } from '../utils/route-helpers.js';
 
 export async function authRoutes(app: FastifyInstance, authService: AuthService) {
   // GET /api/auth/status — public, no secrets
@@ -63,7 +65,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
         return { success: true };
       } catch (error) {
         request.log.error(error, 'Login failed');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -93,11 +95,11 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
         request.log.info({ username }, 'User account created');
         return { success: true };
       } catch (error) {
-        if (error instanceof Error && error.message === 'User already exists') {
-          return reply.status(409).send({ error: 'User already exists' });
+        if (error instanceof UserExistsError) {
+          return reply.status(409).send({ error: error.message });
         }
         request.log.error(error, 'Failed to create user');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -108,7 +110,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
       return await authService.getConfig();
     } catch (error) {
       request.log.error(error, 'Failed to fetch auth config');
-      return reply.status(500).send({ error: 'Internal server error' });
+      return sendInternalError(reply);
     }
   });
 
@@ -123,11 +125,11 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
         request.log.info({ updates }, 'Auth config updated');
         return result;
       } catch (error) {
-        if (error instanceof Error && error.message.includes('without credentials')) {
+        if (error instanceof AuthConfigError) {
           return reply.status(400).send({ error: error.message });
         }
         request.log.error(error, 'Failed to update auth config');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -149,11 +151,11 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
         request.log.info({ username: user.username, newUsername }, 'Credentials updated');
         return { success: true };
       } catch (error) {
-        if (error instanceof Error && error.message === 'Current password is incorrect') {
+        if (error instanceof IncorrectPasswordError) {
           return reply.status(400).send({ error: error.message });
         }
         request.log.error(error, 'Failed to change password');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -168,7 +170,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
       return { apiKey: newKey };
     } catch (error) {
       request.log.error(error, 'Failed to regenerate API key');
-      return reply.status(500).send({ error: 'Internal server error' });
+      return sendInternalError(reply);
     }
   });
 }

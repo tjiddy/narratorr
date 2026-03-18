@@ -7,6 +7,8 @@ import type { ImportService } from '../services/import.service.js';
 import type { ImportOrchestrator } from '../services/import-orchestrator.js';
 import { idParamSchema, paginationParamsSchema, DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { z } from 'zod';
+import { sendInternalError } from '../utils/route-helpers.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -46,7 +48,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
         return { data: augmented, total: result.total };
       } catch (error) {
         request.log.error(error, 'Failed to fetch activity');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -57,7 +59,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
       return await downloadService.getActive();
     } catch (error) {
       request.log.error(error, 'Failed to fetch active downloads');
-      return reply.status(500).send({ error: 'Internal server error' });
+      return sendInternalError(reply);
     }
   });
 
@@ -68,7 +70,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
       return await downloadService.getCounts();
     } catch (error) {
       request.log.error(error, 'Failed to fetch activity counts');
-      return reply.status(500).send({ error: 'Internal server error' });
+      return sendInternalError(reply);
     }
   });
 
@@ -88,7 +90,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
         return download;
       } catch (error) {
         request.log.error(error, 'Failed to fetch download');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -110,7 +112,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
         return { success: true };
       } catch (error) {
         request.log.error({ error }, 'Failed to cancel download');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -136,7 +138,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
         }
       } catch (error) {
         request.log.error({ id, error }, 'Retry failed');
-        const message = error instanceof Error ? error.message : 'Unknown error';
+        const message = getErrorMessage(error);
         if (message.includes('not found') || message.includes('no book linked')) return reply.status(404).send({ error: message });
         if (message.includes('not in failed state')) return reply.status(400).send({ error: message });
         return reply.status(500).send({ error: message });

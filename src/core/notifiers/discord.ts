@@ -1,4 +1,5 @@
 import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.js';
+import { EVENT_TITLES } from '../../shared/notification-events.js';
 
 export interface DiscordConfig {
   webhookUrl: string;
@@ -12,15 +13,6 @@ const EVENT_COLORS: Record<NotificationEvent, number> = {
   on_failure: 0xe74c3c,        // red
   on_upgrade: 0x9b59b6,       // purple
   on_health_issue: 0xe67e22,   // dark orange
-};
-
-const EVENT_TITLES: Record<NotificationEvent, string> = {
-  on_grab: 'Release Grabbed',
-  on_download_complete: 'Download Complete',
-  on_import: 'Import Complete',
-  on_failure: 'Failure',
-  on_upgrade: 'Quality Upgrade',
-  on_health_issue: 'Health Issue',
 };
 
 // eslint-disable-next-line complexity -- event-specific embed field building

@@ -6,6 +6,8 @@ import { updateSettingsSchema, type UpdateSettingsInput } from '../../shared/sch
 import type { IndexerService } from '../services/indexer.service.js';
 import { resolveProxyIp } from '../../core/indexers/proxy.js';
 import { maskFields, isSentinel, type SecretEntity } from '../utils/secret-codec.js';
+import { sendInternalError } from '../utils/route-helpers.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 function redactProxyUrl(proxyUrl: string): string {
   try {
@@ -65,7 +67,7 @@ export async function settingsRoutes(
       return maskSettingsResponse(all);
     } catch (error) {
       request.log.error(error, 'Failed to fetch settings');
-      return reply.status(500).send({ error: 'Internal server error' });
+      return sendInternalError(reply);
     }
   });
 
@@ -117,7 +119,7 @@ export async function settingsRoutes(
         return maskSettingsResponse(result);
       } catch (error) {
         request.log.error(error, 'Failed to update settings');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     }
   );
@@ -139,7 +141,7 @@ export async function settingsRoutes(
       } catch (error) {
         request.log.warn({ error }, 'ffmpeg probe failed');
         return reply.status(400).send({
-          error: error instanceof Error ? error.message : 'ffmpeg probe failed',
+          error: getErrorMessage(error, 'ffmpeg probe failed'),
         });
       }
     }
@@ -160,7 +162,7 @@ export async function settingsRoutes(
         request.log.info({ ip, proxyUrl: redactProxyUrl(proxyUrl) }, 'Proxy test successful');
         return { success: true, ip };
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Proxy test failed';
+        const message = getErrorMessage(error, 'Proxy test failed');
         request.log.warn({ error, proxyUrl: redactProxyUrl(request.body.proxyUrl) }, 'Proxy test failed');
         return reply.status(200).send({ success: false, message });
       }

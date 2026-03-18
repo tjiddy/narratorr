@@ -4,6 +4,7 @@ import { type DownloadOrchestrator } from '../services/download-orchestrator.js'
 import { type BlacklistService } from '../services';
 import { type SettingsService } from '../services';
 import { isMultiPartUsenetPost } from '../../core/utils/index.js';
+import { getErrorMessage } from '../utils/error-message.js';
 import { filterAndRankResults } from '../services/search-pipeline.js';
 import {
   searchQuerySchema,
@@ -101,7 +102,7 @@ export async function searchRoutes(
         return await reply.status(201).send(download);
       } catch (error) {
         request.log.error(error, 'Grab failed');
-        const message = error instanceof Error ? error.message : 'Unknown error';
+        const message = getErrorMessage(error);
         return reply.status(500).send({ error: message });
       }
     }

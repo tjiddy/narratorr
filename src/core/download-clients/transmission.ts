@@ -1,5 +1,7 @@
 import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadProtocol } from './types.js';
 import { transmissionRpcResponseSchema } from './schemas.js';
+import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { DEFAULT_REQUEST_TIMEOUT_MS } from '../utils/constants.js';
 
 export interface TransmissionConfig {
   host: string;
@@ -8,8 +10,6 @@ export interface TransmissionConfig {
   password: string;
   useSsl: boolean;
 }
-
-const REQUEST_TIMEOUT_MS = 15000;
 
 const TORRENT_FIELDS = [
   'hashString',
@@ -162,61 +162,53 @@ export class TransmissionClient implements DownloadClientAdapter {
   }
 
   private async rpc(method: string, args: Record<string, unknown>, retried = false): Promise<RpcResponse> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const response = await fetchWithTimeout(`${this.baseUrl}/transmission/rpc`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: this.authHeader,
+        'X-Transmission-Session-Id': this.sessionId,
+      },
+      body: JSON.stringify({ method, arguments: args }),
+    }, DEFAULT_REQUEST_TIMEOUT_MS);
 
-    try {
-      const response = await fetch(`${this.baseUrl}/transmission/rpc`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: this.authHeader,
-          'X-Transmission-Session-Id': this.sessionId,
-        },
-        body: JSON.stringify({ method, arguments: args }),
-        signal: controller.signal,
-      });
-
-      if (response.status === 409 && !retried) {
-        const newSessionId = response.headers.get('X-Transmission-Session-Id');
-        if (newSessionId) {
-          this.sessionId = newSessionId;
-        }
-        return await this.rpc(method, args, true);
+    if (response.status === 409 && !retried) {
+      const newSessionId = response.headers.get('X-Transmission-Session-Id');
+      if (newSessionId) {
+        this.sessionId = newSessionId;
       }
-
-      if (response.status === 409) {
-        throw new Error('Session ID rotation failed: repeated 409');
-      }
-
-      if (response.status === 401) {
-        throw new Error('Authentication failed: invalid credentials');
-      }
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const contentType = response.headers.get('content-type') ?? '';
-      if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
-        throw new Error(`Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
-      }
-
-      const raw = await response.json();
-      const parsed = transmissionRpcResponseSchema.safeParse(raw);
-      if (!parsed.success) {
-        throw new Error(`Transmission returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
-      }
-      const data = parsed.data as RpcResponse;
-
-      if (data.result !== 'success') {
-        throw new Error(`RPC error: ${data.result}`);
-      }
-
-      return data;
-    } finally {
-      clearTimeout(timeoutId);
+      return this.rpc(method, args, true);
     }
+
+    if (response.status === 409) {
+      throw new Error('Session ID rotation failed: repeated 409');
+    }
+
+    if (response.status === 401) {
+      throw new Error('Authentication failed: invalid credentials');
+    }
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('application/json') && !contentType.includes('text/json')) {
+      throw new Error(`Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
+    }
+
+    const raw = await response.json();
+    const parsed = transmissionRpcResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new Error(`Transmission returned unexpected response: ${parsed.error.issues[0]?.message ?? 'unknown'}`);
+    }
+    const data = parsed.data as RpcResponse;
+
+    if (data.result !== 'success') {
+      throw new Error(`RPC error: ${data.result}`);
+    }
+
+    return data;
   }
 
   private mapTorrent(t: TransmissionTorrent): DownloadItemInfo {

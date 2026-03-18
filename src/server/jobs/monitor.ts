@@ -1,9 +1,10 @@
 import cron from 'node-cron';
+import { MONITOR_CRON_INTERVAL } from './constants.js';
 import { eq, inArray, and, ne } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '../../db/schema.js';
-import { getInProgressStatuses } from '../../shared/download-status-registry.js';
+import { getInProgressStatuses, getClientPolledStatuses } from '../../shared/download-status-registry.js';
 import type { DownloadClientService } from '../services';
 import type { NotifierService } from '../services';
 import { retrySearch, type RetrySearchDeps } from '../services/retry-search.js';
@@ -11,6 +12,7 @@ import type { BlacklistService } from '../services';
 import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import { revertBookStatus } from '../utils/book-status.js';
+import { fireAndForget } from '../utils/fire-and-forget.js';
 
 export interface MonitorRetryDeps {
   blacklistService: BlacklistService;
@@ -26,7 +28,7 @@ export function startMonitorJob(
   broadcaster?: EventBroadcasterService,
 ) {
   // Run every 30 seconds
-  cron.schedule('*/30 * * * * *', async () => {
+  cron.schedule(MONITOR_CRON_INTERVAL, async () => {
     try {
       await monitorDownloads(db, downloadClientService, notifierService, log, retryDeps, broadcaster);
     } catch (error) {
@@ -45,11 +47,10 @@ export async function monitorDownloads(
   retryDeps?: MonitorRetryDeps,
   broadcaster?: EventBroadcasterService,
 ) {
-  const activeStatuses = ['downloading', 'queued', 'paused'] as const;
   const activeDownloads = await db
     .select()
     .from(downloads)
-    .where(inArray(downloads.status, [...activeStatuses]));
+    .where(inArray(downloads.status, getClientPolledStatuses()));
 
   if (activeDownloads.length === 0) {
     log.debug('No active downloads to monitor');
@@ -112,11 +113,15 @@ async function handleMissingItem(
     await recoverBookStatus(db, download.bookId, download.id, log);
   }
 
-  Promise.resolve(notifierService.notify('on_failure', {
-    event: 'on_failure',
-    book: { title: download.title },
-    error: { message: 'Download not found in download client', stage: 'download' },
-  })).catch((err) => log.warn(err, 'Failed to send failure notification'));
+  fireAndForget(
+    notifierService.notify('on_failure', {
+      event: 'on_failure',
+      book: { title: download.title },
+      error: { message: 'Download not found in download client', stage: 'download' },
+    }),
+    log,
+    'Failed to send failure notification',
+  );
 }
 
 /** Update progress, emit SSE events, handle status transitions. */
@@ -204,11 +209,15 @@ function handleCompletionNotification(
 
   log.info({ bookId: download.bookId, downloadId: download.id }, 'Download completed, queued for import');
 
-  Promise.resolve(notifierService.notify('on_download_complete', {
-    event: 'on_download_complete',
-    book: { title: download.title },
-    download: { path: item.savePath, size: item.size },
-  })).catch((err) => log.warn(err, 'Failed to send download complete notification'));
+  fireAndForget(
+    notifierService.notify('on_download_complete', {
+      event: 'on_download_complete',
+      book: { title: download.title },
+      download: { path: item.savePath, size: item.size },
+    }),
+    log,
+    'Failed to send download complete notification',
+  );
 }
 
 /** Blacklist a release on infrastructure error if retry deps are available. */

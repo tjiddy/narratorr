@@ -2,6 +2,7 @@ import { type FastifyInstance } from 'fastify';
 import type { ImportListService } from '../services/import-list.service.js';
 import { createImportListSchema, updateImportListSchema, previewImportListSchema } from '../../shared/schemas.js';
 import { registerCrudRoutes } from './crud-routes.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 export async function importListsRoutes(app: FastifyInstance, importListService: ImportListService) {
   await registerCrudRoutes(app, {
@@ -51,7 +52,7 @@ export async function importListsRoutes(app: FastifyInstance, importListService:
       } catch (error) {
         request.log.error(error, 'Import list preview failed');
         return reply.status(500).send({
-          error: error instanceof Error ? error.message : 'Preview failed',
+          error: getErrorMessage(error, 'Preview failed'),
         });
       }
     },

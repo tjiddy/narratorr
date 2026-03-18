@@ -12,12 +12,13 @@ import {
 } from '../../core/index.js';
 import type { SettingsService } from './settings.service.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
+import { AdapterCache } from '../utils/adapter-cache.js';
 
 type IndexerRow = typeof indexers.$inferSelect;
 type NewIndexer = typeof indexers.$inferInsert;
 
 export class IndexerService {
-  private adapters: Map<number, IndexerAdapter> = new Map();
+  private adapters = new AdapterCache<IndexerAdapter>();
 
   constructor(
     private db: Db,

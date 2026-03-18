@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { EventHistoryService } from '../services';
 import { idParamSchema, eventHistoryQuerySchema, paginationParamsSchema, DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { z } from 'zod';
+import { sendInternalError } from '../utils/route-helpers.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -34,7 +35,7 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
         return await eventHistoryService.getAll({ eventType, search }, pagination);
       } catch (error) {
         request.log.error(error, 'Failed to fetch event history');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -50,7 +51,7 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
         return await eventHistoryService.getByBookId(bookId);
       } catch (error) {
         request.log.error(error, 'Failed to fetch book event history');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -66,7 +67,7 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
         return { success: true };
       } catch (error) {
         request.log.error(error, 'Failed to delete event');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );
@@ -83,7 +84,7 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
         return { deleted };
       } catch (error) {
         request.log.error(error, 'Failed to bulk delete events');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     },
   );

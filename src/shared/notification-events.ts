@@ -24,6 +24,16 @@ export const EVENT_LABELS: Record<string, string> = {
   on_health_issue: 'Health Issue',
 } satisfies Record<NotificationEvent, string>;
 
+/** Descriptive event titles for notification adapters. */
+export const EVENT_TITLES: Record<NotificationEvent, string> = {
+  on_grab: 'Release Grabbed',
+  on_download_complete: 'Download Complete',
+  on_import: 'Import Complete',
+  on_failure: 'Failure',
+  on_upgrade: 'Quality Upgrade',
+  on_health_issue: 'Health Issue',
+};
+
 export interface EventPayload {
   event: NotificationEvent;
   book?: {

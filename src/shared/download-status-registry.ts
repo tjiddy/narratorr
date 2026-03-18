@@ -124,3 +124,14 @@ export function getTerminalStatuses(): DownloadStatus[] {
 export function getCompletedStatuses(): DownloadStatus[] {
   return getTerminalStatuses().filter((s) => s !== 'failed');
 }
+
+/**
+ * Statuses that should be polled from external download clients.
+ * Excludes internal pipeline statuses (checking, pending_review, processing_queued, importing)
+ * that are managed by quality-gate/import flows, not download client APIs.
+ */
+const CLIENT_POLLED_STATUSES: DownloadStatus[] = ['downloading', 'queued', 'paused'];
+
+export function getClientPolledStatuses(): DownloadStatus[] {
+  return CLIENT_POLLED_STATUSES;
+}

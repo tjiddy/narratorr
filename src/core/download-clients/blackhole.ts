@@ -1,6 +1,7 @@
 import { writeFile, access, constants } from 'node:fs/promises';
 import { join, basename } from 'node:path';
 import type { DownloadClientAdapter, DownloadItemInfo, AddDownloadOptions, DownloadProtocol } from './types.js';
+import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 
 export interface BlackholeConfig {
   watchDir: string;
@@ -29,23 +30,16 @@ export class BlackholeClient implements DownloadClientAdapter {
       return null;
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-    try {
-      const response = await fetch(url, { signal: controller.signal });
-      if (!response.ok) {
-        throw new Error(`Failed to download file: HTTP ${response.status}`);
-      }
-
-      const buffer = Buffer.from(await response.arrayBuffer());
-      const filename = this.resolveFilename(url);
-      const filePath = join(this.config.watchDir, filename);
-
-      await writeFile(filePath, buffer);
-    } finally {
-      clearTimeout(timeoutId);
+    const response = await fetchWithTimeout(url, {}, REQUEST_TIMEOUT_MS);
+    if (!response.ok) {
+      throw new Error(`Failed to download file: HTTP ${response.status}`);
     }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const filename = this.resolveFilename(url);
+    const filePath = join(this.config.watchDir, filename);
+
+    await writeFile(filePath, buffer);
 
     // No external ID — Blackhole downloads are not tracked
     return null;

@@ -8,6 +8,7 @@ import {
   type ProwlarrSyncApplyInput,
 } from '../../shared/schemas.js';
 import { maskFields, resolveSentinelFields } from '../utils/secret-codec.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 interface TestBody {
   url: string;
@@ -30,7 +31,7 @@ export async function prowlarrRoutes(
         request.log.error(error, 'Prowlarr connection test failed');
         return reply.status(500).send({
           success: false,
-          message: error instanceof Error ? error.message : 'Connection test failed',
+          message: getErrorMessage(error, 'Connection test failed'),
         });
       }
     },
@@ -73,7 +74,7 @@ export async function prowlarrRoutes(
     } catch (error) {
       request.log.error(error, 'Prowlarr preview failed');
       return reply.status(500).send({
-        error: error instanceof Error ? error.message : 'Preview failed',
+        error: getErrorMessage(error, 'Preview failed'),
       });
     }
   });
@@ -95,7 +96,7 @@ export async function prowlarrRoutes(
       } catch (error) {
         request.log.error(error, 'Prowlarr sync failed');
         return reply.status(500).send({
-          error: error instanceof Error ? error.message : 'Sync failed',
+          error: getErrorMessage(error, 'Sync failed'),
         });
       }
     },

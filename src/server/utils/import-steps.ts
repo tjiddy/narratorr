@@ -7,6 +7,7 @@ import { downloads, books } from '../../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
+import { getErrorMessage } from './error-message.js';
 import type { TaggingService } from '../services/tagging.service.js';
 
 // Re-export side-effect functions for backwards compatibility
@@ -331,7 +332,7 @@ export async function handleImportFailure(args: HandleImportFailureArgs): Promis
   // Revert download to failed
   await db.update(downloads).set({
     status: 'failed',
-    errorMessage: error instanceof Error ? error.message : 'Import failed',
+    errorMessage: getErrorMessage(error, 'Import failed'),
   }).where(eq(downloads.id, downloadId));
 
   // Recover book status

@@ -2,6 +2,7 @@ import { type FastifyInstance } from 'fastify';
 import { type z } from 'zod';
 import { type MetadataService } from '../services/metadata.service.js';
 import { metadataSearchQuerySchema, providerIdParamSchema, type MetadataSearchQuery } from '../../shared/schemas.js';
+import { sendInternalError } from '../utils/route-helpers.js';
 
 type ProviderIdParam = z.infer<typeof providerIdParamSchema>;
 
@@ -21,7 +22,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
         return await metadataService.search(q);
       } catch (error) {
         request.log.error(error, 'Metadata search failed');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     }
   );
@@ -47,7 +48,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
         return author;
       } catch (error) {
         request.log.error(error, 'Failed to fetch author metadata');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     }
   );
@@ -67,7 +68,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
         return await metadataService.getAuthorBooks(id);
       } catch (error) {
         request.log.error(error, 'Failed to fetch author books');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     }
   );
@@ -93,7 +94,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
         return book;
       } catch (error) {
         request.log.error(error, 'Failed to fetch book metadata');
-        return reply.status(500).send({ error: 'Internal server error' });
+        return sendInternalError(reply);
       }
     }
   );
@@ -104,7 +105,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
       return await metadataService.testProviders();
     } catch (error) {
       request.log.error(error, 'Metadata provider test failed');
-      return reply.status(500).send({ error: 'Internal server error' });
+      return sendInternalError(reply);
     }
   });
 
@@ -114,7 +115,7 @@ export async function metadataRoutes(app: FastifyInstance, metadataService: Meta
       return metadataService.getProviders();
     } catch (error) {
       request.log.error(error, 'Failed to fetch metadata providers');
-      return reply.status(500).send({ error: 'Internal server error' });
+      return sendInternalError(reply);
     }
   });
 }

@@ -6,6 +6,8 @@ import { RecyclingBinError } from '../services/recycling-bin.service.js';
 import { RestoreUploadError } from '../services/backup.service.js';
 import { QualityGateServiceError } from '../services/quality-gate.service.js';
 import { EventHistoryServiceError } from '../services/event-history.service.js';
+import { UserExistsError, AuthConfigError, IncorrectPasswordError } from '../services/auth.service.js';
+import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
 
 /** Maps typed error codes to HTTP status codes. */
 // eslint-disable-next-line complexity -- linear error-class→status mapping, one block per service
@@ -54,6 +56,12 @@ function getStatusForError(error: unknown): number | null {
       case 'NO_DOWNLOAD': return 400;
     }
   }
+
+  if (error instanceof UserExistsError) return 409;
+  if (error instanceof AuthConfigError) return 400;
+  if (error instanceof IncorrectPasswordError) return 400;
+  if (error instanceof ScanInProgressError) return 409;
+  if (error instanceof LibraryPathError) return 400;
 
   return null;
 }

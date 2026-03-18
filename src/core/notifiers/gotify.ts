@@ -1,19 +1,13 @@
 import type { NotifierAdapter, NotificationEvent, EventPayload } from './types.js';
 import { formatEventMessage } from './types.js';
+import { EVENT_TITLES } from '../../shared/notification-events.js';
+import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
+import { NOTIFIER_TIMEOUT_MS } from '../utils/constants.js';
 
 export interface GotifyConfig {
   serverUrl: string;
   token: string;
 }
-
-const EVENT_TITLES: Record<NotificationEvent, string> = {
-  on_grab: 'Release Grabbed',
-  on_download_complete: 'Download Complete',
-  on_import: 'Import Complete',
-  on_failure: 'Failure',
-  on_upgrade: 'Quality Upgrade',
-  on_health_issue: 'Health Issue',
-};
 
 export class GotifyNotifier implements NotifierAdapter {
   readonly type = 'gotify';
@@ -29,15 +23,14 @@ export class GotifyNotifier implements NotifierAdapter {
     };
 
     try {
-      const response = await fetch(url, {
+      const response = await fetchWithTimeout(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Gotify-Key': this.config.token,
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(10_000),
-      });
+      }, NOTIFIER_TIMEOUT_MS);
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
