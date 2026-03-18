@@ -131,7 +131,7 @@ Go to **Settings > General**:
 
 | Layer | Technology |
 |-------|------------|
-| Monorepo | Turborepo + pnpm |
+| Package Manager | pnpm |
 | Backend | Node.js 24, Fastify |
 | Database | SQLite (libSQL) + Drizzle ORM |
 | Frontend | React 18 + Vite |

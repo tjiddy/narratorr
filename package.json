@@ -2,6 +2,8 @@
   "name": "narratorr",
   "version": "0.1.0",
   "private": true,
+  "license": "GPL-3.0-only",
+  "author": "Todd Johnson",
   "type": "module",
   "scripts": {
     "gitea": "node scripts/gitea.ts",
