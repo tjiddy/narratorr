@@ -1,13 +1,11 @@
 import { BookMetadataSchema, AuthorMetadataSchema } from './schemas.js';
 import { RateLimitError, TransientError } from './errors.js';
 import { normalizeGenres } from './genres.js';
+import { AUDNEXUS_TIMEOUT_MS } from '../utils/constants.js';
 import type {
-  MetadataProvider,
+  MetadataEnrichmentProvider,
   BookMetadata,
   AuthorMetadata,
-  SeriesMetadata,
-  MetadataSearchResults,
-  SearchBooksOptions,
 } from './types.js';
 
 export interface AudnexusConfig {
@@ -15,9 +13,9 @@ export interface AudnexusConfig {
 }
 
 const BASE_URL = 'https://api.audnex.us';
-const REQUEST_TIMEOUT_MS = 15000;
+const REQUEST_TIMEOUT_MS = AUDNEXUS_TIMEOUT_MS;
 
-export class AudnexusProvider implements MetadataProvider {
+export class AudnexusProvider implements MetadataEnrichmentProvider {
   readonly name = 'Audnexus';
   readonly type = 'audnexus';
 
@@ -25,52 +23,6 @@ export class AudnexusProvider implements MetadataProvider {
 
   constructor(config?: AudnexusConfig) {
     this.region = config?.region ?? 'us';
-  }
-
-  async search(query: string): Promise<MetadataSearchResults> {
-    const authors = await this.searchAuthors(query);
-
-    // Audnexus has no book search or author-books endpoint,
-    // so search only returns author results.
-    return {
-      books: [],
-      authors,
-      series: [],
-    };
-  }
-
-  async searchBooks(_query: string, _options?: SearchBooksOptions): Promise<BookMetadata[]> {
-    // Audnexus does not support book search — use getBook(id) for direct lookup
-    return [];
-  }
-
-  async searchAuthors(query: string): Promise<AuthorMetadata[]> {
-    const data = await this.fetchJson<AudnexusAuthorSearchResult[]>(
-      `/authors?name=${encodeURIComponent(query)}&region=${this.region}`,
-    );
-
-    if (!Array.isArray(data)) return [];
-
-    const seen = new Set<string>();
-    const authors: AuthorMetadata[] = [];
-    for (const item of data) {
-      // Audnexus returns duplicates; deduplicate by ASIN or name
-      const key = item.asin ?? item.name;
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-
-      const mapped = mapAuthor(item);
-      const result = AuthorMetadataSchema.safeParse(mapped);
-      if (result.success) {
-        authors.push(result.data);
-      }
-    }
-    return authors;
-  }
-
-  async searchSeries(_query: string): Promise<SeriesMetadata[]> {
-    // Audnexus does not support series search directly
-    return [];
   }
 
   async getBook(id: string): Promise<BookMetadata | null> {
@@ -95,44 +47,6 @@ export class AudnexusProvider implements MetadataProvider {
     const mapped = mapAuthor(data);
     const result = AuthorMetadataSchema.safeParse(mapped);
     return result.success ? result.data : null;
-  }
-
-  async getAuthorBooks(_id: string): Promise<BookMetadata[]> {
-    // Audnexus does not have an author-books endpoint
-    return [];
-  }
-
-  async getSeries(_id: string): Promise<SeriesMetadata | null> {
-    // Audnexus does not support series lookup directly
-    return null;
-  }
-
-  async test(): Promise<{ success: boolean; message?: string }> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-    try {
-      const response = await fetch(
-        `${BASE_URL}/authors?name=test&region=${this.region}`,
-        { signal: controller.signal },
-      );
-
-      if (response.ok) {
-        return { success: true, message: 'Connected to Audnexus API' };
-      }
-
-      return {
-        success: false,
-        message: `HTTP ${response.status}: ${response.statusText}`,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        message: error instanceof Error ? error.message : 'Connection failed',
-      };
-    } finally {
-      clearTimeout(timeoutId);
-    }
   }
 
   private async fetchJson<T>(path: string): Promise<T | null> {

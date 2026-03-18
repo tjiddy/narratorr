@@ -1,20 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { RateLimitError, TransientError } from '../../core/index.js';
+import { RateLimitError, TransientError, METADATA_SEARCH_PROVIDER_FACTORIES } from '../../core/index.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { MetadataService } from './metadata.service.js';
 
+const mockFactories = vi.mocked(METADATA_SEARCH_PROVIDER_FACTORIES);
+
 const mockAudibleProvider = {
   name: 'Audible.com',
   type: 'audible',
-  search: vi.fn().mockResolvedValue({ books: [], authors: [], series: [] }),
   searchAuthors: vi.fn().mockResolvedValue([]),
   searchBooks: vi.fn().mockResolvedValue([]),
-  getAuthor: vi.fn().mockResolvedValue(null),
-  getAuthorBooks: vi.fn().mockResolvedValue([]),
-  getBook: vi.fn().mockResolvedValue(null),
-  getSeries: vi.fn().mockResolvedValue(null),
   searchSeries: vi.fn().mockResolvedValue([]),
+  getBook: vi.fn().mockResolvedValue(null),
   test: vi.fn().mockResolvedValue({ success: true }),
 };
 
@@ -30,7 +28,9 @@ vi.mock('../../core/index.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../core/index.js')>();
   return {
     ...actual,
-    AudibleProvider: vi.fn().mockImplementation(function () { return mockAudibleProvider; }),
+    METADATA_SEARCH_PROVIDER_FACTORIES: {
+      audible: vi.fn().mockImplementation(function () { return mockAudibleProvider; }),
+    },
     AudnexusProvider: vi.fn().mockImplementation(function () { return mockAudnexus; }),
   };
 });
@@ -42,210 +42,112 @@ describe('MetadataService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Reset mock return values
-    mockAudibleProvider.search.mockResolvedValue({ books: [], authors: [], series: [] });
     mockAudibleProvider.searchAuthors.mockResolvedValue([]);
     mockAudibleProvider.searchBooks.mockResolvedValue([]);
-    mockAudibleProvider.getAuthor.mockResolvedValue(null);
-    mockAudibleProvider.getAuthorBooks.mockResolvedValue([]);
+    mockAudibleProvider.searchSeries.mockResolvedValue([]);
     mockAudibleProvider.getBook.mockResolvedValue(null);
-    mockAudibleProvider.getSeries.mockResolvedValue(null);
     mockAudibleProvider.test.mockResolvedValue({ success: true });
     mockAudnexus.getBook.mockResolvedValue(null);
     mockAudnexus.getAuthor.mockResolvedValue(null);
+
     mockLog = createMockLogger();
     service = new MetadataService(inject<FastifyBaseLogger>(mockLog));
   });
 
   describe('search', () => {
-    it('delegates to the primary provider (Audible)', async () => {
-      const result = await service.search('Brandon Sanderson');
-      expect(result).toEqual({ books: [], authors: [], series: [] });
-      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('Brandon Sanderson');
-      expect(mockAudibleProvider.searchAuthors).toHaveBeenCalledWith('Brandon Sanderson');
-      expect(mockAudibleProvider.searchSeries).toHaveBeenCalledWith('Brandon Sanderson');
-    });
-
-    it('returns empty results on error', async () => {
-      mockAudibleProvider.searchBooks.mockRejectedValueOnce(new Error('Network error'));
-
-      const result = await service.search('test');
+    it('calls searchBooks, searchAuthors, searchSeries on search provider', async () => {
+      const result = await service.search('test query');
       expect(result.books).toEqual([]);
-      expect(mockAudibleProvider.searchAuthors).toHaveBeenCalled();
-      expect(mockAudibleProvider.searchSeries).toHaveBeenCalled();
+      expect(result.authors).toEqual([]);
+      expect(result.series).toEqual([]);
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('test query');
+      expect(mockAudibleProvider.searchAuthors).toHaveBeenCalledWith('test query');
+      expect(mockAudibleProvider.searchSeries).toHaveBeenCalledWith('test query');
     });
 
-    it('throttles each sub-search individually to prevent bursting', async () => {
-      const callOrder: string[] = [];
-      mockAudibleProvider.searchBooks.mockImplementation(() => { callOrder.push('books'); return Promise.resolve([]); });
-      mockAudibleProvider.searchAuthors.mockImplementation(() => { callOrder.push('authors'); return Promise.resolve([]); });
-      mockAudibleProvider.searchSeries.mockImplementation(() => { callOrder.push('series'); return Promise.resolve([]); });
+    it('returns results from search provider', async () => {
+      const mockBooks = [{ title: 'Book A' }];
+      const mockAuthors = [{ name: 'Author A' }];
+      const mockSeries = [{ name: 'Series A' }];
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce(mockBooks);
+      mockAudibleProvider.searchAuthors.mockResolvedValueOnce(mockAuthors);
+      mockAudibleProvider.searchSeries.mockResolvedValueOnce(mockSeries);
 
-      await service.search('test');
-
-      expect(callOrder).toEqual(['books', 'authors', 'series']);
-      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledTimes(1);
-      expect(mockAudibleProvider.searchAuthors).toHaveBeenCalledTimes(1);
-      expect(mockAudibleProvider.searchSeries).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('searchAuthors', () => {
-    it('delegates to the provider', async () => {
-      const result = await service.searchAuthors('Brandon');
-      expect(result).toEqual([]);
-    });
-
-    it('returns empty array on error', async () => {
-      mockAudibleProvider.searchAuthors.mockRejectedValueOnce(new Error('fail'));
-
-      const result = await service.searchAuthors('test');
-      expect(result).toEqual([]);
+      const result = await service.search('query');
+      expect(result.books).toEqual(mockBooks);
+      expect(result.authors).toEqual(mockAuthors);
+      expect(result.series).toEqual(mockSeries);
     });
   });
 
   describe('searchBooks', () => {
-    it('delegates to the provider', async () => {
-      const result = await service.searchBooks('Way of Kings');
-      expect(result).toEqual([]);
+    it('delegates to search provider', async () => {
+      const mockBooks = [{ title: 'Test Book' }];
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce(mockBooks);
+
+      const result = await service.searchBooks('query');
+      expect(result).toEqual(mockBooks);
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('query');
     });
   });
 
-  describe('getAuthor', () => {
-    it('routes to Audnexus and returns author when found', async () => {
-      const mockAuthor = { name: 'Brandon Sanderson', asin: 'B001IGFHW6' };
-      mockAudnexus.getAuthor.mockResolvedValueOnce(mockAuthor);
+  describe('searchAuthors', () => {
+    it('delegates to search provider', async () => {
+      const mockAuthors = [{ name: 'Test Author' }];
+      mockAudibleProvider.searchAuthors.mockResolvedValueOnce(mockAuthors);
 
-      const result = await service.getAuthor('B001IGFHW6');
-      expect(result).toEqual(mockAuthor);
-      expect(mockAudnexus.getAuthor).toHaveBeenCalledWith('B001IGFHW6');
-      expect(mockAudibleProvider.getAuthor).not.toHaveBeenCalled();
-    });
-
-    it('returns null when Audnexus has no data', async () => {
-      const result = await service.getAuthor('UNKNOWN');
-      expect(result).toBeNull();
-      expect(mockAudnexus.getAuthor).toHaveBeenCalledWith('UNKNOWN');
-    });
-
-    it('returns null on Audnexus error', async () => {
-      mockAudnexus.getAuthor.mockRejectedValueOnce(new Error('Network error'));
-
-      const result = await service.getAuthor('B001IGFHW6');
-      expect(result).toBeNull();
-    });
-
-    it('returns null when Audnexus is rate limited', async () => {
-      mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(60000, 'Audnexus'));
-      await expect(service.enrichBook('B000FIRST')).rejects.toThrow(RateLimitError);
-
-      const result = await service.getAuthor('B001IGFHW6');
-      expect(result).toBeNull();
-      expect(mockAudnexus.getAuthor).not.toHaveBeenCalled();
+      const result = await service.searchAuthors('query');
+      expect(result).toEqual(mockAuthors);
+      expect(mockAudibleProvider.searchAuthors).toHaveBeenCalledWith('query');
     });
   });
 
   describe('getBook', () => {
-    it('returns null when not found', async () => {
-      const result = await service.getBook('328491');
-      expect(result).toBeNull();
-    });
-
-    it('returns book when found', async () => {
-      const mockBook = { title: 'The Way of Kings', authors: [] };
+    it('delegates to search provider', async () => {
+      const mockBook = { title: 'The Book' };
       mockAudibleProvider.getBook.mockResolvedValueOnce(mockBook);
 
-      const result = await service.getBook('328491');
+      const result = await service.getBook('B123');
       expect(result).toEqual(mockBook);
+      expect(mockAudibleProvider.getBook).toHaveBeenCalledWith('B123');
+    });
+  });
+
+  describe('getAuthor', () => {
+    it('delegates to Audnexus enrichment provider', async () => {
+      const mockAuthor = { name: 'Test Author', asin: 'B001' };
+      mockAudnexus.getAuthor.mockResolvedValueOnce(mockAuthor);
+
+      const result = await service.getAuthor('B001');
+      expect(result).toEqual(mockAuthor);
+      expect(mockAudnexus.getAuthor).toHaveBeenCalledWith('B001');
     });
   });
 
   describe('enrichBook', () => {
-    it('returns book metadata from Audnexus on success', async () => {
-      const mockBookData = {
-        title: 'The Way of Kings',
-        authors: [{ name: 'Brandon Sanderson' }],
-        narrators: ['Michael Kramer', 'Kate Reading'],
-        duration: 2700,
-      };
-      mockAudnexus.getBook.mockResolvedValueOnce(mockBookData);
+    it('delegates to Audnexus enrichment provider', async () => {
+      const mockEnriched = { title: 'Enriched Book', narrators: ['Jim Dale'], duration: 600 };
+      mockAudnexus.getBook.mockResolvedValueOnce(mockEnriched);
 
-      const result = await service.enrichBook('B003P2WO5E');
-      expect(result).toEqual(mockBookData);
-      expect(mockAudnexus.getBook).toHaveBeenCalledWith('B003P2WO5E');
-    });
-
-    it('returns null when Audnexus has no data', async () => {
-      const result = await service.enrichBook('B000UNKNOWN');
-      expect(result).toBeNull();
-    });
-
-    it('returns null on Audnexus error', async () => {
-      mockAudnexus.getBook.mockRejectedValueOnce(new Error('500 Internal Server Error'));
-
-      const result = await service.enrichBook('B000BROKEN');
-      expect(result).toBeNull();
-    });
-
-    it('returns partial data with only narrators (no duration)', async () => {
-      mockAudnexus.getBook.mockResolvedValueOnce({
-        title: 'Partial',
-        authors: [{ name: 'Author' }],
-        narrators: ['Jim Dale'],
-      });
-
-      const result = await service.enrichBook('B_PARTIAL');
-      expect(result).not.toBeNull();
-      expect(result!.narrators).toEqual(['Jim Dale']);
-      expect(result!.duration).toBeUndefined();
-    });
-
-    it('returns data with empty narrators array', async () => {
-      mockAudnexus.getBook.mockResolvedValueOnce({
-        title: 'Empty Narr',
-        authors: [{ name: 'Author' }],
-        narrators: [],
-        duration: 480,
-      });
-
-      const result = await service.enrichBook('B_EMPTY');
-      expect(result).not.toBeNull();
-      expect(result!.narrators).toEqual([]);
-      expect(result!.duration).toBe(480);
-    });
-
-    it('returns data with only duration (no narrators)', async () => {
-      mockAudnexus.getBook.mockResolvedValueOnce({
-        title: 'Duration Only',
-        authors: [{ name: 'Author' }],
-        duration: 300,
-      });
-
-      const result = await service.enrichBook('B_DUR_ONLY');
-      expect(result).not.toBeNull();
-      expect(result!.narrators).toBeUndefined();
-      expect(result!.duration).toBe(300);
+      const result = await service.enrichBook('B000TEST');
+      expect(result).toEqual(mockEnriched);
+      expect(mockAudnexus.getBook).toHaveBeenCalledWith('B000TEST');
     });
   });
 
-  describe('provider registration', () => {
-    it('registers Audible as the only provider', () => {
-      const providers = service.getProviders();
-      expect(providers).toHaveLength(1);
-      expect(providers[0]).toEqual({ name: 'Audible.com', type: 'audible' });
-    });
+  describe('testProviders', () => {
+    it('tests only search providers (not Audnexus)', async () => {
+      mockAudibleProvider.test.mockResolvedValueOnce({ success: true, message: 'OK' });
 
-    it('registers Audible with custom region', () => {
-      const ukService = new MetadataService(inject<FastifyBaseLogger>(createMockLogger()), { audibleRegion: 'uk' });
-      const providers = ukService.getProviders();
-      expect(providers).toHaveLength(1);
-      expect(providers[0].type).toBe('audible');
-    });
-
-    it('testProviders includes only Audible', async () => {
       const results = await service.testProviders();
-      expect(results).toHaveLength(1);
-      expect(results[0].name).toBe('Audible.com');
-      expect(results[0].type).toBe('audible');
+      expect(results).toEqual([{ name: 'Audible.com', type: 'audible', success: true, message: 'OK' }]);
+    });
+  });
+
+  describe('getProviders', () => {
+    it('returns only search providers (not Audnexus)', () => {
+      const providers = service.getProviders();
+      expect(providers).toEqual([{ name: 'Audible.com', type: 'audible' }]);
     });
   });
 
@@ -362,24 +264,11 @@ describe('MetadataService', () => {
   });
 
   describe('getSeries', () => {
-    it('returns null when not found', async () => {
+    it('returns null directly without delegating to any provider', async () => {
       const result = await service.getSeries('999');
       expect(result).toBeNull();
-    });
-
-    it('returns series when found', async () => {
-      const mockSeries = { name: 'The Stormlight Archive', books: [] };
-      mockAudibleProvider.getSeries.mockResolvedValueOnce(mockSeries);
-
-      const result = await service.getSeries('100');
-      expect(result).toEqual(mockSeries);
-    });
-
-    it('returns fallback on error', async () => {
-      mockAudibleProvider.getSeries.mockRejectedValueOnce(new Error('fail'));
-
-      const result = await service.getSeries('100');
-      expect(result).toBeNull();
+      // Should NOT call any provider method
+      expect(mockAudibleProvider.getBook).not.toHaveBeenCalled();
     });
   });
 
@@ -498,6 +387,93 @@ describe('MetadataService', () => {
       mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(30000, 'Audnexus'));
 
       await expect(service.enrichBook('B000TEST')).rejects.toThrow(RateLimitError);
+    });
+  });
+
+  describe('zero search providers (empty registry)', () => {
+    let emptyService: MetadataService;
+
+    beforeEach(() => {
+      // Temporarily empty the registry
+      const saved = { ...mockFactories };
+      for (const key of Object.keys(mockFactories)) {
+        delete (mockFactories as Record<string, unknown>)[key];
+      }
+      emptyService = new MetadataService(inject<FastifyBaseLogger>(createMockLogger()));
+      // Restore registry for other tests
+      Object.assign(mockFactories, saved);
+    });
+
+    it('search returns empty results without throwing', async () => {
+      const result = await emptyService.search('test');
+      expect(result).toEqual({ books: [], authors: [], series: [] });
+    });
+
+    it('searchBooks returns empty array', async () => {
+      const result = await emptyService.searchBooks('test');
+      expect(result).toEqual([]);
+    });
+
+    it('searchAuthors returns empty array', async () => {
+      const result = await emptyService.searchAuthors('test');
+      expect(result).toEqual([]);
+    });
+
+    it('getBook returns null', async () => {
+      const result = await emptyService.getBook('B123');
+      expect(result).toBeNull();
+    });
+
+    it('searchBooksForDiscovery returns empty results', async () => {
+      const result = await emptyService.searchBooksForDiscovery('test');
+      expect(result).toEqual({ books: [], warnings: [] });
+    });
+
+    it('getProviders returns empty array', () => {
+      expect(emptyService.getProviders()).toEqual([]);
+    });
+
+    it('testProviders returns empty array', async () => {
+      const result = await emptyService.testProviders();
+      expect(result).toEqual([]);
+    });
+
+    it('getAuthor still delegates to Audnexus', async () => {
+      const mockAuthor = { name: 'Test Author', asin: 'B001' };
+      mockAudnexus.getAuthor.mockResolvedValueOnce(mockAuthor);
+
+      const result = await emptyService.getAuthor('B001');
+      expect(result).toEqual(mockAuthor);
+      expect(mockAudnexus.getAuthor).toHaveBeenCalledWith('B001');
+    });
+
+    it('enrichBook still delegates to Audnexus', async () => {
+      const mockBook = { title: 'Enriched', narrators: ['Jim Dale'] };
+      mockAudnexus.getBook.mockResolvedValueOnce(mockBook);
+
+      const result = await emptyService.enrichBook('B000TEST');
+      expect(result).toEqual(mockBook);
+      expect(mockAudnexus.getBook).toHaveBeenCalledWith('B000TEST');
+    });
+  });
+
+  describe('factory config forwarding', () => {
+    it('forwards audibleRegion to registry factory', () => {
+      const factoryFn = mockFactories.audible as ReturnType<typeof vi.fn>;
+      factoryFn.mockClear();
+
+      new MetadataService(inject<FastifyBaseLogger>(createMockLogger()), { audibleRegion: 'uk' });
+
+      expect(factoryFn).toHaveBeenCalledWith({ region: 'uk' });
+    });
+
+    it('defaults region when audibleRegion not provided', () => {
+      const factoryFn = mockFactories.audible as ReturnType<typeof vi.fn>;
+      factoryFn.mockClear();
+
+      new MetadataService(inject<FastifyBaseLogger>(createMockLogger()));
+
+      expect(factoryFn).toHaveBeenCalledWith({ region: 'us' });
     });
   });
 });

@@ -16,10 +16,11 @@ export interface HealthCheckResult {
   message?: string;
 }
 
-interface SystemDeps {
+export interface SystemDeps {
   fsAccess: (path: string, mode?: number) => Promise<void>;
   fsStatfs: (path: string) => Promise<{ bavail: number; bsize: number }>;
   probeFfmpeg: (path: string) => Promise<string>;
+  resolveProxyIp: (proxyUrl: string) => Promise<string>;
 }
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -101,6 +102,16 @@ export class HealthCheckService {
 
   getCachedResults(): HealthCheckResult[] {
     return this.cachedResults;
+  }
+
+  /** Probe ffmpeg binary at given path. Returns version string on success. */
+  async probeFfmpeg(path: string): Promise<string> {
+    return this.deps.probeFfmpeg(path);
+  }
+
+  /** Resolve proxy IP by making a request through the proxy. */
+  async probeProxy(proxyUrl: string): Promise<string> {
+    return this.deps.resolveProxyIp(proxyUrl);
   }
 
   /** Reset state tracking for tests */

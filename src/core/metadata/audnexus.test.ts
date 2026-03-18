@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { AudnexusProvider } from './audnexus.js';
-import { RateLimitError, TransientError } from './errors.js';
+import { TransientError } from './errors.js';
 
 describe('AudnexusProvider', () => {
   const server = useMswServer();
@@ -10,90 +10,6 @@ describe('AudnexusProvider', () => {
 
   beforeEach(() => {
     provider = new AudnexusProvider();
-  });
-
-  describe('searchAuthors', () => {
-    it('returns deduplicated authors from the API', async () => {
-      const authors = await provider.searchAuthors('Brandon');
-
-      expect(authors).toHaveLength(2);
-      expect(authors[0].name).toBe('Brandon Sanderson');
-      expect(authors[0].asin).toBe('B001H6UJO8');
-      expect(authors[1].name).toBe('Brandon Mull');
-    });
-
-    it('includes genres in author results', async () => {
-      const authors = await provider.searchAuthors('Brandon');
-
-      expect(authors[0].genres).toEqual(['Fantasy', 'Science Fiction']);
-    });
-
-    it('includes imageUrl in author results', async () => {
-      const authors = await provider.searchAuthors('Brandon');
-
-      expect(authors[0].imageUrl).toBe(
-        'https://images-na.ssl-images-amazon.com/images/I/brandon-sanderson.jpg',
-      );
-    });
-
-    it('deduplicates authors by ASIN', async () => {
-      server.use(
-        http.get('https://api.audnex.us/authors', () => {
-          return HttpResponse.json([
-            { asin: 'B001H6UJO8', name: 'Brandon Sanderson' },
-            { asin: 'B001H6UJO8', name: 'Brandon Sanderson' },
-          ]);
-        }),
-      );
-
-      const authors = await provider.searchAuthors('Brandon');
-      expect(authors).toHaveLength(1);
-    });
-
-    it('returns empty array when API returns non-array', async () => {
-      server.use(
-        http.get('https://api.audnex.us/authors', () => {
-          return HttpResponse.json({ error: 'bad' });
-        }),
-      );
-
-      const authors = await provider.searchAuthors('Brandon');
-      expect(authors).toEqual([]);
-    });
-
-    it('throws TransientError on API error (5xx)', async () => {
-      server.use(
-        http.get('https://api.audnex.us/authors', () => {
-          return new HttpResponse(null, { status: 500 });
-        }),
-      );
-
-      await expect(provider.searchAuthors('Brandon')).rejects.toThrow(TransientError);
-    });
-  });
-
-  describe('search', () => {
-    it('returns authors in search results with empty books and series', async () => {
-      const results = await provider.search('Brandon');
-
-      expect(results.books).toEqual([]);
-      expect(results.series).toEqual([]);
-      expect(results.authors).toHaveLength(2);
-    });
-  });
-
-  describe('searchBooks', () => {
-    it('returns empty array (not supported)', async () => {
-      const books = await provider.searchBooks('anything');
-      expect(books).toEqual([]);
-    });
-  });
-
-  describe('searchSeries', () => {
-    it('returns empty array (not supported)', async () => {
-      const series = await provider.searchSeries('anything');
-      expect(series).toEqual([]);
-    });
   });
 
   describe('getBook', () => {
@@ -261,81 +177,6 @@ describe('AudnexusProvider', () => {
     });
   });
 
-  describe('getAuthorBooks', () => {
-    it('returns empty array (not supported)', async () => {
-      const books = await provider.getAuthorBooks('B001H6UJO8');
-      expect(books).toEqual([]);
-    });
-  });
-
-  describe('getSeries', () => {
-    it('returns null (not supported)', async () => {
-      const series = await provider.getSeries('B010XKCR92');
-      expect(series).toBeNull();
-    });
-  });
-
-  describe('test', () => {
-    it('returns success when API is reachable', async () => {
-      const result = await provider.test();
-
-      expect(result.success).toBe(true);
-      expect(result.message).toBe('Connected to Audnexus API');
-    });
-
-    it('returns failure on HTTP error', async () => {
-      server.use(
-        http.get('https://api.audnex.us/authors', () => {
-          return new HttpResponse(null, { status: 503 });
-        }),
-      );
-
-      const result = await provider.test();
-      expect(result.success).toBe(false);
-      expect(result.message).toContain('503');
-    });
-
-    it('returns failure on network error', async () => {
-      server.use(
-        http.get('https://api.audnex.us/authors', () => {
-          return HttpResponse.error();
-        }),
-      );
-
-      const result = await provider.test();
-      expect(result.success).toBe(false);
-    });
-  });
-
-  describe('region config', () => {
-    it('uses default "us" region', async () => {
-      let capturedUrl = '';
-      server.use(
-        http.get('https://api.audnex.us/authors', ({ request }) => {
-          capturedUrl = request.url;
-          return HttpResponse.json([]);
-        }),
-      );
-
-      await provider.searchAuthors('test');
-      expect(capturedUrl).toContain('region=us');
-    });
-
-    it('uses custom region when configured', async () => {
-      const ukProvider = new AudnexusProvider({ region: 'uk' });
-      let capturedUrl = '';
-      server.use(
-        http.get('https://api.audnex.us/authors', ({ request }) => {
-          capturedUrl = request.url;
-          return HttpResponse.json([]);
-        }),
-      );
-
-      await ukProvider.searchAuthors('test');
-      expect(capturedUrl).toContain('region=uk');
-    });
-  });
-
   describe('edge cases — NaN and malformed data', () => {
     it('handles NaN series position from non-numeric string', async () => {
       server.use(
@@ -381,46 +222,6 @@ describe('AudnexusProvider', () => {
       await expect(provider.getBook('B000TEST')).rejects.toThrow(TransientError);
     });
 
-    it('throws TransientError on network error in searchAuthors', async () => {
-      server.use(
-        http.get('https://api.audnex.us/authors', () => {
-          return HttpResponse.error();
-        }),
-      );
-
-      await expect(provider.searchAuthors('test')).rejects.toThrow(TransientError);
-    });
-
-    it('handles author search result with missing name and asin', async () => {
-      server.use(
-        http.get('https://api.audnex.us/authors', () => {
-          return HttpResponse.json([
-            { description: 'No name or asin' },
-            { name: 'Valid Author', asin: 'B001' },
-          ]);
-        }),
-      );
-
-      const authors = await provider.searchAuthors('test');
-      // First entry has no key (asin or name), should be skipped
-      expect(authors).toHaveLength(1);
-      expect(authors[0].name).toBe('Valid Author');
-    });
-
-    it('deduplicates authors by name when asin is missing', async () => {
-      server.use(
-        http.get('https://api.audnex.us/authors', () => {
-          return HttpResponse.json([
-            { name: 'Same Author' },
-            { name: 'Same Author' },
-          ]);
-        }),
-      );
-
-      const authors = await provider.searchAuthors('test');
-      expect(authors).toHaveLength(1);
-    });
-
     it('handles book with both seriesPrimary and seriesSecondary', async () => {
       server.use(
         http.get('https://api.audnex.us/books/:asin', () => {
@@ -456,64 +257,9 @@ describe('AudnexusProvider', () => {
       const author = await provider.getAuthor('B001TEST');
       expect(author!.imageUrl).toBeUndefined();
     });
-
-    it('throws RateLimitError on 429 response in searchAuthors', async () => {
-      server.use(
-        http.get('https://api.audnex.us/authors', () => {
-          return new HttpResponse(null, { status: 429 });
-        }),
-      );
-
-      await expect(provider.searchAuthors('test')).rejects.toThrow(RateLimitError);
-    });
   });
 
   describe('TransientError differentiation', () => {
-    it('searchAuthors() on 429 throws RateLimitError', async () => {
-      server.use(
-        http.get('https://api.audnex.us/authors', () => {
-          return new HttpResponse(null, {
-            status: 429,
-            headers: { 'Retry-After': '60' },
-          });
-        }),
-      );
-
-      await expect(provider.searchAuthors('test')).rejects.toThrow(RateLimitError);
-    });
-
-    it('searchAuthors() on timeout throws TransientError', async () => {
-      server.use(
-        http.get('https://api.audnex.us/authors', async () => {
-          await delay('infinite');
-          return new HttpResponse(null, { status: 200 });
-        }),
-      );
-
-      await expect(provider.searchAuthors('test')).rejects.toThrow(TransientError);
-    }, 20000);
-
-    it('searchAuthors() on network error throws TransientError', async () => {
-      server.use(
-        http.get('https://api.audnex.us/authors', () => {
-          return HttpResponse.error();
-        }),
-      );
-
-      await expect(provider.searchAuthors('test')).rejects.toThrow(TransientError);
-    });
-
-    it('searchAuthors() on 404/empty returns empty array', async () => {
-      server.use(
-        http.get('https://api.audnex.us/authors', () => {
-          return new HttpResponse(null, { status: 404 });
-        }),
-      );
-
-      const result = await provider.searchAuthors('test');
-      expect(result).toEqual([]);
-    });
-
     it('getBook() on 5xx throws TransientError', async () => {
       server.use(
         http.get('https://api.audnex.us/books/:asin', () => {
@@ -575,23 +321,6 @@ describe('AudnexusProvider', () => {
 
       const result = await provider.getAuthor('B001TEST');
       expect(result).toBeNull();
-    });
-
-    it('author dedup silently skips entries with missing asin and name', async () => {
-      server.use(
-        http.get('https://api.audnex.us/authors', () => {
-          return HttpResponse.json([
-            { asin: 'B001H6UJO8', name: 'Brandon Sanderson' },
-            { }, // missing both asin and name
-            { asin: 'B001FAKE', name: 'Another Author' },
-          ]);
-        }),
-      );
-
-      const result = await provider.searchAuthors('Brandon');
-      expect(result).toHaveLength(2);
-      expect(result[0].name).toBe('Brandon Sanderson');
-      expect(result[1].name).toBe('Another Author');
     });
   });
 });

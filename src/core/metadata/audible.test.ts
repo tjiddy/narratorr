@@ -216,32 +216,6 @@ describe('AudibleProvider', () => {
     });
   });
 
-  describe('search', () => {
-    it('returns books, authors, and series from search results', async () => {
-      const result = await provider.search('Harry Potter');
-
-      expect(result.books).toHaveLength(2);
-      expect(result.authors).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ name: 'J.K. Rowling' }),
-        ]),
-      );
-      expect(result.series).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ name: 'Harry Potter' }),
-        ]),
-      );
-    });
-
-    it('deduplicates authors across results', async () => {
-      const result = await provider.search('Harry Potter');
-
-      // Both results have J.K. Rowling — should appear once
-      const rowlings = result.authors.filter((a) => a.name === 'J.K. Rowling');
-      expect(rowlings).toHaveLength(1);
-    });
-  });
-
   describe('regional TLD', () => {
     it('uses .co.uk for UK region', async () => {
       const ukProvider = new AudibleProvider({ region: 'uk' });
@@ -265,20 +239,6 @@ describe('AudibleProvider', () => {
     it('defaults to .com with no config', async () => {
       const defaultProvider = new AudibleProvider();
       expect(defaultProvider.name).toBe('Audible.com');
-    });
-  });
-
-  describe('unsupported methods', () => {
-    it('getAuthor returns null', async () => {
-      expect(await provider.getAuthor('B000AP9A6K')).toBeNull();
-    });
-
-    it('getAuthorBooks returns empty array', async () => {
-      expect(await provider.getAuthorBooks('B000AP9A6K')).toEqual([]);
-    });
-
-    it('getSeries returns null', async () => {
-      expect(await provider.getSeries('B0182NWM9I')).toBeNull();
     });
   });
 

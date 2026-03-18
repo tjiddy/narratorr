@@ -174,9 +174,10 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
 
   // Health check service with system deps
   const { probeFfmpeg } = await import('../../core/utils/audio-processor.js');
+  const { resolveProxyIp } = await import('../../core/indexers/proxy.js');
   const healthCheck = new HealthCheckService(
     indexer, downloadClient, settings, notifier, db, log,
-    { fsAccess: fsp.access, fsStatfs: fsp.statfs, probeFfmpeg },
+    { fsAccess: fsp.access, fsStatfs: fsp.statfs, probeFfmpeg, resolveProxyIp },
   );
 
   // Wire retry search dependencies into services that need them
@@ -211,7 +212,7 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, s.import, s.importOrchestrator),
   (app, s) => indexersRoutes(app, s.indexer),
   (app, s) => downloadClientsRoutes(app, s.downloadClient),
-  (app, s) => settingsRoutes(app, s.settings, s.indexer),
+  (app, s) => settingsRoutes(app, s.settings, s.indexer, s.healthCheck),
   (app, s) => metadataRoutes(app, s.metadata),
   (app, s) => libraryScanRoutes(app, s.libraryScan, s.matchJob),
   (app, s, db) => systemRoutes(app, s, db),

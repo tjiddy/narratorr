@@ -1,10 +1,9 @@
 import { z } from 'zod';
 import { type FastifyInstance } from 'fastify';
-import { probeFfmpeg } from '../../core/utils/audio-processor.js';
 import { type SettingsService, type AppSettings } from '../services';
 import { updateSettingsSchema, type UpdateSettingsInput } from '../../shared/schemas.js';
 import type { IndexerService } from '../services/indexer.service.js';
-import { resolveProxyIp } from '../../core/indexers/proxy.js';
+import type { HealthCheckService } from '../services/health-check.service.js';
 import { maskFields, isSentinel, type SecretEntity } from '../utils/secret-codec.js';
 import { sendInternalError } from '../utils/route-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -59,6 +58,7 @@ export async function settingsRoutes(
   app: FastifyInstance,
   settingsService: SettingsService,
   indexerService?: IndexerService,
+  healthCheckService?: HealthCheckService,
 ) {
   // GET /api/settings
   app.get('/api/settings', async (request, reply) => {
@@ -135,7 +135,7 @@ export async function settingsRoutes(
     async (request, reply) => {
       try {
         const { path } = request.body;
-        const version = await probeFfmpeg(path);
+        const version = await healthCheckService!.probeFfmpeg(path);
         request.log.info({ version, path }, 'ffmpeg probe successful');
         return { version };
       } catch (error) {
@@ -158,7 +158,7 @@ export async function settingsRoutes(
     async (request, reply) => {
       try {
         const { proxyUrl } = request.body;
-        const ip = await resolveProxyIp(proxyUrl);
+        const ip = await healthCheckService!.probeProxy(proxyUrl);
         request.log.info({ ip, proxyUrl: redactProxyUrl(proxyUrl) }, 'Proxy test successful');
         return { success: true, ip };
       } catch (error) {

@@ -18,6 +18,7 @@ function createService(overrides?: {
   fsAccess?: (path: string, mode?: number) => Promise<void>;
   fsStatfs?: (path: string) => Promise<{ bavail: number; bsize: number }>;
   probeFfmpeg?: (path: string) => Promise<string>;
+  resolveProxyIp?: (proxyUrl: string) => Promise<string>;
 }) {
   const log = createMockLogger();
   const indexer = {
@@ -56,6 +57,7 @@ function createService(overrides?: {
       fsAccess: overrides?.fsAccess ?? vi.fn().mockResolvedValue(undefined),
       fsStatfs: overrides?.fsStatfs ?? vi.fn().mockResolvedValue({ bavail: 100_000_000, bsize: 4096 }),
       probeFfmpeg: overrides?.probeFfmpeg ?? vi.fn().mockResolvedValue('6.1.1'),
+      resolveProxyIp: overrides?.resolveProxyIp ?? vi.fn().mockResolvedValue('203.0.113.1'),
     },
   );
 
@@ -497,6 +499,42 @@ describe('HealthCheckService', () => {
 
       resolveCheck!();
       await first;
+    });
+  });
+
+  describe('probeFfmpeg delegation', () => {
+    it('delegates to injected dep with exact path and returns version', async () => {
+      const mockProbe = vi.fn().mockResolvedValue('6.1.1');
+      const { service } = createService({ probeFfmpeg: mockProbe });
+
+      const result = await service.probeFfmpeg('/usr/local/bin/ffmpeg');
+      expect(result).toBe('6.1.1');
+      expect(mockProbe).toHaveBeenCalledWith('/usr/local/bin/ffmpeg');
+    });
+
+    it('propagates errors from injected dep', async () => {
+      const mockProbe = vi.fn().mockRejectedValue(new Error('spawn ENOENT'));
+      const { service } = createService({ probeFfmpeg: mockProbe });
+
+      await expect(service.probeFfmpeg('/bad/path')).rejects.toThrow('spawn ENOENT');
+    });
+  });
+
+  describe('probeProxy delegation', () => {
+    it('delegates to injected dep with exact proxy URL and returns IP', async () => {
+      const mockResolve = vi.fn().mockResolvedValue('203.0.113.42');
+      const { service } = createService({ resolveProxyIp: mockResolve });
+
+      const result = await service.probeProxy('http://proxy.example.com:8080');
+      expect(result).toBe('203.0.113.42');
+      expect(mockResolve).toHaveBeenCalledWith('http://proxy.example.com:8080');
+    });
+
+    it('propagates errors from injected dep', async () => {
+      const mockResolve = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+      const { service } = createService({ resolveProxyIp: mockResolve });
+
+      await expect(service.probeProxy('http://bad-proxy:1234')).rejects.toThrow('ECONNREFUSED');
     });
   });
 });

@@ -1,9 +1,11 @@
 import type { FastifyBaseLogger } from 'fastify';
 import {
   AudnexusProvider,
-  AudibleProvider,
+  METADATA_SEARCH_PROVIDER_FACTORIES,
   RateLimitError,
-  type MetadataProvider,
+  TransientError,
+  type MetadataSearchProvider,
+  type MetadataEnrichmentProvider,
   type MetadataSearchResults,
   type BookMetadata,
   type AuthorMetadata,
@@ -33,16 +35,19 @@ export interface MetadataServiceConfig {
 }
 
 export class MetadataService {
-  private providers: MetadataProvider[] = [];
-  private audnexus: AudnexusProvider;
+  private providers: MetadataSearchProvider[] = [];
+  private audnexus: MetadataEnrichmentProvider;
   private throttle = new RequestThrottle();
   private rateLimitUntil: Map<string, number> = new Map();
 
   constructor(private log: FastifyBaseLogger, config?: MetadataServiceConfig) {
-    // Audible is always available (no API key required)
     const region = config?.audibleRegion ?? process.env.AUDIBLE_REGION ?? 'us';
-    this.providers.push(new AudibleProvider({ region }));
-    this.log.info({ region }, 'Metadata provider loaded: Audible');
+
+    for (const [type, factory] of Object.entries(METADATA_SEARCH_PROVIDER_FACTORIES)) {
+      const provider = factory({ region });
+      this.providers.push(provider);
+      this.log.info({ type, name: provider.name }, 'Metadata search provider loaded');
+    }
 
     this.audnexus = new AudnexusProvider();
     this.log.info('Audnexus enrichment provider loaded');
@@ -79,9 +84,9 @@ export class MetadataService {
   }
 
   private async withThrottledSearch<T>(
-    provider: MetadataProvider,
+    provider: MetadataSearchProvider,
     method: string,
-    fn: (provider: MetadataProvider) => Promise<T[]>,
+    fn: (provider: MetadataSearchProvider) => Promise<T[]>,
     warnings: string[],
   ): Promise<T[]> {
     if (this.isRateLimited(provider.name)) return [];
@@ -94,6 +99,11 @@ export class MetadataService {
         this.setRateLimited(error.provider, error.retryAfterMs);
         const remaining = Math.ceil(error.retryAfterMs / 1000);
         warnings.push(`${error.provider} rate limit reached, results may be incomplete. Try again in ${remaining}s.`);
+        return [];
+      }
+      if (error instanceof TransientError) {
+        warnings.push(`${provider.name} ${method} transient failure: ${error.message}`);
+        this.log.warn(error, `Metadata ${method} failed`);
         return [];
       }
       const msg = error instanceof Error ? error.message : String(error);
@@ -172,8 +182,9 @@ export class MetadataService {
     return this.withThrottle('getBook', (provider) => provider.getBook(id), null);
   }
 
-  async getSeries(id: string): Promise<SeriesMetadata | null> {
-    return this.withThrottle('getSeries', (provider) => provider.getSeries(id), null);
+  async getSeries(_id: string): Promise<SeriesMetadata | null> {
+    // Series detail lookup is not supported by any current provider
+    return null;
   }
 
   async enrichBook(asin: string): Promise<BookMetadata | null> {
@@ -238,7 +249,7 @@ export class MetadataService {
 
   private async withThrottle<T>(
     method: string,
-    fn: (provider: MetadataProvider) => Promise<T>,
+    fn: (provider: MetadataSearchProvider) => Promise<T>,
     fallback: T,
   ): Promise<T> {
     const provider = this.providers[0];

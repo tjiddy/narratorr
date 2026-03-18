@@ -1,12 +1,12 @@
 import { BookMetadataSchema, AuthorMetadataSchema, SeriesMetadataSchema } from './schemas.js';
 import { RateLimitError, TransientError } from './errors.js';
 import { REGION_LANGUAGES } from './region-languages.js';
+import { AUDIBLE_TIMEOUT_MS } from '../utils/constants.js';
 import type {
-  MetadataProvider,
+  MetadataSearchProvider,
   BookMetadata,
   AuthorMetadata,
   SeriesMetadata,
-  MetadataSearchResults,
   SearchBooksOptions,
 } from './types.js';
 
@@ -31,12 +31,12 @@ const REGION_TLDS: Record<string, string> = {
 };
 
 
-const REQUEST_TIMEOUT_MS = 10000;
+const REQUEST_TIMEOUT_MS = AUDIBLE_TIMEOUT_MS;
 const MAX_RESULTS = 10;
 const RESPONSE_GROUPS = 'contributors,product_desc,media,product_extended_attrs,series';
 const IMAGE_SIZES = '500,1024';
 
-export class AudibleProvider implements MetadataProvider {
+export class AudibleProvider implements MetadataSearchProvider {
   readonly name: string;
   readonly type = 'audible';
 
@@ -48,45 +48,6 @@ export class AudibleProvider implements MetadataProvider {
     this.tld = REGION_TLDS[region] ?? '.com';
     this.preferredLanguage = REGION_LANGUAGES[region] ?? 'english';
     this.name = `Audible${this.tld}`;
-  }
-
-  async search(query: string): Promise<MetadataSearchResults> {
-    const books = await this.searchBooks(query);
-
-    // Deduplicate authors from book results
-    const authorMap = new Map<string, AuthorMetadata>();
-    for (const book of books) {
-      for (const authorRef of book.authors) {
-        if (!authorMap.has(authorRef.name)) {
-          const mapped = AuthorMetadataSchema.safeParse({
-            name: authorRef.name,
-            asin: authorRef.asin,
-          });
-          if (mapped.success) authorMap.set(authorRef.name, mapped.data);
-        }
-      }
-    }
-
-    // Deduplicate series from book results
-    const seriesMap = new Map<string, SeriesMetadata>();
-    for (const book of books) {
-      for (const seriesRef of book.series ?? []) {
-        if (!seriesMap.has(seriesRef.name)) {
-          const mapped = SeriesMetadataSchema.safeParse({
-            name: seriesRef.name,
-            asin: seriesRef.asin,
-            books: [],
-          });
-          if (mapped.success) seriesMap.set(seriesRef.name, mapped.data);
-        }
-      }
-    }
-
-    return {
-      books,
-      authors: Array.from(authorMap.values()),
-      series: Array.from(seriesMap.values()),
-    };
   }
 
   async searchBooks(query: string, options?: SearchBooksOptions): Promise<BookMetadata[]> {
@@ -166,21 +127,6 @@ export class AudibleProvider implements MetadataProvider {
     const mapped = mapProduct(product);
     const result = BookMetadataSchema.safeParse(mapped);
     return result.success ? result.data : null;
-  }
-
-  async getAuthor(_id: string): Promise<AuthorMetadata | null> {
-    // Audible catalog API doesn't support author detail lookups
-    return null;
-  }
-
-  async getAuthorBooks(_id: string): Promise<BookMetadata[]> {
-    // Audible catalog API doesn't support author book listings
-    return [];
-  }
-
-  async getSeries(_id: string): Promise<SeriesMetadata | null> {
-    // Audible catalog API doesn't support series detail lookups
-    return null;
   }
 
   async test(): Promise<{ success: boolean; message?: string }> {

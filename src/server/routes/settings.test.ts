@@ -1,22 +1,8 @@
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, type Mock } from 'vitest';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import { createMockSettings } from '../../shared/schemas/settings/create-mock-settings.js';
 import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import type { Services } from './index.js';
-
-vi.mock('../../core/utils/audio-processor.js', () => ({
-  probeFfmpeg: vi.fn(),
-}));
-
-vi.mock('../../core/indexers/proxy.js', () => ({
-  resolveProxyIp: vi.fn(),
-}));
-
-import { probeFfmpeg } from '../../core/utils/audio-processor.js';
-import { resolveProxyIp } from '../../core/indexers/proxy.js';
-
-const mockProbeFfmpeg = vi.mocked(probeFfmpeg);
-const mockResolveProxyIp = vi.mocked(resolveProxyIp);
 
 const mockSettings = createMockSettings();
 
@@ -80,7 +66,7 @@ describe('settings routes', () => {
 
   describe('POST /api/settings/ffmpeg-probe', () => {
     it('returns version string on success', async () => {
-      mockProbeFfmpeg.mockResolvedValue('6.1.1');
+      (services.healthCheck.probeFfmpeg as Mock).mockResolvedValue('6.1.1');
 
       const res = await app.inject({
         method: 'POST',
@@ -93,7 +79,7 @@ describe('settings routes', () => {
     });
 
     it('returns 400 on probe failure', async () => {
-      mockProbeFfmpeg.mockRejectedValue(new Error('spawn ENOENT'));
+      (services.healthCheck.probeFfmpeg as Mock).mockRejectedValue(new Error('spawn ENOENT'));
 
       const res = await app.inject({
         method: 'POST',
@@ -258,7 +244,7 @@ describe('settings routes', () => {
 
   describe('POST /api/settings/test-proxy', () => {
     it('returns success with exit IP for reachable proxy', async () => {
-      mockResolveProxyIp.mockResolvedValue('203.0.113.42');
+      (services.healthCheck.probeProxy as Mock).mockResolvedValue('203.0.113.42');
 
       const res = await app.inject({
         method: 'POST',
@@ -270,11 +256,11 @@ describe('settings routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.success).toBe(true);
       expect(body.ip).toBe('203.0.113.42');
-      expect(mockResolveProxyIp).toHaveBeenCalledWith('http://proxy.example.com:8080');
+      expect((services.healthCheck.probeProxy as Mock)).toHaveBeenCalledWith('http://proxy.example.com:8080');
     });
 
     it('returns failure with error message for unreachable proxy', async () => {
-      mockResolveProxyIp.mockRejectedValue(new Error('Proxy connection failed: ECONNREFUSED'));
+      (services.healthCheck.probeProxy as Mock).mockRejectedValue(new Error('Proxy connection failed: ECONNREFUSED'));
 
       const res = await app.inject({
         method: 'POST',

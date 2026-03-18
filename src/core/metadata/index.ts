@@ -5,3 +5,4 @@ export { RateLimitError, TransientError } from './errors.js';
 export { AudnexusProvider, type AudnexusConfig } from './audnexus.js';
 export { AudibleProvider, type AudibleConfig } from './audible.js';
 export { REGION_LANGUAGES } from './region-languages.js';
+export { METADATA_SEARCH_PROVIDER_FACTORIES } from './registry.js';
