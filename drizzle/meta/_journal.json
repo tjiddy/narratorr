@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1773610513770,
-      "tag": "0000_mixed_sprite",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "6",
-      "when": 1773907200000,
-      "tag": "0006_blacklist_reason_not_null",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "6",
-      "when": 1773657664248,
-      "tag": "0007_motionless_vargas",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "6",
-      "when": 1773730583684,
-      "tag": "0008_youthful_bucky",
+      "when": 1773864541332,
+      "tag": "0000_tearful_nightcrawler",
       "breakpoints": true
     }
   ]

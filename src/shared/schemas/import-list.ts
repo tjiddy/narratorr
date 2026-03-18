@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES } from '../import-list-registry.js';
+import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES } from '../import-list-registry';
 
 // ============================================================================
 // Import List schemas

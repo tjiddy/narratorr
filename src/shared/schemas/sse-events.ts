@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { downloadStatusSchema } from './activity.js';
-import { bookStatusSchema } from './book.js';
+import { downloadStatusSchema } from './activity';
+import { bookStatusSchema } from './book';
 
 // ============================================================================
 // SSE Event Types — single source of truth for all real-time event contracts

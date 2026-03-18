@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { INDEXER_REGISTRY, INDEXER_TYPES } from '../indexer-registry.js';
+import { INDEXER_REGISTRY, INDEXER_TYPES } from '../indexer-registry';
 
 // ============================================================================
 // Indexer schemas

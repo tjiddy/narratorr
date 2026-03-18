@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES } from '../download-client-registry.js';
+import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES } from '../download-client-registry';
 
 // ============================================================================
 // Download Client schemas

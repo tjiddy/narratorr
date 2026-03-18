@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { NOTIFIER_REGISTRY, NOTIFIER_TYPES } from '../notifier-registry.js';
-import { NOTIFICATION_EVENTS } from '../notification-events.js';
+import { NOTIFIER_REGISTRY, NOTIFIER_TYPES } from '../notifier-registry';
+import { NOTIFICATION_EVENTS } from '../notification-events';
 
 // ============================================================================
 // Notifier schemas

@@ -1,1 +1,0 @@
-ALTER TABLE `suggestions` ADD `snooze_until` integer;

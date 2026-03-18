@@ -17,7 +17,7 @@ CREATE TABLE `blacklist` (
 	`book_id` integer,
 	`info_hash` text NOT NULL,
 	`title` text NOT NULL,
-	`reason` text,
+	`reason` text DEFAULT 'other' NOT NULL,
 	`note` text,
 	`blacklist_type` text DEFAULT 'permanent' NOT NULL,
 	`expires_at` integer,
@@ -210,6 +210,31 @@ CREATE TABLE `settings` (
 	`value` text NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE `suggestions` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`asin` text NOT NULL,
+	`title` text NOT NULL,
+	`author_name` text NOT NULL,
+	`narrator_name` text,
+	`cover_url` text,
+	`duration` integer,
+	`published_date` text,
+	`language` text,
+	`genres` text,
+	`series_name` text,
+	`series_position` real,
+	`reason` text NOT NULL,
+	`reason_context` text NOT NULL,
+	`score` real NOT NULL,
+	`status` text DEFAULT 'pending' NOT NULL,
+	`refreshed_at` integer DEFAULT (unixepoch()) NOT NULL,
+	`dismissed_at` integer,
+	`snooze_until` integer,
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL
+);
+--> statement-breakpoint
+CREATE INDEX `idx_suggestions_status_score` ON `suggestions` (`status`,`score`);--> statement-breakpoint
+CREATE UNIQUE INDEX `idx_suggestions_asin_unique` ON `suggestions` (`asin`);--> statement-breakpoint
 CREATE TABLE `unmatched_genres` (
 	`genre` text PRIMARY KEY NOT NULL,
 	`count` integer DEFAULT 1 NOT NULL,
