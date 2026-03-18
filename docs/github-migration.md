@@ -129,6 +129,7 @@ This triggers the full Docker pipeline: quality gates → build → push → ver
 - Documentation site (`narratorr-docs`) — update any Gitea links
 - Docker Hub description — add repo link and getting started
 - Any bookmarks, scripts, or tools pointing to Gitea
+- **CONTRIBUTING.md** — update stale labels (`stage/dev` → removed, `stage/qa` → removed, `status/elaborating` → removed, `status/blocked` → `blocked` flag), update Gitea URLs to GitHub, update CLI references from `pnpm gitea` to `gh`
 
 ### 15. Archive Gitea Repo
 - Set Gitea repo to read-only/archived

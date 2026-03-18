@@ -21,8 +21,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "docker:build": "docker build -t narratorr .",
-    "docker:up": "docker compose up -d",
-    "lighthouse": "node --import tsx e2e/lighthouse/run.ts"
+    "docker:up": "docker compose up -d"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
@@ -38,8 +37,6 @@
     "@types/archiver": "^7.0.0",
     "archiver": "^7.0.1",
     "cheerio": "^1.2.0",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
     "dompurify": "^3.3.2",
     "dotenv": "^17.3.1",
     "drizzle-orm": "^0.45.1",
@@ -47,7 +44,7 @@
     "fastify-plugin": "^5.1.0",
     "fastify-type-provider-zod": "^6.1.0",
     "fuse.js": "^7.1.0",
-    "music-metadata": "^11.12.1",
+    "music-metadata": "^11.12.3",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.2",
     "react": "^19.2.4",
@@ -56,13 +53,12 @@
     "react-router-dom": "^7.13.1",
     "socks-proxy-agent": "^8.0.5",
     "sonner": "^2.0.7",
-    "undici": "^7.22.0",
+    "undici": "^7.24.4",
     "unzipper": "^0.12.3",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
-    "@lhci/cli": "^0.15.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -75,7 +71,6 @@
     "@vitest/coverage-v8": "^4.0.18",
     "concurrently": "^9.2.1",
     "drizzle-kit": "^0.31.9",
-    "drizzle-zod": "^0.8.3",
     "eslint": "^9.39.2",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.0",
