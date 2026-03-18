@@ -1,33 +1,170 @@
 // Shared helpers for workflow scripts
-// Usage: import { gitea, git, run, ... } from "./lib.ts"
+// Usage: import { gh, git, run, ... } from "./lib.ts"
 
 import { execFileSync, execSync } from "node:child_process";
-import { resolve, dirname } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeFileSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { createSign } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const GITEA_CLI = resolve(__dirname, "gitea.ts");
 
 const EXEC_OPTS = { encoding: "utf-8" as const, cwd: process.cwd(), stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"] };
 
-// Run a gitea CLI command, return stdout. Throws on failure.
-// Retries up to 3 times on ECONNREFUSED (Gitea connectivity is intermittent).
-export function gitea(...args: string[]): string {
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      return execFileSync("node", [GITEA_CLI, ...args], EXEC_OPTS).trim();
-    } catch (e: unknown) {
-      const err = e as { stderr?: string; message?: string };
-      const msg = (err.stderr || err.message || "").toString();
-      if (msg.includes("ECONNREFUSED") && attempt < 3) continue;
-      throw e;
-    }
-  }
-  throw new Error("unreachable");
+// ---------------------------------------------------------------------------
+// GitHub App token management
+// ---------------------------------------------------------------------------
+
+interface CachedToken {
+  token: string;
+  expiresAt: number; // epoch ms
 }
+
+const tokenCache = new Map<string, CachedToken>();
+
+// Build a GitHub App JWT (RS256, 10-min expiry). No external deps.
+function makeJwt(appId: string, privateKey: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+  const now = Math.floor(Date.now() / 1000);
+  const payload = Buffer.from(JSON.stringify({ iat: now - 30, exp: now + 540, iss: appId })).toString("base64url");
+  const sign = createSign("RSA-SHA256");
+  sign.update(`${header}.${payload}`);
+  const signature = sign.sign(privateKey, "base64url");
+  return `${header}.${payload}.${signature}`;
+}
+
+// Get a valid GH_TOKEN, refreshing if needed. Returns undefined when no app
+// credentials are configured (falls back to user's `gh auth`).
+function getGhToken(): string | undefined {
+  const appId = process.env.GH_APP_ID;
+  const installationId = process.env.GH_INSTALLATION_ID;
+  const privateKeyPath = process.env.GH_APP_PRIVATE_KEY_PATH;
+  const privateKeyEnv = process.env.GH_APP_PRIVATE_KEY;
+
+  if (!appId || !installationId || (!privateKeyPath && !privateKeyEnv)) return undefined;
+
+  const cached = tokenCache.get(appId);
+  const fiveMinMs = 5 * 60 * 1000;
+  if (cached && cached.expiresAt - Date.now() > fiveMinMs) return cached.token;
+
+  // Synchronous wrapper — scripts are sync, and this runs at most once per ~55 min.
+  // We shell out to a temp script because fetch() is async and lib functions are sync.
+  const privateKey = privateKeyEnv || readFileSync(privateKeyPath!, "utf-8");
+  const jwt = makeJwt(appId, privateKey);
+  const scriptContent = [
+    `const res = await fetch("https://api.github.com/app/installations/${installationId}/access_tokens", {`,
+    `  method: "POST",`,
+    `  headers: {`,
+    `    Authorization: "Bearer " + process.argv[2],`,
+    `    Accept: "application/vnd.github+json",`,
+    `    "X-GitHub-Api-Version": "2022-11-28",`,
+    `  },`,
+    `});`,
+    `if (!res.ok) { process.stderr.write(await res.text()); process.exit(1); }`,
+    `const d = await res.json();`,
+    `process.stdout.write(JSON.stringify({ token: d.token, expires_at: d.expires_at }));`,
+  ].join("\n");
+
+  // Write as .mjs so Node treats it as ESM (top-level await support).
+  const scriptPath = join(tmpdir(), `narratorr-ghtoken-${process.pid}.mjs`);
+  writeFileSync(scriptPath, scriptContent);
+  try {
+    const result = execFileSync("node", [scriptPath, jwt],
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+    const data = JSON.parse(result) as { token: string; expires_at: string };
+    const entry: CachedToken = { token: data.token, expiresAt: new Date(data.expires_at).getTime() };
+    tokenCache.set(appId, entry);
+    return entry.token;
+  } finally {
+    try { unlinkSync(scriptPath); } catch { /* cleanup */ }
+  }
+}
+
+// Exported for testing.
+export { makeJwt as _makeJwt, tokenCache as _tokenCache };
+
+// ---------------------------------------------------------------------------
+// JQ output templates — contract between `gh` output and parsers
+// ---------------------------------------------------------------------------
+
+export const JQ = {
+  // gh issue view <id> --json number,state,title,labels,milestone,body --jq '...'
+  ISSUE: `"#\\(.number) [\\(.state | ascii_downcase)] \\(.title)\\nlabels: \\([.labels[].name] | join(", "))\\(.milestone.title // "" | if . != "" then " | milestone: \\(.)" else "" end)\\n\\n\\(.body // "")"`,
+
+  // gh issue list --json number,state,title,labels,milestone --jq '...'
+  ISSUES_LIST: `.[] | "#\\(.number) [\\(.state | ascii_downcase)] \\(.title)\\n   labels: \\([.labels[].name] | join(", "))\\(.milestone.title // "" | if . != "" then " | milestone: \\(.)" else "" end)"`,
+
+  // gh pr view <n> --json number,state,title,headRefName,baseRefName,author,headRefOid,url,labels,body --jq '...'
+  PR: `"#\\(.number) [\\(.state | ascii_downcase)] \\(.title)\\n\\(.headRefName) → \\(.baseRefName) | author: \\(.author.login) | sha: \\(.headRefOid) | \\(.url)\\nlabels: \\([.labels[].name] | join(", "))\\n\\n\\(.body // "")"`,
+
+  // gh pr list --json number,state,title,headRefName,baseRefName,url --jq '...'
+  PRS_LIST: `.[] | "#\\(.number) [\\(.state | ascii_downcase)] \\(.title)\\n   \\(.headRefName) → \\(.baseRefName) | \\(.url)"`,
+
+  // gh api repos/{owner}/{repo}/issues/<id>/comments --paginate --jq '...'
+  COMMENTS: `.[] | "--- comment \\(.id) | \\(.user.login) | \\(.created_at) ---\\n\\(.body)\\n"`,
+
+  // gh api repos/{owner}/{repo}/commits/<ref>/status --jq '...'
+  COMMIT_STATUS: `if .total_count == 0 then "CI: no status checks found" else "CI: \\(.state) (\\(.total_count) checks)\\n\\(.statuses[] | "  \\(.context): \\(.state)")" end`,
+} as const;
+
+// JSON field sets for --json flags (keep in sync with JQ templates above)
+export const GH_FIELDS = {
+  ISSUE: "number,state,title,labels,milestone,body",
+  ISSUES_LIST: "number,state,title,labels,milestone",
+  PR: "number,state,title,headRefName,baseRefName,author,headRefOid,url,labels,body",
+  PRS_LIST: "number,state,title,headRefName,baseRefName,url",
+} as const;
+
+// ---------------------------------------------------------------------------
+// gh CLI wrappers
+// ---------------------------------------------------------------------------
+
+// Run a gh CLI command, return stdout. Throws on failure.
+export function gh(...args: string[]): string {
+  const token = getGhToken();
+  const env = token ? { ...process.env, GH_TOKEN: token } : process.env;
+  return execFileSync("gh", args, { ...EXEC_OPTS, env }).trim();
+}
+
+// Run a gh command, return structured result (never throws).
+export function ghSafe(...args: string[]): { ok: boolean; output: string } {
+  try {
+    return { ok: true, output: gh(...args) };
+  } catch (e: unknown) {
+    const err = e as { stderr?: string; stdout?: string; message?: string };
+    return { ok: false, output: (err.stderr || err.stdout || err.message || "").toString().trim() };
+  }
+}
+
+// Atomically replace all labels on an issue or PR.
+// GitHub's `gh issue edit` only has --add-label/--remove-label; this uses the
+// REST API's PUT endpoint for atomic replacement.
+export function ghSetLabels(issueOrPrNumber: string, labels: string[]): string {
+  return withTempFile(JSON.stringify({ labels }), (path) =>
+    gh("api", `repos/{owner}/{repo}/issues/${issueOrPrNumber}/labels`, "-X", "PUT", "--input", path,
+      "--jq", `[.[].name] | join(", ")`)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Deprecated — fail loudly if any callsite was missed
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use gh() instead */
+export function gitea(..._args: string[]): never {
+  throw new Error(`gitea() removed — use gh(). Caller:\n${new Error().stack}`);
+}
+
+/** @deprecated Use ghSafe() instead */
+export function giteaSafe(..._args: string[]): never {
+  throw new Error(`giteaSafe() removed — use ghSafe(). Caller:\n${new Error().stack}`);
+}
+
+// ---------------------------------------------------------------------------
+// Shell / git helpers (unchanged)
+// ---------------------------------------------------------------------------
 
 // Run a git command, return stdout. Throws on failure.
 export function git(...args: string[]): string {
@@ -49,16 +186,6 @@ export function run(cmd: string): { ok: boolean; stdout: string; stderr: string 
   }
 }
 
-// Run a gitea command, return structured result (never throws).
-export function giteaSafe(...args: string[]): { ok: boolean; output: string } {
-  try {
-    return { ok: true, output: gitea(...args) };
-  } catch (e: unknown) {
-    const err = e as { stderr?: string; stdout?: string; message?: string };
-    return { ok: false, output: (err.stderr || err.stdout || err.message || "").toString().trim() };
-  }
-}
-
 // Write content to temp file, call fn with path, clean up.
 export function withTempFile<T>(content: string, fn: (path: string) => T): T {
   const path = join(tmpdir(), `narratorr-${process.pid}-${Date.now()}.md`);
@@ -70,7 +197,11 @@ export function withTempFile<T>(content: string, fn: (path: string) => T): T {
   }
 }
 
-// Parse label names from gitea issue/PR output.
+// ---------------------------------------------------------------------------
+// Output parsers (unchanged — JQ templates produce matching format)
+// ---------------------------------------------------------------------------
+
+// Parse label names from issue/PR output.
 export function parseLabels(output: string): string[] {
   const match = output.match(/labels:\s*(.+?)(?:\s*\||\s*$)/im);
   if (!match) return [];
@@ -102,25 +233,25 @@ export function parseClosingIssues(output: string): string[] {
   return [...matches].map(m => m[1]);
 }
 
-// Parse PR/issue author from gitea output.
+// Parse PR/issue author from output.
 export function parseAuthor(output: string): string | null {
   const match = output.match(/author:\s*(\S+)/i);
   return match ? match[1] : null;
 }
 
-// Parse SHA from gitea PR output.
+// Parse SHA from PR output.
 export function parseSha(output: string): string | null {
   const match = output.match(/sha:\s*(\S+)/i);
   return match ? match[1] : null;
 }
 
-// Parse state from gitea output.
+// Parse state from output.
 export function parseState(output: string): string | null {
   const match = output.match(/^#\d+\s+\[(\w+)]/m);
   return match ? match[1] : null;
 }
 
-// Parse head branch from gitea PR output.
+// Parse head branch from PR output.
 export function parseHeadBranch(output: string): string | null {
   const match = output.match(/^(\S+)\s*→/m);
   return match ? match[1] : null;
@@ -326,7 +457,7 @@ export function firstLines(s: string, n: number): string {
   return s.split("\n").slice(0, n).join("\n");
 }
 
-// Parse gitea comments output into individual comments.
+// Parse comments output into individual comments.
 export interface ParsedComment {
   id: string;
   username: string;

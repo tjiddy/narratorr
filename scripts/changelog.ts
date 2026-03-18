@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Generate a categorized changelog from git history and linked Gitea issues.
+// Generate a categorized changelog from git history and linked GitHub issues.
 // Usage: node scripts/changelog.ts [since-ref]
 // Output: markdown changelog.
 
-import { git, giteaSafe } from "./lib.ts";
+import { git, ghSafe, JQ, GH_FIELDS } from "./lib.ts";
 
 // 1. Determine since ref
 let since = process.argv[2];
@@ -40,7 +40,7 @@ interface IssueInfo { id: string; title: string; type: string }
 const issues = new Map<string, IssueInfo>();
 
 for (const id of issueIds) {
-  const { ok, output } = giteaSafe("issue", id);
+  const { ok, output } = ghSafe("issue", "view", id, "--json", GH_FIELDS.ISSUE, "--jq", JQ.ISSUE);
   if (!ok) continue;
   const titleMatch = output.match(/^#\d+\s+\[.+?\]\s+(.+)$/m);
   const title = titleMatch?.[1] ?? `Issue #${id}`;

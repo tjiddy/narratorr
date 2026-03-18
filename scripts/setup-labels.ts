@@ -1,16 +1,10 @@
 #!/usr/bin/env node
-// Creates all workflow labels in a Gitea repo.
+// Creates all workflow labels in a GitHub repo.
 // Usage: node setup-labels.ts
 //
-// Reads GITEA_URL, GITEA_TOKEN, GITEA_OWNER, GITEA_REPO from
-// environment variables or .env file in the current working directory.
+// Uses `gh` CLI (authenticated via gh auth login or GH_TOKEN env var).
 
-import { execFileSync } from "node:child_process";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const giteaCli = resolve(__dirname, "gitea.ts");
+import { gh } from "./lib.ts";
 
 const labels: Array<{ name: string; color: string; description: string }> = [
   // Status (lifecycle — exclusive, one at a time on issue)
@@ -29,7 +23,7 @@ const labels: Array<{ name: string; color: string; description: string }> = [
 
   // Standalone flags (additive, not exclusive)
   { name: "blocked", color: "b60205", description: "Blocked, needs resolution" },
-  { name: "yolo", color: "5c007b", description: "Automate this!" },
+  { name: "automate", color: "5c007b", description: "Automate this!" },
 
   // Type
   { name: "type/feature", color: "0075ca", description: "New feature" },
@@ -40,6 +34,13 @@ const labels: Array<{ name: string; color: string; description: string }> = [
   { name: "priority/high", color: "b60205", description: "High priority" },
   { name: "priority/medium", color: "fbca04", description: "Medium priority" },
   { name: "priority/low", color: "0e8a16", description: "Low priority" },
+
+  // Scope
+  { name: "scope/backend", color: "c5def5", description: "Backend changes" },
+  { name: "scope/frontend", color: "bfdadc", description: "Frontend changes" },
+  { name: "scope/services", color: "d4c5f9", description: "Service layer changes" },
+  { name: "scope/core", color: "f9d0c4", description: "Core adapters" },
+  { name: "scope/infra", color: "e6e6e6", description: "Infrastructure / CI / Docker" },
 ];
 
 console.log("Creating workflow labels...\n");
@@ -49,23 +50,16 @@ let failed = 0;
 
 for (const label of labels) {
   try {
-    execFileSync("node", [giteaCli, "label-create", label.name, label.color, label.description], {
-      stdio: "pipe",
-      cwd: process.cwd(),
-    });
+    // --force creates or updates if the label already exists
+    gh("label", "create", label.name, "--color", label.color, "--description", label.description, "--force");
     console.log(`  + ${label.name}`);
     created++;
   } catch (e: unknown) {
-    const msg = e instanceof Error && "stderr" in e ? (e as { stderr: Buffer }).stderr?.toString().trim() : String(e);
-    // Gitea returns 409 if label already exists
-    if (msg.includes("409")) {
-      console.log(`  ~ ${label.name} (already exists)`);
-    } else {
-      console.log(`  x ${label.name} — ${msg}`);
-      failed++;
-    }
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log(`  x ${label.name} — ${msg}`);
+    failed++;
   }
 }
 
-console.log(`\nDone: ${created} created, ${labels.length - created - failed} skipped, ${failed} failed`);
+console.log(`\nDone: ${created} created/updated, ${failed} failed`);
 if (failed > 0) process.exit(1);

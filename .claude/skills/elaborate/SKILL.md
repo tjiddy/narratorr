@@ -1,6 +1,6 @@
 ---
 name: elaborate
-description: Groom and validate a Gitea issue spec. Checks completeness, explores
+description: Groom and validate a GitHub issue spec. Checks completeness, explores
   the codebase for gaps, and reports a structured readiness verdict. Use when user
   says "elaborate", "groom issue", or invokes /elaborate.
 argument-hint: <issue-id>
@@ -10,19 +10,19 @@ argument-hint: <issue-id>
 
 !`cat .claude/docs/architecture-checks.md`
 
-# /elaborate <id> — Groom and validate a Gitea issue spec
+# /elaborate <id> — Groom and validate a GitHub issue spec
 
 Standalone grooming/triage skill. Reads the issue, explores the codebase for gaps, checks dependencies, and reports a structured readiness verdict. Read-only except for updating the issue body with durable content (missing AC, test plan items, scope boundaries).
 
-## Gitea CLI
+## GitHub CLI
 
-All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
+All GitHub commands use: `gh` (referred to as `gh` below).
 
 ## Steps
 
-1. **Read the issue:** Run `gitea issue $ARGUMENTS` and capture the full output (title, body, labels).
+1. **Read the issue:** Run `gh issue view $ARGUMENTS --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` and capture the full output (title, body, labels).
 
-1b. **Check for spec review findings:** Run `gitea issue-comments <id>`. Look for the most recent comment containing `## Spec Review` and `## Verdict:`. If found and the verdict is `needs-work`, **STOP**: "Issue #<id> has unresolved spec review findings. Run `/respond-to-spec-review <id>` to address them." If the verdict is `approve` or no review comment exists, continue with step 2.
+1b. **Check for spec review findings:** Run `gh api repos/{owner}/{repo}/issues/<id>/comments --paginate --jq '.[] | "--- comment \(.id) | \(.user.login) | \(.created_at) ---\n\(.body)\n"'`. Look for the most recent comment containing `## Spec Review` and `## Verdict:`. If found and the verdict is `needs-work`, **STOP**: "Issue #<id> has unresolved spec review findings. Run `/respond-to-spec-review <id>` to address them." If the verdict is `approve` or no review comment exists, continue with step 2.
 
 2. **Parse spec completeness.** Check the issue body for:
    - **Acceptance Criteria** — clear, testable statements (REQUIRED)
@@ -71,9 +71,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    > ```
    >
    > **Overlap and dependencies:**
-   > 12. Run `node scripts/gitea.ts prs` — any open PR touching the same area?
+   > 12. Run `gh pr list --state open --limit 50 --json number,state,title,headRefName,baseRefName,url --jq '.[] | "#\(.number) [\(.state | ascii_downcase)] \(.title)\n   \(.headRefName) → \(.baseRefName) | \(.url)"'` — any open PR touching the same area?
    > 13. Check for `status/in-progress` issues that overlap in scope
-   > 14. For any issues referenced as dependencies (e.g., "depends on #X"), run `node scripts/gitea.ts issue <dep-id>` to verify status
+   > 14. For any issues referenced as dependencies (e.g., "depends on #X"), run `gh issue view <dep-id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` to verify status
    >
    > Return this structure:
    > ```
@@ -99,7 +99,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - If durable content was found, update the issue body:
      - Preserve ALL existing content
      - Append new sections (e.g., `## Implementation Notes (auto-generated)`)
-     - Write updated body to a temp file, then: `gitea issue-update <id> body --body-file <temp-file-path>`
+     - Write updated body to a temp file, then: `gh issue edit <id> --body-file <temp-file-path>`
      - Clean up the temp file
    - **Fixture blast radius (trigger: spec touches settings schema, DB schema, or shared types):** If the spec adds/removes fields on settings categories, DB tables, or shared type interfaces, add a `## Fixture Blast Radius` section listing all test files that hardcode the affected shape. Grep `**/*.test.ts` and `**/*.test.tsx` for inline fixtures of the changed type. This prevents the #1 cascade problem — implementers discovering 10+ broken test files mid-implementation.
    - Only update the body if you're adding genuinely useful durable detail — don't pad it
@@ -120,17 +120,17 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    Followed by a brief prose explanation (2-3 sentences max) of the verdict.
 
-6. **Update labels based on verdict** (for `yolo`-tagged issues):
-   - If the issue has the `yolo` label AND verdict is `ready` or `filled`:
+6. **Update labels based on verdict** (for `automate`-tagged issues):
+   - If the issue has the `automate` label AND verdict is `ready` or `filled`:
      - Run: `node scripts/update-labels.ts <id> --replace "status/" "status/review-spec"`
-   - If the issue has the `yolo` label AND verdict is `not-ready`:
-     - Post a comment explaining why: `gitea issue-comment <id> "**BLOCKED — elaboration verdict: not-ready**\n\nContext: <1-2 sentences about what's missing or unresolvable>\n\nNeeded: <what must be fixed before this can proceed>"`
+   - If the issue has the `automate` label AND verdict is `not-ready`:
+     - Post a comment explaining why: `gh issue comment <id> --body "**BLOCKED — elaboration verdict: not-ready**\n\nContext: <1-2 sentences about what's missing or unresolvable>\n\nNeeded: <what must be fixed before this can proceed>"`
      - Add blocked flag: `node scripts/block.ts <id> "Elaboration verdict: not-ready — <reason>"`
-   - If the issue does NOT have `yolo`: do not change labels (manual workflow — `/claim` handles labels)
+   - If the issue does NOT have `automate`: do not change labels (manual workflow — `/claim` handles labels)
 
 ## Important
 
-- This skill is read-only except for updating the issue body (step 4) with durable content and labels (step 6) for yolo-tagged issues
+- This skill is read-only except for updating the issue body (step 4) with durable content and labels (step 6) for `automate`-tagged issues
 - Do NOT create branches — that's `/claim`'s job
 - Do NOT suggest claiming or starting implementation — just report readiness
 - Ephemeral codebase findings stay in the verdict output — they're consumed by `/claim` or the user, not persisted to the issue

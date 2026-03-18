@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Workflow metrics — parses Gitea comments and git history to produce
+// Workflow metrics — parses GitHub comments and git history to produce
 // trend data on review quality, round counts, and finding patterns.
 // Usage: node scripts/metrics.ts [--since <pr-number>] [--json] [--reviews-dirs <dir1> <dir2> ...]
 // Output: markdown to .claude/workflow-stats.md + stdout (or JSON with --json).
 // Reads yolo dispatch DB for timing/cost data if available.
 
-import { giteaSafe, parseLinkedIssue, parseComments } from "./lib.ts";
+import { ghSafe, parseLinkedIssue, parseComments, JQ, GH_FIELDS } from "./lib.ts";
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, resolve, dirname } from "node:path";
@@ -236,19 +236,19 @@ function collectPRMetrics(prOutput: string, prNumber: number): PRMetrics | null 
   const issue = linkedIssue ? parseInt(linkedIssue, 10) : null;
 
   // Fetch PR comments
-  const { ok, output: commentsRaw } = giteaSafe("pr-comments", String(prNumber));
+  const { ok, output: commentsRaw } = ghSafe("api", `repos/{owner}/{repo}/issues/${prNumber}/comments`, "--paginate", "--jq", JQ.COMMENTS);
   if (!ok) return null;
 
   const comments = parseComments(commentsRaw);
 
-  // Count PR review rounds (## Verdict: in pr_reviewer comments)
+  // Count PR review rounds (## Verdict: in reviewer comments)
   const verdicts = comments.filter(c => c.body.includes("## Verdict:"));
   const reviewRounds = verdicts.length;
 
   // Count spec review rounds (from linked issue)
   let specReviewRounds = 0;
   if (issue) {
-    const { ok: issueOk, output: issueComments } = giteaSafe("issue-comments", String(issue));
+    const { ok: issueOk, output: issueComments } = ghSafe("api", `repos/{owner}/{repo}/issues/${issue}/comments`, "--paginate", "--jq", JQ.COMMENTS);
     if (issueOk) {
       const iComments = parseComments(issueComments);
       specReviewRounds = iComments.filter(c => c.body.includes("## Spec Review") && c.body.includes("## Verdict:")).length;
@@ -546,7 +546,7 @@ function formatMarkdown(agg: AggregateMetrics, prs: PRMetrics[], dispatches: Dis
 // --- Main ---
 async function main() {
   // Fetch all PRs
-  const { ok, output: prsRaw } = giteaSafe("prs", "all");
+  const { ok, output: prsRaw } = ghSafe("pr", "list", "--state", "all", "--limit", "200", "--json", GH_FIELDS.PRS_LIST, "--jq", JQ.PRS_LIST);
   if (!ok) {
     console.error("ERROR: Failed to fetch PRs:", prsRaw);
     process.exit(1);
@@ -572,7 +572,7 @@ async function main() {
   // Collect metrics for each PR
   const allMetrics: PRMetrics[] = [];
   for (const prNum of prNumbers) {
-    const { ok: prOk, output: prOutput } = giteaSafe("pr", String(prNum));
+    const { ok: prOk, output: prOutput } = ghSafe("pr", "view", String(prNum), "--json", GH_FIELDS.PR, "--jq", JQ.PR);
     if (!prOk) continue;
 
     const metrics = collectPRMetrics(prOutput, prNum);

@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Push changes, create a PR, and hand off a Gitea issue. Runs quality
+description: Push changes, create a PR, and hand off a GitHub issue. Runs quality
   gates, posts handoff comment, updates labels, and captures learnings. Use when user
   says "hand off", "create PR", "submit for review", or invokes /handoff.
 argument-hint: <issue-id>
@@ -17,13 +17,13 @@ hooks:
 
 !`cat .claude/docs/design-principles.md`
 
-# /handoff <id> — Push, create PR, and hand off a Gitea issue
+# /handoff <id> — Push, create PR, and hand off a GitHub issue
 
 Automates the "Push + Create PR + Update issue" workflow.
 
-## Gitea CLI
+## GitHub CLI
 
-All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
+All GitHub commands use: `gh` (referred to as `gh` below).
 
 ## Steps
 
@@ -154,13 +154,13 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    git push -u origin $(git branch --show-current)
    ```
 
-7. **Read the issue** to get the title and details: `gitea issue $ARGUMENTS`
+7. **Read the issue** to get the title and details: `gh issue view $ARGUMENTS --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`
 
-8. **Create the PR** via the Gitea API:
+8. **Create the PR** via the GitHub CLI:
    - Write the PR body to a temp file (avoids shell escaping issues with multiline content):
    ```bash
    # Write PR body to temp file, then create PR
-   gitea pr-create "#<id> <issue title>" --body-file <temp-file-path> "<branch-name>" "main"
+   gh pr create --title "#<id> <issue title>" --body-file <temp-file-path> --head "<branch-name>" --base main
    ```
    PR body template (write this to the temp file):
    ```
@@ -189,7 +189,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 10. **Post a handoff comment** on the issue:
    - Write the comment to a temp file, then post it:
    ```bash
-   gitea issue-comment <id> --body-file <temp-file-path>
+   gh issue comment <id> --body-file <temp-file-path>
    ```
    Comment template (write this to the temp file):
    ```

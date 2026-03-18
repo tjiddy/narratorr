@@ -4,16 +4,16 @@
 // Output: "MERGED: PR #<n> — #<id> closed" on success, error otherwise.
 
 import {
-  gitea, giteaSafe, git, parseLabels, replaceLabel, removeLabel,
+  gh, ghSafe, ghSetLabels, git, parseLabels, replaceLabel, removeLabel,
   parseLinkedIssue, parseClosingIssues, parseAuthor, parseSha, parseState, parseHeadBranch,
-  parseComments, withTempFile, die,
+  parseComments, withTempFile, die, JQ, GH_FIELDS,
 } from "./lib.ts";
 
 const prNum = process.argv[2];
 if (!prNum) die("ERROR: usage: node scripts/merge.ts <pr-number>");
 
 // 1. Fetch PR
-const pr = gitea("pr", prNum);
+const pr = gh("pr", "view", prNum, "--json", GH_FIELDS.PR, "--jq", JQ.PR);
 const state = parseState(pr);
 if (state !== "open") die(`ERROR: PR #${prNum} is not open (state: ${state})`);
 
@@ -24,7 +24,7 @@ const linkedIssueId = parseLinkedIssue(pr);
 const closingIssueIds = parseClosingIssues(pr);
 
 // 2. Check approval — find latest verdict from a non-author user
-const commentsRaw = gitea("pr-comments", prNum);
+const commentsRaw = gh("api", `repos/{owner}/{repo}/issues/${prNum}/comments`, "--paginate", "--jq", JQ.COMMENTS);
 const comments = parseComments(commentsRaw);
 
 let approved = false;
@@ -60,18 +60,18 @@ if (commentsRaw.includes("## Status: needs-human-input")) {
 
 // 4. Check CI status
 if (sha) {
-  const { ok, output } = giteaSafe("commit-status", sha);
+  const { ok, output } = ghSafe("api", `repos/{owner}/{repo}/commits/${sha}/status`, "--jq", JQ.COMMIT_STATUS);
   if (ok) {
     if (output.includes("CI: pending")) die("ERROR: CI checks still running — wait and retry");
     if (output.includes("CI: failure") || output.includes("CI: error")) {
       // Add blocked flag to linked issue (don't change status)
       if (linkedIssueId) {
-        const issueOut = gitea("issue", linkedIssueId);
+        const issueOut = gh("issue", "view", linkedIssueId, "--json", GH_FIELDS.ISSUE, "--jq", JQ.ISSUE);
         const labels = parseLabels(issueOut);
         const newLabels = labels.includes("blocked") ? labels : [...labels, "blocked"];
-        gitea("issue-update", linkedIssueId, "labels", newLabels.join(","));
+        ghSetLabels(linkedIssueId, newLabels);
         withTempFile(`Merge blocked — CI checks failed on PR #${prNum}.`, (p) => {
-          gitea("issue-comment", linkedIssueId, "--body-file", p);
+          gh("issue", "comment", linkedIssueId, "--body-file", p);
         });
       }
       die(`ERROR: CI failed — issue flagged as blocked\n${output}`);
@@ -86,13 +86,13 @@ if (sha) {
 }
 
 // 5. Merge
-const { ok: mergeOk, output: mergeOut } = giteaSafe("pr-merge", prNum);
+const { ok: mergeOk, output: mergeOut } = ghSafe("pr", "merge", prNum, "--squash", "--delete-branch");
 if (!mergeOk) {
   // Route merge failures
   const err = mergeOut.toLowerCase();
   const errorType = err.includes("conflict") ? "merge conflict"
     : err.includes("status check") ? "CI failure"
-    : (err.includes("405") || err.includes("please try again")) ? "branch behind base"
+    : (err.includes("not mergeable") || err.includes("try again")) ? "branch behind base"
     : "unknown error";
 
   // Branch behind base: recoverable — caller should try a clean rebase
@@ -102,17 +102,17 @@ if (!mergeOk) {
 
   // Merge conflict or branch behind with conflicts: send back to implementer
   if (errorType === "merge conflict") {
-    const prOut = gitea("pr", prNum);
+    const prOut = gh("pr", "view", prNum, "--json", GH_FIELDS.PR, "--jq", JQ.PR);
     const prLabels = replaceLabel(parseLabels(prOut), "stage/", "stage/fixes-pr");
-    gitea("pr-update-labels", prNum, prLabels.join(","));
+    ghSetLabels(prNum, prLabels);
 
     if (linkedIssueId) {
-      const issueOut = gitea("issue", linkedIssueId);
+      const issueOut = gh("issue", "view", linkedIssueId, "--json", GH_FIELDS.ISSUE, "--jq", JQ.ISSUE);
       const newLabels = replaceLabel(parseLabels(issueOut), "status/", "status/in-progress");
-      gitea("issue-update", linkedIssueId, "labels", newLabels.join(","));
+      ghSetLabels(linkedIssueId, newLabels);
       withTempFile(
         `**Rebase needed** — PR #${prNum} has merge conflicts with main. Rebase onto main, resolve conflicts, push, and set \`stage/review-pr\` for a lightweight re-review.`,
-        (p) => { gitea("issue-comment", linkedIssueId, "--body-file", p); }
+        (p) => { gh("issue", "comment", linkedIssueId, "--body-file", p); }
       );
     }
     die(`REBASE_CONFLICT: PR #${prNum} has merge conflicts with main — sent back to implementer`);
@@ -120,12 +120,12 @@ if (!mergeOk) {
 
   // Other failures: block the issue
   if (linkedIssueId) {
-    const issueOut = gitea("issue", linkedIssueId);
+    const issueOut = gh("issue", "view", linkedIssueId, "--json", GH_FIELDS.ISSUE, "--jq", JQ.ISSUE);
     const labels = parseLabels(issueOut);
     const newLabels = labels.includes("blocked") ? labels : [...labels, "blocked"];
-    gitea("issue-update", linkedIssueId, "labels", newLabels.join(","));
+    ghSetLabels(linkedIssueId, newLabels);
     withTempFile(`Merge failed on PR #${prNum} — ${errorType}. ${mergeOut}`, (p) => {
-      gitea("issue-comment", linkedIssueId, "--body-file", p);
+      gh("issue", "comment", linkedIssueId, "--body-file", p);
     });
   }
   die(`ERROR: merge failed (${errorType}): ${mergeOut}`);
@@ -140,12 +140,12 @@ if (headBranch) {
 
 // 7. Update closing issues to status/done
 for (const issueId of closingIssueIds) {
-  const issueOut = gitea("issue", issueId);
+  const issueOut = gh("issue", "view", issueId, "--json", GH_FIELDS.ISSUE, "--jq", JQ.ISSUE);
   let labels = parseLabels(issueOut);
   labels = replaceLabel(labels, "status/", "status/done");
   labels = removeLabel(labels, "stage/"); // safety: remove any stale stage labels
-  gitea("issue-update", issueId, "labels", labels.join(","));
-  giteaSafe("issue-update", issueId, "state", "closed");
+  ghSetLabels(issueId, labels);
+  ghSafe("issue", "close", issueId);
 }
 
 const closedSummary = closingIssueIds.length > 0

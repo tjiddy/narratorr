@@ -171,8 +171,13 @@ describe('claim.ts script — error handling integration', () => {
 
   function mockLib(overrides: Record<string, unknown> = {}) {
     const defaults = {
-      gitea: vi.fn(() => '#42 [open] Test issue\nlabels: status/ready-for-dev'),
-      giteaSafe: vi.fn(() => ({ ok: true, output: '' })),
+      gh: vi.fn(() => '#42 [open] Test issue\nlabels: status/ready-for-dev'),
+      ghSafe: vi.fn(() => ({ ok: true, output: '' })),
+      ghSetLabels: vi.fn(() => ''),
+      gitea: vi.fn(() => { throw new Error('gitea() removed — use gh()'); }),
+      giteaSafe: vi.fn(() => { throw new Error('giteaSafe() removed — use ghSafe()'); }),
+      JQ: { ISSUE: '', COMMENTS: '', PRS_LIST: '' },
+      GH_FIELDS: { ISSUE: '', PRS_LIST: '' },
       parseLabels: vi.fn(() => ['status/ready-for-dev']),
       replaceLabel: vi.fn(() => ['status/in-progress']),
       slugify: vi.fn(() => 'test-issue'),

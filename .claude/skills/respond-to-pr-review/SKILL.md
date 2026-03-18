@@ -22,20 +22,20 @@ hooks:
 
 Author agent reads the review, addresses each finding with an explicit resolution, pushes fixes, and posts a structured response.
 
-## Gitea CLI
+## GitHub CLI
 
-All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
+All GitHub commands use: `gh` (referred to as `gh` below).
 
 ## Steps
 
 0. **Initialize stop-gate state:** `mkdir -p .claude/state/respond-to-pr-review-<pr-number>/`
 
 1. **Fetch PR and checkout branch:**
-   - Run `gitea pr <pr-number>` to get head branch and linked issue (`Refs #<id>`)
+   - Run `gh pr view <pr-number> --json number,state,title,headRefName,baseRefName,author,headRefOid,url,labels,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\n\(.headRefName) → \(.baseRefName) | author: \(.author.login) | sha: \(.headRefOid) | \(.url)\nlabels: \([.labels[].name] | join(", "))\n\n\(.body // "")"'` to get head branch and linked issue (`Refs #<id>`)
    - `git fetch origin <head-branch> && git checkout <head-branch>`
 
 2. **Read review comments:**
-   - Run `gitea pr-comments <pr-number>`
+   - Run `gh api repos/{owner}/{repo}/issues/<pr-number>/comments --paginate --jq '.[] | "--- comment \(.id) | \(.user.login) | \(.created_at) ---\n\(.body)\n"'`
    - Find the most recent comment containing `## Verdict:` — this is the active review
    - Parse the `## Findings` JSON block from that comment
    - If no findings JSON found, report error and stop
@@ -44,7 +44,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    - **`fixed`** — Make the code change that addresses the finding, then `git add` and `git commit` with message referencing the finding ID (e.g., `fix: address F1 — add missing test for edge case`)
    - **`accepted`** — Current code is correct as-is. Provide concrete reasoning why (not just "I disagree"). Valid for `suggestion` severity only — you cannot accept a `blocking` finding without fixing or disputing it.
-   - **`deferred`** — Create a chore issue in Gitea: `gitea issue-create "<title>" --body-file <path> "type/chore"`. Reference the new issue number in the response. Valid for `suggestion` severity only.
+   - **`deferred`** — Create a chore issue in GitHub: `gh issue create --title "<title>" --body-file <path> --label "type/chore"`. Reference the new issue number in the response. Valid for `suggestion` severity only.
    - **`disputed`** — The finding is genuinely wrong. Provide a rebuttal with evidence (code references, docs, test results). Valid for `blocking` findings only — if you believe a blocking finding is incorrect, dispute it rather than silently accepting.
 
    **Root cause capture:** For every finding resolved as `fixed`, write a learning file to `.claude/cl/learnings/` capturing what gap let this slip through. Create the directory if it doesn't exist.
@@ -95,7 +95,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **STOP** — do not continue. Human must weigh in.
 
 5. **Post response comment on PR:**
-   - Write comment to temp file, then: `gitea pr-comment <pr-number> --body-file <temp-file-path>`
+   - Write comment to temp file, then: `gh pr comment <pr-number> --body-file <temp-file-path>`
    - Template:
      ```
      ## Review Response

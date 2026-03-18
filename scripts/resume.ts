@@ -1,20 +1,20 @@
 #!/usr/bin/env node
-// Resume a blocked Gitea issue: restore branch, update labels, show context.
+// Resume a blocked GitHub issue: restore branch, update labels, show context.
 // Usage: node scripts/resume.ts <issue-id>
 // Output: branch + blocker context for the LLM to present to user.
 
-import { gitea, git, parseLabels, parseComments, withTempFile, die } from "./lib.ts";
+import { gh, ghSetLabels, git, parseLabels, parseComments, withTempFile, die, JQ, GH_FIELDS } from "./lib.ts";
 
 const id = process.argv[2];
 if (!id) die("ERROR: usage: node scripts/resume.ts <issue-id>");
 
 // 1. Read issue, verify blocked
-const issue = gitea("issue", id);
+const issue = gh("issue", "view", id, "--json", GH_FIELDS.ISSUE, "--jq", JQ.ISSUE);
 const labels = parseLabels(issue);
 if (!labels.includes("blocked")) die(`ERROR: #${id} is not blocked (labels: ${labels.join(", ")})`);
 
 // 2. Find BLOCKED comment and post-blocker answers
-const commentsRaw = gitea("issue-comments", id);
+const commentsRaw = gh("api", `repos/{owner}/{repo}/issues/${id}/comments`, "--paginate", "--jq", JQ.COMMENTS);
 const comments = parseComments(commentsRaw);
 
 let blockerIdx = -1;
@@ -56,13 +56,13 @@ if (!branch) {
 
 // 4. Remove blocked flag (status unchanged)
 const newLabels = labels.filter(l => l !== "blocked");
-gitea("issue-update", id, "labels", newLabels.join(","));
+ghSetLabels(id, newLabels);
 
 // 5. Post resume comment
 const resolution = answers ? "answers found (see below)" : "proceeding with default approach";
 withTempFile(
   `**Resuming #${id}**\n- Previous blocker: see below\n- Resolution: ${resolution}\n- Branch: \`${branch}\``,
-  (path) => { gitea("issue-comment", id, "--body-file", path); }
+  (path) => { gh("issue", "comment", id, "--body-file", path); }
 );
 
 // 6. Output context for LLM

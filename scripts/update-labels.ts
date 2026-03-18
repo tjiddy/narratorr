@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Update labels on a Gitea issue or PR using deterministic replaceLabel logic.
+// Update labels on a GitHub issue or PR using deterministic replaceLabel logic.
 // Usage: node scripts/update-labels.ts <id> [--pr] --replace <prefix> <new-label> [--replace ...]
 // Example: node scripts/update-labels.ts 269 --replace "stage/" "stage/review-pr"
 // Example: node scripts/update-labels.ts 42 --pr --replace "stage/" "stage/approved"
 // Output: Updated labels list, or error.
 
-import { gitea, parseLabels, replaceLabel, removeLabel, die } from "./lib.ts";
+import { gh, ghSetLabels, parseLabels, replaceLabel, removeLabel, die, JQ, GH_FIELDS } from "./lib.ts";
 
 const args = process.argv.slice(2);
 const id = args[0];
@@ -35,7 +35,9 @@ while (i < args.length) {
 if (ops.length === 0) die("ERROR: no operations specified");
 
 // Read current labels (issue or PR)
-const entity = isPR ? gitea("pr", id) : gitea("issue", id);
+const entity = isPR
+  ? gh("pr", "view", id, "--json", GH_FIELDS.PR, "--jq", JQ.PR)
+  : gh("issue", "view", id, "--json", GH_FIELDS.ISSUE, "--jq", JQ.ISSUE);
 let labels = parseLabels(entity);
 
 // Apply operations
@@ -47,8 +49,6 @@ for (const op of ops) {
   }
 }
 
-// Update (issue-update or pr-update-labels)
-const result = isPR
-  ? gitea("pr-update-labels", id, labels.join(","))
-  : gitea("issue-update", id, "labels", labels.join(","));
+// Update — ghSetLabels works for both issues and PRs (same GitHub API endpoint)
+const result = ghSetLabels(id, labels);
 console.log(result);

@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-// Claim a Gitea issue: validate status, create branch, update labels, post comment.
+// Claim a GitHub issue: validate status, create branch, update labels, post comment.
 // Usage: node scripts/claim.ts <issue-id>
 // Output: "CLAIMED: #<id> — <branch>" on success, error otherwise.
 
-import { gitea, giteaSafe, parseLabels, replaceLabel, slugify, withTempFile, die, checkoutOrCreateBranch, UnmergedFilesError } from "./lib.ts";
+import { gh, ghSafe, ghSetLabels, parseLabels, replaceLabel, slugify, withTempFile, die, checkoutOrCreateBranch, UnmergedFilesError, JQ, GH_FIELDS } from "./lib.ts";
 
 const id = process.argv[2];
 if (!id) die("ERROR: usage: node scripts/claim.ts <issue-id>");
 
 // 1. Read issue
-const issue = gitea("issue", id);
+const issue = gh("issue", "view", id, "--json", GH_FIELDS.ISSUE, "--jq", JQ.ISSUE);
 const labels = parseLabels(issue);
 
 // 2. Check status
@@ -18,7 +18,7 @@ if (status === "status/in-progress") die(`ERROR: #${id} is already in progress`)
 if (labels.includes("blocked")) die(`ERROR: #${id} is blocked — run /resume ${id}`);
 if (status !== "status/ready" && status !== "status/ready-for-dev") {
   // Check for spec review
-  const { ok, output } = giteaSafe("issue-comments", id);
+  const { ok, output } = ghSafe("api", `repos/{owner}/{repo}/issues/${id}/comments`, "--paginate", "--jq", JQ.COMMENTS);
   if (ok && output.includes("## Spec Review")) {
     if (output.includes("Verdict: needs-work")) {
       die(`ERROR: #${id} has unresolved spec review findings — address them first`);
@@ -28,7 +28,7 @@ if (status !== "status/ready" && status !== "status/ready-for-dev") {
 }
 
 // 3. Check for existing PRs
-const prs = giteaSafe("prs");
+const prs = ghSafe("pr", "list", "--json", GH_FIELDS.PRS_LIST, "--jq", JQ.PRS_LIST);
 if (prs.ok && prs.output.includes(`#${id}`)) {
   die(`ERROR: PR already open for #${id}`);
 }
@@ -52,11 +52,11 @@ try {
 
 // 6. Update labels
 const newLabels = replaceLabel(labels, "status/", "status/in-progress");
-gitea("issue-update", id, "labels", newLabels.join(","));
+ghSetLabels(id, newLabels);
 
 // 7. Post comment
 withTempFile(`**Claiming #${id}** — branch: \`${finalBranch}\``, (path) => {
-  gitea("issue-comment", id, "--body-file", path);
+  gh("issue", "comment", id, "--body-file", path);
 });
 
 console.log(`CLAIMED: #${id} — ${finalBranch}${resumed ? " (resumed)" : ""}`);

@@ -1,6 +1,6 @@
 ---
 name: respond-to-spec-review
-description: Address spec review findings on a Gitea issue — update the spec body,
+description: Address spec review findings on a GitHub issue — update the spec body,
   post a structured response. Use when user says "respond to spec review", "address
   spec findings", or invokes /respond-to-spec-review.
 argument-hint: <issue-id>
@@ -9,19 +9,19 @@ disable-model-invocation: true
 
 !`cat .claude/docs/workflow.md`
 
-# /respond-to-spec-review <id> — Address spec review findings on a Gitea issue
+# /respond-to-spec-review <id> — Address spec review findings on a GitHub issue
 
 Reads the latest `/review-spec` verdict on an issue, addresses each finding by updating the spec body, posts a structured response comment, and reports readiness.
 
-## Gitea CLI
+## GitHub CLI
 
-All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
+All GitHub commands use: `gh` (referred to as `gh` below).
 
 ## Steps
 
-1. **Read the issue:** Run `gitea issue $ARGUMENTS` and capture the full output (title, body, labels).
+1. **Read the issue:** Run `gh issue view $ARGUMENTS --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` and capture the full output (title, body, labels).
 
-2. **Verify spec review findings exist:** Run `gitea issue-comments <id>`. Look for the most recent comment containing `## Spec Review` and `## Verdict:`.
+2. **Verify spec review findings exist:** Run `gh api repos/{owner}/{repo}/issues/<id>/comments --paginate --jq '.[] | "--- comment \(.id) | \(.user.login) | \(.created_at) ---\n\(.body)\n"'`. Look for the most recent comment containing `## Spec Review` and `## Verdict:`.
    - If found and the verdict is `needs-work` → proceed to step 3.
    - If the verdict is `approve` → **STOP**: "Issue #<id> spec review verdict is already `approve`. Nothing to respond to."
    - If no review comment exists → **STOP**: "No spec review found on issue #<id>. Run `/review-spec <id>` first."
@@ -36,7 +36,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 5. **Address each finding.** For each finding, determine a disposition:
    - **`fixed`** — Update the spec body to address the finding. Describe what changed.
    - **`accepted`** — Agree with the finding but handle it differently than suggested. Explain why.
-   - **`deferred`** — Valid finding but out of scope. Create a chore issue if needed: `gitea issue-create "<title>" --body-file <path> "type/chore"`.
+   - **`deferred`** — Valid finding but out of scope. Create a chore issue if needed: `gh issue create --title "<title>" --body-file <path> --label "type/chore"`.
    - **`disputed`** — Disagree with the finding. Explain why with evidence.
 
    All `blocking` findings MUST be `fixed` or `disputed`. `suggestion` findings can be any disposition.
@@ -61,7 +61,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 7. **Update the issue body.** Apply all `fixed` changes to the spec:
    - Preserve ALL existing content structure
    - Modify in-place where the finding points to a specific section (e.g., fix an AC item, add a Test Plan section)
-   - Write updated body to a temp file, then: `gitea issue-update <id> body --body-file <temp-file-path>`
+   - Write updated body to a temp file, then: `gh issue edit <id> --body-file <temp-file-path>`
    - Clean up the temp file
 
 8. **Post a response comment.** Write a structured response and post it:
@@ -75,12 +75,12 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    | F1 | blocking | fixed | <what changed> |
    | F2 | suggestion | accepted | <why> |
    ```
-   Write to temp file, then: `gitea issue-comment <id> --body-file <temp-file-path>`
+   Write to temp file, then: `gh issue comment <id> --body-file <temp-file-path>`
 
-9. **Update labels** (for `yolo`-tagged issues):
-   - If the issue has the `yolo` label:
+9. **Update labels** (for `automate`-tagged issues):
+   - If the issue has the `automate` label:
      - Run: `node scripts/update-labels.ts <id> --replace "status/" "status/review-spec"`
-   - If the issue does NOT have `yolo`: do not change labels (manual workflow)
+   - If the issue does NOT have `automate`: do not change labels (manual workflow)
 
 10. **Prompt improvement retrospective (for `fixed` findings only):**
     For each finding resolved as `fixed`, analyze: "Why did I miss this when writing the spec? What specific addition or change to a skill prompt (`/spec`, `/elaborate`, or CLAUDE.md) would have helped me catch this before it went out for review?"
@@ -133,7 +133,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
 ## Important
 
-- This skill writes to the issue body (step 7), posts a response comment (step 8), and updates labels (step 9) for yolo-tagged issues
+- This skill writes to the issue body (step 7), posts a response comment (step 8), and updates labels (step 9) for `automate`-tagged issues
 - Do NOT create branches — that's `/claim`'s job
 - Do NOT suggest claiming or starting implementation — just report readiness
 - Ephemeral codebase findings stay in the verdict output — they're consumed by `/claim` or the user, not persisted to the issue

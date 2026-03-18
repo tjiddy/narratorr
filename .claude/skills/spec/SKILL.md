@@ -1,6 +1,6 @@
 ---
 name: spec
-description: Create a new Gitea issue from the spec template. Use when user says
+description: Create a new GitHub issue from the spec template. Use when user says
   "new issue", "create issue", "write a spec", or invokes /spec.
 argument-hint: <title>
 ---
@@ -9,13 +9,13 @@ argument-hint: <title>
 
 !`cat .claude/docs/architecture-checks.md`
 
-# /spec <title> — Create a Gitea issue from template
+# /spec <title> — Create a GitHub issue from template
 
-Draft a spec for a new issue using the spec template, then create it in Gitea.
+Draft a spec for a new issue using the spec template, then create it in GitHub.
 
-## Gitea CLI
+## GitHub CLI
 
-All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
+All GitHub commands use: `gh` (referred to as `gh` below).
 
 ## Steps
 
@@ -35,7 +35,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - Status: `status/backlog` (default) or `status/ready` if user wants it next
 6. Create the issue:
    ```
-   gitea issue-create "<title>" --body-file <temp-file-path> "<labels>"
+   gh issue create --title "<title>" --body-file <temp-file-path> --label "<labels>"
    ```
    Write the spec body to a temp file first, then pass via `--body-file`. Clean up the temp file after.
 7. Display the created issue URL to the user.

@@ -11,15 +11,15 @@ description: Rank and categorize all open issues by priority. Read-only analysis
 
 Read-only skill that surveys all open issues and produces a prioritized ranking. Runs as a general-purpose subagent to keep verbose output out of main context.
 
-## Gitea CLI
+## GitHub CLI
 
-All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
+All GitHub commands use: `gh` (referred to as `gh` below).
 
 ## Steps
 
-1. **Fetch all open issues:** Run `gitea issues` to get all open issues.
+1. **Fetch all open issues:** Run `gh issue list --state open --limit 100 --json number,state,title,labels,milestone --jq '.[] | "#\(.number) [\(.state | ascii_downcase)] \(.title)\n   labels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)"'` to get all open issues.
 
-2. **Read each issue:** For each issue, run `gitea issue <id>` to get the full body. Parse from body text only (NO codebase exploration):
+2. **Read each issue:** For each issue, run `gh issue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` to get the full body. Parse from body text only (NO codebase exploration):
    - Acceptance Criteria: present / missing
    - Test Plan: present / missing
    - Dependencies: list any `#<id>` references, note if those are open/closed
@@ -62,7 +62,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    c2. **Read review retrospectives:** Scan all files in `.claude/cl/reviews/`. These contain specific "Prompt fix" suggestions from implementers (respond-to-*) and reviewers (review-*) identifying what prompt changes would have caught issues earlier. Group by target skill — multiple retrospectives suggesting changes to the same skill prompt are high-signal candidates for graduation.
 
    d. **Classify each cluster/item** into one of:
-      - **Code fix** — a concrete change to the repo would eliminate this class of problem (e.g., "mock factories would prevent stale mock breakage"). → Suggest creating a Gitea issue. Include the proposed scope and rationale.
+      - **Code fix** — a concrete change to the repo would eliminate this class of problem (e.g., "mock factories would prevent stale mock breakage"). → Suggest creating a GitHub issue. Include the proposed scope and rationale.
       - **Workflow change** — a change to a skill prompt would catch or prevent this (e.g., "review-spec should check for catch-all blocks"). Review retrospectives (`.claude/cl/reviews/`) are the primary source here — they contain pre-written "Prompt fix" suggestions. When multiple retrospectives across different issues suggest the same prompt change, that's a strong signal to graduate. → Suggest which skill to change and what to add, quoting the retrospective's proposed text where available.
       - **CLAUDE.md rule** — a convention or pattern that should be documented for all contributors (e.g., "always use FastifyBaseLogger, not BaseLogger from pino"). → Suggest the specific addition.
       - **Inherent** — no action possible; this is a runtime/tooling reality that can't be fixed, only known (e.g., "jsdom doesn't support responsive breakpoints"). → No action. Learning stays in `.claude/cl/learnings/` for `/claim` to surface.
@@ -97,7 +97,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
       Present the three-way sort to the user for approval before deleting. Also remove resolved debt items from `.claude/cl/debt.md`.
 
-   h. **Truncate workflow-log.md** — replace contents with just `# Workflow Log\n`. All useful items have been graduated to their destinations (debt.md, Gitea issues, skill prompt changes). Non-graduated entries are discarded. This keeps the file bounded since it's tracked in git.
+   h. **Truncate workflow-log.md** — replace contents with just `# Workflow Log\n`. All useful items have been graduated to their destinations (debt.md, GitHub issues, skill prompt changes). Non-graduated entries are discarded. This keeps the file bounded since it's tracked in git.
 
 ## Important
 

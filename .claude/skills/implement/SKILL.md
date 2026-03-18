@@ -1,6 +1,6 @@
 ---
 name: implement
-description: Full lifecycle implementation of a Gitea issue — claims, plans, implements,
+description: Full lifecycle implementation of a GitHub issue — claims, plans, implements,
   and hands off with a PR. Use when user says "implement issue", "build this", or
   invokes /implement.
 argument-hint: <issue-id>
@@ -24,9 +24,9 @@ hooks:
 
 End-to-end orchestrator skill. Claims the issue, plans the implementation, builds it, and hands off with a PR.
 
-## Gitea CLI
+## GitHub CLI
 
-All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
+All GitHub commands use: `gh` (referred to as `gh` below).
 
 ## Steps
 
@@ -53,7 +53,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 ### Phase 3 — Implement
 
 3. **Read the issue spec one final time** — it may have been updated during elaboration:
-   - `gitea issue $ARGUMENTS`
+   - `gh issue view $ARGUMENTS --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`
 
 4. **Implement the feature/fix using red/green TDD:**
 
@@ -105,9 +105,9 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **When `/handoff` returns → IMMEDIATELY continue to step 8.** Do not end your turn.
 
 8. **Verify label transition (safety net):** Check both sides of the bridge:
-   - Run `gitea issue <id>` and check that the issue has `status/in-review`. If missing:
+   - Run `gh issue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` and check that the issue has `status/in-review`. If missing:
      - Run: `node scripts/update-labels.ts <id> --replace "status/" "status/in-review"`
-   - Run `gitea pr <pr-number>` and check that the PR has `stage/review-pr`. If missing:
+   - Run `gh pr view <pr-number> --json number,state,title,headRefName,baseRefName,author,headRefOid,url,labels,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\n\(.headRefName) → \(.baseRefName) | author: \(.author.login) | sha: \(.headRefOid) | \(.url)\nlabels: \([.labels[].name] | join(", "))\n\n\(.body // "")"'` and check that the PR has `stage/review-pr`. If missing:
      - Run: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/review-pr"`
    - **Both checks are critical for the orchestrator pipeline** — the PR label drives review dispatch, the issue label tracks workflow state.
 
