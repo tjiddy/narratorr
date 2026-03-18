@@ -6,20 +6,13 @@ import { renameFilesWithTemplate } from '../utils/paths.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
-import type { NotifierService } from './notifier.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
-import type { TaggingService } from './tagging.service.js';
-import type { EventHistoryService } from './event-history.service.js';
-import type { EventBroadcasterService } from './event-broadcaster.service.js';
-import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { resolveSavePath } from '../utils/download-path.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
 import {
   validateSource, checkDiskSpace, copyToLibrary, runAudioProcessing,
-  verifyCopy, cleanupOldBookPath, embedTagsForImport,
-  runImportPostProcessing, emitImportSuccess, emitImportingStatus,
-  notifyImportComplete, recordImportEvent, handleImportFailure,
+  verifyCopy, cleanupOldBookPath, handleImportFailure,
 } from '../utils/import-steps.js';
 import type { DownloadRow } from './types.js';
 
@@ -28,6 +21,19 @@ export type { ImportResult } from '../utils/import-helpers.js';
 
 /** Milliseconds per minute — used for seed time calculations. */
 const MS_PER_MINUTE = 60_000;
+
+/** Lightweight context for orchestrator side-effect dispatch. */
+export interface ImportContext {
+  downloadId: number;
+  downloadTitle: string;
+  downloadStatus: string;
+  bookId: number;
+  bookTitle: string;
+  bookStatus: string;
+  bookPath: string | null;
+  authorName: string | null;
+  book: BookRow;
+}
 
 export class ImportService {
   private readonly semaphore = new Semaphore(2);
@@ -47,16 +53,39 @@ export class ImportService {
     private downloadClientService: DownloadClientService,
     private settingsService: SettingsService,
     private log: FastifyBaseLogger,
-    private notifierService?: NotifierService,
     private remotePathMappingService?: RemotePathMappingService,
-    private taggingService?: TaggingService,
-    private eventHistory?: EventHistoryService,
-    private broadcaster?: EventBroadcasterService,
   ) {}
 
   /**
+   * Load context for orchestrator side-effect dispatch.
+   * Returns download + book + author data needed for SSE, notifications, event recording.
+   */
+  async getImportContext(downloadId: number): Promise<ImportContext> {
+    const download = await this.getDownload(downloadId);
+    if (!download) throw new Error(`Download ${downloadId} not found`);
+    if (!download.bookId) throw new Error(`Download ${downloadId} has no linked book`);
+
+    const bookData = await this.getBookWithAuthor(download.bookId);
+    if (!bookData) throw new Error(`Book ${download.bookId} not found`);
+    const { book, author } = bookData;
+
+    return {
+      downloadId,
+      downloadTitle: download.title,
+      downloadStatus: download.status,
+      bookId: book.id,
+      bookTitle: book.title,
+      bookStatus: book.status,
+      bookPath: book.path,
+      authorName: author?.name ?? null,
+      book,
+    };
+  }
+
+  /**
    * Import a single completed download into the library.
-   * Copies files, updates DB records, optionally removes torrent.
+   * Core import lifecycle: copies files, updates DB records, enriches from audio, handles torrent removal.
+   * Side effects (SSE, notifications, events, tagging, post-processing) are dispatched by the orchestrator.
    */
   async importDownload(downloadId: number): Promise<ImportResult> {
     const download = await this.getDownload(downloadId);
@@ -69,7 +98,6 @@ export class ImportService {
     const authorName = author?.name ?? null;
 
     await this.db.update(downloads).set({ status: 'importing' }).where(eq(downloads.id, downloadId));
-    emitImportingStatus({ broadcaster: this.broadcaster, downloadId, book, downloadStatus: download.status as DownloadStatus, log: this.log });
 
     let targetPath: string | undefined;
     try {
@@ -96,43 +124,29 @@ export class ImportService {
       await this.db.update(books).set({ status: 'imported', path: targetPath, size: targetSize, updatedAt: new Date() }).where(eq(books.id, book.id));
       await enrichBookFromAudio(book.id, targetPath, book, this.db, this.log);
 
-      const taggingSettings = await this.settingsService.get('tagging');
-      const processingForTags = await this.settingsService.get('processing');
-      await embedTagsForImport({
-        taggingService: this.taggingService, taggingEnabled: taggingSettings.enabled,
-        ffmpegPath: processingForTags.ffmpegPath, taggingMode: taggingSettings.mode, embedCover: taggingSettings.embedCover,
-        bookId: book.id, targetPath, book: { title: book.title, authorName, narrator: book.narrator, seriesName: book.seriesName, seriesPosition: book.seriesPosition, coverUrl: book.coverUrl },
-        log: this.log,
-      });
-
-      const processingForScript = await this.settingsService.get('processing');
-      await runImportPostProcessing({ postProcessingScript: processingForScript.postProcessingScript, postProcessingScriptTimeout: processingForScript.postProcessingScriptTimeout, targetPath, bookTitle: book.title, bookAuthor: authorName, fileCount, bookId: book.id, log: this.log });
-
       await this.db.update(downloads).set({ status: 'imported' }).where(eq(downloads.id, downloadId));
       this.log.info({ downloadId, bookId: book.id, targetPath, fileCount, totalSize: targetSize }, 'Import completed successfully');
-      emitImportSuccess({ broadcaster: this.broadcaster, downloadId, bookId: book.id, bookTitle: book.title, log: this.log });
-      notifyImportComplete({ notifierService: this.notifierService, bookTitle: book.title, authorName, targetPath, fileCount, log: this.log });
-      recordImportEvent({ eventHistory: this.eventHistory, bookId: book.id, bookTitle: book.title, authorName, downloadId, bookPath: book.path, targetPath, fileCount, totalSize: targetSize, log: this.log });
 
       if (importSettings.deleteAfterImport) {
         await this.handleTorrentRemoval(download, importSettings.minSeedTime);
       }
       return { downloadId, bookId: book.id, targetPath, fileCount, totalSize: targetSize };
     } catch (error) {
-      // handleImportFailure always rethrows — return satisfies TS control flow
+      // handleImportFailure does core cleanup (rm files, revert DB) then rethrows.
+      // Orchestrator catches the rethrow for failure-path side effects.
       return handleImportFailure({
-        error, targetPath, db: this.db, downloadId, downloadTitle: download.title,
-        book, authorName, broadcaster: this.broadcaster, notifierService: this.notifierService,
-        eventHistory: this.eventHistory, log: this.log,
+        error, targetPath, db: this.db, downloadId,
+        book, log: this.log,
       });
     }
   }
 
   /**
-   * Process all completed and queued downloads that are ready for import.
-   * Uses semaphore-based parallel admission up to maxConcurrentProcessing.
+   * Query eligible downloads and apply semaphore admission.
+   * Returns download IDs that acquired a slot. Downloads that couldn't acquire
+   * a slot are set to processing_queued.
    */
-  async processCompletedDownloads(): Promise<ImportResult[]> {
+  async getEligibleDownloads(): Promise<number[]> {
     const processingSettings = await this.settingsService.get('processing');
     this.semaphore.setMax(processingSettings.maxConcurrentProcessing);
 
@@ -152,7 +166,7 @@ export class ImportService {
     }
 
     this.log.info({ count: eligibleDownloads.length }, 'Processing completed downloads for import');
-    const importPromises: Promise<ImportResult | null>[] = [];
+    const admitted: number[] = [];
 
     for (const download of eligibleDownloads) {
       if (!download.bookId) {
@@ -168,25 +182,10 @@ export class ImportService {
         continue;
       }
 
-      importPromises.push(
-        this.importDownload(download.id)
-          .then((result): ImportResult => result)
-          .catch((_error): null => {
-            this.log.warn({ downloadId: download.id }, 'Skipping failed import, continuing with next');
-            return null;
-          })
-          .finally(() => { this.semaphore.release(); }),
-      );
+      admitted.push(download.id);
     }
 
-    const settled = await Promise.allSettled(importPromises);
-    const results: ImportResult[] = [];
-    for (const outcome of settled) {
-      if (outcome.status === 'fulfilled' && outcome.value) {
-        results.push(outcome.value);
-      }
-    }
-    return results;
+    return admitted;
   }
 
   /** Set a download to processing_queued status (for deferred import). */

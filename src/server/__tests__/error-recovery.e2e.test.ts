@@ -220,7 +220,7 @@ describe('Error recovery E2E', () => {
       qbGetTorrentHandler(TORRENT_HASH, downloadParent),
     );
 
-    const result = await e2e.services.import.importDownload(downloadId);
+    const result = await e2e.services.importOrchestrator.importDownload(downloadId);
     expect(result.fileCount).toBe(2);
 
     // Working notifier still received the notification

@@ -28,8 +28,13 @@ import {
   embedTagsForImport,
   runImportPostProcessing,
   emitImportSuccess,
+  emitDownloadImporting,
+  emitBookImporting,
+  emitImportFailure,
   notifyImportComplete,
+  notifyImportFailure,
   recordImportEvent,
+  recordImportFailedEvent,
   handleImportFailure,
 } from './import-steps.js';
 
@@ -430,8 +435,7 @@ describe('handleImportFailure', () => {
     const error = new Error('import broke');
     await expect(handleImportFailure({
       error, targetPath: '/lib/book', db: mockDb as never,
-      downloadId: 1, downloadTitle: 'Download Name', book: { id: 1, title: 'Book', path: null }, authorName: null,
-      broadcaster: undefined, notifierService: undefined, eventHistory: undefined, log,
+      downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
     })).rejects.toThrow('import broke');
     expect(rm).toHaveBeenCalledWith('/lib/book', { recursive: true, force: true });
   });
@@ -440,8 +444,7 @@ describe('handleImportFailure', () => {
     const log = createMockLog();
     await expect(handleImportFailure({
       error: new Error('fail'), targetPath: undefined, db: mockDb as never,
-      downloadId: 1, downloadTitle: 'Download Name', book: { id: 1, title: 'Book', path: null }, authorName: null,
-      broadcaster: undefined, notifierService: undefined, eventHistory: undefined, log,
+      downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
     })).rejects.toThrow('fail');
     expect(rm).not.toHaveBeenCalled();
   });
@@ -451,8 +454,7 @@ describe('handleImportFailure', () => {
     vi.mocked(rm).mockRejectedValueOnce(new Error('rm fail'));
     await expect(handleImportFailure({
       error: new Error('fail'), targetPath: '/lib/book', db: mockDb as never,
-      downloadId: 1, downloadTitle: 'Download Name', book: { id: 1, title: 'Book', path: null }, authorName: null,
-      broadcaster: undefined, notifierService: undefined, eventHistory: undefined, log,
+      downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
     })).rejects.toThrow('fail');
     expect(log.warn).toHaveBeenCalled();
   });
@@ -466,8 +468,7 @@ describe('handleImportFailure', () => {
 
     await expect(handleImportFailure({
       error: new Error('broke'), targetPath: undefined, db,
-      downloadId: 42, downloadTitle: 'Download Name', book: { id: 1, title: 'Book', path: null }, authorName: null,
-      broadcaster: undefined, notifierService: undefined, eventHistory: undefined, log,
+      downloadId: 42, book: { id: 1, title: 'Book', path: null }, log,
     })).rejects.toThrow('broke');
 
     expect(set).toHaveBeenCalledWith(expect.objectContaining({
@@ -480,61 +481,9 @@ describe('handleImportFailure', () => {
     const log = createMockLog();
     await expect(handleImportFailure({
       error: new Error('fail'), targetPath: undefined, db: mockDb as never,
-      downloadId: 1, downloadTitle: 'Download Name', book: { id: 5, title: 'Book', path: '/old' }, authorName: null,
-      broadcaster: undefined, notifierService: undefined, eventHistory: undefined, log,
+      downloadId: 1, book: { id: 5, title: 'Book', path: '/old' }, log,
     })).rejects.toThrow('fail');
     expect(revertBookStatus).toHaveBeenCalledWith(mockDb, { id: 5, title: 'Book', path: '/old' });
-  });
-
-  it('emits SSE failure events', async () => {
-    const log = createMockLog();
-    const broadcaster = { emit: vi.fn() };
-    vi.mocked(revertBookStatus).mockResolvedValueOnce('wanted');
-    await expect(handleImportFailure({
-      error: new Error('fail'), targetPath: undefined, db: mockDb as never,
-      downloadId: 1, downloadTitle: 'Download Name', book: { id: 2, title: 'Book', path: null }, authorName: null,
-      broadcaster: broadcaster as never, notifierService: undefined, eventHistory: undefined, log,
-    })).rejects.toThrow('fail');
-    expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({ new_status: 'failed' }));
-    expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({ new_status: 'wanted' }));
-  });
-
-  it('sends failure notification (fire-and-forget)', async () => {
-    const log = createMockLog();
-    const catchFn = vi.fn();
-    const notify = vi.fn().mockReturnValue({ catch: catchFn });
-    await expect(handleImportFailure({
-      error: new Error('fail'), targetPath: undefined, db: mockDb as never,
-      downloadId: 1, downloadTitle: 'Download Name', book: { id: 1, title: 'Book', path: null }, authorName: null,
-      broadcaster: undefined, notifierService: { notify } as never, eventHistory: undefined, log,
-    })).rejects.toThrow('fail');
-    expect(notify).toHaveBeenCalledWith('on_failure', expect.objectContaining({ event: 'on_failure' }));
-  });
-
-  it('uses download title (not book title) in failure notification payload', async () => {
-    const log = createMockLog();
-    const catchFn = vi.fn();
-    const notify = vi.fn().mockReturnValue({ catch: catchFn });
-    await expect(handleImportFailure({
-      error: new Error('fail'), targetPath: undefined, db: mockDb as never,
-      downloadId: 1, downloadTitle: 'Torrent Release Name [2024]', book: { id: 1, title: 'Clean Book Title', path: null }, authorName: null,
-      broadcaster: undefined, notifierService: { notify } as never, eventHistory: undefined, log,
-    })).rejects.toThrow('fail');
-    expect(notify).toHaveBeenCalledWith('on_failure', expect.objectContaining({
-      book: { title: 'Torrent Release Name [2024]' },
-    }));
-  });
-
-  it('records import_failed event (fire-and-forget)', async () => {
-    const log = createMockLog();
-    const catchFn = vi.fn();
-    const create = vi.fn().mockReturnValue({ catch: catchFn });
-    await expect(handleImportFailure({
-      error: new Error('fail'), targetPath: undefined, db: mockDb as never,
-      downloadId: 1, downloadTitle: 'Download Name', book: { id: 1, title: 'Book', path: null }, authorName: null,
-      broadcaster: undefined, notifierService: undefined, eventHistory: { create } as never, log,
-    })).rejects.toThrow('fail');
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'import_failed' }));
   });
 
   it('rethrows the original error', async () => {
@@ -542,8 +491,123 @@ describe('handleImportFailure', () => {
     const originalError = new Error('original');
     await expect(handleImportFailure({
       error: originalError, targetPath: undefined, db: mockDb as never,
-      downloadId: 1, downloadTitle: 'Download Name', book: { id: 1, title: 'Book', path: null }, authorName: null,
-      broadcaster: undefined, notifierService: undefined, eventHistory: undefined, log,
+      downloadId: 1, book: { id: 1, title: 'Book', path: null }, log,
     })).rejects.toBe(originalError);
+  });
+});
+
+// ── emitDownloadImporting ───────────────────────────────────────────────
+
+describe('emitDownloadImporting', () => {
+  it('emits download_status_change with importing status', () => {
+    const log = createMockLog();
+    const broadcaster = { emit: vi.fn() };
+    emitDownloadImporting({ broadcaster: broadcaster as never, downloadId: 1, bookId: 2, downloadStatus: 'completed', log });
+    expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
+      download_id: 1, book_id: 2, old_status: 'completed', new_status: 'importing',
+    }));
+  });
+
+  it('skips when broadcaster is undefined', () => {
+    const log = createMockLog();
+    emitDownloadImporting({ broadcaster: undefined, downloadId: 1, bookId: 2, downloadStatus: 'completed', log });
+    expect(log.debug).not.toHaveBeenCalled();
+  });
+
+  it('catches and logs at debug level when emit throws', () => {
+    const log = createMockLog();
+    const broadcaster = { emit: vi.fn().mockImplementation(() => { throw new Error('emit fail'); }) };
+    emitDownloadImporting({ broadcaster: broadcaster as never, downloadId: 1, bookId: 2, downloadStatus: 'completed', log });
+    expect(log.debug).toHaveBeenCalled();
+  });
+});
+
+// ── emitBookImporting ───────────────────────────────────────────────────
+
+describe('emitBookImporting', () => {
+  it('emits book_status_change with importing status', () => {
+    const log = createMockLog();
+    const broadcaster = { emit: vi.fn() };
+    emitBookImporting({ broadcaster: broadcaster as never, bookId: 2, bookStatus: 'wanted', log });
+    expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
+      book_id: 2, old_status: 'wanted', new_status: 'importing',
+    }));
+  });
+
+  it('skips when broadcaster is undefined', () => {
+    const log = createMockLog();
+    emitBookImporting({ broadcaster: undefined, bookId: 2, bookStatus: 'wanted', log });
+    expect(log.debug).not.toHaveBeenCalled();
+  });
+
+  it('catches and logs at debug level when emit throws', () => {
+    const log = createMockLog();
+    const broadcaster = { emit: vi.fn().mockImplementation(() => { throw new Error('emit fail'); }) };
+    emitBookImporting({ broadcaster: broadcaster as never, bookId: 2, bookStatus: 'wanted', log });
+    expect(log.debug).toHaveBeenCalled();
+  });
+});
+
+// ── emitImportFailure ───────────────────────────────────────────────────
+
+describe('emitImportFailure', () => {
+  it('emits SSE failure events for download and book', () => {
+    const log = createMockLog();
+    const broadcaster = { emit: vi.fn() };
+    emitImportFailure({ broadcaster: broadcaster as never, downloadId: 1, bookId: 2, revertedBookStatus: 'wanted', log });
+    expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({ new_status: 'failed' }));
+    expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({ new_status: 'wanted' }));
+  });
+
+  it('skips when broadcaster is undefined', () => {
+    const log = createMockLog();
+    emitImportFailure({ broadcaster: undefined, downloadId: 1, bookId: 2, revertedBookStatus: 'wanted', log });
+    expect(log.debug).not.toHaveBeenCalled();
+  });
+});
+
+// ── notifyImportFailure ─────────────────────────────────────────────────
+
+describe('notifyImportFailure', () => {
+  it('sends failure notification with on_failure event', () => {
+    const log = createMockLog();
+    const catchFn = vi.fn();
+    const notify = vi.fn().mockReturnValue({ catch: catchFn });
+    notifyImportFailure({ notifierService: { notify } as never, downloadTitle: 'Download Name', error: new Error('fail'), log });
+    expect(notify).toHaveBeenCalledWith('on_failure', expect.objectContaining({ event: 'on_failure' }));
+  });
+
+  it('uses download title in failure notification payload', () => {
+    const log = createMockLog();
+    const catchFn = vi.fn();
+    const notify = vi.fn().mockReturnValue({ catch: catchFn });
+    notifyImportFailure({ notifierService: { notify } as never, downloadTitle: 'Torrent Release Name [2024]', error: new Error('fail'), log });
+    expect(notify).toHaveBeenCalledWith('on_failure', expect.objectContaining({
+      book: { title: 'Torrent Release Name [2024]' },
+    }));
+  });
+
+  it('skips when notifierService is undefined', () => {
+    const log = createMockLog();
+    notifyImportFailure({ notifierService: undefined, downloadTitle: 'Name', error: new Error('fail'), log });
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+});
+
+// ── recordImportFailedEvent ─────────────────────────────────────────────
+
+describe('recordImportFailedEvent', () => {
+  it('records import_failed event', () => {
+    const log = createMockLog();
+    const catchFn = vi.fn();
+    const create = vi.fn().mockReturnValue({ catch: catchFn });
+    recordImportFailedEvent({ eventHistory: { create } as never, bookId: 1, bookTitle: 'Book', authorName: null, downloadId: 10, error: new Error('fail'), log });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'import_failed' }));
+  });
+
+  it('skips when eventHistory is undefined', () => {
+    const log = createMockLog();
+    recordImportFailedEvent({ eventHistory: undefined, bookId: 1, bookTitle: 'Book', authorName: null, downloadId: 10, error: new Error('fail'), log });
+    expect(log.warn).not.toHaveBeenCalled();
   });
 });

@@ -285,20 +285,20 @@ describe('activity routes', () => {
   describe('POST /api/activity/:id/approve', () => {
     it('transitions pending_review download to importing and triggers import', async () => {
       (services.qualityGate.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
-      (services.import.importDownload as Mock).mockResolvedValue({});
+      (services.importOrchestrator.importDownload as Mock).mockResolvedValue({});
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({ id: 1, status: 'importing' });
-      expect(services.import.importDownload).toHaveBeenCalledWith(1);
+      expect(services.importOrchestrator.importDownload).toHaveBeenCalledWith(1);
     });
 
     it('logs error when fire-and-forget import trigger fails', async () => {
       (services.qualityGate.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
       const importError = new Error('Import pipeline crashed');
       let rejectImport: (err: Error) => void;
-      (services.import.importDownload as Mock).mockReturnValue(
+      (services.importOrchestrator.importDownload as Mock).mockReturnValue(
         new Promise((_resolve, reject) => { rejectImport = reject; })
       );
 
@@ -343,12 +343,12 @@ describe('activity routes', () => {
   describe('POST /api/activity/:id/approve — concurrency', () => {
     it('approve when slot available triggers import immediately', async () => {
       (services.qualityGate.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
-      (services.import.importDownload as Mock).mockResolvedValue({});
+      (services.importOrchestrator.importDownload as Mock).mockResolvedValue({});
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
 
       expect(res.statusCode).toBe(200);
-      expect(services.import.importDownload).toHaveBeenCalledWith(1);
+      expect(services.importOrchestrator.importDownload).toHaveBeenCalledWith(1);
       // setProcessingQueued should NOT have been called
       expect(services.import.setProcessingQueued).not.toHaveBeenCalled();
     });
@@ -365,7 +365,7 @@ describe('activity routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({ id: 1, status: 'processing_queued' });
-      expect(services.import.importDownload).not.toHaveBeenCalled();
+      expect(services.importOrchestrator.importDownload).not.toHaveBeenCalled();
       expect(services.import.setProcessingQueued).toHaveBeenCalledWith(1);
 
       // Release slots for cleanup
@@ -375,7 +375,7 @@ describe('activity routes', () => {
 
     it('releases semaphore slot when import fails after approve', async () => {
       (services.qualityGate.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
-      (services.import.importDownload as Mock).mockRejectedValue(new Error('import failed'));
+      (services.importOrchestrator.importDownload as Mock).mockRejectedValue(new Error('import failed'));
 
       // Semaphore starts with capacity 2, both free
       expect(importSemaphore.tryAcquire()).toBe(true);
@@ -384,7 +384,7 @@ describe('activity routes', () => {
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
 
       expect(res.statusCode).toBe(200);
-      expect(services.import.importDownload).toHaveBeenCalledWith(1);
+      expect(services.importOrchestrator.importDownload).toHaveBeenCalledWith(1);
 
       // Wait for fire-and-forget promise to settle
       await new Promise(resolve => setTimeout(resolve, 10));

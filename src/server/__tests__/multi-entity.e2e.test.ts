@@ -423,7 +423,7 @@ describe('Job lifecycle E2E', () => {
     );
 
     // Call processCompletedDownloads directly (what the import job cron calls)
-    const results = await e2e.services.import.processCompletedDownloads();
+    const results = await e2e.services.importOrchestrator.processCompletedDownloads();
 
     expect(results.length).toBeGreaterThanOrEqual(1);
     const importResult = results.find((r) => r.downloadId === downloadId);

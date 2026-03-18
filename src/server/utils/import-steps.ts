@@ -7,12 +7,19 @@ import { downloads, books } from '../../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
-import type { DownloadStatus } from '../../shared/schemas/activity.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
-import type { NotifierService } from '../services/notifier.service.js';
 import type { TaggingService } from '../services/tagging.service.js';
-import type { EventHistoryService } from '../services/event-history.service.js';
-import type { EventBroadcasterService } from '../services/event-broadcaster.service.js';
+
+// Re-export side-effect functions for backwards compatibility
+export {
+  emitDownloadImporting, emitBookImporting, emitImportSuccess,
+  emitImportFailure, notifyImportComplete, notifyImportFailure,
+  recordImportEvent, recordImportFailedEvent,
+} from './import-side-effects.js';
+export type {
+  EmitDownloadImportingArgs, EmitBookImportingArgs, EmitImportSuccessArgs,
+  EmitImportFailureArgs, NotifyImportCompleteArgs, NotifyImportFailureArgs,
+  RecordImportEventArgs, RecordImportFailedEventArgs,
+} from './import-side-effects.js';
 import type { RemotePathMappingService } from '../services/remote-path-mapping.service.js';
 import {
   containsAudioFiles, countAudioFiles, copyAudioFiles, getPathSize,
@@ -98,26 +105,6 @@ export async function checkDiskSpace(args: CheckDiskSpaceArgs): Promise<void> {
     const requiredGB = (requiredBytes / 1024 ** 3).toFixed(1);
     throw new Error(`Import blocked — insufficient disk space (${freeGB} GB free, ${requiredGB} GB required)`);
   }
-}
-
-// ── emitImportingStatus ─────────────────────────────────────────────────
-
-export interface EmitImportingStatusArgs {
-  broadcaster: EventBroadcasterService | undefined;
-  downloadId: number;
-  book: { id: number; status: string };
-  downloadStatus: string;
-  log: FastifyBaseLogger;
-}
-
-/** Emit SSE events when transitioning to 'importing' status. */
-export function emitImportingStatus(args: EmitImportingStatusArgs): void {
-  const { broadcaster, downloadId, book, downloadStatus, log } = args;
-  if (!broadcaster) return;
-  try {
-    broadcaster.emit('download_status_change', { download_id: downloadId, book_id: book.id, old_status: downloadStatus as DownloadStatus, new_status: 'importing' as DownloadStatus });
-    broadcaster.emit('book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: 'importing' as BookStatus });
-  } catch (e) { log.debug(e, 'SSE emit failed'); }
 }
 
 // ── copyToLibrary ───────────────────────────────────────────────────────
@@ -320,82 +307,6 @@ export async function runImportPostProcessing(args: RunImportPostProcessingArgs)
   }
 }
 
-// ── emitImportSuccess ───────────────────────────────────────────────────
-
-export interface EmitImportSuccessArgs {
-  broadcaster: EventBroadcasterService | undefined;
-  downloadId: number;
-  bookId: number;
-  bookTitle: string;
-  log: FastifyBaseLogger;
-}
-
-/** Emit SSE events for successful import. */
-export function emitImportSuccess(args: EmitImportSuccessArgs): void {
-  const { broadcaster, downloadId, bookId, bookTitle, log } = args;
-  if (!broadcaster) return;
-  try {
-    broadcaster.emit('download_status_change', { download_id: downloadId, book_id: bookId, old_status: 'importing' as DownloadStatus, new_status: 'imported' as DownloadStatus });
-    broadcaster.emit('book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'imported' as BookStatus });
-    broadcaster.emit('import_complete', { download_id: downloadId, book_id: bookId, book_title: bookTitle });
-  } catch (e) {
-    log.debug(e, 'SSE emit failed');
-  }
-}
-
-// ── notifyImportComplete ────────────────────────────────────────────────
-
-export interface NotifyImportCompleteArgs {
-  notifierService: NotifierService | undefined;
-  bookTitle: string;
-  authorName: string | null | undefined;
-  targetPath: string;
-  fileCount: number;
-  log: FastifyBaseLogger;
-}
-
-/** Fire-and-forget import notification. */
-export function notifyImportComplete(args: NotifyImportCompleteArgs): void {
-  const { notifierService, bookTitle, authorName, targetPath, fileCount, log } = args;
-  if (!notifierService) return;
-  notifierService.notify('on_import', {
-    event: 'on_import',
-    book: { title: bookTitle, author: authorName ?? undefined },
-    import: { libraryPath: targetPath, fileCount },
-  }).catch((err: unknown) => log.warn(err, 'Failed to send import notification'));
-}
-
-// ── recordImportEvent ───────────────────────────────────────────────────
-
-export interface RecordImportEventArgs {
-  eventHistory: EventHistoryService | undefined;
-  bookId: number;
-  bookTitle: string;
-  authorName: string | null | undefined;
-  downloadId: number;
-  bookPath: string | null;
-  targetPath: string;
-  fileCount: number;
-  totalSize: number;
-  log: FastifyBaseLogger;
-}
-
-/** Fire-and-forget event recording. */
-export function recordImportEvent(args: RecordImportEventArgs): void {
-  const { eventHistory, bookId, bookTitle, authorName, downloadId, bookPath, targetPath, fileCount, totalSize, log } = args;
-  if (!eventHistory) return;
-  const isUpgrade = !!bookPath;
-  eventHistory.create({
-    bookId,
-    bookTitle,
-    authorName: authorName ?? undefined,
-    downloadId,
-    eventType: isUpgrade ? 'upgraded' : 'imported',
-    source: 'auto',
-    reason: { targetPath, fileCount, totalSize },
-  }).catch((err: unknown) => log.warn(err, 'Failed to record import event'));
-}
-
 // ── handleImportFailure ─────────────────────────────────────────────────
 
 export interface HandleImportFailureArgs {
@@ -403,18 +314,13 @@ export interface HandleImportFailureArgs {
   targetPath: string | undefined;
   db: Db;
   downloadId: number;
-  downloadTitle: string;
   book: { id: number; title: string; path: string | null };
-  authorName: string | null | undefined;
-  broadcaster: EventBroadcasterService | undefined;
-  notifierService: NotifierService | undefined;
-  eventHistory: EventHistoryService | undefined;
   log: FastifyBaseLogger;
 }
 
-/** Clean up after a failed import: remove files, revert statuses, emit events. Rethrows. */
+/** Clean up after a failed import: remove files, revert DB statuses. Rethrows. */
 export async function handleImportFailure(args: HandleImportFailureArgs): Promise<never> {
-  const { error, targetPath, db, downloadId, downloadTitle, book, authorName, broadcaster, notifierService, eventHistory, log } = args;
+  const { error, targetPath, db, downloadId, book, log } = args;
 
   // Clean up copied files
   if (targetPath) {
@@ -431,31 +337,7 @@ export async function handleImportFailure(args: HandleImportFailureArgs): Promis
   // Recover book status
   const revertStatus = await revertBookStatus(db, book);
 
-  // SSE failure events
-  try {
-    broadcaster?.emit('download_status_change', { download_id: downloadId, book_id: book.id, old_status: 'importing' as DownloadStatus, new_status: 'failed' as DownloadStatus });
-    broadcaster?.emit('book_status_change', { book_id: book.id, old_status: 'importing' as BookStatus, new_status: revertStatus as BookStatus });
-  } catch (e) { log.debug(e, 'SSE emit failed'); }
-
   log.error({ error, downloadId, bookStatus: revertStatus }, 'Import failed');
-
-  // Failure notification (fire-and-forget)
-  notifierService?.notify('on_failure', {
-    event: 'on_failure',
-    book: { title: downloadTitle },
-    error: { message: error instanceof Error ? error.message : 'Import failed', stage: 'import' },
-  }).catch((err: unknown) => log.warn(err, 'Failed to send failure notification'));
-
-  // Record import_failed event (fire-and-forget)
-  eventHistory?.create({
-    bookId: book.id,
-    bookTitle: book.title,
-    authorName: authorName ?? undefined,
-    downloadId,
-    eventType: 'import_failed',
-    source: 'auto',
-    reason: { error: error instanceof Error ? error.message : 'Import failed' },
-  }).catch((err: unknown) => log.warn(err, 'Failed to record import_failed event'));
 
   throw error;
 }

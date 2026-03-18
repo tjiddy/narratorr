@@ -215,7 +215,7 @@ describe('Notifier event triggers E2E', () => {
       );
 
       const { downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Routing Test Book', 'Routing Author');
-      await e2e.services.import.importDownload(downloadId);
+      await e2e.services.importOrchestrator.importDownload(downloadId);
 
       // Wait for all-events webhook + discord to confirm notification cycle completed
       await waitForRequests(allEventsCaptured, 1);
@@ -294,7 +294,7 @@ describe('Notifier event triggers E2E', () => {
       );
 
       const { downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Import Payload Test', 'Import Author');
-      await e2e.services.import.importDownload(downloadId);
+      await e2e.services.importOrchestrator.importDownload(downloadId);
 
       await waitForRequests(captured, 1);
 
@@ -323,7 +323,7 @@ describe('Notifier event triggers E2E', () => {
       );
 
       const { downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Failure Payload Test', 'Failure Author');
-      await expect(e2e.services.import.importDownload(downloadId)).rejects.toThrow();
+      await expect(e2e.services.importOrchestrator.importDownload(downloadId)).rejects.toThrow();
 
       await waitForRequests(captured, 1);
 
@@ -412,7 +412,7 @@ describe('Notifier event triggers E2E', () => {
       );
 
       const { bookId, downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Resilience Import 500 Test', 'Test Author');
-      const result = await e2e.services.import.importDownload(downloadId);
+      const result = await e2e.services.importOrchestrator.importDownload(downloadId);
 
       expect(result.downloadId).toBe(downloadId);
       expect(result.bookId).toBe(bookId);
@@ -434,7 +434,7 @@ describe('Notifier event triggers E2E', () => {
       );
 
       const { bookId, downloadId } = await seedBookAndDownload(e2e, downloadClientId,'Resilience Network Test', 'Test Author');
-      const result = await e2e.services.import.importDownload(downloadId);
+      const result = await e2e.services.importOrchestrator.importDownload(downloadId);
 
       expect(result.downloadId).toBe(downloadId);
       expect(result.bookId).toBe(bookId);

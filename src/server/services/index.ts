@@ -7,6 +7,7 @@ export { BookListService, type BookListOptions, type BookStats } from './book-li
 export { DownloadService, type DownloadWithBook, type RetryResult } from './download.service.js';
 export { MetadataService } from './metadata.service.js';
 export { ImportService } from './import.service.js';
+export { ImportOrchestrator } from './import-orchestrator.js';
 export { NotifierService } from './notifier.service.js';
 export { BlacklistService } from './blacklist.service.js';
 export { ProwlarrSyncService } from './prowlarr-sync.service.js';

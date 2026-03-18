@@ -31,7 +31,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   reg.register('enrichment', 'cron', () => runEnrichment(db, services.metadata, log), '*/5 * * * *');
   reg.register('import', 'cron', async () => {
     await services.qualityGate.processCompletedDownloads();
-    await services.import.processCompletedDownloads();
+    await services.importOrchestrator.processCompletedDownloads();
   }, '*/60 * * * * *');
   reg.register('search', 'timeout', () => runSearchJob(services.settings, services.bookList, services.indexer, services.download, log, services.retryBudget));
   reg.register('rss', 'timeout', () => runRssJob(services.settings, services.bookList, services.book, services.indexer, services.download, services.blacklist, log));

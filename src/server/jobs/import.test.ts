@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
-import type { ImportService } from '../services/import.service.js';
+import type { ImportOrchestrator } from '../services/import-orchestrator.js';
 import type { QualityGateService } from '../services/quality-gate.service.js';
 
 vi.mock('node-cron', () => ({
@@ -12,15 +12,15 @@ vi.mock('node-cron', () => ({
 import cron from 'node-cron';
 
 describe('startImportJob', () => {
-  let mockImportService: ImportService;
+  let mockOrchestrator: ImportOrchestrator;
   let mockQualityGateService: QualityGateService;
   let mockLog: FastifyBaseLogger;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockImportService = {
+    mockOrchestrator = {
       processCompletedDownloads: vi.fn().mockResolvedValue(undefined),
-    } as unknown as ImportService;
+    } as unknown as ImportOrchestrator;
     mockQualityGateService = {
       processCompletedDownloads: vi.fn().mockResolvedValue(undefined),
     } as unknown as QualityGateService;
@@ -32,7 +32,7 @@ describe('startImportJob', () => {
 
   it('registers a cron schedule with the expected expression', async () => {
     const { startImportJob } = await import('./import.js');
-    startImportJob(mockImportService, mockQualityGateService, mockLog);
+    startImportJob(mockOrchestrator, mockQualityGateService, mockLog);
 
     expect(cron.schedule).toHaveBeenCalledWith(
       '*/60 * * * * *',
@@ -42,28 +42,28 @@ describe('startImportJob', () => {
 
   it('logs startup message after scheduling', async () => {
     const { startImportJob } = await import('./import.js');
-    startImportJob(mockImportService, mockQualityGateService, mockLog);
+    startImportJob(mockOrchestrator, mockQualityGateService, mockLog);
 
     expect(mockLog.info).toHaveBeenCalledWith('Import job started (every 60 seconds)');
   });
 
   it('calls quality gate then processCompletedDownloads when cron fires', async () => {
     const { startImportJob } = await import('./import.js');
-    startImportJob(mockImportService, mockQualityGateService, mockLog);
+    startImportJob(mockOrchestrator, mockQualityGateService, mockLog);
 
     const callback = (cron.schedule as ReturnType<typeof vi.fn>).mock.calls[0][1];
     await callback();
 
     expect(mockQualityGateService.processCompletedDownloads).toHaveBeenCalled();
-    expect(mockImportService.processCompletedDownloads).toHaveBeenCalled();
+    expect(mockOrchestrator.processCompletedDownloads).toHaveBeenCalled();
   });
 
   it('logs error without throwing when processCompletedDownloads fails', async () => {
     const error = new Error('Import failed');
-    (mockImportService.processCompletedDownloads as ReturnType<typeof vi.fn>).mockRejectedValue(error);
+    (mockOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mockRejectedValue(error);
 
     const { startImportJob } = await import('./import.js');
-    startImportJob(mockImportService, mockQualityGateService, mockLog);
+    startImportJob(mockOrchestrator, mockQualityGateService, mockLog);
 
     const callback = (cron.schedule as ReturnType<typeof vi.fn>).mock.calls[0][1];
     await callback();

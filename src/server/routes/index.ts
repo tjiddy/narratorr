@@ -22,6 +22,7 @@ import {
   DiscoveryService,
 } from '../services';
 import { ImportService } from '../services/import.service.js';
+import { ImportOrchestrator } from '../services/import-orchestrator.js';
 import { ImportListService } from '../services/import-list.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
 import { MatchJobService } from '../services/match-job.service.js';
@@ -67,6 +68,7 @@ export interface Services {
   download: DownloadService;
   metadata: MetadataService;
   import: ImportService;
+  importOrchestrator: ImportOrchestrator;
   libraryScan: LibraryScanService;
   matchJob: MatchJobService;
   notifier: NotifierService;
@@ -102,6 +104,7 @@ export const SERVICE_KEYS = Object.keys({
   download: true,
   metadata: true,
   import: true,
+  importOrchestrator: true,
   libraryScan: true,
   matchJob: true,
   notifier: true,
@@ -146,7 +149,8 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const download = new DownloadService(db, downloadClient, log, notifier, eventHistory, eventBroadcaster);
   const remotePathMapping = new RemotePathMappingService(db, log);
   const taggingService = new TaggingService(db, settings, log);
-  const importService = new ImportService(db, downloadClient, settings, log, notifier, remotePathMapping, taggingService, eventHistory, eventBroadcaster);
+  const importService = new ImportService(db, downloadClient, settings, log, remotePathMapping);
+  const importOrchestrator = new ImportOrchestrator(importService, settings, log, notifier, taggingService, eventHistory, eventBroadcaster);
   const libraryScan = new LibraryScanService(db, book, metadata, settings, log);
   const matchJob = new MatchJobService(metadata, log);
   const prowlarrSync = new ProwlarrSyncService(db, log);
@@ -178,7 +182,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   download.setRetrySearchDeps(retrySearchDeps);
   eventHistory.setRetrySearchDeps(retrySearchDeps);
 
-  return { settings, auth, indexer, downloadClient, book, bookList, download, metadata, import: importService, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin, importList, discovery };
+  return { settings, auth, indexer, downloadClient, book, bookList, download, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin, importList, discovery };
 }
 
 export async function registerRoutes(
@@ -199,7 +203,7 @@ export async function registerRoutes(
   });
   await bookFilesRoute(app, services.book);
   await searchRoutes(app, services.indexer, services.download, services.blacklist, services.settings);
-  await activityRoutes(app, services.download, services.qualityGate, services.import);
+  await activityRoutes(app, services.download, services.qualityGate, services.import, services.importOrchestrator);
   await indexersRoutes(app, services.indexer);
   await downloadClientsRoutes(app, services.downloadClient);
   await settingsRoutes(app, services.settings, services.indexer);

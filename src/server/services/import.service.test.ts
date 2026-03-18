@@ -4,12 +4,7 @@ import { ImportService } from './import.service.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
 import { sanitizePath } from '../../core/utils/index.js';
 import type { DownloadClientService } from './download-client.service.js';
-import type { SettingsService } from './settings.service.js';
-import type { NotifierService } from './notifier.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
-import type { TaggingService } from './tagging.service.js';
-import type { EventHistoryService } from './event-history.service.js';
-import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import { and, inArray, isNotNull } from 'drizzle-orm';
@@ -54,16 +49,10 @@ vi.mock('../../core/utils/audio-processor.js', () => ({
   processAudioFiles: vi.fn().mockResolvedValue({ success: true, outputFiles: [] }),
 }));
 
-// Mock post-processing script
-vi.mock('../utils/post-processing-script.js', () => ({
-  runPostProcessingScript: vi.fn().mockResolvedValue({ success: true }),
-}));
-
 import { mkdir, cp, stat, readdir, writeFile, rename, rm, statfs } from 'node:fs/promises';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
-import { runPostProcessingScript } from '../utils/post-processing-script.js';
 
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 
@@ -241,7 +230,7 @@ describe('ImportService', () => {
     log = createMockLogger();
     clientService = createMockDownloadClientService();
     settingsService = createMockSettingsService();
-    service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log));
+    service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined);
 
     // Default: stat returns a directory for source, then directory for target (size verification)
     const statMock = vi.mocked(stat);
@@ -354,18 +343,18 @@ describe('ImportService', () => {
     });
   });
 
-  describe('processCompletedDownloads', () => {
+  describe('getEligibleDownloads', () => {
     it('returns empty array when no completed downloads', async () => {
       db.select.mockReturnValueOnce(mockDbChain([]));
 
-      const results = await service.processCompletedDownloads();
+      const results = await service.getEligibleDownloads();
       expect(results).toEqual([]);
     });
 
     it('skips downloads with no linked book', async () => {
       db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookId: null }]));
 
-      const results = await service.processCompletedDownloads();
+      const results = await service.getEligibleDownloads();
       expect(results).toEqual([]);
     });
   });
@@ -999,27 +988,6 @@ describe('ImportService', () => {
       expect(allSetArgs).toContainEqual(expect.objectContaining({ status: 'failed' }));
     });
 
-    it('fires on_failure notification on processor error', async () => {
-      const mockNotifier = {
-        notify: vi.fn().mockResolvedValue(undefined),
-      };
-      const serviceWithNotifier = new ImportService(
-        inject<Db>(db), clientService, settingsService,
-        inject<FastifyBaseLogger>(createMockLogger()),
-        inject<NotifierService>(mockNotifier),
-      );
-
-      setupImportWithProcessing(true);
-      const mockProcess = vi.mocked(processAudioFiles);
-      mockProcess.mockResolvedValue({ success: false, error: 'ffmpeg crashed' });
-
-      await expect(serviceWithNotifier.importDownload(1)).rejects.toThrow();
-
-      expect(mockNotifier.notify).toHaveBeenCalledWith('on_failure', expect.objectContaining({
-        error: expect.objectContaining({ stage: 'import' }),
-      }));
-    });
-
     it('passes undefined bitrate when keepOriginalBitrate is true', async () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
@@ -1076,7 +1044,6 @@ describe('ImportService', () => {
       serviceWithMappings = new ImportService(
         inject<Db>(db), clientService, settingsService,
         inject<FastifyBaseLogger>(createMockLogger()),
-        undefined,
         mockMappingService,
       );
     });
@@ -1320,184 +1287,10 @@ describe('ImportService', () => {
     });
   });
 
-  describe('tag embedding during import', () => {
-    function createServiceWithTagging(taggingService: TaggingService, overrideSettings?: SettingsService) {
-      return new ImportService(
-        inject<Db>(db),
-        clientService,
-        overrideSettings ?? settingsService,
-        inject<FastifyBaseLogger>(log),
-        undefined,
-        undefined,
-        taggingService,
-      );
-    }
 
-    function setupSuccessfulImport() {
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
-      db.update.mockReturnValue(mockDbChain());
-    }
-
-    it('calls tagging service when enabled and ffmpeg configured', async () => {
-      const mockTagging = inject<TaggingService>({
-        tagBook: vi.fn().mockResolvedValue({ bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [] }),
-      });
-      const tagSettings = createMockSettingsService({
-        import: { minSeedTime: 0 },
-        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
-        tagging: { enabled: true, mode: 'overwrite' },
-      });
-
-      const svc = createServiceWithTagging(mockTagging, tagSettings);
-      setupSuccessfulImport();
-
-      await svc.importDownload(1);
-
-      expect(mockTagging.tagBook).toHaveBeenCalledWith(
-        1,
-        expect.any(String),
-        expect.objectContaining({ title: mockBook.title }),
-        '/usr/bin/ffmpeg',
-        'overwrite',
-        false,
-      );
-    });
-
-    it('skips tagging when disabled in settings', async () => {
-      const mockTagging = inject<TaggingService>({
-        tagBook: vi.fn().mockResolvedValue({ bookId: 1, tagged: 0, skipped: 0, failed: 0, warnings: [] }),
-      });
-      const tagSettings = createMockSettingsService({
-        import: { minSeedTime: 0 },
-        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
-        tagging: { enabled: false },
-      });
-
-      const svc = createServiceWithTagging(mockTagging, tagSettings);
-      setupSuccessfulImport();
-
-      await svc.importDownload(1);
-
-      expect(mockTagging.tagBook).not.toHaveBeenCalled();
-    });
-
-    it('continues import when tagging fails', async () => {
-      const mockTagging = inject<TaggingService>({
-        tagBook: vi.fn().mockRejectedValue(new Error('ffmpeg crashed')),
-      });
-      const tagSettings = createMockSettingsService({
-        import: { minSeedTime: 0 },
-        processing: { ffmpegPath: '/usr/bin/ffmpeg' },
-        tagging: { enabled: true, mode: 'overwrite' },
-      });
-
-      const svc = createServiceWithTagging(mockTagging, tagSettings);
-      setupSuccessfulImport();
-
-      // Should not throw — tagging failure is non-blocking
-      const result = await svc.importDownload(1);
-      expect(result.downloadId).toBe(1);
-      expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ bookId: 1 }),
-        expect.stringContaining('Tag embedding failed'),
-      );
-    });
-  });
-
-  describe('event history producers', () => {
-    let eventHistory: { create: ReturnType<typeof vi.fn> };
-
-    beforeEach(() => {
-      eventHistory = { create: vi.fn().mockResolvedValue({ id: 1 }) };
-    });
-
-    it('records imported event on successful import', async () => {
-      const svc = new ImportService(
-        inject<Db>(db), clientService, settingsService,
-        inject<FastifyBaseLogger>(log), undefined, undefined,
-        undefined, inject<EventHistoryService>(eventHistory),
-      );
-
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
-      db.update.mockReturnValue(mockDbChain());
-
-      await svc.importDownload(1);
-
-      expect(eventHistory.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          bookId: 1,
-          bookTitle: 'The Way of Kings',
-          authorName: 'Brandon Sanderson',
-          downloadId: 1,
-          eventType: 'imported',
-          source: 'auto',
-          reason: expect.objectContaining({ targetPath: expect.any(String), fileCount: expect.any(Number) }),
-        }),
-      );
-    });
-
-    it('records upgraded event when book already has a path', async () => {
-      const importedBook = createMockDbBook({
-        status: 'downloading' as const,
-        path: '/audiobooks/Brandon Sanderson/The Way of Kings',
-      });
-
-      const svc = new ImportService(
-        inject<Db>(db), clientService, settingsService,
-        inject<FastifyBaseLogger>(log), undefined, undefined,
-        undefined, inject<EventHistoryService>(eventHistory),
-      );
-
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
-      db.update.mockReturnValue(mockDbChain());
-
-      await svc.importDownload(1);
-
-      expect(eventHistory.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          bookId: 1,
-          bookTitle: 'The Way of Kings',
-          eventType: 'upgraded',
-          source: 'auto',
-          reason: expect.objectContaining({ targetPath: expect.any(String) }),
-        }),
-      );
-    });
-
-    it('records import_failed event on import failure', async () => {
-      const svc = new ImportService(
-        inject<Db>(db), clientService, settingsService,
-        inject<FastifyBaseLogger>(log), undefined, undefined,
-        undefined, inject<EventHistoryService>(eventHistory),
-      );
-
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
-      db.update.mockReturnValue(mockDbChain());
-
-      // Make stat throw to trigger import failure
-      const statMock = vi.mocked(stat);
-      statMock.mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
-
-      await expect(svc.importDownload(1)).rejects.toThrow();
-
-      expect(eventHistory.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          bookId: 1,
-          bookTitle: 'The Way of Kings',
-          eventType: 'import_failed',
-          source: 'auto',
-          reason: expect.objectContaining({ error: expect.any(String) }),
-        }),
-      );
-    });
-  });
 
   describe('concurrency limiting (semaphore)', () => {
-    it('with limit=2, two imports run concurrently and third queues', async () => {
+    it('with limit=2, two downloads admitted and third queued', async () => {
       // Configure limit=2
       const settingsWithLimit = createMockSettingsService({ import: { minSeedTime: 0, minFreeSpaceGB: 0 } });
 
@@ -1508,22 +1301,11 @@ describe('ImportService', () => {
       const dl2 = { ...mockDownload, id: 2, bookId: 2 };
       const dl3 = { ...mockDownload, id: 3, bookId: 3 };
       db.select.mockReturnValueOnce(mockDbChain([dl1, dl2, dl3]));
-      // Each importDownload calls: select(download), select(book+author), then updates
-      db.select.mockReturnValue(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
 
-      // Mock book lookups for imports that actually run
-      const origSelect = db.select;
-      let selectCount = 0;
-      origSelect.mockImplementation(() => {
-        selectCount++;
-        if (selectCount === 1) return mockDbChain([dl1, dl2, dl3]); // initial query
-        // For importDownload calls
-        if (selectCount % 2 === 0) return mockDbChain([mockDownload]); // download lookup
-        return mockDbChain([{ book: mockBook, author: mockAuthor }]); // book lookup
-      });
+      const admitted = await svc.getEligibleDownloads();
 
-      await svc.processCompletedDownloads();
+      expect(admitted).toEqual([1, 2]);
 
       // Third download should have been set to processing_queued
       const updateSetCalls = db.update.mock.results
@@ -1533,26 +1315,6 @@ describe('ImportService', () => {
       expect(updateSetCalls).toEqual(
         expect.arrayContaining([{ status: 'processing_queued' }]),
       );
-    });
-
-    it('semaphore releases slot even when importDownload throws', async () => {
-      // Import should release semaphore slot via finally block even on failure
-      const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log));
-
-      // Before: tryAcquire should succeed
-      expect(svc.tryAcquireSlot()).toBe(true);
-      svc.releaseSlot();
-
-      // Now simulate: processCompletedDownloads with a download that fails import
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([])); // importDownload: download not found
-      db.update.mockReturnValue(mockDbChain());
-
-      await svc.processCompletedDownloads();
-
-      // Semaphore should be released despite failure
-      expect(svc.tryAcquireSlot()).toBe(true);
-      svc.releaseSlot();
     });
 
     it('download set to processing_queued when no slot available', async () => {
@@ -1567,18 +1329,14 @@ describe('ImportService', () => {
       const dl1 = { ...mockDownload, id: 1 };
       const dl2 = { ...mockDownload, id: 2, status: 'completed' as const };
 
-      let selectCount = 0;
-      db.select.mockImplementation(() => {
-        selectCount++;
-        if (selectCount === 1) return mockDbChain([dl1, dl2]); // initial query
-        if (selectCount % 2 === 0) return mockDbChain([mockDownload]); // download lookup
-        return mockDbChain([{ book: mockBook, author: mockAuthor }]); // book lookup
-      });
+      db.select.mockReturnValueOnce(mockDbChain([dl1, dl2]));
       db.update.mockReturnValue(mockDbChain());
 
-      await svc.processCompletedDownloads();
+      const admitted = await svc.getEligibleDownloads();
 
-      // dl2 should be set to processing_queued
+      // Only dl1 admitted, dl2 queued
+      expect(admitted).toEqual([1]);
+
       const updateSetCalls = db.update.mock.results
         .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
         .flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
@@ -1586,9 +1344,8 @@ describe('ImportService', () => {
         expect.arrayContaining([{ status: 'processing_queued' }]),
       );
     });
-    it('queued downloads are retried on a later tick in FIFO order', async () => {
-      // limit=1: first tick processes dl1, queues dl2 and dl3
-      // second tick processes dl2 (oldest completedAt), queues dl3
+
+    it('getEligibleDownloads with limit=1 admits only 1 and queues the rest', async () => {
       const settingsWithLimit1 = createMockSettingsService({
         import: { minSeedTime: 0, minFreeSpaceGB: 0 },
         processing: { maxConcurrentProcessing: 1 },
@@ -1600,47 +1357,13 @@ describe('ImportService', () => {
       const dl2 = { ...mockDownload, id: 2, bookId: 2, completedAt: new Date('2025-01-01T00:01:00Z') };
       const dl3 = { ...mockDownload, id: 3, bookId: 3, completedAt: new Date('2025-01-01T00:02:00Z') };
 
-      // --- Tick 1: all 3 eligible, limit=1 ---
-      let selectCount = 0;
-      db.select.mockImplementation(() => {
-        selectCount++;
-        if (selectCount === 1) return mockDbChain([dl1, dl2, dl3]); // initial query
-        if (selectCount % 2 === 0) return mockDbChain([mockDownload]); // download lookup
-        return mockDbChain([{ book: mockBook, author: mockAuthor }]); // book lookup
-      });
+      db.select.mockReturnValueOnce(mockDbChain([dl1, dl2, dl3]));
       db.update.mockReturnValue(mockDbChain());
 
-      await svc.processCompletedDownloads();
+      const admitted = await svc.getEligibleDownloads();
 
-      // dl2 and dl3 should be queued (status set to processing_queued)
-      const tick1Updates = db.update.mock.results
-        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
-        .flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
-      const queuedUpdates = tick1Updates.filter((u: Record<string, unknown>) => u.status === 'processing_queued');
-      expect(queuedUpdates.length).toBeGreaterThanOrEqual(2);
-
-      // --- Tick 2: dl2 and dl3 still eligible (processing_queued), limit=1 ---
-      vi.clearAllMocks();
-      selectCount = 0;
-      const dl2Queued = { ...dl2, status: 'processing_queued' as const };
-      const dl3Queued = { ...dl3, status: 'processing_queued' as const };
-
-      // Spy on importDownload to track which download IDs get imported
-      const importSpy = vi.spyOn(svc as unknown as { importDownload: (id: number) => Promise<unknown> }, 'importDownload')
-        .mockResolvedValue({ downloadId: 2, bookId: 2, success: true });
-
-      db.select.mockImplementation(() => {
-        selectCount++;
-        if (selectCount === 1) return mockDbChain([dl2Queued, dl3Queued]); // FIFO: dl2 first (earlier completedAt)
-        return mockDbChain([]); // any other lookups
-      });
-      db.update.mockReturnValue(mockDbChain());
-
-      await svc.processCompletedDownloads();
-
-      // dl2 (oldest completedAt) must be the one imported — proves FIFO ordering
-      expect(importSpy).toHaveBeenCalledTimes(1);
-      expect(importSpy).toHaveBeenCalledWith(2); // dl2.id, NOT dl3.id
+      // Only dl1 (first in FIFO order) admitted
+      expect(admitted).toEqual([1]);
     });
 
     it('eligibility query filters by correct statuses, non-null fields, and FIFO ordering', async () => {
@@ -1648,7 +1371,7 @@ describe('ImportService', () => {
       const chain = mockDbChain([]);
       db.select.mockReturnValueOnce(chain);
 
-      await service.processCompletedDownloads();
+      await service.getEligibleDownloads();
 
       // Verify the where clause matches the expected Drizzle expression
       const whereFn = (chain as Record<string, Mock>).where;
@@ -1821,274 +1544,66 @@ describe('ImportService', () => {
       );
     });
 
-    it('event history records import_failed on disk-space abort', async () => {
-      const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 5 });
-      const eventHistory = inject<EventHistoryService>({ create: vi.fn().mockResolvedValue(undefined) });
-      const svc = new ImportService(
-        inject<Db>(db), clientService, customSettings,
-        inject<FastifyBaseLogger>(log),
-        undefined, undefined, undefined, eventHistory,
-      );
-      setupImportMocks();
+  });
 
-      vi.mocked(statfs).mockResolvedValueOnce({ bavail: BigInt(1_000_000_000), bsize: BigInt(1) } as never);
 
-      await expect(svc.importDownload(1)).rejects.toThrow();
+  describe('getImportContext', () => {
+    it('returns download and book context for side effect dispatch', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
 
-      expect(eventHistory.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          eventType: 'import_failed',
-          reason: expect.objectContaining({ error: expect.stringContaining('insufficient disk space') }),
-        }),
-      );
+      const ctx = await service.getImportContext(1);
+
+      expect(ctx.downloadId).toBe(1);
+      expect(ctx.downloadTitle).toBe('The Way of Kings');
+      expect(ctx.bookId).toBe(1);
+      expect(ctx.bookTitle).toBe('The Way of Kings');
+      expect(ctx.authorName).toBe('Brandon Sanderson');
+    });
+
+    it('throws when download not found', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      await expect(service.getImportContext(999)).rejects.toThrow('not found');
+    });
+
+    it('throws when download has no linked book', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookId: null }]));
+      await expect(service.getImportContext(1)).rejects.toThrow('no linked book');
     });
   });
 
-  describe('SSE emissions', () => {
-    /** Settings with minFreeSpaceGB=0 to skip disk check in SSE-focused tests. */
-    function createNoCheckSettings() {
-      return createMockSettingsService({ import: { minSeedTime: 0, minFreeSpaceGB: 0 } });
-    }
+  describe('getEligibleDownloads', () => {
+    it('returns empty array when no eligible downloads', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      const result = await service.getEligibleDownloads();
+      expect(result).toEqual([]);
+    });
 
-    function setupImportMocksForSSE(db: ReturnType<typeof createMockDb>) {
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+    it('skips downloads with no linked book', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookId: null }]));
+      const result = await service.getEligibleDownloads();
+      expect(result).toEqual([]);
+    });
+
+    it('sets overflow downloads to processing_queued when semaphore is full', async () => {
+      const settingsWithLimit1 = createMockSettingsService({
+        processing: { maxConcurrentProcessing: 1 },
+      });
+      const svc = new ImportService(inject<Db>(db), clientService, settingsWithLimit1, inject<FastifyBaseLogger>(log));
+
+      const dl1 = { ...mockDownload, id: 1, bookId: 1 };
+      const dl2 = { ...mockDownload, id: 2, bookId: 2, status: 'completed' as const };
+      db.select.mockReturnValueOnce(mockDbChain([dl1, dl2]));
       db.update.mockReturnValue(mockDbChain());
-    }
 
-    it('emits download_status_change and book_status_change on import start', async () => {
-      const broadcaster = { emit: vi.fn() };
-      const localDb = createMockDb();
-      const svc = new ImportService(
-        inject<Db>(localDb), clientService, createNoCheckSettings(),
-        inject<FastifyBaseLogger>(log),
-        undefined, undefined, undefined, undefined,
-        inject<EventBroadcasterService>(broadcaster),
-      );
-      setupImportMocksForSSE(localDb);
+      const admitted = await svc.getEligibleDownloads();
 
-      vi.mocked(stat).mockResolvedValueOnce({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
-      vi.mocked(readdir).mockResolvedValueOnce([{ name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false }] as never);
-
-      await svc.importDownload(1);
-
-      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
-        download_id: 1, book_id: 1, new_status: 'importing',
-      }));
-      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
-        book_id: 1, new_status: 'importing',
-      }));
-    });
-
-    it('emits download_status_change, book_status_change, and import_complete on success', async () => {
-      const broadcaster = { emit: vi.fn() };
-      const localDb = createMockDb();
-      const svc = new ImportService(
-        inject<Db>(localDb), clientService, createNoCheckSettings(),
-        inject<FastifyBaseLogger>(log),
-        undefined, undefined, undefined, undefined,
-        inject<EventBroadcasterService>(broadcaster),
-      );
-      setupImportMocksForSSE(localDb);
-
-      vi.mocked(stat).mockResolvedValueOnce({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
-      vi.mocked(readdir).mockResolvedValueOnce([{ name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false }] as never);
-
-      await svc.importDownload(1);
-
-      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
-        download_id: 1, book_id: 1, old_status: 'importing', new_status: 'imported',
-      }));
-      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
-        book_id: 1, old_status: 'importing', new_status: 'imported',
-      }));
-      expect(broadcaster.emit).toHaveBeenCalledWith('import_complete', {
-        download_id: 1, book_id: 1, book_title: mockBook.title,
-      });
-    });
-
-    it('emits download_status_change and book_status_change on import failure', async () => {
-      const broadcaster = { emit: vi.fn() };
-      const localDb = createMockDb();
-      const svc = new ImportService(
-        inject<Db>(localDb), clientService, createNoCheckSettings(),
-        inject<FastifyBaseLogger>(log),
-        undefined, undefined, undefined, undefined,
-        inject<EventBroadcasterService>(broadcaster),
-      );
-      setupImportMocksForSSE(localDb);
-
-      // Force failure by making stat throw after service starts import
-      vi.mocked(stat).mockRejectedValueOnce(new Error('ENOENT'));
-
-      await expect(svc.importDownload(1)).rejects.toThrow();
-
-      expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
-        download_id: 1, book_id: 1, old_status: 'importing', new_status: 'failed',
-      }));
-      expect(broadcaster.emit).toHaveBeenCalledWith('book_status_change', expect.objectContaining({
-        book_id: 1, old_status: 'importing',
-      }));
-    });
-
-    it('broadcaster.emit failure logs debug and does not break import', async () => {
-      const sseError = new Error('SSE broken');
-      const broadcaster = { emit: vi.fn().mockImplementation(() => { throw sseError; }) };
-      const localDb = createMockDb();
-      const localLog = createMockLogger();
-      const svc = new ImportService(
-        inject<Db>(localDb), clientService, createNoCheckSettings(),
-        inject<FastifyBaseLogger>(localLog),
-        undefined, undefined, undefined, undefined,
-        inject<EventBroadcasterService>(broadcaster),
-      );
-      setupImportMocksForSSE(localDb);
-
-      vi.mocked(stat).mockResolvedValueOnce({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
-      vi.mocked(readdir).mockResolvedValueOnce([{ name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false }] as never);
-
-      const result = await svc.importDownload(1);
-      expect(result.downloadId).toBe(1);
-      expect(localLog.debug).toHaveBeenCalledWith(sseError, 'SSE emit failed');
-    });
-
-    it('failure-revert path logs debug when broadcaster.emit throws', async () => {
-      const sseError = new Error('SSE broken');
-      const broadcaster = { emit: vi.fn().mockImplementation(() => { throw sseError; }) };
-      const localDb = createMockDb();
-      const localLog = createMockLogger();
-      const svc = new ImportService(
-        inject<Db>(localDb), clientService, createNoCheckSettings(),
-        inject<FastifyBaseLogger>(localLog),
-        undefined, undefined, undefined, undefined,
-        inject<EventBroadcasterService>(broadcaster),
-      );
-      setupImportMocksForSSE(localDb);
-      localDb.update.mockReturnValue(mockDbChain());
-
-      // Force processing to fail after the importing transition by making stat throw
-      vi.mocked(stat).mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
-
-      await expect(svc.importDownload(1)).rejects.toThrow();
-      // The failure-revert SSE catch at import.service.ts:448 should log debug
-      expect(localLog.debug).toHaveBeenCalledWith(sseError, 'SSE emit failed');
-    });
-  });
-
-  describe('post-processing script hook', () => {
-    function createSettingsWithScript(scriptPath: string, timeout = 300): SettingsService {
-      return createMockSettingsService({
-        import: { minSeedTime: 0, minFreeSpaceGB: 0 },
-        processing: { postProcessingScript: scriptPath, postProcessingScriptTimeout: timeout },
-      });
-    }
-
-    function setupSuccessfulImport() {
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
-      db.update.mockReturnValue(mockDbChain());
-    }
-
-    it('calls runPostProcessingScript with correct args when script is configured', async () => {
-      const svc = new ImportService(inject<Db>(db), clientService, createSettingsWithScript('/scripts/post.sh', 60), inject<FastifyBaseLogger>(log));
-      setupSuccessfulImport();
-
-      await svc.importDownload(1);
-
-      expect(runPostProcessingScript).toHaveBeenCalledWith(expect.objectContaining({
-        scriptPath: '/scripts/post.sh',
-        timeoutSeconds: 60,
-        audiobookPath: expect.any(String),
-        bookTitle: mockBook.title,
-        bookAuthor: mockAuthor.name,
-        fileCount: expect.any(Number),
-      }));
-    });
-
-    it('skips script when postProcessingScript is empty', async () => {
-      const svc = new ImportService(inject<Db>(db), clientService, createSettingsWithScript(''), inject<FastifyBaseLogger>(log));
-      setupSuccessfulImport();
-
-      await svc.importDownload(1);
-
-      expect(runPostProcessingScript).not.toHaveBeenCalled();
-    });
-
-    it('continues import when script fails', async () => {
-      vi.mocked(runPostProcessingScript).mockResolvedValueOnce({ success: false, warning: 'exit code 1' });
-      const svc = new ImportService(inject<Db>(db), clientService, createSettingsWithScript('/scripts/post.sh'), inject<FastifyBaseLogger>(log));
-      setupSuccessfulImport();
-
-      const result = await svc.importDownload(1);
-      expect(result.downloadId).toBe(1);
-    });
-
-    it('runs script hook after tag embedding and before marking download imported', async () => {
-      const callOrder: string[] = [];
-
-      const mockTagging = inject<TaggingService>({
-        tagBook: vi.fn().mockImplementation(async () => {
-          callOrder.push('tagBook');
-          return { bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [] };
-        }),
-      });
-
-      vi.mocked(runPostProcessingScript).mockImplementation(async () => {
-        callOrder.push('runPostProcessingScript');
-        return { success: true };
-      });
-
-      // Create update chains: tracked chain for downloads table, default for others (books)
-      const defaultUpdateChain = mockDbChain();
-      const downloadsUpdateChain = mockDbChain();
-      const originalSet = downloadsUpdateChain.set as Mock;
-      (downloadsUpdateChain.set as Mock) = vi.fn().mockImplementation((values: Record<string, unknown>) => {
-        if (values.status === 'imported') {
-          callOrder.push('markImported');
-        }
-        return originalSet(values);
-      });
-
-      const orderSettings = createMockSettingsService({
-        import: { minSeedTime: 0, minFreeSpaceGB: 0 },
-        processing: { ffmpegPath: '/usr/bin/ffmpeg', postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 300 },
-        tagging: { enabled: true, mode: 'overwrite' },
-      });
-
-      // Setup: select download, select book+author
-      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
-      // Return tracked chain only for downloads table updates
-      db.update.mockImplementation((table: unknown) =>
-        table === downloads ? downloadsUpdateChain : defaultUpdateChain,
-      );
-
-      const svc = new ImportService(
-        inject<Db>(db),
-        clientService,
-        orderSettings,
-        inject<FastifyBaseLogger>(log),
-        undefined,
-        undefined,
-        mockTagging,
-      );
-
-      await svc.importDownload(1);
-
-      expect(callOrder).toEqual(['tagBook', 'runPostProcessingScript', 'markImported']);
-    });
-
-    it('continues import when script throws', async () => {
-      vi.mocked(runPostProcessingScript).mockRejectedValueOnce(new Error('unexpected'));
-      const svc = new ImportService(inject<Db>(db), clientService, createSettingsWithScript('/scripts/post.sh'), inject<FastifyBaseLogger>(log));
-      setupSuccessfulImport();
-
-      const result = await svc.importDownload(1);
-      expect(result.downloadId).toBe(1);
-      expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ bookId: 1 }),
-        expect.stringContaining('Post-processing script failed'),
-      );
+      // Only 1 admitted (semaphore limit=1), dl2 should be queued
+      expect(admitted).toEqual([1]);
+      const updateSetCalls = db.update.mock.results
+        .map((r: { value: unknown }) => ((r.value as { set: ReturnType<typeof vi.fn> }).set))
+        .flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
+      expect(updateSetCalls).toContainEqual({ status: 'processing_queued' });
     });
   });
 });

@@ -77,6 +77,22 @@ describe('startJobs', () => {
     expect(log.info).toHaveBeenCalledWith('Background jobs started');
   });
 
+  it('import task callback calls qualityGate then importOrchestrator processCompletedDownloads', async () => {
+    const { startJobs } = await import('./index.js');
+    startJobs(db, services, log);
+
+    // Execute the registered import task
+    await services.taskRegistry.executeTracked('import');
+
+    expect(services.qualityGate.processCompletedDownloads).toHaveBeenCalledTimes(1);
+    expect(services.importOrchestrator.processCompletedDownloads).toHaveBeenCalledTimes(1);
+
+    // Quality gate must be called before import orchestrator
+    const qgOrder = (services.qualityGate.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    const ioOrder = (services.importOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    expect(qgOrder).toBeLessThan(ioOrder);
+  });
+
   it('schedules discovery timeout loop using intervalHours * 60 from discovery settings', async () => {
     // Mock settings.get to return specific values per category
     (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {

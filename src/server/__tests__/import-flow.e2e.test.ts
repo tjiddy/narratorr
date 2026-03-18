@@ -187,7 +187,7 @@ describe('Import flow E2E', () => {
       webhookHandler,
     );
 
-    await e2e.services.import.importDownload(downloadId);
+    await e2e.services.importOrchestrator.importDownload(downloadId);
 
     // Bounded-timeout polling for fire-and-forget notification
     await waitForRequests(captured, 1);
@@ -213,7 +213,7 @@ describe('Import flow E2E', () => {
       webhookHandler,
     );
 
-    await expect(e2e.services.import.importDownload(downloadId)).rejects.toThrow();
+    await expect(e2e.services.importOrchestrator.importDownload(downloadId)).rejects.toThrow();
 
     // Download status → failed with error message
     const [dl] = await e2e.db.select().from(downloads).where(eq(downloads.id, downloadId));

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { DownloadService } from '../services';
 import type { QualityGateService } from '../services/quality-gate.service.js';
 import type { ImportService } from '../services/import.service.js';
+import type { ImportOrchestrator } from '../services/import-orchestrator.js';
 import { idParamSchema, paginationParamsSchema, DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { z } from 'zod';
 
@@ -14,7 +15,7 @@ const activityListQuerySchema = z.object({
 
 type ActivityListQuery = z.infer<typeof activityListQuerySchema>;
 
-export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, qualityGateService: QualityGateService, importService: ImportService) {
+export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, qualityGateService: QualityGateService, importService: ImportService, importOrchestrator: ImportOrchestrator) {
   // GET /api/activity
   app.get<{ Querystring: ActivityListQuery }>(
     '/api/activity',
@@ -154,7 +155,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
       // Try to acquire a concurrency slot for immediate import
       if (importService.tryAcquireSlot()) {
         // Slot available — fire-and-forget import with guaranteed slot release
-        importService.importDownload(id)
+        importOrchestrator.importDownload(id)
           .catch((err) => {
             request.log.error({ id, error: err }, 'Import after approve failed');
           })
