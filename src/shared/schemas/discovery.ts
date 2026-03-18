@@ -26,3 +26,30 @@ export const SUGGESTION_REASON_REGISTRY: Record<SuggestionReason, SuggestionReas
   narrator: { label: 'Narrator' },
   diversity: { label: 'Diversity' },
 };
+
+// ---------------------------------------------------------------------------
+// API response type — models the wire contract (not the DB row)
+// ---------------------------------------------------------------------------
+
+export interface SuggestionRowResponse {
+  id: number;
+  asin: string;
+  title: string;
+  authorName: string;
+  narratorName: string | null;
+  coverUrl: string | null;
+  duration: number | null;
+  publishedDate: string | null;
+  language: string | null;
+  genres: string[] | null;
+  seriesName: string | null;
+  seriesPosition: number | null;
+  reason: SuggestionReason;
+  reasonContext: string;
+  score: number;
+  status: 'pending' | 'added' | 'dismissed';
+  refreshedAt: string;
+  dismissedAt: string | null;
+  snoozeUntil: string | null;
+  createdAt: string;
+}

@@ -7,6 +7,20 @@ import { createTestApp, createMockServices, resetMockServices } from '../__tests
 import type { Services } from './index.js';
 import type { AuthService } from '../services/auth.service.js';
 
+const NOW = new Date('2026-01-15T12:00:00Z');
+
+function mockSuggestionRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 1, asin: 'B001', title: 'Test Book', authorName: 'Author',
+    narratorName: null, coverUrl: null, duration: null, publishedDate: null,
+    language: null, genres: null, seriesName: null, seriesPosition: null,
+    reason: 'author', reasonContext: 'test', score: 80,
+    status: 'pending', refreshedAt: NOW, dismissedAt: null,
+    snoozeUntil: null, createdAt: NOW,
+    ...overrides,
+  };
+}
+
 describe('Discover Routes', () => {
   let app: Awaited<ReturnType<typeof createTestApp>>;
   let services: Services;
@@ -27,14 +41,19 @@ describe('Discover Routes', () => {
   describe('GET /api/discover/suggestions', () => {
     it('returns suggestions sorted by score descending', async () => {
       const mockData = [
-        { id: 1, asin: 'B001', score: 80, reason: 'author' },
-        { id: 2, asin: 'B002', score: 60, reason: 'genre' },
+        mockSuggestionRow({ id: 1, asin: 'B001', score: 80, reason: 'author' }),
+        mockSuggestionRow({ id: 2, asin: 'B002', score: 60, reason: 'genre' }),
       ];
       (services.discovery.getSuggestions as Mock).mockResolvedValueOnce(mockData);
 
       const res = await app.inject({ method: 'GET', url: '/api/discover/suggestions' });
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.payload)).toEqual(mockData);
+      const body = JSON.parse(res.payload);
+      expect(body).toHaveLength(2);
+      expect(body[0].score).toBe(80);
+      expect(body[1].score).toBe(60);
+      // Timestamps serialized as ISO strings
+      expect(body[0].refreshedAt).toBe(NOW.toISOString());
     });
 
     it('filters by reason query param', async () => {
@@ -56,7 +75,9 @@ describe('Discover Routes', () => {
 
   describe('POST /api/discover/suggestions/:id/dismiss', () => {
     it('sets status to dismissed and returns 200', async () => {
-      (services.discovery.dismissSuggestion as Mock).mockResolvedValueOnce({ id: 1, status: 'dismissed' });
+      (services.discovery.dismissSuggestion as Mock).mockResolvedValueOnce(
+        mockSuggestionRow({ id: 1, status: 'dismissed', dismissedAt: NOW }),
+      );
 
       const res = await app.inject({ method: 'POST', url: '/api/discover/suggestions/1/dismiss' });
       expect(res.statusCode).toBe(200);
@@ -74,7 +95,7 @@ describe('Discover Routes', () => {
   describe('POST /api/discover/suggestions/:id/add', () => {
     it('creates wanted book and returns 200', async () => {
       (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
-        suggestion: { id: 1, status: 'added' },
+        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
         book: { id: 10, title: 'Test' },
       });
 
@@ -97,7 +118,7 @@ describe('Discover Routes', () => {
 
     it('returns 200 with duplicate flag when library duplicate exists', async () => {
       (services.discovery.addSuggestion as Mock).mockResolvedValueOnce({
-        suggestion: { id: 1, status: 'added' },
+        suggestion: mockSuggestionRow({ id: 1, status: 'added' }),
         book: { id: 99, title: 'Existing' },
         duplicate: true,
       });
@@ -171,9 +192,9 @@ describe('Discover Routes', () => {
   describe('POST /api/discover/suggestions/:id/snooze', () => {
     it('returns 200 with updated SuggestionRow including snoozeUntil', async () => {
       const snoozeUntil = new Date(Date.now() + 7 * 86400000);
-      (services.discovery.snoozeSuggestion as Mock).mockResolvedValueOnce({
-        id: 1, asin: 'B001', status: 'pending', snoozeUntil,
-      });
+      (services.discovery.snoozeSuggestion as Mock).mockResolvedValueOnce(
+        mockSuggestionRow({ id: 1, asin: 'B001', status: 'pending', snoozeUntil }),
+      );
 
       const res = await app.inject({
         method: 'POST',

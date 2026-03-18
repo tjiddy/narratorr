@@ -2,7 +2,6 @@ import { type FastifyInstance } from 'fastify';
 import { type z } from 'zod';
 import { type RemotePathMappingService } from '../services/remote-path-mapping.service.js';
 import { createRemotePathMappingSchema, updateRemotePathMappingSchema, idParamSchema, type CreateRemotePathMappingInput, type UpdateRemotePathMappingInput } from '../../shared/schemas.js';
-import { sendInternalError } from '../utils/route-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
@@ -14,20 +13,15 @@ export async function remotePathMappingRoutes(
   // GET /api/remote-path-mappings — list all, optionally filter by downloadClientId
   app.get<{ Querystring: { downloadClientId?: string } }>(
     '/api/remote-path-mappings',
-    async (request, reply) => {
-      try {
-        const { downloadClientId } = request.query;
-        if (downloadClientId) {
-          const id = parseInt(downloadClientId, 10);
-          if (!isNaN(id)) {
-            return await remotePathMappingService.getByClientId(id);
-          }
+    async (request) => {
+      const { downloadClientId } = request.query;
+      if (downloadClientId) {
+        const id = parseInt(downloadClientId, 10);
+        if (!isNaN(id)) {
+          return remotePathMappingService.getByClientId(id);
         }
-        return await remotePathMappingService.getAll();
-      } catch (error) {
-        request.log.error(error, 'Failed to fetch remote path mappings');
-        return sendInternalError(reply);
       }
+      return remotePathMappingService.getAll();
     },
   );
 
@@ -36,17 +30,12 @@ export async function remotePathMappingRoutes(
     '/api/remote-path-mappings/:id',
     { schema: { params: idParamSchema } },
     async (request, reply) => {
-      try {
-        const { id } = request.params;
-        const item = await remotePathMappingService.getById(id);
-        if (!item) {
-          return await reply.status(404).send({ error: 'Remote path mapping not found' });
-        }
-        return item;
-      } catch (error) {
-        request.log.error(error, 'Failed to fetch remote path mapping');
-        return sendInternalError(reply);
+      const { id } = request.params;
+      const item = await remotePathMappingService.getById(id);
+      if (!item) {
+        return reply.status(404).send({ error: 'Remote path mapping not found' });
       }
+      return item;
     },
   );
 
@@ -55,15 +44,10 @@ export async function remotePathMappingRoutes(
     '/api/remote-path-mappings',
     { schema: { body: createRemotePathMappingSchema } },
     async (request, reply) => {
-      try {
-        const data = request.body;
-        const item = await remotePathMappingService.create(data);
-        request.log.info({ downloadClientId: data.downloadClientId }, 'Remote path mapping created');
-        return await reply.status(201).send(item);
-      } catch (error) {
-        request.log.error(error, 'Failed to create remote path mapping');
-        return sendInternalError(reply);
-      }
+      const data = request.body;
+      const item = await remotePathMappingService.create(data);
+      request.log.info({ downloadClientId: data.downloadClientId }, 'Remote path mapping created');
+      return reply.status(201).send(item);
     },
   );
 
@@ -72,18 +56,13 @@ export async function remotePathMappingRoutes(
     '/api/remote-path-mappings/:id',
     { schema: { params: idParamSchema, body: updateRemotePathMappingSchema } },
     async (request, reply) => {
-      try {
-        const { id } = request.params;
-        const item = await remotePathMappingService.update(id, request.body);
-        if (!item) {
-          return await reply.status(404).send({ error: 'Remote path mapping not found' });
-        }
-        request.log.info({ id }, 'Remote path mapping updated');
-        return item;
-      } catch (error) {
-        request.log.error(error, 'Failed to update remote path mapping');
-        return sendInternalError(reply);
+      const { id } = request.params;
+      const item = await remotePathMappingService.update(id, request.body);
+      if (!item) {
+        return reply.status(404).send({ error: 'Remote path mapping not found' });
       }
+      request.log.info({ id }, 'Remote path mapping updated');
+      return item;
     },
   );
 

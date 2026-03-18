@@ -5,7 +5,6 @@ import { updateSettingsSchema, type UpdateSettingsInput } from '../../shared/sch
 import type { IndexerService } from '../services/indexer.service.js';
 import type { HealthCheckService } from '../services/health-check.service.js';
 import { maskFields, isSentinel, type SecretEntity } from '../utils/secret-codec.js';
-import { sendInternalError } from '../utils/route-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 
 function redactProxyUrl(proxyUrl: string): string {
@@ -61,14 +60,9 @@ export async function settingsRoutes(
   healthCheckService?: HealthCheckService,
 ) {
   // GET /api/settings
-  app.get('/api/settings', async (request, reply) => {
-    try {
-      const all = await settingsService.getAll();
-      return maskSettingsResponse(all);
-    } catch (error) {
-      request.log.error(error, 'Failed to fetch settings');
-      return sendInternalError(reply);
-    }
+  app.get('/api/settings', async () => {
+    const all = await settingsService.getAll();
+    return maskSettingsResponse(all);
   });
 
   // PUT /api/settings
@@ -79,48 +73,43 @@ export async function settingsRoutes(
         body: updateSettingsSchema,
       },
     },
-    async (request, reply) => {
-      try {
-        const data = request.body;
+    async (request) => {
+      const data = request.body;
 
-        // Snapshot current network settings before update to detect actual changes
-        const previousNetwork = data.network && indexerService
-          ? await settingsService.get('network')
-          : undefined;
+      // Snapshot current network settings before update to detect actual changes
+      const previousNetwork = data.network && indexerService
+        ? await settingsService.get('network')
+        : undefined;
 
-        const result = await settingsService.update(data);
+      const result = await settingsService.update(data);
 
-        // Apply log level change at runtime
-        if (data.general?.logLevel) {
-          app.log.level = data.general.logLevel;
-          app.log.info({ level: data.general.logLevel }, 'Log level changed');
-        }
-
-        // Clear indexer adapter cache only when network settings actually changed
-        // so proxy URL changes take effect on next request.
-        // Normalize sentinel values before comparison — '********' means "unchanged",
-        // so replace sentinels with the previous values to avoid false positives.
-        if (previousNetwork && indexerService && data.network) {
-          const normalized = { ...data.network } as Record<string, unknown>;
-          const prev = previousNetwork as Record<string, unknown>;
-          for (const [k, v] of Object.entries(normalized)) {
-            if (typeof v === 'string' && isSentinel(v)) {
-              normalized[k] = prev[k];
-            }
-          }
-          if (JSON.stringify(normalized) !== JSON.stringify(previousNetwork)) {
-            indexerService.clearAdapterCache();
-            request.log.info('Indexer adapter cache cleared (network settings changed)');
-          }
-        }
-
-        request.log.info('Settings updated');
-
-        return maskSettingsResponse(result);
-      } catch (error) {
-        request.log.error(error, 'Failed to update settings');
-        return sendInternalError(reply);
+      // Apply log level change at runtime
+      if (data.general?.logLevel) {
+        app.log.level = data.general.logLevel;
+        app.log.info({ level: data.general.logLevel }, 'Log level changed');
       }
+
+      // Clear indexer adapter cache only when network settings actually changed
+      // so proxy URL changes take effect on next request.
+      // Normalize sentinel values before comparison — '********' means "unchanged",
+      // so replace sentinels with the previous values to avoid false positives.
+      if (previousNetwork && indexerService && data.network) {
+        const normalized = { ...data.network } as Record<string, unknown>;
+        const prev = previousNetwork as Record<string, unknown>;
+        for (const [k, v] of Object.entries(normalized)) {
+          if (typeof v === 'string' && isSentinel(v)) {
+            normalized[k] = prev[k];
+          }
+        }
+        if (JSON.stringify(normalized) !== JSON.stringify(previousNetwork)) {
+          indexerService.clearAdapterCache();
+          request.log.info('Indexer adapter cache cleared (network settings changed)');
+        }
+      }
+
+      request.log.info('Settings updated');
+
+      return maskSettingsResponse(result);
     }
   );
 

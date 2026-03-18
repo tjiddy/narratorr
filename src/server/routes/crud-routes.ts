@@ -2,7 +2,6 @@ import { type FastifyInstance } from 'fastify';
 import { type z, type ZodTypeAny } from 'zod';
 import { idParamSchema } from '../../shared/schemas.js';
 import { maskFields, type SecretEntity } from '../utils/secret-codec.js';
-import { sendInternalError } from '../utils/route-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
@@ -44,14 +43,9 @@ export async function registerCrudRoutes(
   const lower = entityName.toLowerCase();
 
   // GET /api/<resource>
-  app.get(basePath, async (request, reply) => {
-    try {
-      const items = await service.getAll();
-      return items.map((item) => maskRow(item, secretEntity));
-    } catch (error) {
-      request.log.error(error, `Failed to fetch ${lower}s`);
-      return sendInternalError(reply);
-    }
+  app.get(basePath, async () => {
+    const items = await service.getAll();
+    return items.map((item) => maskRow(item, secretEntity));
   });
 
   // GET /api/<resource>/:id
@@ -59,17 +53,12 @@ export async function registerCrudRoutes(
     `${basePath}/:id`,
     { schema: { params: idParamSchema } },
     async (request, reply) => {
-      try {
-        const { id } = request.params;
-        const item = await service.getById(id);
-        if (!item) {
-          return await reply.status(404).send({ error: `${entityName} not found` });
-        }
-        return maskRow(item, secretEntity);
-      } catch (error) {
-        request.log.error(error, `Failed to fetch ${lower}`);
-        return sendInternalError(reply);
+      const { id } = request.params;
+      const item = await service.getById(id);
+      if (!item) {
+        return reply.status(404).send({ error: `${entityName} not found` });
       }
+      return maskRow(item, secretEntity);
     },
   );
 
@@ -78,15 +67,10 @@ export async function registerCrudRoutes(
     basePath,
     { schema: { body: createSchema } },
     async (request, reply) => {
-      try {
-        const data = request.body;
-        const item = await service.create(data);
-        request.log.info({ name: data.name }, `${entityName} created`);
-        return await reply.status(201).send(maskRow(item, secretEntity));
-      } catch (error) {
-        request.log.error(error, `Failed to create ${lower}`);
-        return sendInternalError(reply);
-      }
+      const data = request.body;
+      const item = await service.create(data);
+      request.log.info({ name: data.name }, `${entityName} created`);
+      return reply.status(201).send(maskRow(item, secretEntity));
     },
   );
 
@@ -95,18 +79,13 @@ export async function registerCrudRoutes(
     `${basePath}/:id`,
     { schema: { params: idParamSchema, body: updateSchema } },
     async (request, reply) => {
-      try {
-        const { id } = request.params;
-        const item = await service.update(id, request.body);
-        if (!item) {
-          return await reply.status(404).send({ error: `${entityName} not found` });
-        }
-        request.log.info({ id }, `${entityName} updated`);
-        return maskRow(item, secretEntity);
-      } catch (error) {
-        request.log.error(error, `Failed to update ${lower}`);
-        return sendInternalError(reply);
+      const { id } = request.params;
+      const item = await service.update(id, request.body);
+      if (!item) {
+        return reply.status(404).send({ error: `${entityName} not found` });
       }
+      request.log.info({ id }, `${entityName} updated`);
+      return maskRow(item, secretEntity);
     },
   );
 
@@ -136,23 +115,18 @@ export async function registerCrudRoutes(
   app.post<{ Body: { type: string; settings: Record<string, unknown> } }>(
     `${basePath}/test`,
     { schema: { body: createSchema } },
-    async (request, reply) => {
-      try {
-        const data = request.body;
-        const result = await service.testConfig({
-          type: data.type,
-          settings: data.settings,
-        });
-        if (result.success) {
-          request.log.info({ type: data.type }, `${entityName} config test passed`);
-        } else {
-          request.log.warn({ type: data.type, message: result.message }, `${entityName} config test failed`);
-        }
-        return result;
-      } catch (error) {
-        request.log.error(error, `${entityName} config test error`);
-        return sendInternalError(reply);
+    async (request) => {
+      const data = request.body;
+      const result = await service.testConfig({
+        type: data.type,
+        settings: data.settings,
+      });
+      if (result.success) {
+        request.log.info({ type: data.type }, `${entityName} config test passed`);
+      } else {
+        request.log.warn({ type: data.type, message: result.message }, `${entityName} config test failed`);
       }
+      return result;
     },
   );
 
@@ -160,20 +134,15 @@ export async function registerCrudRoutes(
   app.post<{ Params: IdParam }>(
     `${basePath}/:id/test`,
     { schema: { params: idParamSchema } },
-    async (request, reply) => {
-      try {
-        const { id } = request.params;
-        const result = await service.test(id);
-        if (result.success) {
-          request.log.info({ id }, `${entityName} test passed`);
-        } else {
-          request.log.warn({ id, message: result.message }, `${entityName} test failed`);
-        }
-        return result;
-      } catch (error) {
-        request.log.error(error, `${entityName} test error`);
-        return sendInternalError(reply);
+    async (request) => {
+      const { id } = request.params;
+      const result = await service.test(id);
+      if (result.success) {
+        request.log.info({ id }, `${entityName} test passed`);
+      } else {
+        request.log.warn({ id, message: result.message }, `${entityName} test failed`);
       }
+      return result;
     },
   );
 }

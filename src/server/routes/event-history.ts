@@ -2,7 +2,6 @@ import type { FastifyInstance } from 'fastify';
 import type { EventHistoryService } from '../services';
 import { idParamSchema, eventHistoryQuerySchema, paginationParamsSchema, DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { z } from 'zod';
-import { sendInternalError } from '../utils/route-helpers.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -27,16 +26,11 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
   app.get<{ Querystring: EventHistoryListQuery }>(
     '/api/event-history',
     { schema: { querystring: eventHistoryListQuerySchema } },
-    async (request, reply) => {
-      try {
-        const { eventType, search, limit, offset } = request.query;
-        request.log.debug({ eventType, search, limit, offset }, 'Fetching event history');
-        const pagination = { limit: limit ?? DEFAULT_LIMITS.eventHistory, offset };
-        return await eventHistoryService.getAll({ eventType, search }, pagination);
-      } catch (error) {
-        request.log.error(error, 'Failed to fetch event history');
-        return sendInternalError(reply);
-      }
+    async (request) => {
+      const { eventType, search, limit, offset } = request.query;
+      request.log.debug({ eventType, search, limit, offset }, 'Fetching event history');
+      const pagination = { limit: limit ?? DEFAULT_LIMITS.eventHistory, offset };
+      return eventHistoryService.getAll({ eventType, search }, pagination);
     },
   );
 
@@ -44,15 +38,10 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
   app.get<{ Params: BookIdParam }>(
     '/api/event-history/books/:bookId',
     { schema: { params: bookIdParamSchema } },
-    async (request, reply) => {
-      try {
-        const { bookId } = request.params;
-        request.log.debug({ bookId }, 'Fetching book event history');
-        return await eventHistoryService.getByBookId(bookId);
-      } catch (error) {
-        request.log.error(error, 'Failed to fetch book event history');
-        return sendInternalError(reply);
-      }
+    async (request) => {
+      const { bookId } = request.params;
+      request.log.debug({ bookId }, 'Fetching book event history');
+      return eventHistoryService.getByBookId(bookId);
     },
   );
 
@@ -61,14 +50,9 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
     '/api/event-history/:id',
     { schema: { params: idParamSchema } },
     async (request, reply) => {
-      try {
-        const deleted = await eventHistoryService.delete(request.params.id);
-        if (!deleted) return await reply.status(404).send({ error: 'Event not found' });
-        return { success: true };
-      } catch (error) {
-        request.log.error(error, 'Failed to delete event');
-        return sendInternalError(reply);
-      }
+      const deleted = await eventHistoryService.delete(request.params.id);
+      if (!deleted) return reply.status(404).send({ error: 'Event not found' });
+      return { success: true };
     },
   );
 
@@ -76,16 +60,11 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
   app.delete<{ Querystring: { eventType?: string } }>(
     '/api/event-history',
     { schema: { querystring: z.object({ eventType: eventHistoryQuerySchema.shape.eventType }) } },
-    async (request, reply) => {
-      try {
-        const { eventType } = request.query;
-        const filters = eventType ? { eventType } : undefined;
-        const deleted = await eventHistoryService.deleteAll(filters);
-        return { deleted };
-      } catch (error) {
-        request.log.error(error, 'Failed to bulk delete events');
-        return sendInternalError(reply);
-      }
+    async (request) => {
+      const { eventType } = request.query;
+      const filters = eventType ? { eventType } : undefined;
+      const deleted = await eventHistoryService.deleteAll(filters);
+      return { deleted };
     },
   );
 

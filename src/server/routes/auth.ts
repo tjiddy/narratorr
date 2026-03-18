@@ -3,7 +3,6 @@ import type { AuthService } from '../services/auth.service.js';
 import { UserExistsError, AuthConfigError, IncorrectPasswordError } from '../services/auth.service.js';
 import { loginSchema, setupCredentialsSchema, changePasswordSchema, updateAuthConfigSchema, type LoginInput, type SetupCredentialsInput, type ChangePasswordInput, type UpdateAuthConfigInput } from '../../shared/schemas.js';
 import { config } from '../config.js';
-import { sendInternalError } from '../utils/route-helpers.js';
 
 export async function authRoutes(app: FastifyInstance, authService: AuthService) {
   // GET /api/auth/status — public, no secrets
@@ -40,33 +39,28 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
       config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },
     },
     async (request, reply) => {
-      try {
-        const { username, password } = request.body;
-        const verified = await authService.verifyCredentials(username, password);
+      const { username, password } = request.body;
+      const verified = await authService.verifyCredentials(username, password);
 
-        if (!verified) {
-          request.log.info({ username }, 'Failed login attempt');
-          return await reply.status(401).send({ error: 'Invalid credentials' });
-        }
-
-        // Set session cookie
-        const secret = await authService.getSessionSecret();
-        const cookie = authService.createSessionCookie(username, secret);
-
-        reply.setCookie('narratorr_session', cookie, {
-          httpOnly: true,
-          sameSite: 'lax',
-          secure: !config.isDev,
-          path: '/',
-          maxAge: 7 * 24 * 60 * 60, // 7 days
-        });
-
-        request.log.info({ username }, 'User logged in');
-        return { success: true };
-      } catch (error) {
-        request.log.error(error, 'Login failed');
-        return sendInternalError(reply);
+      if (!verified) {
+        request.log.info({ username }, 'Failed login attempt');
+        return reply.status(401).send({ error: 'Invalid credentials' });
       }
+
+      // Set session cookie
+      const secret = await authService.getSessionSecret();
+      const cookie = authService.createSessionCookie(username, secret);
+
+      reply.setCookie('narratorr_session', cookie, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: !config.isDev,
+        path: '/',
+        maxAge: 7 * 24 * 60 * 60, // 7 days
+      });
+
+      request.log.info({ username }, 'User logged in');
+      return { success: true };
     },
   );
 
@@ -98,20 +92,14 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
         if (error instanceof UserExistsError) {
           return reply.status(409).send({ error: error.message });
         }
-        request.log.error(error, 'Failed to create user');
-        return sendInternalError(reply);
+        throw error;
       }
     },
   );
 
   // GET /api/auth/config — protected, returns config without sessionSecret
-  app.get('/api/auth/config', async (request, reply) => {
-    try {
-      return await authService.getConfig();
-    } catch (error) {
-      request.log.error(error, 'Failed to fetch auth config');
-      return sendInternalError(reply);
-    }
+  app.get('/api/auth/config', async () => {
+    return authService.getConfig();
   });
 
   // PUT /api/auth/config — protected, updates mode and/or localBypass
@@ -128,8 +116,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
         if (error instanceof AuthConfigError) {
           return reply.status(400).send({ error: error.message });
         }
-        request.log.error(error, 'Failed to update auth config');
-        return sendInternalError(reply);
+        throw error;
       }
     },
   );
@@ -154,8 +141,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
         if (error instanceof IncorrectPasswordError) {
           return reply.status(400).send({ error: error.message });
         }
-        request.log.error(error, 'Failed to change password');
-        return sendInternalError(reply);
+        throw error;
       }
     },
   );
@@ -163,14 +149,9 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
   // POST /api/auth/api-key/regenerate — protected
   app.post('/api/auth/api-key/regenerate', {
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } },
-  }, async (request, reply) => {
-    try {
-      const newKey = await authService.regenerateApiKey();
-      request.log.info('API key regenerated');
-      return { apiKey: newKey };
-    } catch (error) {
-      request.log.error(error, 'Failed to regenerate API key');
-      return sendInternalError(reply);
-    }
+  }, async (request) => {
+    const newKey = await authService.regenerateApiKey();
+    request.log.info('API key regenerated');
+    return { apiKey: newKey };
   });
 }

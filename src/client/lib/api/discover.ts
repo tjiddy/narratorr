@@ -1,33 +1,13 @@
-import type { SuggestionReason } from '../../../shared/schemas/discovery.js';
+import type { SuggestionReason, SuggestionRowResponse } from '../../../shared/schemas/discovery.js';
 import { fetchApi } from './client.js';
 
-export interface SuggestionRow {
-  id: number;
-  asin: string;
-  title: string;
-  authorName: string;
-  narratorName: string | null;
-  coverUrl: string | null;
-  duration: number | null;
-  publishedDate: string | null;
-  language: string | null;
-  genres: string[] | null;
-  seriesName: string | null;
-  seriesPosition: number | null;
-  reason: SuggestionReason;
-  reasonContext: string;
-  score: number;
-  status: 'pending' | 'added' | 'dismissed';
-  refreshedAt: string;
-  dismissedAt: string | null;
-  snoozeUntil: string | null;
-  createdAt: string;
-}
+/** @deprecated Use SuggestionRowResponse directly — alias preserved for existing consumers. */
+export type SuggestionRow = SuggestionRowResponse;
 
 export type DiscoverStats = Partial<Record<SuggestionReason, number>>;
 
 export interface AddSuggestionResult {
-  suggestion: SuggestionRow;
+  suggestion: SuggestionRowResponse;
   book?: { id: number; title: string };
   duplicate?: boolean;
 }
@@ -40,7 +20,7 @@ export interface RefreshResult {
 
 export const discoverApi = {
   getDiscoverSuggestions: () =>
-    fetchApi<SuggestionRow[]>('/discover/suggestions'),
+    fetchApi<SuggestionRowResponse[]>('/discover/suggestions'),
 
   addDiscoverSuggestion: (id: number) =>
     fetchApi<AddSuggestionResult>(`/discover/suggestions/${id}/add`, {
@@ -48,12 +28,12 @@ export const discoverApi = {
     }),
 
   dismissDiscoverSuggestion: (id: number) =>
-    fetchApi<SuggestionRow>(`/discover/suggestions/${id}/dismiss`, {
+    fetchApi<SuggestionRowResponse>(`/discover/suggestions/${id}/dismiss`, {
       method: 'POST',
     }),
 
   snoozeDiscoverSuggestion: (id: number, durationDays: number) =>
-    fetchApi<SuggestionRow>(`/discover/suggestions/${id}/snooze`, {
+    fetchApi<SuggestionRowResponse>(`/discover/suggestions/${id}/snooze`, {
       method: 'POST',
       body: JSON.stringify({ durationDays }),
       headers: { 'Content-Type': 'application/json' },

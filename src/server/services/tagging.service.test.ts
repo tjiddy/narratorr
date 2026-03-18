@@ -25,7 +25,11 @@ vi.mock('music-metadata', () => ({
   }),
 }));
 
-// Mock drizzle-orm
+// Mock drizzle-orm — uses importOriginal to preserve all real exports (getTableColumns,
+// sql, etc.) while only overriding `eq` for assertion capture. This is necessary because
+// drizzle-orm is imported at module scope by transitive dependencies (e.g., book-list.service.ts
+// uses getTableColumns). Without importOriginal, those imports would be undefined.
+// See: .claude/cl/learnings/getTableColumns-module-scope-mock.md
 vi.mock('drizzle-orm', async (importOriginal) => {
   const actual = await importOriginal();
   return {

@@ -3,7 +3,6 @@ import { type z } from 'zod';
 import { type DownloadClientService } from '../services';
 import { createDownloadClientSchema, updateDownloadClientSchema, idParamSchema, type CreateDownloadClientInput } from '../../shared/schemas.js';
 import { registerCrudRoutes } from './crud-routes.js';
-import { sendInternalError } from '../utils/route-helpers.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -24,23 +23,18 @@ export async function downloadClientsRoutes(
   app.post<{ Body: CreateDownloadClientInput }>(
     '/api/download-clients/categories',
     { schema: { body: createDownloadClientSchema } },
-    async (request, reply) => {
-      try {
-        const data = request.body;
-        const result = await downloadClientService.getCategoriesFromConfig({
-          type: data.type,
-          settings: data.settings,
-        });
-        if (result.error) {
-          request.log.warn({ type: data.type, error: result.error }, 'Category fetch from config failed');
-        } else {
-          request.log.debug({ type: data.type, count: result.categories.length }, 'Categories fetched from config');
-        }
-        return result;
-      } catch (error) {
-        request.log.error(error, 'Category fetch from config error');
-        return sendInternalError(reply);
+    async (request) => {
+      const data = request.body;
+      const result = await downloadClientService.getCategoriesFromConfig({
+        type: data.type,
+        settings: data.settings,
+      });
+      if (result.error) {
+        request.log.warn({ type: data.type, error: result.error }, 'Category fetch from config failed');
+      } else {
+        request.log.debug({ type: data.type, count: result.categories.length }, 'Categories fetched from config');
       }
+      return result;
     },
   );
 
@@ -48,20 +42,15 @@ export async function downloadClientsRoutes(
   app.post<{ Params: IdParam }>(
     '/api/download-clients/:id/categories',
     { schema: { params: idParamSchema } },
-    async (request, reply) => {
-      try {
-        const { id } = request.params;
-        const result = await downloadClientService.getCategories(id);
-        if (result.error) {
-          request.log.warn({ id, error: result.error }, 'Category fetch failed');
-        } else {
-          request.log.debug({ id, count: result.categories.length }, 'Categories fetched');
-        }
-        return result;
-      } catch (error) {
-        request.log.error(error, 'Category fetch error');
-        return sendInternalError(reply);
+    async (request) => {
+      const { id } = request.params;
+      const result = await downloadClientService.getCategories(id);
+      if (result.error) {
+        request.log.warn({ id, error: result.error }, 'Category fetch failed');
+      } else {
+        request.log.debug({ id, count: result.categories.length }, 'Categories fetched');
       }
+      return result;
     },
   );
 }

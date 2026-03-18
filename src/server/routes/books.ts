@@ -3,8 +3,6 @@ import { join, extname } from 'node:path';
 import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService, RecyclingBinService } from '../services/index.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
-import { sendInternalError } from '../utils/route-helpers.js';
-
 export interface BookRouteDeps {
   bookService: BookService;
   bookListService: BookListService;
@@ -59,7 +57,6 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
   '/api/books/:id',
   { schema: { params: idParamSchema, querystring: deleteBookQuerySchema } },
   async (request, reply) => {
-  try {
     const { id } = request.params;
     const { deleteFiles } = request.query;
 
@@ -69,7 +66,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     // If deleteFiles requested, move to recycling bin BEFORE cancelling downloads or removing DB record
     if (deleteFiles === 'true') {
       if (!book) {
-        return await reply.status(404).send({ error: 'Book not found' });
+        return reply.status(404).send({ error: 'Book not found' });
       }
 
       if (deps.recyclingBinService) {
@@ -77,7 +74,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
           await deps.recyclingBinService.moveToRecycleBin(book, book.path);
         } catch (error) {
           request.log.error({ bookId: id, error }, 'Failed to move book to recycling bin');
-          return await reply.status(500).send({ error: 'Failed to move book files to recycling bin' });
+          return reply.status(500).send({ error: 'Failed to move book files to recycling bin' });
         }
       } else if (book.path) {
         try {
@@ -85,7 +82,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
           await deps.bookService.deleteBookFiles(book.path, librarySettings.path);
         } catch (error) {
           request.log.error({ bookId: id, error }, 'Failed to delete book files');
-          return await reply.status(500).send({ error: 'Failed to delete book files from disk' });
+          return reply.status(500).send({ error: 'Failed to delete book files from disk' });
         }
       }
     }
@@ -117,28 +114,19 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     const deleted = await deps.bookService.delete(id);
 
     if (!deleted) {
-      return await reply.status(404).send({ error: 'Book not found' });
+      return reply.status(404).send({ error: 'Book not found' });
     }
 
     request.log.info({ id, deleteFiles }, 'Book deleted');
     return { success: true };
-  } catch (error) {
-    request.log.error(error, 'Failed to delete book');
-    return sendInternalError(reply);
-  }
 });
 }
 
 async function registerDeleteMissingRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService'>) {
-  app.delete('/api/books/missing', async (request, reply) => {
-    try {
-      const deleted = await deps.bookService.deleteByStatus('missing');
-      request.log.info({ deleted }, 'Batch deleted missing books');
-      return { deleted };
-    } catch (error) {
-      request.log.error(error, 'Failed to batch delete missing books');
-      return sendInternalError(reply);
-    }
+  app.delete('/api/books/missing', async (request) => {
+    const deleted = await deps.bookService.deleteByStatus('missing');
+    request.log.info({ deleted }, 'Batch deleted missing books');
+    return { deleted };
   });
 }
 
@@ -147,29 +135,24 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
     '/api/books/:id/search',
     { schema: { params: idParamSchema } },
     async (request, reply) => {
-      try {
-        const { id } = request.params;
-        const book = await deps.bookService.getById(id);
-        if (!book) {
-          return await reply.status(404).send({ error: 'Book not found' });
-        }
-
-        const qualitySettings = await deps.settingsService.get('quality');
-        const result = await searchAndGrabForBook(
-          book,
-          deps.indexerService!,
-          deps.downloadOrchestrator,
-          qualitySettings,
-          request.log,
-        );
-        if (result.result === 'grab_error') {
-          throw result.error;
-        }
-        return result;
-      } catch (error) {
-        request.log.error(error, 'Per-book search failed');
-        return sendInternalError(reply);
+      const { id } = request.params;
+      const book = await deps.bookService.getById(id);
+      if (!book) {
+        return reply.status(404).send({ error: 'Book not found' });
       }
+
+      const qualitySettings = await deps.settingsService.get('quality');
+      const result = await searchAndGrabForBook(
+        book,
+        deps.indexerService!,
+        deps.downloadOrchestrator,
+        qualitySettings,
+        request.log,
+      );
+      if (result.result === 'grab_error') {
+        throw result.error;
+      }
+      return result;
     },
   );
 }
@@ -180,37 +163,22 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
   app.get<{ Querystring: BooksListQuery }>(
     '/api/books',
     { schema: { querystring: booksListQuerySchema } },
-    async (request, reply) => {
-      try {
-        const { status, search, sortField, sortDirection, limit, offset } = request.query;
-        request.log.debug({ status, search, sortField, limit, offset }, 'Fetching books');
-        const pagination = { limit: limit ?? DEFAULT_LIMITS.books, offset };
-        return await bookListService.getAll(status, pagination, { slim: true, search, sortField, sortDirection });
-      } catch (error) {
-        request.log.error(error, 'Failed to fetch books');
-        return sendInternalError(reply);
-      }
+    async (request) => {
+      const { status, search, sortField, sortDirection, limit, offset } = request.query;
+      request.log.debug({ status, search, sortField, limit, offset }, 'Fetching books');
+      const pagination = { limit: limit ?? DEFAULT_LIMITS.books, offset };
+      return bookListService.getAll(status, pagination, { slim: true, search, sortField, sortDirection });
     },
   );
 
   // GET /api/books/identifiers — lightweight list for duplicate detection (no pagination)
-  app.get('/api/books/identifiers', async (request, reply) => {
-    try {
-      return await bookListService.getIdentifiers();
-    } catch (error) {
-      request.log.error(error, 'Failed to fetch book identifiers');
-      return sendInternalError(reply);
-    }
+  app.get('/api/books/identifiers', async () => {
+    return bookListService.getIdentifiers();
   });
 
   // GET /api/books/stats — server-side status counts and filter values
-  app.get('/api/books/stats', async (request, reply) => {
-    try {
-      return await bookListService.getStats();
-    } catch (error) {
-      request.log.error(error, 'Failed to fetch book stats');
-      return sendInternalError(reply);
-    }
+  app.get('/api/books/stats', async () => {
+    return bookListService.getStats();
   });
 
   // GET /api/books/:id
@@ -218,19 +186,14 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     '/api/books/:id',
     { schema: { params: idParamSchema } },
     async (request, reply) => {
-      try {
-        const { id } = request.params;
-        const book = await bookService.getById(id);
+      const { id } = request.params;
+      const book = await bookService.getById(id);
 
-        if (!book) {
-          return await reply.status(404).send({ error: 'Book not found' });
-        }
-
-        return book;
-      } catch (error) {
-        request.log.error(error, 'Failed to fetch book');
-        return sendInternalError(reply);
+      if (!book) {
+        return reply.status(404).send({ error: 'Book not found' });
       }
+
+      return book;
     },
   );
 
@@ -239,30 +202,25 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     '/api/books',
     { schema: { body: createBookBodySchema } },
     async (request, reply) => {
-      try {
-        const body = request.body;
+      const body = request.body;
 
-        // Check for duplicates
-        const existing = await bookService.findDuplicate(body.title, body.authorName, body.asin);
-        if (existing) {
-          request.log.info({ title: body.title, existingId: existing.id }, 'Duplicate book detected');
-          return await reply.status(409).send(existing);
-        }
-
-        const book = await bookService.create(body);
-
-        request.log.info({ title: body.title }, 'Book added');
-
-        // Fire-and-forget: trigger search if searchImmediately is set
-        if (body.searchImmediately && book.status === 'wanted' && indexerService) {
-          triggerImmediateSearch(book, deps, request.log);
-        }
-
-        return await reply.status(201).send(book);
-      } catch (error) {
-        request.log.error(error, 'Failed to create book');
-        return sendInternalError(reply);
+      // Check for duplicates
+      const existing = await bookService.findDuplicate(body.title, body.authorName, body.asin);
+      if (existing) {
+        request.log.info({ title: body.title, existingId: existing.id }, 'Duplicate book detected');
+        return reply.status(409).send(existing);
       }
+
+      const book = await bookService.create(body);
+
+      request.log.info({ title: body.title }, 'Book added');
+
+      // Fire-and-forget: trigger search if searchImmediately is set
+      if (body.searchImmediately && book.status === 'wanted' && indexerService) {
+        triggerImmediateSearch(book, deps, request.log);
+      }
+
+      return reply.status(201).send(book);
     },
   );
 
@@ -271,22 +229,17 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     '/api/books/:id',
     { schema: { params: idParamSchema, body: updateBookBodySchema } },
     async (request, reply) => {
-      try {
-        const { id } = request.params;
-        const body = request.body;
+      const { id } = request.params;
+      const body = request.body;
 
-        const book = await bookService.update(id, body);
+      const book = await bookService.update(id, body);
 
-        if (!book) {
-          return await reply.status(404).send({ error: 'Book not found' });
-        }
-
-        request.log.info({ id }, 'Book updated');
-        return book;
-      } catch (error) {
-        request.log.error(error, 'Failed to update book');
-        return sendInternalError(reply);
+      if (!book) {
+        return reply.status(404).send({ error: 'Book not found' });
       }
+
+      request.log.info({ id }, 'Book updated');
+      return book;
     },
   );
 
@@ -327,34 +280,29 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
     '/api/books/:id/cover',
     { schema: { params: idParamSchema } },
     async (request, reply) => {
-      try {
-        const { id } = request.params;
+      const { id } = request.params;
 
-        const book = await bookService.getById(id);
-        if (!book || !book.path) {
-          return await reply.status(404).send({ error: 'Book not found' });
-        }
-
-        // Find cover file in book directory
-        const entries = await readdir(book.path);
-        const coverFile = entries.find(f => /^cover\.(jpg|jpeg|png|webp)$/i.test(f));
-        if (!coverFile) {
-          return await reply.status(404).send({ error: 'No cover image' });
-        }
-
-        const mime = coverFile.endsWith('.png') ? 'image/png'
-          : coverFile.endsWith('.webp') ? 'image/webp'
-          : 'image/jpeg';
-
-        const data = await readFile(join(book.path, coverFile));
-        return await reply
-          .header('Content-Type', mime)
-          .header('Cache-Control', 'public, max-age=86400')
-          .send(data);
-      } catch (error) {
-        request.log.error(error, 'Failed to serve cover image');
-        return sendInternalError(reply);
+      const book = await bookService.getById(id);
+      if (!book || !book.path) {
+        return reply.status(404).send({ error: 'Book not found' });
       }
+
+      // Find cover file in book directory
+      const entries = await readdir(book.path);
+      const coverFile = entries.find(f => /^cover\.(jpg|jpeg|png|webp)$/i.test(f));
+      if (!coverFile) {
+        return reply.status(404).send({ error: 'No cover image' });
+      }
+
+      const mime = coverFile.endsWith('.png') ? 'image/png'
+        : coverFile.endsWith('.webp') ? 'image/webp'
+        : 'image/jpeg';
+
+      const data = await readFile(join(book.path, coverFile));
+      return reply
+        .header('Content-Type', mime)
+        .header('Cache-Control', 'public, max-age=86400')
+        .send(data);
     },
   );
 
@@ -362,38 +310,33 @@ export async function bookFilesRoute(app: FastifyInstance, bookService: BookServ
     '/api/books/:id/files',
     { schema: { params: idParamSchema } },
     async (request, reply) => {
-      try {
-        const { id } = request.params;
+      const { id } = request.params;
 
-        const book = await bookService.getById(id);
-        if (!book || !book.path) {
-          return await reply.status(404).send({ error: 'Book not found' });
-        }
-
-        let entries: string[];
-        try {
-          entries = await readdir(book.path);
-        } catch {
-          request.log.warn({ bookId: id, path: book.path }, 'Could not read book directory');
-          return [];
-        }
-
-        const audioFiles = entries.filter(f => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
-        const files = await Promise.all(
-          audioFiles.map(async (name) => {
-            const info = await stat(join(book.path!, name));
-            return { name, size: info.size };
-          })
-        );
-
-        files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-
-        request.log.debug({ bookId: id, fileCount: files.length }, 'Listed book files');
-        return files;
-      } catch (error) {
-        request.log.error(error, 'Failed to list book files');
-        return sendInternalError(reply);
+      const book = await bookService.getById(id);
+      if (!book || !book.path) {
+        return reply.status(404).send({ error: 'Book not found' });
       }
+
+      let entries: string[];
+      try {
+        entries = await readdir(book.path);
+      } catch {
+        request.log.warn({ bookId: id, path: book.path }, 'Could not read book directory');
+        return [];
+      }
+
+      const audioFiles = entries.filter(f => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()));
+      const files = await Promise.all(
+        audioFiles.map(async (name) => {
+          const info = await stat(join(book.path!, name));
+          return { name, size: info.size };
+        })
+      );
+
+      files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+      request.log.debug({ bookId: id, fileCount: files.length }, 'Listed book files');
+      return files;
     },
   );
 }

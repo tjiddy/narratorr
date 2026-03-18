@@ -9,60 +9,38 @@ import { EventHistoryServiceError } from '../services/event-history.service.js';
 import { UserExistsError, AuthConfigError, IncorrectPasswordError } from '../services/auth.service.js';
 import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
 
+// ---------------------------------------------------------------------------
+// Error → HTTP status registry
+// ---------------------------------------------------------------------------
+
+type ErrorEntry =
+  | { type: 'flat'; status: number }
+  | { type: 'coded'; codes: Record<string, number> };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ERROR_REGISTRY = new Map<new (...args: any[]) => Error, ErrorEntry>([
+  [RenameError, { type: 'coded', codes: { NOT_FOUND: 404, NO_PATH: 400, CONFLICT: 409 } }],
+  [RetagError, { type: 'coded', codes: { NOT_FOUND: 404, NO_PATH: 400, PATH_MISSING: 400, FFMPEG_NOT_CONFIGURED: 400 } }],
+  [RecyclingBinError, { type: 'coded', codes: { NOT_FOUND: 404, CONFLICT: 409, FILESYSTEM: 500 } }],
+  [RestoreUploadError, { type: 'flat', status: 400 }],
+  [QualityGateServiceError, { type: 'coded', codes: { NOT_FOUND: 404, INVALID_STATUS: 409 } }],
+  [EventHistoryServiceError, { type: 'coded', codes: { NOT_FOUND: 404, DOWNLOAD_NOT_FOUND: 404, UNSUPPORTED_EVENT_TYPE: 400, NO_DOWNLOAD: 400 } }],
+  [UserExistsError, { type: 'flat', status: 409 }],
+  [AuthConfigError, { type: 'flat', status: 400 }],
+  [IncorrectPasswordError, { type: 'flat', status: 400 }],
+  [ScanInProgressError, { type: 'flat', status: 409 }],
+  [LibraryPathError, { type: 'flat', status: 400 }],
+]);
+
 /** Maps typed error codes to HTTP status codes. */
-// eslint-disable-next-line complexity -- linear error-class→status mapping, one block per service
 function getStatusForError(error: unknown): number | null {
-  if (error instanceof RenameError) {
-    switch (error.code) {
-      case 'NOT_FOUND': return 404;
-      case 'NO_PATH': return 400;
-      case 'CONFLICT': return 409;
+  for (const [ErrorClass, entry] of ERROR_REGISTRY) {
+    if (error instanceof ErrorClass) {
+      if (entry.type === 'flat') return entry.status;
+      const code = (error as { code?: string }).code;
+      if (code && code in entry.codes) return entry.codes[code];
     }
   }
-
-  if (error instanceof RetagError) {
-    switch (error.code) {
-      case 'NOT_FOUND': return 404;
-      case 'NO_PATH':
-      case 'PATH_MISSING':
-      case 'FFMPEG_NOT_CONFIGURED': return 400;
-    }
-  }
-
-  if (error instanceof RecyclingBinError) {
-    switch (error.code) {
-      case 'NOT_FOUND': return 404;
-      case 'CONFLICT': return 409;
-      case 'FILESYSTEM': return 500;
-    }
-  }
-
-  if (error instanceof RestoreUploadError) {
-    return 400;
-  }
-
-  if (error instanceof QualityGateServiceError) {
-    switch (error.code) {
-      case 'NOT_FOUND': return 404;
-      case 'INVALID_STATUS': return 409;
-    }
-  }
-
-  if (error instanceof EventHistoryServiceError) {
-    switch (error.code) {
-      case 'NOT_FOUND':
-      case 'DOWNLOAD_NOT_FOUND': return 404;
-      case 'UNSUPPORTED_EVENT_TYPE':
-      case 'NO_DOWNLOAD': return 400;
-    }
-  }
-
-  if (error instanceof UserExistsError) return 409;
-  if (error instanceof AuthConfigError) return 400;
-  if (error instanceof IncorrectPasswordError) return 400;
-  if (error instanceof ScanInProgressError) return 409;
-  if (error instanceof LibraryPathError) return 400;
-
   return null;
 }
 

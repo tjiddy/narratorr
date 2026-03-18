@@ -7,7 +7,6 @@ import type { ImportService } from '../services/import.service.js';
 import type { ImportOrchestrator } from '../services/import-orchestrator.js';
 import { idParamSchema, paginationParamsSchema, DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { z } from 'zod';
-import { sendInternalError } from '../utils/route-helpers.js';
 import { getErrorMessage } from '../utils/error-message.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
@@ -24,54 +23,39 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
   app.get<{ Querystring: ActivityListQuery }>(
     '/api/activity',
     { schema: { querystring: activityListQuerySchema } },
-    async (request, reply) => {
-      try {
-        const { status, section, limit, offset } = request.query;
-        request.log.debug({ status, section, limit, offset }, 'Fetching activity');
-        const pagination = { limit: limit ?? DEFAULT_LIMITS.activity, offset };
-        const result = await downloadService.getAll(status, pagination, section);
+    async (request) => {
+      const { status, section, limit, offset } = request.query;
+      request.log.debug({ status, section, limit, offset }, 'Fetching activity');
+      const pagination = { limit: limit ?? DEFAULT_LIMITS.activity, offset };
+      const result = await downloadService.getAll(status, pagination, section);
 
-        // Augment pending_review downloads with quality gate comparison data (batch)
-        const pendingIds = result.data
-          .filter((dl) => dl.status === 'pending_review')
-          .map((dl) => dl.id);
+      // Augment pending_review downloads with quality gate comparison data (batch)
+      const pendingIds = result.data
+        .filter((dl) => dl.status === 'pending_review')
+        .map((dl) => dl.id);
 
-        const gateMap = pendingIds.length > 0
-          ? await qualityGateService.getQualityGateDataBatch(pendingIds)
-          : new Map<number, null>();
+      const gateMap = pendingIds.length > 0
+        ? await qualityGateService.getQualityGateDataBatch(pendingIds)
+        : new Map<number, null>();
 
-        const augmented = result.data.map((dl) => {
-          const qualityGate = gateMap.get(dl.id);
-          return qualityGate ? { ...dl, qualityGate } : dl;
-        });
+      const augmented = result.data.map((dl) => {
+        const qualityGate = gateMap.get(dl.id);
+        return qualityGate ? { ...dl, qualityGate } : dl;
+      });
 
-        return { data: augmented, total: result.total };
-      } catch (error) {
-        request.log.error(error, 'Failed to fetch activity');
-        return sendInternalError(reply);
-      }
+      return { data: augmented, total: result.total };
     },
   );
 
   // GET /api/activity/active
-  app.get('/api/activity/active', async (request, reply) => {
-    try {
-      return await downloadService.getActive();
-    } catch (error) {
-      request.log.error(error, 'Failed to fetch active downloads');
-      return sendInternalError(reply);
-    }
+  app.get('/api/activity/active', async () => {
+    return downloadService.getActive();
   });
 
   // GET /api/activity/counts
-  app.get('/api/activity/counts', async (request, reply) => {
-    try {
-      request.log.debug('Fetching activity counts');
-      return await downloadService.getCounts();
-    } catch (error) {
-      request.log.error(error, 'Failed to fetch activity counts');
-      return sendInternalError(reply);
-    }
+  app.get('/api/activity/counts', async (request) => {
+    request.log.debug('Fetching activity counts');
+    return downloadService.getCounts();
   });
 
   // GET /api/activity/:id
@@ -79,19 +63,14 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     '/api/activity/:id',
     { schema: { params: idParamSchema } },
     async (request, reply) => {
-      try {
-        const { id } = request.params;
-        const download = await downloadService.getById(id);
+      const { id } = request.params;
+      const download = await downloadService.getById(id);
 
-        if (!download) {
-          return await reply.status(404).send({ error: 'Download not found' });
-        }
-
-        return download;
-      } catch (error) {
-        request.log.error(error, 'Failed to fetch download');
-        return sendInternalError(reply);
+      if (!download) {
+        return reply.status(404).send({ error: 'Download not found' });
       }
+
+      return download;
     },
   );
 
@@ -100,20 +79,15 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     '/api/activity/:id',
     { schema: { params: idParamSchema } },
     async (request, reply) => {
-      try {
-        const { id } = request.params;
-        const cancelled = await downloadOrchestrator.cancel(id);
+      const { id } = request.params;
+      const cancelled = await downloadOrchestrator.cancel(id);
 
-        if (!cancelled) {
-          return await reply.status(404).send({ error: 'Download not found' });
-        }
-
-        request.log.info({ id }, 'Download cancelled');
-        return { success: true };
-      } catch (error) {
-        request.log.error({ error }, 'Failed to cancel download');
-        return sendInternalError(reply);
+      if (!cancelled) {
+        return reply.status(404).send({ error: 'Download not found' });
       }
+
+      request.log.info({ id }, 'Download cancelled');
+      return { success: true };
     },
   );
 

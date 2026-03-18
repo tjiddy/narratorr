@@ -1,9 +1,38 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { suggestionReasonSchema } from '../../shared/schemas/discovery.js';
+import { suggestionReasonSchema, type SuggestionRowResponse } from '../../shared/schemas/discovery.js';
 import type { DiscoveryService, SettingsService } from '../services/index.js';
 import type { TaskRegistry } from '../services/task-registry.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import type { suggestions } from '../../db/schema.js';
+
+type SuggestionRow = typeof suggestions.$inferSelect;
+
+/** Maps a DB suggestion row to the API response contract. */
+function toSuggestionResponse(row: SuggestionRow): SuggestionRowResponse {
+  return {
+    id: row.id,
+    asin: row.asin,
+    title: row.title,
+    authorName: row.authorName,
+    narratorName: row.narratorName,
+    coverUrl: row.coverUrl,
+    duration: row.duration,
+    publishedDate: row.publishedDate,
+    language: row.language,
+    genres: row.genres,
+    seriesName: row.seriesName,
+    seriesPosition: row.seriesPosition,
+    reason: row.reason as SuggestionRowResponse['reason'],
+    reasonContext: row.reasonContext,
+    score: row.score,
+    status: row.status as SuggestionRowResponse['status'],
+    refreshedAt: row.refreshedAt.toISOString(),
+    dismissedAt: row.dismissedAt?.toISOString() ?? null,
+    snoozeUntil: row.snoozeUntil?.toISOString() ?? null,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
 
 export interface DiscoverRouteDeps {
   discoveryService: DiscoveryService;
@@ -32,7 +61,8 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
       const filters: { reason?: SuggestionsQuery['reason']; author?: string } = {};
       if (reason) filters.reason = reason;
       if (author) filters.author = author;
-      return discoveryService.getSuggestions(Object.keys(filters).length > 0 ? filters : undefined);
+      const rows = await discoveryService.getSuggestions(Object.keys(filters).length > 0 ? filters : undefined);
+      return rows.map(toSuggestionResponse);
     },
   );
 
@@ -45,7 +75,7 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
       if (!result) {
         return reply.status(404).send({ error: 'Suggestion not found' });
       }
-      return result;
+      return toSuggestionResponse(result);
     },
   );
 
@@ -62,9 +92,9 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
         return reply.status(409).send({ error: 'Suggestion already added' });
       }
       if (result.duplicate) {
-        return { suggestion: result.suggestion, book: result.book, duplicate: true };
+        return { suggestion: toSuggestionResponse(result.suggestion), book: result.book, duplicate: true };
       }
-      return { suggestion: result.suggestion, book: result.book };
+      return { suggestion: toSuggestionResponse(result.suggestion), book: result.book };
     },
   );
 
@@ -83,7 +113,7 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
       if (result === 'conflict') {
         return reply.status(409).send({ error: 'Suggestion is not in pending status' });
       }
-      return result;
+      return toSuggestionResponse(result);
     },
   );
 

@@ -27,6 +27,8 @@ async function createAuthTestApp(services: Services) {
   app.setSerializerCompiler(serializerCompiler);
 
   await app.register(cookie);
+  const { errorHandlerPlugin } = await import('../plugins/error-handler.js');
+  await app.register(errorHandlerPlugin);
 
   // Simulate auth middleware: set request.user for protected routes
   app.decorateRequest('user', null);

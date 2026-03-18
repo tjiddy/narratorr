@@ -118,4 +118,94 @@ describe('startJobs', () => {
 
     setTimeoutSpy.mockRestore();
   });
+
+  describe('scheduleCron error handling (#448 item 9)', () => {
+    it('logs error when cron job callback throws', async () => {
+      // Make the monitor job's callback throw by making monitorDownloads reject
+      const { monitorDownloads } = await import('./monitor.js');
+      const error = new Error('monitor boom');
+      vi.mocked(monitorDownloads).mockRejectedValueOnce(error);
+
+      const { startJobs } = await import('./index.js');
+      startJobs(db, services, log);
+
+      // Find the cron callback for monitor (first cron.schedule call)
+      const cronCalls = vi.mocked(cron.schedule).mock.calls;
+      const monitorCall = cronCalls.find(([expr]) => expr === '*/30 * * * * *');
+      expect(monitorCall).toBeDefined();
+
+      // Execute the cron callback — scheduleCron wraps it in try/catch
+      const cronCallback = monitorCall![1] as () => Promise<void>;
+      await cronCallback();
+
+      expect(log.error).toHaveBeenCalledWith(error, 'monitor job error');
+    });
+  });
+
+  describe('scheduleTimeoutLoop error handling (#448 item 9)', () => {
+    it('logs error and retries in 5 minutes when getIntervalMinutes throws', async () => {
+      // Make settings.get throw for all categories to trigger the outer catch
+      const settingsError = new Error('settings unavailable');
+      (services.settings.get as ReturnType<typeof vi.fn>).mockRejectedValue(settingsError);
+
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+      const { startJobs } = await import('./index.js');
+      startJobs(db, services, log);
+
+      // Wait for the error to be logged (async scheduleNext runs immediately)
+      const fiveMinMs = 5 * 60 * 1000;
+      await vi.waitFor(() => {
+        expect(log.error).toHaveBeenCalled();
+      });
+
+      // Verify 5-minute retry timeout was scheduled for at least one timeout-loop job
+      const retryCall = setTimeoutSpy.mock.calls.find(([, delay]) => delay === fiveMinMs);
+      expect(retryCall).toBeDefined();
+
+      setTimeoutSpy.mockRestore();
+    });
+
+    it('logs error when executeTracked throws and still calls scheduleNext', async () => {
+      // Set up normal settings for initial scheduleNext
+      (services.settings.get as ReturnType<typeof vi.fn>).mockImplementation(async (category: string) => {
+        if (category === 'search') return { intervalMinutes: 1 }; // 1 minute = 60000ms
+        if (category === 'rss') return { intervalMinutes: 1 };
+        if (category === 'discovery') return { enabled: true, intervalHours: 1, maxSuggestionsPerAuthor: 5 };
+        if (category === 'system') return { backupIntervalMinutes: 1 };
+        return {};
+      });
+
+      // Make the search job throw when executed
+      const { runSearchJob } = await import('./search.js');
+      const jobError = new Error('search exploded');
+      vi.mocked(runSearchJob).mockRejectedValue(jobError);
+
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+      const { startJobs } = await import('./index.js');
+      startJobs(db, services, log);
+
+      // Wait for initial setTimeout to be called
+      const oneMinMs = 1 * 60 * 1000;
+      await vi.waitFor(() => {
+        const call = setTimeoutSpy.mock.calls.find(([, delay]) => delay === oneMinMs);
+        expect(call).toBeDefined();
+      });
+
+      // Execute the setTimeout callback (which runs the job)
+      const timeoutCall = setTimeoutSpy.mock.calls.find(([, delay]) => delay === oneMinMs);
+      const timeoutCallback = timeoutCall![0] as () => Promise<void>;
+      await timeoutCallback();
+
+      // Error should be logged
+      expect(log.error).toHaveBeenCalledWith(jobError, 'search job error');
+
+      // scheduleNext should have been called again (another setTimeout)
+      const laterCalls = setTimeoutSpy.mock.calls.filter(([, delay]) => delay === oneMinMs);
+      expect(laterCalls.length).toBeGreaterThanOrEqual(2); // initial + retry
+
+      setTimeoutSpy.mockRestore();
+    });
+  });
 });
