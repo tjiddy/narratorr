@@ -1,5 +1,93 @@
 # Workflow Log
 
+## #437 Architecture review: DIP, ISP, modularity, and DRY fixes — 2026-03-18
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #447
+
+### Metrics
+- Files changed: 15 | Tests added/modified: 6
+- Quality gate runs: 2 (pass on attempt 2 — lint fixes needed)
+- Fix iterations: 1 (unused vi import, return await in non-try/catch, missing resolveProxyIp in SystemDeps test fixture)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Modules 1-6 were clean mechanical refactors. Registry pattern is well-established. CrudSettingsPage migration was 1:1 with zero test changes needed.
+- Friction / issues encountered: 5 rounds of spec review before approval (ISP interface split required tracing actual MetadataService call graph). SystemDeps interface extension broke health-check test fixture.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (5 rounds) consumed significant context before implementation started
+- Avoidable waste: The ISP split should have been designed by reading the MetadataService call graph first
+- Suggestions: For interface splits, trace the call graph in the consuming service FIRST, then define interfaces
+
+### Infrastructure gaps
+- Repeated workarounds: none
+- Missing tooling / config: none
+- Unresolved debt: none introduced
+
+### Wish I'd Known
+1. ISP interface splits must follow the actual call graph, not method naming (see isp-split-follows-call-graph.md)
+2. Adding a field to SystemDeps interface breaks health-check.service.test.ts createService() fixture (see systemdeps-extension-blast-radius.md)
+3. CrudSettingsPage migration is a perfect 1:1 mapping with zero test changes (see crud-settings-page-migration-pattern.md)
+
+
+## #430 OCP: Settings nav, route, and job auto-registration -- 2026-03-18
+**Skill path:** /implement -> /claim -> /plan -> /handoff
+**Outcome:** success -- PR #446
+
+### Metrics
+- Files changed: 7 | Tests added/modified: 3 new test files, 3 existing updated
+- Quality gate runs: 2 (pass on attempt 2 -- first had TypeScript errors from job callback types)
+- Fix iterations: 1 (job callback type too narrow for functions returning non-void promises)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean 3-module implementation. All 5809 existing tests passed.
+- Friction: vi.mock() hoisting broke App.test.tsx. Job callback types needed widening.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for plan and self-review
+- Avoidable waste: Elaborate phase had stale ImportListsSettings finding -- cost a spec review round
+- Suggestions: Verify subagent defect claims with targeted grep before including in specs
+
+### Infrastructure gaps
+- Repeated workarounds: .claude/state/ directory disappearing between steps
+- Unresolved debt: scheduleCron/scheduleTimeoutLoop error paths untested (pre-existing)
+
+### Wish I Had Known
+1. vi.mock() factories are hoisted above ALL variable declarations
+2. Job callback types vary wildly -- use wide return type and cast at registration
+3. settingsRegistry (12 schema categories) != settings pages (8 UI routes)
+
+## #431 Code smells: Error utilities, magic numbers, adapter DRY-up — 2026-03-17
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #445
+
+### Metrics
+- Files changed: 45+ | Tests added/modified: 24 new tests across 5 files, 6 test files updated
+- Quality gate runs: 2 (pass on attempt 2 — first had lint violations from agent work)
+- Fix iterations: 2 (lint violations from agent fetchWithTimeout replacement, pre-existing typecheck failure)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Modular TDD approach worked well — each utility was self-contained and could be tested independently before sweeping
+- Friction / issues encountered: Agent-based sweeps introduced lint violations (unused vi imports, unnecessary return-await) requiring a fix pass. Pre-existing typecheck failure on main (duplicate enrichmentStatusSchema) initially looked like a regression.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for codebase exploration and self-review (each reading 30+ files)
+- Avoidable waste: Could have combined the route sweep agents (sendInternalError + getErrorMessage) — ran them separately
+- Suggestions: For broad mechanical sweeps, include lint rules in agent prompts to avoid fix-up passes
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: Pre-existing typecheck failure on main should have been caught by CI
+- Unresolved debt: error-handler.ts now has 11 instanceof blocks (was 6) — registry pattern needed
+
+### Wish I'd Known
+1. AbortSignal.timeout() can't be controlled by vi.useFakeTimers() — agents needed to discover this and adapt test mocking strategies independently
+2. Typed error class migrations have a guaranteed blast radius in test mocks — every test that mocks the old Error('message') must be updated to the typed class
+3. Pre-existing failures on main should be checked first when verify fails — would have saved a debugging cycle
+
+
 
 ## #435 SRP: Extract orchestration from QualityGateService — 2026-03-18
 **Skill path:** /implement → /claim → /plan → /handoff
