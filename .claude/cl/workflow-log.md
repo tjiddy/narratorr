@@ -1,5 +1,180 @@
 # Workflow Log
 
+
+## #435 SRP: Extract orchestration from QualityGateService — 2026-03-18
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #441
+
+### Metrics
+- Files changed: 8 | Tests added/modified: 67 (25 new orchestrator + 42 restructured service)
+- Quality gate runs: 2 (pass on attempt 2 — lint fix for type import)
+- Fix iterations: 1 (self-review caught stale SSE status in auto-reject path)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The DownloadOrchestrator/ImportOrchestrator pattern was well-established, making the extraction mechanical.
+- Friction: Test fixture types needed all schema fields when calling processDownload() directly vs through untyped mockDbChain.
+
+### Token efficiency
+- Highest-token actions: Reading full service test file (881 lines), reading routes/index.ts wiring
+- Avoidable waste: Could have derived fixture types from schema upfront
+- Suggestions: Create shared complete fixture factories per schema type
+
+### Infrastructure gaps
+- Missing tooling: No shared complete-fixture factory for DownloadRow/BookRow
+- Unresolved debt: jobs/import.ts is a legacy helper that duplicates jobs/index.ts cron registration
+
+### Wish I'd Known
+1. Batch loop objects become stale after atomicClaim — SSE must use statusTransition, not download.status
+2. Test fixtures need ALL schema fields when called directly (not through mockDbChain)
+3. Spec review rounds were expensive but caught real issues — shared orchestration pattern was already established
+
+## #434 SRP: Extract orchestration from DownloadService — 2026-03-18
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #440
+
+### Metrics
+- Files changed: 16 | Tests added/modified: 12 (57 new tests, 9 suites restructured)
+- Quality gate runs: 2 (pass on attempt 2 — lint complexity fix)
+- Fix iterations: 1 (grab() complexity 18→15 via parseDownloadInput + sendToClient extraction)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The ImportOrchestrator from #436 was a perfect template — same constructor pattern, same side-effect helper pattern, same test structure
+- Friction / issues encountered: Initially forgot to move the book status DB update to the orchestrator (only moved SSE). The E2E test caught it. Also had to fix complexity in grab() even after stripping side effects.
+
+### Token efficiency
+- Highest-token actions: The spec review cycle consumed most context — 3 rounds of elaborate → respond-to-spec-review before the spec was approved
+- Avoidable waste: The elaboration wrote test plan bullets from assumptions rather than reading source — caused 2 review rounds of corrections
+- Suggestions: For extraction specs, always read actual method implementations before writing test plan bullets
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: monitor.ts has parallel orchestration (direct DB writes + SSE + notifications) — separate from DownloadOrchestrator
+
+### Wish I'd Known
+1. Book status DB updates are "consequence" side effects that must move with the SSE/notification side effects — they're not core CRUD (ref: orchestrator-book-status-db-update.md)
+2. Stripping side effects from a complex method doesn't always fix the complexity lint — protocol parsing and client wiring alone hit 18 branches (ref: grab-complexity-extraction.md)
+3. When side effects are independently guarded, each needs its own try/catch (the safe() pattern) — a single outer try/catch stops all remaining effects when one throws (ref: orchestrator-safe-wrapper-pattern.md)
+
+
+## #436 SRP: Extract orchestration from ImportService — 2026-03-17
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #439
+
+### Metrics
+- Files changed: 15 | Tests added/modified: ~60 (23 new orchestrator, rest restructured)
+- Quality gate runs: 3 (pass on attempt 3 — 1st hit max-lines lint, 2nd hit E2E failures from stale callers)
+- Fix iterations: 2 (import-steps line limit → extracted to import-side-effects.ts; E2E tests → updated to use orchestrator)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The spec was extremely detailed after 4 review rounds — caller matrix, side-effect classification, SSE ownership, test plan. Implementation was mostly mechanical extraction.
+- Friction / issues encountered: handleImportFailure mixed core cleanup with side effects — had to split it before the orchestrator could own failure-path dispatch. E2E tests directly called ImportService methods for flows that expect side effects — needed to switch to orchestrator. The 400-line lint limit on import-steps.ts required extracting side-effect functions to a new file.
+
+### Token efficiency
+- Highest-token actions: Reading the full import.service.test.ts (1800+ lines) and updating all constructor calls, removing side-effect describe blocks
+- Avoidable waste: Could have used a subagent for the import.service.test.ts refactor from the start rather than reading chunks manually first
+- Suggestions: For large test file refactors, delegate to a subagent immediately with clear instructions
+
+### Infrastructure gaps
+- Repeated workarounds: `.claude/state/` directory keeps disappearing between steps — mkdir -p needed repeatedly
+- Missing tooling / config: None
+- Unresolved debt: jobs/import.ts is dead code (not imported anywhere), ImportService.getImportContext duplicates queries that importDownload also runs internally
+
+### Wish I'd Known
+1. handleImportFailure had mixed concerns (core cleanup + side effects) — splitting it was a prerequisite not obvious from the spec's "stays in ImportService" framing
+2. The 400-line lint limit on import-steps.ts would be hit by the new exports — should have extracted to a separate file from the start
+3. E2E tests directly instantiate/call service methods — any extraction refactor needs a blast-radius pass on all E2E test files, not just unit tests
+
+## #428 Upgrade to Node 24 — 2026-03-17
+**Skill path:** /implement → /claim (already claimed) → /plan (already planned) → /handoff
+**Outcome:** success — PR #438
+
+### Metrics
+- Files changed: 8 | Tests added/modified: 1 (5 new assertions in s6-service.test.ts)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Implementation was already complete (4 commits on branch) — handoff was a straight verification pass. All 293 suites / 5593 tests passed immediately. Self-review and coverage review both clean.
+- Friction / issues encountered: `.claude/state/` directory kept disappearing between steps (known recurring issue — mkdir -p needed repeatedly). The claim script rejected because the issue was already in-progress, requiring manual phase marker writes.
+
+### Token efficiency
+- Highest-token actions: Self-review subagent (~53k tokens) and coverage review subagent (~35k tokens) for what was essentially a verification-only handoff
+- Avoidable waste: Both review subagents were overkill for a version-pin-only change with no application logic. Could skip self-review for infra-only issues.
+- Suggestions: Consider a lightweight handoff path for chore/infra issues that skips the behavioral review subagents
+
+### Infrastructure gaps
+- Repeated workarounds: `.claude/state/` directory disappearing (5th consecutive issue with this problem)
+- Missing tooling / config: No lightweight handoff path for trivial chore issues
+- Unresolved debt: None introduced or discovered
+
+### Wish I'd Known
+1. Alpine 3.21 LSIO baseimage doesn't ship Node 24 packages — must COPY binary from builder stage (see `dockerfile-3stage-alpine-node.md`)
+2. When an issue is already claimed and partially implemented, `/implement` should detect this and skip to verification rather than re-claiming
+3. The `.claude/state/` directory reliability issue has been present for 5+ issues now — needs a persistent fix (tmpdir? gitignored committed dir?)
+
+## #421 Fix test brittleness — hardcoded counts and missing coverage — 2026-03-17
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #427
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 1 new (20 tests), 1 modified
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean 3-commit implementation — each AC mapped to exactly one commit. Full server test suite (92 files, 2307 tests) confirmed zero regressions for the shared helper change.
+- Friction / issues encountered: Branch was created from main while HEAD was on the old #422 branch, causing the coverage review subagent to diff against main and pick up #422 changes. Had to explicitly `git checkout` to the correct branch.
+
+### Token efficiency
+- Highest-token actions: Coverage review subagent analyzing 10 files from #422 that weren't relevant
+- Avoidable waste: Could have verified HEAD was on the correct branch before launching the coverage subagent
+- Suggestions: Add a branch verification step at the start of the coverage review subagent prompt
+
+### Infrastructure gaps
+- Repeated workarounds: `.claude/state/` directory disappearing between branch switches — had to `mkdir -p` again
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `readonly (keyof Services)[]` doesn't enforce exhaustiveness — need `satisfies Record<keyof Services, true>` pattern (see `satisfies-exhaustiveness-guard.md`)
+2. Branch creation from `/claim` while on a different branch can leave HEAD detached — always verify with explicit checkout (see `branch-divergence-claim-timing.md`)
+3. The coverage review subagent diffs against main, so if the branch includes merged commits from another PR, it'll flag those as untested — scope the diff to branch-only commits
+
+## #422 Code hygiene — extract helpers, typed errors, remove stale patterns — 2026-03-17
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #426
+
+### Metrics
+- Files changed: 13 | Tests added/modified: 7
+- Quality gate runs: 3 (pass on attempt 3)
+- Fix iterations: 2 (1: lint issues from route simplification + error-handler complexity; 2: typecheck failure from untyped emitSSE + module-scope getTableColumns breaking transitive test mock)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: AC3 (stale re-exports) was trivial. AC2 typed error pattern was well-established in the codebase — copy/adapt was fast. AC1 extraction hit the line target cleanly.
+- Friction / issues encountered: AC4's `getTableColumns` at module scope broke tagging.service.test.ts through a transitive import chain (services/index.ts). Had to make the call lazy. Also needed to fix the tagging test's shallow drizzle-orm mock to use `importOriginal`.
+
+### Token efficiency
+- Highest-token actions: Coverage review subagent (exhaustive, read all test files)
+- Avoidable waste: Could have anticipated the module-scope issue with getTableColumns before running verify
+- Suggestions: When adding module-scope calls to shared utility imports, grep for partial mocks of that module first
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: error-handler.ts complexity growing linearly (6 blocks, eslint-disable); tagging.service.test.ts shallow mock pattern is fragile
+
+### Wish I'd Known
+1. `getTableColumns()` at module scope will break any test that partially mocks `drizzle-orm` through transitive imports — use lazy evaluation
+2. Removing try/catch from route handlers also requires removing `return await` (eslint `return-await` rule) and the unused `reply` parameter
+3. The `emitSSE` helper must preserve the broadcaster's generic type constraint — `string` won't satisfy `SSEEventType`
+
 ## #418 Extract shared SuggestionReason registry — 2026-03-17
 **Skill path:** /respond-to-spec-review → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #424
