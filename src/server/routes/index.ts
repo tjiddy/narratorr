@@ -190,47 +190,58 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin, importList, discovery };
 }
 
+type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;
+
+/** Route registry — adding a new route requires one entry here. */
+const routeRegistry: RouteFactory[] = [
+  (app, s) => booksRoutes(app, {
+    bookService: s.book,
+    bookListService: s.bookList,
+    downloadService: s.download,
+    downloadOrchestrator: s.downloadOrchestrator,
+    settingsService: s.settings,
+    renameService: s.rename,
+    taggingService: s.tagging,
+    eventHistory: s.eventHistory,
+    indexerService: s.indexer,
+    recyclingBinService: s.recyclingBin,
+  }),
+  (app, s) => bookFilesRoute(app, s.book),
+  (app, s) => searchRoutes(app, s.indexer, s.downloadOrchestrator, s.blacklist, s.settings),
+  (app, s) => activityRoutes(app, s.download, s.downloadOrchestrator, s.qualityGate, s.qualityGateOrchestrator, s.import, s.importOrchestrator),
+  (app, s) => indexersRoutes(app, s.indexer),
+  (app, s) => downloadClientsRoutes(app, s.downloadClient),
+  (app, s) => settingsRoutes(app, s.settings, s.indexer),
+  (app, s) => metadataRoutes(app, s.metadata),
+  (app, s) => libraryScanRoutes(app, s.libraryScan, s.matchJob),
+  (app, s, db) => systemRoutes(app, s, db),
+  (app, s) => updateRoutes(app, s.settings),
+  (app, s) => notifiersRoutes(app, s.notifier),
+  (app, s) => blacklistRoutes(app, s.blacklist),
+  (app, s) => prowlarrRoutes(app, s.prowlarrSync),
+  (app, s) => authRoutes(app, s.auth),
+  (app, s) => remotePathMappingRoutes(app, s.remotePathMapping),
+  (app) => filesystemRoutes(app),
+  (app, s) => eventHistoryRoutes(app, s.eventHistory),
+  (app, s) => eventsRoutes(app, s.eventBroadcaster),
+  (app, s) => recyclingBinRoutes(app, s.recyclingBin),
+  (app, s) => prowlarrCompatRoutes(app, s.indexer),
+  (app, s) => importListsRoutes(app, s.importList),
+  (app, s) => discoverRoutes(app, {
+    discoveryService: s.discovery,
+    settingsService: s.settings,
+    taskRegistry: s.taskRegistry,
+  }),
+];
+
+export { routeRegistry };
+
 export async function registerRoutes(
   app: FastifyInstance,
   services: Services,
   db: Db,
 ): Promise<void> {
-  await booksRoutes(app, {
-    bookService: services.book,
-    bookListService: services.bookList,
-    downloadService: services.download,
-    downloadOrchestrator: services.downloadOrchestrator,
-    settingsService: services.settings,
-    renameService: services.rename,
-    taggingService: services.tagging,
-    eventHistory: services.eventHistory,
-    indexerService: services.indexer,
-    recyclingBinService: services.recyclingBin,
-  });
-  await bookFilesRoute(app, services.book);
-  await searchRoutes(app, services.indexer, services.downloadOrchestrator, services.blacklist, services.settings);
-  await activityRoutes(app, services.download, services.downloadOrchestrator, services.qualityGate, services.qualityGateOrchestrator, services.import, services.importOrchestrator);
-  await indexersRoutes(app, services.indexer);
-  await downloadClientsRoutes(app, services.downloadClient);
-  await settingsRoutes(app, services.settings, services.indexer);
-  await metadataRoutes(app, services.metadata);
-  await libraryScanRoutes(app, services.libraryScan, services.matchJob);
-  await systemRoutes(app, services, db);
-  await updateRoutes(app, services.settings);
-  await notifiersRoutes(app, services.notifier);
-  await blacklistRoutes(app, services.blacklist);
-  await prowlarrRoutes(app, services.prowlarrSync);
-  await authRoutes(app, services.auth);
-  await remotePathMappingRoutes(app, services.remotePathMapping);
-  await filesystemRoutes(app);
-  await eventHistoryRoutes(app, services.eventHistory);
-  await eventsRoutes(app, services.eventBroadcaster);
-  await recyclingBinRoutes(app, services.recyclingBin);
-  await prowlarrCompatRoutes(app, services.indexer);
-  await importListsRoutes(app, services.importList);
-  await discoverRoutes(app, {
-    discoveryService: services.discovery,
-    settingsService: services.settings,
-    taskRegistry: services.taskRegistry,
-  });
+  for (const factory of routeRegistry) {
+    await factory(app, services, db);
+  }
 }

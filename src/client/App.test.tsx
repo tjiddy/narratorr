@@ -48,15 +48,24 @@ vi.mock('@/pages/discover', () => ({
 
 vi.mock('@/pages/settings', () => ({
   SettingsLayout: () => <div data-testid="settings-page">Settings Page<Outlet /></div>,
-  GeneralSettings: () => <div>General</div>,
-  IndexersSettings: () => <div>Indexers</div>,
-  DownloadClientsSettings: () => <div>Download Clients</div>,
-  NotificationsSettings: () => <div>Notifications</div>,
-  BlacklistSettings: () => <div>Blacklist</div>,
-  SecuritySettings: () => <div>Security</div>,
-  SystemSettings: () => <div>System</div>,
-  ImportListsSettings: () => <div>Import Lists</div>,
 }));
+
+// Mock the settings page registry used by App.tsx for route generation
+vi.mock('@/pages/settings/registry', () => {
+  const icon = () => null;
+  return {
+    settingsPageRegistry: [
+      { path: '', label: 'General', icon, component: () => <div>General</div>, end: true },
+      { path: 'indexers', label: 'Indexers', icon, component: () => <div>Indexers</div> },
+      { path: 'download-clients', label: 'Download Clients', icon, component: () => <div>Download Clients</div> },
+      { path: 'notifications', label: 'Notifications', icon, component: () => <div>Notifications</div> },
+      { path: 'blacklist', label: 'Blacklist', icon, component: () => <div>Blacklist</div> },
+      { path: 'security', label: 'Security', icon, component: () => <div>Security</div> },
+      { path: 'import-lists', label: 'Import Lists', icon, component: () => <div>Import Lists</div> },
+      { path: 'system', label: 'System', icon, component: () => <div>System</div> },
+    ],
+  };
+});
 
 function renderApp(route = '/') {
   const queryClient = new QueryClient({

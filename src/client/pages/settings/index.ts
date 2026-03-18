@@ -1,4 +1,6 @@
 export { SettingsLayout } from './SettingsLayout.js';
+export { settingsPageRegistry } from './registry.js';
+export type { SettingsPageEntry } from './registry.js';
 export { GeneralSettings } from './GeneralSettings.js';
 export { IndexersSettings } from './IndexersSettings.js';
 export { DownloadClientsSettings } from './DownloadClientsSettings.js';

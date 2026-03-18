@@ -1,25 +1,5 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import {
-  SettingsIcon,
-  SearchIcon,
-  ServerIcon,
-  BellIcon,
-  ShieldBanIcon,
-  ShieldIcon,
-  HardDriveIcon,
-  ListIcon,
-} from '@/components/icons';
-
-const navItems = [
-  { to: '/settings', label: 'General', icon: SettingsIcon, end: true },
-  { to: '/settings/indexers', label: 'Indexers', icon: SearchIcon },
-  { to: '/settings/download-clients', label: 'Download Clients', icon: ServerIcon },
-  { to: '/settings/notifications', label: 'Notifications', icon: BellIcon },
-  { to: '/settings/blacklist', label: 'Blacklist', icon: ShieldBanIcon },
-  { to: '/settings/security', label: 'Security', icon: ShieldIcon },
-  { to: '/settings/import-lists', label: 'Import Lists', icon: ListIcon },
-  { to: '/settings/system', label: 'System', icon: HardDriveIcon },
-];
+import { settingsPageRegistry } from './registry.js';
 
 export function SettingsLayout() {
   const location = useLocation();
@@ -40,16 +20,17 @@ export function SettingsLayout() {
         {/* Navigation Sidebar */}
         <nav className="lg:w-56 shrink-0 animate-fade-in-up stagger-1">
           <div className="flex lg:flex-col gap-2 overflow-x-auto lg:overflow-visible pb-2 lg:pb-0">
-            {navItems.map((item) => {
+            {settingsPageRegistry.map((item) => {
+              const to = item.path ? `/settings/${item.path}` : '/settings';
               const isActive = item.end
-                ? location.pathname === item.to
-                : location.pathname.startsWith(item.to);
+                ? location.pathname === to
+                : location.pathname.startsWith(to);
               const Icon = item.icon;
 
               return (
                 <NavLink
-                  key={item.to}
-                  to={item.to}
+                  key={to}
+                  to={to}
                   end={item.end}
                   className={`
                     flex items-center gap-3 px-4 py-3 rounded-xl whitespace-nowrap

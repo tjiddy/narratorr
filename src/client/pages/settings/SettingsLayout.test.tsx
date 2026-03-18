@@ -16,11 +16,33 @@ describe('SettingsLayout', () => {
     expect(screen.getByText('Notifications').closest('a')).toHaveAttribute('href', '/settings/notifications');
     expect(screen.getByText('Blacklist').closest('a')).toHaveAttribute('href', '/settings/blacklist');
     expect(screen.getByText('Security').closest('a')).toHaveAttribute('href', '/settings/security');
+    expect(screen.getByText('Import Lists').closest('a')).toHaveAttribute('href', '/settings/import-lists');
     expect(screen.getByText('System').closest('a')).toHaveAttribute('href', '/settings/system');
 
     // Navigate to Indexers
     await user.click(screen.getByText('Indexers'));
     expect(screen.getByText('Indexers').closest('a')).toHaveAttribute('href', '/settings/indexers');
+  });
+
+  it('applies active styling to General when at /settings', () => {
+    renderWithProviders(<SettingsLayout />, { route: '/settings' });
+
+    const generalLink = screen.getByText('General').closest('a')!;
+    const systemLink = screen.getByText('System').closest('a')!;
+
+    expect(generalLink.className).toContain('bg-primary');
+    expect(systemLink.className).not.toContain('bg-primary');
+  });
+
+  it('applies active styling to System when at /settings/system', () => {
+    renderWithProviders(<SettingsLayout />, { route: '/settings/system' });
+
+    const generalLink = screen.getByText('General').closest('a')!;
+    const systemLink = screen.getByText('System').closest('a')!;
+
+    // General (end: true) should NOT be active at /settings/system
+    expect(generalLink.className).not.toContain('bg-primary');
+    expect(systemLink.className).toContain('bg-primary');
   });
 
   it('navigates between settings sections', async () => {

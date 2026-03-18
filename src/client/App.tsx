@@ -10,17 +10,8 @@ import { DiscoverPage } from './pages/discover';
 import { BookPage } from './pages/book';
 import { AuthorPage } from './pages/author';
 import { ManualImportPage } from './pages/manual-import';
-import {
-  SettingsLayout,
-  GeneralSettings,
-  IndexersSettings,
-  DownloadClientsSettings,
-  NotificationsSettings,
-  BlacklistSettings,
-  SecuritySettings,
-  SystemSettings,
-  ImportListsSettings,
-} from './pages/settings';
+import { SettingsLayout } from './pages/settings';
+import { settingsPageRegistry } from './pages/settings/registry';
 
 export function App() {
   return (
@@ -42,14 +33,14 @@ export function App() {
             <Route path="books/:id" element={<BookPage />} />
             <Route path="authors/:asin" element={<AuthorPage />} />
             <Route path="settings" element={<SettingsLayout />}>
-              <Route index element={<GeneralSettings />} />
-              <Route path="indexers" element={<IndexersSettings />} />
-              <Route path="download-clients" element={<DownloadClientsSettings />} />
-              <Route path="notifications" element={<NotificationsSettings />} />
-              <Route path="blacklist" element={<BlacklistSettings />} />
-              <Route path="security" element={<SecuritySettings />} />
-              <Route path="import-lists" element={<ImportListsSettings />} />
-              <Route path="system" element={<SystemSettings />} />
+              {settingsPageRegistry.map((entry) => {
+                const Component = entry.component;
+                return entry.path === '' ? (
+                  <Route key="index" index element={<Component />} />
+                ) : (
+                  <Route key={entry.path} path={entry.path} element={<Component />} />
+                );
+              })}
             </Route>
           </Route>
         </Routes>
