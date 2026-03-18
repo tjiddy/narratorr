@@ -24,6 +24,7 @@ import {
 import { ImportService } from '../services/import.service.js';
 import { ImportOrchestrator } from '../services/import-orchestrator.js';
 import { DownloadOrchestrator } from '../services/download-orchestrator.js';
+import { QualityGateOrchestrator } from '../services/quality-gate-orchestrator.js';
 import { ImportListService } from '../services/import-list.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
 import { MatchJobService } from '../services/match-job.service.js';
@@ -81,6 +82,7 @@ export interface Services {
   eventHistory: EventHistoryService;
   tagging: TaggingService;
   qualityGate: QualityGateService;
+  qualityGateOrchestrator: QualityGateOrchestrator;
   retryBudget: RetryBudget;
   eventBroadcaster: EventBroadcasterService;
   backup: BackupService;
@@ -118,6 +120,7 @@ export const SERVICE_KEYS = Object.keys({
   eventHistory: true,
   tagging: true,
   qualityGate: true,
+  qualityGateOrchestrator: true,
   retryBudget: true,
   eventBroadcaster: true,
   backup: true,
@@ -159,7 +162,8 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const matchJob = new MatchJobService(metadata, log);
   const prowlarrSync = new ProwlarrSyncService(db, log);
 
-  const qualityGateService = new QualityGateService(db, downloadClient, eventHistory, blacklistService, log, remotePathMapping);
+  const qualityGateService = new QualityGateService(db, log);
+  const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, eventHistory, eventBroadcaster, blacklistService, remotePathMapping);
   const renameService = new RenameService(db, book, settings, log, eventHistory);
   const retryBudget = new RetryBudget();
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
@@ -175,9 +179,6 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
     { fsAccess: fsp.access, fsStatfs: fsp.statfs, probeFfmpeg },
   );
 
-  // Wire broadcaster into quality gate service
-  qualityGateService.setBroadcaster(eventBroadcaster);
-
   // Wire retry search dependencies into services that need them
   const retrySearchDeps = createRetrySearchDeps(
     { indexer, downloadOrchestrator, blacklist: blacklistService, book, settings, retryBudget },
@@ -186,7 +187,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   download.setRetrySearchDeps(retrySearchDeps);
   eventHistory.setRetrySearchDeps(retrySearchDeps);
 
-  return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin, importList, discovery };
+  return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin, importList, discovery };
 }
 
 export async function registerRoutes(
@@ -208,7 +209,7 @@ export async function registerRoutes(
   });
   await bookFilesRoute(app, services.book);
   await searchRoutes(app, services.indexer, services.downloadOrchestrator, services.blacklist, services.settings);
-  await activityRoutes(app, services.download, services.downloadOrchestrator, services.qualityGate, services.import, services.importOrchestrator);
+  await activityRoutes(app, services.download, services.downloadOrchestrator, services.qualityGate, services.qualityGateOrchestrator, services.import, services.importOrchestrator);
   await indexersRoutes(app, services.indexer);
   await downloadClientsRoutes(app, services.downloadClient);
   await settingsRoutes(app, services.settings, services.indexer);

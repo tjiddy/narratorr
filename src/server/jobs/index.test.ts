@@ -84,11 +84,11 @@ describe('startJobs', () => {
     // Execute the registered import task
     await services.taskRegistry.executeTracked('import');
 
-    expect(services.qualityGate.processCompletedDownloads).toHaveBeenCalledTimes(1);
+    expect(services.qualityGateOrchestrator.processCompletedDownloads).toHaveBeenCalledTimes(1);
     expect(services.importOrchestrator.processCompletedDownloads).toHaveBeenCalledTimes(1);
 
     // Quality gate must be called before import orchestrator
-    const qgOrder = (services.qualityGate.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    const qgOrder = (services.qualityGateOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
     const ioOrder = (services.importOrchestrator.processCompletedDownloads as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
     expect(qgOrder).toBeLessThan(ioOrder);
   });

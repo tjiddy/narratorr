@@ -2,173 +2,81 @@ import { eq, and, desc, isNotNull, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, bookEvents } from '../../db/schema.js';
-import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
-import type { EventHistoryService } from './event-history.service.js';
-import type { BlacklistService } from './blacklist.service.js';
-import type { DownloadClientService } from './download-client.service.js';
-import type { RemotePathMappingService } from './remote-path-mapping.service.js';
-import type { EventBroadcasterService } from './event-broadcaster.service.js';
-import type { SSEEventType, SSEEventPayloads } from '../../shared/schemas/sse-events.js';
-import type { DownloadStatus } from '../../shared/schemas/activity.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
-import { revertBookStatus } from '../utils/book-status.js';
-import { resolveSavePath } from '../utils/download-path.js';
 
 import type { DownloadRow } from './types.js';
 import { buildQualityAssessment } from './quality-gate.helpers.js';
-import { QualityGateServiceError, NULL_REASON } from './quality-gate.types.js';
+import { QualityGateServiceError } from './quality-gate.types.js';
 import type { QualityDecisionReason } from './quality-gate.types.js';
 
 export { QualityGateServiceError, type QualityDecisionReason } from './quality-gate.types.js';
 
 type BookRow = typeof books.$inferSelect;
 
-export class QualityGateService {
-  private broadcaster?: EventBroadcasterService;
+export type QualityDecision = {
+  action: 'imported' | 'rejected' | 'held';
+  reason: QualityDecisionReason;
+  statusTransition: { from: string; to: string };
+};
 
+export class QualityGateService {
   constructor(
     private db: Db,
-    private downloadClientService: DownloadClientService,
-    private eventHistory: EventHistoryService,
-    private blacklistService: BlacklistService,
     private log: FastifyBaseLogger,
-    private remotePathMappingService?: RemotePathMappingService,
   ) {}
 
-  /** Set broadcaster for SSE emission (called after service graph construction). */
-  setBroadcaster(broadcaster: EventBroadcasterService): void {
-    this.broadcaster = broadcaster;
-  }
-
-  /** Fire-and-forget SSE emit — swallows errors to avoid breaking the caller. */
-  private emitSSE<T extends SSEEventType>(eventType: T, payload: SSEEventPayloads[T]): void {
-    try { this.broadcaster?.emit(eventType, payload); } catch (e) { this.log.debug(e, 'SSE emit failed'); }
-  }
-
   /**
-   * Process all completed downloads through the quality gate.
-   * Atomically claims each via completed→checking, then decides: auto-import, auto-reject, or hold.
+   * Query completed downloads with externalId, left-joined with books.
+   * Batch-input seam for QualityGateOrchestrator (mirrors ImportService.getEligibleDownloads).
    */
-  async processCompletedDownloads(): Promise<void> {
-    // Find completed downloads with externalId (skip handoff/blackhole)
-    const completedDownloads = await this.db
+  async getCompletedDownloads(): Promise<Array<{ download: DownloadRow; book: BookRow | null }>> {
+    return this.db
       .select({ download: downloads, book: books })
       .from(downloads)
       .leftJoin(books, eq(downloads.bookId, books.id))
       .where(and(eq(downloads.status, 'completed'), isNotNull(downloads.externalId)));
-
-    for (const row of completedDownloads) {
-      if (!row.download.externalId || !row.download.bookId) {
-        this.log.debug({ id: row.download.id }, 'Quality gate: skipping download without externalId or bookId');
-        continue;
-      }
-
-      try {
-        await this.processDownload(row.download, row.book);
-      } catch (error) {
-        this.log.error({ error, downloadId: row.download.id }, 'Quality gate error');
-        // Set pending_review with probeFailure on unhandled error
-        await this.setStatus(row.download.id, 'pending_review');
-        await this.recordDecision(row.download, row.book, {
-          ...NULL_REASON, probeFailure: true, holdReasons: ['unhandled_error'],
-        });
-      }
-    }
   }
 
-  /** Process a single download through the quality gate. */
-  private async processDownload(download: DownloadRow, book: BookRow | null): Promise<void> {
-    // Atomic claim: completed → checking
-    const claimed = await this.atomicClaim(download.id);
-    if (!claimed) {
-      this.log.debug({ id: download.id }, 'Quality gate: already claimed by another cycle');
-      return;
-    }
-
-    // SSE: download_status_change (completed → checking)
-    if (book) {
-      this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: 'completed', new_status: 'checking' });
-    }
-
-    // Resolve save path
-    let savePath: string;
-    try {
-      savePath = await resolveSavePath(download, this.downloadClientService, this.remotePathMappingService);
-    } catch (error) {
-      this.log.error({ error, downloadId: download.id }, 'Quality gate: failed to resolve save path');
-      await this.holdForReview(download, book, { probeFailure: true, holdReasons: ['probe_failed'] });
-      return;
-    }
-
-    // Probe audio files
-    let scanResult;
-    try {
-      scanResult = await scanAudioDirectory(savePath, { skipCover: true });
-    } catch (error) {
-      this.log.error({ error, downloadId: download.id }, 'Quality gate: scan failed');
-      await this.holdForReview(download, book, { probeFailure: true, holdReasons: ['probe_failed'] });
-      return;
-    }
-
-    if (!scanResult) {
-      this.log.warn({ downloadId: download.id }, 'Quality gate: no audio files found');
-      await this.holdForReview(download, book, { probeFailure: true, holdReasons: ['probe_failed'] });
-      return;
-    }
-
+  /**
+   * Pure quality decision: given a download, book, and scan result,
+   * compute the decision (accept/reject/hold), execute the DB status transition,
+   * and return the result for the orchestrator to dispatch side effects.
+   */
+  async processDownload(
+    download: DownloadRow,
+    book: BookRow | null,
+    scanResult: { totalSize: number; totalDuration: number; tagNarrator?: string; channels: number; codec: string },
+  ): Promise<QualityDecision> {
     // Build quality assessment (pure computation)
     const reason = buildQualityAssessment(scanResult, book);
     const { holdReasons, mbPerHour: newMbPerHour, existingMbPerHour } = reason;
 
     // Decision tree
     if (holdReasons.length > 0) {
-      // Hold for review
       reason.action = 'held';
       await this.setStatus(download.id, 'pending_review');
-      await this.recordDecision(download, book, reason);
-
-      // SSE: download_status_change (checking → pending_review) + review_needed
-      if (book) {
-        this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: 'checking', new_status: 'pending_review' });
-        this.emitSSE('review_needed', { download_id: download.id, book_id: book.id, book_title: book.title });
-      }
-
       this.log.info({ downloadId: download.id, holdReasons }, 'Quality gate: held for review');
+      return { action: 'held', reason, statusTransition: { from: 'checking', to: 'pending_review' } };
     } else if (newMbPerHour !== null && existingMbPerHour !== null && newMbPerHour > existingMbPerHour) {
-      // Auto-import: quality strictly better
       reason.action = 'imported';
       await this.setStatus(download.id, 'completed');
-      await this.recordDecision(download, book, reason);
-
-      // SSE: download_status_change (checking → completed)
-      if (book) {
-        this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: 'checking', new_status: 'completed' });
-      }
-
       this.log.info({ downloadId: download.id, newMbPerHour, existingMbPerHour }, 'Quality gate: auto-import (better quality)');
+      return { action: 'imported', reason, statusTransition: { from: 'checking', to: 'completed' } };
     } else if (newMbPerHour !== null && existingMbPerHour !== null) {
-      // Auto-reject: quality same or worse
       reason.action = 'rejected';
-      await this.autoReject(download, book, reason);
+      await this.setStatus(download.id, 'failed');
+      this.log.info({ downloadId: download.id }, 'Quality gate: auto-rejected (quality same or worse)');
+      return { action: 'rejected', reason, statusTransition: { from: 'checking', to: 'failed' } };
     } else {
-      // Cannot compare — hold for review (should not normally reach here if no_quality_data was caught above)
       reason.action = 'held';
       reason.holdReasons.push('no_quality_data');
       await this.setStatus(download.id, 'pending_review');
-      await this.recordDecision(download, book, reason);
-
-      // SSE: download_status_change (checking → pending_review) + review_needed
-      if (book) {
-        this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: 'checking', new_status: 'pending_review' });
-        this.emitSSE('review_needed', { download_id: download.id, book_id: book.id, book_title: book.title });
-      }
-
       this.log.info({ downloadId: download.id }, 'Quality gate: held for review (insufficient quality data)');
+      return { action: 'held', reason, statusTransition: { from: 'checking', to: 'pending_review' } };
     }
   }
 
   /** Atomically claim a download: completed → checking. Returns true if claimed. */
-  private async atomicClaim(downloadId: number): Promise<boolean> {
+  async atomicClaim(downloadId: number): Promise<boolean> {
     const result = await this.db
       .update(downloads)
       .set({ status: 'checking' })
@@ -178,140 +86,41 @@ export class QualityGateService {
     return result.length > 0;
   }
 
-  /** Hold a download for review with partial reason data. */
-  private async holdForReview(
-    download: DownloadRow,
-    book: BookRow | null,
-    partial: Pick<QualityDecisionReason, 'probeFailure' | 'holdReasons'>,
-  ): Promise<void> {
-    await this.setStatus(download.id, 'pending_review');
-    await this.recordDecision(download, book, { ...NULL_REASON, ...partial });
-
-    // SSE: download_status_change (checking → pending_review) + review_needed
-    if (book) {
-      this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: 'checking', new_status: 'pending_review' });
-      this.emitSSE('review_needed', { download_id: download.id, book_id: book.id, book_title: book.title });
-    }
-
-    this.log.info({ downloadId: download.id, holdReasons: partial.holdReasons }, 'Quality gate: held for review');
-  }
-
-  /** Auto-reject: delete files, blacklist if infoHash present, set failed. */
-  private async autoReject(
-    download: DownloadRow,
-    book: BookRow | null,
-    reason: QualityDecisionReason,
-  ): Promise<void> {
-    await this.setStatus(download.id, 'failed');
-    await this.recordDecision(download, book, reason);
-    await this.performRejectionCleanup(download, book);
-    this.log.info({ downloadId: download.id }, 'Quality gate: auto-rejected (quality same or worse)');
-  }
-
   /** Set download status. */
-  private async setStatus(downloadId: number, status: DownloadRow['status']): Promise<void> {
+  async setStatus(downloadId: number, status: DownloadRow['status']): Promise<void> {
     await this.db.update(downloads).set({ status }).where(eq(downloads.id, downloadId));
-  }
-
-  /** Record a quality gate decision event. */
-  private async recordDecision(
-    download: DownloadRow,
-    book: BookRow | null,
-    reason: QualityDecisionReason,
-  ): Promise<void> {
-    if (!book) return;
-
-    try {
-      await this.eventHistory.create({
-        bookId: book.id,
-        bookTitle: book.title,
-        downloadId: download.id,
-        eventType: 'held_for_review',
-        source: 'auto',
-        reason: { ...reason },
-      });
-    } catch (err) {
-      this.log.warn({ downloadId: download.id, err }, 'Quality gate: failed to record decision event');
-    }
-  }
-
-  /** Shared cleanup for rejection: blacklist, delete files, revert book status + SSE. */
-  private async performRejectionCleanup(download: DownloadRow, book: BookRow | null): Promise<void> {
-    // Blacklist if infoHash present
-    if (download.infoHash) {
-      try {
-        await this.blacklistService.create({
-          infoHash: download.infoHash,
-          title: download.title,
-          bookId: download.bookId ?? undefined,
-          reason: 'bad_quality',
-        });
-        this.log.info({ downloadId: download.id, infoHash: download.infoHash }, 'Quality gate: blacklisted rejected release');
-      } catch (err) {
-        this.log.warn({ downloadId: download.id, err }, 'Quality gate: failed to blacklist release');
-      }
-    } else {
-      this.log.info({ downloadId: download.id }, 'Quality gate: blacklist skipped — no infoHash');
-    }
-
-    // Delete downloaded files via client
-    try {
-      if (download.downloadClientId && download.externalId) {
-        const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
-        if (adapter) {
-          await adapter.removeDownload(download.externalId, true);
-          this.log.info({ downloadId: download.id }, 'Quality gate: deleted rejected download files');
-        }
-      }
-    } catch (err) {
-      this.log.warn({ downloadId: download.id, err }, 'Quality gate: failed to delete download files');
-    }
-
-    // Recover book status
-    if (book) {
-      const revertStatus = await revertBookStatus(this.db, book);
-      this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: download.status as DownloadStatus, new_status: 'failed' });
-      this.emitSSE('book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: revertStatus as BookStatus });
-    }
   }
 
   /**
    * Approve a pending_review download — transition to importing.
-   * Returns the download ID and new status.
+   * Returns context for the orchestrator to dispatch side effects.
    */
-  async approve(downloadId: number): Promise<{ id: number; status: string }> {
-    const download = await this.db.select().from(downloads).where(eq(downloads.id, downloadId)).limit(1);
-    if (download.length === 0) {
+  async approve(downloadId: number): Promise<{ id: number; status: string; download: DownloadRow; book: BookRow | null }> {
+    const result = await this.db
+      .select({ download: downloads, book: books })
+      .from(downloads)
+      .leftJoin(books, eq(downloads.bookId, books.id))
+      .where(eq(downloads.id, downloadId))
+      .limit(1);
+
+    if (result.length === 0) {
       throw new QualityGateServiceError('Download not found', 'NOT_FOUND');
     }
-    if (download[0].status !== 'pending_review') {
+    if (result[0].download.status !== 'pending_review') {
       throw new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS');
     }
 
     await this.setStatus(downloadId, 'importing');
-
-    // SSE: download_status_change (pending_review → importing)
-    if (download[0].bookId) {
-      this.emitSSE('download_status_change', { download_id: downloadId, book_id: download[0].bookId, old_status: 'pending_review', new_status: 'importing' });
-    }
-
     this.log.info({ downloadId }, 'Quality gate: download approved for import');
 
-    // Record approval event
-    if (download[0].bookId) {
-      const bookData = await this.db.select().from(books).where(eq(books.id, download[0].bookId)).limit(1);
-      if (bookData.length > 0) {
-        await this.recordDecision(download[0], bookData[0], { ...NULL_REASON, action: 'imported' });
-      }
-    }
-
-    return { id: downloadId, status: 'importing' };
+    return { id: downloadId, status: 'importing', download: result[0].download, book: result[0].book };
   }
 
   /**
-   * Reject a pending_review download — delete files, blacklist if infoHash, set failed.
+   * Reject a pending_review download — transition to failed.
+   * Returns context for the orchestrator to dispatch side effects.
    */
-  async reject(downloadId: number): Promise<{ id: number; status: string }> {
+  async reject(downloadId: number): Promise<{ id: number; status: string; download: DownloadRow; book: BookRow | null }> {
     const result = await this.db
       .select({ download: downloads, book: books })
       .from(downloads)
@@ -332,11 +141,7 @@ export class QualityGateService {
 
     await this.setStatus(downloadId, 'failed');
 
-    // Record rejection event
-    await this.recordDecision(download, book, { ...NULL_REASON, action: 'rejected' });
-
-    await this.performRejectionCleanup(download, book);
-    return { id: downloadId, status: 'failed' };
+    return { id: downloadId, status: 'failed', download, book };
   }
 
   /**

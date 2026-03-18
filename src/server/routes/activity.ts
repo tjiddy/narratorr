@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { DownloadService } from '../services';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { QualityGateService } from '../services/quality-gate.service.js';
+import type { QualityGateOrchestrator } from '../services/quality-gate-orchestrator.js';
 import type { ImportService } from '../services/import.service.js';
 import type { ImportOrchestrator } from '../services/import-orchestrator.js';
 import { idParamSchema, paginationParamsSchema, DEFAULT_LIMITS } from '../../shared/schemas.js';
@@ -16,7 +17,7 @@ const activityListQuerySchema = z.object({
 
 type ActivityListQuery = z.infer<typeof activityListQuerySchema>;
 
-export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, downloadOrchestrator: DownloadOrchestrator, qualityGateService: QualityGateService, importService: ImportService, importOrchestrator: ImportOrchestrator) {
+export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, downloadOrchestrator: DownloadOrchestrator, qualityGateService: QualityGateService, qualityGateOrchestrator: QualityGateOrchestrator, importService: ImportService, importOrchestrator: ImportOrchestrator) {
   // GET /api/activity
   app.get<{ Querystring: ActivityListQuery }>(
     '/api/activity',
@@ -151,7 +152,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
       const { id } = request.params;
 
       request.log.info({ id }, 'Download approved');
-      const result = await qualityGateService.approve(id);
+      const result = await qualityGateOrchestrator.approve(id);
 
       // Try to acquire a concurrency slot for immediate import
       if (importService.tryAcquireSlot()) {
@@ -181,7 +182,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
       const { id } = request.params;
 
       request.log.info({ id }, 'Download rejected');
-      return qualityGateService.reject(id);
+      return qualityGateOrchestrator.reject(id);
     },
   );
 }

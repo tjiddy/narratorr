@@ -30,7 +30,7 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   reg.register('monitor', 'cron', () => monitorDownloads(db, services.downloadClient, services.notifier, log, retryDeps, services.eventBroadcaster), '*/30 * * * * *');
   reg.register('enrichment', 'cron', () => runEnrichment(db, services.metadata, log), '*/5 * * * *');
   reg.register('import', 'cron', async () => {
-    await services.qualityGate.processCompletedDownloads();
+    await services.qualityGateOrchestrator.processCompletedDownloads();
     await services.importOrchestrator.processCompletedDownloads();
   }, '*/60 * * * * *');
   reg.register('search', 'timeout', () => runSearchJob(services.settings, services.bookList, services.indexer, services.downloadOrchestrator, log, services.retryBudget));

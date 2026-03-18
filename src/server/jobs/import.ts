@@ -1,14 +1,14 @@
 import cron from 'node-cron';
 import type { FastifyBaseLogger } from 'fastify';
 import type { ImportOrchestrator } from '../services/import-orchestrator.js';
-import type { QualityGateService } from '../services/quality-gate.service.js';
+import type { QualityGateOrchestrator } from '../services/quality-gate-orchestrator.js';
 
-export function startImportJob(importOrchestrator: ImportOrchestrator, qualityGateService: QualityGateService, log: FastifyBaseLogger) {
+export function startImportJob(importOrchestrator: ImportOrchestrator, qualityGateOrchestrator: QualityGateOrchestrator, log: FastifyBaseLogger) {
   // Run every 60 seconds
   cron.schedule('*/60 * * * * *', async () => {
     try {
       // Quality gate runs first: completed → checking → (completed|pending_review|failed)
-      await qualityGateService.processCompletedDownloads();
+      await qualityGateOrchestrator.processCompletedDownloads();
       // Import picks up downloads that passed the gate (still completed)
       await importOrchestrator.processCompletedDownloads();
     } catch (error) {

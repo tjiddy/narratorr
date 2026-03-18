@@ -284,7 +284,7 @@ describe('activity routes', () => {
 
   describe('POST /api/activity/:id/approve', () => {
     it('transitions pending_review download to importing and triggers import', async () => {
-      (services.qualityGate.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
+      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
       (services.importOrchestrator.importDownload as Mock).mockResolvedValue({});
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
@@ -295,7 +295,7 @@ describe('activity routes', () => {
     });
 
     it('logs error when fire-and-forget import trigger fails', async () => {
-      (services.qualityGate.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
+      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
       const importError = new Error('Import pipeline crashed');
       let rejectImport: (err: Error) => void;
       (services.importOrchestrator.importDownload as Mock).mockReturnValue(
@@ -315,7 +315,7 @@ describe('activity routes', () => {
     });
 
     it('returns 409 when download is not in pending_review status', async () => {
-      (services.qualityGate.approve as Mock).mockRejectedValue(new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS'));
+      (services.qualityGateOrchestrator.approve as Mock).mockRejectedValue(new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
 
@@ -323,7 +323,7 @@ describe('activity routes', () => {
     });
 
     it('returns 404 when download not found', async () => {
-      (services.qualityGate.approve as Mock).mockRejectedValue(new QualityGateServiceError('Download not found', 'NOT_FOUND'));
+      (services.qualityGateOrchestrator.approve as Mock).mockRejectedValue(new QualityGateServiceError('Download not found', 'NOT_FOUND'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/999/approve' });
 
@@ -331,7 +331,7 @@ describe('activity routes', () => {
     });
 
     it('returns 500 when approve throws an untyped error', async () => {
-      (services.qualityGate.approve as Mock).mockRejectedValue(new Error('unexpected DB failure'));
+      (services.qualityGateOrchestrator.approve as Mock).mockRejectedValue(new Error('unexpected DB failure'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
 
@@ -342,7 +342,7 @@ describe('activity routes', () => {
 
   describe('POST /api/activity/:id/approve — concurrency', () => {
     it('approve when slot available triggers import immediately', async () => {
-      (services.qualityGate.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
+      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
       (services.importOrchestrator.importDownload as Mock).mockResolvedValue({});
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
@@ -359,7 +359,7 @@ describe('activity routes', () => {
       importSemaphore.tryAcquire();
       importSemaphore.tryAcquire();
 
-      (services.qualityGate.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
+      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/approve' });
 
@@ -374,7 +374,7 @@ describe('activity routes', () => {
     });
 
     it('releases semaphore slot when import fails after approve', async () => {
-      (services.qualityGate.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
+      (services.qualityGateOrchestrator.approve as Mock).mockResolvedValue({ id: 1, status: 'importing' });
       (services.importOrchestrator.importDownload as Mock).mockRejectedValue(new Error('import failed'));
 
       // Semaphore starts with capacity 2, both free
@@ -400,17 +400,17 @@ describe('activity routes', () => {
 
   describe('POST /api/activity/:id/reject', () => {
     it('transitions pending_review download to failed', async () => {
-      (services.qualityGate.reject as Mock).mockResolvedValue({ id: 1, status: 'failed' });
+      (services.qualityGateOrchestrator.reject as Mock).mockResolvedValue({ id: 1, status: 'failed' });
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/reject' });
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({ id: 1, status: 'failed' });
-      expect(services.qualityGate.reject).toHaveBeenCalledWith(1);
+      expect(services.qualityGateOrchestrator.reject).toHaveBeenCalledWith(1);
     });
 
     it('ignores reason in body — parameter was removed (L-11)', async () => {
-      (services.qualityGate.reject as Mock).mockResolvedValue({ id: 1, status: 'failed' });
+      (services.qualityGateOrchestrator.reject as Mock).mockResolvedValue({ id: 1, status: 'failed' });
 
       const res = await app.inject({
         method: 'POST',
@@ -420,11 +420,11 @@ describe('activity routes', () => {
 
       expect(res.statusCode).toBe(200);
       // reject() should only receive downloadId, not reason
-      expect(services.qualityGate.reject).toHaveBeenCalledWith(1);
+      expect(services.qualityGateOrchestrator.reject).toHaveBeenCalledWith(1);
     });
 
     it('returns 409 when download is not in pending_review status', async () => {
-      (services.qualityGate.reject as Mock).mockRejectedValue(new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS'));
+      (services.qualityGateOrchestrator.reject as Mock).mockRejectedValue(new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/reject' });
 
@@ -432,7 +432,7 @@ describe('activity routes', () => {
     });
 
     it('returns 404 when download not found', async () => {
-      (services.qualityGate.reject as Mock).mockRejectedValue(new QualityGateServiceError('Download not found', 'NOT_FOUND'));
+      (services.qualityGateOrchestrator.reject as Mock).mockRejectedValue(new QualityGateServiceError('Download not found', 'NOT_FOUND'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/999/reject' });
 
@@ -440,7 +440,7 @@ describe('activity routes', () => {
     });
 
     it('returns 500 when reject throws an untyped error', async () => {
-      (services.qualityGate.reject as Mock).mockRejectedValue(new Error('unexpected DB failure'));
+      (services.qualityGateOrchestrator.reject as Mock).mockRejectedValue(new Error('unexpected DB failure'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/reject' });
 
