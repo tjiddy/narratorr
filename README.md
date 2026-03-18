@@ -233,7 +233,6 @@ This file is gitignored. The client provides quick access to issues and project 
 ```bash
 pnpm gitea issues          # List open issues
 pnpm gitea issue <id>      # Read issue details
-pnpm gitea milestones      # List milestones
 pnpm gitea prs             # List open pull requests
 ```
 
