@@ -28,7 +28,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    - **Acceptance Criteria**: verifiable behaviors, each mapping to one or more interactions/behaviors
    - **Technical Notes**: only if there are real constraints worth calling out
 4. Present the draft to the user for review. Incorporate feedback.
-5. Once approved, determine labels and milestone from context:
+5. Once approved, determine labels from context:
    - Type: `type/feature`, `type/bug`, or `type/chore`
    - Priority: `priority/high`, `priority/medium`, or `priority/low` (ask if unclear)
    - Scope: `scope/frontend`, `scope/backend`, `scope/core`, `scope/db` (can be multiple)

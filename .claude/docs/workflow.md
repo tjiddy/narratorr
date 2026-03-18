@@ -51,6 +51,3 @@ Skipping `/handoff` means no PR, no label update, no workflow log entry.
 
 Type: `type/feature` · `type/bug` · `type/chore` | Priority: `priority/high` · `priority/medium` · `priority/low` | Scope: `scope/backend` · `scope/frontend` · `scope/core` · `scope/db` · `scope/infra` · `scope/api` · `scope/services` · `scope/ui`
 
-## Milestones
-
-v0.1 MVP Foundation (done) → v0.2 Metadata & Library (done) → v0.3 Complete Pipeline → v0.4 Ready for Others → v1.1 Post Go-live

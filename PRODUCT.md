@@ -73,9 +73,3 @@ Indexers, download clients, metadata providers, and notifiers all follow the ada
 
 This keeps the core thin and the integration surface wide.
 
-## Milestone Philosophy
-
-- **v0.1 — MVP Foundation:** Core infrastructure, basic search/download pipeline.
-- **v0.2 — Metadata & Library:** Rich metadata, library management, book detail pages.
-- **v0.3 — Automation:** Scheduled search, quality awareness, retry/blacklist. The "set it and forget it" milestone.
-- **v0.4 — Polish:** Notifications, directory import, naming templates, documentation. The "ready for other people to use" milestone.

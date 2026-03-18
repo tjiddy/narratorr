@@ -37,7 +37,7 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 0b. **Ensure latest codebase:** Run `git checkout main && git pull` before starting. Spec reviews validate assumptions against the codebase — a stale checkout produces false findings.
 
 1. **Read the issue:** Run `gitea issue <id>`. Extract:
-   - Title, labels, milestone
+   - Title, labels
    - Full issue body (spec)
    - Existing comments (prior review findings, elaboration notes)
 

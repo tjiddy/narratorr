@@ -114,6 +114,6 @@ Project is indexed via `codebase-memory-mcp` with auto-sync (graph stays fresh a
 Detailed standards and workflow are in `.claude/docs/`. Skills inject only the docs they need via `!`cat`` dynamic context injection — they are NOT loaded globally.
 
 - `.claude/docs/testing.md` — Test conventions, quality standards, coverage gate, test plan completeness
-- `.claude/docs/workflow.md` — Issue lifecycle, label model, workflow guardrails, milestones
+- `.claude/docs/workflow.md` — Issue lifecycle, label model, workflow guardrails
 - `.claude/docs/design-principles.md` — SOLID principles, co-location, extraction patterns
 - `.claude/docs/architecture-checks.md` — Greppable OCP/SRP/DRY/LSP/ISP checks for specs and reviews
