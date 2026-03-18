@@ -26,8 +26,8 @@ Initial public release. Full audiobook acquisition and organization pipeline.
 - Recycling bin with configurable retention
 
 ### Metadata
-- Audible metadata provider with region support
-- Audnexus enrichment provider for author details
+- Metadata providers with region support
+- Author and series enrichment
 - Cover art display and embedding
 - Series and narrator tracking
 

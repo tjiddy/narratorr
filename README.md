@@ -156,7 +156,7 @@ narratorr/
 │   ├── core/                # Indexers, download clients, metadata
 │   │   ├── indexers/        # AudioBookBay, Torznab, Newznab
 │   │   ├── download-clients/  # qBittorrent, SABnzbd, etc.
-│   │   ├── metadata/        # Audnexus, etc.
+│   │   ├── metadata/        # Metadata providers
 │   │   └── utils/           # Magnet links, parsing
 │   └── db/                  # Drizzle ORM schema
 ├── scripts/
@@ -248,18 +248,9 @@ pnpm test           # Run tests
 pnpm lint           # Lint
 ```
 
-## Roadmap
-
-Tracked via [Gitea milestones and issues](https://git.tjiddy.com/todd/narratorr/issues):
-
-- **v0.1 - MVP Foundation** -- Complete (search, grab, activity, settings)
-- **v0.2 - Metadata & Library** -- Audnexus integration, library management, author/book pages
-- **v0.3 - Automation** -- Scheduled search, auto-grab, blacklist
-- **v0.4 - Polish** -- File import, Audiobookshelf integration, author monitoring
-
 ## License
 
-MIT
+GPL-3.0 — see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
