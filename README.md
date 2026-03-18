@@ -1,64 +1,34 @@
 # Narratorr
 
-> "arr for audiobooks"
+> *arr for audiobooks
 
-Narratorr is a self-hosted audiobook management and automation application. It allows you to search for audiobooks, add them to a wanted list, automatically search indexers, send downloads to a torrent client, and import completed downloads into a folder structure compatible with Audiobookshelf.
+Narratorr is a self-hosted audiobook acquisition and organization application. Search indexers for audiobooks, send downloads to your preferred client, and automatically import completed downloads into an organized library folder structure.
 
-**[Read the documentation](https://docs.narratorr.dev)** for installation guides, configuration reference, and troubleshooting.
+**[Documentation](https://docs.narratorr.dev)** | **[Changelog](CHANGELOG.md)** | **[Security](SECURITY.md)**
 
 ## Features
 
-- **Search** - Search AudioBookBay (and future indexers) for audiobooks
-- **Download Management** - Integrates with qBittorrent to manage downloads
-- **Progress Monitoring** - Real-time download progress tracking
-- **Library Organization** - Imports completed downloads to your audiobook library
-- **Modern UI** - Clean React-based interface with dark mode support
-
-## Screenshots
-
-The UI includes:
-- **Search Page** - Find audiobooks across configured indexers
-- **Activity Page** - Monitor active downloads and view history
-- **Settings** - Configure indexers, download clients, and library settings
+- **Search & Grab** — Search Torznab, Newznab, and private tracker indexers. Grab releases to qBittorrent, Transmission, Deluge, SABnzbd, NZBGet, or a blackhole watch folder.
+- **Automated Pipeline** — Scheduled search, RSS monitoring, quality-aware upgrades, retry with blacklisting.
+- **Quality Gate** — Auto-accept upgrades, hold questionable releases for review, auto-reject downgrades.
+- **Library Management** — Configurable folder/file naming, audio enrichment from file tags, grid and list views with filtering and bulk actions.
+- **Discovery** — AI-powered book suggestions based on your library: author affinity, series completion, genre, narrator, and diversity signals.
+- **Audio Processing** — Optional FFmpeg-based conversion, merging, ID3 tag embedding, and cover art embedding.
+- **Notifications** — Discord, Slack, Telegram, Pushover, Gotify, Ntfy, email, and generic webhooks.
+- **Import Lists** — Sync wanted books from external sources.
+- **Security** — Forms or Basic auth, rate-limited login, AES-256-GCM credential encryption at rest, CSP with nonce-based script execution.
+- **Docker** — Multi-arch images (amd64/arm64) with linuxserver.io base and s6-overlay.
 
 ## Quick Start
 
-### Prerequisites
-
-- Node.js 24+
-- pnpm 9+
-- qBittorrent with WebUI enabled
-
-### Installation
+### Docker (recommended)
 
 ```bash
-# Clone the repository
-git clone https://git.tjiddy.com/todd/narratorr.git
-cd narratorr
-
-# Install dependencies
-pnpm install
-
-# Generate database migrations
-pnpm db:generate
-
-# Start development server
-pnpm dev
-```
-
-The server will start on http://localhost:3000 (API) and http://localhost:5173 (Vite dev server).
-
-### Docker
-
-Published to `ghcr.io/todd/narratorr` as multi-arch images (amd64/arm64). Built on [linuxserver.io](https://www.linuxserver.io/) base image with s6-overlay for process supervision, matching the conventions used by other *arr applications.
-
-```bash
-# Pull and run with Docker Compose
 docker compose pull
 docker compose up -d
 ```
 
-Edit `docker-compose.yml` to set your volume paths and user:
+Edit `docker-compose.yml` to set your volume paths:
 
 ```yaml
 environment:
@@ -70,142 +40,61 @@ volumes:
   - /path/to/downloads:/downloads       # Download client save path
 ```
 
+Open `http://localhost:3000` and follow the setup wizard.
+
 **Image tags:**
 
 | Tag | Description |
 |-----|-------------|
 | `latest` | Most recent release |
-| `0.9.0` | Specific version |
-| `0.9` | Latest patch for a major.minor series |
+| `1.0.0` | Specific version |
+| `1.0` | Latest patch for a major.minor series |
 
-**Building from source:** To build locally instead of pulling from the registry, uncomment the `build: .` line in `docker-compose.yml` (and comment out the `image:` line), then run `docker compose up -d --build`.
+### Bare Metal
 
-#### CI/CD — Docker Publish Pipeline
+```bash
+git clone https://github.com/tjiddy/narratorr.git
+cd narratorr
+pnpm install
+pnpm dev
+```
 
-Images are built and published automatically when a version tag (e.g., `v0.9.0`) is pushed. The pipeline runs quality gates (lint, test, typecheck, build) before building multi-arch images via `docker buildx` with QEMU emulation.
-
-**Required Gitea Actions secrets:**
-
-| Secret | Description |
-|--------|-------------|
-| `REGISTRY_USER` | GHCR username (e.g., `todd`) |
-| `REGISTRY_PASSWORD` | GHCR personal access token with `write:packages` scope |
-
-**Setup:** In your Gitea repository, go to **Settings > Actions > Secrets** and add both `REGISTRY_USER` and `REGISTRY_PASSWORD`. The workflow validates these are present before attempting to push — if either is missing, the job fails with a clear error message. Once configured, push a version tag (e.g., `git tag v0.9.0 && git push origin v0.9.0`) to trigger a build.
+Requires Node.js 24+ and pnpm 9+. The dev server starts on `http://localhost:3000` (API) and `http://localhost:5173` (Vite).
 
 ## Configuration
 
-### 1. Add a Download Client
+Once running, configure these in **Settings**:
 
-Go to **Settings > Download Clients** and add your qBittorrent instance:
+1. **Download Client** — Add your torrent or usenet client (qBittorrent, Transmission, Deluge, SABnzbd, NZBGet, or blackhole). Click **Test** to verify.
+2. **Indexer** — Add your Torznab or Newznab indexer (or sync from Prowlarr). Click **Test** to verify.
+3. **Library Path** — Set where imported audiobooks are stored and configure the folder/file naming format.
 
-- **Host**: Your qBittorrent IP/hostname (e.g., `localhost`)
-- **Port**: WebUI port (default: `8080`)
-- **Username/Password**: Your qBittorrent credentials
+That's it. Search for a book, grab a release, and Narratorr handles the rest.
 
-Click **Test** to verify the connection.
-
-### 2. Add an Indexer
-
-Go to **Settings > Indexers** and add AudioBookBay:
-
-- **Name**: AudioBookBay
-- **Hostname**: `audiobookbay.lu` (or current domain)
-- **Page Limit**: Number of search result pages to scrape (default: 2)
-
-### 3. Configure Library Settings
-
-Go to **Settings > General**:
-
-- **Library Path**: Where imported audiobooks will be stored (e.g., `/audiobooks`)
-- **Folder Format**: How to organize files (e.g., `{author}/{title}`)
-
-## Usage
-
-1. **Search** - Enter a book title or author name in the search box
-2. **Grab** - Click the "Grab" button on a search result to start downloading
-3. **Monitor** - Watch progress on the Activity page
-4. **Import** - Completed downloads are automatically imported to your library
+See the **[documentation](https://docs.narratorr.dev)** for detailed configuration guides.
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
 | Package Manager | pnpm |
-| Backend | Node.js 24, Fastify |
+| Backend | Node.js 24, Fastify 5 |
 | Database | SQLite (libSQL) + Drizzle ORM |
 | Frontend | React 18 + Vite |
 | Data Fetching | TanStack Query |
 | Styling | Tailwind CSS |
-| Deployment | Docker |
+| Deployment | Docker (linuxserver.io base) |
 
 ## Project Structure
 
 ```
-narratorr/
-├── src/
-│   ├── server/              # Fastify backend
-│   │   ├── routes/          # API endpoints
-│   │   ├── services/        # Business logic
-│   │   └── jobs/            # Background tasks
-│   ├── client/              # React frontend
-│   │   ├── pages/           # Page components
-│   │   ├── components/      # Shared components
-│   │   └── lib/             # Utilities
-│   ├── shared/              # Zod schemas, registries
-│   ├── core/                # Indexers, download clients, metadata
-│   │   ├── indexers/        # AudioBookBay, Torznab, Newznab
-│   │   ├── download-clients/  # qBittorrent, SABnzbd, etc.
-│   │   ├── metadata/        # Metadata providers
-│   │   └── utils/           # Magnet links, parsing
-│   └── db/                  # Drizzle ORM schema
-├── scripts/
-│   └── gitea.ts             # Gitea API client (TypeScript CLI)
-├── Dockerfile
-└── docker-compose.yml
+src/
+  server/           # Fastify backend (routes, services, jobs)
+  client/           # React frontend (pages, components, lib)
+  shared/           # Zod schemas and registries
+  core/             # Indexer, download client, and metadata adapters
+  db/               # Drizzle ORM schema and migrations
 ```
-
-## API Reference
-
-### Search
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/search?q=query` | Search indexers |
-| POST | `/api/search/grab` | Grab a search result |
-
-### Activity
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/activity` | List all downloads |
-| DELETE | `/api/activity/:id` | Cancel download |
-| POST | `/api/activity/:id/retry` | Retry failed download |
-
-### Indexers
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/indexers` | List indexers |
-| POST | `/api/indexers` | Add indexer |
-| DELETE | `/api/indexers/:id` | Remove indexer |
-| POST | `/api/indexers/:id/test` | Test connection |
-
-### Download Clients
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/download-clients` | List clients |
-| POST | `/api/download-clients` | Add client |
-| DELETE | `/api/download-clients/:id` | Remove client |
-| POST | `/api/download-clients/:id/test` | Test connection |
-
-### Settings
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/settings` | Get all settings |
-| PUT | `/api/settings` | Update settings |
 
 ## Environment Variables
 
@@ -213,39 +102,24 @@ narratorr/
 |----------|---------|-------------|
 | `PORT` | `3000` | Server port |
 | `NODE_ENV` | `development` | Environment |
-| `CONFIG_PATH` | `./config` | Config directory |
+| `CONFIG_PATH` | `./config` | Config and database directory |
 | `LIBRARY_PATH` | `./audiobooks` | Audiobook library path |
 | `DATABASE_URL` | `file:./config/narratorr.db` | SQLite database path |
-
-### Gitea (Development Only)
-
-For contributors using the `scripts/gitea.ts` client, create a `.env` file in the project root:
-
-```bash
-GITEA_TOKEN=your_token_here    # Generate at https://git.tjiddy.com/user/settings/applications
-GITEA_URL=https://git.tjiddy.com
-GITEA_OWNER=todd
-GITEA_REPO=narratorr
-```
-
-This file is gitignored. The client provides quick access to issues and project management:
-
-```bash
-pnpm gitea issues          # List open issues
-pnpm gitea issue <id>      # Read issue details
-pnpm gitea prs             # List open pull requests
-```
+| `URL_BASE` | `/` | Subpath for reverse proxy deployments |
+| `NARRATORR_SECRET_KEY` | (auto-generated) | 32-byte hex encryption key for credentials at rest |
 
 ## Development
 
 ```bash
 pnpm dev            # Dev servers (API :3000, Vite :5173)
 pnpm build          # Build for production
-pnpm db:generate    # Generate new database migration
-pnpm typecheck      # Type check
 pnpm test           # Run tests
+pnpm typecheck      # Type check
 pnpm lint           # Lint
+pnpm db:generate    # Generate new database migration
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development workflow.
 
 ## License
 
@@ -253,5 +127,4 @@ GPL-3.0 — see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
-- Inspired by [Sonarr](https://sonarr.tv/), [Radarr](https://radarr.video/), and [Readarr](https://readarr.com/)
-- AudioBookBay scraping approach inspired by [audiobookbay-automated](https://github.com/JamesRy96/audiobookbay-automated)
+Inspired by the *arr ecosystem and the self-hosted media community.
