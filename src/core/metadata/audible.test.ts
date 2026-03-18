@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { http, HttpResponse } from 'msw';
+import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { AudibleProvider } from './audible.js';
-import { RateLimitError } from './errors.js';
+import { RateLimitError, TransientError } from './errors.js';
 
 describe('AudibleProvider', () => {
   const server = useMswServer();
@@ -94,26 +94,24 @@ describe('AudibleProvider', () => {
       expect(books[0].language).toBe('English');
     });
 
-    it('returns empty array on API error', async () => {
+    it('throws TransientError on API error (5xx)', async () => {
       server.use(
         http.get('https://api.audible.com/1.0/catalog/products', () => {
           return HttpResponse.json({}, { status: 500 });
         }),
       );
 
-      const books = await provider.searchBooks('test');
-      expect(books).toEqual([]);
+      await expect(provider.searchBooks('test')).rejects.toThrow(TransientError);
     });
 
-    it('returns empty array on network error', async () => {
+    it('throws TransientError on network error', async () => {
       server.use(
         http.get('https://api.audible.com/1.0/catalog/products', () => {
           return HttpResponse.error();
         }),
       );
 
-      const books = await provider.searchBooks('test');
-      expect(books).toEqual([]);
+      await expect(provider.searchBooks('test')).rejects.toThrow(TransientError);
     });
 
     it('returns empty array when response has no products', async () => {
@@ -379,7 +377,7 @@ describe('AudibleProvider', () => {
       }
     });
 
-    it('handles malformed JSON response body', async () => {
+    it('throws TransientError on malformed JSON response body', async () => {
       server.use(
         http.get('https://api.audible.com/1.0/catalog/products', () => {
           return new HttpResponse('not json{{{', {
@@ -389,8 +387,7 @@ describe('AudibleProvider', () => {
         }),
       );
 
-      const books = await provider.searchBooks('test');
-      expect(books).toEqual([]);
+      await expect(provider.searchBooks('test')).rejects.toThrow(TransientError);
     });
 
     it('handles NaN series position from non-numeric sequence', async () => {
@@ -485,7 +482,7 @@ describe('AudibleProvider', () => {
       expect(books[0].authors).toEqual([]);
     });
 
-    it('getBook handles malformed JSON response', async () => {
+    it('getBook throws TransientError on malformed JSON response', async () => {
       server.use(
         http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
           return new HttpResponse('broken json', {
@@ -495,8 +492,118 @@ describe('AudibleProvider', () => {
         }),
       );
 
-      const book = await provider.getBook('B000TEST');
-      expect(book).toBeNull();
+      await expect(provider.getBook('B000TEST')).rejects.toThrow(TransientError);
+    });
+  });
+
+  describe('TransientError differentiation', () => {
+    it('searchBooks() on 429 throws RateLimitError', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': '30' },
+          });
+        }),
+      );
+
+      await expect(provider.searchBooks('test')).rejects.toThrow(RateLimitError);
+    });
+
+    it('searchBooks() on timeout throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', async () => {
+          await delay('infinite');
+          return new HttpResponse(null, { status: 200 });
+        }),
+      );
+
+      await expect(provider.searchBooks('test')).rejects.toThrow(TransientError);
+    }, 15000);
+
+    it('searchBooks() on 5xx throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return new HttpResponse(null, { status: 503 });
+        }),
+      );
+
+      await expect(provider.searchBooks('test')).rejects.toThrow(TransientError);
+    });
+
+    it('searchBooks() on network error throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      await expect(provider.searchBooks('test')).rejects.toThrow(TransientError);
+    });
+
+    it('searchBooks() on 404/empty returns empty array', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return new HttpResponse(null, { status: 404 });
+        }),
+      );
+
+      const result = await provider.searchBooks('test');
+      expect(result).toEqual([]);
+    });
+
+    it('getBook() on timeout throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', async () => {
+          await delay('infinite');
+          return new HttpResponse(null, { status: 200 });
+        }),
+      );
+
+      await expect(provider.getBook('B000TEST')).rejects.toThrow(TransientError);
+    }, 15000);
+
+    it('getBook() on network error throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      await expect(provider.getBook('B000TEST')).rejects.toThrow(TransientError);
+    });
+
+    it('getBook() on 5xx throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return new HttpResponse(null, { status: 500 });
+        }),
+      );
+
+      await expect(provider.getBook('B000TEST')).rejects.toThrow(TransientError);
+    });
+
+    it('getBook() on 404/no data returns null', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products/:asin', () => {
+          return new HttpResponse(null, { status: 404 });
+        }),
+      );
+
+      const result = await provider.getBook('B000TEST');
+      expect(result).toBeNull();
+    });
+
+    it('test() catches TransientError and returns { success: false }', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toBeDefined();
     });
   });
 });

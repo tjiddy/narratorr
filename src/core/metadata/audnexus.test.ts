@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { http, HttpResponse } from 'msw';
+import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { AudnexusProvider } from './audnexus.js';
+import { RateLimitError, TransientError } from './errors.js';
 
 describe('AudnexusProvider', () => {
   const server = useMswServer();
@@ -60,15 +61,14 @@ describe('AudnexusProvider', () => {
       expect(authors).toEqual([]);
     });
 
-    it('returns empty array on API error', async () => {
+    it('throws TransientError on API error (5xx)', async () => {
       server.use(
         http.get('https://api.audnex.us/authors', () => {
           return new HttpResponse(null, { status: 500 });
         }),
       );
 
-      const authors = await provider.searchAuthors('Brandon');
-      expect(authors).toEqual([]);
+      await expect(provider.searchAuthors('Brandon')).rejects.toThrow(TransientError);
     });
   });
 
@@ -371,26 +371,24 @@ describe('AudnexusProvider', () => {
       expect(book!.narrators).toEqual(['Jim Dale']);
     });
 
-    it('handles network error in getBook', async () => {
+    it('throws TransientError on network error in getBook', async () => {
       server.use(
         http.get('https://api.audnex.us/books/:asin', () => {
           return HttpResponse.error();
         }),
       );
 
-      const book = await provider.getBook('B000TEST');
-      expect(book).toBeNull();
+      await expect(provider.getBook('B000TEST')).rejects.toThrow(TransientError);
     });
 
-    it('handles network error in searchAuthors', async () => {
+    it('throws TransientError on network error in searchAuthors', async () => {
       server.use(
         http.get('https://api.audnex.us/authors', () => {
           return HttpResponse.error();
         }),
       );
 
-      const authors = await provider.searchAuthors('test');
-      expect(authors).toEqual([]);
+      await expect(provider.searchAuthors('test')).rejects.toThrow(TransientError);
     });
 
     it('handles author search result with missing name and asin', async () => {
@@ -459,16 +457,141 @@ describe('AudnexusProvider', () => {
       expect(author!.imageUrl).toBeUndefined();
     });
 
-    it('handles 429 response in searchAuthors (no rate limit special handling)', async () => {
+    it('throws RateLimitError on 429 response in searchAuthors', async () => {
       server.use(
         http.get('https://api.audnex.us/authors', () => {
           return new HttpResponse(null, { status: 429 });
         }),
       );
 
-      // Audnexus provider doesn't have RateLimitError handling — returns empty
-      const authors = await provider.searchAuthors('test');
-      expect(authors).toEqual([]);
+      await expect(provider.searchAuthors('test')).rejects.toThrow(RateLimitError);
+    });
+  });
+
+  describe('TransientError differentiation', () => {
+    it('searchAuthors() on 429 throws RateLimitError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors', () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': '60' },
+          });
+        }),
+      );
+
+      await expect(provider.searchAuthors('test')).rejects.toThrow(RateLimitError);
+    });
+
+    it('searchAuthors() on timeout throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors', async () => {
+          await delay('infinite');
+          return new HttpResponse(null, { status: 200 });
+        }),
+      );
+
+      await expect(provider.searchAuthors('test')).rejects.toThrow(TransientError);
+    }, 20000);
+
+    it('searchAuthors() on network error throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors', () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      await expect(provider.searchAuthors('test')).rejects.toThrow(TransientError);
+    });
+
+    it('searchAuthors() on 404/empty returns empty array', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors', () => {
+          return new HttpResponse(null, { status: 404 });
+        }),
+      );
+
+      const result = await provider.searchAuthors('test');
+      expect(result).toEqual([]);
+    });
+
+    it('getBook() on 5xx throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return new HttpResponse(null, { status: 503 });
+        }),
+      );
+
+      await expect(provider.getBook('B000TEST')).rejects.toThrow(TransientError);
+    });
+
+    it('getBook() on 404/no data returns null', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return new HttpResponse(null, { status: 404 });
+        }),
+      );
+
+      const result = await provider.getBook('B000TEST');
+      expect(result).toBeNull();
+    });
+
+    it('getAuthor() on timeout throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors/:asin', async () => {
+          await delay('infinite');
+          return new HttpResponse(null, { status: 200 });
+        }),
+      );
+
+      await expect(provider.getAuthor('B001TEST')).rejects.toThrow(TransientError);
+    }, 20000);
+
+    it('getAuthor() on network error throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors/:asin', () => {
+          return HttpResponse.error();
+        }),
+      );
+
+      await expect(provider.getAuthor('B001TEST')).rejects.toThrow(TransientError);
+    });
+
+    it('getAuthor() on 5xx throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors/:asin', () => {
+          return new HttpResponse(null, { status: 500 });
+        }),
+      );
+
+      await expect(provider.getAuthor('B001TEST')).rejects.toThrow(TransientError);
+    });
+
+    it('getAuthor() on 404/no data returns null', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors/:asin', () => {
+          return new HttpResponse(null, { status: 404 });
+        }),
+      );
+
+      const result = await provider.getAuthor('B001TEST');
+      expect(result).toBeNull();
+    });
+
+    it('author dedup silently skips entries with missing asin and name', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors', () => {
+          return HttpResponse.json([
+            { asin: 'B001H6UJO8', name: 'Brandon Sanderson' },
+            { }, // missing both asin and name
+            { asin: 'B001FAKE', name: 'Another Author' },
+          ]);
+        }),
+      );
+
+      const result = await provider.searchAuthors('Brandon');
+      expect(result).toHaveLength(2);
+      expect(result[0].name).toBe('Brandon Sanderson');
+      expect(result[1].name).toBe('Another Author');
     });
   });
 });

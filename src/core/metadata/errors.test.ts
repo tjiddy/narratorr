@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { RateLimitError } from './errors.js';
+import { RateLimitError, TransientError } from './errors.js';
 
 describe('RateLimitError', () => {
   it('constructs with correct properties', () => {
@@ -22,5 +22,27 @@ describe('RateLimitError', () => {
 
     expect(error).toBeInstanceOf(Error);
     expect(error).toBeInstanceOf(RateLimitError);
+  });
+});
+
+describe('TransientError', () => {
+  it('constructs with correct name property', () => {
+    const error = new TransientError('Audible', 'Connection timed out');
+
+    expect(error.name).toBe('TransientError');
+    expect(error.provider).toBe('Audible');
+  });
+
+  it('includes provider name and failure context in message', () => {
+    const error = new TransientError('Audnexus', 'HTTP 503 Service Unavailable');
+
+    expect(error.message).toBe('Audnexus transient failure: HTTP 503 Service Unavailable');
+  });
+
+  it('is instanceof Error', () => {
+    const error = new TransientError('Audible', 'timeout');
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(TransientError);
   });
 });

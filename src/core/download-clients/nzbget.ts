@@ -1,3 +1,4 @@
+import { nzbgetRpcResponseSchema, nzbgetGroupSchema, nzbgetHistorySchema } from './schemas.js';
 import type {
   DownloadClientAdapter,
   DownloadItemInfo,
@@ -15,30 +16,10 @@ export interface NZBGetConfig {
 
 const REQUEST_TIMEOUT_MS = 15000;
 
-interface NZBGetGroup {
-  NZBID: number;
-  NZBName: string;
-  Status: string;
-  FileSizeMB: number;
-  DownloadedSizeMB: number;
-  RemainingSizeMB: number;
-  DownloadTimeSec: number;
-  Category: string;
-  DestDir: string;
-  MinPostTime: number; // unix timestamp
-}
+import { z } from 'zod';
 
-interface NZBGetHistoryItem {
-  NZBID: number;
-  Name: string;
-  Status: string;
-  FileSizeMB: number;
-  DownloadTimeSec: number;
-  Category: string;
-  DestDir: string;
-  HistoryTime: number; // unix timestamp
-  MinPostTime: number;
-}
+type NZBGetGroup = z.infer<typeof nzbgetGroupSchema>;
+type NZBGetHistoryItem = z.infer<typeof nzbgetHistorySchema>;
 
 export class NZBGetClient implements DownloadClientAdapter {
   readonly type = 'nzbget';
@@ -86,15 +67,17 @@ export class NZBGetClient implements DownloadClientAdapter {
     const nzbId = parseInt(id, 10);
 
     // Check active groups first
-    const groups = await this.rpc<NZBGetGroup[]>('listgroups');
-    const group = groups?.find((g) => g.NZBID === nzbId);
+    const rawGroups = await this.rpc<unknown[]>('listgroups');
+    const groups = z.array(nzbgetGroupSchema).parse(rawGroups ?? []);
+    const group = groups.find((g) => g.NZBID === nzbId);
     if (group) {
       return this.mapGroup(group);
     }
 
     // Check history
-    const history = await this.rpc<NZBGetHistoryItem[]>('history', [false]);
-    const histItem = history?.find((h) => h.NZBID === nzbId);
+    const rawHistory = await this.rpc<unknown[]>('history', [false]);
+    const history = z.array(nzbgetHistorySchema).parse(rawHistory ?? []);
+    const histItem = history.find((h) => h.NZBID === nzbId);
     if (histItem) {
       return this.mapHistoryItem(histItem);
     }
@@ -103,18 +86,21 @@ export class NZBGetClient implements DownloadClientAdapter {
   }
 
   async getAllDownloads(category?: string): Promise<DownloadItemInfo[]> {
-    const [groups, history] = await Promise.all([
-      this.rpc<NZBGetGroup[]>('listgroups'),
-      this.rpc<NZBGetHistoryItem[]>('history', [false]),
+    const [rawGroups, rawHistory] = await Promise.all([
+      this.rpc<unknown[]>('listgroups'),
+      this.rpc<unknown[]>('history', [false]),
     ]);
+
+    const groups = z.array(nzbgetGroupSchema).parse(rawGroups ?? []);
+    const history = z.array(nzbgetHistorySchema).parse(rawHistory ?? []);
 
     const items: DownloadItemInfo[] = [];
 
-    for (const group of groups || []) {
+    for (const group of groups) {
       if (category && group.Category !== category) continue;
       items.push(this.mapGroup(group));
     }
-    for (const histItem of history || []) {
+    for (const histItem of history) {
       if (category && histItem.Category !== category) continue;
       items.push(this.mapHistoryItem(histItem));
     }
@@ -186,13 +172,18 @@ export class NZBGetClient implements DownloadClientAdapter {
         throw new Error(`Connection failed: server didn't respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.`);
       }
 
-      const data = (await response.json()) as { result: T; error?: string };
+      const json = await response.json();
+      const parsed = nzbgetRpcResponseSchema.safeParse(json);
 
-      if (data.error) {
-        throw new Error(`NZBGet RPC error: ${data.error}`);
+      if (!parsed.success) {
+        throw new Error(`NZBGet returned unexpected response: ${parsed.error.message}`);
       }
 
-      return data.result;
+      if (parsed.data.error) {
+        throw new Error(`NZBGet RPC error: ${parsed.data.error}`);
+      }
+
+      return parsed.data.result as T;
     } finally {
       clearTimeout(timeoutId);
     }

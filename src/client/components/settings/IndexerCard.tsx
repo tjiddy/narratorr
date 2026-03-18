@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { Indexer, TestResult } from '@/lib/api';
 import { TestResultMessage } from '@/components/TestResultMessage';
+import { FormField } from './FormField';
 import { SettingsCardShell, type IdTestResult } from './SettingsCardShell';
 import { SettingsFormActions } from './SettingsFormActions';
 import { IndexerFields } from './IndexerFields';
@@ -163,22 +164,7 @@ export function IndexerCard(props: IndexerCardProps) {
       </div>
 
       <div className="grid gap-5 sm:grid-cols-2">
-        <div>
-          <label htmlFor="indexerName" className="block text-sm font-medium mb-2">Name</label>
-          <input
-            id="indexerName"
-            type="text"
-            {...register('name')}
-            readOnly={isProwlarrManaged}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-              errors.name ? 'border-destructive' : 'border-border'
-            } ${isProwlarrManaged ? 'opacity-60 cursor-not-allowed' : ''}`}
-            placeholder="AudioBookBay"
-          />
-          {errors.name && (
-            <p className="text-sm text-destructive mt-1">{errors.name.message}</p>
-          )}
-        </div>
+        <FormField id="indexerName" label="Name" registration={register('name')} error={errors.name} placeholder="AudioBookBay" readOnly={isProwlarrManaged} />
 
         <div>
           <label htmlFor="indexerType" className="block text-sm font-medium mb-2">Type</label>

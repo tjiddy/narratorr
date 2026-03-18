@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { type TestResult } from '@/lib/api';
 import { useConnectionTest } from '@/hooks/useConnectionTest';
 
-interface CrudSettingsConfig<TItem extends { id: number; name: string }, TFormData> {
+export interface CrudSettingsConfig<TItem extends { id: number; name: string }, TFormData> {
   queryKey: readonly unknown[];
   queryFn: () => Promise<TItem[]>;
   createFn: (data: TFormData) => Promise<TItem>;

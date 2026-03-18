@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-disable complexity, max-lines -- standalone CLI script, not library code */
 // Workflow metrics — parses Gitea comments and git history to produce
 // trend data on review quality, round counts, and finding patterns.
 // Usage: node scripts/metrics.ts [--since <pr-number>] [--json] [--reviews-dirs <dir1> <dir2> ...]

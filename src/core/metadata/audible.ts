@@ -1,5 +1,5 @@
 import { BookMetadataSchema, AuthorMetadataSchema, SeriesMetadataSchema } from './schemas.js';
-import { RateLimitError } from './errors.js';
+import { RateLimitError, TransientError } from './errors.js';
 import { REGION_LANGUAGES } from './region-languages.js';
 import type {
   MetadataProvider,
@@ -230,11 +230,16 @@ export class AudibleProvider implements MetadataProvider {
         const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : DEFAULT_RATE_LIMIT_WAIT_MS;
         throw new RateLimitError(waitMs, this.name);
       }
+      if (res.status >= 500) {
+        throw new TransientError(this.name, `HTTP ${res.status} ${res.statusText}`);
+      }
       if (!res.ok) return null;
       return (await res.json()) as T;
     } catch (error) {
       if (error instanceof RateLimitError) throw error;
-      return null;
+      if (error instanceof TransientError) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new TransientError(this.name, message);
     } finally {
       clearTimeout(timeoutId);
     }

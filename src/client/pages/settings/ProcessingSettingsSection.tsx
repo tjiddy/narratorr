@@ -1,4 +1,3 @@
-/* eslint-disable max-lines -- linear form with processing, tagging, and custom script sections */
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, type UseFormReturn } from 'react-hook-form';
@@ -7,25 +6,11 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { FORMAT_LABELS, MERGE_LABELS, TAG_MODE_LABELS } from '@/lib/constants';
 import { ZapIcon, CheckCircleIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';
+import { FormField } from '@/components/settings/FormField';
 import { outputFormatSchema, mergeBehaviorSchema, tagModeSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
-
-const FORMAT_LABELS: Record<string, string> = {
-  m4b: 'M4B (recommended — chapters supported)',
-  mp3: 'MP3 (no chapter support)',
-};
-
-const MERGE_LABELS: Record<string, string> = {
-  always: 'Always merge',
-  'multi-file-only': 'Only when multiple files',
-  never: 'Never (convert only)',
-};
-
-const TAG_MODE_LABELS: Record<string, string> = {
-  populate_missing: 'Populate missing (only write blank fields)',
-  overwrite: 'Overwrite (write all fields)',
-};
 
 const processingFormSchema = z.object({
   processingEnabled: z.boolean(),
@@ -110,22 +95,24 @@ function CustomScriptSection({ register, errors }: Pick<UseFormReturn<Processing
         </p>
       </div>
       <div className="space-y-5">
-        <div>
-          <label htmlFor="postProcessingScript" className="block text-sm font-medium mb-2">Post-Processing Script</label>
-          <input id="postProcessingScript" type="text" {...register('postProcessingScript')} className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${errors.postProcessingScript ? 'border-destructive' : 'border-border'}`} placeholder="/path/to/script.sh" />
-          {errors.postProcessingScript && (<p className="text-sm text-destructive mt-1">{errors.postProcessingScript.message}</p>)}
-          <p className="text-sm text-muted-foreground mt-2">
-            Absolute path to a script. Leave empty to disable. Environment variables: <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_BOOK_TITLE</code>, <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_BOOK_AUTHOR</code>, <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_IMPORT_PATH</code>, <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_IMPORT_FILE_COUNT</code>.
-          </p>
-        </div>
-        <div>
-          <label htmlFor="postProcessingScriptTimeout" className="block text-sm font-medium mb-2">Script Timeout (seconds)</label>
-          <input id="postProcessingScriptTimeout" type="number" {...register('postProcessingScriptTimeout', { valueAsNumber: true })} className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${errors.postProcessingScriptTimeout ? 'border-destructive' : 'border-border'}`} min={1} placeholder="300" />
-          {errors.postProcessingScriptTimeout && (<p className="text-sm text-destructive mt-1">{errors.postProcessingScriptTimeout.message}</p>)}
-          <p className="text-sm text-muted-foreground mt-2">
-            Maximum time in seconds before the script is killed. Default: 300 (5 minutes).
-          </p>
-        </div>
+        <FormField
+          id="postProcessingScript"
+          label="Post-Processing Script"
+          registration={register('postProcessingScript')}
+          error={errors.postProcessingScript}
+          placeholder="/path/to/script.sh"
+          hint={<>Absolute path to a script. Leave empty to disable. Environment variables: <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_BOOK_TITLE</code>, <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_BOOK_AUTHOR</code>, <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_IMPORT_PATH</code>, <code className="px-1 py-0.5 bg-muted rounded text-xs">NARRATORR_IMPORT_FILE_COUNT</code>.</>}
+        />
+        <FormField
+          id="postProcessingScriptTimeout"
+          label="Script Timeout (seconds)"
+          type="number"
+          registration={register('postProcessingScriptTimeout', { valueAsNumber: true })}
+          error={errors.postProcessingScriptTimeout}
+          min={1}
+          placeholder="300"
+          hint="Maximum time in seconds before the script is killed. Default: 300 (5 minutes)."
+        />
       </div>
     </div>
   );
@@ -340,26 +327,17 @@ export function ProcessingSettingsSection() {
             </p>
           </div>
 
-          <div>
-            <label htmlFor="maxConcurrentProcessing" className="block text-sm font-medium mb-2">Max Concurrent Jobs</label>
-            <input
-              id="maxConcurrentProcessing"
-              type="number"
-              {...register('maxConcurrentProcessing', { valueAsNumber: true })}
-              disabled={!enabled}
-              className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed ${
-                errors.maxConcurrentProcessing ? 'border-destructive' : 'border-border'
-              }`}
-              min={1}
-              placeholder="2"
-            />
-            {errors.maxConcurrentProcessing && (
-              <p className="text-sm text-destructive mt-1">{errors.maxConcurrentProcessing.message}</p>
-            )}
-            <p className="text-sm text-muted-foreground mt-2">
-              Maximum number of imports that can run simultaneously. Higher values use more CPU and disk I/O.
-            </p>
-          </div>
+          <FormField
+            id="maxConcurrentProcessing"
+            label="Max Concurrent Jobs"
+            type="number"
+            registration={register('maxConcurrentProcessing', { valueAsNumber: true })}
+            error={errors.maxConcurrentProcessing}
+            disabled={!enabled}
+            min={1}
+            placeholder="2"
+            hint="Maximum number of imports that can run simultaneously. Higher values use more CPU and disk I/O."
+          />
         </div>
 
         <div className="pt-6 mt-6 border-t border-border">

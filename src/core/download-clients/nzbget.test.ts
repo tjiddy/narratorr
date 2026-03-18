@@ -642,4 +642,49 @@ describe('NZBGetClient', () => {
       expect(item!.eta).toBe(100);
     });
   });
+
+  describe('Zod response validation', () => {
+    it('rpc() with valid response shape parses correctly and returns result', async () => {
+      server.use(
+        rpcHandler({
+          version: () => '21.1',
+        }),
+      );
+
+      const result = await client.test();
+      expect(result.success).toBe(true);
+    });
+
+    it('rpc() with { error: "some error" } throws with descriptive message', async () => {
+      server.use(
+        http.post(RPC_URL, async () => {
+          return HttpResponse.json({ result: null, error: 'Authentication failed' });
+        }),
+      );
+
+      await expect(client.getAllDownloads()).rejects.toThrow('NZBGet RPC error: Authentication failed');
+    });
+
+    it('rpc() with malformed JSON shape throws parse error', async () => {
+      server.use(
+        http.post(RPC_URL, async () => {
+          return HttpResponse.json({ unexpected: 'shape' });
+        }),
+      );
+
+      await expect(client.getAllDownloads()).rejects.toThrow('NZBGet returned unexpected response');
+    });
+
+    it('getAllDownloads() when listgroups returns null returns empty array', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => null,
+          history: () => null,
+        }),
+      );
+
+      const items = await client.getAllDownloads();
+      expect(items).toEqual([]);
+    });
+  });
 });

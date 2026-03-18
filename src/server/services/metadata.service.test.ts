@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { RateLimitError } from '../../core/index.js';
+import { RateLimitError, TransientError } from '../../core/index.js';
 import { createMockLogger, inject } from '../__tests__/helpers.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { MetadataService } from './metadata.service.js';
@@ -37,6 +37,7 @@ vi.mock('../../core/index.js', async (importOriginal) => {
 
 describe('MetadataService', () => {
   let service: MetadataService;
+  let mockLog: ReturnType<typeof createMockLogger>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -51,7 +52,8 @@ describe('MetadataService', () => {
     mockAudibleProvider.test.mockResolvedValue({ success: true });
     mockAudnexus.getBook.mockResolvedValue(null);
     mockAudnexus.getAuthor.mockResolvedValue(null);
-    service = new MetadataService(inject<FastifyBaseLogger>(createMockLogger()));
+    mockLog = createMockLogger();
+    service = new MetadataService(inject<FastifyBaseLogger>(mockLog));
   });
 
   describe('search', () => {
@@ -434,6 +436,68 @@ describe('MetadataService', () => {
       expect(result.books).toEqual([]);
       expect(result.warnings).toHaveLength(1);
       expect(result.warnings[0]).toContain('Network error');
+    });
+  });
+
+  describe('TransientError contract verification', () => {
+    it('withThrottledSearch: TransientError returns [] with warning containing transient context', async () => {
+      const transientErr = new TransientError('Audible.com', 'HTTP 503 Service Unavailable');
+      mockAudibleProvider.searchBooks.mockRejectedValueOnce(transientErr);
+
+      const result = await service.search('test');
+      expect(result.books).toEqual([]);
+      expect(result.warnings).toBeDefined();
+      expect(result.warnings!.length).toBeGreaterThan(0);
+      expect(result.warnings![0]).toContain('transient failure');
+    });
+
+    it('withThrottle: TransientError returns fallback and logs warning', async () => {
+      const transientErr = new TransientError('Audible.com', 'HTTP 500 Internal Server Error');
+      mockAudibleProvider.getBook.mockRejectedValueOnce(transientErr);
+
+      const result = await service.getBook('B000TEST');
+      expect(result).toBeNull();
+      expect(mockLog.warn).toHaveBeenCalledWith(transientErr, 'Metadata getBook failed');
+    });
+
+    it('getAuthor(): Audnexus TransientError returns null and logs warning', async () => {
+      const transientErr = new TransientError('Audnexus', 'HTTP 503 Service Unavailable');
+      mockAudnexus.getAuthor.mockRejectedValueOnce(transientErr);
+
+      const result = await service.getAuthor('B001TEST');
+      expect(result).toBeNull();
+      expect(mockLog.warn).toHaveBeenCalledWith(transientErr, 'Audnexus getAuthor failed');
+    });
+
+    it('getAuthor(): Audnexus RateLimitError returns null and sets rate limit', async () => {
+      mockAudnexus.getAuthor.mockRejectedValueOnce(new RateLimitError(30000, 'Audnexus'));
+
+      const result = await service.getAuthor('B001TEST');
+      expect(result).toBeNull();
+
+      // Subsequent call should be skipped due to rate limit
+      const result2 = await service.getAuthor('B002TEST');
+      expect(result2).toBeNull();
+      // getAuthor should only have been called once (second was skipped)
+      expect(mockAudnexus.getAuthor).toHaveBeenCalledTimes(1);
+    });
+
+    it('enrichBook(): Audnexus TransientError returns null and logs warning', async () => {
+      const transientErr = new TransientError('Audnexus', 'Connection timed out');
+      mockAudnexus.getBook.mockRejectedValueOnce(transientErr);
+
+      const result = await service.enrichBook('B000TEST');
+      expect(result).toBeNull();
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: transientErr, asin: 'B000TEST' }),
+        'Audnexus enrichment lookup failed',
+      );
+    });
+
+    it('enrichBook(): Audnexus RateLimitError re-throws for enrichment job', async () => {
+      mockAudnexus.getBook.mockRejectedValueOnce(new RateLimitError(30000, 'Audnexus'));
+
+      await expect(service.enrichBook('B000TEST')).rejects.toThrow(RateLimitError);
     });
   });
 });

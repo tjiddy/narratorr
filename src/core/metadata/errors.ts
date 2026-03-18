@@ -7,3 +7,13 @@ export class RateLimitError extends Error {
     this.name = 'RateLimitError';
   }
 }
+
+export class TransientError extends Error {
+  constructor(
+    public readonly provider: string,
+    context: string,
+  ) {
+    super(`${provider} transient failure: ${context}`);
+    this.name = 'TransientError';
+  }
+}

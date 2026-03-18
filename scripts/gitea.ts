@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-disable max-lines */
 // Gitea CLI helper for Claude Code workflow plugin
 // Usage: node gitea.ts <command> [args]
 //

@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { DownloadClient, TestResult } from '@/lib/api';
 import { TestResultMessage } from '@/components/TestResultMessage';
+import { FormField } from './FormField';
 import { SettingsFormActions } from './SettingsFormActions';
 import { DownloadClientFields } from './DownloadClientFields';
 import { BlackholeFields } from './BlackholeFields';
@@ -69,11 +70,7 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
     <form onSubmit={handleSubmit(onSubmit)} className="glass-card rounded-2xl p-6 animate-fade-in-up space-y-5">
       <h3 className="font-display text-lg font-semibold">{isEdit ? 'Edit Download Client' : 'Add Download Client'}</h3>
       <div className="grid gap-5 sm:grid-cols-2">
-        <div>
-          <label htmlFor="clientName" className="block text-sm font-medium mb-2">Name</label>
-          <input id="clientName" type="text" {...register('name')} className={`${inputClass} ${errors.name ? 'border-destructive' : ''}`} placeholder="qBittorrent" />
-          {errors.name && <p className="text-sm text-destructive mt-1">{errors.name.message}</p>}
-        </div>
+        <FormField id="clientName" label="Name" registration={register('name')} error={errors.name} placeholder="qBittorrent" />
         <div>
           <label htmlFor="clientType" className="block text-sm font-medium mb-2">Type</label>
           <select id="clientType" {...register('type')} className={inputClass}>

@@ -1,4 +1,5 @@
 import { BookMetadataSchema, AuthorMetadataSchema } from './schemas.js';
+import { RateLimitError, TransientError } from './errors.js';
 import { normalizeGenres } from './genres.js';
 import type {
   MetadataProvider,
@@ -140,10 +141,21 @@ export class AudnexusProvider implements MetadataProvider {
 
     try {
       const response = await fetch(`${BASE_URL}${path}`, { signal: controller.signal });
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('Retry-After');
+        const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 60_000;
+        throw new RateLimitError(waitMs, 'Audnexus');
+      }
+      if (response.status >= 500) {
+        throw new TransientError('Audnexus', `HTTP ${response.status} ${response.statusText}`);
+      }
       if (!response.ok) return null;
       return (await response.json()) as T;
-    } catch {
-      return null;
+    } catch (error) {
+      if (error instanceof RateLimitError) throw error;
+      if (error instanceof TransientError) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new TransientError('Audnexus', message);
     } finally {
       clearTimeout(timeoutId);
     }

@@ -1,6 +1,7 @@
 import type { UseFormReturn } from 'react-hook-form';
 import type { TestResult } from '@/lib/api';
 import { TestResultMessage } from '@/components/TestResultMessage';
+import { FormField } from './FormField';
 import { SettingsFormActions } from './SettingsFormActions';
 import { NotifierFields } from './NotifierFields';
 import { NOTIFIER_REGISTRY } from '../../../shared/notifier-registry.js';
@@ -40,19 +41,7 @@ export function NotifierCardForm(props: NotifierCardFormProps) {
       </h3>
 
       <div className="grid gap-5 sm:grid-cols-2">
-        <div>
-          <label htmlFor="notifierName" className="block text-sm font-medium mb-2">Name</label>
-          <input id="notifierName" type="text"
-            {...register('name')}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-              errors.name ? 'border-destructive' : 'border-border'
-            }`}
-            placeholder="My Webhook"
-          />
-          {errors.name && (
-            <p className="text-sm text-destructive mt-1">{errors.name.message}</p>
-          )}
-        </div>
+        <FormField id="notifierName" label="Name" registration={register('name')} error={errors.name} placeholder="My Webhook" />
 
         <div>
           <label htmlFor="notifierType" className="block text-sm font-medium mb-2">Type</label>
