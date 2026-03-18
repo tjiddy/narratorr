@@ -50,7 +50,7 @@ The server will start on http://localhost:3000 (API) and http://localhost:5173 (
 
 ### Docker
 
-Published to `ghcr.io/todd/narratorr` as multi-arch images (amd64/arm64). Built on [linuxserver.io](https://www.linuxserver.io/) base image with s6-overlay for process supervision, matching the conventions used by Sonarr, Radarr, and Lidarr.
+Published to `ghcr.io/todd/narratorr` as multi-arch images (amd64/arm64). Built on [linuxserver.io](https://www.linuxserver.io/) base image with s6-overlay for process supervision, matching the conventions used by other *arr applications.
 
 ```bash
 # Pull and run with Docker Compose

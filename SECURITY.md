@@ -81,7 +81,7 @@ When enabled, requests from private IP ranges (10.x, 172.16-31.x, 192.168.x, loc
 
 The `/api/filesystem/browse` endpoint allows authenticated users to browse the host filesystem. This is intentional — users need to select library paths, download directories, and other filesystem locations during setup and configuration.
 
-**Design decision:** Narratorr is a single-user self-hosted application. The authenticated user is the server operator. Restricting filesystem browsing would prevent legitimate configuration workflows without meaningful security benefit. This matches the pattern used by Sonarr, Radarr, and Lidarr.
+**Design decision:** Narratorr is a single-user self-hosted application. The authenticated user is the server operator. Restricting filesystem browsing would prevent legitimate configuration workflows without meaningful security benefit. This matches the pattern used by other *arr applications.
 
 ## Input Validation
 
