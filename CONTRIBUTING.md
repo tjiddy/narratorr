@@ -5,7 +5,7 @@ This guide covers the development workflow, conventions, and tooling for contrib
 ## Getting Started
 
 ```bash
-git clone https://git.tjiddy.com/todd/narratorr.git
+git clone https://github.com/tjiddy/narratorr.git
 cd narratorr
 pnpm install
 pnpm dev           # API on :3000, Vite on :5173
@@ -13,7 +13,7 @@ pnpm dev           # API on :3000, Vite on :5173
 
 ## Gitea Project Management
 
-All work is tracked as issues on [Gitea](https://git.tjiddy.com/todd/narratorr/issues). Each issue is self-contained — the spec, acceptance criteria, and test plan live in the issue body.
+All work is tracked as issues on [Gitea](https://github.com/tjiddy/narratorr/issues). Each issue is self-contained — the spec, acceptance criteria, and test plan live in the issue body.
 
 ### CLI Tool
 

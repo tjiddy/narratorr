@@ -99,7 +99,7 @@ Mechanical workflow steps live in `scripts/` as deterministic Node scripts (not 
 
 ## Project Management (Gitea)
 
-All work tracked as Gitea issues at `https://git.tjiddy.com/todd/narratorr`. Gitea CLI: `scripts/gitea.ts`. Gitea connectivity is intermittent — retry up to 3 times on ECONNREFUSED.
+All work tracked as Gitea issues at `https://github.com/tjiddy/narratorr`. Gitea CLI: `scripts/gitea.ts`. Gitea connectivity is intermittent — retry up to 3 times on ECONNREFUSED.
 
 ## Codebase Knowledge Graph (MCP)
 

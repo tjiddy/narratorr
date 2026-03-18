@@ -1,13 +1,21 @@
-name: Docker
-run-name: Docker build for ${{ github.ref_name || gitea.ref_name }}
+name: Build & Push Docker Image
+run-name: Docker build for ${{ github.ref_name }}
 
 on:
   push:
     tags: [v*]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag override (default: from git tag)'
+        required: false
+
+env:
+  IMAGE_NAME: narratorr/narratorr
 
 jobs:
   quality-gates:
-    runs-on: ${{ vars.RUNNER_TYPE || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
@@ -50,7 +58,10 @@ jobs:
 
   docker:
     needs: [quality-gates]
-    runs-on: ${{ vars.RUNNER_TYPE || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout repository
@@ -58,34 +69,35 @@ jobs:
 
       - name: Validate registry credentials
         run: |
-          if [ -z "${{ secrets.REGISTRY_USER }}" ] || [ -z "${{ secrets.REGISTRY_PASSWORD }}" ]; then
-            echo "::error::Registry credentials missing. Set REGISTRY_USER and REGISTRY_PASSWORD secrets."
+          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ] || [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "::error::Registry credentials missing. Set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets."
             exit 1
           fi
 
       - name: Extract version from tag
         id: version
         run: |
-          # Strip 'v' prefix: v0.9.0 -> 0.9.0
-          VERSION="${{ github.ref_name || gitea.ref_name }}"
-          VERSION="${VERSION#v}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.tag }}" ]]; then
+            VERSION="${{ inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
           MAJOR_MINOR="${VERSION%.*}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "major_minor=$MAJOR_MINOR" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION (major.minor: $MAJOR_MINOR)"
 
-      - name: Set up QEMU
+      - name: Set up QEMU (for ARM64)
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to registry
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ secrets.REGISTRY_USER }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v6
@@ -94,15 +106,20 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/todd/narratorr:latest
-            ghcr.io/todd/narratorr:${{ steps.version.outputs.version }}
-            ghcr.io/todd/narratorr:${{ steps.version.outputs.major_minor }}
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major_minor }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Report image size
+        run: |
+          docker images ${{ env.IMAGE_NAME }} --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}" || true
+          echo "Image size is informational only — no hard gate."
+
       - name: Verify multi-arch manifest
         run: |
-          MANIFEST=$(docker buildx imagetools inspect ghcr.io/todd/narratorr:${{ steps.version.outputs.version }} 2>&1)
+          MANIFEST=$(docker buildx imagetools inspect ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }} 2>&1)
           echo "$MANIFEST"
 
           if ! echo "$MANIFEST" | grep -q 'linux/amd64'; then
@@ -115,17 +132,12 @@ jobs:
           fi
           echo "Multi-arch manifest verified: linux/amd64 and linux/arm64 present"
 
-      - name: Report image size
-        run: |
-          docker images ghcr.io/todd/narratorr --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}" || true
-          echo "Image size is informational only — no hard gate."
-
       - name: Smoke test container
         run: |
           docker run -d --name smoke-test \
             -e DATABASE_URL=file:/config/narratorr.db \
             -p 3199:3000 \
-            ghcr.io/todd/narratorr:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
 
           # Wait for /api/health to return 200 (max 30s)
           for i in $(seq 1 30); do

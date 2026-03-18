@@ -1,16 +1,15 @@
 name: CI
-run-name: CI for ${{ github.ref_name || gitea.ref_name }}
+run-name: CI for ${{ github.ref_name }}
 
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 jobs:
   quality-gates:
-    runs-on: ${{ vars.RUNNER_TYPE || 'ubuntu-latest' }}
-
-    env:
-      GITHUB_TOKEN: ${{ github.token }}
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository

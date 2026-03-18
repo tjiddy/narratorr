@@ -13,7 +13,7 @@ export function _resetUpdateCache() {
   cachedUpdate = undefined;
 }
 
-const GITHUB_API_URL = 'https://api.github.com/repos/todd/narratorr/releases/latest';
+const GITHUB_API_URL = 'https://api.github.com/repos/tjiddy/narratorr/releases/latest';
 
 export async function checkForUpdate(log: FastifyBaseLogger): Promise<void> {
   try {

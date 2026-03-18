@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   narratorr:
-    image: ghcr.io/todd/narratorr:latest
+    image: narratorr/narratorr:latest
     # To build from local source instead of pulling from the registry:
     # build: .
     container_name: narratorr
