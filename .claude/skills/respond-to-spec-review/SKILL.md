@@ -107,7 +107,15 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
     Be specific in "Prompt fix" — "check more carefully" is useless. "Add to /spec AC checklist: 'For DB schema changes, verify all existing callers of affected queries'" is actionable.
 
-11. **Report readiness verdict** using this format:
+11. **Commit and push CL files:** Learning and retrospective files from step 10 need to be committed to main so all clones stay in sync:
+    ```bash
+    git add .claude/cl/
+    git commit -m "CL from #<id> spec review response"
+    git push origin main
+    ```
+    If there's nothing to commit (no new CL files), skip this step.
+
+12. **Report readiness verdict** using this format:
 
    ```
    VERDICT: ready | filled | not-ready

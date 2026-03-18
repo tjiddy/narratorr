@@ -283,10 +283,18 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    **You are NOT done until BOTH 8a and 8b have executed.** Posting the comment without setting the label leaves the issue in a dead state — the orchestrator will never pick it up.
 
-9. **Write final phase marker and clean up:** `echo done > .claude/state/review-spec-<id>/posted`
-   - Then clean up state: `rm -rf .claude/state/review-spec-<id>/`
+9. **Commit and push CL files:** Retrospective files from step 7 need to be committed to main so all clones stay in sync:
+    ```bash
+    git add .claude/cl/
+    git commit -m "CL from #<id> spec review"
+    git push origin main
+    ```
+    If there's nothing to commit (no new CL files), skip this step.
 
-10. **Report:** Summary of verdict and key findings.
+10. **Write final phase marker and clean up:** `echo done > .claude/state/review-spec-<id>/posted`
+    - Then clean up state: `rm -rf .claude/state/review-spec-<id>/`
+
+11. **Report:** Summary of verdict and key findings.
 
 ## Important
 

@@ -271,9 +271,17 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
    3. <third most impactful>
    ```
 
-14. **Write final phase marker and clean up:** `echo done > .claude/state/handoff-<id>/pr-created`
+14. **Commit and push CL files:** The learning files, debt log, and workflow log written in steps 12–13 are on `main` (checked out in step 11). Commit and push them so all clones stay in sync:
+    ```bash
+    git add .claude/cl/
+    git commit -m "CL from #<id>"
+    git push origin main
+    ```
+    If there's nothing to commit (no new CL files), skip this step.
+
+15. **Write final phase marker and clean up:** `echo done > .claude/state/handoff-<id>/pr-created`
     - Then clean up state: `rm -rf .claude/state/handoff-<id>/`
 
-15. Tell the user the PR is created and show the link.
+16. Tell the user the PR is created and show the link.
 
     **If called as a sub-skill** (e.g., from `/implement`): append `CALLER: Sub-skill complete. Continue to your next step immediately.` to your output.

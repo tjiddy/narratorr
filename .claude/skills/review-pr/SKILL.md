@@ -391,10 +391,18 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
     - Verify the PR shows `stage/fixes-pr` and the issue shows `status/in-progress`
     - **STOP.** Do not attempt to fix anything — that's the author's job via `/respond-to-pr-review`
 
-14. **Write final phase marker and clean up:** `echo done > .claude/state/review-pr-<pr-number>/posted`
+14. **Commit and push CL files:** Retrospective files from step 10 need to be committed to main so all clones stay in sync:
+    ```bash
+    git add .claude/cl/
+    git commit -m "CL from PR #<pr-number> review"
+    git push origin main
+    ```
+    If there's nothing to commit (no new CL files), skip this step.
+
+15. **Write final phase marker and clean up:** `echo done > .claude/state/review-pr-<pr-number>/posted`
     - Then clean up state: `rm -rf .claude/state/review-pr-<pr-number>/`
 
-15. **Report to main agent:** Overall verdict + outcome (merged or awaiting author response).
+16. **Report to main agent:** Overall verdict + outcome (merged or awaiting author response).
 
 ## Important
 

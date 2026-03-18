@@ -140,10 +140,17 @@ All Gitea commands use: `node scripts/gitea.ts` (referred to as `gitea` below).
 
    Be specific in "Prompt fix" — "be more careful" is useless. "Add to /plan step 3: 'When modifying query filters, verify cache invalidation logic still matches'" is actionable.
 
-7. **Write final phase marker and clean up:** `echo done > .claude/state/respond-to-pr-review-<pr-number>/response-posted`
+7. **Commit and push CL files:** Learning and retrospective files from step 6 should be included in the feature branch push so they land on main when the PR merges:
+   ```bash
+   git add .claude/cl/
+   git commit -m "CL from PR #<pr-number> review response"
+   ```
+   These will be pushed along with the code fixes in step 4's push. If there's nothing to commit (no new CL files), skip this step.
+
+8. **Write final phase marker and clean up:** `echo done > .claude/state/respond-to-pr-review-<pr-number>/response-posted`
    - Then clean up state: `rm -rf .claude/state/respond-to-pr-review-<pr-number>/`
 
-8. **Report to main agent:** "**PR #<pr-number> (issue #<id>)** — <status: ready-for-re-review | needs-human-input> — <1-line summary of resolutions>"
+9. **Report to main agent:** "**PR #<pr-number> (issue #<id>)** — <status: ready-for-re-review | needs-human-input> — <1-line summary of resolutions>"
 
 ## Important
 - This skill is for the **author agent** — the one who wrote the code, not the reviewer
