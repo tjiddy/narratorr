@@ -634,7 +634,7 @@ describe('monitor job', () => {
       blacklistService: { create: ReturnType<typeof vi.fn> };
       retrySearchDeps: {
         indexerService: { searchAll: ReturnType<typeof vi.fn> };
-        downloadService: { grab: ReturnType<typeof vi.fn> };
+        downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
@@ -649,7 +649,7 @@ describe('monitor job', () => {
         blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
         retrySearchDeps: {
           indexerService: { searchAll: vi.fn().mockResolvedValue([]) },
-          downloadService: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
+          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, author: { name: 'Author' } }) },
           settingsService: createMockSettingsService(),
@@ -775,7 +775,7 @@ describe('monitor job', () => {
 
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
 
-      expect(retryDeps.retrySearchDeps.downloadService.grab).toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.downloadOrchestrator.grab).toHaveBeenCalled();
       expect(db.delete).toHaveBeenCalled();
     });
 
@@ -871,7 +871,7 @@ describe('monitor job', () => {
       blacklistService: { create: ReturnType<typeof vi.fn> };
       retrySearchDeps: {
         indexerService: { searchAll: ReturnType<typeof vi.fn> };
-        downloadService: { grab: ReturnType<typeof vi.fn> };
+        downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
         blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
@@ -886,7 +886,7 @@ describe('monitor job', () => {
         blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
         retrySearchDeps: {
           indexerService: { searchAll: vi.fn().mockResolvedValue([]) },
-          downloadService: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
+          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
           blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, author: { name: 'Author' } }) },
           settingsService: createMockSettingsService(),

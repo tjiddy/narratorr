@@ -1,7 +1,8 @@
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/index.js';
 import type { IndexerService } from './indexer.service.js';
-import type { DownloadService, DownloadWithBook } from './download.service.js';
+import type { DownloadWithBook } from './download.service.js';
+import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { BookService } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -16,7 +17,7 @@ export type RetryOutcome =
 
 export interface RetrySearchDeps {
   indexerService: IndexerService;
-  downloadService: DownloadService;
+  downloadOrchestrator: DownloadOrchestrator;
   blacklistService: BlacklistService;
   bookService: BookService;
   settingsService: SettingsService;
@@ -27,7 +28,7 @@ export interface RetrySearchDeps {
 /** Factory to build RetrySearchDeps from a Services bag + logger. Eliminates duplication across routes and jobs. */
 export function createRetrySearchDeps(services: {
   indexer: IndexerService;
-  download: DownloadService;
+  downloadOrchestrator: DownloadOrchestrator;
   blacklist: BlacklistService;
   book: BookService;
   settings: SettingsService;
@@ -35,7 +36,7 @@ export function createRetrySearchDeps(services: {
 }, log: FastifyBaseLogger): RetrySearchDeps {
   return {
     indexerService: services.indexer,
-    downloadService: services.download,
+    downloadOrchestrator: services.downloadOrchestrator,
     blacklistService: services.blacklist,
     bookService: services.book,
     settingsService: services.settings,
@@ -57,7 +58,7 @@ export async function retrySearch(
   bookId: number,
   deps: RetrySearchDeps,
 ): Promise<RetryOutcome> {
-  const { indexerService, downloadService, blacklistService, bookService, settingsService, retryBudget, log } = deps;
+  const { indexerService, downloadOrchestrator, blacklistService, bookService, settingsService, retryBudget, log } = deps;
 
   // Check retry budget
   if (!retryBudget.hasRemaining(bookId)) {
@@ -117,7 +118,7 @@ export async function retrySearch(
     }
 
     // Grab the best candidate
-    const newDownload = await downloadService.grab({
+    const newDownload = await downloadOrchestrator.grab({
       downloadUrl: best.downloadUrl!,
       title: best.title,
       protocol: best.protocol,

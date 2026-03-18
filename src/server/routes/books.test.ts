@@ -215,7 +215,7 @@ describe('books routes', () => {
 
       expect(services.settings.get).toHaveBeenCalledWith('quality');
       expect(services.indexer.searchAll).toHaveBeenCalled();
-      expect(services.download.grab).toHaveBeenCalled();
+      expect(services.downloadOrchestrator.grab).toHaveBeenCalled();
     });
 
     it('fire-and-forget search excludes results matching reject words', async () => {
@@ -240,8 +240,8 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(201);
       await new Promise(r => setTimeout(r, 50));
 
-      expect(services.download.grab).toHaveBeenCalledTimes(1);
-      expect(services.download.grab).toHaveBeenCalledWith(
+      expect(services.downloadOrchestrator.grab).toHaveBeenCalledTimes(1);
+      expect(services.downloadOrchestrator.grab).toHaveBeenCalledWith(
         expect.objectContaining({ downloadUrl: 'https://example.com/dl2' }),
       );
     });
@@ -267,7 +267,7 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(201);
       await new Promise(r => setTimeout(r, 50));
 
-      expect(services.download.grab).not.toHaveBeenCalled();
+      expect(services.downloadOrchestrator.grab).not.toHaveBeenCalled();
     });
 
     it('does not trigger search when searchImmediately is false', async () => {
@@ -655,15 +655,15 @@ describe('books routes', () => {
         { id: 11, bookId: 1, status: 'queued' },
       ];
       (services.download.getActiveByBookId as Mock).mockResolvedValue(activeDownloads);
-      (services.download.cancel as Mock).mockResolvedValue(true);
+      (services.downloadOrchestrator.cancel as Mock).mockResolvedValue(true);
       (services.book.delete as Mock).mockResolvedValue(true);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/books/1' });
 
       expect(res.statusCode).toBe(200);
-      expect(services.download.cancel).toHaveBeenCalledWith(10);
-      expect(services.download.cancel).toHaveBeenCalledWith(11);
-      expect(services.download.cancel).toHaveBeenCalledTimes(2);
+      expect(services.downloadOrchestrator.cancel).toHaveBeenCalledWith(10);
+      expect(services.downloadOrchestrator.cancel).toHaveBeenCalledWith(11);
+      expect(services.downloadOrchestrator.cancel).toHaveBeenCalledTimes(2);
       expect(services.book.delete).toHaveBeenCalledWith(1);
     });
 
@@ -840,7 +840,7 @@ describe('books routes', () => {
       (services.indexer.searchAll as Mock).mockResolvedValue([
         { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
       ]);
-      (services.download.grab as Mock).mockRejectedValue(new Error('Book 1 already has an active download'));
+      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new Error('Book 1 already has an active download'));
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
 
@@ -885,7 +885,7 @@ describe('books routes', () => {
       expect(services.settings.get).toHaveBeenCalledWith('quality');
       // The abridged result should be filtered out by rejectWords
       if (JSON.parse(res.payload).result === 'grabbed') {
-        expect(services.download.grab).toHaveBeenCalledWith(
+        expect(services.downloadOrchestrator.grab).toHaveBeenCalledWith(
           expect.objectContaining({ downloadUrl: 'https://example.com/dl2' }),
         );
       }
@@ -901,8 +901,8 @@ describe('books routes', () => {
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
 
       expect(res.statusCode).toBe(200);
-      expect(services.download.grab).toHaveBeenCalledTimes(1);
-      expect(services.download.grab).toHaveBeenCalledWith({
+      expect(services.downloadOrchestrator.grab).toHaveBeenCalledTimes(1);
+      expect(services.downloadOrchestrator.grab).toHaveBeenCalledWith({
         downloadUrl: 'https://example.com/dl',
         title: 'The Way of Kings',
         protocol: 'torrent',
@@ -918,7 +918,7 @@ describe('books routes', () => {
       (services.indexer.searchAll as Mock).mockResolvedValue([
         { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
       ]);
-      (services.download.grab as Mock).mockRejectedValue(new Error('Download client connection refused'));
+      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new Error('Download client connection refused'));
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
 
@@ -976,7 +976,7 @@ describe('books routes', () => {
         { id: 11, bookId: 1, status: 'queued' },
       ];
       (services.download.getActiveByBookId as Mock).mockResolvedValue(activeDownloads);
-      (services.download.cancel as Mock)
+      (services.downloadOrchestrator.cancel as Mock)
         .mockRejectedValueOnce(new Error('cancel failed'))
         .mockResolvedValueOnce(true);
       (services.book.delete as Mock).mockResolvedValue(true);

@@ -4,7 +4,8 @@ import { RetryBudget } from './retry-budget.js';
 import { createMockLogger, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import type { IndexerService } from './indexer.service.js';
-import type { DownloadService, DownloadWithBook } from './download.service.js';
+import type { DownloadOrchestrator } from './download-orchestrator.js';
+import type { DownloadWithBook } from './download.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { BookService, BookWithAuthor } from './book.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -50,7 +51,7 @@ function createDeps(overrides?: Partial<RetrySearchDeps>): RetrySearchDeps {
     indexerService: inject<IndexerService>({
       searchAll: vi.fn().mockResolvedValue([mockSearchResult]),
     }),
-    downloadService: inject<DownloadService>({
+    downloadOrchestrator: inject<DownloadOrchestrator>({
       grab: vi.fn().mockResolvedValue(mockDownload),
     }),
     blacklistService: inject<BlacklistService>({
@@ -76,7 +77,7 @@ describe('retrySearch', () => {
       expect(result.download.id).toBe(2);
     }
     expect(deps.indexerService.searchAll).toHaveBeenCalled();
-    expect(deps.downloadService.grab).toHaveBeenCalledWith(
+    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
       expect.objectContaining({
         downloadUrl: 'magnet:?xt=urn:btih:def456',
         bookId: 1,
@@ -139,7 +140,7 @@ describe('retrySearch', () => {
 
     expect(result.outcome).toBe('retried');
     // Should have grabbed the non-blacklisted result
-    expect(deps.downloadService.grab).toHaveBeenCalledWith(
+    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
       expect.objectContaining({ downloadUrl: 'magnet:?xt=urn:btih:def456' }),
     );
   });
@@ -230,7 +231,7 @@ describe('retrySearch', () => {
 describe('createRetrySearchDeps', () => {
   it('maps service bag fields to RetrySearchDeps contract by reference', () => {
     const indexer = {} as IndexerService;
-    const download = {} as DownloadService;
+    const downloadOrchestrator = {} as DownloadOrchestrator;
     const blacklist = {} as BlacklistService;
     const book = {} as BookService;
     const settings = {} as SettingsService;
@@ -238,12 +239,12 @@ describe('createRetrySearchDeps', () => {
     const log = inject<FastifyBaseLogger>(createMockLogger());
 
     const result = createRetrySearchDeps(
-      { indexer, download, blacklist, book, settings, retryBudget },
+      { indexer, downloadOrchestrator, blacklist, book, settings, retryBudget },
       log,
     );
 
     expect(result.indexerService).toBe(indexer);
-    expect(result.downloadService).toBe(download);
+    expect(result.downloadOrchestrator).toBe(downloadOrchestrator);
     expect(result.blacklistService).toBe(blacklist);
     expect(result.bookService).toBe(book);
     expect(result.settingsService).toBe(settings);

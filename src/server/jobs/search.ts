@@ -4,7 +4,7 @@ import type { SettingsService } from '../services/settings.service.js';
 import type { BookService } from '../services/book.service.js';
 import type { BookListService } from '../services/book-list.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
-import type { DownloadService } from '../services/download.service.js';
+import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { RetryBudget } from '../services/retry-budget.js';
 import { buildSearchQuery, filterAndRankResults, searchAndGrabForBook } from '../services/search-pipeline.js';
 
@@ -27,7 +27,7 @@ export async function runSearchJob(
   settingsService: SettingsService,
   bookListService: BookListService,
   indexerService: IndexerService,
-  downloadService: DownloadService,
+  downloadOrchestrator: DownloadOrchestrator,
   log: FastifyBaseLogger,
   retryBudget?: RetryBudget,
 ): Promise<SearchJobResult> {
@@ -54,7 +54,7 @@ export async function runSearchJob(
 
   for (const book of wantedBooks) {
     try {
-      const result = await searchAndGrabForBook(book, indexerService, downloadService, qualitySettings, log);
+      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, qualitySettings, log);
       searched++;
       if (result.result === 'grabbed') grabbed++;
       if (result.result === 'grab_error') {
@@ -77,7 +77,7 @@ export async function searchAllWanted(
   settingsService: SettingsService,
   bookListService: BookListService,
   indexerService: IndexerService,
-  downloadService: DownloadService,
+  downloadOrchestrator: DownloadOrchestrator,
   log: FastifyBaseLogger,
 ): Promise<SearchAllWantedResult> {
   const qualitySettings = await settingsService.get('quality');
@@ -97,7 +97,7 @@ export async function searchAllWanted(
 
   for (const book of wantedBooks) {
     try {
-      const result = await searchAndGrabForBook(book, indexerService, downloadService, qualitySettings, log);
+      const result = await searchAndGrabForBook(book, indexerService, downloadOrchestrator, qualitySettings, log);
       searched++;
       if (result.result === 'grabbed') grabbed++;
       else if (result.result === 'skipped') skipped++;
@@ -125,7 +125,7 @@ export async function runUpgradeSearchJob(
   settingsService: SettingsService,
   bookService: BookService,
   indexerService: IndexerService,
-  downloadService: DownloadService,
+  downloadOrchestrator: DownloadOrchestrator,
   log: FastifyBaseLogger,
 ): Promise<SearchJobResult> {
   const searchSettings = await settingsService.get('search');
@@ -191,7 +191,7 @@ export async function runUpgradeSearchJob(
       }
 
       try {
-        await downloadService.grab({
+        await downloadOrchestrator.grab({
           downloadUrl: best.downloadUrl!,
           title: best.title,
           protocol: best.protocol,
@@ -227,7 +227,7 @@ export function startSearchJob(
   bookListService: BookListService,
   bookService: BookService,
   indexerService: IndexerService,
-  downloadService: DownloadService,
+  downloadOrchestrator: DownloadOrchestrator,
   log: FastifyBaseLogger,
   retryBudget?: RetryBudget,
 ): void {
@@ -238,12 +238,12 @@ export function startSearchJob(
 
       setTimeout(async () => {
         try {
-          await runSearchJob(settingsService, bookListService, indexerService, downloadService, log, retryBudget);
+          await runSearchJob(settingsService, bookListService, indexerService, downloadOrchestrator, log, retryBudget);
         } catch (error) {
           log.error(error, 'Search job error');
         }
         try {
-          await runUpgradeSearchJob(settingsService, bookService, indexerService, downloadService, log);
+          await runUpgradeSearchJob(settingsService, bookService, indexerService, downloadOrchestrator, log);
         } catch (error) {
           log.error(error, 'Upgrade search job error');
         }

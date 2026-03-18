@@ -337,7 +337,7 @@ describe('Job lifecycle E2E', () => {
       e2e.services.settings,
       e2e.services.bookList,
       e2e.services.indexer,
-      e2e.services.download,
+      e2e.services.downloadOrchestrator,
       e2e.app.log,
     );
 

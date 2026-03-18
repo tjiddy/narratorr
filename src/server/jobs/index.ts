@@ -15,7 +15,7 @@ import { runDiscoveryJob } from './discovery.js';
 
 export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
   const retrySearchDeps = createRetrySearchDeps(
-    { indexer: services.indexer, download: services.download, blacklist: services.blacklist, book: services.book, settings: services.settings, retryBudget: services.retryBudget },
+    { indexer: services.indexer, downloadOrchestrator: services.downloadOrchestrator, blacklist: services.blacklist, book: services.book, settings: services.settings, retryBudget: services.retryBudget },
     log,
   );
 
@@ -33,8 +33,8 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
     await services.qualityGate.processCompletedDownloads();
     await services.importOrchestrator.processCompletedDownloads();
   }, '*/60 * * * * *');
-  reg.register('search', 'timeout', () => runSearchJob(services.settings, services.bookList, services.indexer, services.download, log, services.retryBudget));
-  reg.register('rss', 'timeout', () => runRssJob(services.settings, services.bookList, services.book, services.indexer, services.download, services.blacklist, log));
+  reg.register('search', 'timeout', () => runSearchJob(services.settings, services.bookList, services.indexer, services.downloadOrchestrator, log, services.retryBudget));
+  reg.register('rss', 'timeout', () => runRssJob(services.settings, services.bookList, services.book, services.indexer, services.downloadOrchestrator, services.blacklist, log));
   reg.register('backup', 'timeout', () => runBackupJob(services.backup, log));
   reg.register('housekeeping', 'cron', async () => {
     await db.run(sql`VACUUM`);

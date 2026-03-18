@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildSearchQuery, searchAndGrabForBook } from './search-pipeline.js';
 import type { IndexerService } from './indexer.service.js';
-import type { DownloadService } from './download.service.js';
+import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/index.js';
 
@@ -71,7 +71,7 @@ describe('buildSearchQuery', () => {
 
 describe('searchAndGrabForBook', () => {
   let indexerService: IndexerService;
-  let downloadService: DownloadService;
+  let downloadService: DownloadOrchestrator;
   let log: FastifyBaseLogger;
 
   beforeEach(() => {
@@ -81,7 +81,7 @@ describe('searchAndGrabForBook', () => {
 
     downloadService = {
       grab: vi.fn().mockResolvedValue({ id: 1, status: 'downloading' }),
-    } as unknown as DownloadService;
+    } as unknown as DownloadOrchestrator;
 
     log = createMockLogger();
   });

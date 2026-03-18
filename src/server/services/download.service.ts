@@ -5,13 +5,9 @@ import { downloads, books } from '../../db/schema.js';
 import { parseInfoHash, type DownloadProtocol } from '../../core/index.js';
 import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses } from '../../shared/download-status-registry.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
-import type { BookStatus } from '../../shared/schemas/book.js';
 import { type DownloadClientService } from './download-client.service.js';
-import { type NotifierService } from './notifier.service.js';
-import { type EventHistoryService, type CreateEventInput } from './event-history.service.js';
+import { type CreateEventInput } from './event-history.service.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
-import { type EventBroadcasterService } from './event-broadcaster.service.js';
-import { revertBookStatus } from '../utils/book-status.js';
 
 import type { DownloadRow } from './types.js';
 
@@ -33,37 +29,11 @@ export class DownloadService {
     private db: Db,
     private downloadClientService: DownloadClientService,
     private log: FastifyBaseLogger,
-    private notifierService?: NotifierService,
-    private eventHistory?: EventHistoryService,
-    private broadcaster?: EventBroadcasterService,
   ) {}
 
   /** Set retry search dependencies (called after service graph construction). */
   setRetrySearchDeps(deps: RetrySearchDeps): void {
     this.retrySearchDeps = deps;
-  }
-
-  /** Fire-and-forget event recording — silently skips if no eventHistory injected. */
-  private emitEvent(input: CreateEventInput): void {
-    this.eventHistory?.create(input)
-      .catch((err) => this.log.warn(err, `Failed to record ${input.eventType} event`));
-  }
-
-  /** Emit grabbed event if bookId is present (fire-and-forget). */
-  private emitEventForGrab(bookId: number | undefined, title: string, downloadId: number, reason?: Record<string, unknown>, source: CreateEventInput['source'] = 'auto'): void {
-    if (bookId) {
-      this.emitEvent({ bookId, bookTitle: title, downloadId, eventType: 'grabbed', source, reason });
-    }
-  }
-
-  /** Look up a download and emit an event for it (fire-and-forget). */
-  private emitEventForDownload(downloadId: number, eventType: CreateEventInput['eventType'], reason?: Record<string, unknown>): void {
-    if (!this.eventHistory) return;
-    this.getById(downloadId).then((dl) => {
-      if (dl?.bookId) {
-        this.emitEvent({ bookId: dl.bookId, bookTitle: dl.title, downloadId: dl.id, eventType, source: 'auto', reason });
-      }
-    }).catch((err) => this.log.warn(err, 'Failed to look up download for event'));
   }
 
   async getAll(
@@ -197,7 +167,31 @@ export class DownloadService {
     }));
   }
 
-  // eslint-disable-next-line complexity -- linear grab flow with per-field conditionals for handoff vs tracked clients
+  /** Send a download to the client and return the external ID. */
+  private async sendToClient(downloadUrl: string, protocol: DownloadProtocol, torrentFile?: Buffer): Promise<{ externalId: string | null; clientId: number; clientType: string }> {
+    const client = await this.downloadClientService.getFirstEnabledForProtocol(protocol);
+    if (!client) throw new Error('No download client configured');
+    const adapter = await this.downloadClientService.getAdapter(client.id);
+    if (!adapter) throw new Error('Could not initialize download client');
+    const settings = (client.settings ?? {}) as Record<string, unknown>;
+    const category = (settings.category as string | undefined)?.trim() || undefined;
+    const addOptions = { ...(category ? { category } : {}), ...(torrentFile ? { torrentFile } : {}) };
+    const externalId = await adapter.addDownload(downloadUrl, Object.keys(addOptions).length > 0 ? addOptions : undefined);
+    return { externalId, clientId: client.id, clientType: client.type };
+  }
+
+  /** Parse data: URI torrent files into a buffer + metadata. */
+  private parseDownloadInput(downloadUrl: string, protocol: DownloadProtocol): { torrentFile?: Buffer; infoHash: string | null; logUrl: string } {
+    const isDataUri = downloadUrl.startsWith('data:application/x-bittorrent;base64,');
+    if (isDataUri) {
+      const base64Content = downloadUrl.slice('data:application/x-bittorrent;base64,'.length);
+      const torrentFile = Buffer.from(base64Content, 'base64');
+      return { torrentFile, infoHash: null, logUrl: `data:application/x-bittorrent [${(torrentFile.length / 1024).toFixed(1)} KB]` };
+    }
+    const infoHash = protocol === 'torrent' ? parseInfoHash(downloadUrl) : null;
+    return { infoHash, logUrl: downloadUrl };
+  }
+
   async grab(params: {
     downloadUrl: string;
     title: string;
@@ -218,35 +212,11 @@ export class DownloadService {
     }
 
     const protocol = params.protocol ?? 'torrent';
+    const { torrentFile, infoHash, logUrl } = this.parseDownloadInput(params.downloadUrl, protocol);
 
-    // Detect data: URI torrent files — decode base64 content for torrent file handoff
-    const isDataUri = params.downloadUrl.startsWith('data:application/x-bittorrent;base64,');
-    let torrentFile: Buffer | undefined;
-    if (isDataUri) {
-      const base64Content = params.downloadUrl.slice('data:application/x-bittorrent;base64,'.length);
-      torrentFile = Buffer.from(base64Content, 'base64');
-    }
-
-    const infoHash = protocol === 'torrent' && !isDataUri ? parseInfoHash(params.downloadUrl) : null;
-
-    // Get the first enabled download client for this protocol
-    const client = await this.downloadClientService.getFirstEnabledForProtocol(protocol);
-    if (!client) {
-      throw new Error('No download client configured');
-    }
-
-    const adapter = await this.downloadClientService.getAdapter(client.id);
-    if (!adapter) {
-      throw new Error('Could not initialize download client');
-    }
-
-    // Add to download client
-    const settings = (client.settings ?? {}) as Record<string, unknown>;
-    const category = (settings.category as string | undefined)?.trim() || undefined;
-    const logUrl = isDataUri ? `data:application/x-bittorrent [${(torrentFile!.length / 1024).toFixed(1)} KB]` : params.downloadUrl;
-    this.log.debug({ protocol, downloadUrl: logUrl, infoHash, clientId: client.id, clientName: client.name, category }, 'Sending download to client');
-    const addOptions = { ...(category ? { category } : {}), ...(torrentFile ? { torrentFile } : {}) };
-    const externalId = await adapter.addDownload(params.downloadUrl, Object.keys(addOptions).length > 0 ? addOptions : undefined);
+    // Send to download client
+    this.log.debug({ protocol, downloadUrl: logUrl, infoHash }, 'Sending download to client');
+    const { externalId, clientId, clientType } = await this.sendToClient(params.downloadUrl, protocol, torrentFile);
 
     // Handoff clients (e.g. Blackhole) return null externalId — mark as completed immediately
     const isHandoff = !externalId;
@@ -254,7 +224,7 @@ export class DownloadService {
     const downloadProgress = isHandoff ? 1 : 0;
     const downloadCompletedAt = isHandoff ? new Date() : undefined;
     if (isHandoff) {
-      this.log.info({ title: params.title, clientType: client.type }, 'Handoff client — download completed immediately (no progress tracking)');
+      this.log.info({ title: params.title, clientType }, 'Handoff client — download completed immediately (no progress tracking)');
     }
 
     // Create download record
@@ -263,7 +233,7 @@ export class DownloadService {
       .values({
         bookId: params.bookId,
         indexerId: params.indexerId,
-        downloadClientId: client.id,
+        downloadClientId: clientId,
         title: params.title,
         protocol,
         infoHash,
@@ -277,52 +247,12 @@ export class DownloadService {
       })
       .returning();
 
-    // Update book status if linked
-    if (params.bookId) {
-      const bookStatus = isHandoff ? 'missing' as const : 'downloading' as const;
-      await this.db
-        .update(books)
-        .set({ status: bookStatus, updatedAt: new Date() })
-        .where(eq(books.id, params.bookId));
-    }
-
     this.log.info({ title: params.title, indexerId: params.indexerId }, 'Download initiated');
-
-    // Fire grab notification (fire-and-forget)
-    if (this.notifierService) {
-      Promise.resolve(this.notifierService.notify('on_grab', {
-        event: 'on_grab',
-        book: { title: params.title },
-        release: { title: params.title, size: params.size },
-      })).catch((err) => this.log.warn(err, 'Failed to send grab notification'));
-    }
-
-    // Record grabbed event (fire-and-forget)
-    this.emitEventForGrab(params.bookId, params.title, result[0].id, {
-      indexerId: params.indexerId,
-      size: params.size,
-      protocol,
-    }, params.source);
-
-    // SSE: grab_started
-    if (params.bookId) {
-      try {
-        this.broadcaster?.emit('grab_started', {
-          download_id: result[0].id, book_id: params.bookId, book_title: params.title, release_title: params.title,
-        });
-        // SSE: book_status_change (wanted -> downloading or missing for handoff)
-        const bookStatus = isHandoff ? 'missing' as const : 'downloading' as const;
-        this.broadcaster?.emit('book_status_change', {
-          book_id: params.bookId, old_status: 'wanted', new_status: bookStatus,
-        });
-      } catch (e) { this.log.debug(e, 'SSE emit failed'); }
-    }
 
     return this.getById(result[0].id) as Promise<DownloadWithBook>;
   }
 
-  async updateProgress(id: number, progress: number, bookId?: number): Promise<void> {
-    const oldStatus: DownloadStatus = 'downloading';
+  async updateProgress(id: number, progress: number, _bookId?: number): Promise<void> {
     const status: DownloadStatus = progress >= 1 ? 'completed' : 'downloading';
     const completedAt = progress >= 1 ? new Date() : null;
 
@@ -335,51 +265,24 @@ export class DownloadService {
       .set({ progress, status, completedAt, ...(progressChanged ? { progressUpdatedAt: new Date() } : {}) })
       .where(eq(downloads.id, id));
 
-    // SSE: download_progress (always emit if we have a broadcaster)
-    if (bookId) {
-      try { this.broadcaster?.emit('download_progress', { download_id: id, book_id: bookId, percentage: progress, speed: null, eta: null }); } catch (e) { this.log.debug(e, 'SSE emit failed'); }
-    }
-
     if (progress >= 1) {
       this.log.info({ id }, 'Download completed');
-
-      // SSE: download_status_change
-      if (bookId) {
-        try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: bookId, old_status: oldStatus, new_status: status }); } catch (e) { this.log.debug(e, 'SSE emit failed'); }
-      }
-
-      // Record download_completed event (fire-and-forget)
-      this.emitEventForDownload(id, 'download_completed', { progress: 1 });
     }
   }
 
-  async updateStatus(id: number, status: DownloadRow['status'], meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
+  async updateStatus(id: number, status: DownloadRow['status'], _meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
     await this.db.update(downloads).set({ status }).where(eq(downloads.id, id));
     this.log.info({ id, status }, 'Download status changed');
-
-    // SSE: download_status_change
-    if (meta?.bookId && meta?.oldStatus) {
-      try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: meta.bookId, old_status: meta.oldStatus, new_status: status as DownloadStatus }); } catch (e) { this.log.debug(e, 'SSE emit failed'); }
-    }
   }
 
-  async setError(id: number, errorMessage: string, meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
+  async setError(id: number, errorMessage: string, _meta?: { bookId?: number; oldStatus?: DownloadStatus }): Promise<void> {
     await this.db
       .update(downloads)
       .set({ status: 'failed', errorMessage })
       .where(eq(downloads.id, id));
     this.log.warn({ id, error: errorMessage }, 'Download error recorded');
-
-    // SSE: download_status_change
-    if (meta?.bookId && meta?.oldStatus) {
-      try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: meta.bookId, old_status: meta.oldStatus, new_status: 'failed' }); } catch (e) { this.log.debug(e, 'SSE emit failed'); }
-    }
-
-    // Record download_failed event (fire-and-forget)
-    this.emitEventForDownload(id, 'download_failed', { error: errorMessage });
   }
 
-  // eslint-disable-next-line complexity -- linear cancel flow with SSE emission at each status transition
   async cancel(id: number): Promise<boolean> {
     const download = await this.getById(id);
     if (!download) return false;
@@ -397,25 +300,10 @@ export class DownloadService {
     }
 
     // Update download status
-    const oldStatus = download.status as DownloadStatus;
     await this.db
       .update(downloads)
       .set({ status: 'failed', errorMessage: 'Cancelled by user' })
       .where(eq(downloads.id, id));
-
-    // SSE: download_status_change
-    if (download.bookId) {
-      try { this.broadcaster?.emit('download_status_change', { download_id: id, book_id: download.bookId, old_status: oldStatus, new_status: 'failed' }); } catch (e) { this.log.debug(e, 'SSE emit failed'); }
-    }
-
-    // Reset book status if linked — revert to imported if book has a path, else wanted
-    if (download.bookId) {
-      const oldBookStatus = (download.book?.status ?? 'downloading') as BookStatus;
-      const revertStatus = await revertBookStatus(this.db, { id: download.bookId, path: download.book?.path ?? null });
-
-      // SSE: book_status_change
-      try { this.broadcaster?.emit('book_status_change', { book_id: download.bookId, old_status: oldBookStatus, new_status: revertStatus }); } catch (e) { this.log.debug(e, 'SSE emit failed'); }
-    }
 
     this.log.info({ id }, 'Download cancelled');
     return true;

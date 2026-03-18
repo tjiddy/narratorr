@@ -202,7 +202,7 @@ describe('activity routes', () => {
 
   describe('DELETE /api/activity/:id', () => {
     it('cancels download and returns success', async () => {
-      (services.download.cancel as Mock).mockResolvedValue(true);
+      (services.downloadOrchestrator.cancel as Mock).mockResolvedValue(true);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/activity/1' });
 
@@ -211,7 +211,7 @@ describe('activity routes', () => {
     });
 
     it('returns 404 when not found', async () => {
-      (services.download.cancel as Mock).mockResolvedValue(false);
+      (services.downloadOrchestrator.cancel as Mock).mockResolvedValue(false);
 
       const res = await app.inject({ method: 'DELETE', url: '/api/activity/999' });
 
@@ -222,17 +222,17 @@ describe('activity routes', () => {
   describe('POST /api/activity/:id/retry', () => {
     it('returns 201 with new download on successful retry', async () => {
       const newDownload = { ...mockDownload, id: 2 };
-      (services.download.retry as Mock).mockResolvedValue({ status: 'retried', download: newDownload });
+      (services.downloadOrchestrator.retry as Mock).mockResolvedValue({ status: 'retried', download: newDownload });
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
       expect(res.statusCode).toBe(201);
-      expect(services.download.retry).toHaveBeenCalledWith(1);
+      expect(services.downloadOrchestrator.retry).toHaveBeenCalledWith(1);
       expect(JSON.parse(res.payload).id).toBe(2);
     });
 
     it('returns 200 with no_candidates status when no candidates found', async () => {
-      (services.download.retry as Mock).mockResolvedValue({ status: 'no_candidates' });
+      (services.downloadOrchestrator.retry as Mock).mockResolvedValue({ status: 'no_candidates' });
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
@@ -241,7 +241,7 @@ describe('activity routes', () => {
     });
 
     it('returns 200 with retry_error status when retry search errors', async () => {
-      (services.download.retry as Mock).mockResolvedValue({ status: 'retry_error' });
+      (services.downloadOrchestrator.retry as Mock).mockResolvedValue({ status: 'retry_error' });
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
@@ -250,7 +250,7 @@ describe('activity routes', () => {
     });
 
     it('returns 404 when download not found', async () => {
-      (services.download.retry as Mock).mockRejectedValue(new Error('Download 999 not found'));
+      (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new Error('Download 999 not found'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/999/retry' });
 
@@ -258,7 +258,7 @@ describe('activity routes', () => {
     });
 
     it('returns 404 when no book linked', async () => {
-      (services.download.retry as Mock).mockRejectedValue(new Error('Download 1 has no book linked'));
+      (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new Error('Download 1 has no book linked'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
@@ -266,7 +266,7 @@ describe('activity routes', () => {
     });
 
     it('returns 400 when download not in failed state', async () => {
-      (services.download.retry as Mock).mockRejectedValue(new Error('Download 1 is not in failed state'));
+      (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new Error('Download 1 is not in failed state'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
@@ -274,7 +274,7 @@ describe('activity routes', () => {
     });
 
     it('returns 500 when retry fails unexpectedly', async () => {
-      (services.download.retry as Mock).mockRejectedValue(new Error('No client'));
+      (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new Error('No client'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
@@ -451,7 +451,7 @@ describe('activity routes', () => {
 
   describe('error paths', () => {
     it('DELETE /api/activity/:id returns 500 when cancel throws', async () => {
-      (services.download.cancel as Mock).mockRejectedValue(new Error('Adapter error'));
+      (services.downloadOrchestrator.cancel as Mock).mockRejectedValue(new Error('Adapter error'));
 
       const res = await app.inject({ method: 'DELETE', url: '/api/activity/1' });
 
@@ -522,12 +522,12 @@ describe('activity routes', () => {
 
     it('POST /api/activity/:id/retry delegates to service retry method', async () => {
       const newDownload = { ...mockDownload, id: 2 };
-      (services.download.retry as Mock).mockResolvedValue({ status: 'retried', download: newDownload });
+      (services.downloadOrchestrator.retry as Mock).mockResolvedValue({ status: 'retried', download: newDownload });
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
       expect(res.statusCode).toBe(201);
-      expect(services.download.retry).toHaveBeenCalledWith(1);
+      expect(services.downloadOrchestrator.retry).toHaveBeenCalledWith(1);
     });
   });
 

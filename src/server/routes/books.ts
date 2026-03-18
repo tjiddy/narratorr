@@ -2,11 +2,13 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService, RecyclingBinService } from '../services/index.js';
+import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 
 export interface BookRouteDeps {
   bookService: BookService;
   bookListService: BookListService;
   downloadService: DownloadService;
+  downloadOrchestrator: DownloadOrchestrator;
   settingsService: SettingsService;
   renameService: RenameService;
   taggingService: TaggingService;
@@ -39,19 +41,19 @@ import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 /** Fire-and-forget: search indexers and grab the best result for a newly added book. */
 function triggerImmediateSearch(
   book: { id: number; title: string; duration?: number | null; author?: { name: string } | null },
-  deps: Pick<BookRouteDeps, 'indexerService' | 'downloadService' | 'settingsService'>,
+  deps: Pick<BookRouteDeps, 'indexerService' | 'downloadOrchestrator' | 'settingsService'>,
   log: FastifyBaseLogger,
 ) {
   deps.settingsService.get('quality')
     .then(async (qualitySettings) => {
-      await searchAndGrabForBook(book, deps.indexerService!, deps.downloadService, qualitySettings, log);
+      await searchAndGrabForBook(book, deps.indexerService!, deps.downloadOrchestrator, qualitySettings, log);
     })
     .catch((err) => {
       log.warn({ error: err, bookId: book.id }, 'Search-immediately trigger failed');
     });
 }
 
-async function registerDeleteBookRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadService' | 'settingsService' | 'eventHistory' | 'recyclingBinService'>) {
+async function registerDeleteBookRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadService' | 'downloadOrchestrator' | 'settingsService' | 'eventHistory' | 'recyclingBinService'>) {
 app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
   '/api/books/:id',
   { schema: { params: idParamSchema, querystring: deleteBookQuerySchema } },
@@ -91,7 +93,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     const activeDownloads = await deps.downloadService.getActiveByBookId(id);
     for (const download of activeDownloads) {
       try {
-        await deps.downloadService.cancel(download.id);
+        await deps.downloadOrchestrator.cancel(download.id);
       } catch (error) {
         request.log.warn({ downloadId: download.id, error }, 'Failed to cancel download during book deletion');
       }
@@ -139,7 +141,7 @@ async function registerDeleteMissingRoute(app: FastifyInstance, deps: Pick<BookR
   });
 }
 
-function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadService' | 'settingsService' | 'indexerService'>) {
+function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadOrchestrator' | 'settingsService' | 'indexerService'>) {
   app.post<{ Params: IdParam }>(
     '/api/books/:id/search',
     { schema: { params: idParamSchema } },
@@ -155,7 +157,7 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
         const result = await searchAndGrabForBook(
           book,
           deps.indexerService!,
-          deps.downloadService,
+          deps.downloadOrchestrator,
           qualitySettings,
           request.log,
         );

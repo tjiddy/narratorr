@@ -580,7 +580,7 @@ describe('search routes', () => {
   describe('POST /api/search/grab', () => {
     it('grabs download and returns 201', async () => {
       const mockDownload = { id: 1, title: 'Test', status: 'downloading' };
-      (services.download.grab as Mock).mockResolvedValue(mockDownload);
+      (services.downloadOrchestrator.grab as Mock).mockResolvedValue(mockDownload);
 
       const res = await app.inject({
         method: 'POST',
@@ -620,7 +620,7 @@ describe('search routes', () => {
     });
 
     it('returns 500 when grab fails', async () => {
-      (services.download.grab as Mock).mockRejectedValue(new Error('No download client'));
+      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new Error('No download client'));
 
       const res = await app.inject({
         method: 'POST',

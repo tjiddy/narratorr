@@ -1,6 +1,6 @@
 import { type FastifyInstance } from 'fastify';
 import { type IndexerService } from '../services';
-import { type DownloadService } from '../services';
+import { type DownloadOrchestrator } from '../services/download-orchestrator.js';
 import { type BlacklistService } from '../services';
 import { type SettingsService } from '../services';
 import { isMultiPartUsenetPost } from '../../core/utils/index.js';
@@ -15,7 +15,7 @@ import {
 export async function searchRoutes(
   app: FastifyInstance,
   indexerService: IndexerService,
-  downloadService: DownloadService,
+  downloadOrchestrator: DownloadOrchestrator,
   blacklistService: BlacklistService,
   settingsService: SettingsService,
 ) {
@@ -96,7 +96,7 @@ export async function searchRoutes(
       try {
         request.log.info({ title: data.title }, 'Grab requested');
         request.log.debug({ title: data.title, protocol: data.protocol, downloadUrl: data.downloadUrl, bookId: data.bookId }, 'Grab details');
-        const download = await downloadService.grab(data);
+        const download = await downloadOrchestrator.grab(data);
         request.log.debug({ downloadId: download.id, status: download.status, externalId: download.externalId }, 'Grab completed');
         return await reply.status(201).send(download);
       } catch (error) {

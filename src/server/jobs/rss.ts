@@ -6,7 +6,7 @@ import type { SettingsService } from '../services/settings.service.js';
 import type { BookService, BookWithAuthor } from '../services/book.service.js';
 import type { BookListService } from '../services/book-list.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
-import type { DownloadService } from '../services/download.service.js';
+import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import { filterAndRankResults } from '../services/search-pipeline.js';
 
@@ -28,7 +28,7 @@ export async function runRssJob(
   bookListService: BookListService,
   bookService: BookService,
   indexerService: IndexerService,
-  downloadService: DownloadService,
+  downloadOrchestrator: DownloadOrchestrator,
   blacklistService: BlacklistService,
   log: FastifyBaseLogger,
 ): Promise<RssJobResult> {
@@ -189,7 +189,7 @@ export async function runRssJob(
 
     // Attempt grab with mutex
     try {
-      await downloadService.grab({
+      await downloadOrchestrator.grab({
         downloadUrl: best.downloadUrl!,
         title: best.title,
         protocol: best.protocol,
@@ -223,7 +223,7 @@ export function startRssJob(
   bookListService: BookListService,
   bookService: BookService,
   indexerService: IndexerService,
-  downloadService: DownloadService,
+  downloadOrchestrator: DownloadOrchestrator,
   blacklistService: BlacklistService,
   log: FastifyBaseLogger,
 ): void {
@@ -234,7 +234,7 @@ export function startRssJob(
 
       setTimeout(async () => {
         try {
-          await runRssJob(settingsService, bookListService, bookService, indexerService, downloadService, blacklistService, log);
+          await runRssJob(settingsService, bookListService, bookService, indexerService, downloadOrchestrator, blacklistService, log);
         } catch (error) {
           log.error(error, 'RSS sync job error');
         }

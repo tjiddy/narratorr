@@ -2,7 +2,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { calculateQuality } from '../../core/utils/index.js';
 import type { SearchResult } from '../../core/index.js';
 import type { IndexerService } from './indexer.service.js';
-import type { DownloadService } from './download.service.js';
+import type { DownloadOrchestrator } from './download-orchestrator.js';
 
 /** Build a search query string from a book's title and author. */
 export function buildSearchQuery(book: { title: string; author?: { name: string } | null }): string {
@@ -122,7 +122,7 @@ export type SingleBookSearchResult =
 export async function searchAndGrabForBook(
   book: { id: number; title: string; duration?: number | null; author?: { name: string } | null },
   indexerService: IndexerService,
-  downloadService: DownloadService,
+  downloadOrchestrator: DownloadOrchestrator,
   qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string },
   log: FastifyBaseLogger,
 ): Promise<SingleBookSearchResult> {
@@ -155,7 +155,7 @@ export async function searchAndGrabForBook(
   }
 
   try {
-    await downloadService.grab({
+    await downloadOrchestrator.grab({
       downloadUrl: best.downloadUrl!,
       title: best.title,
       protocol: best.protocol,

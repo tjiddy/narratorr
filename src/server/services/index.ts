@@ -5,6 +5,7 @@ export { DownloadClientService } from './download-client.service.js';
 export { BookService, type BookWithAuthor } from './book.service.js';
 export { BookListService, type BookListOptions, type BookStats } from './book-list.service.js';
 export { DownloadService, type DownloadWithBook, type RetryResult } from './download.service.js';
+export { DownloadOrchestrator } from './download-orchestrator.js';
 export { MetadataService } from './metadata.service.js';
 export { ImportService } from './import.service.js';
 export { ImportOrchestrator } from './import-orchestrator.js';

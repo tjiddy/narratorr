@@ -5,7 +5,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { BookService } from '../services/book.service.js';
 import type { BookListService } from '../services/book-list.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
-import type { DownloadService } from '../services/download.service.js';
+import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { SearchResult } from '../../core/index.js';
 
 function createMockBookListService(books: unknown[] = []): BookListService {
@@ -43,8 +43,8 @@ function createMockIndexerService(results: SearchResult[] = []): IndexerService 
   });
 }
 
-function createMockDownloadService(): DownloadService {
-  return inject<DownloadService>({
+function createMockDownloadOrchestrator(): DownloadOrchestrator {
+  return inject<DownloadOrchestrator>({
     grab: vi.fn().mockResolvedValue({ id: 1 }),
     getAll: vi.fn(),
     getById: vi.fn(),
@@ -83,7 +83,7 @@ describe('runSearchJob', () => {
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService([]);
     const indexer = createMockIndexerService();
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log), retryBudget);
 
@@ -94,7 +94,7 @@ describe('runSearchJob', () => {
     const settings = createMockSettingsService({ search: { enabled: false, intervalMinutes: 60 } });
     const bookList = createMockBookListService();
     const indexer = createMockIndexerService();
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -110,7 +110,7 @@ describe('runSearchJob', () => {
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -126,7 +126,7 @@ describe('runSearchJob', () => {
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -147,7 +147,7 @@ describe('runSearchJob', () => {
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]); // no results for any search
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -179,7 +179,7 @@ describe('runSearchJob', () => {
       .mockResolvedValueOnce(results)     // Book A succeeds with results
       .mockRejectedValueOnce(new Error('Network error'))  // Book B throws
       .mockResolvedValueOnce(results);    // Book C succeeds with results
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -201,7 +201,7 @@ describe('runSearchJob', () => {
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -216,7 +216,7 @@ describe('runSearchJob', () => {
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     // grab throws duplicate error
     vi.mocked(download.grab).mockRejectedValueOnce(
@@ -239,7 +239,7 @@ describe('runSearchJob', () => {
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     // grab throws a non-duplicate error
     vi.mocked(download.grab).mockRejectedValueOnce(
@@ -268,7 +268,7 @@ describe('runSearchJob', () => {
     vi.mocked(indexer.searchAll)
       .mockRejectedValueOnce(new Error('Indexer down'))
       .mockResolvedValueOnce([]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -287,7 +287,7 @@ describe('runSearchJob', () => {
       { ...mockResult(10, 'magnet:?xt=urn:btih:aaa'), title: 'German Edition' },
       { ...mockResult(10, 'magnet:?xt=urn:btih:bbb'), title: 'English Edition' },
     ]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -309,7 +309,7 @@ describe('runSearchJob', () => {
       { ...mockResult(10, 'magnet:?xt=urn:btih:aaa'), title: 'Book MP3' },
       { ...mockResult(10, 'magnet:?xt=urn:btih:bbb'), title: 'Book M4B' },
     ]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -330,7 +330,7 @@ describe('runSearchJob', () => {
     const bookList = createMockBookListService(wantedBooks);
     // Only result has 2 seeders — below min
     const indexer = createMockIndexerService([mockResult(2, 'magnet:?xt=urn:btih:aaa')]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runSearchJob(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -370,7 +370,7 @@ describe('runUpgradeSearchJob', () => {
     const settings = createMockSettingsService({ search: { enabled: false, intervalMinutes: 60 } });
     const books = createMockBookService([makeMonitoredBook()]);
     const indexer = createMockIndexerService();
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -382,7 +382,7 @@ describe('runUpgradeSearchJob', () => {
     const settings = createMockSettingsService();
     const books = createMockBookService([]);
     const indexer = createMockIndexerService();
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -394,7 +394,7 @@ describe('runUpgradeSearchJob', () => {
     const settings = createMockSettingsService();
     const books = createMockBookService([book]);
     const indexer = createMockIndexerService();
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -407,7 +407,7 @@ describe('runUpgradeSearchJob', () => {
     const settings = createMockSettingsService();
     const books = createMockBookService([book]);
     const indexer = createMockIndexerService();
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -434,7 +434,7 @@ describe('runUpgradeSearchJob', () => {
       downloadUrl: 'magnet:?xt=urn:btih:upgrade',
     };
     const indexer = createMockIndexerService([higherResult]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -467,7 +467,7 @@ describe('runUpgradeSearchJob', () => {
       downloadUrl: 'magnet:?xt=urn:btih:similar',
     };
     const indexer = createMockIndexerService([similarResult]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -492,7 +492,7 @@ describe('runUpgradeSearchJob', () => {
       downloadUrl: 'magnet:?xt=urn:btih:belowfloor',
     };
     const indexer = createMockIndexerService([result100]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -510,7 +510,7 @@ describe('runUpgradeSearchJob', () => {
     vi.mocked(indexer.searchAll)
       .mockRejectedValueOnce(new Error('Indexer down'))
       .mockResolvedValueOnce([]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -539,7 +539,7 @@ describe('runUpgradeSearchJob', () => {
       downloadUrl: 'magnet:?xt=urn:btih:german',
     };
     const indexer = createMockIndexerService([germanResult]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -564,7 +564,7 @@ describe('runUpgradeSearchJob', () => {
       downloadUrl: 'magnet:?xt=urn:btih:mp3',
     };
     const indexer = createMockIndexerService([mp3Result]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await runUpgradeSearchJob(settings, books, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -588,7 +588,7 @@ describe('runUpgradeSearchJob', () => {
       downloadUrl: 'magnet:?xt=urn:btih:upgrade',
     };
     const indexer = createMockIndexerService([higherResult]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     vi.mocked(download.grab).mockRejectedValueOnce(
       new Error('Book 1 already has an active download (id: 5)'),
@@ -622,7 +622,7 @@ describe('searchAllWanted', () => {
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -638,7 +638,7 @@ describe('searchAllWanted', () => {
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -654,7 +654,7 @@ describe('searchAllWanted', () => {
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab).mockRejectedValueOnce(new Error('Book 1 already has an active download (id: 5)'));
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
@@ -678,7 +678,7 @@ describe('searchAllWanted', () => {
       .mockResolvedValueOnce(results)
       .mockRejectedValueOnce(new Error('Network error'))
       .mockResolvedValueOnce(results);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -693,7 +693,7 @@ describe('searchAllWanted', () => {
     const settings = createMockSettingsService({ search: { enabled: false, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([mockResult(10, 'magnet:?xt=urn:btih:aaa')]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -715,7 +715,7 @@ describe('searchAllWanted', () => {
       .mockResolvedValueOnce(results) // Book A — grab succeeds
       .mockResolvedValueOnce(results) // Book B — grab fails (active download)
       .mockResolvedValueOnce(results); // Book C — grab succeeds
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab)
       .mockResolvedValueOnce({ id: 1 } as never)
       .mockRejectedValueOnce(new Error('already has an active download'))
@@ -733,7 +733,7 @@ describe('searchAllWanted', () => {
     const settings = createMockSettingsService({ quality: { grabFloor: 100, minSeeders: 0, protocolPreference: 'none' } });
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -748,7 +748,7 @@ describe('searchAllWanted', () => {
     const settings = createMockSettingsService({ quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' } });
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -761,7 +761,7 @@ describe('searchAllWanted', () => {
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService(searchResults);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -774,7 +774,7 @@ describe('searchAllWanted', () => {
     const settings = createMockSettingsService();
     const bookList = createMockBookListService([]);
     const indexer = createMockIndexerService();
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -789,7 +789,7 @@ describe('searchAllWanted', () => {
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([mockResult(10, 'magnet:?aaa')]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab).mockRejectedValue(new Error('already has an active download'));
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
@@ -806,7 +806,7 @@ describe('searchAllWanted', () => {
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -819,7 +819,7 @@ describe('searchAllWanted', () => {
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
 
     await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
 
@@ -842,7 +842,7 @@ describe('searchAllWanted', () => {
       .mockRejectedValueOnce(new Error('Timeout')) // Book B — search fails
       .mockResolvedValueOnce(results) // Book C — active download
       .mockResolvedValueOnce([]); // Book D — no results
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab)
       .mockResolvedValueOnce({ id: 1 } as never) // Book A
       .mockRejectedValueOnce(new Error('already has an active download')); // Book C
@@ -857,7 +857,7 @@ describe('searchAllWanted', () => {
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([mockResult(10, 'magnet:?aaa')]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab).mockRejectedValueOnce('already has an active download');
 
     const result = await searchAllWanted(settings, bookList, indexer, download, inject<FastifyBaseLogger>(log));
@@ -871,7 +871,7 @@ describe('searchAllWanted', () => {
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([mockResult(10, 'magnet:?xt=urn:btih:aaa')]);
-    const download = createMockDownloadService();
+    const download = createMockDownloadOrchestrator();
     vi.mocked(download.grab).mockRejectedValueOnce(
       new Error('No download client configured'),
     );

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { DownloadService } from '../services';
+import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { QualityGateService } from '../services/quality-gate.service.js';
 import type { ImportService } from '../services/import.service.js';
 import type { ImportOrchestrator } from '../services/import-orchestrator.js';
@@ -15,7 +16,7 @@ const activityListQuerySchema = z.object({
 
 type ActivityListQuery = z.infer<typeof activityListQuerySchema>;
 
-export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, qualityGateService: QualityGateService, importService: ImportService, importOrchestrator: ImportOrchestrator) {
+export async function activityRoutes(app: FastifyInstance, downloadService: DownloadService, downloadOrchestrator: DownloadOrchestrator, qualityGateService: QualityGateService, importService: ImportService, importOrchestrator: ImportOrchestrator) {
   // GET /api/activity
   app.get<{ Querystring: ActivityListQuery }>(
     '/api/activity',
@@ -98,7 +99,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     async (request, reply) => {
       try {
         const { id } = request.params;
-        const cancelled = await downloadService.cancel(id);
+        const cancelled = await downloadOrchestrator.cancel(id);
 
         if (!cancelled) {
           return await reply.status(404).send({ error: 'Download not found' });
@@ -122,7 +123,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
 
       try {
         request.log.info({ id }, 'Download retry');
-        const result = await downloadService.retry(id);
+        const result = await downloadOrchestrator.retry(id);
 
         switch (result.status) {
           case 'retried':
