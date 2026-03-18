@@ -2,6 +2,12 @@ import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-or
 import { sql } from 'drizzle-orm';
 import { downloadStatusSchema } from '../shared/schemas/activity';
 import { SUGGESTION_REASONS } from '../shared/schemas/discovery';
+import { bookStatusSchema } from '../shared/schemas/book';
+import { enrichmentStatusSchema } from '../shared/schemas/enrichment';
+import { indexerTypeSchema } from '../shared/schemas/indexer';
+import { downloadClientTypeSchema } from '../shared/schemas/download-client';
+import { notifierTypeSchema } from '../shared/schemas/notifier';
+import { importListTypeSchema } from '../shared/schemas/import-list';
 
 // ============ LIBRARY ============
 
@@ -39,12 +45,12 @@ export const books = sqliteTable('books', {
   publishedDate: text('published_date'),
   genres: text('genres', { mode: 'json' }).$type<string[]>(),
   status: text('status', {
-    enum: ['wanted', 'searching', 'downloading', 'importing', 'imported', 'missing', 'failed'],
+    enum: bookStatusSchema.options as unknown as [string, ...string[]],
   })
     .notNull()
     .default('wanted'),
   enrichmentStatus: text('enrichment_status', {
-    enum: ['pending', 'enriched', 'failed', 'skipped', 'file-enriched'],
+    enum: enrichmentStatusSchema.options as unknown as [string, ...string[]],
   })
     .notNull()
     .default('pending'),
@@ -82,7 +88,7 @@ export const books = sqliteTable('books', {
 export const indexers = sqliteTable('indexers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: ['abb', 'torznab', 'newznab', 'myanonamouse'] }).notNull(),
+  type: text('type', { enum: indexerTypeSchema.options as unknown as [string, ...string[]] }).notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   priority: integer('priority').notNull().default(50),
   settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
@@ -98,7 +104,7 @@ export const indexers = sqliteTable('indexers', {
 export const downloadClients = sqliteTable('download_clients', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: ['qbittorrent', 'transmission', 'sabnzbd', 'nzbget', 'deluge', 'blackhole'] }).notNull(),
+  type: text('type', { enum: downloadClientTypeSchema.options as unknown as [string, ...string[]] }).notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   priority: integer('priority').notNull().default(50),
   settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
@@ -129,7 +135,7 @@ export const remotePathMappings = sqliteTable('remote_path_mappings', {
 export const notifiers = sqliteTable('notifiers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: ['webhook', 'discord', 'script', 'email', 'telegram', 'slack', 'pushover', 'ntfy', 'gotify'] }).notNull(),
+  type: text('type', { enum: notifierTypeSchema.options as unknown as [string, ...string[]] }).notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   events: text('events', { mode: 'json' }).notNull().$type<string[]>(),
   settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
@@ -143,7 +149,7 @@ export const notifiers = sqliteTable('notifiers', {
 export const importLists = sqliteTable('import_lists', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: ['abs', 'nyt', 'hardcover'] }).notNull(),
+  type: text('type', { enum: importListTypeSchema.options as unknown as [string, ...string[]] }).notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   settings: text('settings', { mode: 'json' }).notNull().$type<Record<string, unknown>>(),
   syncIntervalMinutes: integer('sync_interval_minutes').notNull().default(1440),

@@ -1,6 +1,9 @@
 import type { CreateIndexerFormData } from './schemas.js';
 import type { RegistryEntry } from './registry-types.js';
 
+export const INDEXER_TYPES = ['abb', 'torznab', 'newznab', 'myanonamouse'] as const;
+export type IndexerType = typeof INDEXER_TYPES[number];
+
 type IndexerTypeMetadata = RegistryEntry<CreateIndexerFormData['settings']>;
 
 export const INDEXER_REGISTRY: Record<string, IndexerTypeMetadata> = {
@@ -36,4 +39,4 @@ export const INDEXER_REGISTRY: Record<string, IndexerTypeMetadata> = {
     ],
     viewSubtitle: (s) => (s.baseUrl as string) || 'myanonamouse.net',
   },
-};
+} satisfies Record<IndexerType, IndexerTypeMetadata>;

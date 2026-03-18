@@ -14,6 +14,9 @@ interface DownloadClientTypeMetadata extends RegistryEntry<CreateDownloadClientF
   protocol: 'torrent' | 'usenet' | 'per-instance';
 }
 
+export const DOWNLOAD_CLIENT_TYPES = ['qbittorrent', 'transmission', 'sabnzbd', 'nzbget', 'deluge', 'blackhole'] as const;
+export type DownloadClientType = typeof DOWNLOAD_CLIENT_TYPES[number];
+
 export const DOWNLOAD_CLIENT_REGISTRY: Record<string, DownloadClientTypeMetadata> = {
   qbittorrent: {
     label: 'qBittorrent',
@@ -108,7 +111,7 @@ export const DOWNLOAD_CLIENT_REGISTRY: Record<string, DownloadClientTypeMetadata
     supportsCategories: false,
     protocol: 'per-instance',
   },
-};
+} satisfies Record<DownloadClientType, DownloadClientTypeMetadata>;
 
 /** Normalize raw DB settings into typed form settings */
 export function settingsFromClient(

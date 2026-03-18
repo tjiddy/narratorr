@@ -1,11 +1,11 @@
 import { z } from 'zod';
-import { INDEXER_REGISTRY } from '../indexer-registry.js';
+import { INDEXER_REGISTRY, INDEXER_TYPES } from '../indexer-registry.js';
 
 // ============================================================================
 // Indexer schemas
 // ============================================================================
 
-export const indexerTypeSchema = z.enum(['abb', 'torznab', 'newznab', 'myanonamouse']);
+export const indexerTypeSchema = z.enum(INDEXER_TYPES);
 
 // Server-side: accepts any settings shape (type-specific validation is client-side only)
 export const createIndexerSchema = z.object({

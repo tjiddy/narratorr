@@ -1,11 +1,11 @@
 import { z } from 'zod';
-import { IMPORT_LIST_REGISTRY } from '../import-list-registry.js';
+import { IMPORT_LIST_REGISTRY, IMPORT_LIST_TYPES } from '../import-list-registry.js';
 
 // ============================================================================
 // Import List schemas
 // ============================================================================
 
-export const importListTypeSchema = z.enum(['abs', 'nyt', 'hardcover']);
+export const importListTypeSchema = z.enum(IMPORT_LIST_TYPES);
 
 function validateRequiredSettings(data: { type: string; settings: Record<string, unknown> }, ctx: z.RefinementCtx) {
   const meta = IMPORT_LIST_REGISTRY[data.type];

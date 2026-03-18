@@ -3,7 +3,8 @@ import type { TestResult } from '@/lib/api';
 import { TestResultMessage } from '@/components/TestResultMessage';
 import { SettingsFormActions } from './SettingsFormActions';
 import { NotifierFields } from './NotifierFields';
-import { NOTIFIER_REGISTRY, EVENT_LABELS } from '../../../shared/notifier-registry.js';
+import { NOTIFIER_REGISTRY } from '../../../shared/notifier-registry.js';
+import { EVENT_LABELS } from '../../../shared/notification-events.js';
 import {
   notifierTypeSchema,
   notificationEventSchema,

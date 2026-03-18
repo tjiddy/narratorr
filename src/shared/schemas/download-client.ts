@@ -1,11 +1,11 @@
 import { z } from 'zod';
-import { DOWNLOAD_CLIENT_REGISTRY } from '../download-client-registry.js';
+import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES } from '../download-client-registry.js';
 
 // ============================================================================
 // Download Client schemas
 // ============================================================================
 
-export const downloadClientTypeSchema = z.enum(['qbittorrent', 'transmission', 'sabnzbd', 'nzbget', 'deluge', 'blackhole']);
+export const downloadClientTypeSchema = z.enum(DOWNLOAD_CLIENT_TYPES);
 
 // Server-side: accepts any settings shape (type-specific validation is client-side only)
 export const createDownloadClientSchema = z.object({

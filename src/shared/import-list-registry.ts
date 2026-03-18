@@ -1,6 +1,9 @@
 import type { CreateImportListFormData } from './schemas.js';
 import type { RegistryEntry } from './registry-types.js';
 
+export const IMPORT_LIST_TYPES = ['abs', 'nyt', 'hardcover'] as const;
+export type ImportListType = typeof IMPORT_LIST_TYPES[number];
+
 type ImportListTypeMetadata = RegistryEntry<CreateImportListFormData['settings']>;
 
 export const IMPORT_LIST_REGISTRY: Record<string, ImportListTypeMetadata> = {
@@ -30,4 +33,4 @@ export const IMPORT_LIST_REGISTRY: Record<string, ImportListTypeMetadata> = {
     ],
     viewSubtitle: (s) => (s.listType as string) || 'trending',
   },
-};
+} satisfies Record<ImportListType, ImportListTypeMetadata>;

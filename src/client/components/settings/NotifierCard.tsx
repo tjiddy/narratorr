@@ -4,7 +4,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import type { Notifier, TestResult } from '@/lib/api';
 import { SettingsCardShell, type IdTestResult } from './SettingsCardShell';
 import { NotifierCardForm } from './NotifierCardForm';
-import { NOTIFIER_REGISTRY, EVENT_LABELS } from '../../../shared/notifier-registry.js';
+import { NOTIFIER_REGISTRY } from '../../../shared/notifier-registry.js';
+import { EVENT_LABELS } from '../../../shared/notification-events.js';
 import {
   createNotifierFormSchema,
   type CreateNotifierFormData,

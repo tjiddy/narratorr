@@ -1,6 +1,9 @@
 import type { CreateNotifierFormData } from './schemas.js';
 import type { RegistryEntry } from './registry-types.js';
 
+export const NOTIFIER_TYPES = ['webhook', 'discord', 'script', 'email', 'telegram', 'slack', 'pushover', 'ntfy', 'gotify'] as const;
+export type NotifierType = typeof NOTIFIER_TYPES[number];
+
 type NotifierTypeMetadata = RegistryEntry<CreateNotifierFormData['settings']>;
 
 export const NOTIFIER_REGISTRY: Record<string, NotifierTypeMetadata> = {
@@ -71,13 +74,6 @@ export const NOTIFIER_REGISTRY: Record<string, NotifierTypeMetadata> = {
     ],
     viewSubtitle: (s) => (s.gotifyUrl as string)?.replace(/^https?:\/\//, '') || 'gotify',
   },
-};
+} satisfies Record<NotifierType, NotifierTypeMetadata>;
 
-export const EVENT_LABELS: Record<string, string> = {
-  on_grab: 'Grab',
-  on_download_complete: 'Download Complete',
-  on_import: 'Import',
-  on_failure: 'Failure',
-  on_upgrade: 'Upgrade',
-  on_health_issue: 'Health Issue',
-};
+// EVENT_LABELS moved to src/shared/notification-events.ts (leaf module)

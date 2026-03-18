@@ -1,12 +1,13 @@
 import { z } from 'zod';
-import { NOTIFIER_REGISTRY } from '../notifier-registry.js';
+import { NOTIFIER_REGISTRY, NOTIFIER_TYPES } from '../notifier-registry.js';
+import { NOTIFICATION_EVENTS } from '../notification-events.js';
 
 // ============================================================================
 // Notifier schemas
 // ============================================================================
 
-export const notifierTypeSchema = z.enum(['webhook', 'discord', 'script', 'email', 'telegram', 'slack', 'pushover', 'ntfy', 'gotify']);
-export const notificationEventSchema = z.enum(['on_grab', 'on_download_complete', 'on_import', 'on_failure', 'on_upgrade', 'on_health_issue']);
+export const notifierTypeSchema = z.enum(NOTIFIER_TYPES);
+export const notificationEventSchema = z.enum(NOTIFICATION_EVENTS);
 
 export const createNotifierSchema = z.object({
   name: z.string().min(1, 'Name is required').max(100),
