@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #10 Fix white screen on force-reload of nested routes — 2026-03-19
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #14
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 6 new tests
+- Quality gate runs: 2 (both pass)
+- Fix iterations: 0 (clean first pass after spec was corrected)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Implementation was minimal (one line in sendIndexHtml) and clean once the spec converged on the correct fix. TDD cycle was fast — 5 tests red, all green after one-line change.
+- Friction / issues encountered: 3 rounds of spec review before approve. Initial spec proposed changing vite.config.ts base to /, which conflicted with documented base: ./ choice for Docker URL_BASE portability. Two wrong fix proposals caught by spec review before any code was written. The learning doc vite-base-buildtime-vs-runtime.md contained the key constraint but was not consulted during elaboration.
+
+### Token efficiency
+- Highest-token actions: 3 rounds of spec review with elaborate/respond-to-spec-review (codebase exploration subagents per round)
+- Avoidable waste: Both wrong fix proposals could have been avoided by reading vite-base-buildtime-vs-runtime.md during the first /elaborate pass
+- Suggestions: When a bug involves Vite config or SPA asset serving, grep .claude/cl/learnings/ for vite and base before proposing a fix
+
+### Infrastructure gaps
+- Repeated workarounds: State directory recreation (.claude/state/implement-10/ was lost between phases, required mkdir -p repeatedly)
+- Missing tooling / config: Git remote URL using stale token required manual set-url refresh before push
+- Unresolved debt: None
+
+### Wish I Known
+1. The vite-base-buildtime-vs-runtime.md learning doc explicitly documents that base: ./ is intentional — reading it during elaboration would have prevented 2 wrong spec proposals and 3 review rounds
+2. The <base> HTML tag solution is a standard fix for this SPA + subpath deployment pattern — 1 line in sendIndexHtml() and no Vite changes
+3. The correct frame for this bug is SPA fallback serving HTML for asset requests not Vite producing wrong paths — once framed correctly the fix is obvious
+
+
 ## #8 UAT - Authentication Issues — 2026-03-19
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #13
