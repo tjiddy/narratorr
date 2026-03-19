@@ -9,17 +9,23 @@ import { SettingsSection } from './SettingsSection';
 export function CredentialsSection({
   hasUser,
   currentUsername,
+  bypassActive = false,
   queryClient,
 }: {
   hasUser: boolean;
   currentUsername?: string;
+  bypassActive?: boolean;
   queryClient: QueryClient;
 }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [setupError, setSetupError] = useState('');
   const [editUsername, setEditUsername] = useState(currentUsername ?? '');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [changeError, setChangeError] = useState('');
 
   const setupMutation = useMutation({
     mutationFn: () => api.authSetup(username, password),
@@ -28,6 +34,8 @@ export function CredentialsSection({
       toast.success('Credentials created');
       setUsername('');
       setPassword('');
+      setConfirmPassword('');
+      setSetupError('');
     },
     onError: (err) => {
       const message = err instanceof ApiError ? err.message : 'Failed to create credentials';
@@ -42,6 +50,8 @@ export function CredentialsSection({
       toast.success('Credentials updated');
       setCurrentPassword('');
       setNewPassword('');
+      setConfirmNewPassword('');
+      setChangeError('');
     },
     onError: (err) => {
       const message = err instanceof ApiError ? err.message : 'Failed to change password';
@@ -49,15 +59,39 @@ export function CredentialsSection({
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: () => api.authDeleteCredentials(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
+      toast.success('Credentials removed');
+    },
+    onError: (err) => {
+      const message = err instanceof ApiError ? err.message : 'Failed to remove credentials';
+      toast.error(message);
+    },
+  });
+
   function handleSetup(e: FormEvent) {
     e.preventDefault();
+    if (password !== confirmPassword) {
+      setSetupError('Passwords do not match');
+      return;
+    }
+    setSetupError('');
     setupMutation.mutate();
   }
 
   function handleChangePassword(e: FormEvent) {
     e.preventDefault();
+    if (newPassword !== confirmNewPassword) {
+      setChangeError('Passwords do not match');
+      return;
+    }
+    setChangeError('');
     passwordMutation.mutate();
   }
+
+  const showRemoveButton = bypassActive && hasUser;
 
   return (
     <SettingsSection
@@ -93,6 +127,19 @@ export function CredentialsSection({
               placeholder="Enter password"
             />
           </div>
+          <div>
+            <label htmlFor="setup-confirm-password" className="block text-sm font-medium mb-1.5">Confirm Password</label>
+            <input
+              id="setup-confirm-password"
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
+              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+              placeholder="Confirm password"
+            />
+          </div>
+          {setupError && <p className="text-sm text-destructive">{setupError}</p>}
           <button
             type="submit"
             disabled={setupMutation.isPending}
@@ -102,52 +149,83 @@ export function CredentialsSection({
           </button>
         </form>
       ) : (
-        <form onSubmit={handleChangePassword} className="space-y-4">
-          <div>
-            <label htmlFor="edit-username" className="block text-sm font-medium mb-1.5">Username</label>
-            <input
-              id="edit-username"
-              type="text"
-              value={editUsername}
-              onChange={(e) => setEditUsername(e.target.value)}
-              required
-              minLength={1}
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-            />
-          </div>
-          <div>
-            <label htmlFor="current-password" className="block text-sm font-medium mb-1.5">Current Password</label>
-            <input
-              id="current-password"
-              type="password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              required
-              autoComplete="current-password"
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-            />
-          </div>
-          <div>
-            <label htmlFor="new-password" className="block text-sm font-medium mb-1.5">New Password</label>
-            <input
-              id="new-password"
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              required
-              autoComplete="new-password"
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-              placeholder="Enter new password"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={passwordMutation.isPending}
-            className="px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring"
-          >
-            {passwordMutation.isPending ? 'Updating...' : 'Change Password'}
-          </button>
-        </form>
+        <div className="space-y-6">
+          <form onSubmit={handleChangePassword} className="space-y-4">
+            <div>
+              <label htmlFor="edit-username" className="block text-sm font-medium mb-1.5">Username</label>
+              <input
+                id="edit-username"
+                type="text"
+                value={editUsername}
+                onChange={(e) => setEditUsername(e.target.value)}
+                required
+                minLength={1}
+                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+              />
+            </div>
+            <div>
+              <label htmlFor="current-password" className="block text-sm font-medium mb-1.5">Current Password</label>
+              <input
+                id="current-password"
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+              />
+            </div>
+            <div>
+              <label htmlFor="new-password" className="block text-sm font-medium mb-1.5">New Password</label>
+              <input
+                id="new-password"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                required
+                autoComplete="new-password"
+                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                placeholder="Enter new password"
+              />
+            </div>
+            <div>
+              <label htmlFor="confirm-new-password" className="block text-sm font-medium mb-1.5">Confirm New Password</label>
+              <input
+                id="confirm-new-password"
+                type="password"
+                value={confirmNewPassword}
+                onChange={(e) => setConfirmNewPassword(e.target.value)}
+                autoComplete="new-password"
+                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                placeholder="Confirm new password"
+              />
+            </div>
+            {changeError && <p className="text-sm text-destructive">{changeError}</p>}
+            <button
+              type="submit"
+              disabled={passwordMutation.isPending}
+              className="px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring"
+            >
+              {passwordMutation.isPending ? 'Updating...' : 'Change Password'}
+            </button>
+          </form>
+
+          {showRemoveButton && (
+            <div className="border-t border-border pt-4">
+              <p className="text-sm text-muted-foreground mb-3">
+                Remove credentials and reset auth mode to None. Only available while AUTH_BYPASS is active.
+              </p>
+              <button
+                type="button"
+                onClick={() => deleteMutation.mutate()}
+                disabled={deleteMutation.isPending}
+                className="px-5 py-3 bg-destructive text-destructive-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring"
+              >
+                {deleteMutation.isPending ? 'Removing...' : 'Remove Credentials'}
+              </button>
+            </div>
+          )}
+        </div>
       )}
     </SettingsSection>
   );
