@@ -88,6 +88,7 @@ export function CredentialsSection({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              autoComplete="new-password"
               className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
               placeholder="Enter password"
             />
@@ -122,6 +123,7 @@ export function CredentialsSection({
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
               required
+              autoComplete="current-password"
               className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
             />
           </div>
@@ -133,6 +135,7 @@ export function CredentialsSection({
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               required
+              autoComplete="new-password"
               className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
               placeholder="Enter new password"
             />

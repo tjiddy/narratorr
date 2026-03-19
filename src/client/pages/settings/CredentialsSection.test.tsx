@@ -348,6 +348,32 @@ describe('CredentialsSection', () => {
     });
   });
 
+  describe('autocomplete attributes', () => {
+    it('setup form: password input has autoComplete="new-password"', () => {
+      renderWithProviders(
+        <CredentialsSection hasUser={false} queryClient={queryClient} />,
+      );
+      const password = screen.getByLabelText('Password');
+      expect(password).toHaveAttribute('autoComplete', 'new-password');
+    });
+
+    it('change password form: current password has autoComplete="current-password"', () => {
+      renderWithProviders(
+        <CredentialsSection hasUser={true} currentUsername="admin" queryClient={queryClient} />,
+      );
+      const currentPw = screen.getByLabelText('Current Password');
+      expect(currentPw).toHaveAttribute('autoComplete', 'current-password');
+    });
+
+    it('change password form: new password has autoComplete="new-password"', () => {
+      renderWithProviders(
+        <CredentialsSection hasUser={true} currentUsername="admin" queryClient={queryClient} />,
+      );
+      const newPw = screen.getByLabelText('New Password');
+      expect(newPw).toHaveAttribute('autoComplete', 'new-password');
+    });
+  });
+
   describe('edge cases', () => {
     it('currentUsername undefined with hasUser=true initializes edit username to empty string', () => {
       renderWithProviders(
