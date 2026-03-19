@@ -4,3 +4,4 @@ No active items. All prior debt graduated and resolved in #448.
 
 - **src/server/services/auth.service.test.ts**: `updateLocalBypass()`, `changePassword()` selective field updates (username-only vs password-only), and timing-safe comparison have no direct unit tests — only covered via route integration tests. (discovered in #8)
 - **src/client/pages/settings/SecuritySettings.test.tsx**: `LocalBypassSection` toggle behavior and `ApiKeySection` clipboard copy button have no interaction tests — only existence tests. (discovered in #8)
+- **src/client/pages/settings/SecuritySettings.tsx**: AuthModeSection mutation flow (immediate mode changes without confirmation, toast messages, query invalidation) and LocalBypassSection mutation flow (checkbox onChange, success/error toasts, query invalidation) have no interaction tests. These are pre-existing gaps unrelated to the clipboard fix. (discovered in #11)

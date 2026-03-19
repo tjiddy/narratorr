@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #11 Fix clipboard copy crash on plain HTTP (no secure context) — 2026-03-19
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #15
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 5 new tests
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 2 (clipboard mock ordering issue — see below)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Implementation was minimal (12 lines changed), all error branches well-specified in the issue. Coverage check passed immediately.
+- Friction / issues encountered: Clipboard mocking took 2 fix iterations. Root cause: `userEvent.setup()` silently replaces any `Object.defineProperty(navigator, 'clipboard', ...)` set before it by installing its own clipboard stub. Also, `vi.spyOn(document, 'execCommand')` fails because jsdom doesn't define `execCommand` at all — must use `Object.defineProperty` instead.
+
+### Token efficiency
+- Highest-token actions: Debugging clipboard mock interaction with user-event (3 rounds of diagnosis)
+- Avoidable waste: Would have been avoided by knowing user-event installs a clipboard stub on `userEvent.setup()` — the learning file now captures this
+- Suggestions: Check user-event Clipboard.js source early when mocking `navigator.clipboard` in tests
+
+### Infrastructure gaps
+- Repeated workarounds: None new
+- Missing tooling / config: No built-in guidance on mocking Clipboard API in testing docs
+- Unresolved debt: AuthModeSection and LocalBypassSection mutation flows remain untested (pre-existing, logged in debt.md)
+
+### Wish I'd Known
+1. `userEvent.setup()` replaces `navigator.clipboard` with its own stub — set clipboard mocks AFTER calling `userEvent.setup()`, not before
+2. `document.execCommand` is not defined in jsdom — use `Object.defineProperty(document, 'execCommand', ...)` instead of `vi.spyOn`
+3. `document.execCommand('copy')` returns `false` silently on failure (no throw) — must explicitly throw on falsy return to reach the catch block
+
+
 ## #10 Fix white screen on force-reload of nested routes — 2026-03-19
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #14
