@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #7 Fix CSP nonce injection for inline scripts and add autocomplete attributes — 2026-03-19
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #12
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 14
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (regex double-nonce on config script — added negative lookahead exclusion)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean red/green TDD cycle, spec review caught the wrong CSP target before implementation started
+- Friction / issues encountered: Original spec targeted Vite external asset tags instead of the real inline script violation — spec review caught this before any code was written
+
+### Token efficiency
+- Highest-token actions: Explore subagents for plan and handoff self-review/coverage
+- Avoidable waste: Initial /elaborate explored the wrong CSP surface
+- Suggestions: For CSP issues, always read the actual served HTML and CSP header config before speccing the fix
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None
+
+### Wish I'd Known
+1. script-src self already covers same-origin external scripts — the real CSP gap was the inline theme bootstrap IIFE (see csp-nonce-inline-vs-external.md)
+2. When injecting nonces via regex after template-literal injection, the regex must exclude already-nonced tags (see regex-nonce-injection-idempotency.md)
+3. The test fixture was minimal synthetic HTML that did not match production — updating it to mirror dist/client/index.html was prerequisite to writing meaningful nonce tests
+
+
 ## #5 Remove password minimum length requirement — 2026-03-19
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #6
