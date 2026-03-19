@@ -45,7 +45,7 @@ Skipping `/handoff` means no PR, no label update, no workflow log entry.
 ### Standalone flags (additive, not exclusive)
 
 - `blocked` — something is preventing progress (overlays current status, doesn't replace it)
-- `yolo` — enables autonomous orchestration (narrator-yolo)
+- `automate` — enables autonomous orchestration (narrator-automate)
 
 ### Metadata labels (additive)
 

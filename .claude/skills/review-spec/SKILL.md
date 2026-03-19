@@ -164,34 +164,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    - **Enumerate, don't summarize:** When a finding says data in the spec is wrong or stale (audit tables, version numbers, parent paths, field names, file lists), list every specific row/claim that is wrong and what the correct value is. "Refresh this table" is an umbrella finding — the author will regenerate sloppily and you'll re-raise the same finding next round with a narrower scope. Instead: "Row X says parent is Y but audit shows Z; row A is missing entirely; row B lists the wrong severity." Give the author a punch list, not a vague direction.
    - **Exhaust the category:** When you find one instance of a problem pattern (e.g., one wrong audit path, one missing policy case, one untested endpoint), actively look for MORE instances of the same pattern before writing the finding. A finding that says "the rollup path is wrong" when ajv and minimatch paths are also wrong will bounce back. Sweep the full surface once so you can write one comprehensive finding instead of discovering siblings in round 2.
 
-6b. **Reviewer self-critique (round 2+ only, when new findings exist on original spec text):**
-    If this is a re-review (prior `## Spec Review` comments exist) and any new findings target spec text that was present during round 1 (NOT text introduced by the author's fixes since the last review), perform a self-critique:
-
-    For each such finding, analyze: "This spec text existed during my round 1 review. Could I have caught this then? What specific addition or change to the `/review-spec` prompt would have helped me identify this in the first round?"
-
-    Write a retrospective file: `.claude/cl/reviews/reviewer-spec-<issue-id>-round-<N>.md`. Create `.claude/cl/reviews/` if it doesn't exist.
-
-    Format:
-    ```yaml
-    ---
-    skill: review-spec
-    issue: <id>
-    round: <N>
-    date: <YYYY-MM-DD>
-    new_findings_on_original_spec: [F1, F4, ...]
-    ---
-    ```
-    Then for each finding:
-    ```
-    ### <finding-id>: <short description>
-    **What I missed in round 1:** <the finding>
-    **Why I missed it:** <did I not verify this assumption? did I not grep deep enough? did I focus on other sections and miss this? did I not run the command to check?>
-    **Prompt fix:** <specific text to add/change in `/review-spec` that would catch this class of issue in round 1>
-    ```
-
-    Skip this step if all new findings are on spec text introduced by the author's fixes (those are genuinely new issues, not round-1 misses).
-
-6c. **Write phase marker:** `echo done > .claude/state/review-spec-<id>/review-complete`
+6b. **Write phase marker:** `echo done > .claude/state/review-spec-<id>/review-complete`
 
 7. **Determine verdict:**
    - **`approve`**: Zero blocking findings. Spec is ready for implementation.
@@ -283,15 +256,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
 
    **You are NOT done until BOTH 8a and 8b have executed.** Posting the comment without setting the label leaves the issue in a dead state — the orchestrator will never pick it up.
 
-9. **Commit and push CL files:** Retrospective files from step 7 need to be committed to main so all clones stay in sync:
-    ```bash
-    git add .claude/cl/
-    git commit -m "CL from #<id> spec review"
-    git push origin main
-    ```
-    If there's nothing to commit (no new CL files), skip this step.
-
-10. **Write final phase marker and clean up:** `echo done > .claude/state/review-spec-<id>/posted`
+9. **Write final phase marker and clean up:** `echo done > .claude/state/review-spec-<id>/posted`
     - Then clean up state: `rm -rf .claude/state/review-spec-<id>/`
 
 11. **Report:** Summary of verdict and key findings.
