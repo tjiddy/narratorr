@@ -307,7 +307,7 @@ describe('CredentialsSection', () => {
   });
 
   describe('HTML constraint attributes', () => {
-    it('setup form: username has required, password has required and minLength=8', () => {
+    it('setup form: username has required, password has required and no minLength', () => {
       renderWithProviders(
         <CredentialsSection hasUser={false} queryClient={queryClient} />,
       );
@@ -315,10 +315,18 @@ describe('CredentialsSection', () => {
       const password = screen.getByLabelText('Password');
       expect(username).toBeRequired();
       expect(password).toBeRequired();
-      expect(password).toHaveAttribute('minLength', '8');
+      expect(password).not.toHaveAttribute('minLength');
     });
 
-    it('change password form: username required, current password required, new password required with minLength=8', () => {
+    it('setup form: placeholder does not reference "8 characters"', () => {
+      renderWithProviders(
+        <CredentialsSection hasUser={false} queryClient={queryClient} />,
+      );
+      const password = screen.getByLabelText('Password');
+      expect(password.getAttribute('placeholder') ?? '').not.toMatch(/8 characters/i);
+    });
+
+    it('change password form: username required, current password required, new password required without minLength', () => {
       renderWithProviders(
         <CredentialsSection hasUser={true} currentUsername="admin" queryClient={queryClient} />,
       );
@@ -328,7 +336,15 @@ describe('CredentialsSection', () => {
       expect(username).toBeRequired();
       expect(currentPw).toBeRequired();
       expect(newPw).toBeRequired();
-      expect(newPw).toHaveAttribute('minLength', '8');
+      expect(newPw).not.toHaveAttribute('minLength');
+    });
+
+    it('change password form: placeholder does not reference "8 characters"', () => {
+      renderWithProviders(
+        <CredentialsSection hasUser={true} currentUsername="admin" queryClient={queryClient} />,
+      );
+      const newPw = screen.getByLabelText('New Password');
+      expect(newPw.getAttribute('placeholder') ?? '').not.toMatch(/8 characters/i);
     });
   });
 
