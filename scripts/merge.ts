@@ -58,13 +58,18 @@ if (commentsRaw.includes("## Status: needs-human-input")) {
   }
 }
 
-// 4. Check CI status
+// 4. Check CI status (GitHub Actions uses check-runs API, not legacy statuses)
 if (sha) {
-  const { ok, output } = ghSafe("api", `repos/{owner}/{repo}/commits/${sha}/status`, "--jq", JQ.COMMIT_STATUS);
-  if (ok) {
-    if (output.includes("CI: pending")) die("ERROR: CI checks still running — wait and retry");
-    if (output.includes("CI: failure") || output.includes("CI: error")) {
-      // Add blocked flag to linked issue (don't change status)
+  let ciResolved = false;
+
+  // Try check-runs API first (GitHub Actions)
+  const { ok: checkOk, output: checkOut } = ghSafe("api", `repos/{owner}/{repo}/commits/${sha}/check-runs`, "--jq",
+    `if .total_count == 0 then "CHECKS: none" else "CHECKS: \\(.check_runs | map(.conclusion // .status) | if all(. == "success") then "success" elif any(. == "in_progress" or . == "queued" or . == "pending") then "pending" else "failure" end) (\\(.total_count) runs)\\n\\(.check_runs[] | "  \\(.name): \\(.conclusion // .status)")" end`);
+
+  if (checkOk && !checkOut.includes("CHECKS: none")) {
+    ciResolved = true;
+    if (checkOut.includes("CHECKS: pending")) die("ERROR: CI checks still running — wait and retry");
+    if (checkOut.includes("CHECKS: failure")) {
       if (linkedIssueId) {
         const issueOut = gh("issue", "view", linkedIssueId, "--json", GH_FIELDS.ISSUE, "--jq", JQ.ISSUE);
         const labels = parseLabels(issueOut);
@@ -74,13 +79,31 @@ if (sha) {
           gh("issue", "comment", linkedIssueId, "--body-file", p);
         });
       }
-      die(`ERROR: CI failed — issue flagged as blocked\n${output}`);
+      die(`ERROR: CI failed — issue flagged as blocked\n${checkOut}`);
     }
-    // CI: success or no status checks → proceed
-    if (output.includes("no status checks found")) {
-      // Check for recent /verify pass in PR comments
-      const hasVerify = comments.some(c => c.body.includes("OVERALL: pass") || c.body.includes("VERIFY: pass"));
-      if (!hasVerify) die("ERROR: no CI checks and no /verify pass found — run /verify first");
+  }
+
+  // Fall back to legacy commit status API (third-party CI tools)
+  if (!ciResolved) {
+    const { ok, output } = ghSafe("api", `repos/{owner}/{repo}/commits/${sha}/status`, "--jq", JQ.COMMIT_STATUS);
+    if (ok) {
+      if (output.includes("CI: pending")) die("ERROR: CI checks still running — wait and retry");
+      if (output.includes("CI: failure") || output.includes("CI: error")) {
+        if (linkedIssueId) {
+          const issueOut = gh("issue", "view", linkedIssueId, "--json", GH_FIELDS.ISSUE, "--jq", JQ.ISSUE);
+          const labels = parseLabels(issueOut);
+          const newLabels = labels.includes("blocked") ? labels : [...labels, "blocked"];
+          ghSetLabels(linkedIssueId, newLabels);
+          withTempFile(`Merge blocked — CI checks failed on PR #${prNum}.`, (p) => {
+            gh("issue", "comment", linkedIssueId, "--body-file", p);
+          });
+        }
+        die(`ERROR: CI failed — issue flagged as blocked\n${output}`);
+      }
+      if (output.includes("no status checks found")) {
+        const hasVerify = comments.some(c => c.body.includes("OVERALL: pass") || c.body.includes("VERIFY: pass"));
+        if (!hasVerify) die("ERROR: no CI checks and no /verify pass found — run /verify first");
+      }
     }
   }
 }
