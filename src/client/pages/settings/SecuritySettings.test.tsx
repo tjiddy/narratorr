@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
@@ -338,6 +338,144 @@ describe('SecuritySettings', () => {
     // Auth status should be refetched due to query invalidation
     await waitFor(() => {
       expect(api.getAuthStatus).toHaveBeenCalled();
+    });
+  });
+
+  describe('clipboard copy', () => {
+    let mockExecCommand: ReturnType<typeof vi.fn> | null = null;
+
+    afterEach(() => {
+      mockExecCommand = null;
+      Object.defineProperty(document, 'execCommand', {
+        value: undefined,
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(navigator, 'clipboard', {
+        get: () => undefined,
+        configurable: true,
+      });
+    });
+
+    function mockExecCommandWith(returnValue: boolean | (() => never)) {
+      mockExecCommand = typeof returnValue === 'function'
+        ? vi.fn().mockImplementation(returnValue)
+        : vi.fn().mockReturnValue(returnValue);
+      Object.defineProperty(document, 'execCommand', {
+        value: mockExecCommand,
+        configurable: true,
+        writable: true,
+      });
+      return mockExecCommand;
+    }
+
+    it('copies via navigator.clipboard.writeText when available → success toast', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      // Must set clipboard AFTER userEvent.setup() — userEvent attaches its own clipboard stub on setup()
+      const user = userEvent.setup();
+      Object.defineProperty(navigator, 'clipboard', {
+        get: () => ({ writeText }),
+        configurable: true,
+      });
+
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => {
+        expect(screen.getByTitle('Copy to clipboard')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Copy to clipboard'));
+
+      await waitFor(() => {
+        expect(writeText).toHaveBeenCalledWith('test-api-key-12345');
+        expect(toast.success).toHaveBeenCalledWith('Copied to clipboard');
+      });
+    });
+
+    it('falls back to execCommand when navigator.clipboard is undefined → success toast', async () => {
+      const user = userEvent.setup();
+      // Make clipboard unavailable to trigger fallback path
+      Object.defineProperty(navigator, 'clipboard', {
+        get: () => undefined,
+        configurable: true,
+      });
+      const execCommand = mockExecCommandWith(true);
+
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => {
+        expect(screen.getByTitle('Copy to clipboard')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Copy to clipboard'));
+
+      await waitFor(() => {
+        expect(execCommand).toHaveBeenCalledWith('copy');
+        expect(toast.success).toHaveBeenCalledWith('Copied to clipboard');
+      });
+    });
+
+    it('shows error toast when navigator.clipboard is undefined AND execCommand returns false (silent failure)', async () => {
+      const user = userEvent.setup();
+      Object.defineProperty(navigator, 'clipboard', {
+        get: () => undefined,
+        configurable: true,
+      });
+      mockExecCommandWith(false);
+
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => {
+        expect(screen.getByTitle('Copy to clipboard')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Copy to clipboard'));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to copy to clipboard');
+      });
+    });
+
+    it('shows error toast when navigator.clipboard rejects (permissions denied)', async () => {
+      const writeText = vi.fn().mockRejectedValue(new Error('NotAllowedError'));
+      const user = userEvent.setup();
+      Object.defineProperty(navigator, 'clipboard', {
+        get: () => ({ writeText }),
+        configurable: true,
+      });
+
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => {
+        expect(screen.getByTitle('Copy to clipboard')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Copy to clipboard'));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to copy to clipboard');
+      });
+    });
+
+    it('shows error toast when navigator.clipboard is undefined AND execCommand throws', async () => {
+      const user = userEvent.setup();
+      Object.defineProperty(navigator, 'clipboard', {
+        get: () => undefined,
+        configurable: true,
+      });
+      mockExecCommandWith(() => { throw new Error('execCommand not supported'); });
+
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => {
+        expect(screen.getByTitle('Copy to clipboard')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByTitle('Copy to clipboard'));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to copy to clipboard');
+      });
     });
   });
 

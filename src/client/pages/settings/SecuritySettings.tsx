@@ -246,9 +246,26 @@ function ApiKeySection({
   });
 
   async function handleCopy() {
-    await navigator.clipboard.writeText(apiKey);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(apiKey);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = apiKey;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(textarea);
+        if (!ok) throw new Error('execCommand copy failed');
+      }
+      toast.success('Copied to clipboard');
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error('Failed to copy to clipboard');
+    }
   }
 
   return (
