@@ -16,14 +16,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
   useEffect(() => {
     if (auth.isLoading) return;
 
-    // In forms mode, redirect unauthenticated users to /login
-    if (auth.mode === 'forms' && !auth.isAuthenticated && location.pathname !== '/login') {
+    // In forms mode, redirect unauthenticated users to /login unless bypass is active
+    if (auth.mode === 'forms' && !auth.isAuthenticated && !auth.bypassActive && location.pathname !== '/login') {
       navigate('/login', { replace: true });
     }
-  }, [auth.isLoading, auth.mode, auth.isAuthenticated, location.pathname, navigate]);
+  }, [auth.isLoading, auth.mode, auth.isAuthenticated, auth.bypassActive, location.pathname, navigate]);
 
   // Show loading while auth state resolves, or while redirecting to login
-  const needsRedirect = auth.mode === 'forms' && !auth.isAuthenticated && location.pathname !== '/login';
+  const needsRedirect = auth.mode === 'forms' && !auth.isAuthenticated && !auth.bypassActive && location.pathname !== '/login';
   if (auth.isLoading || needsRedirect) {
     return (
       <div className="min-h-screen flex items-center justify-center gradient-bg">
