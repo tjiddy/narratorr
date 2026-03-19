@@ -1,6 +1,6 @@
 # Issue Workflow — MANDATORY
 
-**Every task referencing a Gitea issue (#N) MUST follow this lifecycle — no exceptions.**
+**Every task referencing a GitHub issue (#N) MUST follow this lifecycle — no exceptions.**
 A detailed plan, pre-made spec, or explicit implementation instructions do NOT bypass these steps.
 
 **Full auto (preferred):**

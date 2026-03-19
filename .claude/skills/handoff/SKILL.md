@@ -66,7 +66,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    > - Input handling: is user input sanitized before use in shell commands, SQL, file paths?
    > - Response data: could any endpoint leak internal state or credentials?
    >
-   > **5. Infrastructure artifact check (trigger: diff contains any file matching `Dockerfile*`, `docker-compose*`, `.dockerignore`, `docker/**`, `.gitea/workflows/*`, `package.json`, `pnpm-lock.yaml`, `*.sh`, `*.config.js`, `*.config.ts`, `tsconfig*.json`):**
+   > **5. Infrastructure artifact check (trigger: diff contains any file matching `Dockerfile*`, `docker-compose*`, `.dockerignore`, `docker/**`, `.github/workflows/*`, `package.json`, `pnpm-lock.yaml`, `*.sh`, `*.config.js`, `*.config.ts`, `tsconfig*.json`):**
    > If any changed file matches the trigger patterns above, check:
    > - Shell scripts: execute bit set (`git ls-files -s <file>` should show 100755, not 100644)
    > - Dockerfile: base image assumptions (Node.js availability, s6-overlay service naming conventions)

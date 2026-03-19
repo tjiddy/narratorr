@@ -2,14 +2,10 @@
 // Usage: import { gh, git, run, ... } from "./lib.ts"
 
 import { execFileSync, execSync } from "node:child_process";
-import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { createSign } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const EXEC_OPTS = { encoding: "utf-8" as const, cwd: process.cwd(), stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"] };
 

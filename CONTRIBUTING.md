@@ -11,44 +11,40 @@ pnpm install
 pnpm dev           # API on :3000, Vite on :5173
 ```
 
-## Gitea Project Management
+## GitHub Project Management
 
-All work is tracked as issues on [Gitea](https://github.com/tjiddy/narratorr/issues). Each issue is self-contained — the spec, acceptance criteria, and test plan live in the issue body.
+All work is tracked as issues on [GitHub](https://github.com/tjiddy/narratorr/issues). Each issue is self-contained — the spec, acceptance criteria, and test plan live in the issue body.
 
 ### CLI Tool
 
-A TypeScript CLI wraps the Gitea API for quick access. Requires a `.env` file with `GITEA_TOKEN`, `GITEA_URL`, `GITEA_OWNER`, `GITEA_REPO` (see README for setup).
+We use the [GitHub CLI (`gh`)](https://cli.github.com/) for all issue and PR interactions:
 
 ```bash
-pnpm gitea issues                    # List open issues
-pnpm gitea issue <id>                # Read full issue (spec, AC, test plan)
-pnpm gitea issue-update <id> <field> <value>  # Update (state/labels/milestone/title/body)
-pnpm gitea issue-comment <id> "msg"  # Comment on issue
-pnpm gitea prs                       # List open PRs
-pnpm gitea pr <number>               # Read PR details
-pnpm gitea pr-create <title> <body> <head> [base]  # Create PR
-pnpm gitea pr-comment <number> "msg" # Comment on PR
+gh issue list                        # List open issues
+gh issue view <id>                   # Read full issue (spec, AC, test plan)
+gh issue edit <id> --add-label X     # Add labels
+gh issue comment <id> -b "msg"       # Comment on issue
+gh pr list                           # List open PRs
+gh pr view <number>                  # Read PR details
+gh pr create --title "..." --body "..."  # Create PR
+gh pr comment <number> -b "msg"      # Comment on PR
 ```
-
-All body arguments support `--body-file <path>` to read content from a file (avoids shell escaping with multiline content).
 
 ### Labels (2-axis model)
 
 Issues use two exclusive label groups:
 
 **Status** (lifecycle — exactly one):
-`status/backlog` → `status/elaborating` → `status/review-spec` → `status/ready-for-dev` → `status/in-progress` → `status/done`
-↘ `status/blocked` (at any point) · `status/fixes-spec` (spec review loop)
+`status/backlog` → `status/review-spec` ↔ `status/fixes-spec` → `status/ready-for-dev` → `status/in-progress` → `status/in-review` → `status/done`
 
-**Stage** (pipeline — exactly one when in-progress):
-`stage/dev` → `stage/review-pr` → `stage/approved`
-↘ `stage/fixes-pr` (PR review loop) · `stage/qa` (reserved)
+**Stage** (pipeline — exactly one, on the PR):
+`stage/review-pr` ↔ `stage/fixes-pr` → `stage/approved`
 
-**Gate**: `yolo` — enables autonomous orchestration (narrator-yolo). Without it, skills run manually.
+**Standalone flags** (additive, not exclusive):
+- `blocked` — something is preventing progress (overlays current status)
+- `yolo` — enables autonomous orchestration (narrator-yolo)
 
-Legacy aliases (accepted on read, never written): `status/ready` → `status/ready-for-dev`, `stage/review` → `stage/review-pr`
-
-Other labels: `type/feature` · `type/bug` · `type/chore` | `priority/high` · `priority/medium` · `priority/low` | `scope/backend` · `scope/frontend` · `scope/core` · `scope/db`
+Other labels: `type/feature` · `type/bug` · `type/chore` | `priority/high` · `priority/medium` · `priority/low` | `scope/backend` · `scope/frontend` · `scope/core` · `scope/db` · `scope/infra` · `scope/api` · `scope/services` · `scope/ui`
 
 ---
 
@@ -64,11 +60,11 @@ Before writing any code, verify the issue has:
 - **Implementation detail** — file paths, interfaces, wiring points (recommended)
 - **Dependencies** — any referenced issues should be `status/done`
 
-If the spec is incomplete and you can fill gaps from codebase knowledge, update the issue body (preserve existing content, append new sections). If it needs human input, comment with what's missing and set `status/blocked`.
+If the spec is incomplete and you can fill gaps from codebase knowledge, update the issue body (preserve existing content, append new sections). If it needs human input, comment with what's missing and set `blocked`.
 
 ### 2. Check for conflicts
 
-- `pnpm gitea prs` — any open PR touching the same area?
+- `gh pr list` — any open PR touching the same area?
 - Any `status/in-progress` issues that overlap?
 
 If conflicts exist, stop and flag them.
@@ -85,9 +81,9 @@ Post a claim comment on the issue:
 - Verification: `<tests to run>`
 ```
 
-Set labels to `status/in-progress` + `stage/dev`:
+Update labels:
 ```bash
-pnpm gitea issue-update <id> labels "status/in-progress,stage/dev,type/feature,..."
+gh issue edit <id> --add-label "status/in-progress" --remove-label "status/ready-for-dev"
 ```
 
 ### 4. Create a branch
@@ -117,6 +113,8 @@ pnpm typecheck   # TypeScript strict
 pnpm build       # Full build
 ```
 
+Or run them all at once: `node scripts/verify.ts`
+
 ### 7. Push and create PR
 
 ```bash
@@ -124,10 +122,10 @@ git push -u origin $(git branch --show-current)
 ```
 
 PR title: `#<id> <issue title>`
-PR body must include `Refs #<id>` and these sections:
+PR body must include `Closes #<id>` and these sections:
 
 ```markdown
-Refs #<id>
+Closes #<id>
 
 ## Summary
 - <what changed>
@@ -147,7 +145,7 @@ Refs #<id>
 ### 8. Hand off
 
 After creating the PR:
-- Update labels: replace `stage/dev` with `stage/review-pr`
+- Update labels: add `stage/review-pr` to the PR, set `status/in-review` on the issue
 - Comment on the issue with PR link + what changed + how verified
 - Switch back to main: `git checkout main`
 
@@ -243,7 +241,7 @@ Decision needed:
     - Default if no answer: A
 ```
 
-2. Set label to `status/blocked` (keep current `stage/*`)
+2. Add the `blocked` label (keep current `status/*`)
 3. Stop working
 
 ### Resuming a blocked issue
@@ -251,7 +249,7 @@ Decision needed:
 1. Read the issue and find the most recent `BLOCKED` comment
 2. Read comments posted after it for answers
 3. Check out the existing branch: `git checkout feature/issue-<id>-*`
-4. Update labels: `status/blocked` → `status/in-progress`
+4. Remove the `blocked` label
 5. Continue implementation
 
 ---
@@ -267,7 +265,7 @@ Mechanical workflow steps are deterministic Node scripts in `scripts/`. These ru
 | `node scripts/merge.ts <pr>` | Validate approval, CI, squash merge, close issue | `MERGED:/ERROR:` |
 | `node scripts/block.ts <id> "<reason>"` | Post blocker comment, update labels | `BLOCKED:` |
 | `node scripts/resume.ts <id>` | Restore branch, collect context | Branch + context |
-| `node scripts/changelog.ts [since]` | Categorized changelog from git + Gitea | Markdown |
+| `node scripts/changelog.ts [since]` | Categorized changelog from git + GitHub | Markdown |
 
 ## Claude Code Skills
 

@@ -1,11 +1,11 @@
 ---
 name: block
-description: Mark a Gitea issue as blocked. Use when user says "block issue", "mark
+description: Mark a GitHub issue as blocked. Use when user says "block issue", "mark
   blocked", or invokes /block.
 argument-hint: <issue-id>
 ---
 
-# /block <id> — Mark a Gitea issue as blocked
+# /block <id> — Mark a GitHub issue as blocked
 
 1. **If the user hasn't stated the blocker reason yet**, ask what the blocker is. Gather:
    - Context: what was attempted and where you got stuck

@@ -1,6 +1,6 @@
 ---
 name: resume
-description: Resume a previously blocked Gitea issue by restoring the branch and
+description: Resume a previously blocked GitHub issue by restoring the branch and
   working state. Use when user says "resume issue", "unblock", or invokes /resume.
 argument-hint: <issue-id>
 ---

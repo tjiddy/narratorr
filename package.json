@@ -6,7 +6,7 @@
   "author": "Todd Johnson",
   "type": "module",
   "scripts": {
-    "gitea": "node scripts/gitea.ts",
+
     "dev": "concurrently \"pnpm dev:server\" \"pnpm dev:client\"",
     "dev:server": "tsx watch src/server/index.ts",
     "dev:client": "vite",

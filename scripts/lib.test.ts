@@ -15,7 +15,7 @@ import {
 } from './lib.ts';
 
 describe('parseLabels', () => {
-  it('parses comma-separated labels from gitea output', () => {
+  it('parses comma-separated labels from gh output', () => {
     const output = '#42 [open] Some Issue\nlabels: status/backlog, type/chore | milestone: v0.3';
     expect(parseLabels(output)).toEqual(['status/backlog', 'type/chore']);
   });
@@ -130,7 +130,7 @@ describe('parseLinkedIssue', () => {
 });
 
 describe('parseAuthor', () => {
-  it('extracts author from gitea PR output', () => {
+  it('extracts author from gh PR output', () => {
     const output = 'feature/foo → main | author: claude | sha: abc123';
     expect(parseAuthor(output)).toBe('claude');
   });
@@ -141,7 +141,7 @@ describe('parseAuthor', () => {
 });
 
 describe('parseSha', () => {
-  it('extracts SHA from gitea PR output', () => {
+  it('extracts SHA from gh PR output', () => {
     const output = 'feature/foo → main | author: claude | sha: abc123def';
     expect(parseSha(output)).toBe('abc123def');
   });
@@ -216,7 +216,7 @@ describe('slugify', () => {
 });
 
 describe('parseComments', () => {
-  it('parses gitea comment text blocks', () => {
+  it('parses comment text blocks', () => {
     const output = '--- comment 123 | alice | 2026-03-01T10:00:00Z ---\nHello world\n\n--- comment 456 | bob | 2026-03-02T11:00:00Z ---\nAnother comment';
     const result = parseComments(output);
     expect(result).toHaveLength(2);

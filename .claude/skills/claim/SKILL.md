@@ -1,12 +1,12 @@
 ---
 name: claim
-description: Claim a spec-approved Gitea issue for implementation. Validates status,
+description: Claim a spec-approved GitHub issue for implementation. Validates status,
   creates the feature branch, updates labels, and posts a claim comment. Use when
   user says "claim issue", "start working on", or invokes /claim.
 argument-hint: <issue-id>
 ---
 
-# /claim <id> — Claim a Gitea issue
+# /claim <id> — Claim a GitHub issue
 
 Run: `node scripts/claim.ts $ARGUMENTS`
 

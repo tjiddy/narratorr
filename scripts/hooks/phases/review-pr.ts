@@ -4,7 +4,7 @@ export const phases: PhaseDefinition[] = [
   {
     marker: "review-complete",
     prompt:
-      "Review analysis complete. IMMEDIATELY continue — post the review comment to Gitea and update PR/issue labels.",
+      "Review analysis complete. IMMEDIATELY continue — post the review comment to GitHub and update PR/issue labels.",
   },
   {
     marker: "posted",

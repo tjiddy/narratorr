@@ -9,7 +9,7 @@ export const phases: PhaseDefinition[] = [
   {
     marker: "plan-complete",
     prompt:
-      "STOP BLOCKED: You are inside /implement Phase 3. /plan returned but implementation has not started. Your next action: write the plan-complete marker, then run `gitea issue <id>` to re-read the spec, then begin red/green TDD. Do NOT stop.",
+      "STOP BLOCKED: You are inside /implement Phase 3. /plan returned but implementation has not started. Your next action: write the plan-complete marker, then run `gh issue view <id>` to re-read the spec, then begin red/green TDD. Do NOT stop.",
   },
   {
     marker: "implement-complete",
@@ -19,6 +19,6 @@ export const phases: PhaseDefinition[] = [
   {
     marker: "handoff-complete",
     prompt:
-      "STOP BLOCKED: You are inside /implement step 8. /handoff returned but label verification is not done. Your next action: run `gitea issue <id>` and `gitea pr <number>` to verify labels, then report completion. Do NOT stop.",
+      "STOP BLOCKED: You are inside /implement step 8. /handoff returned but label verification is not done. Your next action: run `gh issue view <id>` and `gh pr view <number>` to verify labels, then report completion. Do NOT stop.",
   },
 ];
