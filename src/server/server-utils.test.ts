@@ -308,6 +308,58 @@ describe('registerStaticAndSpa', () => {
       await app.close();
     });
 
+    it('Helmet path: root deep SPA route contains <base href="/"> before ./assets/ and nonce on inline scripts', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/settings/security' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('<base href="/">');
+      expect(res.body).toMatch(/<script nonce="[a-f0-9]+">/);
+      const baseIndex = res.body.indexOf('<base href="/">');
+      const assetIndex = res.body.indexOf('./assets/');
+      expect(baseIndex).toBeGreaterThan(-1);
+      expect(assetIndex).toBeGreaterThan(-1);
+      expect(baseIndex).toBeLessThan(assetIndex);
+      await app.close();
+    });
+
+    it('Helmet path: prefixed deep SPA route contains <base href="/narratorr/"> and nonce on inline scripts', async () => {
+      const app = await createAppWithHelmet('/narratorr', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/narratorr/settings/security' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('<base href="/narratorr/">');
+      expect(res.body).toMatch(/<script nonce="[a-f0-9]+">/);
+      const baseIndex = res.body.indexOf('<base href="/narratorr/">');
+      const assetIndex = res.body.indexOf('./assets/');
+      expect(baseIndex).toBeGreaterThan(-1);
+      expect(assetIndex).toBeGreaterThan(-1);
+      expect(baseIndex).toBeLessThan(assetIndex);
+      await app.close();
+    });
+
+    it('injects <base href="/"> at exact /index.html entry route (root deployment)', async () => {
+      const app = Fastify({ logger: false });
+      await registerStaticAndSpa(app, '', tmpDir);
+      await app.ready();
+
+      const res = await app.inject({ method: 'GET', url: '/index.html' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('<base href="/">');
+      await app.close();
+    });
+
+    it('injects <base href="/narratorr/"> at exact /narratorr/index.html entry route (prefixed deployment)', async () => {
+      const app = Fastify({ logger: false });
+      await registerStaticAndSpa(app, '/narratorr', tmpDir);
+      await app.ready();
+
+      const res = await app.inject({ method: 'GET', url: '/narratorr/index.html' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('<base href="/narratorr/">');
+      await app.close();
+    });
+
     it('static asset serving is unaffected — JS file returns application/javascript, not text/html', async () => {
       const assetContent = 'console.log("bundle");';
       fs.writeFileSync(path.join(tmpDir, 'bundle.js'), assetContent);
