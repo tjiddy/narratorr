@@ -98,8 +98,7 @@ describe('index.html inline bootstrap script (production path)', () => {
 
   it('adds dark class when localStorage theme=dark', () => {
     localStorage.setItem('theme', 'dark');
-    // eslint-disable-next-line no-eval
-    eval(inlineBootstrapScript!);
+    eval(inlineBootstrapScript!); // executes the actual production inline IIFE
     expect(document.documentElement.classList.contains('dark')).toBe(true);
   });
 
@@ -107,22 +106,19 @@ describe('index.html inline bootstrap script (production path)', () => {
     // The inline script runs on a fresh <html> with no pre-existing classes.
     // Light mode means dark is never added — not that it is removed.
     localStorage.setItem('theme', 'light');
-    // eslint-disable-next-line no-eval
-    eval(inlineBootstrapScript!);
+    eval(inlineBootstrapScript!); // executes the actual production inline IIFE
     expect(document.documentElement.classList.contains('dark')).toBe(false);
   });
 
   it('adds dark class when no localStorage theme and system prefers dark', () => {
     matchMediaMock.mockReturnValue({ matches: true });
-    // eslint-disable-next-line no-eval
-    eval(inlineBootstrapScript!);
+    eval(inlineBootstrapScript!); // executes the actual production inline IIFE
     expect(document.documentElement.classList.contains('dark')).toBe(true);
   });
 
   it('does not add dark class when no localStorage theme and system prefers light', () => {
     matchMediaMock.mockReturnValue({ matches: false });
-    // eslint-disable-next-line no-eval
-    eval(inlineBootstrapScript!);
+    eval(inlineBootstrapScript!); // executes the actual production inline IIFE
     expect(document.documentElement.classList.contains('dark')).toBe(false);
   });
 });
