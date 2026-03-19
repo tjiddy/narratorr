@@ -19,6 +19,7 @@ vi.mock('@/hooks/useAuthContext', () => ({
     mode: 'none',
     hasUser: false,
     localBypass: false,
+    bypassActive: false,
     isAuthenticated: true,
     isLoading: false,
     logout: vi.fn(),

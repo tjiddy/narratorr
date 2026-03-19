@@ -1,12 +1,13 @@
 import { type FastifyInstance } from 'fastify';
 import type { AuthService } from '../services/auth.service.js';
-import { UserExistsError, AuthConfigError, IncorrectPasswordError } from '../services/auth.service.js';
+import { UserExistsError, AuthConfigError, IncorrectPasswordError, NoCredentialsError } from '../services/auth.service.js';
 import { loginSchema, setupCredentialsSchema, changePasswordSchema, updateAuthConfigSchema, type LoginInput, type SetupCredentialsInput, type ChangePasswordInput, type UpdateAuthConfigInput } from '../../shared/schemas.js';
 import { config } from '../config.js';
+import { isPrivateIp } from '../plugins/auth.js';
 
 export async function authRoutes(app: FastifyInstance, authService: AuthService) {
   // GET /api/auth/status — public, no secrets
-  // Also checks session cookie to include `authenticated` flag for the frontend
+  // Also checks session cookie to include `authenticated` and `bypassActive` flags for the frontend
   app.get('/api/auth/status', async (request) => {
     try {
       const status = await authService.getStatus();
@@ -24,9 +25,29 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
         }
       }
 
-      return { ...status, authenticated };
+      // Request-scoped bypass: true when AUTH_BYPASS env var is set OR local network bypass applies
+      const bypassActive = config.authBypass || (status.localBypass && isPrivateIp(request.ip));
+
+      return { ...status, authenticated, bypassActive };
     } catch (error) {
       request.log.error(error, 'Failed to fetch auth status');
+      throw error;
+    }
+  });
+
+  // DELETE /api/auth/credentials — only allowed when AUTH_BYPASS is active
+  app.delete('/api/auth/credentials', async (request, reply) => {
+    if (!config.authBypass) {
+      return reply.status(403).send({ error: 'Only available when AUTH_BYPASS is active' });
+    }
+    try {
+      await authService.deleteCredentials();
+      request.log.info('Credentials deleted via AUTH_BYPASS');
+      return { success: true };
+    } catch (error) {
+      if (error instanceof NoCredentialsError) {
+        return reply.status(404).send({ error: error.message });
+      }
       throw error;
     }
   });
@@ -54,7 +75,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
       reply.setCookie('narratorr_session', cookie, {
         httpOnly: true,
         sameSite: 'lax',
-        secure: !config.isDev,
+        secure: false,
         path: '/',
         maxAge: 7 * 24 * 60 * 60, // 7 days
       });
@@ -69,7 +90,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
     reply.clearCookie('narratorr_session', {
       httpOnly: true,
       sameSite: 'lax',
-      secure: !config.isDev,
+      secure: false,
       path: '/',
     });
     return { success: true };

@@ -7,6 +7,7 @@ export interface AuthStatus {
   username?: string;
   localBypass: boolean;
   authenticated: boolean;
+  bypassActive: boolean;
 }
 
 export interface AuthConfig {
@@ -52,5 +53,10 @@ export const authApi = {
   authRegenerateApiKey: () =>
     fetchApi<{ apiKey: string }>('/auth/api-key/regenerate', {
       method: 'POST',
+    }),
+
+  authDeleteCredentials: () =>
+    fetchApi<{ success: boolean }>('/auth/credentials', {
+      method: 'DELETE',
     }),
 };

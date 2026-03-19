@@ -21,6 +21,7 @@ function mockAuth(overrides: Partial<AuthState> = {}) {
     mode: 'none',
     hasUser: false,
     localBypass: false,
+    bypassActive: false,
     isAuthenticated: true,
     isLoading: false,
     logout: vi.fn(),
@@ -75,6 +76,33 @@ describe('AuthProvider', () => {
     mockAuth({ logout: logoutFn });
     // The logout function is provided via context — verify it's the one from useAuth
     expect(vi.mocked(useAuth)().logout).toBe(logoutFn);
+  });
+
+  it('does NOT redirect to /login when bypassActive is true (env bypass), even in forms mode', () => {
+    mockAuth({ mode: 'forms', isAuthenticated: false, hasUser: true, bypassActive: true });
+    renderWithProviders(
+      <AuthProvider><div>Protected Content</div></AuthProvider>,
+      { route: '/library' },
+    );
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('does NOT redirect to /login when bypassActive is true (local bypass), even in forms mode', () => {
+    mockAuth({ mode: 'forms', isAuthenticated: false, hasUser: true, bypassActive: true });
+    renderWithProviders(
+      <AuthProvider><div>Protected Content</div></AuthProvider>,
+      { route: '/library' },
+    );
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('still redirects to /login in forms mode when bypassActive is false and user is unauthenticated', () => {
+    mockAuth({ mode: 'forms', isAuthenticated: false, hasUser: true, bypassActive: false });
+    renderWithProviders(
+      <AuthProvider><div>Protected Content</div></AuthProvider>,
+      { route: '/library' },
+    );
+    expect(mockNavigate).toHaveBeenCalledWith('/login', { replace: true });
   });
 
   it('shows loading spinner while auth state resolves', () => {

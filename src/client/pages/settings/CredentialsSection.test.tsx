@@ -10,6 +10,7 @@ vi.mock('@/lib/api', () => ({
   api: {
     authSetup: vi.fn(),
     authChangePassword: vi.fn(),
+    authDeleteCredentials: vi.fn(),
   },
   ApiError: class ApiError extends Error {
     status: number;
@@ -31,6 +32,8 @@ vi.mock('sonner', () => ({
 }));
 
 import { api, ApiError } from '@/lib/api';
+// Cast to access all mocked methods
+const mockApi = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
 describe('CredentialsSection', () => {
   let queryClient: QueryClient;
@@ -61,6 +64,7 @@ describe('CredentialsSection', () => {
 
       await user.type(screen.getByLabelText('Username'), 'admin');
       await user.type(screen.getByLabelText('Password'), 'password123');
+      await user.type(screen.getByLabelText('Confirm Password'), 'password123');
       await user.click(screen.getByRole('button', { name: 'Create Credentials' }));
 
       await waitFor(() => {
@@ -75,6 +79,7 @@ describe('CredentialsSection', () => {
 
       await user.type(screen.getByLabelText('Username'), 'admin');
       await user.type(screen.getByLabelText('Password'), 'password123');
+      await user.type(screen.getByLabelText('Confirm Password'), 'password123');
       await user.click(screen.getByRole('button', { name: 'Create Credentials' }));
 
       await waitFor(() => {
@@ -83,6 +88,7 @@ describe('CredentialsSection', () => {
 
       expect(screen.getByLabelText('Username')).toHaveValue('');
       expect(screen.getByLabelText('Password')).toHaveValue('');
+      expect(screen.getByLabelText('Confirm Password')).toHaveValue('');
     });
 
     it('invalidates auth status query on success', async () => {
@@ -93,6 +99,7 @@ describe('CredentialsSection', () => {
 
       await user.type(screen.getByLabelText('Username'), 'admin');
       await user.type(screen.getByLabelText('Password'), 'password123');
+      await user.type(screen.getByLabelText('Confirm Password'), 'password123');
       await user.click(screen.getByRole('button', { name: 'Create Credentials' }));
 
       await waitFor(() => {
@@ -111,6 +118,7 @@ describe('CredentialsSection', () => {
 
       await user.type(screen.getByLabelText('Username'), 'admin');
       await user.type(screen.getByLabelText('Password'), 'password123');
+      await user.type(screen.getByLabelText('Confirm Password'), 'password123');
       await user.click(screen.getByRole('button', { name: 'Create Credentials' }));
 
       await waitFor(() => {
@@ -125,6 +133,7 @@ describe('CredentialsSection', () => {
 
       await user.type(screen.getByLabelText('Username'), 'admin');
       await user.type(screen.getByLabelText('Password'), 'password123');
+      await user.type(screen.getByLabelText('Confirm Password'), 'password123');
       await user.click(screen.getByRole('button', { name: 'Create Credentials' }));
 
       await waitFor(() => {
@@ -142,6 +151,7 @@ describe('CredentialsSection', () => {
 
       await user.type(screen.getByLabelText('Username'), 'admin');
       await user.type(screen.getByLabelText('Password'), 'password123');
+      await user.type(screen.getByLabelText('Confirm Password'), 'password123');
       await user.click(screen.getByRole('button', { name: 'Create Credentials' }));
 
       await waitFor(() => {
@@ -179,6 +189,7 @@ describe('CredentialsSection', () => {
       await user.type(screen.getByLabelText('Username'), 'newadmin');
       await user.type(screen.getByLabelText('Current Password'), 'oldpass123');
       await user.type(screen.getByLabelText('New Password'), 'newpass123');
+      await user.type(screen.getByLabelText('Confirm New Password'), 'newpass123');
       await user.click(screen.getByRole('button', { name: 'Change Password' }));
 
       await waitFor(() => {
@@ -193,6 +204,7 @@ describe('CredentialsSection', () => {
 
       await user.type(screen.getByLabelText('Current Password'), 'oldpass123');
       await user.type(screen.getByLabelText('New Password'), 'newpass123');
+      await user.type(screen.getByLabelText('Confirm New Password'), 'newpass123');
       await user.click(screen.getByRole('button', { name: 'Change Password' }));
 
       await waitFor(() => {
@@ -207,6 +219,7 @@ describe('CredentialsSection', () => {
 
       await user.type(screen.getByLabelText('Current Password'), 'oldpass123');
       await user.type(screen.getByLabelText('New Password'), 'newpass123');
+      await user.type(screen.getByLabelText('Confirm New Password'), 'newpass123');
       await user.click(screen.getByRole('button', { name: 'Change Password' }));
 
       await waitFor(() => {
@@ -216,6 +229,7 @@ describe('CredentialsSection', () => {
       expect(screen.getByLabelText('Username')).toHaveValue('admin');
       expect(screen.getByLabelText('Current Password')).toHaveValue('');
       expect(screen.getByLabelText('New Password')).toHaveValue('');
+      expect(screen.getByLabelText('Confirm New Password')).toHaveValue('');
     });
 
     it('invalidates auth status query on success', async () => {
@@ -226,6 +240,7 @@ describe('CredentialsSection', () => {
 
       await user.type(screen.getByLabelText('Current Password'), 'oldpass123');
       await user.type(screen.getByLabelText('New Password'), 'newpass123');
+      await user.type(screen.getByLabelText('Confirm New Password'), 'newpass123');
       await user.click(screen.getByRole('button', { name: 'Change Password' }));
 
       await waitFor(() => {
@@ -244,6 +259,7 @@ describe('CredentialsSection', () => {
 
       await user.type(screen.getByLabelText('Current Password'), 'wrongpass');
       await user.type(screen.getByLabelText('New Password'), 'newpass123');
+      await user.type(screen.getByLabelText('Confirm New Password'), 'newpass123');
       await user.click(screen.getByRole('button', { name: 'Change Password' }));
 
       await waitFor(() => {
@@ -258,6 +274,7 @@ describe('CredentialsSection', () => {
 
       await user.type(screen.getByLabelText('Current Password'), 'oldpass123');
       await user.type(screen.getByLabelText('New Password'), 'newpass123');
+      await user.type(screen.getByLabelText('Confirm New Password'), 'newpass123');
       await user.click(screen.getByRole('button', { name: 'Change Password' }));
 
       await waitFor(() => {
@@ -275,6 +292,7 @@ describe('CredentialsSection', () => {
 
       await user.type(screen.getByLabelText('Current Password'), 'oldpass123');
       await user.type(screen.getByLabelText('New Password'), 'newpass123');
+      await user.type(screen.getByLabelText('Confirm New Password'), 'newpass123');
       await user.click(screen.getByRole('button', { name: 'Change Password' }));
 
       await waitFor(() => {
@@ -371,6 +389,161 @@ describe('CredentialsSection', () => {
       );
       const newPw = screen.getByLabelText('New Password');
       expect(newPw).toHaveAttribute('autoComplete', 'new-password');
+    });
+  });
+
+  describe('confirm password — setup form', () => {
+    function renderSetup() {
+      return renderWithProviders(
+        <CredentialsSection hasUser={false} queryClient={queryClient} />,
+      );
+    }
+
+    it('renders a Confirm Password field', () => {
+      renderSetup();
+      expect(screen.getByLabelText('Confirm Password')).toBeInTheDocument();
+    });
+
+    it('submitting with matching passwords calls api.authSetup', async () => {
+      const user = userEvent.setup();
+      (api.authSetup as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      renderSetup();
+      await user.type(screen.getByLabelText('Username'), 'admin');
+      await user.type(screen.getByLabelText('Password'), 'pass123');
+      await user.type(screen.getByLabelText('Confirm Password'), 'pass123');
+      await user.click(screen.getByRole('button', { name: 'Create Credentials' }));
+      await waitFor(() => {
+        expect(api.authSetup).toHaveBeenCalledWith('admin', 'pass123');
+      });
+    });
+
+    it('submitting with mismatched passwords shows inline error and does not call API', async () => {
+      const user = userEvent.setup();
+      renderSetup();
+      await user.type(screen.getByLabelText('Username'), 'admin');
+      await user.type(screen.getByLabelText('Password'), 'pass123');
+      await user.type(screen.getByLabelText('Confirm Password'), 'different');
+      await user.click(screen.getByRole('button', { name: 'Create Credentials' }));
+      await waitFor(() => {
+        expect(screen.getByText('Passwords do not match')).toBeInTheDocument();
+      });
+      expect(api.authSetup).not.toHaveBeenCalled();
+    });
+
+    it('submitting with empty confirm password shows inline error and does not call API', async () => {
+      const user = userEvent.setup();
+      renderSetup();
+      await user.type(screen.getByLabelText('Username'), 'admin');
+      await user.type(screen.getByLabelText('Password'), 'pass123');
+      await user.click(screen.getByRole('button', { name: 'Create Credentials' }));
+      await waitFor(() => {
+        expect(screen.getByText('Passwords do not match')).toBeInTheDocument();
+      });
+      expect(api.authSetup).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('confirm password — change password form', () => {
+    function renderChangePassword(currentUsername = 'admin') {
+      return renderWithProviders(
+        <CredentialsSection hasUser={true} currentUsername={currentUsername} queryClient={queryClient} />,
+      );
+    }
+
+    it('renders a Confirm New Password field', () => {
+      renderChangePassword();
+      expect(screen.getByLabelText('Confirm New Password')).toBeInTheDocument();
+    });
+
+    it('submitting with matching new passwords calls api.authChangePassword', async () => {
+      const user = userEvent.setup();
+      (api.authChangePassword as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      renderChangePassword();
+      await user.type(screen.getByLabelText('Current Password'), 'oldpass');
+      await user.type(screen.getByLabelText('New Password'), 'newpass123');
+      await user.type(screen.getByLabelText('Confirm New Password'), 'newpass123');
+      await user.click(screen.getByRole('button', { name: 'Change Password' }));
+      await waitFor(() => {
+        expect(api.authChangePassword).toHaveBeenCalled();
+      });
+    });
+
+    it('submitting with mismatched new passwords shows inline error and does not call API', async () => {
+      const user = userEvent.setup();
+      renderChangePassword();
+      await user.type(screen.getByLabelText('Current Password'), 'oldpass');
+      await user.type(screen.getByLabelText('New Password'), 'newpass123');
+      await user.type(screen.getByLabelText('Confirm New Password'), 'different');
+      await user.click(screen.getByRole('button', { name: 'Change Password' }));
+      await waitFor(() => {
+        expect(screen.getByText('Passwords do not match')).toBeInTheDocument();
+      });
+      expect(api.authChangePassword).not.toHaveBeenCalled();
+    });
+
+    it('submitting with empty confirm new password shows inline error and does not call API', async () => {
+      const user = userEvent.setup();
+      renderChangePassword();
+      await user.type(screen.getByLabelText('Current Password'), 'oldpass');
+      await user.type(screen.getByLabelText('New Password'), 'newpass123');
+      await user.click(screen.getByRole('button', { name: 'Change Password' }));
+      await waitFor(() => {
+        expect(screen.getByText('Passwords do not match')).toBeInTheDocument();
+      });
+      expect(api.authChangePassword).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('remove credentials (bypassActive=true)', () => {
+    it('Remove Credentials button is visible when bypassActive=true and hasUser=true', () => {
+      renderWithProviders(
+        <CredentialsSection hasUser={true} currentUsername="admin" bypassActive={true} queryClient={queryClient} />,
+      );
+      expect(screen.getByRole('button', { name: 'Remove Credentials' })).toBeInTheDocument();
+    });
+
+    it('Remove Credentials button is NOT visible when bypassActive=false', () => {
+      renderWithProviders(
+        <CredentialsSection hasUser={true} currentUsername="admin" bypassActive={false} queryClient={queryClient} />,
+      );
+      expect(screen.queryByRole('button', { name: 'Remove Credentials' })).not.toBeInTheDocument();
+    });
+
+    it('Remove Credentials button is NOT visible when bypassActive=true but hasUser=false', () => {
+      renderWithProviders(
+        <CredentialsSection hasUser={false} bypassActive={true} queryClient={queryClient} />,
+      );
+      expect(screen.queryByRole('button', { name: 'Remove Credentials' })).not.toBeInTheDocument();
+    });
+
+    it('clicking Remove Credentials calls delete endpoint and invalidates auth queries and switches to setup view', async () => {
+      const user = userEvent.setup();
+      mockApi.authDeleteCredentials.mockResolvedValue({ success: true });
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      renderWithProviders(
+        <CredentialsSection hasUser={true} currentUsername="admin" bypassActive={true} queryClient={queryClient} />,
+      );
+      await user.click(screen.getByRole('button', { name: 'Remove Credentials' }));
+      await waitFor(() => {
+        expect(mockApi.authDeleteCredentials).toHaveBeenCalled();
+        expect(invalidateSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ queryKey: ['auth', 'status'] }),
+        );
+      });
+    });
+
+    it('Remove Credentials API failure shows error toast and preserves form state', async () => {
+      const user = userEvent.setup();
+      mockApi.authDeleteCredentials.mockRejectedValue(new ApiError(403, { error: 'Only available when AUTH_BYPASS is active' }));
+      renderWithProviders(
+        <CredentialsSection hasUser={true} currentUsername="admin" bypassActive={true} queryClient={queryClient} />,
+      );
+      await user.click(screen.getByRole('button', { name: 'Remove Credentials' }));
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalled();
+      });
+      // Change password form should still be visible (form state preserved)
+      expect(screen.getByRole('button', { name: 'Change Password' })).toBeInTheDocument();
     });
   });
 

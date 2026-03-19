@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createHmac } from 'node:crypto';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { AuthService } from './auth.service.js';
+import { AuthService, NoCredentialsError } from './auth.service.js';
 import { createMockDb, createMockLogger, mockDbChain, inject } from '../__tests__/helpers.js';
 import { initializeKey, _resetKey, isEncrypted } from '../utils/secret-codec.js';
 
@@ -174,6 +174,37 @@ describe('AuthService', () => {
 
       expect(await service.validateApiKey('test-key-123')).toBe(true);
       expect(await service.validateApiKey('wrong-key')).toBe(false);
+    });
+  });
+
+  describe('deleteCredentials', () => {
+    it('deletes all users and resets auth mode to none', async () => {
+      const authConfig = { mode: 'forms' as const, apiKey: 'key', sessionSecret: 'sec', localBypass: false };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1, username: 'admin', passwordHash: 'h:s' }])) // users check
+        .mockReturnValueOnce(mockDbChain([{ key: 'auth', value: authConfig }])); // getAuthConfig inside setAuthConfig
+      db.delete.mockReturnValue(mockDbChain(undefined));
+      db.insert.mockReturnValue(mockDbChain(undefined));
+
+      await service.deleteCredentials();
+
+      expect(db.delete).toHaveBeenCalled();
+
+      // Assert setAuthConfig was called with mode: 'none' and preserved apiKey/sessionSecret/localBypass
+      const insertChain = db.insert.mock.results[0].value;
+      const valuesCall = insertChain.values.mock.calls[0][0];
+      expect(valuesCall.key).toBe('auth');
+      const storedConfig = valuesCall.value as { mode: string; apiKey: string; sessionSecret: string; localBypass: boolean };
+      expect(storedConfig.mode).toBe('none');
+      expect(isEncrypted(storedConfig.apiKey)).toBe(true);      // apiKey preserved (re-encrypted)
+      expect(isEncrypted(storedConfig.sessionSecret)).toBe(true); // sessionSecret preserved (re-encrypted)
+      expect(storedConfig.localBypass).toBe(false);              // localBypass preserved
+    });
+
+    it('throws NoCredentialsError when no user exists', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      await expect(service.deleteCredentials()).rejects.toThrow(NoCredentialsError);
     });
   });
 

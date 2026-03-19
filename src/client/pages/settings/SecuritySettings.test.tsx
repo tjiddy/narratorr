@@ -13,6 +13,7 @@ vi.mock('@/lib/api', () => ({
     authSetup: vi.fn(),
     authChangePassword: vi.fn(),
     authRegenerateApiKey: vi.fn(),
+    authDeleteCredentials: vi.fn(),
   },
   ApiError: class ApiError extends Error {
     status: number;
@@ -45,6 +46,7 @@ const mockStatus = {
   mode: 'none' as const,
   hasUser: false,
   localBypass: false,
+  bypassActive: false,
 };
 
 describe('SecuritySettings', () => {
@@ -169,6 +171,7 @@ describe('SecuritySettings', () => {
     // Should show create form since hasUser=false
     await user.type(screen.getByLabelText('Username'), 'admin');
     await user.type(screen.getByLabelText('Password'), 'password1234');
+    await user.type(screen.getByLabelText('Confirm Password'), 'password1234');
     await user.click(screen.getByRole('button', { name: /create credentials/i }));
 
     await waitFor(() => {
@@ -200,6 +203,7 @@ describe('SecuritySettings', () => {
 
     await user.type(screen.getByLabelText('Current Password'), 'oldpass');
     await user.type(screen.getByLabelText('New Password'), 'newpassword1');
+    await user.type(screen.getByLabelText('Confirm New Password'), 'newpassword1');
     await user.click(screen.getByRole('button', { name: /change password/i }));
 
     // Username unchanged → third arg is undefined
@@ -220,6 +224,7 @@ describe('SecuritySettings', () => {
 
     await user.type(screen.getByLabelText('Username'), 'admin');
     await user.type(screen.getByLabelText('Password'), 'password1234');
+    await user.type(screen.getByLabelText('Confirm Password'), 'password1234');
     await user.click(screen.getByRole('button', { name: /create credentials/i }));
 
     await waitFor(() => {
@@ -238,6 +243,7 @@ describe('SecuritySettings', () => {
 
     await user.type(screen.getByLabelText('Username'), 'admin');
     await user.type(screen.getByLabelText('Password'), 'password1234');
+    await user.type(screen.getByLabelText('Confirm Password'), 'password1234');
     await user.click(screen.getByRole('button', { name: /create credentials/i }));
 
     await waitFor(() => {
@@ -268,6 +274,7 @@ describe('SecuritySettings', () => {
 
     await user.type(screen.getByLabelText('Current Password'), 'wrongpass');
     await user.type(screen.getByLabelText('New Password'), 'newpassword1');
+    await user.type(screen.getByLabelText('Confirm New Password'), 'newpassword1');
     await user.click(screen.getByRole('button', { name: /change password/i }));
 
     await waitFor(() => {
@@ -295,6 +302,7 @@ describe('SecuritySettings', () => {
     await user.type(usernameField, 'newadmin');
     await user.type(screen.getByLabelText('Current Password'), 'oldpass');
     await user.type(screen.getByLabelText('New Password'), 'newpassword1');
+    await user.type(screen.getByLabelText('Confirm New Password'), 'newpassword1');
     await user.click(screen.getByRole('button', { name: /change password/i }));
 
     await waitFor(() => {
@@ -320,6 +328,7 @@ describe('SecuritySettings', () => {
 
     await user.type(screen.getByLabelText('Username'), 'admin');
     await user.type(screen.getByLabelText('Password'), 'password1234');
+    await user.type(screen.getByLabelText('Confirm Password'), 'password1234');
     await user.click(screen.getByRole('button', { name: /create credentials/i }));
 
     await waitFor(() => {
@@ -329,6 +338,43 @@ describe('SecuritySettings', () => {
     // Auth status should be refetched due to query invalidation
     await waitFor(() => {
       expect(api.getAuthStatus).toHaveBeenCalled();
+    });
+  });
+
+  it('bypassActive from query wires into CredentialsSection — Remove Credentials visible, then hidden after deletion', async () => {
+    // Start: user exists, bypass active → Remove Credentials button should be visible
+    (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockStatus,
+      hasUser: true,
+      bypassActive: true,
+      username: 'admin',
+    });
+    (api.authDeleteCredentials as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+
+    const user = userEvent.setup();
+    renderWithProviders(<SecuritySettings />);
+
+    // Remove Credentials button visible when bypassActive=true and hasUser=true
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /remove credentials/i })).toBeInTheDocument();
+    });
+
+    // Resolve the refetch after deletion to: hasUser=false, bypassActive=false
+    (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockStatus,
+      hasUser: false,
+      bypassActive: false,
+    });
+
+    await user.click(screen.getByRole('button', { name: /remove credentials/i }));
+
+    // After deletion + refetch: setup form shown, Remove Credentials gone
+    await waitFor(() => {
+      expect(api.authDeleteCredentials).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /create credentials/i })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /remove credentials/i })).not.toBeInTheDocument();
     });
   });
 
@@ -359,6 +405,7 @@ describe('SecuritySettings', () => {
 
     await user.type(screen.getByLabelText('Current Password'), 'oldpass');
     await user.type(screen.getByLabelText('New Password'), 'newpassword1');
+    await user.type(screen.getByLabelText('Confirm New Password'), 'newpassword1');
     await user.click(screen.getByRole('button', { name: /change password/i }));
 
     await waitFor(() => {

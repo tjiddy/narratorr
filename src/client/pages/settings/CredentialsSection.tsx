@@ -6,58 +6,148 @@ import { queryKeys } from '@/lib/queryKeys';
 import { ShieldIcon } from '@/components/icons';
 import { SettingsSection } from './SettingsSection';
 
-export function CredentialsSection({
-  hasUser,
-  currentUsername,
-  queryClient,
-}: {
-  hasUser: boolean;
-  currentUsername?: string;
-  queryClient: QueryClient;
-}) {
+const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all';
+const btnPrimary = 'px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring';
+const btnDestructive = 'px-5 py-3 bg-destructive text-destructive-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring';
+
+function SetupForm({ queryClient }: { queryClient: QueryClient }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [editUsername, setEditUsername] = useState(currentUsername ?? '');
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState('');
 
-  const setupMutation = useMutation({
+  const mutation = useMutation({
     mutationFn: () => api.authSetup(username, password),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
       toast.success('Credentials created');
-      setUsername('');
-      setPassword('');
+      setUsername(''); setPassword(''); setConfirmPassword(''); setError('');
     },
     onError: (err) => {
-      const message = err instanceof ApiError ? err.message : 'Failed to create credentials';
-      toast.error(message);
+      toast.error(err instanceof ApiError ? err.message : 'Failed to create credentials');
     },
   });
 
-  const passwordMutation = useMutation({
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (password !== confirmPassword) { setError('Passwords do not match'); return; }
+    setError('');
+    mutation.mutate();
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label htmlFor="setup-username" className="block text-sm font-medium mb-1.5">Username</label>
+        <input id="setup-username" type="text" value={username} onChange={(e) => setUsername(e.target.value)} required minLength={1} className={inputClass} placeholder="Enter username" />
+      </div>
+      <div>
+        <label htmlFor="setup-password" className="block text-sm font-medium mb-1.5">Password</label>
+        <input id="setup-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="new-password" className={inputClass} placeholder="Enter password" />
+      </div>
+      <div>
+        <label htmlFor="setup-confirm-password" className="block text-sm font-medium mb-1.5">Confirm Password</label>
+        <input id="setup-confirm-password" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" className={inputClass} placeholder="Confirm password" />
+      </div>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      <button type="submit" disabled={mutation.isPending} className={btnPrimary}>
+        {mutation.isPending ? 'Creating...' : 'Create Credentials'}
+      </button>
+    </form>
+  );
+}
+
+function ChangePasswordForm({ currentUsername, queryClient, showRemoveButton, onRemove, isRemoving }: {
+  currentUsername?: string;
+  queryClient: QueryClient;
+  showRemoveButton: boolean;
+  onRemove: () => void;
+  isRemoving: boolean;
+}) {
+  const [editUsername, setEditUsername] = useState(currentUsername ?? '');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const mutation = useMutation({
     mutationFn: () => api.authChangePassword(currentPassword, newPassword, editUsername !== currentUsername ? editUsername : undefined),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
       toast.success('Credentials updated');
-      setCurrentPassword('');
-      setNewPassword('');
+      setCurrentPassword(''); setNewPassword(''); setConfirmNewPassword(''); setError('');
     },
     onError: (err) => {
-      const message = err instanceof ApiError ? err.message : 'Failed to change password';
-      toast.error(message);
+      toast.error(err instanceof ApiError ? err.message : 'Failed to change password');
     },
   });
 
-  function handleSetup(e: FormEvent) {
+  function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setupMutation.mutate();
+    if (newPassword !== confirmNewPassword) { setError('Passwords do not match'); return; }
+    setError('');
+    mutation.mutate();
   }
 
-  function handleChangePassword(e: FormEvent) {
-    e.preventDefault();
-    passwordMutation.mutate();
-  }
+  return (
+    <div className="space-y-6">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label htmlFor="edit-username" className="block text-sm font-medium mb-1.5">Username</label>
+          <input id="edit-username" type="text" value={editUsername} onChange={(e) => setEditUsername(e.target.value)} required minLength={1} className={inputClass} />
+        </div>
+        <div>
+          <label htmlFor="current-password" className="block text-sm font-medium mb-1.5">Current Password</label>
+          <input id="current-password" type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} required autoComplete="current-password" className={inputClass} />
+        </div>
+        <div>
+          <label htmlFor="new-password" className="block text-sm font-medium mb-1.5">New Password</label>
+          <input id="new-password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required autoComplete="new-password" className={inputClass} placeholder="Enter new password" />
+        </div>
+        <div>
+          <label htmlFor="confirm-new-password" className="block text-sm font-medium mb-1.5">Confirm New Password</label>
+          <input id="confirm-new-password" type="password" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} autoComplete="new-password" className={inputClass} placeholder="Confirm new password" />
+        </div>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <button type="submit" disabled={mutation.isPending} className={btnPrimary}>
+          {mutation.isPending ? 'Updating...' : 'Change Password'}
+        </button>
+      </form>
+      {showRemoveButton && (
+        <div className="border-t border-border pt-4">
+          <p className="text-sm text-muted-foreground mb-3">
+            Remove credentials and reset auth mode to None. Only available while AUTH_BYPASS is active.
+          </p>
+          <button type="button" onClick={onRemove} disabled={isRemoving} className={btnDestructive}>
+            {isRemoving ? 'Removing...' : 'Remove Credentials'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function CredentialsSection({
+  hasUser,
+  currentUsername,
+  bypassActive = false,
+  queryClient,
+}: {
+  hasUser: boolean;
+  currentUsername?: string;
+  bypassActive?: boolean;
+  queryClient: QueryClient;
+}) {
+  const deleteMutation = useMutation({
+    mutationFn: () => api.authDeleteCredentials(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
+      toast.success('Credentials removed');
+    },
+    onError: (err) => {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to remove credentials');
+    },
+  });
 
   return (
     <SettingsSection
@@ -66,88 +156,15 @@ export function CredentialsSection({
       description={hasUser ? 'Manage your login credentials' : 'Create login credentials to enable authentication'}
     >
       {!hasUser ? (
-        <form onSubmit={handleSetup} className="space-y-4">
-          <div>
-            <label htmlFor="setup-username" className="block text-sm font-medium mb-1.5">Username</label>
-            <input
-              id="setup-username"
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              minLength={1}
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-              placeholder="Enter username"
-            />
-          </div>
-          <div>
-            <label htmlFor="setup-password" className="block text-sm font-medium mb-1.5">Password</label>
-            <input
-              id="setup-password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              autoComplete="new-password"
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-              placeholder="Enter password"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={setupMutation.isPending}
-            className="px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring"
-          >
-            {setupMutation.isPending ? 'Creating...' : 'Create Credentials'}
-          </button>
-        </form>
+        <SetupForm queryClient={queryClient} />
       ) : (
-        <form onSubmit={handleChangePassword} className="space-y-4">
-          <div>
-            <label htmlFor="edit-username" className="block text-sm font-medium mb-1.5">Username</label>
-            <input
-              id="edit-username"
-              type="text"
-              value={editUsername}
-              onChange={(e) => setEditUsername(e.target.value)}
-              required
-              minLength={1}
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-            />
-          </div>
-          <div>
-            <label htmlFor="current-password" className="block text-sm font-medium mb-1.5">Current Password</label>
-            <input
-              id="current-password"
-              type="password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              required
-              autoComplete="current-password"
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-            />
-          </div>
-          <div>
-            <label htmlFor="new-password" className="block text-sm font-medium mb-1.5">New Password</label>
-            <input
-              id="new-password"
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              required
-              autoComplete="new-password"
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-              placeholder="Enter new password"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={passwordMutation.isPending}
-            className="px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring"
-          >
-            {passwordMutation.isPending ? 'Updating...' : 'Change Password'}
-          </button>
-        </form>
+        <ChangePasswordForm
+          currentUsername={currentUsername}
+          queryClient={queryClient}
+          showRemoveButton={bypassActive && hasUser}
+          onRemove={() => deleteMutation.mutate()}
+          isRemoving={deleteMutation.isPending}
+        />
       )}
     </SettingsSection>
   );

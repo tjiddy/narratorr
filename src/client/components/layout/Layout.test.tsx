@@ -46,6 +46,7 @@ describe('Layout', () => {
       mode,
       hasUser: mode !== 'none',
       localBypass: false,
+      bypassActive: false,
       isAuthenticated: true,
       isLoading: false,
       logout: vi.fn(),

@@ -127,7 +127,7 @@ async function handleFormsAuth(
     reply.setCookie('narratorr_session', newCookie, {
       httpOnly: true,
       sameSite: 'lax',
-      secure: !config.isDev,
+      secure: false,
       path: '/',
       maxAge: 7 * 24 * 60 * 60,
     });
