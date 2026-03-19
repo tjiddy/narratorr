@@ -73,9 +73,9 @@ describe('Security Headers (helmet)', () => {
       expect(res.headers['x-frame-options']).toBe('DENY');
     });
 
-    it('includes Strict-Transport-Security header on responses', async () => {
+    it('does not include Strict-Transport-Security (self-hosted, no TLS)', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/test' });
-      expect(res.headers['strict-transport-security']).toContain('max-age=');
+      expect(res.headers['strict-transport-security']).toBeUndefined();
     });
 
     it('includes Referrer-Policy on responses', async () => {
