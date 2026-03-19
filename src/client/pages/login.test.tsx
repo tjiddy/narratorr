@@ -65,55 +65,8 @@ describe('LoginPage', () => {
     });
   });
 
-  it('renders with dark class on <html> when localStorage theme=dark', () => {
-    // Simulate what the pre-paint bootstrap script does
-    localStorage.setItem('theme', 'dark');
-    document.documentElement.classList.add('dark');
-
-    renderWithProviders(<LoginPage />);
-
-    // Login page should not strip the pre-applied dark class
-    expect(document.documentElement.classList.contains('dark')).toBe(true);
-
-    // Cleanup
-    document.documentElement.classList.remove('dark');
-    localStorage.removeItem('theme');
-  });
-
-  it('renders without dark class when localStorage theme=light', () => {
-    // Simulate what the pre-paint bootstrap script does for light mode
-    localStorage.setItem('theme', 'light');
-    document.documentElement.classList.remove('dark');
-
-    renderWithProviders(<LoginPage />);
-
-    // Login page should not add dark class when light mode is set
-    expect(document.documentElement.classList.contains('dark')).toBe(false);
-
-    localStorage.removeItem('theme');
-  });
-
-  it('respects system prefers-color-scheme: dark when no localStorage theme is set', () => {
-    // Simulate bootstrap script applying dark from system preference
-    localStorage.removeItem('theme');
-    document.documentElement.classList.add('dark');
-
-    renderWithProviders(<LoginPage />);
-
-    expect(document.documentElement.classList.contains('dark')).toBe(true);
-
-    document.documentElement.classList.remove('dark');
-  });
-
-  it('respects system prefers-color-scheme: light when no localStorage theme is set', () => {
-    // Simulate bootstrap script leaving class absent for light system preference
-    localStorage.removeItem('theme');
-    document.documentElement.classList.remove('dark');
-
-    renderWithProviders(<LoginPage />);
-
-    expect(document.documentElement.classList.contains('dark')).toBe(false);
-  });
+  // Theme selection logic (localStorage + matchMedia → dark class on <html>) is tested in
+  // src/client/lib/theme-bootstrap.test.ts where the bootstrap function can be exercised directly.
 
   it('submit disables button while pending', async () => {
     // Make login hang until we resolve it

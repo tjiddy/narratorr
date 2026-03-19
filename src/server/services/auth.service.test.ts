@@ -189,6 +189,16 @@ describe('AuthService', () => {
       await service.deleteCredentials();
 
       expect(db.delete).toHaveBeenCalled();
+
+      // Assert setAuthConfig was called with mode: 'none' and preserved apiKey/sessionSecret/localBypass
+      const insertChain = db.insert.mock.results[0].value;
+      const valuesCall = insertChain.values.mock.calls[0][0];
+      expect(valuesCall.key).toBe('auth');
+      const storedConfig = valuesCall.value as { mode: string; apiKey: string; sessionSecret: string; localBypass: boolean };
+      expect(storedConfig.mode).toBe('none');
+      expect(isEncrypted(storedConfig.apiKey)).toBe(true);      // apiKey preserved (re-encrypted)
+      expect(isEncrypted(storedConfig.sessionSecret)).toBe(true); // sessionSecret preserved (re-encrypted)
+      expect(storedConfig.localBypass).toBe(false);              // localBypass preserved
     });
 
     it('throws NoCredentialsError when no user exists', async () => {

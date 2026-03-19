@@ -494,6 +494,18 @@ describe('auth routes', () => {
         (config as Record<string, unknown>).authBypass = false;
       }
     });
+
+    it('returns 500 for unexpected service errors when AUTH_BYPASS is active', async () => {
+      (config as Record<string, unknown>).authBypass = true;
+      (services.auth.deleteCredentials as Mock).mockRejectedValue(new Error('db down'));
+      try {
+        const res = await app.inject({ method: 'DELETE', url: '/api/auth/credentials' });
+        expect(res.statusCode).toBe(500);
+        expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
+      } finally {
+        (config as Record<string, unknown>).authBypass = false;
+      }
+    });
   });
 
   describe('POST /api/auth/login — cookie security (production mode)', () => {

@@ -355,6 +355,9 @@ describe('auth middleware', () => {
       const setCookie = res.headers['set-cookie'];
       expect(setCookie).toBeDefined();
       expect(String(setCookie)).toContain('narratorr_session=renewed-cookie-value');
+      expect(String(setCookie)).toContain('HttpOnly');
+      expect(String(setCookie)).toContain('SameSite=Lax');
+      expect(String(setCookie)).not.toContain('Secure');
     });
   });
 

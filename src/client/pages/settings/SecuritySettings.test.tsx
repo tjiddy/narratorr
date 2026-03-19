@@ -341,6 +341,43 @@ describe('SecuritySettings', () => {
     });
   });
 
+  it('bypassActive from query wires into CredentialsSection — Remove Credentials visible, then hidden after deletion', async () => {
+    // Start: user exists, bypass active → Remove Credentials button should be visible
+    (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockStatus,
+      hasUser: true,
+      bypassActive: true,
+      username: 'admin',
+    });
+    (api.authDeleteCredentials as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+
+    const user = userEvent.setup();
+    renderWithProviders(<SecuritySettings />);
+
+    // Remove Credentials button visible when bypassActive=true and hasUser=true
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /remove credentials/i })).toBeInTheDocument();
+    });
+
+    // Resolve the refetch after deletion to: hasUser=false, bypassActive=false
+    (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockStatus,
+      hasUser: false,
+      bypassActive: false,
+    });
+
+    await user.click(screen.getByRole('button', { name: /remove credentials/i }));
+
+    // After deletion + refetch: setup form shown, Remove Credentials gone
+    await waitFor(() => {
+      expect(api.authDeleteCredentials).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /create credentials/i })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /remove credentials/i })).not.toBeInTheDocument();
+    });
+  });
+
   it('password change success shows success toast, clears fields, and invalidates auth queries', async () => {
     (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
