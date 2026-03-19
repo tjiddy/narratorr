@@ -47,6 +47,7 @@ export function SecuritySettings() {
       <CredentialsSection
         hasUser={authStatus?.hasUser ?? false}
         currentUsername={authStatus?.username}
+        bypassActive={authStatus?.bypassActive ?? false}
         queryClient={queryClient}
       />
       <AuthModeSection
