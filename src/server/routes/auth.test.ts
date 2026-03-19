@@ -266,6 +266,29 @@ describe('auth routes', () => {
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload)).toEqual({ error: 'User already exists' });
     });
+
+    it('accepts 1-char password', async () => {
+      (services.auth.createUser as Mock).mockResolvedValue(undefined);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/setup',
+        payload: { username: 'admin', password: 'x' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.auth.createUser).toHaveBeenCalledWith('admin', 'x');
+    });
+
+    it('rejects empty password with 400', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/setup',
+        payload: { username: 'admin', password: '' },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
   });
 
   describe('GET /api/auth/config', () => {
@@ -348,6 +371,29 @@ describe('auth routes', () => {
 
       expect(res.statusCode).toBe(500);
       expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+
+    it('accepts 1-char newPassword', async () => {
+      (services.auth.changePassword as Mock).mockResolvedValue(undefined);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/auth/password',
+        payload: { currentPassword: 'old', newPassword: 'x' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.auth.changePassword).toHaveBeenCalledWith('admin', 'old', 'x', undefined);
+    });
+
+    it('rejects empty newPassword with 400', async () => {
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/auth/password',
+        payload: { currentPassword: 'old', newPassword: '' },
+      });
+
+      expect(res.statusCode).toBe(400);
     });
   });
 

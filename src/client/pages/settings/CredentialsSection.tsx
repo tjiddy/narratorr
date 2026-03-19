@@ -88,9 +88,8 @@ export function CredentialsSection({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              minLength={8}
               className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-              placeholder="At least 8 characters"
+              placeholder="Enter password"
             />
           </div>
           <button
@@ -134,9 +133,8 @@ export function CredentialsSection({
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               required
-              minLength={8}
               className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-              placeholder="At least 8 characters"
+              placeholder="Enter new password"
             />
           </div>
           <button
