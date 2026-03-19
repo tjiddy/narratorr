@@ -12,6 +12,15 @@ describe('setupCredentialsSchema', () => {
     expect(result.success).toBe(false);
   });
 
+  it('empty-password error message does not reference "8 characters"', () => {
+    const result = setupCredentialsSchema.safeParse({ username: 'admin', password: '' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const messages = result.error.issues.map((i) => i.message).join(' ');
+      expect(messages).not.toMatch(/8 characters/i);
+    }
+  });
+
   it('accepts a 128-character password (max boundary)', () => {
     const result = setupCredentialsSchema.safeParse({ username: 'admin', password: 'a'.repeat(128) });
     expect(result.success).toBe(true);
@@ -27,6 +36,15 @@ describe('changePasswordSchema', () => {
   it('rejects an empty string newPassword', () => {
     const result = changePasswordSchema.safeParse({ currentPassword: 'old', newPassword: '' });
     expect(result.success).toBe(false);
+  });
+
+  it('empty-newPassword error message does not reference "8 characters"', () => {
+    const result = changePasswordSchema.safeParse({ currentPassword: 'old', newPassword: '' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const messages = result.error.issues.map((i) => i.message).join(' ');
+      expect(messages).not.toMatch(/8 characters/i);
+    }
   });
 
   it('accepts a 128-character newPassword (max boundary)', () => {
