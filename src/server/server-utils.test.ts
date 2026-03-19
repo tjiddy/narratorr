@@ -80,11 +80,33 @@ describe('registerStaticAndSpa', () => {
   let tmpDir: string;
 
   beforeAll(() => {
-    // Create a temp directory with a minimal index.html
+    // Create a temp directory with a realistic index.html matching the built output
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'narratorr-test-'));
     fs.writeFileSync(
       path.join(tmpDir, 'index.html'),
-      '<html><head></head><body><div id="root"></div></body></html>',
+      [
+        '<!doctype html>',
+        '<html lang="en">',
+        '  <head>',
+        '    <meta charset="UTF-8" />',
+        '    <link rel="preconnect" href="https://fonts.googleapis.com">',
+        '    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
+        '    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans&display=swap">',
+        '    <title>Narratorr</title>',
+        '    <script>',
+        '      (function() {',
+        '        var t = localStorage.getItem("theme");',
+        '        if (t === "dark") document.documentElement.classList.add("dark");',
+        '      })();',
+        '    </script>',
+        '    <script type="module" crossorigin src="./assets/index-abc123.js"></script>',
+        '    <link rel="stylesheet" crossorigin href="./assets/index-abc123.css">',
+        '  </head>',
+        '  <body>',
+        '    <div id="root"></div>',
+        '  </body>',
+        '</html>',
+      ].join('\n'),
     );
   });
 
@@ -428,6 +450,137 @@ describe('registerStaticAndSpa', () => {
       expect(res.statusCode).toBe(200);
       expect(res.headers['content-type']).toContain('text/html');
       expect(res.body).toContain('window.__NARRATORR_URL_BASE__="/narratorr"');
+      await app.close();
+    });
+  });
+
+  describe('inline script nonce injection', () => {
+    it('injects nonce into existing inline theme bootstrap <script> tag', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/' });
+      // The inline theme script should have a nonce attribute
+      expect(res.body).toMatch(/<script nonce="[a-f0-9]+">[\s\S]*?localStorage/);
+      await app.close();
+    });
+
+    it('injected config script still receives nonce (no regression)', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/' });
+      expect(res.body).toMatch(/<script nonce="[a-f0-9]+">window\.__NARRATORR_URL_BASE__/);
+      await app.close();
+    });
+
+    it('nonce on inline theme script matches nonce on injected config script (same per-request value)', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/' });
+      const nonceMatches = [...res.body.matchAll(/nonce="([a-f0-9]+)"/g)].map((m) => m[1]);
+      // Should have at least 2 nonces (theme script + config script)
+      expect(nonceMatches.length).toBeGreaterThanOrEqual(2);
+      // All nonces should be the same per-request value
+      expect(new Set(nonceMatches).size).toBe(1);
+      await app.close();
+    });
+
+    it('all inline <script> blocks receive nonces (not just the first match)', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/' });
+      // Count inline scripts: theme bootstrap + injected config = 2
+      const inlineScripts = [...res.body.matchAll(/<script(?![^>]*\bsrc=)[^>]*>/g)];
+      expect(inlineScripts.length).toBeGreaterThanOrEqual(2);
+      // Every inline script should have a nonce
+      for (const match of inlineScripts) {
+        expect(match[0]).toMatch(/nonce="[a-f0-9]+"/);
+      }
+      await app.close();
+    });
+
+    it('external <script type="module" ...> tags are NOT modified', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/' });
+      // The external module script should NOT have a nonce
+      expect(res.body).toMatch(/<script type="module" crossorigin src="\.\/assets\/index-abc123\.js"><\/script>/);
+      await app.close();
+    });
+
+    it('script nonce in HTML tags matches the script nonce in CSP header', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/' });
+      const csp = res.headers['content-security-policy'] as string;
+      const headerNonce = csp.match(/'nonce-([a-f0-9]+)'/)?.[1];
+      // Get nonce from the inline theme script
+      const themeNonce = res.body.match(/<script nonce="([a-f0-9]+)">[\s\S]*?localStorage/)?.[1];
+
+      expect(headerNonce).toBeDefined();
+      expect(themeNonce).toBeDefined();
+      expect(themeNonce).toBe(headerNonce);
+      await app.close();
+    });
+
+    it('HTML is returned without nonce attributes when reply.cspNonce is unavailable', async () => {
+      // Without helmet, reply.cspNonce is undefined
+      const app = Fastify({ logger: false });
+      await registerStaticAndSpa(app, '', tmpDir);
+      await app.ready();
+
+      const res = await app.inject({ method: 'GET', url: '/' });
+      expect(res.statusCode).toBe(200);
+      // Theme script should be present but without nonce
+      expect(res.body).toMatch(/<script>[\s\S]*?localStorage/);
+      expect(res.body).not.toMatch(/<script nonce="[^"]*">[\s\S]*?localStorage/);
+      await app.close();
+    });
+
+    it('URL_BASE prefix does not interfere with nonce injection on inline scripts', async () => {
+      const app = await createAppWithHelmet('/narratorr', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/narratorr/' });
+      expect(res.body).toMatch(/<script nonce="[a-f0-9]+">[\s\S]*?localStorage/);
+      expect(res.body).toMatch(/<script nonce="[a-f0-9]+">window\.__NARRATORR_URL_BASE__="/);
+      await app.close();
+    });
+
+    it('nonce injection handles multiline inline script content without corruption', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/' });
+      // The full theme script body should be intact
+      expect(res.body).toContain('localStorage.getItem("theme")');
+      expect(res.body).toContain('document.documentElement.classList.add("dark")');
+      await app.close();
+    });
+
+    it('HTML with no inline scripts passes through without errors', async () => {
+      const noScriptDir = fs.mkdtempSync(path.join(os.tmpdir(), 'narratorr-noscript-'));
+      fs.writeFileSync(
+        path.join(noScriptDir, 'index.html'),
+        '<html><head></head><body><div id="root"></div></body></html>',
+      );
+
+      const app = await createAppWithHelmet('', noScriptDir);
+      const res = await app.inject({ method: 'GET', url: '/' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toContain('<div id="root">');
+      await app.close();
+      fs.rmSync(noScriptDir, { recursive: true, force: true });
+    });
+
+    it('nonce values are unique across sequential requests', async () => {
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res1 = await app.inject({ method: 'GET', url: '/' });
+      const res2 = await app.inject({ method: 'GET', url: '/' });
+      const themeNonce1 = res1.body.match(/<script nonce="([a-f0-9]+)">[\s\S]*?localStorage/)?.[1];
+      const themeNonce2 = res2.body.match(/<script nonce="([a-f0-9]+)">[\s\S]*?localStorage/)?.[1];
+
+      expect(themeNonce1).toBeDefined();
+      expect(themeNonce2).toBeDefined();
+      expect(themeNonce1).not.toBe(themeNonce2);
       await app.close();
     });
   });

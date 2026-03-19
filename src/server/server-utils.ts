@@ -22,7 +22,11 @@ export async function registerStaticAndSpa(
     const nonce = reply.cspNonce?.script;
     const nonceAttr = nonce ? ` nonce="${nonce}"` : '';
     const configScript = `<script${nonceAttr}>window.__NARRATORR_URL_BASE__=${JSON.stringify(urlBasePrefix)};</script>`;
-    const html = rawIndexHtml.replace('</head>', `${configScript}\n</head>`);
+    let html = rawIndexHtml.replace('</head>', `${configScript}\n</head>`);
+    // Inject nonce into pre-existing inline <script> tags (those without a src attribute)
+    if (nonce) {
+      html = html.replace(/<script(?![^>]*\bsrc\b)(?![^>]*\bnonce\b)([^>]*)>/g, `<script nonce="${nonce}"$1>`);
+    }
     return reply.type('text/html').send(html);
   }
 
