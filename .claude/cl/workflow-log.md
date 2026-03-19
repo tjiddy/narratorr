@@ -1,5 +1,37 @@
 # Workflow Log
 
+## #8 UAT - Authentication Issues — 2026-03-19
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #13
+
+### Metrics
+- Files changed: 16 | Tests added/modified: ~120 test assertions across 9 test files
+- Quality gate runs: 3 (pass on attempt 3; failed on lint max-lines, then typecheck)
+- Fix iterations: 4 (confirm field HTML5 required conflict, existing cookie test inversion, CredentialsSection max-lines refactor, TypeScript blast-radius in test mocks)
+- Context compactions: 1 (conversation hit limit mid-implementation; resumed cleanly)
+
+### Workflow experience
+- What went smoothly: bypassActive architecture (request-scoped vs stored) was clear once the route handler needed request.ip. Cookie fix was straightforward.
+- Friction / issues encountered:
+  - HTML5 required on confirm password fields blocked jsdom form submission entirely — silent timeout, took time to diagnose.
+  - Existing test asserting the Secure cookie BUG had to be inverted rather than deleted.
+  - Adding bypassActive to AuthState caused TypeScript errors across 3 unrelated test files.
+  - CredentialsSection grew to 216 lines triggering max-lines lint violation — required sub-component extraction.
+
+### Token efficiency
+- Highest-token actions: context compaction mid-implementation; coverage subagent reading many test files
+- Avoidable waste: blast-radius test mocks could have been identified in one pass if enumerated during planning
+- Suggestions: When adding required fields to AuthState, grep all useAuthContext/useAuth mocks upfront
+
+### Infrastructure gaps
+- Missing tooling / config: frontend-design skill not available in this environment — UI polish pass skipped
+- Unresolved debt: LocalBypassSection toggle, clipboard copy, changePassword selective field update untested at unit level
+
+### Wish I Had Known
+1. HTML5 required blocks form submission in jsdom before React onSubmit fires — omit required on confirm fields. See html5-required-blocks-js-validation.md.
+2. Adding a required field to AuthState cascades TypeScript errors to ALL test files mocking auth state. See authstate-blast-radius-bypassactive.md.
+3. The existing test for Secure cookie flag was asserting the BUG — check existing tests before writing new ones. See existing-test-existing-cookie-behavior.md.
+
 ## #7 Fix CSP nonce injection for inline scripts and add autocomplete attributes — 2026-03-19
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #12
