@@ -106,12 +106,14 @@ describe('useAuth', () => {
         hasUser: true,
         localBypass: false,
         authenticated: true,
+        bypassActive: false,
       })
       .mockResolvedValue({
         mode: 'forms',
         hasUser: true,
         localBypass: false,
         authenticated: false,
+        bypassActive: false,
       });
     vi.mocked(api.authLogout).mockResolvedValue(undefined as never);
 
@@ -156,11 +158,13 @@ describe('useAuth', () => {
       hasUser: true,
       localBypass: false,
       authenticated: true,
+      bypassActive: false,
     }).mockResolvedValue({
       mode: 'forms',
       hasUser: true,
       localBypass: false,
       authenticated: false,
+      bypassActive: false,
     });
     vi.mocked(freshApi.authLogout).mockResolvedValue(undefined as never);
 

@@ -33,7 +33,7 @@ vi.mock('sonner', () => ({
 
 import { api, ApiError } from '@/lib/api';
 // Cast to access all mocked methods
-const mockApi = api as Record<string, ReturnType<typeof vi.fn>>;
+const mockApi = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
 describe('CredentialsSection', () => {
   let queryClient: QueryClient;
