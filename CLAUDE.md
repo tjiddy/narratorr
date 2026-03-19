@@ -94,12 +94,12 @@ Mechanical workflow steps live in `scripts/` as deterministic Node scripts (not 
 | `scripts/merge.ts <pr>` | Validate approval, CI, squash merge, close issue | `MERGED:/ERROR:` |
 | `scripts/block.ts <id> "<reason>"` | Post blocker comment, update labels | `BLOCKED:` |
 | `scripts/resume.ts <id>` | Restore branch, collect context | Branch + context |
-| `scripts/changelog.ts [since]` | Categorized changelog from git + Gitea | Markdown |
-| `scripts/lib.ts` | Shared helpers (gitea, git, label parsing) | — |
+| `scripts/changelog.ts [since]` | Categorized changelog from git + GitHub | Markdown |
+| `scripts/lib.ts` | Shared helpers (gh, git, label parsing) | — |
 
-## Project Management (Gitea)
+## Project Management (GitHub)
 
-All work tracked as Gitea issues at `https://github.com/tjiddy/narratorr`. Gitea CLI: `scripts/gitea.ts`. Gitea connectivity is intermittent — retry up to 3 times on ECONNREFUSED.
+All work tracked as GitHub issues at `https://github.com/tjiddy/narratorr`. Scripts and skills use `gh` CLI for all GitHub API interactions. Token management for GitHub Apps is handled by `scripts/lib.ts` (JWT → installation token, auto-refresh).
 
 ## Codebase Knowledge Graph (MCP)
 
