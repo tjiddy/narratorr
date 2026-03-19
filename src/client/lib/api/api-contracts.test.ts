@@ -135,6 +135,11 @@ describe('authApi', () => {
     await authApi.authRegenerateApiKey();
     expect(mockFetchApi).toHaveBeenCalledWith('/auth/api-key/regenerate', expect.objectContaining({ method: 'POST' }));
   });
+
+  it('authDeleteCredentials → DELETE /auth/credentials', async () => {
+    await authApi.authDeleteCredentials();
+    expect(mockFetchApi).toHaveBeenCalledWith('/auth/credentials', expect.objectContaining({ method: 'DELETE' }));
+  });
 });
 
 describe('blacklistApi', () => {

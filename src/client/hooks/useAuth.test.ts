@@ -42,12 +42,33 @@ describe('useAuth', () => {
     vi.resetModules();
   });
 
+  it('exposes bypassActive from auth status', async () => {
+    vi.mocked(api.getAuthStatus).mockResolvedValue({
+      mode: 'forms',
+      hasUser: true,
+      localBypass: false,
+      authenticated: false,
+      bypassActive: true,
+    });
+
+    const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.bypassActive).toBe(true);
+  });
+
+  it('defaults bypassActive to false while loading', () => {
+    vi.mocked(api.getAuthStatus).mockReturnValue(new Promise(() => {}));
+    const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
+    expect(result.current.bypassActive).toBe(false);
+  });
+
   it('returns auth status from API', async () => {
     vi.mocked(api.getAuthStatus).mockResolvedValue({
       mode: 'forms',
       hasUser: true,
       localBypass: false,
       authenticated: true,
+      bypassActive: false,
     });
 
     const { result } = renderHook(() => useAuth(), {

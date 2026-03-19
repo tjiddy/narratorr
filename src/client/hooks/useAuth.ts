@@ -9,6 +9,7 @@ export interface AuthState {
   mode: AuthMode;
   hasUser: boolean;
   localBypass: boolean;
+  bypassActive: boolean;
   isAuthenticated: boolean;
   isLoading: boolean;
   logout: () => Promise<void>;
@@ -40,6 +41,7 @@ export function useAuth(): AuthState {
     mode: data?.mode ?? 'none',
     hasUser: data?.hasUser ?? false,
     localBypass: data?.localBypass ?? false,
+    bypassActive: data?.bypassActive ?? false,
     isAuthenticated,
     isLoading,
     logout,
