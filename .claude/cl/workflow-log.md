@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #3 Remove password minimum length requirement — 2026-03-19
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #4
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 2 (1 new, 1 updated)
+- Quality gate runs: 2 (pass on attempt 2 — first had flaky ImportSettingsSection test)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Trivial issue, clean red/green TDD cycle, blast radius check found nothing
+- Friction / issues encountered: gh not on PATH in bash — required PATH prefix
+
+### Token efficiency
+- Highest-token actions: Explore subagents — overkill for a 4-file change
+- Avoidable waste: Three explore subagents for removing a constraint is heavy
+- Suggestions: Consider fast-path for trivial chores
+
+### Infrastructure gaps
+- Repeated workarounds: gh PATH issue
+- Missing tooling / config: Scripts that spawn gh need PATH configured
+- Unresolved debt: None
+
+### Wish I Had Known
+1. Spec said frontend-only but backend Zod schemas also enforced min(8) — always verify both layers
+2. gh PATH issue would affect label scripts
+3. Nothing else — genuinely trivial issue
+
+
 ## #448 Housekeeping: Clear remaining debt log — 2026-03-18
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #449
