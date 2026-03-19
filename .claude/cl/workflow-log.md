@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #5 Remove password minimum length requirement — 2026-03-19
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #6
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 3 (auth.test.ts new, auth.test.ts route tests, CredentialsSection.test.tsx updated)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was thoroughly validated through 3 rounds of review — implementation was mechanical
+- Friction / issues encountered: None — trivial constraint removal with clear spec
+
+### Token efficiency
+- Highest-token actions: Explore subagents for self-review and coverage review (overkill for this size change)
+- Avoidable waste: For a 4-file, ~10-line-change issue, the full handoff review pipeline is heavy
+- Suggestions: Consider a lightweight handoff path for changes below a complexity threshold
+
+### Infrastructure gaps
+- Repeated workarounds: .claude/state/ directory disappearing between steps
+- Missing tooling / config: None
+- Unresolved debt: Issue #5 appears to be a duplicate of #3 (PR #4 was already open with identical changes)
+
+### Wish I'd Known
+1. Trivial issue, clean red/green TDD cycle, no learnings to capture — identical to #3 experience
+2. PR #4 from #3 already implemented the same changes (duplicate work)
+3. The changePassword route handler signature is (username, currentPassword, newPassword, newUsername) — easy to get arg order wrong in test assertions
+
 ## #3 Remove password minimum length requirement — 2026-03-19
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #4
