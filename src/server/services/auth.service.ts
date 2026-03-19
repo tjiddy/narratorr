@@ -169,6 +169,21 @@ export class AuthService {
 
   // ─── Users / Credentials ──────────────────────────────────────────
 
+  /** Delete all users and reset auth mode to `none`. Only call when AUTH_BYPASS is active. */
+  async deleteCredentials(): Promise<void> {
+    const userRows = await this.db.select().from(users).limit(1);
+    if (userRows.length === 0) {
+      throw new NoCredentialsError();
+    }
+
+    await this.db.delete(users);
+
+    const config = await this.getAuthConfig();
+    config.mode = 'none';
+    await this.setAuthConfig(config);
+    this.log.info('Credentials deleted and auth mode reset to none');
+  }
+
   async createUser(username: string, password: string): Promise<void> {
     const existing = await this.db
       .select()
@@ -343,5 +358,13 @@ export class IncorrectPasswordError extends Error {
   constructor() {
     super('Current password is incorrect');
     this.name = 'IncorrectPasswordError';
+  }
+}
+
+export class NoCredentialsError extends Error {
+  readonly code = 'NO_CREDENTIALS' as const;
+  constructor() {
+    super('No credentials configured');
+    this.name = 'NoCredentialsError';
   }
 }

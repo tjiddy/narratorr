@@ -18,7 +18,7 @@ vi.mock('../config.js', () => ({
 }));
 
 import { config } from '../config.js';
-import { UserExistsError, AuthConfigError, IncorrectPasswordError } from '../services/auth.service.js';
+import { UserExistsError, AuthConfigError, IncorrectPasswordError, NoCredentialsError } from '../services/auth.service.js';
 
 /** Creates a test app with @fastify/cookie + auth routes + a hook that sets request.user. */
 async function createAuthTestApp(services: Services) {
@@ -72,7 +72,7 @@ describe('auth routes', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      expect(body).toEqual({ mode: 'none', hasUser: false, localBypass: false, authenticated: true });
+      expect(body).toEqual({ mode: 'none', hasUser: false, localBypass: false, authenticated: true, bypassActive: false });
     });
 
     it('returns authenticated: false for forms mode without session cookie', async () => {
@@ -208,16 +208,14 @@ describe('auth routes', () => {
       expect(logoutCookie).not.toContain('Secure');
     });
 
-    it('logout cookie includes Secure flag in production mode', async () => {
-      // Switch to production mode
+    it('login and logout cookies never include Secure flag (reverse proxies handle TLS)', async () => {
+      // Switch to production mode — Secure should still NOT be set
       (config as { isDev: boolean }).isDev = false;
 
-      // Need a fresh app for the config change to take effect in route handler
       const prodServices = createMockServices();
       const prodApp = await createAuthTestApp(prodServices);
 
       try {
-        // Login
         (prodServices.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
         (prodServices.auth.getSessionSecret as Mock).mockResolvedValue('test-secret');
         (prodServices.auth.createSessionCookie as Mock).mockReturnValue('signed-cookie');
@@ -227,11 +225,10 @@ describe('auth routes', () => {
           url: '/api/auth/login',
           payload: { username: 'admin', password: 'pass' },
         });
-        expect(String(loginRes.headers['set-cookie'])).toContain('Secure');
+        expect(String(loginRes.headers['set-cookie'])).not.toContain('Secure');
 
-        // Logout should also have Secure
         const logoutRes = await prodApp.inject({ method: 'POST', url: '/api/auth/logout' });
-        expect(String(logoutRes.headers['set-cookie'])).toContain('Secure');
+        expect(String(logoutRes.headers['set-cookie'])).not.toContain('Secure');
       } finally {
         (config as { isDev: boolean }).isDev = true;
         await prodApp.close();
@@ -422,6 +419,116 @@ describe('auth routes', () => {
 
       expect(res.statusCode).toBe(500);
       expect(JSON.parse(res.payload).error).toBe('Internal server error');
+    });
+  });
+
+  describe('GET /api/auth/status — bypassActive field', () => {
+    it('returns bypassActive: true when AUTH_BYPASS env var is set', async () => {
+      (config as Record<string, unknown>).authBypass = true;
+      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'none', hasUser: false, localBypass: false });
+      try {
+        const res = await app.inject({ method: 'GET', url: '/api/auth/status' });
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload).bypassActive).toBe(true);
+      } finally {
+        (config as Record<string, unknown>).authBypass = false;
+      }
+    });
+
+    it('returns bypassActive: false when AUTH_BYPASS is not set and request is from public IP', async () => {
+      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'none', hasUser: false, localBypass: false });
+      const res = await app.inject({ method: 'GET', url: '/api/auth/status', remoteAddress: '8.8.8.8' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).bypassActive).toBe(false);
+    });
+
+    it('returns bypassActive: true when localBypass=true and request is from private IP', async () => {
+      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: true });
+      const res = await app.inject({ method: 'GET', url: '/api/auth/status', remoteAddress: '192.168.1.5' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).bypassActive).toBe(true);
+    });
+
+    it('returns bypassActive: false when localBypass=true but request is from public IP', async () => {
+      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: true });
+      const res = await app.inject({ method: 'GET', url: '/api/auth/status', remoteAddress: '8.8.8.8' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).bypassActive).toBe(false);
+    });
+
+    it('returns bypassActive: false when localBypass=false and request is from private IP', async () => {
+      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: false });
+      const res = await app.inject({ method: 'GET', url: '/api/auth/status', remoteAddress: '192.168.1.5' });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).bypassActive).toBe(false);
+    });
+  });
+
+  describe('DELETE /api/auth/credentials', () => {
+    it('returns 200 and deletes user when AUTH_BYPASS is active', async () => {
+      (config as Record<string, unknown>).authBypass = true;
+      try {
+        const res = await app.inject({ method: 'DELETE', url: '/api/auth/credentials' });
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload)).toEqual({ success: true });
+        expect(services.auth.deleteCredentials).toHaveBeenCalled();
+      } finally {
+        (config as Record<string, unknown>).authBypass = false;
+      }
+    });
+
+    it('returns 403 when AUTH_BYPASS is not active', async () => {
+      const res = await app.inject({ method: 'DELETE', url: '/api/auth/credentials' });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Only available when AUTH_BYPASS is active' });
+    });
+
+    it('returns 404 when no user exists and AUTH_BYPASS is active', async () => {
+      (config as Record<string, unknown>).authBypass = true;
+      (services.auth.deleteCredentials as Mock).mockRejectedValue(new NoCredentialsError());
+      try {
+        const res = await app.inject({ method: 'DELETE', url: '/api/auth/credentials' });
+        expect(res.statusCode).toBe(404);
+        expect(JSON.parse(res.payload)).toEqual({ error: 'No credentials configured' });
+      } finally {
+        (config as Record<string, unknown>).authBypass = false;
+      }
+    });
+  });
+
+  describe('POST /api/auth/login — cookie security (production mode)', () => {
+    it('login Set-Cookie does NOT contain Secure flag in production mode', async () => {
+      (config as { isDev: boolean }).isDev = false;
+      const prodServices = createMockServices();
+      const prodApp = await createAuthTestApp(prodServices);
+      try {
+        (prodServices.auth.verifyCredentials as Mock).mockResolvedValue({ username: 'admin' });
+        (prodServices.auth.getSessionSecret as Mock).mockResolvedValue('secret');
+        (prodServices.auth.createSessionCookie as Mock).mockReturnValue('cookie-val');
+        const res = await prodApp.inject({
+          method: 'POST', url: '/api/auth/login',
+          payload: { username: 'admin', password: 'pass' },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(String(res.headers['set-cookie'])).not.toContain('Secure');
+      } finally {
+        (config as { isDev: boolean }).isDev = true;
+        await prodApp.close();
+      }
+    });
+
+    it('logout Set-Cookie does NOT contain Secure flag in production mode', async () => {
+      (config as { isDev: boolean }).isDev = false;
+      const prodServices = createMockServices();
+      const prodApp = await createAuthTestApp(prodServices);
+      try {
+        const res = await prodApp.inject({ method: 'POST', url: '/api/auth/logout' });
+        expect(res.statusCode).toBe(200);
+        expect(String(res.headers['set-cookie'])).not.toContain('Secure');
+      } finally {
+        (config as { isDev: boolean }).isDev = true;
+        await prodApp.close();
+      }
     });
   });
 
