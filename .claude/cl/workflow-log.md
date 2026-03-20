@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #23 Detect auth proxy redirects instead of failing with confusing errors — 2026-03-20
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #35
+
+### Metrics
+- Files changed: 1 source | Tests added/modified: 3 test files (11+1+1 new tests)
+- Quality gate runs: 1 (pre-existing 5 failures on main, unrelated to change)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The throw-before-return contract made the implementation clean and zero-caller-change — once the spec defined it clearly, the code path was obvious. All tests went green on first run.
+- Friction / issues encountered: Git remote token was stale (GitHub App installation token had expired); had to refresh via `gh auth token` before push succeeded. Recurring pattern.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for self-review and coverage check
+- Avoidable waste: Running verify.ts twice (implement + handoff) — both hit the same pre-existing failures
+- Suggestions: Cache known-baseline-failures list so /handoff can skip re-running the suite when diff is clean
+
+### Infrastructure gaps
+- Repeated workarounds: Pre-existing auth test failures (discover.test.ts + prowlarr-compat.test.ts) block CI on every branch — now 7+ issues
+- Missing tooling / config: Git remote token refresh requires manual intervention on each expiry
+- Unresolved debt: Metadata providers (audible.ts, audnexus.ts) use bare fetch() without timeout or redirect protection
+
+### Wish I'd Known
+1. fetchWithTimeout must **throw** (not return) for the redirect error to propagate — returning the 3xx Response causes every caller to emit a generic HTTP 302 message
+2. vi.spyOn(globalThis, fetch) is better than MSW for utility-level tests since you can construct Response directly with exact status/headers
+3. GitHub App tokens expire; always refresh remote URL via `git remote set-url origin with fresh token from gh auth token` before pushing
+
 ## #24 qBittorrent test() fails — version endpoint returns plain text, not JSON — 2026-03-20
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #34
