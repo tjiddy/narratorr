@@ -69,6 +69,14 @@ describe('IndexersSettings', () => {
     });
   });
 
+  it('does not render the Prowlarr import button or modal', async () => {
+    renderWithProviders(<IndexersSettings />);
+    await waitForListLoad('My ABB');
+
+    expect(screen.queryByRole('button', { name: /prowlarr/i })).toBeNull();
+    expect(screen.queryByText('Import from Prowlarr')).toBeNull();
+  });
+
   it('toggles add form when Add Indexer button is clicked', async () => {
     const user = userEvent.setup();
     renderWithProviders(<IndexersSettings />);
