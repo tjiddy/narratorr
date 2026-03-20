@@ -12,7 +12,7 @@ function makeResult(overrides: Record<string, unknown> = {}) {
     title: 'The Way of Kings',
     author_info: '"{\\"123\\": \\"Brandon Sanderson\\"}"',
     narrator_info: '"{\\"456\\": \\"Michael Kramer\\"}"',
-    size: 1073741824,
+    size: '881.8 MiB',
     seeders: 42,
     leechers: 3,
     ...overrides,
@@ -78,7 +78,7 @@ describe('MyAnonamouseIndexer', () => {
 
       expect(results.length).toBe(1);
       expect(results[0].title).toBe('The Way of Kings');
-      expect(results[0].size).toBe(1073741824);
+      expect(results[0].size).toBe(924634317);
       expect(results[0].seeders).toBe(42);
       expect(results[0].leechers).toBe(3);
       expect(results[0].indexer).toBe('MyAnonamouse');
@@ -448,6 +448,136 @@ describe('MyAnonamouseIndexer', () => {
       const result = await indexer.test();
       expect(result.success).toBe(false);
       expect(result.message).toBeDefined();
+    });
+  });
+
+  describe('search — size parsing', () => {
+    it('parses "881.8 MiB" string size into 924634317 bytes', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: '881.8 MiB' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results[0].size).toBe(924634317);
+    });
+
+    it('parses "1.1 GiB" string size into 1181116006 bytes', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: '1.1 GiB' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results[0].size).toBe(1181116006);
+    });
+
+    it('parses "512 KiB" string size into 524288 bytes', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: '512 KiB' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results[0].size).toBe(524288);
+    });
+
+    it('parses "1.5 TiB" string size into 1649267441664 bytes', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: '1.5 TiB' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results[0].size).toBe(1649267441664);
+    });
+
+    it('sets size undefined when size is "0 MiB" (zero is not a useful size)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: '0 MiB' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results[0].size).toBeUndefined();
+    });
+
+    it('sets size undefined when size string has non-numeric value ("invalid MiB")', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: 'invalid MiB' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results[0].size).toBeUndefined();
+    });
+
+    it('sets size undefined when size string has unknown unit ("1.5 ZZB")', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: '1.5 ZZB' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results[0].size).toBeUndefined();
+    });
+
+    it('sets size undefined when size string has no unit ("881.8")', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: '881.8' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results[0].size).toBeUndefined();
+    });
+
+    it('passes numeric size through unchanged', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: 1073741824 })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results[0].size).toBe(1073741824);
+    });
+
+    it('MAM result with string size and nonzero bookDuration produces valid numeric quality value', async () => {
+      // Verifies the full chain: string size → bytes → calculateQuality produces a number, not NaN
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ size: '881.8 MiB' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      const sizeBytes = results[0].size;
+      expect(typeof sizeBytes).toBe('number');
+      expect(Number.isNaN(sizeBytes)).toBe(false);
+      // Simulate quality calculation as SearchReleasesModal does with bookDuration
+      const bookDurationSeconds = 3600; // 1 hour
+      const mbPerHour = sizeBytes !== undefined ? (sizeBytes / 1024 / 1024) / (bookDurationSeconds / 3600) : NaN;
+      expect(Number.isNaN(mbPerHour)).toBe(false);
+      expect(mbPerHour).toBeGreaterThan(0);
     });
   });
 

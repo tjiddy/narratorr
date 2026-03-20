@@ -22,7 +22,7 @@ interface MAMSearchResult {
   author_info?: string;
   narrator_info?: string;
   series_info?: string;
-  size?: number;
+  size?: string | number;
   seeders?: number;
   leechers?: number;
 }
@@ -124,7 +124,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         narrator: parseDoubleEncodedNames(item.narrator_info),
         protocol: 'torrent',
         downloadUrl,
-        size: item.size ?? undefined,
+        size: this.parseSize(item.size),
         seeders: item.seeders ?? undefined,
         leechers: item.leechers ?? undefined,
         indexer: this.name,
@@ -221,6 +221,35 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
     } finally {
       clearTimeout(timeoutId);
     }
+  }
+
+  /**
+   * Parse a MAM size field (e.g. "881.8 MiB", "1.1 GiB") into bytes.
+   * Returns undefined for zero, unparseable strings, or unknown units.
+   * Numeric values pass through unchanged (future-proofing).
+   * Illustrative captured MAM values: "881.8 MiB", "1.1 GiB", "830.0 MiB".
+   */
+  private parseSize(raw: string | number | undefined): number | undefined {
+    if (raw === undefined || raw === null) return undefined;
+    if (typeof raw === 'number') return raw || undefined;
+
+    const parts = raw.trim().split(' ');
+    if (parts.length !== 2) return undefined;
+
+    const num = parseFloat(parts[0]);
+    if (!num || !isFinite(num)) return undefined;
+
+    const multipliers: Record<string, number> = {
+      KIB: 1024,
+      MIB: 1024 * 1024,
+      GIB: 1024 * 1024 * 1024,
+      TIB: 1024 * 1024 * 1024 * 1024,
+    };
+
+    const multiplier = multipliers[parts[1].toUpperCase()];
+    if (!multiplier) return undefined;
+
+    return Math.round(num * multiplier);
   }
 
   /**
