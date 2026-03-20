@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #39 Skip quality gate hold for first download (no existing files) — 2026-03-20
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #42
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 8 new tests
+- Quality gate runs: 1 (pre-existing auth failures on main, not introduced by this change)
+- Fix iterations: 1 (self-review caught branch ordering bug — first-download exemption positioned after quality comparison instead of before it)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: spec was very well-defined after 4 review rounds; three code locations were precisely identified; TDD cycle was clean
+- Friction / issues encountered: branch ordering bug caught only during self-review — the spec said "insert before the fallback else" but that still left quality comparison branches ahead of the new branch. A placeholder book with metadata quality fields (size + duration from Audible) would have non-null existingMbPerHour, bypassing the first-download exemption entirely.
+
+### Token efficiency
+- Highest-token actions: 4 rounds of spec review (elaborate + 4x respond-to-spec-review) consumed the most context before implementation even began
+- Avoidable waste: spec iteration rounds were necessary but lengthy — the original spec had incorrect field names and missed the service fallback as a required change site
+- Suggestions: when spec-ing conditional logic changes, identify ALL firing paths for the affected case upfront (not just helper pushes)
+
+### Infrastructure gaps
+- Repeated workarounds: git push auth — remote URL token expired, had to refresh via `gh auth token` and `git remote set-url`
+- Missing tooling / config: none
+- Unresolved debt: none introduced
+
+### Wish I'd Known
+1. The first-download exemption branch must come BEFORE quality comparison branches in the decision tree, not just before the fallback else — a book with metadata-populated quality fields would have non-null existingMbPerHour and never reach a later exemption branch (see learning: quality-gate-branch-ordering.md)
+2. The service decision tree has two separate `no_quality_data` push sites: helpers.ts (in buildQualityAssessment) and service.ts (in the fallback else) — both needed guards, plus a new service branch to actually return `imported`
+3. The spec went through 4 review rounds because it missed: (1) nonexistent field names, (2) null-book behavior was wrong, (3) AC scope was too broad (narrator still holds), (4) service fallback wasn't identified as a change site
+
 ## #29 Search results display NaN for missing size/quality data — 2026-03-20
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #38
