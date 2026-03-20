@@ -78,6 +78,7 @@ Graduated learnings from the CL system — non-obvious patterns that have caused
 - **DB update timing:** Update the database immediately after the first irreversible filesystem step, not at end.
 - **Streaming parser errors:** Map to 4xx by checking error messages for format/validation failures, not blanket 500.
 - **Case-insensitive filters:** Deduplicate dropdown options case-insensitively (Map keyed by lowercase).
+- **CSP nonce kills unsafe-inline:** Never combine `'nonce-'` and `'unsafe-inline'` in the same CSP directive — per CSP Level 2, a nonce's presence silently disables `unsafe-inline`. Use a Fastify `onSend` hook to strip the nonce from `style-src` after helmet injects it, preserving the nonce only in `script-src`.
 
 ## Frontend Design Quality
 
