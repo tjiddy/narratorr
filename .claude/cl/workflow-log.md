@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #41 Rename 'Completed' download status label to 'Downloaded' — 2026-03-20
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #46
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 3 (43+33=76 total passing)
+- Quality gate runs: 1 (pre-existing 5 auth failures unrelated)
+- Fix iterations: 1 (added `getClientPolledStatuses` test after coverage review flag)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Registry pattern is clean — single file change + 2 test updates, exactly as spec promised. TDD cycle was fast with no ambiguity.
+- Friction / issues encountered: Coverage review flagged `getClientPolledStatuses()` as untested — pre-existing function, not changed by this issue but in the same file. Required an extra commit to add 2 assertions. Git push token expired, needed `gh auth token` refresh before push.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for elaboration (2 rounds), plan, self-review, coverage review
+- Avoidable waste: Coverage subagent read the whole file to find one pre-existing gap — could be avoided by pre-emptively testing all exports in touched files
+- Suggestions: Before touching a shared file, grep for untested exports to front-run the coverage gate
+
+### Infrastructure gaps
+- Repeated workarounds: `gh auth token` push token refresh (same workaround as #26, #37)
+- Missing tooling / config: 5 pre-existing auth failures poison `verify.ts` globally — every PR hits `VERIFY: fail` regardless of change quality
+- Unresolved debt: none introduced
+
+### Wish I'd Known
+1. Coverage review flags ALL functions in touched files, not just changed code — pre-emptively test any export in a file you touch
+2. Git push token in remote URL expires; need `GH_TOKEN=$(gh auth token)` refresh before every push
+3. `arrow-down` icon was already mapped in `ICON_COMPONENTS` (shared with `downloading` status) — icon reuse across statuses is fine, color differentiates them
+
+
 ## #26 Remove Prowlarr pull-sync path (push path confirmed working) — 2026-03-20
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #45
