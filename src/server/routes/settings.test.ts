@@ -345,8 +345,22 @@ describe('settings routes', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      // Empty proxyUrl is also masked (field exists in secret registry)
-      expect(body.network.proxyUrl).toBe('********');
+      // Empty proxyUrl is preserved as-is — not masked to sentinel
+      expect(body.network.proxyUrl).toBe('');
+    });
+
+    it('GET /api/settings returns proxyUrl as empty string when not configured — no phantom sentinel', async () => {
+      const freshSettings = {
+        ...mockSettings,
+        network: { proxyUrl: '' },
+      };
+      (services.settings.getAll as Mock).mockResolvedValue(freshSettings);
+
+      const res = await app.inject({ method: 'GET', url: '/api/settings' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.network.proxyUrl).toBe('');
     });
 
     it('clears indexer adapter cache when network settings actually change', async () => {
