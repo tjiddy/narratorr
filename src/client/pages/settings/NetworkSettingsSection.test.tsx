@@ -257,6 +257,16 @@ describe('NetworkSettingsSection', () => {
   });
 
   describe('proxy sentinel handling', () => {
+    it('shows empty input (placeholder) when proxyUrl is empty string from fresh database', async () => {
+      const settings = createMockSettings({ network: { proxyUrl: '' } });
+      mockApi.getSettings.mockResolvedValue(settings);
+      renderWithProviders(<NetworkSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Proxy URL')).toHaveValue('');
+      });
+    });
+
     it('round-trips server-hydrated masked sentinel value through save', async () => {
       // When server returns a masked proxy URL (sentinel), saving the section
       // must pass it through unchanged without validation blocking it
