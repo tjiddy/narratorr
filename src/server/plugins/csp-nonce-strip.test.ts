@@ -1,13 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import helmet from '@fastify/helmet';
-import { buildHelmetOptions } from './helmet-options.js';
-import cspNonceStripPlugin from './csp-nonce-strip.js';
+import { registerSecurityPlugins } from './security-plugins.js';
 
 async function createApp(isDev: boolean): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
-  await app.register(helmet, buildHelmetOptions(isDev));
-  await app.register(cspNonceStripPlugin);
+  await registerSecurityPlugins(app, isDev);
   app.get('/test', async (_request, reply) => {
     const nonce = reply.cspNonce?.script;
     return { ok: true, nonce };

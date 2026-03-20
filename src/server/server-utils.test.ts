@@ -1,11 +1,10 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import Fastify from 'fastify';
-import helmet from '@fastify/helmet';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { listenWithRetry, registerStaticAndSpa } from './server-utils.js';
-import { buildHelmetOptions } from './plugins/helmet-options.js';
+import { registerSecurityPlugins } from './plugins/security-plugins.js';
 
 function createMockApp() {
   return {
@@ -19,10 +18,10 @@ function createMockApp() {
   } as unknown as Parameters<typeof listenWithRetry>[0];
 }
 
-/** Create a Fastify app with helmet (prod mode) + registerStaticAndSpa */
+/** Create a Fastify app with production security plugins + registerStaticAndSpa */
 async function createAppWithHelmet(urlBasePrefix: string, clientPath: string) {
   const app = Fastify({ logger: false });
-  await app.register(helmet, buildHelmetOptions(false));
+  await registerSecurityPlugins(app, false);
   await registerStaticAndSpa(app, urlBasePrefix, clientPath);
   await app.ready();
   return app;
@@ -649,6 +648,30 @@ describe('registerStaticAndSpa', () => {
       expect(headerNonce).toBeDefined();
       expect(themeNonce).toBeDefined();
       expect(themeNonce).toBe(headerNonce);
+      await app.close();
+    });
+
+    it('registerStaticAndSpa with security plugins: style-src has no nonce while script-src retains it and HTML nonce matches', async () => {
+      // F2: prove the real HTML-serving path works correctly with cspNonceStripPlugin enabled.
+      // Tests B6: if cspNonceStripPlugin were removed from registerSecurityPlugins, this test fails.
+      const app = await createAppWithHelmet('', tmpDir);
+
+      const res = await app.inject({ method: 'GET', url: '/' });
+      const csp = res.headers['content-security-policy'] as string;
+      const scriptSegment = csp.split(';').find((s) => s.trim().startsWith('script-src'));
+      const styleSegment = csp.split(';').find((s) => s.trim().startsWith('style-src'));
+
+      // script-src retains nonce
+      expect(scriptSegment).toMatch(/'nonce-[a-f0-9]+'/);
+      // style-src has NO nonce (cspNonceStripPlugin removes it)
+      expect(styleSegment).not.toMatch(/'nonce-/);
+      // HTML inline scripts still have the nonce injected
+      expect(res.body).toMatch(/nonce="[a-f0-9]+"/);
+      // The nonce in the HTML matches the nonce in the CSP script-src
+      const scriptNonce = scriptSegment!.match(/'nonce-([a-f0-9]+)'/)?.[1];
+      expect(scriptNonce).toBeDefined();
+      expect(res.body).toContain(`nonce="${scriptNonce}"`);
+
       await app.close();
     });
 
