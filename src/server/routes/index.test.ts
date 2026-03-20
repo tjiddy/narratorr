@@ -5,12 +5,12 @@ import type { Db } from '../../db/index.js';
 import type { Services } from './index.js';
 
 describe('routeRegistry', () => {
-  it('contains all 23 route factories', () => {
+  it('contains all 22 route factories', () => {
     // books, bookFiles, search, activity, indexers, downloadClients,
     // settings, metadata, libraryScan, system, update, notifiers, blacklist,
-    // prowlarr, auth, remotePathMapping, filesystem, eventHistory, events,
+    // auth, remotePathMapping, filesystem, eventHistory, events,
     // recyclingBin, prowlarrCompat, importLists, discover
-    expect(routeRegistry).toHaveLength(23);
+    expect(routeRegistry).toHaveLength(22);
   });
 
   it('every entry is a function', () => {

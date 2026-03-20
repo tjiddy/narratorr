@@ -31,7 +31,6 @@ import { filesystemApi } from './filesystem.js';
 import { indexersApi } from './indexers.js';
 import { libraryScanApi } from './library-scan.js';
 import { notifiersApi } from './notifiers.js';
-import { prowlarrApi } from './prowlarr.js';
 import { remotePathMappingsApi } from './remote-path-mappings.js';
 import { searchApi } from './search.js';
 import { settingsApi } from './settings.js';
@@ -456,43 +455,6 @@ describe('notifiersApi', () => {
   });
 });
 
-describe('prowlarrApi', () => {
-  it('prowlarrTestConnection → POST /prowlarr/test with url and apiKey', async () => {
-    await prowlarrApi.prowlarrTestConnection('https://prowlarr.local', 'key123');
-    expect(mockFetchApi).toHaveBeenCalledWith('/prowlarr/test', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ url: 'https://prowlarr.local', apiKey: 'key123' }),
-    }));
-  });
-
-  it('prowlarrGetConfig → GET /prowlarr/config', async () => {
-    await prowlarrApi.prowlarrGetConfig();
-    expect(mockFetchApi).toHaveBeenCalledWith('/prowlarr/config');
-  });
-
-  it('prowlarrSaveConfig → PUT /prowlarr/config with config', async () => {
-    const config = { url: 'https://prowlarr.local', apiKey: 'key', syncMode: 'addOnly' as const, categories: [3030] };
-    await prowlarrApi.prowlarrSaveConfig(config);
-    expect(mockFetchApi).toHaveBeenCalledWith('/prowlarr/config', expect.objectContaining({
-      method: 'PUT',
-      body: JSON.stringify(config),
-    }));
-  });
-
-  it('prowlarrPreview → POST /prowlarr/preview', async () => {
-    await prowlarrApi.prowlarrPreview();
-    expect(mockFetchApi).toHaveBeenCalledWith('/prowlarr/preview', expect.objectContaining({ method: 'POST' }));
-  });
-
-  it('prowlarrSync → POST /prowlarr/sync with request', async () => {
-    const request = { items: [{ prowlarrId: 1, action: 'new', selected: true }] };
-    await prowlarrApi.prowlarrSync(request);
-    expect(mockFetchApi).toHaveBeenCalledWith('/prowlarr/sync', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify(request),
-    }));
-  });
-});
 
 describe('remotePathMappingsApi', () => {
   it('getRemotePathMappings → GET /remote-path-mappings', async () => {
@@ -684,13 +646,6 @@ describe('response pass-through', () => {
     const data = [{ id: 1, name: 'Discord' }];
     mockFetchApi.mockResolvedValue(data);
     const result = await notifiersApi.getNotifiers();
-    expect(result).toBe(data);
-  });
-
-  it('prowlarrApi.prowlarrPreview returns fetchApi response', async () => {
-    const data = [{ action: 'new', name: 'NZBGeek' }];
-    mockFetchApi.mockResolvedValue(data);
-    const result = await prowlarrApi.prowlarrPreview();
     expect(result).toBe(data);
   });
 

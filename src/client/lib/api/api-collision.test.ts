@@ -8,7 +8,6 @@ import { notifiersApi } from './notifiers.js';
 import { blacklistApi } from './blacklist.js';
 import { settingsApi } from './settings.js';
 import { libraryScanApi } from './library-scan.js';
-import { prowlarrApi } from './prowlarr.js';
 import { systemApi } from './system.js';
 import { authApi } from './auth.js';
 import { filesystemApi } from './filesystem.js';
@@ -28,7 +27,6 @@ const allModules = [
   { name: 'blacklistApi', api: blacklistApi },
   { name: 'settingsApi', api: settingsApi },
   { name: 'libraryScanApi', api: libraryScanApi },
-  { name: 'prowlarrApi', api: prowlarrApi },
   { name: 'systemApi', api: systemApi },
   { name: 'authApi', api: authApi },
   { name: 'filesystemApi', api: filesystemApi },
