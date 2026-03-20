@@ -453,6 +453,7 @@ describe('search routes', () => {
           indexer: 'AudioBookBay',
           infoHash: 'abc123',
           downloadUrl: 'magnet:?xt=urn:btih:abc123',
+          seeders: 10,
         },
       ];
       (services.indexer.searchAll as Mock).mockResolvedValue(results);

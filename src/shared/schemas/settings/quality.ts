@@ -6,7 +6,7 @@ export type ProtocolPreference = z.infer<typeof protocolPreferenceSchema>;
 export const qualitySettingsSchema = z.object({
   grabFloor: z.number().nonnegative().default(0),
   protocolPreference: protocolPreferenceSchema.default('none'),
-  minSeeders: z.number().int().nonnegative().default(0),
+  minSeeders: z.number().int().nonnegative().default(1),
   searchImmediately: z.boolean().default(false),
   monitorForUpgrades: z.boolean().default(false),
   rejectWords: z.string().default(''),
