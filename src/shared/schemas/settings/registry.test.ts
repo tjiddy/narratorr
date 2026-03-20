@@ -128,7 +128,7 @@ describe('settingsRegistry', () => {
       expect(DEFAULT_SETTINGS.quality).toEqual({
         grabFloor: 0,
         protocolPreference: 'none',
-        minSeeders: 0,
+        minSeeders: 1,
         searchImmediately: false,
         monitorForUpgrades: false,
         rejectWords: '',

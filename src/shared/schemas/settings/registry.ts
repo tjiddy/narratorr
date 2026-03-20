@@ -75,7 +75,7 @@ export const settingsRegistry = {
     defaults: {
       grabFloor: 0,
       protocolPreference: 'none' as const,
-      minSeeders: 0,
+      minSeeders: 1,
       searchImmediately: false,
       monitorForUpgrades: false,
       rejectWords: '',
