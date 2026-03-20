@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #30 Default min seeders to 1 and filter non-audiobook formats from search — 2026-03-20
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #33
+
+### Metrics
+- Files changed: 5 | Tests added/modified: 16 added, 3 fixtures updated
+- Quality gate runs: 1 (pre-existing failures only; all new code passes)
+- Fix iterations: 1 (search.test.ts torrent fixture missing `seeders` broke multi-part filter test after default bump)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: TDD cycle was clean — format filter stubs failed immediately, implementation was minimal (10 lines), tests went green on first attempt. The Explore subagent correctly identified both default sources (quality.ts + registry.ts) upfront, avoiding a common trap.
+- Friction / issues encountered: git push failed on first attempt due to stale installation token; resolved by refreshing via scripts/lib.ts. Search route test broke because a torrent mock omitted `seeders` — was implicitly relying on old minSeeders=0 behavior.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for plan (48k) and self-review (49k)
+- Avoidable waste: None significant — subagents were necessary for correct blast-radius enumeration
+- Suggestions: Pre-enumerate torrent fixture seeders at test creation time to avoid default-change cascade
+
+### Infrastructure gaps
+- Repeated workarounds: git push auth token refresh (stale token in remote URL) — same pattern as prior issues
+- Missing tooling / config: verify.ts reports fail for pre-existing discover/prowlarr-compat auth failures, masking real results
+- Unresolved debt: 5 pre-existing auth test failures in discover/prowlarr-compat unrelated to this issue
+
+### Wish I Known
+1. Settings defaults live in TWO places (quality.ts Zod default + registry.ts DEFAULT_SETTINGS). Only updating the schema leaves fresh installs reading the old value.
+2. Torrent test fixtures that omit `seeders` are implicitly coupled to minSeeders=0. After bumping the default to 1, any torrent mock without `seeders` starts getting filtered.
+3. The ebook filter false-positive risk: epub is a substring of republic. Used regex word boundaries (epub) rather than .includes() to avoid spurious matches.
+
+
 ## #28 MAM adapter size field is a string, not a number — causes NaN display — 2026-03-20
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #32

@@ -13,3 +13,5 @@ No active items. All prior debt graduated and resolved in #448.
 - **src/server/routes/discover.test.ts** and **src/server/routes/prowlarr-compat.test.ts**: 5 auth-integration tests failing on `main` ("returns 401" getting 500 instead) — pre-existing failures unrelated to CSP work. Need investigation into why the auth plugin isn't rejecting unauthenticated requests in these test setups. (discovered in #21)
 
 - **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 auth integration tests failing on main — pre-existing before #28, unrelated to size parsing. Blocks `scripts/verify.ts` from returning `VERIFY: pass` on any branch. (discovered in #28)
+
+- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 pre-existing auth test failures — tests assert 401 but something in the auth integration is broken; unrelated to #30 but blocking `verify.ts` pass for every branch (discovered in #30)
