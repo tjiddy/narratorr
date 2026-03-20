@@ -40,6 +40,37 @@ describe('getVersion', () => {
   });
 });
 
+describe('getCommit', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '0.0.0' }));
+  });
+
+  async function loadGetCommit() {
+    const mod = await import('./version.js');
+    return mod.getCommit;
+  }
+
+  it('returns the build-injected SHA when GIT_COMMIT env var is set', async () => {
+    process.env.GIT_COMMIT = 'abc1234';
+    const getCommit = await loadGetCommit();
+    expect(getCommit()).toBe('abc1234');
+    delete process.env.GIT_COMMIT;
+  });
+
+  it('returns "unknown" when GIT_COMMIT env var is not set', async () => {
+    delete process.env.GIT_COMMIT;
+    const getCommit = await loadGetCommit();
+    expect(getCommit()).toBe('unknown');
+  });
+
+  it('getVersion() return value is unchanged after adding getCommit()', async () => {
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '1.2.3' }));
+    const mod = await import('./version.js');
+    expect(mod.getVersion()).toBe('1.2.3');
+  });
+});
+
 describe('isNewerVersion', () => {
   // Import statically since isNewerVersion is a pure function with no side effects
   let isNewerVersion: (current: string, latest: string) => boolean;
