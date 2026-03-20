@@ -56,6 +56,12 @@ export class QualityGateService {
       await this.setStatus(download.id, 'pending_review');
       this.log.info({ downloadId: download.id, holdReasons }, 'Quality gate: held for review');
       return { action: 'held', reason, statusTransition: { from: 'checking', to: 'pending_review' } };
+    } else if (book !== null && book.path === null) {
+      // First download: book is a search placeholder with no files on disk — skip quality comparison
+      reason.action = 'imported';
+      await this.setStatus(download.id, 'completed');
+      this.log.info({ downloadId: download.id }, 'Quality gate: first download auto-imported');
+      return { action: 'imported', reason, statusTransition: { from: 'checking', to: 'completed' } };
     } else if (newMbPerHour !== null && existingMbPerHour !== null && newMbPerHour > existingMbPerHour) {
       reason.action = 'imported';
       await this.setStatus(download.id, 'completed');

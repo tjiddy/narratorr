@@ -271,6 +271,96 @@ describe('QualityGateService', () => {
     });
   });
 
+  describe('processDownload — first download (book.path === null)', () => {
+    const placeholderBook = { ...baseBook, path: null, size: null, audioTotalSize: null, duration: null, audioDuration: null };
+
+    it('auto-imports when book.path is null and no other hold reasons apply (no narrator conflict)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(baseDownload, placeholderBook, makeScan());
+
+      expect(result.action).toBe('imported');
+      expect(result.reason.holdReasons).toHaveLength(0);
+    });
+
+    it('auto-imports when book.path is null and new scan has valid duration/size — no no_quality_data, no duration_delta', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(baseDownload, placeholderBook, makeScan({ totalSize: 800_000_000, totalDuration: 36000 }));
+
+      expect(result.action).toBe('imported');
+      expect(result.reason.holdReasons).not.toContain('no_quality_data');
+      expect(result.reason.holdReasons).not.toContain('duration_delta');
+    });
+
+    it('holds with narrator_mismatch only when book.path is null but narrator does not match', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+      const bookWithNarrator = { ...placeholderBook, narrator: 'Jane Doe' };
+
+      const result = await service.processDownload(baseDownload, bookWithNarrator, makeScan({ tagNarrator: 'John Smith' }));
+
+      expect(result.action).toBe('held');
+      expect(result.reason.holdReasons).toContain('narrator_mismatch');
+      expect(result.reason.holdReasons).not.toContain('no_quality_data');
+      expect(result.reason.holdReasons).not.toContain('duration_delta');
+    });
+
+    it('no_quality_data is NOT in hold reasons when book.path is null', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(baseDownload, placeholderBook, makeScan());
+
+      expect(result.reason.holdReasons).not.toContain('no_quality_data');
+    });
+
+    it('duration_delta is NOT triggered for placeholder book (duration: 1, path: null) with extreme new duration', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+      const bookWithPlaceholderDuration = { ...placeholderBook, duration: 1 };
+
+      const result = await service.processDownload(baseDownload, bookWithPlaceholderDuration, makeScan({ totalDuration: 36000 }));
+
+      expect(result.reason.holdReasons).not.toContain('duration_delta');
+    });
+
+    it('auto-imports when book.path is null even if quality metadata fields are populated (metadata-only quality)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+      // Book with path null but size + duration from metadata provider (not from probe)
+      const metadataBook = { ...baseBook, path: null };
+
+      const result = await service.processDownload(baseDownload, metadataBook, makeScan());
+
+      expect(result.action).toBe('imported');
+      expect(result.reason.holdReasons).not.toContain('no_quality_data');
+    });
+
+    it('duration_delta IS triggered for existing book (path not null) with large duration change (regression)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+      // Book has path set (existing files) and a short duration → extreme delta with 36000s new scan
+      const existingBook = { ...baseBook, duration: 1, audioDuration: null, audioTotalSize: null };
+
+      const result = await service.processDownload(baseDownload, existingBook, makeScan({ totalDuration: 36000 }));
+
+      expect(result.reason.holdReasons).toContain('duration_delta');
+    });
+
+    it('null-book (book === null) still returns held with no_quality_data (orphan-download behavior unchanged)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(baseDownload, null, makeScan());
+
+      expect(result.action).toBe('held');
+      expect(result.reason.holdReasons).toContain('no_quality_data');
+    });
+  });
+
   describe('atomicClaim', () => {
     it('returns true when claim succeeds (status was completed)', async () => {
       const { service, db } = createService();
