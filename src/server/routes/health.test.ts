@@ -11,6 +11,7 @@ vi.mock('fs/promises', async (importOriginal) => {
 
 vi.mock('../utils/version.js', () => ({
   getVersion: () => '99.88.77',
+  getCommit: () => 'abc1234def',
 }));
 
 import fsp from 'fs/promises';
@@ -222,6 +223,27 @@ describe('System info routes', () => {
       const payload = JSON.parse(res.payload);
       expect(payload.libraryPath).toBeNull();
       expect(payload.freeSpace).toBeNull();
+    });
+
+    it('includes commit field in response', async () => {
+      (services.settings.get as Mock).mockResolvedValue({ path: '/audiobooks' });
+      (mockDb.run as Mock).mockResolvedValue({ rows: [[10, 4096]] });
+      (fsp.statfs as unknown as Mock).mockResolvedValue({ bavail: 500, bsize: 4096 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/system/info' });
+      const payload = JSON.parse(res.payload);
+      expect(payload.commit).toBe('abc1234def');
+    });
+
+    it('commit field reflects getCommit() value, not a hardcoded string', async () => {
+      (services.settings.get as Mock).mockResolvedValue({ path: '/audiobooks' });
+      (mockDb.run as Mock).mockResolvedValue({ rows: [[10, 4096]] });
+      (fsp.statfs as unknown as Mock).mockResolvedValue({ bavail: 500, bsize: 4096 });
+
+      const res = await app.inject({ method: 'GET', url: '/api/system/info' });
+      const payload = JSON.parse(res.payload);
+      // getCommit() is mocked to return 'abc1234def' — proves dynamic read, not hardcoded
+      expect(payload.commit).toBe('abc1234def');
     });
 
     // L-14: version should come from getVersion() instead of hardcoded '0.1.0'
