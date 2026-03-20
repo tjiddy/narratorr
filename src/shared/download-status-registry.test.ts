@@ -146,6 +146,29 @@ describe('download-status-registry', () => {
     });
   });
 
+  describe('completed status label rename', () => {
+    it('completed entry label is "Downloaded"', () => {
+      expect(DOWNLOAD_STATUS_REGISTRY.completed.label).toBe('Downloaded');
+    });
+
+    it('completed icon differs from imported icon', () => {
+      expect(DOWNLOAD_STATUS_REGISTRY.completed.icon).not.toBe(DOWNLOAD_STATUS_REGISTRY.imported.icon);
+    });
+
+    it('completed color scheme differs from imported success styling', () => {
+      expect(DOWNLOAD_STATUS_REGISTRY.completed.color).not.toBe(DOWNLOAD_STATUS_REGISTRY.imported.color);
+      expect(DOWNLOAD_STATUS_REGISTRY.completed.bgColor).not.toBe(DOWNLOAD_STATUS_REGISTRY.imported.bgColor);
+      expect(DOWNLOAD_STATUS_REGISTRY.completed.textColor).not.toBe(DOWNLOAD_STATUS_REGISTRY.imported.textColor);
+    });
+
+    it('imported entry label remains "Imported" with success styling unchanged', () => {
+      expect(DOWNLOAD_STATUS_REGISTRY.imported.label).toBe('Imported');
+      expect(DOWNLOAD_STATUS_REGISTRY.imported.color).toBe('text-success');
+      expect(DOWNLOAD_STATUS_REGISTRY.imported.bgColor).toBe('bg-success/10');
+      expect(DOWNLOAD_STATUS_REGISTRY.imported.textColor).toBe('text-success');
+    });
+  });
+
   describe('visual metadata', () => {
     it('every status has label, icon, color, bgColor, textColor', () => {
       for (const status of allStatuses) {
