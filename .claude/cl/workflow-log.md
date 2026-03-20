@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #40 Improve quality gate review panel — narrator names, probe errors, stereo flag — 2026-03-20
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #43
+
+### Metrics
+- Files changed: 5 source files + 5 test files | Tests added/modified: 22+
+- Quality gate runs: 1 (skipped due to pre-existing failures, noted)
+- Fix iterations: 2 (ESLint complexity violation → extracted buildRows + ProbeFailureMessage; NULL_REASON import missing in orchestrator test)
+- Context compactions: 1 (triggered during /handoff, required resumption)
+
+### Workflow experience
+- What went smoothly: Spec was well-defined by the time implementation started (2 rounds of spec review had resolved all ambiguities). TDD cycle was clean — stubs from /plan mapped directly to behaviors.
+- Friction / issues encountered: ESLint complexity violation discovered at verify time (not during implementation) — QualityComparisonPanel had complexity 18 vs max 15. Required extracting buildRows() and ProbeFailureMessage sub-component in a 4th commit. Context compaction during /handoff required resumption from scratch.
+
+### Token efficiency
+- Highest-token actions: Two rounds of /respond-to-spec-review before implementation (spent most context resolving the unhandled_error precedence rule before writing code)
+- Avoidable waste: The spec review rounds could have been fewer if the precedence ordering for overlapping conditions had been defined upfront
+- Suggestions: For UI components with 4+ conditional render paths, pre-check ESLint complexity before committing — run `pnpm exec eslint src/client/.../Component.tsx` early
+
+### Infrastructure gaps
+- Repeated workarounds: Pre-existing auth test failures in discover.test.ts / prowlarr-compat.test.ts cause VERIFY: fail on every branch — workaround is to manually confirm they're pre-existing before proceeding
+- Missing tooling / config: No way to mark known-broken tests as expected-fail in verify.ts; the script treats any test failure as blocking
+- Unresolved debt: ESLint complexity is enforced post-hoc at verify time; would be better to run it incrementally during implementation
+
+### Wish I'd Known
+1. ESLint complexity rule counts null-guard ternaries (`?? '—'`) and conditional `if` guards equally — a display component with 5+ optional rows will almost certainly need extraction. Extract `buildRows()` and conditional sub-components upfront, not as a fix pass.
+2. When two conditions can both be true (e.g., `unhandled_error` AND `probeError === null`), define their precedence in the AC before coding — this cost two spec review rounds to clarify.
+3. Fixture blast radius for `QualityDecisionReason` is 5 test files — grep for the type name before starting to know the full scope. The `replace_all` Edit approach handles the pattern efficiently.
+
+
 ## #39 Skip quality gate hold for first download (no existing files) — 2026-03-20
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #42

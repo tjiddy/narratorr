@@ -20,3 +20,5 @@ No active items. All prior debt graduated and resolved in #448.
 - **src/core/metadata/ (audible.ts, audnexus.ts)**: These use direct `fetch()` calls without timeout or redirect protection — they won't benefit from auth-proxy detection or timeout enforcement. Consider migrating to `fetchWithTimeout` in a follow-up. (discovered in #23)
 
 - **src/core/utils/parse.ts:315**: Second `formatBytes` helper with same negative/Infinity edge-case profile as the client formatter — no guards for `bytes < 0`, `!isFinite`, or out-of-bounds index. Server-side metadata display, low urgency, but should be hardened for consistency. (discovered in #29)
+
+- **src/server/routes/discover.test.ts, src/server/routes/prowlarr-compat.test.ts**: Pre-existing auth test failures (5 tests) noted again in #40 — still present on main, still blocking `VERIFY: pass`. These need investigation and a fix, not just a note. (rediscovered in #40)
