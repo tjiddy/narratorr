@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #24 qBittorrent test() fails — version endpoint returns plain text, not JSON — 2026-03-20
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #34
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 3 (updated 1 mock, added 2 new tests)
+- Quality gate runs: 1 (VERIFY: fail due to 5 pre-existing failures on main, not introduced by this change)
+- Fix iterations: 0 (coverage gap caught by handoff subagent — added non-2xx test before PR)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The fix was narrow and well-defined. The `doLogin()` pattern was an exact reference for the direct-fetch approach. Red/green cycle was clean — updating the mock immediately proved the bug.
+- Friction / issues encountered: Pre-existing failures in `discover.test.ts` / `prowlarr-compat.test.ts` cause `scripts/verify.ts` to return `VERIFY: fail` on every branch. Also, `git push` failed with cached credentials; required `gh auth token` for a fresh token.
+
+### Token efficiency
+- Highest-token actions: Three spec review cycles before approval
+- Avoidable waste: Spec round 1 proposed changing `request()` broadly — wrong approach. Scoping to `test()` was obvious from `doLogin()` precedent.
+- Suggestions: When a spec changes a shared helper, immediately check all callers before committing to the approach.
+
+### Infrastructure gaps
+- Repeated workarounds: `git push` via HTTPS requires fresh token (`gh auth token`); cached remote URL has expired credentials
+- Missing tooling / config: 5 pre-existing test failures in auth routes block `scripts/verify.ts` from ever passing
+- Unresolved debt: Pre-existing auth test failures need fixing (see debt.md)
+
+### Wish I'd Known
+1. `HttpResponse.json('v4.6.0')` wraps the string as JSON (adds quotes + JSON content-type), making `JSON.parse()` succeed — the mock was lying. Use `new HttpResponse('v4.6.0')` when the real endpoint returns plain text.
+2. Broadening `request()` to accept non-JSON breaks `getCategories()` silently: `Object.keys('text')` returns character indexes. Scope fixes to the calling method only.
+3. `doLogin()` (same file) is the reference pattern for plain-text fetching — always check sibling methods first.
+
 ## #30 Default min seeders to 1 and filter non-audiobook formats from search — 2026-03-20
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #33
