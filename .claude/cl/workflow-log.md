@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #27 maskFields sentinel applied to empty secret fields shows phantom values — 2026-03-20
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #31
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 8 (5 new unit, 1 updated unit, 1 new route, 1 new frontend)
+- Quality gate runs: 1 (failed due to 5 pre-existing failures on main; not caused by this change)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The fix itself was trivial — one guard expression in maskFields(). Test plan from spec was precise enough to implement directly. All three test layers (unit, route, frontend) worked first-try.
+- Friction / issues encountered: Spec review took 3 rounds; each round re-raised the same finding about the auth route in Scope. The issue was a carryover from the first response where auth was added incorrectly. verify.ts fails due to 5 pre-existing test failures (discover.test.ts + prowlarr-compat.test.ts), blocking the verify gate even though all changed-file tests pass.
+
+### Token efficiency
+- Highest-token actions: 3 spec review rounds with Explore subagent; self-review and coverage subagents during handoff
+- Avoidable waste: Spec review rounds 2 and 3 spent on the same auth-route scope issue; round 1 response introduced it
+- Suggestions: When spec response adds scope clarifications, re-read the exact wording before posting
+
+### Infrastructure gaps
+- Repeated workarounds: verify.ts does not filter pre-existing test failures the way runDiffLintGate filters lint violations
+- Missing tooling / config: A diff-based test gate that only fails on NEW test failures would eliminate false-positive verify failures
+- Unresolved debt: 5 pre-existing auth test failures on main (already in debt.md from #16)
+
+### Wish I'd Known
+1. maskFields() had a comment explicitly documenting the now-wrong behavior ("Mask even null/undefined") — the null/undefined behavior change is intentional but the old comment could mislead a reviewer
+2. Schema defaults using z.string().default('') silently populate the settings object with keys, so any key-existence check in utilities triggers on fresh DB state — this is the class of bug, not just proxyUrl
+3. Spec reviews go faster if the Scope section uses concrete file paths + function names rather than route labels — "auth route" was ambiguous because auth.ts has no maskFields() callsite
+
 ## #21 Fix CSP style-src nonce conflict blocking inline styles — 2026-03-20
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #25
