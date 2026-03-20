@@ -281,7 +281,20 @@ export class QBittorrentClient implements DownloadClientAdapter {
   async test(): Promise<{ success: boolean; message?: string }> {
     try {
       await this.login();
-      const version = await this.request<string>('/api/v2/app/version');
+      const response = await fetchWithTimeout(`${this.baseUrl}/api/v2/app/version`, {
+        headers: {
+          Cookie: this.cookie!,
+          Referer: this.baseUrl,
+        },
+      }, DEFAULT_REQUEST_TIMEOUT_MS);
+      if (!response.ok) {
+        throw new Error(`Request failed: HTTP ${response.status} /api/v2/app/version`);
+      }
+      const contentType = response.headers.get('content-type');
+      if (contentType?.includes('text/html')) {
+        throw new Error('Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.');
+      }
+      const version = await response.text();
       return { success: true, message: `qBittorrent ${version}` };
     } catch (error) {
       return {
