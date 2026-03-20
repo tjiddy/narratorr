@@ -33,7 +33,7 @@ function makeResult(overrides: Partial<SearchResult> = {}): SearchResult {
 
 const defaultQualitySettings = {
   grabFloor: 0,
-  minSeeders: 0,
+  minSeeders: 1,
   protocolPreference: 'none',
 };
 
