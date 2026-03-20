@@ -21,6 +21,15 @@ export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
     downloaded: formatMbPerHour(data.mbPerHour),
   });
 
+  if (data.narratorMatch !== null) {
+    rows.push({
+      label: 'Narrator',
+      current: data.existingNarrator ?? '—',
+      downloaded: data.downloadNarrator ?? '—',
+      flagged: data.narratorMatch === false,
+    });
+  }
+
   if (data.durationDelta !== null) {
     rows.push({
       label: 'Duration Delta',
@@ -43,9 +52,10 @@ export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
       label: 'Channels',
       current: '—',
       downloaded: data.channels === 1 ? 'Mono' : data.channels === 2 ? 'Stereo' : `${data.channels}ch`,
-      flagged: data.channels > 1,
     });
   }
+
+  const isUnhandledError = data.holdReasons?.includes('unhandled_error') ?? false;
 
   return (
     <div className="mt-3 p-4 bg-muted/50 rounded-xl border border-border/50 space-y-3">
@@ -54,32 +64,19 @@ export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
         {data.probeFailure && (
           <span className="inline-flex items-center gap-1 text-xs text-destructive">
             <AlertCircleIcon className="w-3.5 h-3.5" />
-            Probe failed
+            {isUnhandledError ? 'Unexpected error' : 'Probe failed'}
           </span>
         )}
       </h4>
 
       {data.probeFailure ? (
         <p className="text-sm text-muted-foreground">
-          Audio probe failed — unable to determine download quality. Manual review required.
+          {isUnhandledError
+            ? (data.probeError ?? 'An unexpected error occurred.') + ' Manual review required.'
+            : (data.probeError ? `${data.probeError} — ` : 'Audio probe failed — ') + 'unable to determine download quality. Manual review required.'}
         </p>
       ) : (
         <>
-          {/* Narrator match */}
-          {data.narratorMatch !== null && (
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Narrator:</span>
-              {data.narratorMatch ? (
-                <span className="text-success">Match</span>
-              ) : (
-                <span className="text-destructive flex items-center gap-1">
-                  <AlertTriangleIcon className="w-3.5 h-3.5" />
-                  Mismatch
-                </span>
-              )}
-            </div>
-          )}
-
           {/* Comparison grid */}
           <div className="grid grid-cols-3 gap-2 text-sm">
             <div className="text-muted-foreground font-medium" />

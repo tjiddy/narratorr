@@ -128,10 +128,13 @@ describe('DownloadCard', () => {
       mbPerHour: 60,
       existingMbPerHour: 40,
       narratorMatch: true,
+      existingNarrator: null,
+      downloadNarrator: null,
       durationDelta: 0.05,
       codec: 'AAC',
       channels: 1,
       probeFailure: false,
+      probeError: null,
       holdReasons: ['narrator_mismatch'],
     };
 
