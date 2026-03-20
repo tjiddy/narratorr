@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #29 Search results display NaN for missing size/quality data — 2026-03-20
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #38
+
+### Metrics
+- Files changed: 2 source files, 2 test files | Tests added/modified: 8 new tests
+- Quality gate runs: 1 (pre-existing failures in unrelated auth tests)
+- Fix iterations: 0 (clean first pass)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: TDD cycle was fast — formatBytes unit tests gave clear red/green signal; modal tests cleanly isolated the guard behavior via the existing mock
+- Friction / issues encountered: Spec went through 4 review rounds before approval due to incremental scope clarifications (stale MAM assumptions → ambiguous contracts → quality pill leakage → ranking concern). The actual implementation was 2 lines of production code. Pre-existing auth test failures in `discover.test.ts` and `prowlarr-compat.test.ts` caused a `VERIFY: fail` that required manual confirmation they were pre-existing.
+
+### Token efficiency
+- Highest-token actions: 4 rounds of `/respond-to-spec-review` with codebase exploration to validate each finding
+- Avoidable waste: Scope creep in spec review added Infinity/Number.MAX_VALUE quality pill concerns that were ultimately removed; more upfront JSON transport analysis would have prevented rounds 2–4
+- Suggestions: Before adding Infinity/Number.MAX_VALUE to formatter test scope, verify whether those inputs can actually reach the formatter via JSON transport
+
+### Infrastructure gaps
+- Repeated workarounds: `git push` auth failure required refreshing the remote URL with `gh auth token` — the stored token in the remote URL was stale
+- Missing tooling / config: `scripts/verify.ts` doesn't distinguish pre-existing failures from branch-introduced ones; manual confirmation needed when pre-existing failures block the gate
+- Unresolved debt: `src/core/utils/parse.ts:315` has a second `formatBytes` with the same bug profile (server-side, low urgency)
+
+### Wish I'd Known
+1. `Math.log(negative)` = NaN and `Math.log(Infinity)` = Infinity — both produce `sizes[NaN/Infinity]` = undefined via array index. Knowing the exact JS math behavior upfront would have made the guard design obvious from the start.
+2. JSON.stringify coerces NaN/Infinity to null — Infinity can never arrive at the client from a JSON API. This single fact would have cut the spec review from 4 rounds to 1 by immediately ruling out all the Infinity-in-ranking/comparison concerns.
+3. The `!bytes` guard in formatBytes already handles NaN/0/undefined — the real gap is negative values which are truthy and pass `!bytes`. Reading the existing guard logic before writing the spec would have scoped it correctly from round 1.
+
+
 ## #22 Name field placeholder doesn't update when type changes — 2026-03-20
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #36
