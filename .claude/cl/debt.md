@@ -9,3 +9,5 @@ No active items. All prior debt graduated and resolved in #448.
 - **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 auth integration tests failing on main — pre-existing, unrelated to CSP work. Root cause unknown but blocks `node scripts/verify.ts` from returning `VERIFY: pass` even on unrelated changes. (discovered in #16)
 
 - **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 pre-existing auth integration test failures on main — these poison `scripts/verify.ts` for all branches. Root cause unrelated to #17 but discovered during quality gate run. (discovered in #17)
+
+- **src/server/routes/discover.test.ts** and **src/server/routes/prowlarr-compat.test.ts**: 5 auth-integration tests failing on `main` ("returns 401" getting 500 instead) — pre-existing failures unrelated to CSP work. Need investigation into why the auth plugin isn't rejecting unauthenticated requests in these test setups. (discovered in #21)

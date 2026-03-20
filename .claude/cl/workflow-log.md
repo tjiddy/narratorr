@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #21 Fix CSP style-src nonce conflict blocking inline styles — 2026-03-20
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #25
+
+### Metrics
+- Files changed: 5 (1 new plugin, 1 new test file, 3 modified) | Tests added/modified: 18 new
+- Quality gate runs: 1 (fail — pre-existing failures in unrelated test files)
+- Fix iterations: 0 (no fixes needed for my changes; pre-existing failures confirmed on main)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The onSend hook approach was clean and well-scoped. The regex /(style-src[^;]*?)\s+'nonce-[a-f0-9]+'/g worked first try. Red/green TDD was smooth — module import error was the initial red state, then all 6 tests went green immediately after writing the plugin.
+- Friction / issues encountered: (1) helmet.test.ts needed the strip plugin added to its createApp() — the semantic assertion correctly failed without it, but the reason was "plugin not present" not "nonce in header". Added the plugin and got true green. (2) git push token expiry: the remote URL was set with a stale installation token. Had to call gh auth token via lib.ts gh() to get a fresh token and update the remote. Same issue with gh pr create — needed to set GH_TOKEN=... explicitly.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for elaborate, plan, and self-review passes — each consumed significant context for file reads
+- Avoidable waste: The elaborate/respond-to-spec-review passes happened before /implement, adding a full spec-review cycle already completed before /implement was invoked
+- Suggestions: For issues where spec is already clean, the /plan Explore subagent could be smaller if the elaborate pass already identified all touch points
+
+### Infrastructure gaps
+- Repeated workarounds: GitHub App token expiry on git remote and gh CLI — must refresh token before push and before gh pr create. Pattern: gh auth token via lib.ts, then update remote URL and pass GH_TOKEN=... to gh CLI
+- Missing tooling / config: No mechanism to auto-refresh the git remote URL when the installation token expires; must do it manually
+- Unresolved debt: 5 pre-existing test failures in discover.test.ts and prowlarr-compat.test.ts (auth integration, 401 vs 500) — logged in debt.md
+
+### Wish I Had Known
+1. The helmet.test.ts createApp() must include all plugins that affect the header under test — not just the plugin being directly tested. Without the strip plugin, a semantic assertion about nonce absence in the sent header will incorrectly fail the red state for the wrong reason.
+2. GitHub App installation tokens expire after ~1 hour. git push and gh pr create will both fail with misleading errors when the token in the remote URL or GH_TOKEN env var has expired. Always refresh via gh auth token from lib.ts before pushing.
+3. The fp() wrapper from fastify-plugin is required to make an onSend hook apply globally — without it, the hook is scoped to the plugin encapsulation context and won't fire for routes registered outside that context.
+
 ## #17 Fix Remove Credentials button visibility — gate on AUTH_BYPASS env var only — 2026-03-20
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #20
