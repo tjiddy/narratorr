@@ -11,10 +11,13 @@ const baseGateData: QualityGateData = {
   mbPerHour: 60,
   existingMbPerHour: 40,
   narratorMatch: true,
+  existingNarrator: null,
+  downloadNarrator: null,
   durationDelta: 0.05,
   codec: 'AAC',
   channels: 1,
   probeFailure: false,
+  probeError: null,
   holdReasons: ['narrator_mismatch'],
 };
 
@@ -26,14 +29,17 @@ describe('QualityComparisonPanel', () => {
     expect(screen.getByText('40 MB/hr')).toBeInTheDocument();
   });
 
-  it('renders narrator match status', () => {
+  it('renders narrator row in the comparison grid when narratorMatch is set', () => {
     render(<QualityComparisonPanel data={baseGateData} />);
-    expect(screen.getByText('Match')).toBeInTheDocument();
+    expect(screen.getByText('Narrator')).toBeInTheDocument();
   });
 
-  it('renders narrator mismatch status', () => {
-    render(<QualityComparisonPanel data={{ ...baseGateData, narratorMatch: false }} />);
-    expect(screen.getByText('Mismatch')).toBeInTheDocument();
+  it('renders narrator mismatch row with warning icon', () => {
+    const { container } = render(<QualityComparisonPanel data={{ ...baseGateData, narratorMatch: false, existingNarrator: 'John Smith', downloadNarrator: 'Jane Doe' }} />);
+    expect(screen.getByText('Narrator')).toBeInTheDocument();
+    expect(screen.getByText('John Smith')).toBeInTheDocument();
+    expect(screen.getByText('Jane Doe')).toBeInTheDocument();
+    expect(container.querySelectorAll('svg')).toHaveLength(1);
   });
 
   it('renders codec and channel info', () => {
@@ -131,5 +137,75 @@ describe('DownloadCard - pending_review', () => {
 
     await expandPendingReview();
     expect(screen.getByText('Quality Comparison')).toBeInTheDocument();
+  });
+});
+
+describe('QualityComparisonPanel — narrator names', () => {
+  it('shows both existingNarrator and downloadNarrator when narratorMatch is false', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, narratorMatch: false, existingNarrator: 'John Smith', downloadNarrator: 'Jane Doe' }} />);
+    expect(screen.getByText('John Smith')).toBeInTheDocument();
+    expect(screen.getByText('Jane Doe')).toBeInTheDocument();
+  });
+
+  it('shows both narrator names when narratorMatch is true', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, narratorMatch: true, existingNarrator: 'John Smith', downloadNarrator: 'John Smith' }} />);
+    expect(screen.getAllByText('John Smith')).toHaveLength(2);
+  });
+
+  it('shows narrator row with dashes when narratorMatch is not null but names are missing (legacy)', () => {
+    const { container } = render(<QualityComparisonPanel data={{ ...baseGateData, narratorMatch: false, existingNarrator: null, downloadNarrator: null }} />);
+    expect(screen.getByText('Narrator')).toBeInTheDocument();
+    // Two em-dashes appear in narrator current and downloaded columns
+    const dashes = container.querySelectorAll('*');
+    const dashElements = Array.from(dashes).filter(el => el.textContent === '—');
+    expect(dashElements.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('hides narrator row entirely when narratorMatch is null', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, narratorMatch: null, existingNarrator: null, downloadNarrator: null }} />);
+    expect(screen.queryByText('Narrator')).not.toBeInTheDocument();
+  });
+});
+
+describe('QualityComparisonPanel — probe error display', () => {
+  it('shows specific probeError text when probeFailure=true and probeError present', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, probeFailure: true, probeError: 'No audio files found', holdReasons: ['probe_failed'] }} />);
+    expect(screen.getByText(/No audio files found/)).toBeInTheDocument();
+  });
+
+  it('shows generic Audio probe failed message when probeFailure=true and probeError null', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, probeFailure: true, probeError: null, holdReasons: ['probe_failed'] }} />);
+    expect(screen.getByText(/Audio probe failed/)).toBeInTheDocument();
+  });
+
+  it('shows Unexpected error heading when holdReasons includes unhandled_error with probeError present', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, probeFailure: true, probeError: 'DB connection lost', holdReasons: ['unhandled_error'] }} />);
+    expect(screen.getByText(/Unexpected error/)).toBeInTheDocument();
+    expect(screen.getByText(/DB connection lost/)).toBeInTheDocument();
+  });
+
+  it('shows Unexpected error heading with generic body when unhandled_error + null probeError (legacy event)', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, probeFailure: true, probeError: null, holdReasons: ['unhandled_error'] }} />);
+    expect(screen.getByText(/Unexpected error/)).toBeInTheDocument();
+    expect(screen.getByText(/unexpected error occurred/i)).toBeInTheDocument();
+  });
+});
+
+describe('QualityComparisonPanel — stereo flag removal', () => {
+  it('renders Stereo without warning icon for channels=2', () => {
+    const { container } = render(<QualityComparisonPanel data={{ ...baseGateData, channels: 2, probeFailure: false, durationDelta: null, narratorMatch: null }} />);
+    expect(screen.getByText('Stereo')).toBeInTheDocument();
+    // No AlertTriangleIcon SVGs when no rows are flagged
+    expect(container.querySelectorAll('svg')).toHaveLength(0);
+  });
+
+  it('renders Mono without flag for channels=1', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, channels: 1 }} />);
+    expect(screen.getByText('Mono')).toBeInTheDocument();
+  });
+
+  it('renders 6ch without flag for channels=6', () => {
+    render(<QualityComparisonPanel data={{ ...baseGateData, channels: 6 }} />);
+    expect(screen.getByText('6ch')).toBeInTheDocument();
   });
 });

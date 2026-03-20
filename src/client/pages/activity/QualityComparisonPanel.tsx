@@ -12,14 +12,25 @@ function formatDurationDelta(delta: number | null): string {
   return `${percent > 0 ? '+' : ''}${percent}%`;
 }
 
-export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
-  const rows: { label: string; current: string; downloaded: string; flagged?: boolean }[] = [];
+type Row = { label: string; current: string; downloaded: string; flagged?: boolean };
+
+function buildRows(data: QualityGateData): Row[] {
+  const rows: Row[] = [];
 
   rows.push({
     label: 'Quality',
     current: formatMbPerHour(data.existingMbPerHour),
     downloaded: formatMbPerHour(data.mbPerHour),
   });
+
+  if (data.narratorMatch !== null) {
+    rows.push({
+      label: 'Narrator',
+      current: data.existingNarrator ?? '—',
+      downloaded: data.downloadNarrator ?? '—',
+      flagged: data.narratorMatch === false,
+    });
+  }
 
   if (data.durationDelta !== null) {
     rows.push({
@@ -31,11 +42,7 @@ export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
   }
 
   if (data.codec !== null) {
-    rows.push({
-      label: 'Codec',
-      current: '—',
-      downloaded: data.codec,
-    });
+    rows.push({ label: 'Codec', current: '—', downloaded: data.codec });
   }
 
   if (data.channels !== null) {
@@ -43,9 +50,30 @@ export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
       label: 'Channels',
       current: '—',
       downloaded: data.channels === 1 ? 'Mono' : data.channels === 2 ? 'Stereo' : `${data.channels}ch`,
-      flagged: data.channels > 1,
     });
   }
+
+  return rows;
+}
+
+function ProbeFailureMessage({ probeError, holdReasons }: { probeError: string | null; holdReasons: string[] }) {
+  if (holdReasons.includes('unhandled_error')) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        {probeError ?? 'An unexpected error occurred.'} Manual review required.
+      </p>
+    );
+  }
+  return (
+    <p className="text-sm text-muted-foreground">
+      {probeError ? `${probeError} — ` : 'Audio probe failed — '}unable to determine download quality. Manual review required.
+    </p>
+  );
+}
+
+export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
+  const rows = buildRows(data);
+  const isUnhandledError = data.holdReasons?.includes('unhandled_error') ?? false;
 
   return (
     <div className="mt-3 p-4 bg-muted/50 rounded-xl border border-border/50 space-y-3">
@@ -54,32 +82,15 @@ export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
         {data.probeFailure && (
           <span className="inline-flex items-center gap-1 text-xs text-destructive">
             <AlertCircleIcon className="w-3.5 h-3.5" />
-            Probe failed
+            {isUnhandledError ? 'Unexpected error' : 'Probe failed'}
           </span>
         )}
       </h4>
 
       {data.probeFailure ? (
-        <p className="text-sm text-muted-foreground">
-          Audio probe failed — unable to determine download quality. Manual review required.
-        </p>
+        <ProbeFailureMessage probeError={data.probeError} holdReasons={data.holdReasons} />
       ) : (
         <>
-          {/* Narrator match */}
-          {data.narratorMatch !== null && (
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Narrator:</span>
-              {data.narratorMatch ? (
-                <span className="text-success">Match</span>
-              ) : (
-                <span className="text-destructive flex items-center gap-1">
-                  <AlertTriangleIcon className="w-3.5 h-3.5" />
-                  Mismatch
-                </span>
-              )}
-            </div>
-          )}
-
           {/* Comparison grid */}
           <div className="grid grid-cols-3 gap-2 text-sm">
             <div className="text-muted-foreground font-medium" />

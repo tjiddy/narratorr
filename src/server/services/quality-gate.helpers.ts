@@ -41,10 +41,14 @@ export function buildQualityAssessment(
 
   // Check narrator match
   let narratorMatch: boolean | null = null;
+  let existingNarrator: string | null = null;
+  let downloadNarrator: string | null = null;
   if (scanResult.tagNarrator && book?.narrator) {
+    existingNarrator = book.narrator;
+    downloadNarrator = scanResult.tagNarrator;
     const existingNarrators = book.narrator.split(/[,;&]/).map(n => n.trim().toLowerCase());
-    const downloadNarrator = scanResult.tagNarrator.trim().toLowerCase();
-    narratorMatch = existingNarrators.some(n => n === downloadNarrator);
+    const normalizedDownload = scanResult.tagNarrator.trim().toLowerCase();
+    narratorMatch = existingNarrators.some(n => n === normalizedDownload);
     if (!narratorMatch) {
       holdReasons.push('narrator_mismatch');
     }
@@ -74,10 +78,13 @@ export function buildQualityAssessment(
     mbPerHour: newMbPerHour,
     existingMbPerHour,
     narratorMatch,
+    existingNarrator,
+    downloadNarrator,
     durationDelta,
     codec: scanResult.codec || null,
     channels: scanResult.channels || null,
     probeFailure: false,
+    probeError: null,
     holdReasons,
   };
 }

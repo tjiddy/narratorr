@@ -27,10 +27,13 @@ export interface QualityGateData {
   mbPerHour: number | null;
   existingMbPerHour: number | null;
   narratorMatch: boolean | null;
+  existingNarrator: string | null;
+  downloadNarrator: string | null;
   durationDelta: number | null;
   codec: string | null;
   channels: number | null;
   probeFailure: boolean;
+  probeError: string | null;
   holdReasons: string[];
 }
 

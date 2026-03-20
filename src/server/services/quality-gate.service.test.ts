@@ -197,6 +197,70 @@ describe('QualityGateService', () => {
 
       expect(result.reason.narratorMatch).toBe(true);
     });
+
+    it('persists original book.narrator string (not lowercased) on mismatch', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, tagNarrator: 'Jane Doe' }));
+
+      expect(result.reason.existingNarrator).toBe('John Smith');
+      expect(result.reason.downloadNarrator).toBe('Jane Doe');
+    });
+
+    it('persists original book.narrator and tagNarrator strings on match', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, tagNarrator: 'John Smith' }));
+
+      expect(result.reason.narratorMatch).toBe(true);
+      expect(result.reason.existingNarrator).toBe('John Smith');
+      expect(result.reason.downloadNarrator).toBe('John Smith');
+    });
+
+    it('persists original tagNarrator casing (not lowercased) even on mismatch', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000, tagNarrator: 'JANE DOE' }));
+
+      expect(result.reason.downloadNarrator).toBe('JANE DOE');
+    });
+
+    it('sets existingNarrator and downloadNarrator to null when book.narrator is null', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(baseDownload, { ...baseBook, narrator: null }, makeScan({ totalSize: 600_000_000, tagNarrator: 'John Smith' }));
+
+      expect(result.reason.existingNarrator).toBeNull();
+      expect(result.reason.downloadNarrator).toBeNull();
+    });
+
+    it('sets existingNarrator and downloadNarrator to null when tagNarrator is undefined', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(baseDownload, baseBook, makeScan({ totalSize: 600_000_000 }));
+
+      expect(result.reason.existingNarrator).toBeNull();
+      expect(result.reason.downloadNarrator).toBeNull();
+    });
+
+    it('preserves multi-narrator original string as existingNarrator', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(
+        baseDownload,
+        { ...baseBook, narrator: 'John Smith; Jane Doe' },
+        makeScan({ totalSize: 600_000_000, tagNarrator: 'Jane Doe' }),
+      );
+
+      expect(result.reason.existingNarrator).toBe('John Smith; Jane Doe');
+      expect(result.reason.downloadNarrator).toBe('Jane Doe');
+    });
   });
 
   describe('processDownload — duration delta', () => {

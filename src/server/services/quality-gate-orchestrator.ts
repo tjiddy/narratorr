@@ -63,7 +63,7 @@ export class QualityGateOrchestrator {
           savePath = await resolveSavePath(row.download, this.downloadClientService, this.remotePathMappingService);
         } catch (error) {
           this.log.error({ error, downloadId: row.download.id }, 'Quality gate: failed to resolve save path');
-          await this.holdForProbeFailure(row.download, row.book, 'probe_failed');
+          await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
           continue;
         }
 
@@ -73,13 +73,13 @@ export class QualityGateOrchestrator {
           scanResult = await scanAudioDirectory(savePath, { skipCover: true });
         } catch (error) {
           this.log.error({ error, downloadId: row.download.id }, 'Quality gate: scan failed');
-          await this.holdForProbeFailure(row.download, row.book, 'probe_failed');
+          await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
           continue;
         }
 
         if (!scanResult) {
           this.log.warn({ downloadId: row.download.id }, 'Quality gate: no audio files found');
-          await this.holdForProbeFailure(row.download, row.book, 'probe_failed');
+          await this.holdForProbeFailure(row.download, row.book, 'probe_failed', 'No audio files found');
           continue;
         }
 
@@ -92,7 +92,8 @@ export class QualityGateOrchestrator {
         this.log.error({ error, downloadId: row.download.id }, 'Quality gate error');
         // Set pending_review with probeFailure on unhandled error
         await this.qualityGateService.setStatus(row.download.id, 'pending_review');
-        this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, holdReasons: ['unhandled_error'] });
+        const probeError = error instanceof Error ? error.message : String(error);
+        this.recordDecision(row.download, row.book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: ['unhandled_error'] });
       }
     }
   }
@@ -135,6 +136,7 @@ export class QualityGateOrchestrator {
     download: DownloadRow,
     book: BookRow | null,
     holdReason: string,
+    error?: unknown,
   ): Promise<void> {
     await this.qualityGateService.setStatus(download.id, 'pending_review');
 
@@ -144,7 +146,11 @@ export class QualityGateOrchestrator {
       this.emitSSE('review_needed', { download_id: download.id, book_id: book.id, book_title: book.title });
     }
 
-    this.recordDecision(download, book, { ...NULL_REASON, probeFailure: true, holdReasons: [holdReason] });
+    const probeError = error === undefined ? null
+      : typeof error === 'string' ? error
+      : error instanceof Error ? error.message
+      : String(error);
+    this.recordDecision(download, book, { ...NULL_REASON, probeFailure: true, probeError, holdReasons: [holdReason] });
   }
 
   /** Dispatch side effects based on quality decision. */

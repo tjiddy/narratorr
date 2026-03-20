@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyBaseLogger } from 'fastify';
 import { QualityGateOrchestrator } from './quality-gate-orchestrator.js';
 import type { QualityGateService, QualityDecision } from './quality-gate.service.js';
-import { QualityGateServiceError } from './quality-gate.types.js';
+import { QualityGateServiceError, NULL_REASON } from './quality-gate.types.js';
 import { inject, createMockDb, createMockLogger } from '../__tests__/helpers.js';
 import type { Db } from '../../db/index.js';
 import type { EventHistoryService } from './event-history.service.js';
@@ -216,7 +216,7 @@ describe('QualityGateOrchestrator', () => {
     it('emits download_status_change and review_needed SSE, records event', async () => {
       const { orchestrator, qualityGateService, broadcaster, eventHistory } = createOrchestrator();
       const holdDecision: QualityDecision = {
-        action: 'held', reason: { action: 'held', mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false, durationDelta: 0.05, codec: 'AAC', channels: 1, probeFailure: false, holdReasons: ['narrator_mismatch'] },
+        action: 'held', reason: { action: 'held', mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false, existingNarrator: null, downloadNarrator: null, durationDelta: 0.05, codec: 'AAC', channels: 1, probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'] },
         statusTransition: { from: 'checking', to: 'pending_review' },
       };
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
@@ -241,7 +241,7 @@ describe('QualityGateOrchestrator', () => {
         { download: { ...baseDownload, bookId: 1 }, book: null },
       ]);
       qualityGateService.processDownload.mockResolvedValue({
-        action: 'held', reason: { action: 'held', mbPerHour: null, existingMbPerHour: null, narratorMatch: null, durationDelta: null, codec: null, channels: null, probeFailure: false, holdReasons: ['no_quality_data'] },
+        action: 'held', reason: { action: 'held', mbPerHour: null, existingMbPerHour: null, narratorMatch: null, existingNarrator: null, downloadNarrator: null, durationDelta: null, codec: null, channels: null, probeFailure: false, probeError: null, holdReasons: ['no_quality_data'] },
         statusTransition: { from: 'checking', to: 'pending_review' },
       });
 
@@ -261,7 +261,7 @@ describe('QualityGateOrchestrator', () => {
       const { orchestrator, qualityGateService, broadcaster, eventHistory } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
-        action: 'imported', reason: { action: 'imported', mbPerHour: 60, existingMbPerHour: 40, narratorMatch: true, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, holdReasons: [] },
+        action: 'imported', reason: { action: 'imported', mbPerHour: 60, existingMbPerHour: 40, narratorMatch: true, existingNarrator: null, downloadNarrator: null, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, probeError: null, holdReasons: [] },
         statusTransition: { from: 'checking', to: 'completed' },
       });
 
@@ -281,7 +281,7 @@ describe('QualityGateOrchestrator', () => {
       const { orchestrator, qualityGateService, eventHistory, blacklistService, broadcaster } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
-        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, holdReasons: [] },
+        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, existingNarrator: null, downloadNarrator: null, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, probeError: null, holdReasons: [] },
         statusTransition: { from: 'checking', to: 'failed' },
       });
 
@@ -305,7 +305,7 @@ describe('QualityGateOrchestrator', () => {
       // download.status='completed' (from initial query), but statusTransition says checking→failed
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: { ...baseDownload, status: 'completed' }, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
-        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, holdReasons: [] },
+        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, existingNarrator: null, downloadNarrator: null, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, probeError: null, holdReasons: [] },
         statusTransition: { from: 'checking', to: 'failed' },
       });
 
@@ -323,7 +323,7 @@ describe('QualityGateOrchestrator', () => {
         { download: { ...baseDownload, infoHash: null }, book: baseBook },
       ]);
       qualityGateService.processDownload.mockResolvedValue({
-        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, holdReasons: [] },
+        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, existingNarrator: null, downloadNarrator: null, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, probeError: null, holdReasons: [] },
         statusTransition: { from: 'checking', to: 'failed' },
       });
 
@@ -337,7 +337,7 @@ describe('QualityGateOrchestrator', () => {
       downloadClientService.getAdapter.mockResolvedValue(null);
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
-        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, holdReasons: [] },
+        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, existingNarrator: null, downloadNarrator: null, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, probeError: null, holdReasons: [] },
         statusTransition: { from: 'checking', to: 'failed' },
       });
 
@@ -410,7 +410,7 @@ describe('QualityGateOrchestrator', () => {
       eventHistory.create.mockRejectedValue(new Error('event DB error'));
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
-        action: 'held', reason: { action: 'held', mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false, durationDelta: 0.05, codec: 'AAC', channels: 1, probeFailure: false, holdReasons: ['narrator_mismatch'] },
+        action: 'held', reason: { action: 'held', mbPerHour: 60, existingMbPerHour: 40, narratorMatch: false, existingNarrator: null, downloadNarrator: null, durationDelta: 0.05, codec: 'AAC', channels: 1, probeFailure: false, probeError: null, holdReasons: ['narrator_mismatch'] },
         statusTransition: { from: 'checking', to: 'pending_review' },
       });
 
@@ -425,7 +425,7 @@ describe('QualityGateOrchestrator', () => {
       broadcaster.emit.mockImplementation(() => { throw new Error('SSE broken'); });
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
-        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, holdReasons: [] },
+        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, existingNarrator: null, downloadNarrator: null, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, probeError: null, holdReasons: [] },
         statusTransition: { from: 'checking', to: 'failed' },
       });
 
@@ -439,7 +439,7 @@ describe('QualityGateOrchestrator', () => {
       blacklistService.create.mockRejectedValue(new Error('blacklist error'));
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
-        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, holdReasons: [] },
+        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, existingNarrator: null, downloadNarrator: null, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, probeError: null, holdReasons: [] },
         statusTransition: { from: 'checking', to: 'failed' },
       });
 
@@ -453,7 +453,7 @@ describe('QualityGateOrchestrator', () => {
       mockAdapter.removeDownload.mockRejectedValue(new Error('delete error'));
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
-        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, holdReasons: [] },
+        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, existingNarrator: null, downloadNarrator: null, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, probeError: null, holdReasons: [] },
         statusTransition: { from: 'checking', to: 'failed' },
       });
 
@@ -467,7 +467,7 @@ describe('QualityGateOrchestrator', () => {
       (revertBookStatus as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('revert failed'));
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
-        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, holdReasons: [] },
+        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, existingNarrator: null, downloadNarrator: null, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, probeError: null, holdReasons: [] },
         statusTransition: { from: 'checking', to: 'failed' },
       });
 
@@ -486,6 +486,67 @@ describe('QualityGateOrchestrator', () => {
       (revertBookStatus as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('revert failed'));
 
       await expect(orchestrator.reject(1)).rejects.toThrow('revert failed');
+    });
+  });
+
+  describe('probeError capture', () => {
+    it('records probeError equal to error.message when resolveSavePath throws', async () => {
+      const { orchestrator, qualityGateService, eventHistory } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('path resolution failed'));
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        reason: expect.objectContaining({ probeFailure: true, probeError: 'path resolution failed', holdReasons: ['probe_failed'] }),
+      }));
+    });
+
+    it('records probeError equal to error.message when scanAudioDirectory throws', async () => {
+      const { orchestrator, qualityGateService, eventHistory } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ffprobe not found'));
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        reason: expect.objectContaining({ probeFailure: true, probeError: 'ffprobe not found', holdReasons: ['probe_failed'] }),
+      }));
+    });
+
+    it('records probeError string literal when scan result is null (no error object)', async () => {
+      const { orchestrator, qualityGateService, eventHistory } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        reason: expect.objectContaining({ probeFailure: true, probeError: 'No audio files found', holdReasons: ['probe_failed'] }),
+      }));
+    });
+
+    it('records probeError from unhandled catch error with holdReasons: [unhandled_error]', async () => {
+      const { orchestrator, qualityGateService, eventHistory } = createOrchestrator();
+      (revertBookStatus as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('unexpected DB failure'));
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
+      qualityGateService.processDownload.mockResolvedValue({
+        action: 'rejected', reason: { action: 'rejected', mbPerHour: 40, existingMbPerHour: 40, narratorMatch: true, existingNarrator: null, downloadNarrator: null, durationDelta: 0, codec: 'AAC', channels: 1, probeFailure: false, probeError: null, holdReasons: [] },
+        statusTransition: { from: 'checking', to: 'failed' },
+      });
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        reason: expect.objectContaining({ probeFailure: true, probeError: 'unexpected DB failure', holdReasons: ['unhandled_error'] }),
+      }));
+    });
+
+    it('NULL_REASON spreads include existingNarrator, downloadNarrator, probeError as null', () => {
+      const spread = { ...NULL_REASON, probeFailure: true };
+      expect(spread.existingNarrator).toBeNull();
+      expect(spread.downloadNarrator).toBeNull();
+      expect(spread.probeError).toBeNull();
     });
   });
 });
