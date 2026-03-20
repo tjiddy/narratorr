@@ -22,3 +22,5 @@ No active items. All prior debt graduated and resolved in #448.
 - **src/core/utils/parse.ts:315**: Second `formatBytes` helper with same negative/Infinity edge-case profile as the client formatter — no guards for `bytes < 0`, `!isFinite`, or out-of-bounds index. Server-side metadata display, low urgency, but should be hardened for consistency. (discovered in #29)
 
 - **src/server/routes/discover.test.ts, src/server/routes/prowlarr-compat.test.ts**: Pre-existing auth test failures (5 tests) noted again in #40 — still present on main, still blocking `VERIFY: pass`. These need investigation and a fix, not just a note. (rediscovered in #40)
+
+- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 pre-existing auth test failures (`returns 401 when no auth credentials provided`, `rejects /api/v1/* without credentials`) poison `verify.ts` on all branches. Needs investigation into the auth plugin test setup. (discovered in #37)

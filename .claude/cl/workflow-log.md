@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #37 Include git commit SHA in version display and health endpoint — 2026-03-20
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #44
+
+### Metrics
+- Files changed: 9 source + 6 test | Tests added/modified: 20 new tests
+- Quality gate runs: 1 (fail — pre-existing auth failures only, not caused by this change)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: TDD cycle was clean — stubs written, confirmed failure, implemented, green. All AC items mapped directly to tests. Blast-radius test files were exactly as predicted from the explore phase.
+- Friction / issues encountered: `git push` failed mid-handoff due to expired embedded token in remote URL. `gh auth token` returns a fresh token but the remote URL embeds a stale one — needed `git remote set-url` to refresh it. Pre-existing auth test failures in discover/prowlarr-compat poison `verify.ts` globally.
+
+### Token efficiency
+- Highest-token actions: Two Explore subagents (elaboration + plan) and self-review agent each consumed significant context
+- Avoidable waste: The elaborate → respond-to-spec-review → implement sequence made 3 Explore subagent runs; a pre-elaborated issue would save one
+- Suggestions: For small additive features like this, the full 3-round spec review cycle is overkill — a single elaborate pass would suffice
+
+### Infrastructure gaps
+- Repeated workarounds: Pre-existing auth test failures blocking `verify.ts` on every branch — mentioned in debt.md
+- Missing tooling / config: No way to exclude known-broken test files from the verify gate; `git push` requires manual token refresh when embedded remote token expires
+- Unresolved debt: 5 auth test failures in discover/prowlarr-compat need root cause investigation
+
+### Wish I'd Known
+1. `tsup` uses `esbuildOptions(options)` not a top-level `define` key — the tsup docs emphasize `esbuild` plugin style, not the webpack-style `define` object (see `tsup-build-time-env-injection.md`)
+2. Docker `ARG` values must be explicitly passed to `RUN` commands as `RUN KEY=$KEY cmd` — just declaring `ARG KEY` doesn't auto-export to the shell environment in the RUN step (see `dockerfile-arg-env-passthrough.md`)
+3. The git remote URL token expires independently of `gh auth token` — always refresh with `git remote set-url` using `$(gh auth token)` before pushing in a long session (see `git-remote-token-expiry.md`)
+
+
 ## #40 Improve quality gate review panel — narrator names, probe errors, stereo flag — 2026-03-20
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #43
