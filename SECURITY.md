@@ -64,7 +64,7 @@ An API key is generated on first run (`crypto.randomUUID`). It can be regenerate
 
 Narratorr uses `@fastify/helmet` for HTTP security headers in production:
 
-- **Content-Security-Policy:** Strict CSP with nonce-based script execution (`'self'` only, no `unsafe-inline`)
+- **Content-Security-Policy:** Strict CSP with nonce-based script execution (`script-src 'self'`, no `unsafe-inline` in script-src); `style-src` permits `'unsafe-inline'` to allow inline styles used across the app
 - **X-Frame-Options:** `DENY` — prevents clickjacking
 - **Referrer-Policy:** `strict-origin-when-cross-origin`
 - **X-Content-Type-Options:** `nosniff` (helmet default)

@@ -29,7 +29,7 @@ describe('Security Headers (helmet)', () => {
       const app = await createApp(false);
       const res = await app.inject({ method: 'GET', url: '/api/test' });
       const csp = res.headers['content-security-policy'] as string;
-      expect(csp).not.toContain("'unsafe-inline'");
+      expect(csp).not.toMatch(/script-src[^;]*'unsafe-inline'/);
       await app.close();
     });
 
@@ -89,7 +89,7 @@ describe('Security Headers (helmet)', () => {
       expect(csp).toBeDefined();
       expect(csp).toContain("default-src 'self'");
       expect(csp).toContain("script-src 'self'");
-      expect(csp).toContain("style-src 'self' https://fonts.googleapis.com");
+      expect(csp).toContain("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com");
       expect(csp).toContain("font-src 'self' https://fonts.gstatic.com");
       expect(csp).toContain("img-src 'self' data: https:");
       expect(csp).toContain("connect-src 'self'");
