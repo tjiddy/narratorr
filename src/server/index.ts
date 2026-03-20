@@ -26,6 +26,7 @@ import { startJobs } from './jobs';
 import multipart from '@fastify/multipart';
 import authPlugin from './plugins/auth.js';
 import { errorHandlerPlugin } from './plugins/error-handler.js';
+import cspNonceStripPlugin from './plugins/csp-nonce-strip.js';
 import { registerStaticAndSpa, listenWithRetry } from './server-utils.js';
 import { applyPendingRestore } from './services/backup.service.js';
 import { loadEncryptionKey, initializeKey } from './utils/secret-codec.js';
@@ -58,6 +59,7 @@ async function main() {
 
   // Security headers
   await app.register(helmet, buildHelmetOptions(config.isDev));
+  await app.register(cspNonceStripPlugin);
 
   // Rate limiting (per-route only — global: false prevents auto-applying to all routes)
   await app.register(rateLimit, { global: false });
