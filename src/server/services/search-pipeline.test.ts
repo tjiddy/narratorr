@@ -231,6 +231,28 @@ describe('filterAndRankResults — ebook format filtering', () => {
     );
     expect(results).toHaveLength(0);
   });
+
+  it('filters underscore-separated ebook-only titles (scene-style)', () => {
+    const epub = filterAndRankResults([makeResult({ title: 'Dune_EPUB' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    const pdf = filterAndRankResults([makeResult({ title: 'Author.Title_PDF_2023' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    expect(epub.results).toHaveLength(0);
+    expect(pdf.results).toHaveLength(0);
+  });
+
+  it('passes underscore-separated mixed-format title (ebook + audio)', () => {
+    const { results } = filterAndRankResults([makeResult({ title: 'Dune_EPUB_M4B' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    expect(results).toHaveLength(1);
+  });
+
+  it('passes result with EPUB and FLAC (mixed format)', () => {
+    const { results } = filterAndRankResults([makeResult({ title: 'Dune EPUB FLAC' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    expect(results).toHaveLength(1);
+  });
+
+  it('passes result with EPUB and OGG (mixed format)', () => {
+    const { results } = filterAndRankResults([makeResult({ title: 'Dune EPUB OGG' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    expect(results).toHaveLength(1);
+  });
 });
 
 describe('filterAndRankResults — minSeeders default', () => {
