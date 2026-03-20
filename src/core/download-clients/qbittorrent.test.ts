@@ -462,6 +462,18 @@ describe('QBittorrentClient', () => {
       expect(result.success).toBe(true);
       expect(result.message).toBe('qBittorrent v4.6.0');
     });
+
+    it('returns failure when version endpoint returns non-2xx status', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/app/version`, () => {
+          return new HttpResponse(null, { status: 404 });
+        }),
+      );
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('404');
+    });
   });
 
   describe('getCategories', () => {
