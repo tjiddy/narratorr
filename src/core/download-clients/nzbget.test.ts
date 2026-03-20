@@ -313,6 +313,7 @@ describe('NZBGetClient', () => {
       expect(result.success).toBe(false);
       expect(result.message).toContain('https://auth.example.com/login');
       expect(result.message).toMatch(/auth proxy/i);
+      expect(result.message).toMatch(/internal address|whitelist/i);
     });
 
     it('returns failure on HTTP error', async () => {
