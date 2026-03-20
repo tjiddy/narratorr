@@ -175,10 +175,38 @@ describe('SecretCodec', () => {
       expect(masked.port).toBe(443);
     });
 
-    it('maskFields handles null/undefined fields gracefully', () => {
+    it('maskFields preserves null secret fields — does not mask to sentinel', () => {
       const settings = { apiKey: null, hostname: 'example.com' };
       const masked = maskFields('indexer', settings as Record<string, unknown>);
-      expect(masked.apiKey).toBe('********');
+      expect(masked.apiKey).toBeNull();
+    });
+
+    it('maskFields preserves empty string secret fields — does not mask to sentinel', () => {
+      const settings = { proxyUrl: '' };
+      const masked = maskFields('network', { ...settings });
+      expect(masked.proxyUrl).toBe('');
+    });
+
+    it('maskFields preserves undefined secret fields — does not mask to sentinel', () => {
+      const settings: Record<string, unknown> = { apiKey: undefined };
+      const masked = maskFields('indexer', { ...settings });
+      expect(masked.apiKey).toBeUndefined();
+    });
+
+    it('maskFields preserves empty string across all six secret categories', () => {
+      expect(maskFields('network', { proxyUrl: '' }).proxyUrl).toBe('');
+      expect(maskFields('prowlarr', { apiKey: '' }).apiKey).toBe('');
+      expect(maskFields('auth', { sessionSecret: '', apiKey: '' })).toEqual({ sessionSecret: '', apiKey: '' });
+      expect(maskFields('indexer', { apiKey: '' }).apiKey).toBe('');
+      expect(maskFields('downloadClient', { apiKey: '', password: '' })).toEqual({ apiKey: '', password: '' });
+      expect(maskFields('importList', { apiKey: '' }).apiKey).toBe('');
+    });
+
+    it('maskFields mixed: empty field preserved, non-empty field still masked in same object', () => {
+      const settings = { apiKey: '', flareSolverrUrl: 'http://flare.example.com' };
+      const masked = maskFields('indexer', { ...settings });
+      expect(masked.apiKey).toBe('');
+      expect(masked.flareSolverrUrl).toBe('********');
     });
   });
 
