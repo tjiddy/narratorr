@@ -79,6 +79,9 @@ describe('fetchWithTimeout', () => {
       await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(
         /auth proxy/i,
       );
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(
+        /internal address|whitelist/i,
+      );
     });
 
     it('throws descriptive error on all 3xx status codes (301, 303, 307, 308)', async () => {
