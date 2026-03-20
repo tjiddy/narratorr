@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #22 Name field placeholder doesn't update when type changes — 2026-03-20
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #36
+
+### Metrics
+- Files changed: 2 source | Tests added/modified: 2 test files (4 new tests)
+- Quality gate runs: 1 (pre-existing 5 failures on main, unrelated to change; all changed-file tests 98/98 pass)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Fix was a pure one-line prop change per component. Both `selectedType` and registry imports were already in scope. Red/green cycle confirmed the assertions were real — new tests failed before the fix, passed after.
+- Friction / issues encountered: git push required token refresh (same recurring pattern as prior issues). State directory was cleaned up mid-implement by the stop-gate, requiring recreation.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for self-review and coverage check
+- Avoidable waste: None significant for the scope
+- Suggestions: For trivial one-line fixes, self-review and coverage subagents still consume significant tokens — consider a fast-path for minimal diffs
+
+### Infrastructure gaps
+- Repeated workarounds: git push via HTTPS requires fresh token each session (documented since #23)
+- Missing tooling / config: 5 pre-existing auth test failures still block `verify.ts` globally
+- Unresolved debt: Pre-existing auth test failures need fixing (see debt.md)
+
+### Wish I'd Known
+1. When a RHF component calls `watch('type')`, any derived prop (like placeholder) updates automatically on re-render — no extra `useEffect` needed. The fix is a single expression, not a hook.
+2. The blast radius for placeholder changes is larger than it looks — page-level integration tests also query by placeholder text. Check all 5 test files, not just the component test.
+3. Existing tests were accidentally correct: the default registry label ('AudioBookBay', 'qBittorrent') happened to match the old hardcoded string, so zero existing assertions broke after the fix.
+
+
 ## #23 Detect auth proxy redirects instead of failing with confusing errors — 2026-03-20
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #35
