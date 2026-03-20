@@ -49,6 +49,25 @@ describe('SlackNotifier', () => {
     expect(result.message).toContain('404');
   });
 
+  it('returns failure with redirect URL and proxy suggestion when webhook returns 302', async () => {
+    server.use(
+      http.post(WEBHOOK_URL, () =>
+        new HttpResponse(null, {
+          status: 302,
+          headers: { Location: 'https://auth.example.com/login' },
+        }),
+      ),
+    );
+
+    const notifier = new SlackNotifier({ webhookUrl: WEBHOOK_URL });
+    const result = await notifier.test();
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('https://auth.example.com/login');
+    expect(result.message).toMatch(/auth proxy/i);
+    expect(result.message).toMatch(/internal address|whitelist/i);
+  });
+
   it('returns timeout error on slow response', async () => {
     server.use(
       http.post(WEBHOOK_URL, async () => {

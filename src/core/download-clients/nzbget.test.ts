@@ -299,6 +299,23 @@ describe('NZBGetClient', () => {
       expect(result.message).toBe('NZBGet 24.1');
     });
 
+    it('returns failure with redirect URL and proxy suggestion when server returns 302', async () => {
+      server.use(
+        http.post(RPC_URL, () => {
+          return new HttpResponse(null, {
+            status: 302,
+            headers: { Location: 'https://auth.example.com/login' },
+          });
+        }),
+      );
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('https://auth.example.com/login');
+      expect(result.message).toMatch(/auth proxy/i);
+      expect(result.message).toMatch(/internal address|whitelist/i);
+    });
+
     it('returns failure on HTTP error', async () => {
       server.use(
         http.post(RPC_URL, () => {
