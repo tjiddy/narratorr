@@ -721,4 +721,76 @@ describe('SearchReleasesModal unsupported results', () => {
       spy.mockRestore();
     });
   });
+
+  describe('ReleaseCard size display guard', () => {
+    const baseResult: SearchResult = {
+      title: 'Test Book',
+      author: 'Test Author',
+      protocol: 'torrent',
+      infoHash: 'test123',
+      downloadUrl: 'magnet:?xt=urn:btih:test123',
+      seeders: 5,
+      indexer: 'TestIndexer',
+    };
+
+    it('hides size field when result.size is -1 (negative sentinel)', async () => {
+      vi.mocked(api.searchBooks).mockResolvedValue(
+        searchResponse([{ ...baseResult, size: -1 }]),
+      );
+
+      renderWithProviders(<SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Book')).toBeInTheDocument();
+      });
+
+      // The mock formatBytes for -1 would produce "-0.0 GB"; with the guard it must not render
+      expect(screen.queryByText('-0.0 GB')).not.toBeInTheDocument();
+    });
+
+    it('hides size field when result.size is 0', async () => {
+      vi.mocked(api.searchBooks).mockResolvedValue(
+        searchResponse([{ ...baseResult, size: 0 }]),
+      );
+
+      renderWithProviders(<SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Book')).toBeInTheDocument();
+      });
+
+      // size=0 should be hidden; the mock returns '0 B' for falsy values but guard should prevent render
+      expect(screen.queryByText('0 B')).not.toBeInTheDocument();
+    });
+
+    it('hides size field when result.size is null', async () => {
+      vi.mocked(api.searchBooks).mockResolvedValue(
+        searchResponse([{ ...baseResult, size: null as unknown as number }]),
+      );
+
+      renderWithProviders(<SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Book')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByText('0 B')).not.toBeInTheDocument();
+    });
+
+    it('shows size field when result.size is a valid positive number', async () => {
+      const size = 500 * 1024 * 1024;
+      vi.mocked(api.searchBooks).mockResolvedValue(
+        searchResponse([{ ...baseResult, size }]),
+      );
+
+      renderWithProviders(<SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Book')).toBeInTheDocument();
+      });
+
+      // mock formatBytes: (500*1024*1024 / 1024^3).toFixed(1) = "0.5 GB"
+      expect(screen.getByText('0.5 GB')).toBeInTheDocument();
+    });
+  });
 });

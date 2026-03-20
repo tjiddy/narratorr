@@ -33,6 +33,22 @@ describe('formatBytes', () => {
   it('formats fractional values', () => {
     expect(formatBytes(1536)).toBe('1.5 KB');
   });
+
+  it('returns Unknown for negative sentinel value -1', () => {
+    expect(formatBytes(-1)).toBe('Unknown');
+  });
+
+  it('returns Unknown for negative value like -500 MB', () => {
+    expect(formatBytes(-500 * 1024 * 1024)).toBe('Unknown');
+  });
+
+  it('returns Unknown for Infinity (defense-in-depth; non-finite guard)', () => {
+    expect(formatBytes(Infinity)).toBe('Unknown');
+  });
+
+  it('returns Unknown for Number.MAX_VALUE (index out-of-bounds safety net)', () => {
+    expect(formatBytes(Number.MAX_VALUE)).toBe('Unknown');
+  });
 });
 
 describe('formatProgress', () => {
