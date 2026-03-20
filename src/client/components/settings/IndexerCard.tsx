@@ -164,7 +164,7 @@ export function IndexerCard(props: IndexerCardProps) {
       </div>
 
       <div className="grid gap-5 sm:grid-cols-2">
-        <FormField id="indexerName" label="Name" registration={register('name')} error={errors.name} placeholder="AudioBookBay" readOnly={isProwlarrManaged} />
+        <FormField id="indexerName" label="Name" registration={register('name')} error={errors.name} placeholder={INDEXER_REGISTRY[selectedType]?.label} readOnly={isProwlarrManaged} />
 
         <div>
           <label htmlFor="indexerType" className="block text-sm font-medium mb-2">Type</label>

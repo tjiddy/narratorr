@@ -265,6 +265,25 @@ describe('IndexerCard — create mode', () => {
 
     expect(screen.getByText('Adding...')).toBeInTheDocument();
   });
+
+  it('updates Name field placeholder to match selected type display name when type changes', async () => {
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <IndexerCard
+        mode="create"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText('AudioBookBay')).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByRole('combobox'), 'torznab');
+
+    expect(screen.getByPlaceholderText('Torznab')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('AudioBookBay')).not.toBeInTheDocument();
+  });
 });
 
 describe('IndexerCard — edit mode', () => {
@@ -373,6 +392,20 @@ describe('IndexerCard — edit mode', () => {
     );
 
     expect(screen.getByText('Saving...')).toBeInTheDocument();
+  });
+
+  it("shows placeholder matching the indexer's configured type, not the default type", () => {
+    renderWithProviders(
+      <IndexerCard
+        indexer={mockTorznabIndexer}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText('Torznab')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('AudioBookBay')).not.toBeInTheDocument();
   });
 });
 
