@@ -38,11 +38,11 @@ export const DOWNLOAD_STATUS_REGISTRY: Record<DownloadStatus, DownloadStatusMeta
   },
   completed: {
     category: 'terminal',
-    label: 'Completed',
-    icon: 'check-circle',
-    color: 'text-success',
-    bgColor: 'bg-success/10',
-    textColor: 'text-success',
+    label: 'Downloaded',
+    icon: 'arrow-down',
+    color: 'text-teal-500',
+    bgColor: 'bg-teal-500/10',
+    textColor: 'text-teal-600 dark:text-teal-400',
   },
   checking: {
     category: 'inProgress',

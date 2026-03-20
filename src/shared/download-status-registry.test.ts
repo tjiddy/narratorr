@@ -7,6 +7,7 @@ import {
   getInProgressStatuses,
   getTerminalStatuses,
   getCompletedStatuses,
+  getClientPolledStatuses,
 } from './download-status-registry.js';
 
 describe('download-status-registry', () => {
@@ -143,6 +144,44 @@ describe('download-status-registry', () => {
       expect(meta.color).toBeTruthy();
       expect(meta.bgColor).toBeTruthy();
       expect(meta.textColor).toBeTruthy();
+    });
+  });
+
+  describe('completed status label rename', () => {
+    it('completed entry label is "Downloaded"', () => {
+      expect(DOWNLOAD_STATUS_REGISTRY.completed.label).toBe('Downloaded');
+    });
+
+    it('completed icon differs from imported icon', () => {
+      expect(DOWNLOAD_STATUS_REGISTRY.completed.icon).not.toBe(DOWNLOAD_STATUS_REGISTRY.imported.icon);
+    });
+
+    it('completed color scheme differs from imported success styling', () => {
+      expect(DOWNLOAD_STATUS_REGISTRY.completed.color).not.toBe(DOWNLOAD_STATUS_REGISTRY.imported.color);
+      expect(DOWNLOAD_STATUS_REGISTRY.completed.bgColor).not.toBe(DOWNLOAD_STATUS_REGISTRY.imported.bgColor);
+      expect(DOWNLOAD_STATUS_REGISTRY.completed.textColor).not.toBe(DOWNLOAD_STATUS_REGISTRY.imported.textColor);
+    });
+
+    it('imported entry label remains "Imported" with success styling unchanged', () => {
+      expect(DOWNLOAD_STATUS_REGISTRY.imported.label).toBe('Imported');
+      expect(DOWNLOAD_STATUS_REGISTRY.imported.color).toBe('text-success');
+      expect(DOWNLOAD_STATUS_REGISTRY.imported.bgColor).toBe('bg-success/10');
+      expect(DOWNLOAD_STATUS_REGISTRY.imported.textColor).toBe('text-success');
+    });
+  });
+
+  describe('getClientPolledStatuses', () => {
+    it('returns the three client-polled statuses', () => {
+      const statuses = getClientPolledStatuses();
+      expect(statuses).toHaveLength(3);
+      expect(statuses).toEqual(expect.arrayContaining(['downloading', 'queued', 'paused']));
+    });
+
+    it('does not include internal pipeline statuses', () => {
+      const statuses = getClientPolledStatuses();
+      for (const s of ['checking', 'pending_review', 'processing_queued', 'importing', 'completed', 'imported', 'failed'] as const) {
+        expect(statuses).not.toContain(s);
+      }
     });
   });
 

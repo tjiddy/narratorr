@@ -21,7 +21,7 @@ describe('DownloadCard', () => {
         queued: 'Queued',
         downloading: 'Downloading',
         paused: 'Paused',
-        completed: 'Completed',
+        completed: 'Downloaded',
         checking: 'Checking Quality',
         pending_review: 'Pending Review',
         processing_queued: 'Processing Queued',
