@@ -27,8 +27,10 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
 
       // Request-scoped bypass: true when AUTH_BYPASS env var is set OR local network bypass applies
       const bypassActive = config.authBypass || (status.localBypass && isPrivateIp(request.ip));
+      // env-only bypass: true only when AUTH_BYPASS env var is set (not local network bypass)
+      const envBypass = Boolean(config.authBypass);
 
-      return { ...status, authenticated, bypassActive };
+      return { ...status, authenticated, bypassActive, envBypass };
     } catch (error) {
       request.log.error(error, 'Failed to fetch auth status');
       throw error;

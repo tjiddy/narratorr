@@ -49,6 +49,7 @@ describe('useAuth', () => {
       localBypass: false,
       authenticated: false,
       bypassActive: true,
+      envBypass: false,
     });
 
     const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
@@ -69,6 +70,7 @@ describe('useAuth', () => {
       localBypass: false,
       authenticated: true,
       bypassActive: false,
+      envBypass: false,
     });
 
     const { result } = renderHook(() => useAuth(), {
@@ -107,6 +109,7 @@ describe('useAuth', () => {
         localBypass: false,
         authenticated: true,
         bypassActive: false,
+        envBypass: false,
       })
       .mockResolvedValue({
         mode: 'forms',
@@ -114,6 +117,7 @@ describe('useAuth', () => {
         localBypass: false,
         authenticated: false,
         bypassActive: false,
+        envBypass: false,
       });
     vi.mocked(api.authLogout).mockResolvedValue(undefined as never);
 
@@ -159,12 +163,14 @@ describe('useAuth', () => {
       localBypass: false,
       authenticated: true,
       bypassActive: false,
+      envBypass: false,
     }).mockResolvedValue({
       mode: 'forms',
       hasUser: true,
       localBypass: false,
       authenticated: false,
       bypassActive: false,
+      envBypass: false,
     });
     vi.mocked(freshApi.authLogout).mockResolvedValue(undefined as never);
 
