@@ -322,7 +322,7 @@ function ReleaseCard({
             </p>
           )}
           <div className="flex flex-wrap items-center gap-2.5 mt-auto pt-2">
-            {result.size != null && (
+            {result.size != null && result.size > 0 && (
               <span className="text-xs text-muted-foreground">{formatBytes(result.size)}</span>
             )}
             {result.seeders !== undefined && (
