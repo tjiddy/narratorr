@@ -50,9 +50,9 @@ export function buildQualityAssessment(
     }
   }
 
-  // Check duration delta
+  // Check duration delta (skip for placeholder books with no existing files)
   let durationDelta: number | null = null;
-  if (book) {
+  if (book && book.path !== null) {
     const existingInputs = resolveBookQualityInputs(book);
     if (existingInputs.durationSeconds && existingInputs.durationSeconds > 0 && newDurationSeconds > 0) {
       durationDelta = (newDurationSeconds - existingInputs.durationSeconds) / existingInputs.durationSeconds;
@@ -63,9 +63,9 @@ export function buildQualityAssessment(
     }
   }
 
-  // Check if existing book has no quality data
+  // Check if existing book has no quality data (only applies when book has files on disk)
   const noExistingQuality = existingMbPerHour === null;
-  if (noExistingQuality && book) {
+  if (noExistingQuality && book && book.path !== null) {
     holdReasons.push('no_quality_data');
   }
 

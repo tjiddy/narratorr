@@ -66,6 +66,11 @@ export class QualityGateService {
       await this.setStatus(download.id, 'failed');
       this.log.info({ downloadId: download.id }, 'Quality gate: auto-rejected (quality same or worse)');
       return { action: 'rejected', reason, statusTransition: { from: 'checking', to: 'failed' } };
+    } else if (book !== null && book.path === null) {
+      reason.action = 'imported';
+      await this.setStatus(download.id, 'completed');
+      this.log.info({ downloadId: download.id }, 'Quality gate: first download auto-imported');
+      return { action: 'imported', reason, statusTransition: { from: 'checking', to: 'completed' } };
     } else {
       reason.action = 'held';
       reason.holdReasons.push('no_quality_data');
