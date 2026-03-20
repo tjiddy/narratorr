@@ -64,7 +64,7 @@ An API key is generated on first run (`crypto.randomUUID`). It can be regenerate
 
 Narratorr uses `@fastify/helmet` for HTTP security headers in production:
 
-- **Content-Security-Policy:** Strict CSP with nonce-based script execution (`script-src 'self'`, no `unsafe-inline` in script-src); `style-src` permits `'unsafe-inline'` to allow inline styles used across the app
+- **Content-Security-Policy:** Strict CSP with nonce-based script execution (`script-src 'self'`, no `unsafe-inline` in script-src); `style-src` permits `'unsafe-inline'` (and explicitly no nonce — a Fastify `onSend` hook strips the `@fastify/helmet`-injected style nonce before the response is sent, because per CSP Level 2 a nonce's presence silently disables `unsafe-inline` in the same directive)
 - **X-Frame-Options:** `DENY` — prevents clickjacking
 - **Referrer-Policy:** `strict-origin-when-cross-origin`
 - **X-Content-Type-Options:** `nosniff` (helmet default)
@@ -72,6 +72,10 @@ Narratorr uses `@fastify/helmet` for HTTP security headers in production:
 - **Cross-Origin-Embedder-Policy:** Disabled (allows external cover art images)
 
 CSP nonces are injected per-request for the inline configuration script (`window.__NARRATORR_URL_BASE__`).
+
+### eval() in CSP
+
+A CSP `script-src` `eval()` violation may appear in the browser console. First-party application source (`src/`, excluding `*.test.ts`) contains no `eval()` calls, so the violation originates outside the app codebase — likely from a third-party runtime bundled into the page. This is treated as out-of-scope for application code; a bundle trace would be needed to identify the exact source.
 
 ## Local Network Bypass
 

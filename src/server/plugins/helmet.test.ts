@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import helmet from '@fastify/helmet';
+import { registerSecurityPlugins } from './security-plugins.js';
 import { buildHelmetOptions } from './helmet-options.js';
 
 async function createApp(isDev: boolean): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
-  await app.register(helmet, buildHelmetOptions(isDev));
+  await registerSecurityPlugins(app, isDev);
   app.get('/api/test', async (_request, reply) => {
     // Access cspNonce to verify it's generated (only in prod mode)
     const nonce = reply.cspNonce?.script;
@@ -89,7 +89,12 @@ describe('Security Headers (helmet)', () => {
       expect(csp).toBeDefined();
       expect(csp).toContain("default-src 'self'");
       expect(csp).toContain("script-src 'self'");
-      expect(csp).toContain("style-src 'self' 'unsafe-inline' https://fonts.googleapis.com");
+      // Semantic check: style-src must allow unsafe-inline AND must NOT contain a nonce.
+      // toContain() would pass even if a 'nonce-...' token were appended by helmet, because
+      // it only checks for a substring. The two-part check below is the correct contract.
+      const styleSegment = csp.split(';').find((s) => s.trim().startsWith('style-src'));
+      expect(styleSegment).toMatch(/'unsafe-inline'/);
+      expect(styleSegment).not.toMatch(/'nonce-/);
       expect(csp).toContain("font-src 'self' https://fonts.gstatic.com");
       expect(csp).toContain("img-src 'self' data: https:");
       expect(csp).toContain("connect-src 'self'");
