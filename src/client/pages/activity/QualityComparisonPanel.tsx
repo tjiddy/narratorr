@@ -12,8 +12,10 @@ function formatDurationDelta(delta: number | null): string {
   return `${percent > 0 ? '+' : ''}${percent}%`;
 }
 
-export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
-  const rows: { label: string; current: string; downloaded: string; flagged?: boolean }[] = [];
+type Row = { label: string; current: string; downloaded: string; flagged?: boolean };
+
+function buildRows(data: QualityGateData): Row[] {
+  const rows: Row[] = [];
 
   rows.push({
     label: 'Quality',
@@ -40,11 +42,7 @@ export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
   }
 
   if (data.codec !== null) {
-    rows.push({
-      label: 'Codec',
-      current: '—',
-      downloaded: data.codec,
-    });
+    rows.push({ label: 'Codec', current: '—', downloaded: data.codec });
   }
 
   if (data.channels !== null) {
@@ -55,6 +53,26 @@ export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
     });
   }
 
+  return rows;
+}
+
+function ProbeFailureMessage({ probeError, holdReasons }: { probeError: string | null; holdReasons: string[] }) {
+  if (holdReasons.includes('unhandled_error')) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        {probeError ?? 'An unexpected error occurred.'} Manual review required.
+      </p>
+    );
+  }
+  return (
+    <p className="text-sm text-muted-foreground">
+      {probeError ? `${probeError} — ` : 'Audio probe failed — '}unable to determine download quality. Manual review required.
+    </p>
+  );
+}
+
+export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
+  const rows = buildRows(data);
   const isUnhandledError = data.holdReasons?.includes('unhandled_error') ?? false;
 
   return (
@@ -70,11 +88,7 @@ export function QualityComparisonPanel({ data }: { data: QualityGateData }) {
       </h4>
 
       {data.probeFailure ? (
-        <p className="text-sm text-muted-foreground">
-          {isUnhandledError
-            ? (data.probeError ?? 'An unexpected error occurred.') + ' Manual review required.'
-            : (data.probeError ? `${data.probeError} — ` : 'Audio probe failed — ') + 'unable to determine download quality. Manual review required.'}
-        </p>
+        <ProbeFailureMessage probeError={data.probeError} holdReasons={data.holdReasons} />
       ) : (
         <>
           {/* Comparison grid */}
