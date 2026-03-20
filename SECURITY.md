@@ -75,7 +75,7 @@ CSP nonces are injected per-request for the inline configuration script (`window
 
 ### eval() in CSP
 
-A CSP `script-src` `eval()` violation may appear in the browser console. This originates from a third-party runtime (Vite production bundle or TanStack Query internals) — there are no `eval()` calls in application source (`src/`, excluding `*.test.ts`). This is considered out-of-scope for the app codebase and does not represent a first-party security risk.
+A CSP `script-src` `eval()` violation may appear in the browser console. First-party application source (`src/`, excluding `*.test.ts`) contains no `eval()` calls, so the violation originates outside the app codebase — likely from a third-party runtime bundled into the page. This is treated as out-of-scope for application code; a bundle trace would be needed to identify the exact source.
 
 ## Local Network Bypass
 
