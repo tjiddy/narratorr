@@ -85,6 +85,16 @@ export function filterAndRankResults(
     });
   }
 
+  // Ebook-only format filter: exclude results that contain ebook keywords (AZW3, EPUB, PDF, MOBI)
+  // but no audio keywords (M4B, MP3, FLAC, AAC, OGG). Mixed-format results are kept.
+  const EBOOK_FORMAT_RE = /\b(azw3|epub|pdf|mobi)\b/i;
+  const AUDIO_FORMAT_RE = /\b(m4b|mp3|flac|aac|ogg)\b/i;
+  filtered = filtered.filter((r) => {
+    const sourceTitle = r.rawTitle ?? r.title;
+    if (!EBOOK_FORMAT_RE.test(sourceTitle)) return true;
+    return AUDIO_FORMAT_RE.test(sourceTitle);
+  });
+
   // Apply min seeders filter (torrent only)
   if (minSeeders > 0) {
     filtered = filtered.filter((r) => {

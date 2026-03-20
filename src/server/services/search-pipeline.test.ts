@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildSearchQuery, searchAndGrabForBook } from './search-pipeline.js';
+import { buildSearchQuery, filterAndRankResults, searchAndGrabForBook } from './search-pipeline.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 import type { FastifyBaseLogger } from 'fastify';
@@ -161,5 +161,101 @@ describe('searchAndGrabForBook', () => {
   it('calls buildSearchQuery to construct the query', async () => {
     await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log);
     expect(indexerService.searchAll).toHaveBeenCalledWith('Test Book Author', expect.any(Object));
+  });
+});
+
+describe('filterAndRankResults — ebook format filtering', () => {
+  const base = { bookDuration: undefined as number | undefined, grabFloor: 0, minSeeders: 0, protocolPreference: 'none' };
+
+  it('filters result with only EPUB in title', () => {
+    const { results } = filterAndRankResults([makeResult({ title: 'Dune EPUB' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    expect(results).toHaveLength(0);
+  });
+
+  it('filters result with only PDF in title', () => {
+    const { results } = filterAndRankResults([makeResult({ title: 'Dune PDF' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    expect(results).toHaveLength(0);
+  });
+
+  it('filters result with only MOBI in title', () => {
+    const { results } = filterAndRankResults([makeResult({ title: 'Dune MOBI' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    expect(results).toHaveLength(0);
+  });
+
+  it('filters result with only AZW3 in title', () => {
+    const { results } = filterAndRankResults([makeResult({ title: 'Dune AZW3' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    expect(results).toHaveLength(0);
+  });
+
+  it('passes result with no ebook keywords in title', () => {
+    const { results } = filterAndRankResults([makeResult({ title: 'Dune Audiobook M4B' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    expect(results).toHaveLength(1);
+  });
+
+  it('passes result with EPUB and M4B (mixed format)', () => {
+    const { results } = filterAndRankResults([makeResult({ title: 'Dune EPUB M4B' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    expect(results).toHaveLength(1);
+  });
+
+  it('passes result with EPUB and MP3 (mixed format)', () => {
+    const { results } = filterAndRankResults([makeResult({ title: 'Dune EPUB MP3' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    expect(results).toHaveLength(1);
+  });
+
+  it('passes result with EPUB and AAC (mixed format)', () => {
+    const { results } = filterAndRankResults([makeResult({ title: 'Dune EPUB AAC' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    expect(results).toHaveLength(1);
+  });
+
+  it('filter is case-insensitive (epub, pdf, mobi, azw3)', () => {
+    const epubLower = filterAndRankResults([makeResult({ title: 'dune.epub.2023' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    const pdfMixed = filterAndRankResults([makeResult({ title: 'Dune.Pdf' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    const mobiLower = filterAndRankResults([makeResult({ title: 'DUNE.mobi' })], base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference);
+    expect(epubLower.results).toHaveLength(0);
+    expect(pdfMixed.results).toHaveLength(0);
+    expect(mobiLower.results).toHaveLength(0);
+  });
+
+  it('uses rawTitle for matching when present, ignoring title', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ rawTitle: 'dune.epub.2023', title: 'Dune' })],
+      base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference,
+    );
+    expect(results).toHaveLength(0);
+  });
+
+  it('falls back to title when rawTitle is absent', () => {
+    const { results } = filterAndRankResults(
+      [makeResult({ rawTitle: undefined, title: 'Dune EPUB' })],
+      base.bookDuration, base.grabFloor, base.minSeeders, base.protocolPreference,
+    );
+    expect(results).toHaveLength(0);
+  });
+});
+
+describe('filterAndRankResults — minSeeders default', () => {
+  it('filters torrent with 0 seeders when minSeeders is 1 (new default)', () => {
+    const { results } = filterAndRankResults([makeResult({ protocol: 'torrent', seeders: 0 })], undefined, 0, 1, 'none');
+    expect(results).toHaveLength(0);
+  });
+
+  it('passes torrent with 1 seeder when minSeeders is 1', () => {
+    const { results } = filterAndRankResults([makeResult({ protocol: 'torrent', seeders: 1 })], undefined, 0, 1, 'none');
+    expect(results).toHaveLength(1);
+  });
+
+  it('filters torrent with undefined seeders when minSeeders is 1', () => {
+    const { results } = filterAndRankResults([makeResult({ protocol: 'torrent', seeders: undefined })], undefined, 0, 1, 'none');
+    expect(results).toHaveLength(0);
+  });
+
+  it('passes torrent with 0 seeders when minSeeders is 0 (filter disabled)', () => {
+    const { results } = filterAndRankResults([makeResult({ protocol: 'torrent', seeders: 0 })], undefined, 0, 0, 'none');
+    expect(results).toHaveLength(1);
+  });
+
+  it('passes usenet result regardless of seeders when minSeeders is 1', () => {
+    const { results } = filterAndRankResults([makeResult({ protocol: 'usenet', seeders: undefined })], undefined, 0, 1, 'none');
+    expect(results).toHaveLength(1);
   });
 });
