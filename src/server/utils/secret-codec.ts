@@ -130,11 +130,11 @@ export function maskFields(
 ): Record<string, unknown> {
   const fields = getSecretFieldNames(entity);
   for (const field of fields) {
-    if (!(field in settings) && !fields.includes(field)) continue;
-    // Mask even null/undefined — the field exists in the registry
-    if (field in settings) {
-      settings[field] = SENTINEL;
-    }
+    if (!(field in settings)) continue;
+    const value = settings[field];
+    // Preserve empty string, null, and undefined — only mask non-empty values
+    if (value === '' || value == null) continue;
+    settings[field] = SENTINEL;
   }
   return settings;
 }
