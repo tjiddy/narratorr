@@ -7,6 +7,7 @@ import {
   getInProgressStatuses,
   getTerminalStatuses,
   getCompletedStatuses,
+  getClientPolledStatuses,
 } from './download-status-registry.js';
 
 describe('download-status-registry', () => {
@@ -166,6 +167,21 @@ describe('download-status-registry', () => {
       expect(DOWNLOAD_STATUS_REGISTRY.imported.color).toBe('text-success');
       expect(DOWNLOAD_STATUS_REGISTRY.imported.bgColor).toBe('bg-success/10');
       expect(DOWNLOAD_STATUS_REGISTRY.imported.textColor).toBe('text-success');
+    });
+  });
+
+  describe('getClientPolledStatuses', () => {
+    it('returns the three client-polled statuses', () => {
+      const statuses = getClientPolledStatuses();
+      expect(statuses).toHaveLength(3);
+      expect(statuses).toEqual(expect.arrayContaining(['downloading', 'queued', 'paused']));
+    });
+
+    it('does not include internal pipeline statuses', () => {
+      const statuses = getClientPolledStatuses();
+      for (const s of ['checking', 'pending_review', 'processing_queued', 'importing', 'completed', 'imported', 'failed'] as const) {
+        expect(statuses).not.toContain(s);
+      }
     });
   });
 
