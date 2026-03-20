@@ -6,7 +6,7 @@ import { runSearchJob, searchAllWanted } from '../jobs/search.js';
 import { runRssJob } from '../jobs/rss.js';
 import { runBackupJob } from '../jobs/backup.js';
 import { healthRoutes } from './health-routes.js';
-import { getVersion } from '../utils/version.js';
+import { getVersion, getCommit } from '../utils/version.js';
 import { getUpdateStatus } from '../jobs/version-check.js';
 import { getErrorMessage } from '../utils/error-message.js';
 import { RestoreUploadError } from '../services/backup.service.js';
@@ -35,12 +35,16 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       return {
         status: 'ok',
         timestamp: new Date().toISOString(),
+        version: getVersion(),
+        commit: getCommit(),
       };
     } catch (error) {
       request.log.warn(error, 'Health check DB probe failed');
       return reply.status(503).send({
         status: 'error',
         timestamp: new Date().toISOString(),
+        version: getVersion(),
+        commit: getCommit(),
         error: getErrorMessage(error, 'Database unreachable'),
       });
     }

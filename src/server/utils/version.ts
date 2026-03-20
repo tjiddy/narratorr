@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
 let packageVersion: string | undefined;
+let packageCommit: string | undefined;
 
 /** Returns the app version from package.json (cached after first call). */
 export function getVersion(): string {
@@ -15,6 +16,14 @@ export function getVersion(): string {
     }
   }
   return packageVersion!;
+}
+
+/** Returns the build-injected git commit SHA, or "unknown" when not set. */
+export function getCommit(): string {
+  if (!packageCommit) {
+    packageCommit = process.env.GIT_COMMIT || 'unknown';
+  }
+  return packageCommit;
 }
 
 /**

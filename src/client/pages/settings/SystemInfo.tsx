@@ -34,7 +34,11 @@ export function SystemInfo() {
 
       {info && (
         <div>
-          <InfoRow label="Version" value={info.version} mono />
+          <InfoRow
+            label="Version"
+            value={info.commit !== 'unknown' ? `${info.version} (${info.commit})` : info.version}
+            mono
+          />
           <InfoRow label="Node.js" value={info.nodeVersion} mono />
           <InfoRow label="OS" value={info.os} />
           <InfoRow label="Database Size" value={info.dbSize != null ? formatBytes(info.dbSize) : 'N/A'} />

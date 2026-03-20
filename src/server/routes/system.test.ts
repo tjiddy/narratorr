@@ -13,6 +13,7 @@ import { registerRoutes, type Services } from './index.js';
 
 vi.mock('../utils/version.js', () => ({
   getVersion: () => '0.1.0',
+  getCommit: () => 'testsha99',
 }));
 
 vi.mock('../jobs/version-check.js', () => ({
@@ -141,6 +142,35 @@ describe('system routes', () => {
       // Verify timestamp is a valid ISO string
       const timestamp = new Date(payload.timestamp);
       expect(timestamp.toISOString()).toBe(payload.timestamp);
+    });
+
+    it('includes version and commit fields in 200 response', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/health' });
+      expect(res.statusCode).toBe(200);
+      const payload = JSON.parse(res.payload);
+      expect(payload.version).toBe('0.1.0');
+      expect(payload.commit).toBe('testsha99');
+    });
+
+    it('commit field reflects getCommit() value, not a hardcoded string', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/health' });
+      const payload = JSON.parse(res.payload);
+      // getCommit() is mocked to return 'testsha99' — proves dynamic read, not hardcoded
+      expect(payload.commit).toBe('testsha99');
+    });
+
+    it('includes version and commit fields in 503 error response', async () => {
+      const failingDb = inject<Db>({ run: vi.fn().mockRejectedValue(new Error('SQLITE_CANTOPEN')) });
+      const failServices = createMockServices();
+      const failApp = await createTestApp(failServices, failingDb);
+
+      const res = await failApp.inject({ method: 'GET', url: '/api/health' });
+      expect(res.statusCode).toBe(503);
+      const payload = JSON.parse(res.payload);
+      expect(payload.version).toBe('0.1.0');
+      expect(payload.commit).toBe('testsha99');
+
+      await failApp.close();
     });
 
     it('returns 503 with error when DB probe fails', async () => {

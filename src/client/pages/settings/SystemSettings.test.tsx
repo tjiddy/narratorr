@@ -23,7 +23,7 @@ vi.mock('@/lib/api', () => ({
     getHealthStatus: vi.fn().mockResolvedValue([]),
     getHealthSummary: vi.fn().mockResolvedValue({ state: 'healthy' }),
     getSystemTasks: vi.fn().mockResolvedValue([]),
-    getSystemInfo: vi.fn().mockResolvedValue({ version: '0.1.0', nodeVersion: 'v20.0.0', os: 'linux', dbSize: 1024, libraryPath: '/books', freeSpace: 100000000000 }),
+    getSystemInfo: vi.fn().mockResolvedValue({ version: '0.1.0', commit: 'unknown', nodeVersion: 'v20.0.0', os: 'linux', dbSize: 1024, libraryPath: '/books', freeSpace: 100000000000 }),
   },
   formatBytes: vi.fn((bytes: number) => `${(bytes / 1024).toFixed(1)} KB`),
 }));

@@ -19,39 +19,35 @@ vi.mock('@/lib/api', () => ({
 import { api } from '@/lib/api';
 import type { Mock } from 'vitest';
 
+const baseInfo = {
+  version: '0.1.0',
+  commit: '4445dd4',
+  nodeVersion: 'v20.11.1',
+  os: 'Linux 6.1.0',
+  dbSize: 1048576,
+  libraryPath: '/audiobooks',
+  freeSpace: 107374182400,
+};
+
 describe('SystemInfo', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it('displays version, Node version, OS info', async () => {
-    (api.getSystemInfo as Mock).mockResolvedValue({
-      version: '0.1.0',
-      nodeVersion: 'v20.11.1',
-      os: 'Linux 6.1.0',
-      dbSize: 1048576,
-      libraryPath: '/audiobooks',
-      freeSpace: 107374182400,
-    });
+    (api.getSystemInfo as Mock).mockResolvedValue(baseInfo);
 
     renderWithProviders(<SystemInfo />);
 
     await waitFor(() => {
-      expect(screen.getByText('0.1.0')).toBeInTheDocument();
+      expect(screen.getByText(/0\.1\.0/)).toBeInTheDocument();
     });
     expect(screen.getByText('v20.11.1')).toBeInTheDocument();
     expect(screen.getByText('Linux 6.1.0')).toBeInTheDocument();
   });
 
   it('displays DB size in human-readable format', async () => {
-    (api.getSystemInfo as Mock).mockResolvedValue({
-      version: '0.1.0',
-      nodeVersion: 'v20.11.1',
-      os: 'Linux 6.1.0',
-      dbSize: 1048576,
-      libraryPath: '/audiobooks',
-      freeSpace: 107374182400,
-    });
+    (api.getSystemInfo as Mock).mockResolvedValue(baseInfo);
 
     renderWithProviders(<SystemInfo />);
 
@@ -61,14 +57,7 @@ describe('SystemInfo', () => {
   });
 
   it('displays library path and free space', async () => {
-    (api.getSystemInfo as Mock).mockResolvedValue({
-      version: '0.1.0',
-      nodeVersion: 'v20.11.1',
-      os: 'Linux 6.1.0',
-      dbSize: 1048576,
-      libraryPath: '/audiobooks',
-      freeSpace: 107374182400,
-    });
+    (api.getSystemInfo as Mock).mockResolvedValue(baseInfo);
 
     renderWithProviders(<SystemInfo />);
 
@@ -78,11 +67,30 @@ describe('SystemInfo', () => {
     expect(screen.getByText('100 GB')).toBeInTheDocument();
   });
 
+  it('displays commit SHA inline with version when commit is a real SHA', async () => {
+    (api.getSystemInfo as Mock).mockResolvedValue({ ...baseInfo, commit: '4445dd4' });
+
+    renderWithProviders(<SystemInfo />);
+
+    await waitFor(() => {
+      expect(screen.getByText('0.1.0 (4445dd4)')).toBeInTheDocument();
+    });
+  });
+
+  it('suppresses commit display when commit is "unknown"', async () => {
+    (api.getSystemInfo as Mock).mockResolvedValue({ ...baseInfo, commit: 'unknown' });
+
+    renderWithProviders(<SystemInfo />);
+
+    await waitFor(() => {
+      expect(screen.getByText('0.1.0')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/unknown/)).not.toBeInTheDocument();
+  });
+
   it('handles missing/null values gracefully', async () => {
     (api.getSystemInfo as Mock).mockResolvedValue({
-      version: '0.1.0',
-      nodeVersion: 'v20.11.1',
-      os: 'Linux 6.1.0',
+      ...baseInfo,
       dbSize: null,
       libraryPath: null,
       freeSpace: null,
@@ -91,7 +99,7 @@ describe('SystemInfo', () => {
     renderWithProviders(<SystemInfo />);
 
     await waitFor(() => {
-      expect(screen.getByText('0.1.0')).toBeInTheDocument();
+      expect(screen.getByText(/0\.1\.0/)).toBeInTheDocument();
     });
     // Should show N/A or similar for null values
     const naElements = screen.getAllByText(/n\/a|not configured/i);

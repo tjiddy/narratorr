@@ -6,9 +6,10 @@ import type { FastifyBaseLogger } from 'fastify';
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-// Mock getVersion
+// Mock getVersion and getCommit
 vi.mock('../utils/version.js', () => ({
   getVersion: () => '0.1.0',
+  getCommit: () => 'unknown',
   isNewerVersion: (current: string, latest: string) => {
     const parse = (v: string) => {
       const match = v.replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)$/);
