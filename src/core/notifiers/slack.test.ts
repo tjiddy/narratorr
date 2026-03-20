@@ -60,11 +60,12 @@ describe('SlackNotifier', () => {
     );
 
     const notifier = new SlackNotifier({ webhookUrl: WEBHOOK_URL });
-    const result = await notifier.send('on_grab', { event: 'on_grab' });
+    const result = await notifier.test();
 
     expect(result.success).toBe(false);
     expect(result.message).toContain('https://auth.example.com/login');
     expect(result.message).toMatch(/auth proxy/i);
+    expect(result.message).toMatch(/internal address|whitelist/i);
   });
 
   it('returns timeout error on slow response', async () => {
