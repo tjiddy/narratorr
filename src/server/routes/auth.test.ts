@@ -72,7 +72,7 @@ describe('auth routes', () => {
 
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
-      expect(body).toEqual({ mode: 'none', hasUser: false, localBypass: false, authenticated: true, bypassActive: false });
+      expect(body).toEqual({ mode: 'none', hasUser: false, localBypass: false, authenticated: true, bypassActive: false, envBypass: false });
     });
 
     it('returns authenticated: false for forms mode without session cookie', async () => {
@@ -461,6 +461,40 @@ describe('auth routes', () => {
       const res = await app.inject({ method: 'GET', url: '/api/auth/status', remoteAddress: '192.168.1.5' });
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload).bypassActive).toBe(false);
+    });
+  });
+
+  describe('GET /api/auth/status — envBypass field', () => {
+    it('returns envBypass: true and bypassActive: true when AUTH_BYPASS=true', async () => {
+      (config as Record<string, unknown>).authBypass = true;
+      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'none', hasUser: false, localBypass: false });
+      try {
+        const res = await app.inject({ method: 'GET', url: '/api/auth/status' });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload);
+        expect(body.envBypass).toBe(true);
+        expect(body.bypassActive).toBe(true);
+      } finally {
+        (config as Record<string, unknown>).authBypass = false;
+      }
+    });
+
+    it('returns envBypass: false and bypassActive: true when localBypass=true and request from private IP', async () => {
+      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: true });
+      const res = await app.inject({ method: 'GET', url: '/api/auth/status', remoteAddress: '192.168.1.5' });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.envBypass).toBe(false);
+      expect(body.bypassActive).toBe(true);
+    });
+
+    it('returns envBypass: false and bypassActive: false when localBypass=true and request from public IP', async () => {
+      (services.auth.getStatus as Mock).mockResolvedValue({ mode: 'forms', hasUser: true, localBypass: true });
+      const res = await app.inject({ method: 'GET', url: '/api/auth/status', remoteAddress: '8.8.8.8' });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.envBypass).toBe(false);
+      expect(body.bypassActive).toBe(false);
     });
   });
 
