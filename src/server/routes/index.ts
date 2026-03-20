@@ -12,7 +12,6 @@ import {
   MetadataService,
   NotifierService,
   BlacklistService,
-  ProwlarrSyncService,
   RemotePathMappingService,
   RenameService,
   EventHistoryService,
@@ -45,7 +44,6 @@ import { metadataRoutes } from './metadata.js';
 import { libraryScanRoutes } from './library-scan.js';
 import { notifiersRoutes } from './notifiers.js';
 import { blacklistRoutes } from './blacklist.js';
-import { prowlarrRoutes } from './prowlarr.js';
 import { authRoutes } from './auth.js';
 import { filesystemRoutes } from './filesystem.js';
 import { remotePathMappingRoutes } from './remote-path-mappings.js';
@@ -76,7 +74,6 @@ export interface Services {
   matchJob: MatchJobService;
   notifier: NotifierService;
   blacklist: BlacklistService;
-  prowlarrSync: ProwlarrSyncService;
   remotePathMapping: RemotePathMappingService;
   rename: RenameService;
   eventHistory: EventHistoryService;
@@ -114,7 +111,6 @@ export const SERVICE_KEYS = Object.keys({
   matchJob: true,
   notifier: true,
   blacklist: true,
-  prowlarrSync: true,
   remotePathMapping: true,
   rename: true,
   eventHistory: true,
@@ -160,7 +156,6 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const importOrchestrator = new ImportOrchestrator(importService, settings, log, notifier, taggingService, eventHistory, eventBroadcaster);
   const libraryScan = new LibraryScanService(db, book, metadata, settings, log);
   const matchJob = new MatchJobService(metadata, log);
-  const prowlarrSync = new ProwlarrSyncService(db, log);
 
   const qualityGateService = new QualityGateService(db, log);
   const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, eventHistory, eventBroadcaster, blacklistService, remotePathMapping);
@@ -188,7 +183,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   download.setRetrySearchDeps(retrySearchDeps);
   eventHistory.setRetrySearchDeps(retrySearchDeps);
 
-  return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, prowlarrSync, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin, importList, discovery };
+  return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin, importList, discovery };
 }
 
 type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;
@@ -219,7 +214,6 @@ const routeRegistry: RouteFactory[] = [
   (app, s) => updateRoutes(app, s.settings),
   (app, s) => notifiersRoutes(app, s.notifier),
   (app, s) => blacklistRoutes(app, s.blacklist),
-  (app, s) => prowlarrRoutes(app, s.prowlarrSync),
   (app, s) => authRoutes(app, s.auth),
   (app, s) => remotePathMappingRoutes(app, s.remotePathMapping),
   (app) => filesystemRoutes(app),

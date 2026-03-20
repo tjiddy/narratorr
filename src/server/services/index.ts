@@ -11,7 +11,6 @@ export { ImportService } from './import.service.js';
 export { ImportOrchestrator } from './import-orchestrator.js';
 export { NotifierService } from './notifier.service.js';
 export { BlacklistService } from './blacklist.service.js';
-export { ProwlarrSyncService } from './prowlarr-sync.service.js';
 export { RemotePathMappingService } from './remote-path-mapping.service.js';
 export { RenameService, RenameError, type RenameResult } from './rename.service.js';
 export { EventHistoryService, type CreateEventInput } from './event-history.service.js';

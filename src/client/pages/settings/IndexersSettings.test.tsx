@@ -77,16 +77,6 @@ describe('IndexersSettings', () => {
     await assertToggleAddForm(user, 'Add Indexer', 'Add New Indexer');
   });
 
-  it('opens Prowlarr import modal', async () => {
-    const user = userEvent.setup();
-    renderWithProviders(<IndexersSettings />);
-    await waitForListLoad('My ABB');
-
-    await user.click(screen.getByText('Prowlarr').closest('button')!);
-    await waitFor(() => {
-      expect(screen.getByText('Import from Prowlarr')).toBeInTheDocument();
-    });
-  });
 
   it('creates a new indexer via the add form', async () => {
     const user = userEvent.setup();

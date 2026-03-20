@@ -24,10 +24,6 @@ export const queryKeys = {
   notifiers: () => ['notifiers'] as const,
   importLists: () => ['importLists'] as const,
   blacklist: (params?: BlacklistListParams) => params ? ['blacklist', params] as const : ['blacklist'] as const,
-  prowlarr: {
-    config: () => ['prowlarr', 'config'] as const,
-    preview: () => ['prowlarr', 'preview'] as const,
-  },
   remotePathMappings: (clientId?: number) =>
     clientId !== undefined
       ? (['remotePathMappings', clientId] as const)

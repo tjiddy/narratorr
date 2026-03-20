@@ -10,7 +10,6 @@ export type { BlacklistEntry } from './blacklist.js';
 export type { Settings, TestResult, FfmpegProbeResult, ProxyTestResult } from './settings.js';
 export type { AuthStatus, AuthConfig } from './auth.js';
 export type { DiscoveredBook, ScanResult, SingleBookResult, ImportConfirmItem, ImportSingleResult, ImportResult, ImportMode, Confidence, MatchCandidate, MatchResult, MatchJobStatus, RescanResult } from './library-scan.js';
-export type { ProwlarrConfig, SyncPreviewItem, SyncResult } from './prowlarr.js';
 export type { BrowseResult } from './filesystem.js';
 export type { RemotePathMapping } from './remote-path-mappings.js';
 export type { BookEvent, EventHistoryParams } from './event-history.js';
@@ -31,7 +30,6 @@ import { notifiersApi } from './notifiers.js';
 import { blacklistApi } from './blacklist.js';
 import { settingsApi } from './settings.js';
 import { libraryScanApi } from './library-scan.js';
-import { prowlarrApi } from './prowlarr.js';
 import { systemApi } from './system.js';
 import { authApi } from './auth.js';
 import { filesystemApi } from './filesystem.js';
@@ -52,7 +50,6 @@ export const api = {
   ...blacklistApi,
   ...settingsApi,
   ...libraryScanApi,
-  ...prowlarrApi,
   ...systemApi,
   ...authApi,
   ...filesystemApi,
