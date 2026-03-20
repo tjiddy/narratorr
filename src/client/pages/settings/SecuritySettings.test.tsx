@@ -47,6 +47,7 @@ const mockStatus = {
   hasUser: false,
   localBypass: false,
   bypassActive: false,
+  envBypass: false,
 };
 
 describe('SecuritySettings', () => {
@@ -479,12 +480,13 @@ describe('SecuritySettings', () => {
     });
   });
 
-  it('bypassActive from query wires into CredentialsSection — Remove Credentials visible, then hidden after deletion', async () => {
-    // Start: user exists, bypass active → Remove Credentials button should be visible
+  it('envBypass from query wires into CredentialsSection — Remove Credentials visible, then hidden after deletion', async () => {
+    // Start: user exists, AUTH_BYPASS env var set → Remove Credentials button should be visible
     (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
       hasUser: true,
       bypassActive: true,
+      envBypass: true,
       username: 'admin',
     });
     (api.authDeleteCredentials as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
@@ -492,16 +494,17 @@ describe('SecuritySettings', () => {
     const user = userEvent.setup();
     renderWithProviders(<SecuritySettings />);
 
-    // Remove Credentials button visible when bypassActive=true and hasUser=true
+    // Remove Credentials button visible when envBypass=true and hasUser=true
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /remove credentials/i })).toBeInTheDocument();
     });
 
-    // Resolve the refetch after deletion to: hasUser=false, bypassActive=false
+    // Resolve the refetch after deletion to: hasUser=false, envBypass=false
     (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
       hasUser: false,
       bypassActive: false,
+      envBypass: false,
     });
 
     await user.click(screen.getByRole('button', { name: /remove credentials/i }));

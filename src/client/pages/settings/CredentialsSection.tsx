@@ -130,12 +130,12 @@ function ChangePasswordForm({ currentUsername, queryClient, showRemoveButton, on
 export function CredentialsSection({
   hasUser,
   currentUsername,
-  bypassActive = false,
+  envBypass = false,
   queryClient,
 }: {
   hasUser: boolean;
   currentUsername?: string;
-  bypassActive?: boolean;
+  envBypass?: boolean;
   queryClient: QueryClient;
 }) {
   const deleteMutation = useMutation({
@@ -161,7 +161,7 @@ export function CredentialsSection({
         <ChangePasswordForm
           currentUsername={currentUsername}
           queryClient={queryClient}
-          showRemoveButton={bypassActive && hasUser}
+          showRemoveButton={envBypass && hasUser}
           onRemove={() => deleteMutation.mutate()}
           isRemoving={deleteMutation.isPending}
         />

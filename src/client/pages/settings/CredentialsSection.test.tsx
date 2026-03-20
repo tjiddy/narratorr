@@ -494,24 +494,24 @@ describe('CredentialsSection', () => {
     });
   });
 
-  describe('remove credentials (bypassActive=true)', () => {
-    it('Remove Credentials button is visible when bypassActive=true and hasUser=true', () => {
+  describe('remove credentials (envBypass=true)', () => {
+    it('Remove Credentials button is visible when envBypass=true and hasUser=true', () => {
       renderWithProviders(
-        <CredentialsSection hasUser={true} currentUsername="admin" bypassActive={true} queryClient={queryClient} />,
+        <CredentialsSection hasUser={true} currentUsername="admin" envBypass={true} queryClient={queryClient} />,
       );
       expect(screen.getByRole('button', { name: 'Remove Credentials' })).toBeInTheDocument();
     });
 
-    it('Remove Credentials button is NOT visible when bypassActive=false', () => {
+    it('Remove Credentials button is NOT visible when envBypass=false', () => {
       renderWithProviders(
-        <CredentialsSection hasUser={true} currentUsername="admin" bypassActive={false} queryClient={queryClient} />,
+        <CredentialsSection hasUser={true} currentUsername="admin" envBypass={false} queryClient={queryClient} />,
       );
       expect(screen.queryByRole('button', { name: 'Remove Credentials' })).not.toBeInTheDocument();
     });
 
-    it('Remove Credentials button is NOT visible when bypassActive=true but hasUser=false', () => {
+    it('Remove Credentials button is NOT visible when envBypass=true but hasUser=false', () => {
       renderWithProviders(
-        <CredentialsSection hasUser={false} bypassActive={true} queryClient={queryClient} />,
+        <CredentialsSection hasUser={false} envBypass={true} queryClient={queryClient} />,
       );
       expect(screen.queryByRole('button', { name: 'Remove Credentials' })).not.toBeInTheDocument();
     });
@@ -521,7 +521,7 @@ describe('CredentialsSection', () => {
       mockApi.authDeleteCredentials.mockResolvedValue({ success: true });
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
       renderWithProviders(
-        <CredentialsSection hasUser={true} currentUsername="admin" bypassActive={true} queryClient={queryClient} />,
+        <CredentialsSection hasUser={true} currentUsername="admin" envBypass={true} queryClient={queryClient} />,
       );
       await user.click(screen.getByRole('button', { name: 'Remove Credentials' }));
       await waitFor(() => {
@@ -536,7 +536,7 @@ describe('CredentialsSection', () => {
       const user = userEvent.setup();
       mockApi.authDeleteCredentials.mockRejectedValue(new ApiError(403, { error: 'Only available when AUTH_BYPASS is active' }));
       renderWithProviders(
-        <CredentialsSection hasUser={true} currentUsername="admin" bypassActive={true} queryClient={queryClient} />,
+        <CredentialsSection hasUser={true} currentUsername="admin" envBypass={true} queryClient={queryClient} />,
       );
       await user.click(screen.getByRole('button', { name: 'Remove Credentials' }));
       await waitFor(() => {

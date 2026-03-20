@@ -8,6 +8,7 @@ export interface AuthStatus {
   localBypass: boolean;
   authenticated: boolean;
   bypassActive: boolean;
+  envBypass: boolean;
 }
 
 export interface AuthConfig {
