@@ -411,7 +411,7 @@ describe('QBittorrentClient', () => {
     it('returns success with version string', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/app/version`, () => {
-          return HttpResponse.json('v4.6.0');
+          return new HttpResponse('v4.6.0');
         }),
       );
 
@@ -444,6 +444,35 @@ describe('QBittorrentClient', () => {
       const result = await client.test();
       expect(result.success).toBe(false);
       expect(result.message).toContain('didn\'t respond as expected');
+    });
+
+    it('sends session cookie and Referer header on version fetch', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/app/version`, ({ request }) => {
+          const cookie = request.headers.get('cookie');
+          const referer = request.headers.get('referer');
+          if (!cookie?.includes('SID=') || referer !== BASE_URL) {
+            return new HttpResponse(null, { status: 403 });
+          }
+          return new HttpResponse('v4.6.0');
+        }),
+      );
+
+      const result = await client.test();
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('qBittorrent v4.6.0');
+    });
+
+    it('returns failure when version endpoint returns non-2xx status', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/app/version`, () => {
+          return new HttpResponse(null, { status: 404 });
+        }),
+      );
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('404');
     });
   });
 
