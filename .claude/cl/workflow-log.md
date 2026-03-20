@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #16 Fix CSP style-src for Google Fonts inline styles — 2026-03-20
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #19
+
+### Metrics
+- Files changed: 3 | Tests modified: 2 assertions in helmet.test.ts
+- Quality gate runs: 1 (VERIFY: fail due to 5 pre-existing unrelated failures — 100% coverage on changed file)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Extremely focused change — 1 source line, 2 test assertion updates, 1 doc line. Red/green cycle worked cleanly; the test failure at line 92 confirmed correct red state before production code edit.
+- Friction / issues encountered: `node scripts/verify.ts` returned VERIFY: fail due to 5 pre-existing auth test failures in unrelated route files (discover.test.ts, prowlarr-compat.test.ts). Had to confirm pre-existence by running those tests independently, then proceed past the gate with coverage evidence for changed files only.
+
+### Token efficiency
+- Highest-token actions: /respond-to-spec-review (two rounds of spec review + multiple file reads for diagnosis)
+- Avoidable waste: Spec review cycle took 2 rounds because the original overview incorrectly attributed the violation to Google Fonts; clearer initial diagnosis would have saved a review round
+- Suggestions: For CSP changes, read the full test file and current CSP output before writing the spec to catch all affected assertions upfront
+
+### Infrastructure gaps
+- Repeated workarounds: Pre-existing test failures in verify.ts require manual side-channel verification of coverage rather than trusting the top-level pass/fail
+- Missing tooling / config: `scripts/verify.ts` has no way to mark known-failing tests as pre-existing — any pre-existing failure poisons the gate for unrelated changes
+- Unresolved debt: 5 auth integration tests failing on main (see debt.md)
+
+### Wish I'd Known
+1. `helmet.test.ts:32` contained a global `not.toContain("'unsafe-inline'")` that would fail — always grep the full test file for `unsafe-inline` before writing a CSP spec to catch all affected assertions
+2. `@fastify/helmet` with `enableCSPNonces: true` injects nonces into ALL directives including `style-src` — the actual CSP header has more tokens than what's in the config array
+3. SECURITY.md documents the CSP posture and goes stale when CSP changes — it's not surfaced by tests, so it requires a deliberate doc update step
+
 ## #11 Fix clipboard copy crash on plain HTTP (no secure context) — 2026-03-19
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #15
