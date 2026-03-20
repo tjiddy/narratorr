@@ -194,6 +194,25 @@ describe('DownloadClientCard — create mode', () => {
     expect(screen.getByText('Adding...')).toBeInTheDocument();
   });
 
+  it('updates Name field placeholder to match selected type display name when type changes', async () => {
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <DownloadClientCard
+        mode="create"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText('qBittorrent')).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByRole('combobox'), 'sabnzbd');
+
+    expect(screen.getByPlaceholderText('SABnzbd')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('qBittorrent')).not.toBeInTheDocument();
+  });
+
   it('shows form test result', () => {
     const formTestResult: TestResult = { success: false, message: 'Connection refused' };
 
@@ -315,6 +334,27 @@ describe('DownloadClientCard — edit mode', () => {
     );
 
     expect(screen.getByText('Saving...')).toBeInTheDocument();
+  });
+
+  it("shows placeholder matching the client's configured type, not the default type", () => {
+    const sabnzbdClient = createMockDownloadClient({
+      id: 99,
+      name: 'My SABnzbd',
+      type: 'sabnzbd',
+      settings: { host: 'localhost', port: 8080, apiKey: 'abc123', username: '', password: '', useSsl: false },
+    });
+
+    renderWithProviders(
+      <DownloadClientCard
+        client={sabnzbdClient}
+        mode="edit"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByPlaceholderText('SABnzbd')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('qBittorrent')).not.toBeInTheDocument();
   });
 
   it('shows Remote Path Mappings subsection in edit mode', () => {

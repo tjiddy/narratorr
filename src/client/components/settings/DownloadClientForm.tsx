@@ -70,7 +70,7 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
     <form onSubmit={handleSubmit(onSubmit)} className="glass-card rounded-2xl p-6 animate-fade-in-up space-y-5">
       <h3 className="font-display text-lg font-semibold">{isEdit ? 'Edit Download Client' : 'Add Download Client'}</h3>
       <div className="grid gap-5 sm:grid-cols-2">
-        <FormField id="clientName" label="Name" registration={register('name')} error={errors.name} placeholder="qBittorrent" />
+        <FormField id="clientName" label="Name" registration={register('name')} error={errors.name} placeholder={DOWNLOAD_CLIENT_REGISTRY[selectedType]?.label} />
         <div>
           <label htmlFor="clientType" className="block text-sm font-medium mb-2">Type</label>
           <select id="clientType" {...register('type')} className={inputClass}>
