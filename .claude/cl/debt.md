@@ -7,3 +7,5 @@ No active items. All prior debt graduated and resolved in #448.
 - **src/client/pages/settings/SecuritySettings.tsx**: AuthModeSection mutation flow (immediate mode changes without confirmation, toast messages, query invalidation) and LocalBypassSection mutation flow (checkbox onChange, success/error toasts, query invalidation) have no interaction tests. These are pre-existing gaps unrelated to the clipboard fix. (discovered in #11)
 
 - **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 auth integration tests failing on main — pre-existing, unrelated to CSP work. Root cause unknown but blocks `node scripts/verify.ts` from returning `VERIFY: pass` even on unrelated changes. (discovered in #16)
+
+- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 pre-existing auth integration test failures on main — these poison `scripts/verify.ts` for all branches. Root cause unrelated to #17 but discovered during quality gate run. (discovered in #17)

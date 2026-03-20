@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #17 Fix Remove Credentials button visibility — gate on AUTH_BYPASS env var only — 2026-03-20
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #20
+
+### Metrics
+- Files changed: 4 source + 3 test | Tests added/modified: 8 new tests, 8 inline mocks updated
+- Quality gate runs: 1 (VERIFY: fail due to 5 pre-existing failures unrelated to this change)
+- Fix iterations: 1 (Boolean coercion for config.authBypass — was undefined, not false)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: spec was well-structured after two rounds of spec review; blast radius section accurately predicted all affected test files; red/green TDD cycle clean and fast
+- Friction / issues encountered: (1) `config.authBypass` is `undefined` not `false` when unset — discovered when base status test failed after adding envBypass to expected; (2) GitHub token expiry required manual remote URL refresh before push and PR creation; (3) pre-existing test failures in discover/prowlarr-compat tests cause verify.ts to report VERIFY: fail even though all changed-file tests pass
+
+### Token efficiency
+- Highest-token actions: two Explore subagents for plan + self-review; spec review round trips
+- Avoidable waste: spec review went 2 rounds (needs-work → approve) — the initial spec had an ambiguous "split or add" alternative that needed clarifying; F3 blast-radius suggestion was non-blocking but required iteration
+- Suggestions: check if config env-var fields are boolean or undefined/falsy before using them in JSON responses
+
+### Infrastructure gaps
+- Repeated workarounds: GH_TOKEN expiry mid-session requires running `node -e "import {gh} from './scripts/lib.ts'; const t = gh('auth','token')..."` + `git remote set-url` to refresh. Should be automated or handled in scripts
+- Missing tooling: `frontend-design` skill was unavailable (external plugin not loaded)
+- Unresolved debt: 5 pre-existing test failures in discover/prowlarr-compat on main poison verify.ts for all branches
+
+### Wish I'd Known
+1. `config.authBypass` is `undefined` (not `false`) when AUTH_BYPASS env var is not set — always coerce env-var booleans with `Boolean()` when including them in JSON response fields
+2. The spec's fixture blast radius section saves significant time — read it first and batch all inline mock updates before running any test
+3. The GH_TOKEN expires mid-session; refresh via `scripts/lib.ts` `gh('auth','token')` and update the remote URL before push
+
 ## #16 Fix CSP style-src for Google Fonts inline styles — 2026-03-20
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #19
