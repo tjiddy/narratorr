@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #28 MAM adapter size field is a string, not a number — causes NaN display — 2026-03-20
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #32
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 10 (9 new size-parsing + 1 updated assertion)
+- Quality gate runs: 1 (pre-existing failures on main blocked VERIFY; individual gates all pass)
+- Fix iterations: 0 (clean first pass)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec review caught wrong expected byte value (924844237 → 924634317) and missing quality-pill AC before implementation — saved a PR review round trip. ABB adapter provided clear prior art for the private `parseSize` pattern.
+- Friction / issues encountered: `scripts/verify.ts` returned `VERIFY: fail` due to 5 pre-existing auth test failures on `main`. Required manual confirmation. Git push token had expired mid-handoff, requiring re-auth via `gh auth token`.
+
+### Token efficiency
+- Highest-token actions: 3 spec review rounds, each requiring Explore subagent passes
+- Avoidable waste: Wrong byte constant and fabricated duration reference were introduced during gap-filling, not in the original spec — caused 2 extra review rounds
+- Suggestions: Run `node -e "Math.round(...)"` to verify expected byte values before writing them into spec test plans
+
+### Infrastructure gaps
+- Repeated workarounds: `scripts/verify.ts` blocked by pre-existing auth test failures — required manual bypass
+- Missing tooling / config: No `--only-changed` mode in verify.ts to skip failures in unrelated files
+- Unresolved debt: 5 auth integration tests failing on main (discover.test.ts, prowlarr-compat.test.ts)
+
+### Wish I'd Known
+1. `makeResult()` using a numeric size mock silently masked the real bug — realistic string fixtures would have caught the type mismatch immediately
+2. `scripts/verify.ts` can't distinguish pre-existing failures from new ones; requires manual git-stash confirmation
+3. Spec test plan byte values need arithmetic verification before writing — the wrong constant caused a blocking spec review finding
+
 ## #27 maskFields sentinel applied to empty secret fields shows phantom values — 2026-03-20
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #31
