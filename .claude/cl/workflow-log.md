@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #26 Remove Prowlarr pull-sync path (push path confirmed working) — 2026-03-20
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #45
+
+### Metrics
+- Files changed: 24 | Tests modified: 4 (test files deleted: 3)
+- Quality gate runs: 1 (VERIFY: fail — pre-existing failures only, not a new regression)
+- Fix iterations: 1 (api-contracts.test.ts had a second prowlarrApi reference in "response pass-through" describe block not covered by the named describe block removal)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: spec was extremely thorough after 3 rounds of spec review — every file, line number, and required edit was enumerated precisely; implementation was mechanical
+- Friction / issues encountered: (1) api-contracts.test.ts had a second location referencing prowlarrApi (response pass-through block) not found by the initial grep — caught only when tests ran; (2) git remote URL had a stale hardcoded installation token requiring manual override with GH_TOKEN; (3) coverage-review subagent incorrectly returned RESULT:fail for deleted tests, requiring manual judgment to override
+
+### Token efficiency
+- Highest-token actions: three rounds of spec review (elaborate → respond-to-spec-review x3) before implementation even started; Explore subagent for codebase exploration
+- Avoidable waste: spec review rounds could have been reduced if /elaborate had verified all file contents rather than relying on the reviewer to find gaps
+- Suggestions: for deletion tasks, the coverage-review prompt should explicitly handle the case where all untested items are "(TEST FILE DELETED)" — auto-pass if no new source was added
+
+### Infrastructure gaps
+- Repeated workarounds: git remote set-url with GH_TOKEN — stale hardcoded token in remote URL
+- Missing tooling / config: no way to auto-refresh the remote URL when GH_APP_PRIVATE_KEY is unavailable; coverage-review prompt doesn't have a deletion-branch fast-path
+- Unresolved debt: 5 pre-existing auth test failures in discover.test.ts + prowlarr-compat.test.ts continue to poison verify.ts on all branches
+
+### Wish I'd Known
+1. api-contracts.test.ts has two separate locations per API module (named describe block + "response pass-through" describe block) — always grep the full file, not just the describe title
+2. The git remote URL embeds a hardcoded installation token that expires; GH_APP_PRIVATE_KEY is required to auto-refresh it, and if absent the push will fail with an auth error
+3. Coverage-review subagent returns RESULT:fail on pure-deletion branches — this is a false positive; safe to override when all untested items are deleted code with co-deleted tests
+
 ## #37 Include git commit SHA in version display and health endpoint — 2026-03-20
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #44
