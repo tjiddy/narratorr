@@ -481,11 +481,12 @@ describe('SecuritySettings', () => {
   });
 
   it('envBypass from query wires into CredentialsSection — Remove Credentials visible, then hidden after deletion', async () => {
-    // Start: user exists, AUTH_BYPASS env var set → Remove Credentials button should be visible
+    // Start: bypassActive=false (no local bypass), envBypass=true (AUTH_BYPASS env var).
+    // Button must be visible — proves SecuritySettings passes envBypass, not bypassActive, to CredentialsSection.
     (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
       hasUser: true,
-      bypassActive: true,
+      bypassActive: false,
       envBypass: true,
       username: 'admin',
     });
