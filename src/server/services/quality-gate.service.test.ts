@@ -327,6 +327,18 @@ describe('QualityGateService', () => {
       expect(result.reason.holdReasons).not.toContain('duration_delta');
     });
 
+    it('auto-imports when book.path is null even if quality metadata fields are populated (metadata-only quality)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+      // Book with path null but size + duration from metadata provider (not from probe)
+      const metadataBook = { ...baseBook, path: null };
+
+      const result = await service.processDownload(baseDownload, metadataBook, makeScan());
+
+      expect(result.action).toBe('imported');
+      expect(result.reason.holdReasons).not.toContain('no_quality_data');
+    });
+
     it('duration_delta IS triggered for existing book (path not null) with large duration change (regression)', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
