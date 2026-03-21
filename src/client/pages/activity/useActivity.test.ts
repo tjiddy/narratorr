@@ -233,6 +233,7 @@ describe('useActivity', () => {
     });
 
     const invalidatedKeys = invalidateSpy.mock.calls.map((c) => c[0]);
+    expect(invalidatedKeys).toContainEqual({ queryKey: ['activity'] });
     expect(invalidatedKeys).toContainEqual({ queryKey: queryKeys.eventHistory.root() });
     expect(invalidatedKeys).toContainEqual({ queryKey: queryKeys.eventHistory.byBookId(99) });
   });
@@ -283,6 +284,7 @@ describe('useActivity', () => {
     });
 
     const invalidatedKeys = invalidateSpy.mock.calls.map((c) => c[0]);
+    expect(invalidatedKeys).toContainEqual({ queryKey: ['activity'] });
     expect(invalidatedKeys).toContainEqual({ queryKey: queryKeys.eventHistory.root() });
   });
 });
