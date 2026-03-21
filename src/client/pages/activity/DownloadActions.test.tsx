@@ -143,4 +143,48 @@ describe('DownloadActions', () => {
       expect(screen.queryByRole('button')).not.toBeInTheDocument();
     });
   });
+
+  describe('delete button', () => {
+    it.each(['completed', 'imported', 'failed'] as const)(
+      'renders delete button for %s status',
+      (status) => {
+        const download = createMockDownload({ status });
+        render(<DownloadActions download={download} onDelete={vi.fn()} />);
+        expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument();
+      },
+    );
+
+    it.each(['pending_review', 'downloading', 'queued', 'paused', 'checking', 'processing_queued', 'importing'] as const)(
+      'does not render delete button for %s status',
+      (status) => {
+        const download = createMockDownload({ status });
+        render(<DownloadActions download={download} onDelete={vi.fn()} />);
+        expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
+      },
+    );
+
+    it('does not render delete button when onDelete prop is not provided', () => {
+      const download = createMockDownload({ status: 'completed' });
+      render(<DownloadActions download={download} />);
+      expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
+    });
+
+    it('calls onDelete when delete button is clicked', async () => {
+      const user = userEvent.setup();
+      const onDelete = vi.fn();
+      const download = createMockDownload({ status: 'completed' });
+      render(<DownloadActions download={download} onDelete={onDelete} />);
+
+      await user.click(screen.getByRole('button', { name: /delete/i }));
+      expect(onDelete).toHaveBeenCalledOnce();
+    });
+
+    it('shows both Retry and Delete for failed status with non-null bookId', () => {
+      const download = createMockDownload({ status: 'failed', bookId: 1 });
+      render(<DownloadActions download={download} onRetry={vi.fn()} onDelete={vi.fn()} />);
+
+      expect(screen.getByText('Retry')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument();
+    });
+  });
 });
