@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #47 Quality probe fails on single-file SABnzbd downloads — 2026-03-21
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #51
+
+### Metrics
+- Files changed: 2 source, 2 test | Tests added/modified: 4 new scanner + 1 orchestrator regression + 14 mock updates
+- Quality gate runs: 1 (pre-existing failures prevent full pass; changed files clean)
+- Fix iterations: 0 (correct first try)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Fix was well-scoped — one function, one pattern. The `import-steps.ts:validateSource()` exact precedent made implementation trivial. TDD cycle was clean.
+- Friction / issues encountered: Adding `stat()` to `collectAudioFiles()` required updating 14 existing `mockStat` calls — existing mocks returned `{ size: X }` without `isFile()/isDirectory()`. Calling `undefined()` is caught by try/catch, returning `[]` silently, breaking all existing directory tests before the mock updates.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for elaboration and plan (full scanner source + test file)
+- Avoidable waste: None significant
+- Suggestions: When expanding a mocked function's call surface, grep all `mockXxx.mockResolvedValue` calls upfront to estimate update scope
+
+### Infrastructure gaps
+- Repeated workarounds: GH_TOKEN remote URL expired mid-session; needed `git remote set-url` refresh
+- Missing tooling / config: None
+- Unresolved debt: 5 pre-existing auth test failures in discover.test.ts + prowlarr-compat.test.ts
+
+### Wish I'd Known
+1. Adding `stat()` to a function previously using only `readdir()` requires updating ALL existing mocks — the existing `{ size: X }` shape silently passes `undefined` for `isFile()`, caught by try/catch, breaking tests with misleading null returns.
+2. The exact pattern needed already existed in `import-steps.ts:validateSource()` — check existing scanner/import code before implementing.
+3. GH_TOKEN in the remote URL can expire; refresh with `git remote set-url origin "https://x-access-token:${GH_TOKEN}@..."`.
+
+
 ## #41 Rename 'Completed' download status label to 'Downloaded' — 2026-03-20
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #46
