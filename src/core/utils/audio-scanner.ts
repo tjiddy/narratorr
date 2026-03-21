@@ -161,6 +161,10 @@ async function collectAudioFiles(dirPath: string): Promise<string[]> {
   const files: string[] = [];
 
   try {
+    const pathStat = await stat(dirPath);
+    if (pathStat.isFile()) {
+      return AUDIO_EXTENSIONS.has(extname(dirPath).toLowerCase()) ? [dirPath] : [];
+    }
     const entries = await readdir(dirPath, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = join(dirPath, entry.name);
@@ -172,7 +176,7 @@ async function collectAudioFiles(dirPath: string): Promise<string[]> {
       }
     }
   } catch {
-    // Directory read error — return whatever we have
+    // stat or readdir error — return whatever we have
   }
 
   return files.sort();
