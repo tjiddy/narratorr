@@ -89,7 +89,7 @@ describe('scanAudioDirectory', () => {
     mockReaddir.mockResolvedValue([
       makeDirent('chapter1.mp3', true),
     ] as never);
-    mockStat.mockResolvedValue({ size: 50_000_000 } as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 50_000_000 } as never);
     mockParseFile.mockResolvedValue(makeMetadata() as never);
 
     const result = await scanAudioDirectory('/audiobooks/test');
@@ -109,7 +109,7 @@ describe('scanAudioDirectory', () => {
     mockReaddir.mockResolvedValue([
       makeDirent('chapter1.mp3', true),
     ] as never);
-    mockStat.mockResolvedValue({ size: 10_000_000 } as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
     mockParseFile.mockResolvedValue(makeMetadata() as never);
 
     const result = await scanAudioDirectory('/audiobooks/test');
@@ -128,7 +128,7 @@ describe('scanAudioDirectory', () => {
       makeDirent('chapter2.mp3', true),
       makeDirent('chapter3.mp3', true),
     ] as never);
-    mockStat.mockResolvedValue({ size: 10_000_000 } as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
     mockParseFile.mockResolvedValue(makeMetadata({
       format: { codec: 'MPEG 1 Layer 3', bitrate: 128000, sampleRate: 44100, numberOfChannels: 2, duration: 1200 },
     }) as never);
@@ -145,7 +145,7 @@ describe('scanAudioDirectory', () => {
       makeDirent('corrupt.mp3', true),
       makeDirent('good.mp3', true),
     ] as never);
-    mockStat.mockResolvedValue({ size: 10_000_000 } as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
     mockParseFile
       .mockRejectedValueOnce(new Error('Invalid file'))
       .mockResolvedValueOnce(makeMetadata() as never);
@@ -168,7 +168,7 @@ describe('scanAudioDirectory', () => {
         makeDirent('track1.m4b', true),
       ] as never);
 
-    mockStat.mockResolvedValue({ size: 100_000_000 } as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 100_000_000 } as never);
     mockParseFile.mockResolvedValue(makeMetadata({
       format: { codec: 'AAC', bitrate: 256000, sampleRate: 44100, numberOfChannels: 2, duration: 7200, container: 'MPEG-4' },
     }) as never);
@@ -184,7 +184,7 @@ describe('scanAudioDirectory', () => {
     mockReaddir.mockResolvedValue([
       makeDirent('book.m4b', true),
     ] as never);
-    mockStat.mockResolvedValue({ size: 500_000_000 } as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
 
     const coverData = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG header
     mockParseFile.mockResolvedValue(makeMetadata({
@@ -205,7 +205,7 @@ describe('scanAudioDirectory', () => {
     mockReaddir.mockResolvedValue([
       makeDirent('track.mp3', true),
     ] as never);
-    mockStat.mockResolvedValue({ size: 10_000_000 } as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
     mockParseFile.mockResolvedValue(makeMetadata({
       format: {
         codec: 'MPEG 1 Layer 3',
@@ -225,7 +225,7 @@ describe('scanAudioDirectory', () => {
     mockReaddir.mockResolvedValue([
       makeDirent('bad.mp3', true),
     ] as never);
-    mockStat.mockResolvedValue({ size: 1000 } as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 1000 } as never);
     mockParseFile.mockRejectedValue(new Error('Cannot parse'));
 
     const result = await scanAudioDirectory('/audiobooks/test');
@@ -236,7 +236,7 @@ describe('scanAudioDirectory', () => {
     mockReaddir.mockResolvedValue([
       makeDirent('book.m4b', true),
     ] as never);
-    mockStat.mockResolvedValue({ size: 10_000_000 } as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
     mockParseFile.mockResolvedValue(makeMetadata({
       common: {
         title: 'Test Book',
@@ -259,7 +259,7 @@ describe('scanAudioDirectory', () => {
     mockReaddir.mockResolvedValue([
       makeDirent('track.mp3', true),
     ] as never);
-    mockStat.mockResolvedValue({ size: 10_000_000 } as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
     mockParseFile.mockResolvedValue(makeMetadata({
       common: {
         title: 'Test Book',
@@ -278,7 +278,7 @@ describe('scanAudioDirectory', () => {
     mockReaddir.mockResolvedValue([
       makeDirent('track.mp3', true),
     ] as never);
-    mockStat.mockResolvedValue({ size: 10_000_000 } as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
     mockParseFile.mockResolvedValue(makeMetadata({
       common: {
         title: 'Test Book',
@@ -296,7 +296,7 @@ describe('scanAudioDirectory', () => {
     mockReaddir.mockResolvedValue([
       makeDirent('track.mp3', true),
     ] as never);
-    mockStat.mockResolvedValue({ size: 10_000_000 } as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
     mockParseFile.mockResolvedValue(makeMetadata({
       common: {
         title: 'Test Book',
@@ -314,7 +314,7 @@ describe('scanAudioDirectory', () => {
     mockReaddir.mockResolvedValue([
       makeDirent('track.mp3', true),
     ] as never);
-    mockStat.mockResolvedValue({ size: 10_000_000 } as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
     mockParseFile.mockResolvedValue(makeMetadata({
       common: {
         title: undefined,
@@ -334,7 +334,7 @@ describe('scanAudioDirectory', () => {
     mockReaddir.mockResolvedValue([
       makeDirent('track.mp3', true),
     ] as never);
-    mockStat.mockResolvedValue({ size: 10_000_000 } as never);
+    mockStat.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 10_000_000 } as never);
     mockParseFile.mockResolvedValue(makeMetadata({
       common: {
         title: 'Only Title',
@@ -348,5 +348,55 @@ describe('scanAudioDirectory', () => {
     expect(result!.tagAuthor).toBeUndefined();
     expect(result!.tagNarrator).toBeUndefined();
     expect(result!.tagSeries).toBeUndefined();
+  });
+
+  describe('single-file path handling', () => {
+    it('returns valid AudioScanResult when path is a single audio file', async () => {
+      mockReaddir.mockRejectedValue(Object.assign(new Error('ENOTDIR'), { code: 'ENOTDIR' }));
+      mockStat
+        .mockResolvedValueOnce({ isFile: () => true, isDirectory: () => false, size: 10_000_000 } as never)
+        .mockResolvedValueOnce({ isFile: () => true, isDirectory: () => false, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata() as never);
+
+      const result = await scanAudioDirectory('/complete/BookTitle.m4b');
+
+      expect(result).not.toBeNull();
+      expect(result!.fileCount).toBe(1);
+    });
+
+    it('returns null when path is a single non-audio file', async () => {
+      mockStat.mockResolvedValue({ isFile: () => true, isDirectory: () => false, size: 0 } as never);
+
+      const result = await scanAudioDirectory('/complete/BookTitle.pdf');
+
+      expect(result).toBeNull();
+      expect(mockReaddir).not.toHaveBeenCalled();
+    });
+
+    it('returns valid AudioScanResult for single audio file with uppercase extension', async () => {
+      mockReaddir.mockRejectedValue(Object.assign(new Error('ENOTDIR'), { code: 'ENOTDIR' }));
+      mockStat
+        .mockResolvedValueOnce({ isFile: () => true, isDirectory: () => false, size: 10_000_000 } as never)
+        .mockResolvedValueOnce({ isFile: () => true, isDirectory: () => false, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata() as never);
+
+      const result = await scanAudioDirectory('/complete/BookTitle.M4B');
+
+      expect(result).not.toBeNull();
+      expect(result!.fileCount).toBe(1);
+    });
+
+    it('returns null gracefully when stat() throws ENOENT on the path', async () => {
+      mockReaddir.mockResolvedValue([makeDirent('track.m4b', true)] as never);
+      mockStat
+        .mockRejectedValueOnce(Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' }))
+        .mockResolvedValue({ isFile: () => true, isDirectory: () => false, size: 10_000_000 } as never);
+      mockParseFile.mockResolvedValue(makeMetadata() as never);
+
+      const result = await scanAudioDirectory('/complete/BookTitle.m4b');
+
+      expect(result).toBeNull();
+      expect(mockReaddir).not.toHaveBeenCalled();
+    });
   });
 });
