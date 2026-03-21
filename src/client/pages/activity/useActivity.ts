@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { api, type Download, type ActivityListParams } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useSSEConnected } from '@/hooks/useEventSource';
@@ -65,14 +66,22 @@ export function useActivity(queueParams: ActivityListParams = {}, historyParams:
       if (bookId != null) {
         queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.byBookId(bookId) });
       }
+      toast.success('Download deleted');
+    },
+    onError: () => {
+      toast.error('Failed to delete download');
     },
   });
 
   const deleteHistoryMutation = useMutation({
-    mutationFn: api.deleteDownloadHistory,
+    mutationFn: () => api.deleteDownloadHistory(),
     onSuccess: () => {
       invalidateActivity();
       queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
+      toast.success('Download history cleared');
+    },
+    onError: () => {
+      toast.error('Failed to clear history');
     },
   });
 
