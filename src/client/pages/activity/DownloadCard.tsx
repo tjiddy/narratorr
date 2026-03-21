@@ -118,9 +118,11 @@ export function DownloadCard({
   onRetry,
   onApprove,
   onReject,
+  onDelete,
   isCancelling,
   isApproving,
   isRejecting,
+  isDeleting,
   showProgress = true,
   index = 0,
   compact = false,
@@ -130,9 +132,11 @@ export function DownloadCard({
   onRetry?: () => void;
   onApprove?: () => void;
   onReject?: () => void;
+  onDelete?: () => void;
   isCancelling?: boolean;
   isApproving?: boolean;
   isRejecting?: boolean;
+  isDeleting?: boolean;
   showProgress?: boolean;
   index?: number;
   compact?: boolean;
@@ -183,9 +187,11 @@ export function DownloadCard({
                 onRetry={onRetry}
                 onApprove={onApprove}
                 onReject={onReject}
+                onDelete={onDelete}
                 isCancelling={isCancelling}
                 isApproving={isApproving}
                 isRejecting={isRejecting}
+                isDeleting={isDeleting}
               />
             )}
           </div>
