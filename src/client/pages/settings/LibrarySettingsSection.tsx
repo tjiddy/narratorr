@@ -164,13 +164,14 @@ export function LibrarySettingsSection() {
 
   const { onBlur: rhfPathOnBlur, ...pathRegistration } = register('path');
 
-  function handlePathBlur(e: React.FocusEvent<HTMLInputElement>) {
-    rhfPathOnBlur(e);
-    const currentPath = e.currentTarget.value.trim();
+  // Typed as ChangeHandler (async, returns Promise<void>) so it satisfies registration.onBlur type
+  const handlePathBlur: typeof rhfPathOnBlur = async (e) => {
+    await rhfPathOnBlur(e);
+    const currentPath = ((e.target as HTMLInputElement).value ?? '').trim();
     const savedPath = settings?.library.path ?? '';
     if (!currentPath || currentPath === savedPath) return;
     pathSaveMutation.mutate(currentPath);
-  }
+  };
 
   // eslint-disable-next-line react-hooks/incompatible-library -- watch() is the standard RHF API; Compiler skip is expected
   const pathValue = watch('path');
