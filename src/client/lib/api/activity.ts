@@ -75,4 +75,8 @@ export const activityApi = {
       body: JSON.stringify({ reason }),
       headers: { 'Content-Type': 'application/json' },
     }),
+  deleteHistoryDownload: (id: number) =>
+    fetchApi<{ success: boolean }>(`/activity/${id}/history`, { method: 'DELETE' }),
+  deleteDownloadHistory: () =>
+    fetchApi<{ deleted: number }>('/activity/history', { method: 'DELETE' }),
 };

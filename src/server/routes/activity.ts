@@ -74,6 +74,36 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     },
   );
 
+  // DELETE /api/activity/history (bulk clear)
+  app.delete('/api/activity/history', async (request) => {
+    request.log.info('Bulk deleting download history');
+    return downloadService.deleteHistory();
+  });
+
+  // DELETE /api/activity/:id/history (single history delete)
+  app.delete<{ Params: IdParam }>(
+    '/api/activity/:id/history',
+    { schema: { params: idParamSchema } },
+    async (request, reply) => {
+      const { id } = request.params;
+
+      try {
+        const deleted = await downloadService.delete(id);
+        if (!deleted) {
+          return await reply.status(404).send({ error: 'Download not found' });
+        }
+        request.log.info({ id }, 'Download history item deleted');
+        return { success: true };
+      } catch (error) {
+        const message = getErrorMessage(error);
+        if (message.includes('use cancel instead')) {
+          return reply.status(400).send({ error: message });
+        }
+        return reply.status(500).send({ error: message });
+      }
+    },
+  );
+
   // DELETE /api/activity/:id (cancel)
   app.delete<{ Params: IdParam }>(
     '/api/activity/:id',

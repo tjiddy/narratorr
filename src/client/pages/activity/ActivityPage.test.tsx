@@ -5,6 +5,13 @@ import { renderWithProviders } from '@/__tests__/helpers';
 import { ActivityPage } from './ActivityPage';
 import type { Download } from '@/lib/api';
 
+vi.mock('sonner', () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 vi.mock('@/lib/api', () => ({
   api: {
     getActivity: vi.fn(),
@@ -12,6 +19,8 @@ vi.mock('@/lib/api', () => ({
     retryDownload: vi.fn(),
     approveDownload: vi.fn(),
     rejectDownload: vi.fn(),
+    deleteHistoryDownload: vi.fn(),
+    deleteDownloadHistory: vi.fn(),
   },
   formatBytes: (bytes?: number) => {
     if (!bytes || bytes === 0) return '0 B';
@@ -359,3 +368,205 @@ describe('ActivityPage', () => {
     expect(screen.getByText('Tracker returned error')).toBeInTheDocument();
   });
 });
+
+
+  describe('delete history item', () => {
+    it('delete button appears on terminal status history cards', async () => {
+      const completed = makeDownload({ id: 10, title: 'Completed Book', status: 'completed' });
+      mockActivitySections([], [completed]);
+
+      renderWithProviders(<ActivityPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Completed Book')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument();
+    });
+
+    it('clicking delete calls deleteHistoryDownload with correct id and shows success toast', async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.deleteHistoryDownload).mockResolvedValue({ success: true });
+      const { toast } = await import('sonner');
+
+      const completed = makeDownload({ id: 11, title: 'To Delete', status: 'completed' });
+      mockActivitySections([], [completed]);
+      vi.mocked(api.getActivity).mockImplementation((params) => {
+        if (params?.section === 'history') return Promise.resolve({ data: [completed], total: 1 });
+        return Promise.resolve({ data: [], total: 0 });
+      });
+
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByText('To Delete')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /delete/i }));
+
+      await waitFor(() => {
+        expect(api.deleteHistoryDownload).toHaveBeenCalledWith(11);
+      });
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Download deleted');
+      });
+    });
+
+    it('shows error toast when single delete fails', async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.deleteHistoryDownload).mockRejectedValue(new Error('Server error'));
+      const { toast } = await import('sonner');
+
+      const failed = makeDownload({ id: 12, title: 'Fail Delete', status: 'failed' });
+      mockActivitySections([], [failed]);
+
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByText('Fail Delete')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /delete/i }));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to delete download');
+      });
+    });
+  });
+
+  describe('clear history', () => {
+    it('"Clear History" button appears in history section header when items exist', async () => {
+      const completed = makeDownload({ id: 20, status: 'completed' });
+      mockActivitySections([], [completed]);
+
+      renderWithProviders(<ActivityPage />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /clear history/i })).toBeInTheDocument();
+      });
+    });
+
+    it('"Clear History" button does not appear when history section is empty', async () => {
+      mockActivitySections([], []);
+
+      renderWithProviders(<ActivityPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('No download history')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('button', { name: /clear history/i })).not.toBeInTheDocument();
+    });
+
+    it('clicking "Clear History" opens confirmation dialog with item count', async () => {
+      const user = userEvent.setup();
+      const items = [
+        makeDownload({ id: 21, status: 'completed' }),
+        makeDownload({ id: 22, status: 'imported' }),
+      ];
+      mockActivitySections([], items);
+
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByRole('button', { name: /clear history/i })).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /clear history/i }));
+
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByText(/2 items/i)).toBeInTheDocument();
+    });
+
+    it('confirming bulk clear calls deleteDownloadHistory and shows success toast', async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.deleteDownloadHistory).mockResolvedValue({ deleted: 2 });
+      const { toast } = await import('sonner');
+
+      const items = [makeDownload({ id: 23, status: 'completed' }), makeDownload({ id: 24, status: 'imported' })];
+      mockActivitySections([], items);
+
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByRole('button', { name: /clear history/i })).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /clear history/i }));
+      // Click the confirm button in the modal (last button with Delete label)
+      const confirmButtons = screen.getAllByRole('button', { name: /delete/i });
+      await user.click(confirmButtons[confirmButtons.length - 1]);
+
+      await waitFor(() => {
+        expect(api.deleteDownloadHistory).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Download history cleared');
+      });
+    });
+
+    it('shows error toast when bulk clear fails', async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.deleteDownloadHistory).mockRejectedValue(new Error('Server error'));
+      const { toast } = await import('sonner');
+
+      const items = [makeDownload({ id: 25, status: 'completed' })];
+      mockActivitySections([], items);
+
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByRole('button', { name: /clear history/i })).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /clear history/i }));
+      const confirmButtons = screen.getAllByRole('button', { name: /delete/i });
+      await user.click(confirmButtons[confirmButtons.length - 1]);
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to clear history');
+      });
+    });
+
+    it('dismissing confirmation dialog makes no API call', async () => {
+      const user = userEvent.setup();
+      const items = [makeDownload({ id: 26, status: 'completed' })];
+      mockActivitySections([], items);
+
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByRole('button', { name: /clear history/i })).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /clear history/i }));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /cancel/i }));
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(api.deleteDownloadHistory).not.toHaveBeenCalled();
+    });
+
+    it('confirmation modal closes after successful bulk clear settles', async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.deleteDownloadHistory).mockResolvedValue({ deleted: 1 });
+
+      const items = [makeDownload({ id: 27, status: 'completed' })];
+      mockActivitySections([], items);
+
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByRole('button', { name: /clear history/i })).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /clear history/i }));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      const confirmButtons = screen.getAllByRole('button', { name: /delete/i });
+      await user.click(confirmButtons[confirmButtons.length - 1]);
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
+    });
+
+    it('confirmation modal closes after failed bulk clear settles', async () => {
+      const user = userEvent.setup();
+      vi.mocked(api.deleteDownloadHistory).mockRejectedValue(new Error('Server error'));
+
+      const items = [makeDownload({ id: 28, status: 'completed' })];
+      mockActivitySections([], items);
+
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByRole('button', { name: /clear history/i })).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /clear history/i }));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      const confirmButtons = screen.getAllByRole('button', { name: /delete/i });
+      await user.click(confirmButtons[confirmButtons.length - 1]);
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
+    });
+  });

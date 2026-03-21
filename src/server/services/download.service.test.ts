@@ -491,9 +491,9 @@ describe('DownloadService', () => {
   });
 
   describe('delete', () => {
-    it('returns true when download exists', async () => {
+    it('returns true when download exists and has terminal status', async () => {
       db.select.mockReturnValue(
-        mockDbChain([{ download: mockDownload, book: mockBook }]),
+        mockDbChain([{ download: { ...mockDownload, status: 'completed' }, book: mockBook }]),
       );
       db.delete.mockReturnValue(mockDbChain());
 
@@ -1154,6 +1154,97 @@ describe('DownloadService', () => {
       const result = await service.getAll(undefined, { limit: 10, offset: 0 }, 'queue');
       expect(result.total).toBe(20);
       expect(result.data).toHaveLength(1);
+    });
+  });
+
+
+  describe('delete — history guard', () => {
+    it('succeeds and returns true when status is completed', async () => {
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, status: 'completed' }, book: mockBook }]),
+      );
+      db.delete.mockReturnValue(mockDbChain());
+
+      const result = await service.delete(1);
+      expect(result).toBe(true);
+    });
+
+    it('succeeds and returns true when status is imported', async () => {
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, status: 'imported' }, book: mockBook }]),
+      );
+      db.delete.mockReturnValue(mockDbChain());
+
+      const result = await service.delete(1);
+      expect(result).toBe(true);
+    });
+
+    it('succeeds and returns true when status is failed', async () => {
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, status: 'failed' }, book: mockBook }]),
+      );
+      db.delete.mockReturnValue(mockDbChain());
+
+      const result = await service.delete(1);
+      expect(result).toBe(true);
+    });
+
+    it.each(['downloading', 'queued', 'paused', 'checking', 'pending_review', 'processing_queued', 'importing'] as const)(
+      'throws when status is %s',
+      async (status) => {
+        db.select.mockReturnValue(
+          mockDbChain([{ download: { ...mockDownload, status }, book: mockBook }]),
+        );
+
+        await expect(service.delete(1)).rejects.toThrow();
+        expect(db.delete).not.toHaveBeenCalled();
+      },
+    );
+
+    it('returns false when id does not exist', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+
+      const result = await service.delete(999);
+      expect(result).toBe(false);
+    });
+
+    it('succeeds for orphaned download (bookId = null)', async () => {
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, bookId: null, status: 'completed' }, book: null }]),
+      );
+      db.delete.mockReturnValue(mockDbChain());
+
+      const result = await service.delete(1);
+      expect(result).toBe(true);
+    });
+  });
+
+  describe('deleteHistory', () => {
+    it('deletes all terminal-status downloads and returns exact count', async () => {
+      const deleted = [{ id: 1 }, { id: 2 }, { id: 3 }];
+      db.delete.mockReturnValue(mockDbChain(deleted));
+
+      const result = await service.deleteHistory();
+      expect(result).toEqual({ deleted: 3 });
+    });
+
+    it('returns { deleted: 0 } when no history items exist', async () => {
+      db.delete.mockReturnValue(mockDbChain([]));
+
+      const result = await service.deleteHistory();
+      expect(result).toEqual({ deleted: 0 });
+    });
+
+    it('filters deletes to terminal statuses via getTerminalStatuses()', async () => {
+      const chain = mockDbChain([]);
+      db.delete.mockReturnValue(chain);
+
+      const spy = vi.spyOn(statusRegistry, 'getTerminalStatuses');
+
+      await service.deleteHistory();
+
+      expect(spy).toHaveBeenCalled();
+      expect(chain.where).toHaveBeenCalledOnce();
     });
   });
 

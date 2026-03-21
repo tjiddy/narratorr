@@ -10,6 +10,7 @@ import { EventHistorySection } from './EventHistorySection.js';
 import { useActivity } from './useActivity.js';
 import { usePagination } from '@/hooks/usePagination';
 import { Pagination } from '@/components/Pagination';
+import { ConfirmModal } from '@/components/ConfirmModal';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 
 // eslint-disable-next-line max-lines-per-function -- page with independent queue/history pagination sections
@@ -22,6 +23,7 @@ export function ActivityPage() {
     history, historyTotal,
     isLoading,
     cancelMutation, retryMutation, approveMutation, rejectMutation,
+    deleteMutation, deleteHistoryMutation,
   } = useActivity(
     { limit: queuePagination.limit, offset: queuePagination.offset },
     { limit: historyPagination.limit, offset: historyPagination.offset },
@@ -32,6 +34,7 @@ export function ActivityPage() {
   useEffect(() => { historyPagination.clampToTotal(historyTotal); }, [historyTotal, historyPagination]);
 
   const [tab, setTab] = useState<'downloads' | 'events'>('downloads');
+  const [confirmClearHistory, setConfirmClearHistory] = useState(false);
 
   if (isLoading) {
     return (
@@ -144,16 +147,27 @@ export function ActivityPage() {
 
           {/* Download History Section */}
           <section className="space-y-5 animate-fade-in-up stagger-3">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-muted rounded-xl">
-                <HistoryIcon className="w-5 h-5 text-muted-foreground" />
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-muted rounded-xl">
+                  <HistoryIcon className="w-5 h-5 text-muted-foreground" />
+                </div>
+                <div>
+                  <h2 className="font-display text-xl font-semibold">History</h2>
+                  <p className="text-sm text-muted-foreground">
+                    {historyTotal} completed download{historyTotal !== 1 ? 's' : ''}
+                  </p>
+                </div>
               </div>
-              <div>
-                <h2 className="font-display text-xl font-semibold">History</h2>
-                <p className="text-sm text-muted-foreground">
-                  {historyTotal} completed download{historyTotal !== 1 ? 's' : ''}
-                </p>
-              </div>
+              {historyTotal > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmClearHistory(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl transition-all focus-ring"
+                >
+                  Clear History
+                </button>
+              )}
             </div>
 
             {history.length === 0 ? (
@@ -171,6 +185,8 @@ export function ActivityPage() {
                     key={download.id}
                     download={download}
                     onRetry={() => retryMutation.mutate(download.id)}
+                    onDelete={() => deleteMutation.mutate({ id: download.id, bookId: download.bookId })}
+                    isDeleting={deleteMutation.isPending && deleteMutation.variables?.id === download.id}
                     showProgress={false}
                     index={index}
                     compact
@@ -186,6 +202,19 @@ export function ActivityPage() {
               onPageChange={historyPagination.setPage}
             />
           </section>
+
+          <ConfirmModal
+            isOpen={confirmClearHistory}
+            title="Clear Download History"
+            message={`Remove all ${historyTotal} item${historyTotal !== 1 ? 's' : ''} from download history?`}
+            confirmLabel="Delete"
+            onConfirm={() => {
+              deleteHistoryMutation.mutate(undefined, {
+                onSettled: () => setConfirmClearHistory(false),
+              });
+            }}
+            onCancel={() => setConfirmClearHistory(false)}
+          />
         </>
       )}
 

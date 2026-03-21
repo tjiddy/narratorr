@@ -607,4 +607,69 @@ describe('activity routes', () => {
       );
     });
   });
+
+  describe('DELETE /api/activity/:id/history', () => {
+    it('returns 200 { success: true } when download has terminal status', async () => {
+      (services.download.delete as Mock).mockResolvedValue(true);
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/activity/1/history' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ success: true });
+      expect(services.download.delete).toHaveBeenCalledWith(1);
+    });
+
+    it('returns 404 when id not found', async () => {
+      (services.download.delete as Mock).mockResolvedValue(false);
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/activity/999/history' });
+
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 400 when download has non-terminal status', async () => {
+      (services.download.delete as Mock).mockRejectedValue(
+        new Error("Cannot delete download with status 'downloading' — use cancel instead"),
+      );
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/activity/1/history' });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 400 for NaN id', async () => {
+      const res = await app.inject({ method: 'DELETE', url: '/api/activity/abc/history' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 500 when service throws unexpected error', async () => {
+      (services.download.delete as Mock).mockRejectedValue(new Error('db unavailable'));
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/activity/1/history' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'db unavailable' });
+    });
+  });
+
+  describe('DELETE /api/activity/history', () => {
+    it('returns 200 { deleted: N } with count of deleted records', async () => {
+      (services.download.deleteHistory as Mock).mockResolvedValue({ deleted: 3 });
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/activity/history' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ deleted: 3 });
+      expect(services.download.deleteHistory).toHaveBeenCalledWith();
+    });
+
+    it('returns 200 { deleted: 0 } when no history items exist', async () => {
+      (services.download.deleteHistory as Mock).mockResolvedValue({ deleted: 0 });
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/activity/history' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ deleted: 0 });
+    });
+  });
 });

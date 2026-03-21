@@ -3,7 +3,7 @@ import { type Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '../../db/schema.js';
 import { parseInfoHash, type DownloadProtocol } from '../../core/index.js';
-import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses } from '../../shared/download-status-registry.js';
+import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses, isTerminalStatus } from '../../shared/download-status-registry.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import { type DownloadClientService } from './download-client.service.js';
 import { type CreateEventInput } from './event-history.service.js';
@@ -353,7 +353,23 @@ export class DownloadService {
     const existing = await this.getById(id);
     if (!existing) return false;
 
+    if (!isTerminalStatus(existing.status)) {
+      throw new Error(`Cannot delete download with status '${existing.status}' — use cancel instead`);
+    }
+
     await this.db.delete(downloads).where(eq(downloads.id, id));
+    this.log.info({ id }, 'Download history item deleted');
     return true;
+  }
+
+  async deleteHistory(): Promise<{ deleted: number }> {
+    const terminalStatuses = getTerminalStatuses();
+    const rows = await this.db
+      .delete(downloads)
+      .where(inArray(downloads.status, terminalStatuses))
+      .returning({ id: downloads.id });
+    const deleted = rows.length;
+    this.log.info({ deleted }, 'Download history bulk deleted');
+    return { deleted };
   }
 }
