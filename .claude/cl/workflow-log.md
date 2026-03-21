@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #48 Hide Retry button on orphaned downloads after book deletion — 2026-03-21
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #53
+
+### Metrics
+- Files changed: 2 source + 3 test | Tests added/modified: 7 new + 2 updated
+- Quality gate runs: 1 (blocked by 5 pre-existing auth failures on main — unrelated, proceeded)
+- Fix iterations: 0 (implementation was clean first pass)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec review cycle caught the null vs undefined distinction before implementation — no rework needed. The fix was exactly two lines of production code.
+- Friction / issues encountered: Pre-existing `discover.test.ts` / `prowlarr-compat.test.ts` failures cause `verify.ts` to return `VERIFY: fail` even though all branch tests pass. GH token expired mid-handoff — required refreshing via `scripts/lib.ts` gh-auth-token workaround for push and PR create.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 rounds with reviewer bot) consumed significant context before implementation even started
+- Avoidable waste: None — spec rounds were necessary to catch the null vs undefined issue
+- Suggestions: When token expires for gh CLI ops, the lib.ts workaround pattern works as a refresh
+
+### Infrastructure gaps
+- Repeated workarounds: Pre-existing 5 auth test failures poison verify.ts (third time — #37, #50, #48)
+- Missing tooling / config: No way to run verify.ts scoped to branch-changed files only
+- Unresolved debt: Same auth test failures (already in debt.md from #37/#50)
+
+### Wish I'd Known
+1. createMockDownload() factory omits bookId entirely (undefined, not null) — when adding a != null guard, ALL existing tests expecting Retry to be visible need explicit bookId: 1. Two ActivityPage tests failed because of this.
+2. DB SET NULL FK sends JavaScript null (not undefined) — the correct guard is != null (loose equality, covers both), not !== undefined. The spec review correctly flagged this.
+3. GH token expires every ~1h; scripts/lib.ts can refresh it when gh commands return 401.
+
 ## #50 Manual Import browse button not clickable and lacks affordance — 2026-03-21
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #52
