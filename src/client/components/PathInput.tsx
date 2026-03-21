@@ -7,6 +7,7 @@ interface PathInputProps {
   value: string;
   onChange?: (path: string) => void;
   registration?: UseFormRegisterReturn;
+  id?: string;
   placeholder?: string;
   error?: FieldError;
   className?: string;
@@ -19,6 +20,7 @@ export function PathInput({
   value,
   onChange,
   registration,
+  id,
   placeholder,
   error,
   className,
@@ -31,6 +33,13 @@ export function PathInput({
 
   function handleSelect(path: string) {
     onChange?.(path);
+    // Drive RHF directly so registration-only callers get Browse updates.
+    // Must include `name` in the synthetic target — RHF reads event.target.name to look up the field.
+    if (registration) {
+      void registration.onChange({
+        target: { name: registration.name, value: path },
+      } as React.ChangeEvent<HTMLInputElement>);
+    }
     setBrowseOpen(false);
     browseButtonRef.current?.focus();
   }
@@ -53,6 +62,7 @@ export function PathInput({
           <FolderIcon className="w-4 h-4" />
         </span>
         <input
+          id={id}
           type="text"
           value={value}
           onChange={(e) => onChange?.(e.target.value)}

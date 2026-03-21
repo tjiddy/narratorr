@@ -59,7 +59,7 @@ describe('PathInput', () => {
 
     it('renders without error message when error is absent', () => {
       renderWithProviders(<PathInput value="" onChange={vi.fn()} />);
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.queryByText('Path is required')).not.toBeInTheDocument();
     });
   });
 
@@ -144,9 +144,9 @@ describe('PathInput', () => {
   });
 
   describe('RHF registration mode', () => {
-    it('selecting a path via Browse calls onChange prop so the parent can update RHF field value', async () => {
+    it('selecting a path via Browse calls both onChange prop and registration.onChange so all callers get updates', async () => {
       const onChange = vi.fn();
-      const registration = makeRegistration();
+      const registration = makeRegistration({ name: 'path' });
       renderWithProviders(<PathInput value="" onChange={onChange} registration={registration} />);
 
       await userEvent.click(screen.getByRole('button', { name: /browse/i }));
@@ -154,12 +154,21 @@ describe('PathInput', () => {
       await userEvent.click(await screen.findByRole('button', { name: 'Select' }));
 
       expect(onChange).toHaveBeenCalledWith('/');
+      // registration.onChange receives a synthetic event with name+value so RHF can look up the field by name
+      expect(registration.onChange).toHaveBeenCalledWith(
+        expect.objectContaining({ target: expect.objectContaining({ name: 'path', value: '/' }) }),
+      );
     });
 
     it('spreading registration onto PathInput exposes the input name for RHF field tracking', () => {
       const registration = makeRegistration({ name: 'libraryPath' });
       renderWithProviders(<PathInput value="" onChange={vi.fn()} registration={registration} />);
       expect(screen.getByRole('textbox')).toHaveAttribute('name', 'libraryPath');
+    });
+
+    it('id prop is forwarded to the inner input so labels can use htmlFor to associate correctly', () => {
+      renderWithProviders(<PathInput id="myPath" value="" onChange={vi.fn()} />);
+      expect(screen.getByRole('textbox')).toHaveAttribute('id', 'myPath');
     });
   });
 

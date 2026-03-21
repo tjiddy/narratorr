@@ -214,6 +214,7 @@ export function LibrarySettingsSection() {
         <div>
           <label htmlFor="libraryPath" className="block text-sm font-medium mb-2">Library Path</label>
           <PathInput
+            id="libraryPath"
             value={pathValue ?? ''}
             onChange={(path) => setValue('path', path, { shouldDirty: true, shouldValidate: true })}
             registration={register('path')}

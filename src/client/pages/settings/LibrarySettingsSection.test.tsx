@@ -31,6 +31,7 @@ const { toast } = await import('sonner');
 const mockApi = api as unknown as {
   getSettings: ReturnType<typeof vi.fn>;
   updateSettings: ReturnType<typeof vi.fn>;
+  browseDirectory: ReturnType<typeof vi.fn>;
 };
 const mockToast = toast as unknown as {
   success: ReturnType<typeof vi.fn>;
@@ -280,6 +281,38 @@ describe('LibrarySettingsSection', () => {
       await waitFor(() => {
         expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks/new-library');
       });
+    });
+
+    it('modal Cancel, Close, breadcrumb, and directory-row clicks inside the form do not submit the form', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /browse/i })).toBeInTheDocument();
+      });
+
+      // Open and dismiss via Cancel — must not submit
+      await user.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+
+      // Open and dismiss via header Close button — must not submit
+      await user.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+      await user.click(screen.getByRole('button', { name: 'Close' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+
+      // Open, navigate via directory row, select — must not submit the form (only updates the field)
+      mockApi.browseDirectory.mockResolvedValueOnce({ dirs: ['books'], parent: '/' }).mockResolvedValueOnce({ dirs: [], parent: '/audiobooks' });
+      await user.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+      await user.click(await screen.findByText('books'));
+      await user.click(screen.getByRole('button', { name: 'Select' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
     });
 
     it('saving the form after a browse selection persists the chosen path', async () => {
