@@ -305,6 +305,21 @@ describe('LibrarySettingsSection', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
       expect(mockApi.updateSettings).not.toHaveBeenCalled();
 
+      // Open, navigate via breadcrumb — must not submit the form
+      mockApi.browseDirectory
+        .mockResolvedValueOnce({ dirs: ['books'], parent: '/' })      // initial /audiobooks
+        .mockResolvedValueOnce({ dirs: [], parent: '/audiobooks' })   // /audiobooks/books after dir-row click
+        .mockResolvedValueOnce({ dirs: ['books'], parent: '/' });     // back to /audiobooks after breadcrumb click
+      await user.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+      await user.click(await screen.findByText('books'));             // navigate into books/
+      // Now at /audiobooks/books — breadcrumbs show / > audiobooks > books
+      await user.click(await screen.findByRole('button', { name: 'audiobooks' })); // click breadcrumb
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+
       // Open, navigate via directory row, select — must not submit the form (only updates the field)
       mockApi.browseDirectory.mockResolvedValueOnce({ dirs: ['books'], parent: '/' }).mockResolvedValueOnce({ dirs: [], parent: '/audiobooks' });
       await user.click(screen.getByRole('button', { name: /browse/i }));
