@@ -14,6 +14,7 @@ vi.mock('@/lib/api', () => ({
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
     browseDirectory: vi.fn().mockResolvedValue({ dirs: [], parent: '/' }),
+    rescanLibrary: vi.fn(),
   },
 }));
 
@@ -32,6 +33,7 @@ const mockApi = api as unknown as {
   getSettings: ReturnType<typeof vi.fn>;
   updateSettings: ReturnType<typeof vi.fn>;
   browseDirectory: ReturnType<typeof vi.fn>;
+  rescanLibrary: ReturnType<typeof vi.fn>;
 };
 const mockToast = toast as unknown as {
   success: ReturnType<typeof vi.fn>;
@@ -244,6 +246,232 @@ describe('LibrarySettingsSection', () => {
 
     await waitFor(() => {
       expect(mockToast.error).toHaveBeenCalledWith('Save failed');
+    });
+  });
+
+  describe('library path blur → rescan prompt', () => {
+    const mockSettingsLib1 = createMockSettings({
+      library: { path: '/lib1', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+    });
+
+    beforeEach(() => {
+      mockApi.getSettings.mockResolvedValue(mockSettingsLib1);
+      mockApi.updateSettings.mockResolvedValue(mockSettingsLib1);
+      mockApi.rescanLibrary.mockResolvedValue({ scanned: 3, missing: 1, restored: 0 });
+    });
+
+    it('calls updateSettings with only library.path when path changes on blur', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/lib1'));
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.tripleClick(pathInput);
+      await user.keyboard('/lib2');
+      await act(async () => { fireEvent.blur(pathInput); });
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith({ library: { path: '/lib2' } });
+      });
+    });
+
+    it('does NOT call updateSettings when blurred with unchanged path', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/lib1'));
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.click(pathInput);
+      await act(async () => { fireEvent.blur(pathInput); });
+
+      await waitFor(() => expect(mockApi.getSettings).toHaveBeenCalled());
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+    });
+
+    it('shows rescan prompt modal after successful path auto-save on blur', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/lib1'));
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.tripleClick(pathInput);
+      await user.keyboard('/lib2');
+      await act(async () => { fireEvent.blur(pathInput); });
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Scan Library?')).toBeInTheDocument();
+    });
+
+    it('does NOT show rescan prompt modal when updateSettings fails on blur', async () => {
+      mockApi.updateSettings.mockRejectedValue(new Error('Network error'));
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/lib1'));
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.tripleClick(pathInput);
+      await user.keyboard('/lib2');
+      await act(async () => { fireEvent.blur(pathInput); });
+
+      await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith('Network error'));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('does NOT show rescan prompt or call updateSettings when blurred with empty path', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/lib1'));
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.clear(pathInput);
+      await act(async () => { fireEvent.blur(pathInput); });
+
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('does NOT show rescan prompt when path is reverted to the saved value before blur', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/lib1'));
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.tripleClick(pathInput);
+      await user.keyboard('/lib2');
+      await user.tripleClick(pathInput);
+      await user.keyboard('/lib1');
+      await act(async () => { fireEvent.blur(pathInput); });
+
+      await waitFor(() => expect(mockApi.getSettings).toHaveBeenCalled());
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('calls rescanLibrary and shows success toast when user clicks Scan in the prompt', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/lib1'));
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.tripleClick(pathInput);
+      await user.keyboard('/lib2');
+      await act(async () => { fireEvent.blur(pathInput); });
+
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: /scan/i }));
+
+      await waitFor(() => {
+        expect(mockApi.rescanLibrary).toHaveBeenCalled();
+        expect(mockToast.success).toHaveBeenCalledWith('Library scan complete: 3 scanned, 1 missing, 0 restored');
+      });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('closes prompt without calling rescanLibrary when user clicks Skip', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/lib1'));
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.tripleClick(pathInput);
+      await user.keyboard('/lib2');
+      await act(async () => { fireEvent.blur(pathInput); });
+
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: /skip/i }));
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(mockApi.rescanLibrary).not.toHaveBeenCalled();
+    });
+
+    it('closes prompt without calling rescanLibrary when backdrop is clicked', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/lib1'));
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.tripleClick(pathInput);
+      await user.keyboard('/lib2');
+      await act(async () => { fireEvent.blur(pathInput); });
+
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+      // Click the outer fixed container (has onClick={onCancel}) — inner dialog stops propagation
+      const outerContainer = screen.getByRole('dialog').parentElement!;
+      fireEvent.click(outerContainer);
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(mockApi.rescanLibrary).not.toHaveBeenCalled();
+    });
+
+    it('shows error toast when rescanLibrary fails after accepting prompt', async () => {
+      mockApi.rescanLibrary.mockRejectedValue(new Error('Library path is not accessible'));
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/lib1'));
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.tripleClick(pathInput);
+      await user.keyboard('/lib2');
+      await act(async () => { fireEvent.blur(pathInput); });
+
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: /scan/i }));
+
+      await waitFor(() => {
+        expect(mockToast.error).toHaveBeenCalledWith('Library path is not accessible');
+      });
+    });
+
+    it('only auto-saves library.path on blur — dirty folderFormat is not submitted', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/lib1'));
+
+      // Dirty the folderFormat field
+      const folderInput = screen.getByPlaceholderText('{author}/{title}');
+      await user.tripleClick(folderInput);
+      await user.keyboard('{author}/{title}/{year}');
+
+      // Now change path and blur
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.tripleClick(pathInput);
+      await user.keyboard('/lib2');
+      await act(async () => { fireEvent.blur(pathInput); });
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith({ library: { path: '/lib2' } });
+      });
+      // Should NOT have sent folderFormat in the blur-save call
+      expect(mockApi.updateSettings).not.toHaveBeenCalledWith(
+        expect.objectContaining({ library: expect.objectContaining({ folderFormat: expect.anything() }) }),
+      );
+    });
+
+    it('shows rescan prompt after Browse selection changes path and user blurs field', async () => {
+      mockApi.browseDirectory
+        .mockResolvedValueOnce({ dirs: ['lib2'], parent: '/' })
+        .mockResolvedValueOnce({ dirs: [], parent: '/lib2' });
+
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByRole('button', { name: /browse/i })).toBeInTheDocument());
+
+      // Select via Browse
+      await user.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+      await user.click(await screen.findByText('lib2'));
+      await user.click(screen.getByRole('button', { name: 'Select' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      // Path field now shows the selected path (subdir of /lib1) — blur it to trigger auto-save
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/lib1/lib2'));
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await act(async () => { fireEvent.blur(pathInput); });
+
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+      expect(screen.getByText('Scan Library?')).toBeInTheDocument();
     });
   });
 

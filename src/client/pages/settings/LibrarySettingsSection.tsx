@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { FolderIcon } from '@/components/icons';
 import { PathInput } from '@/components/PathInput';
+import { ConfirmModal } from '@/components/ConfirmModal';
 import { renderTemplate, renderFilename, toLastFirst, toSortTitle, ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from '@core/utils/index.js';
 import { DEFAULT_SETTINGS, type AppSettings, libraryFormSchema } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
@@ -108,6 +109,7 @@ export function LibrarySettingsSection() {
   const queryClient = useQueryClient();
   const folderFormatRef = useRef<HTMLInputElement | null>(null);
   const fileFormatRef = useRef<HTMLInputElement | null>(null);
+  const [showRescanPrompt, setShowRescanPrompt] = useState(false);
 
   const { data: settings } = useQuery({
     queryKey: queryKeys.settings(),
@@ -136,6 +138,39 @@ export function LibrarySettingsSection() {
       toast.error(err instanceof Error ? err.message : 'Failed to save settings');
     },
   });
+
+  const pathSaveMutation = useMutation({
+    mutationFn: (path: string) => api.updateSettings({ library: { path } }),
+    onSuccess: (_result, savedPath) => {
+      queryClient.setQueryData(queryKeys.settings(), (old: AppSettings | undefined) =>
+        old ? { ...old, library: { ...old.library, path: savedPath } } : old,
+      );
+      setShowRescanPrompt(true);
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : 'Failed to save library path');
+    },
+  });
+
+  const rescanMutation = useMutation({
+    mutationFn: () => api.rescanLibrary(),
+    onSuccess: (result) => {
+      toast.success(`Library scan complete: ${result.scanned} scanned, ${result.missing} missing, ${result.restored} restored`);
+    },
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : 'Library scan failed');
+    },
+  });
+
+  const { onBlur: rhfPathOnBlur, ...pathRegistration } = register('path');
+
+  function handlePathBlur(e: React.FocusEvent<HTMLInputElement>) {
+    rhfPathOnBlur(e);
+    const currentPath = e.currentTarget.value.trim();
+    const savedPath = settings?.library.path ?? '';
+    if (!currentPath || currentPath === savedPath) return;
+    pathSaveMutation.mutate(currentPath);
+  }
 
   // eslint-disable-next-line react-hooks/incompatible-library -- watch() is the standard RHF API; Compiler skip is expected
   const pathValue = watch('path');
@@ -217,7 +252,7 @@ export function LibrarySettingsSection() {
             id="libraryPath"
             value={pathValue ?? ''}
             onChange={(path) => setValue('path', path, { shouldDirty: true, shouldValidate: true })}
-            registration={register('path')}
+            registration={{ ...pathRegistration, onBlur: handlePathBlur }}
             error={errors.path}
             placeholder="/audiobooks"
           />
@@ -355,6 +390,18 @@ export function LibrarySettingsSection() {
           </button>
         )}
       </form>
+      <ConfirmModal
+        isOpen={showRescanPrompt}
+        title="Scan Library?"
+        message="Would you like to scan the library at the new path?"
+        confirmLabel="Scan"
+        cancelLabel="Skip"
+        onConfirm={() => {
+          setShowRescanPrompt(false);
+          rescanMutation.mutate();
+        }}
+        onCancel={() => setShowRescanPrompt(false)}
+      />
     </SettingsSection>
   );
 }
