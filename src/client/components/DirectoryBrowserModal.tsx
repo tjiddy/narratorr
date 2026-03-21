@@ -86,6 +86,7 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: Omit<Direct
             <p className="text-xs text-muted-foreground/50 truncate mt-0.5">Select a folder to scan</p>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors focus-ring"
             aria-label="Close"
@@ -102,6 +103,7 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: Omit<Direct
             <span key={crumb.path} className="flex items-center gap-1 shrink-0">
               {i > 0 && <ChevronRightIcon className="w-3 h-3 text-muted-foreground/50" />}
               <button
+                type="button"
                 onClick={() => handleNavigate(crumb.path)}
                 className={`px-1.5 py-0.5 rounded transition-colors focus-ring ${
                   i === breadcrumbs.length - 1
@@ -145,6 +147,7 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: Omit<Direct
             <div className="divide-y divide-white/5">
               {data.dirs.map((dir) => (
                 <button
+                  type="button"
                   key={dir}
                   onClick={() => handleDirClick(dir)}
                   className="w-full flex items-center gap-3 px-6 py-2.5 text-sm text-left hover:bg-white/5 transition-colors focus-ring group"
@@ -167,12 +170,14 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: Omit<Direct
           </p>
           <div className="flex items-center gap-3 shrink-0">
             <button
+              type="button"
               onClick={onClose}
               className="px-4 py-2 text-sm font-medium glass-card rounded-xl hover:border-primary/30 transition-all focus-ring"
             >
               Cancel
             </button>
             <button
+              type="button"
               onClick={handleSelect}
               className="px-5 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all focus-ring"
             >

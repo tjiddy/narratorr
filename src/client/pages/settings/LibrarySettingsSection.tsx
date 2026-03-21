@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { FolderIcon } from '@/components/icons';
+import { PathInput } from '@/components/PathInput';
 import { renderTemplate, renderFilename, toLastFirst, toSortTitle, ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from '@core/utils/index.js';
 import { DEFAULT_SETTINGS, type AppSettings, libraryFormSchema } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
@@ -137,6 +138,7 @@ export function LibrarySettingsSection() {
   });
 
   // eslint-disable-next-line react-hooks/incompatible-library -- watch() is the standard RHF API; Compiler skip is expected
+  const pathValue = watch('path');
   const folderFormat = watch('folderFormat');
   const fileFormat = watch('fileFormat');
 
@@ -211,18 +213,14 @@ export function LibrarySettingsSection() {
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
         <div>
           <label htmlFor="libraryPath" className="block text-sm font-medium mb-2">Library Path</label>
-          <input
+          <PathInput
             id="libraryPath"
-            type="text"
-            {...register('path')}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
-              errors.path ? 'border-destructive' : 'border-border'
-            }`}
+            value={pathValue ?? ''}
+            onChange={(path) => setValue('path', path, { shouldDirty: true, shouldValidate: true })}
+            registration={register('path')}
+            error={errors.path}
             placeholder="/audiobooks"
           />
-          {errors.path && (
-            <p className="text-sm text-destructive mt-1">{errors.path.message}</p>
-          )}
           <p className="text-sm text-muted-foreground mt-2">
             The root folder where imported audiobooks will be stored
           </p>

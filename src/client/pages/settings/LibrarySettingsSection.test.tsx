@@ -13,6 +13,7 @@ vi.mock('@/lib/api', () => ({
   api: {
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
+    browseDirectory: vi.fn().mockResolvedValue({ dirs: [], parent: '/' }),
   },
 }));
 
@@ -30,6 +31,7 @@ const { toast } = await import('sonner');
 const mockApi = api as unknown as {
   getSettings: ReturnType<typeof vi.fn>;
   updateSettings: ReturnType<typeof vi.fn>;
+  browseDirectory: ReturnType<typeof vi.fn>;
 };
 const mockToast = toast as unknown as {
   success: ReturnType<typeof vi.fn>;
@@ -242,6 +244,122 @@ describe('LibrarySettingsSection', () => {
 
     await waitFor(() => {
       expect(mockToast.error).toHaveBeenCalledWith('Save failed');
+    });
+  });
+
+  describe('library path browse integration', () => {
+    it('Library Path field renders a Browse button', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /browse/i })).toBeInTheDocument();
+      });
+    });
+
+    it('selecting a path via Browse updates the RHF field value and form becomes dirty', async () => {
+      const { api: mockApiModule } = await import('@/lib/api');
+      // Return a subdirectory so user can navigate into it and select a new path
+      (mockApiModule.browseDirectory as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ dirs: ['new-library'], parent: '/' })
+        .mockResolvedValueOnce({ dirs: [], parent: '/audiobooks' });
+
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /browse/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+
+      // Navigate into a different directory
+      await user.click(await screen.findByText('new-library'));
+      await user.click(screen.getByRole('button', { name: 'Select' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      // Input should show the selected path
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks/new-library');
+      });
+    });
+
+    it('modal Cancel, Close, breadcrumb, and directory-row clicks inside the form do not submit the form', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /browse/i })).toBeInTheDocument();
+      });
+
+      // Open and dismiss via Cancel — must not submit
+      await user.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+
+      // Open and dismiss via header Close button — must not submit
+      await user.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+      await user.click(screen.getByRole('button', { name: 'Close' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+
+      // Open, navigate via breadcrumb — must not submit the form
+      mockApi.browseDirectory
+        .mockResolvedValueOnce({ dirs: ['books'], parent: '/' })      // initial /audiobooks
+        .mockResolvedValueOnce({ dirs: [], parent: '/audiobooks' })   // /audiobooks/books after dir-row click
+        .mockResolvedValueOnce({ dirs: ['books'], parent: '/' });     // back to /audiobooks after breadcrumb click
+      await user.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+      await user.click(await screen.findByText('books'));             // navigate into books/
+      // Now at /audiobooks/books — breadcrumbs show / > audiobooks > books
+      await user.click(await screen.findByRole('button', { name: 'audiobooks' })); // click breadcrumb
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+      await user.click(screen.getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+
+      // Open, navigate via directory row, select — must not submit the form (only updates the field)
+      mockApi.browseDirectory.mockResolvedValueOnce({ dirs: ['books'], parent: '/' }).mockResolvedValueOnce({ dirs: [], parent: '/audiobooks' });
+      await user.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+      await user.click(await screen.findByText('books'));
+      await user.click(screen.getByRole('button', { name: 'Select' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+    });
+
+    it('saving the form after a browse selection persists the chosen path', async () => {
+      const { api: mockApiModule } = await import('@/lib/api');
+      (mockApiModule.browseDirectory as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ dirs: ['new-library'], parent: '/' })
+        .mockResolvedValueOnce({ dirs: [], parent: '/' });
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /browse/i })).toBeInTheDocument();
+      });
+
+      // Open browse modal, navigate into new-library, select it
+      await user.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+      await user.click(await screen.findByText('new-library'));
+      await user.click(screen.getByRole('button', { name: 'Select' }));
+
+      // Submit the form
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            library: expect.objectContaining({ path: '/audiobooks/new-library' }),
+          }),
+        );
+      });
     });
   });
 });
