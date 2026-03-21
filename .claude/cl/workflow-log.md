@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #50 Manual Import browse button not clickable and lacks affordance — 2026-03-21
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #52
+
+### Metrics
+- Files changed: 7 source files | Tests added/modified: 3 test files (+69 passing tests)
+- Quality gate runs: 1 (VERIFY: fail — 5 pre-existing failures in unrelated auth routes)
+- Fix iterations: 4 (type="button" in modal, controlled/uncontrolled RHF conflict, cascade mock failure from missing onKeyDown, toHaveValue assertion bug)
+- Context compactions: 1 (carried over from previous session)
+
+### Workflow experience
+- What went smoothly: PathInput component design and ManualImportPage refactor (36 tests, zero regressions). Focus management and browse seeding worked on first attempt.
+- Friction / issues encountered: (1) `registration.onChange()` programmatic call silently failed to update `watch('path')` — `isDirty` updated but `pathValue` staled. Root cause: `watch()` subscriptions don't reliably react to `registration.onChange` called outside native input events. Fixed by passing `onChange → setValue()` separately. (2) `toHaveValue(expect.stringContaining(...))` silently fails in vitest+jest-dom — waitFor timed out even though the value was correct; wasted ~30min debugging a non-existent value-update bug. (3) `DirectoryBrowserModal` buttons without `type="button"` triggered form submission when used inside LibrarySettingsSection's `<form>`. (4) Removing `onKeyDown` in the first refactor attempt left a stale `mockResolvedValueOnce` that cascaded into 15 downstream test failures.
+
+### Token efficiency
+- Highest-token actions: Debugging the RHF `watch()` subscription issue consumed the most context — required tracing through RHF internals before finding that `setValue()` in the parent is the reliable path.
+- Avoidable waste: The `toHaveValue(expect.stringContaining(...))` red herring consumed significant debugging time. Running `getByPlaceholderText(...).value` directly would have immediately shown the value was correct.
+- Suggestions: When a `waitFor` assertion times out, immediately log the current element value before attempting code fixes.
+
+### Infrastructure gaps
+- Repeated workarounds: Git push authentication — the embedded token in the remote URL is stale; had to manually generate a fresh installation token with `contents:write` permission. This happened in previous sessions too.
+- Missing tooling / config: `scripts/verify.ts` VERIFY:fail due to pre-existing auth test failures has no way to signal "fail but not my fault" — forces manual inspection to distinguish new from pre-existing failures.
+- Unresolved debt: 5 pre-existing auth 401 test failures in discover/prowlarr-compat routes blocking VERIFY:pass.
+
+### Wish I'd Known
+1. `registration.onChange()` called programmatically does not reliably update `watch()` — always use `setValue(name, value, { shouldDirty: true })` in the parent for non-native-event value changes when using `register()`.
+2. `toHaveValue(expect.stringContaining(...))` silently fails in vitest — check the actual element value first before assuming the code is broken.
+3. Every `<button>` in a shared component must have `type="button"` upfront — don't wait until the component is used inside a `<form>` to discover the default `type="submit"` behavior.
+
+
 ## #47 Quality probe fails on single-file SABnzbd downloads — 2026-03-21
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #51

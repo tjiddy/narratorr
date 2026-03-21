@@ -24,3 +24,6 @@ No active items. All prior debt graduated and resolved in #448.
 - **src/server/routes/discover.test.ts, src/server/routes/prowlarr-compat.test.ts**: Pre-existing auth test failures (5 tests) noted again in #40 — still present on main, still blocking `VERIFY: pass`. These need investigation and a fix, not just a note. (rediscovered in #40)
 
 - **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 pre-existing auth test failures (`returns 401 when no auth credentials provided`, `rejects /api/v1/* without credentials`) poison `verify.ts` on all branches. Needs investigation into the auth plugin test setup. (discovered in #37)
+
+- **src/client/pages/settings/LibrarySettingsSection.tsx**: File format token insertion test missing (folder format token insertion is tested but not file format). Also missing: file format title-missing error, preview output assertions, Save button disabled-during-mutation test. (discovered in #50)
+- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 pre-existing auth 401 test failures exist on main — these tests expect 401 but get 500/200. Root cause unknown; unrelated to frontend work but blocks verify.ts from returning VERIFY:pass. (discovered in #50)
