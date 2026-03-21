@@ -1,5 +1,33 @@
 # Workflow Log
 
+## #18 Prompt to scan library when path is set or changed — 2026-03-21
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #55
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 12 new tests
+- Quality gate runs: 1 (pass on attempt 1 — 5 pre-existing failures excluded)
+- Fix iterations: 2 (TypeScript ChangeHandler type incompatibility on blur handler; backdrop click + Browse path assertion fixes)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: spec was well-groomed from elaborate/respond-to-spec-review; codebase exploration identified the ConfirmModal-outside-form requirement up front; test stubs from /plan made the red/green cycle efficient
+- Friction / issues encountered: (1) TypeScript rejected `(e: FocusEvent) => void` where ChangeHandler expected — resolved by typing handler as `typeof rhfPathOnBlur` (async). (2) Backdrop click test hit inner dialog via user.click — resolved by fireEvent.click directly on outer container. (3) Browse test expected /lib2 but mock navigation produced /lib1/lib2 — updated assertion.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for /plan (8 files read), /elaborate Explore subagent (deep source analysis), self-review Explore subagent
+- Avoidable waste: Coverage Explore subagent flagged 27 items but most were pre-existing code — should scope to diff-changed behaviors only
+- Suggestions: Coverage review prompt should filter to "behaviors added or changed in the diff" not all behaviors in touched files
+
+### Infrastructure gaps
+- Repeated workarounds: git push failed with stale token — required manual GH App JWT refresh
+- Missing tooling / config: git remote token not auto-refreshed; scripts/lib.ts handles this for gh CLI but not raw git push
+- Unresolved debt: 5 pre-existing auth failures in discover/prowlarr-compat continue to block scripts/verify.ts on every branch
+
+### Wish I'd Known
+1. ConfirmModal buttons have no type="button" — rendering inside a <form> silently causes form submission. Must always place outside the form.
+2. RHF register().onBlur is ChangeHandler (expects {target: any} → Promise<void|boolean>), not FocusEventHandler. Custom blur handlers must be typed as `typeof rhfPathOnBlur` (async) and use e.target not e.currentTarget.
+3. queryClient.setQueryData (not invalidateQueries) for partial cache updates — invalidating triggers a refetch that wipes dirty sibling form fields via the !isDirty useEffect reset.
 ## #48 Hide Retry button on orphaned downloads after book deletion — 2026-03-21
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #53

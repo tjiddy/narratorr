@@ -27,3 +27,6 @@ No active items. All prior debt graduated and resolved in #448.
 
 - **src/client/pages/settings/LibrarySettingsSection.tsx**: File format token insertion test missing (folder format token insertion is tested but not file format). Also missing: file format title-missing error, preview output assertions, Save button disabled-during-mutation test. (discovered in #50)
 - **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 pre-existing auth 401 test failures exist on main — these tests expect 401 but get 500/200. Root cause unknown; unrelated to frontend work but blocks verify.ts from returning VERIFY:pass. (discovered in #50)
+
+- **src/client/pages/settings/LibrarySettingsSection.tsx**: Pre-existing untested behaviors (cursor position after token insertion, pending button state text, dirty-reset after save, regex variant coverage for title/author tokens) — not introduced by #18 but visible when reading the file. Low urgency. (discovered in #18)
+- **src/client/components/ConfirmModal.tsx**: Buttons lack `type="button"` — safe only when rendered outside a `<form>`, but any future usage inside a form would silently break. Should add `type="button"` to both buttons. (discovered in #18)
