@@ -116,7 +116,7 @@ export function LibrarySettingsSection() {
     queryFn: api.getSettings,
   });
 
-  const { register, handleSubmit, reset, watch, setValue, formState: { errors, isDirty } } = useForm<LibraryFormData>({
+  const { register, handleSubmit, reset, resetField, watch, setValue, formState: { errors, isDirty } } = useForm<LibraryFormData>({
     defaultValues: DEFAULT_SETTINGS.library,
     resolver: zodResolver(libraryFormSchema),
   });
@@ -145,6 +145,8 @@ export function LibrarySettingsSection() {
       queryClient.setQueryData(queryKeys.settings(), (old: AppSettings | undefined) =>
         old ? { ...old, library: { ...old.library, path: savedPath } } : old,
       );
+      // Clear path dirty state so Save button only reflects unsaved sibling fields
+      resetField('path', { defaultValue: savedPath });
       setShowRescanPrompt(true);
     },
     onError: (err) => {
@@ -156,6 +158,7 @@ export function LibrarySettingsSection() {
     mutationFn: () => api.rescanLibrary(),
     onSuccess: (result) => {
       toast.success(`Library scan complete: ${result.scanned} scanned, ${result.missing} missing, ${result.restored} restored`);
+      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
     },
     onError: (err) => {
       toast.error(err instanceof Error ? err.message : 'Library scan failed');

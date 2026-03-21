@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { QueryClient } from '@tanstack/react-query';
 import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
+import { queryKeys } from '@/lib/queryKeys';
 import { LibrarySettingsSection } from './LibrarySettingsSection';
 
 vi.mock('sonner', () => ({
@@ -472,6 +474,62 @@ describe('LibrarySettingsSection', () => {
 
       await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
       expect(screen.getByText('Scan Library?')).toBeInTheDocument();
+    });
+
+    it('hides Save button after path-only autosave when no sibling fields are dirty', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/lib1'));
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.tripleClick(pathInput);
+      await user.keyboard('/lib2');
+      await act(async () => { fireEvent.blur(pathInput); });
+
+      // Path auto-saved and path dirty state cleared → no sibling fields dirty → Save button gone
+      await waitFor(() => expect(mockApi.updateSettings).toHaveBeenCalledWith({ library: { path: '/lib2' } }));
+      await waitFor(() => expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument());
+    });
+
+    it('keeps Save button visible when sibling fields are dirty after path-only autosave', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/lib1'));
+
+      // Dirty folderFormat
+      const folderInput = screen.getByPlaceholderText('{author}/{title}');
+      await user.tripleClick(folderInput);
+      await user.keyboard('{author}/{title}/{year}');
+
+      // Path change + blur → auto-save → path no longer dirty, but folderFormat still is
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.tripleClick(pathInput);
+      await user.keyboard('/lib2');
+      await act(async () => { fireEvent.blur(pathInput); });
+
+      await waitFor(() => expect(mockApi.updateSettings).toHaveBeenCalledWith({ library: { path: '/lib2' } }));
+      // Save button stays because folderFormat is still dirty
+      await waitFor(() => expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument());
+    });
+
+    it('invalidates books query after rescan completes', async () => {
+      const invalidateSpy = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/lib1'));
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.tripleClick(pathInput);
+      await user.keyboard('/lib2');
+      await act(async () => { fireEvent.blur(pathInput); });
+
+      await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: /scan/i }));
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+      });
+      invalidateSpy.mockRestore();
     });
   });
 
