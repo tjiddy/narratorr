@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -578,11 +578,11 @@ describe('ManualImportPage', () => {
   });
 
   describe('directory browser integration', () => {
-    it('opens directory browser when folder icon is clicked', async () => {
+    it('opens directory browser when Browse button is clicked', async () => {
       renderPage();
 
-      await userEvent.click(screen.getByLabelText('Browse directories'));
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: /browse/i }));
+      expect(await screen.findByRole('dialog')).toBeInTheDocument();
       expect(screen.getByText('Browse Directories')).toBeInTheDocument();
     });
 
@@ -593,7 +593,7 @@ describe('ManualImportPage', () => {
 
       renderPage();
 
-      await userEvent.click(screen.getByLabelText('Browse directories'));
+      await userEvent.click(screen.getByRole('button', { name: /browse/i }));
       const dialog = await screen.findByRole('dialog');
       await within(dialog).findByText('projects');
 
@@ -608,6 +608,41 @@ describe('ManualImportPage', () => {
       expect(screen.queryByText('Browse Directories')).not.toBeInTheDocument();
       const input = screen.getByPlaceholderText('/path/to/audiobooks') as HTMLInputElement;
       expect(input.value).toContain('projects');
+    });
+
+    it('Browse button is clickable and not intercepted by the input field', async () => {
+      renderPage();
+      await userEvent.click(screen.getByRole('button', { name: /browse/i }));
+      expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    });
+
+    it('when path field is empty and user opens Browse, the modal seeds from library settings path', async () => {
+      renderPage();
+
+      // path starts empty — settings.library.path is '/audiobooks'
+      await userEvent.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+
+      await waitFor(() => {
+        expect(mockBrowseDirectory).toHaveBeenCalledWith('/audiobooks');
+      });
+    });
+
+    it('manually typing a path into the field still works', async () => {
+      renderPage();
+      const input = screen.getByPlaceholderText('/path/to/audiobooks') as HTMLInputElement;
+      await userEvent.type(input, '/my/audiobooks');
+      expect(input.value).toBe('/my/audiobooks');
+    });
+
+    it('existing form submission behavior is unchanged after PathInput adoption', async () => {
+      mockScanDirectory.mockResolvedValue({ books: [], message: undefined });
+      renderPage();
+      await userEvent.type(screen.getByPlaceholderText('/path/to/audiobooks'), '/audio');
+      await userEvent.click(screen.getByRole('button', { name: 'Scan' }));
+      await waitFor(() => {
+        expect(mockScanDirectory).toHaveBeenCalledWith('/audio');
+      });
     });
   });
 });

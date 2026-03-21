@@ -1,9 +1,7 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ImportCard, ImportSummaryBar, BookEditModal } from '@/components/manual-import';
-import { DirectoryBrowserModal } from '@/components/DirectoryBrowserModal';
+import { PathInput } from '@/components/PathInput';
 import {
-  FolderIcon,
   AlertCircleIcon,
   LoadingSpinner,
   ArrowLeftIcon,
@@ -13,9 +11,8 @@ import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useManualImport } from './useManualImport.js';
 
-// eslint-disable-next-line complexity, max-lines-per-function -- 3-step page with 21 hook props, directory browser modal, and conditional step rendering
+// eslint-disable-next-line complexity, max-lines-per-function -- 3-step page with 21 hook props, path input, and conditional step rendering
 export function ManualImportPage() {
-  const [browseOpen, setBrowseOpen] = useState(false);
   const { data: settings } = useQuery({ queryKey: queryKeys.settings(), queryFn: api.getSettings });
 
   const {
@@ -54,25 +51,14 @@ export function ManualImportPage() {
       {/* Step 1: Path Input */}
       {step === 'path' && (
         <div className="max-w-xl space-y-4 animate-fade-in-up stagger-1">
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setBrowseOpen(true)}
-              className="absolute left-3 top-1/2 -translate-y-1/2 p-0.5 text-muted-foreground hover:text-foreground rounded transition-colors focus-ring"
-              aria-label="Browse directories"
-            >
-              <FolderIcon className="w-4 h-4" />
-            </button>
-            <input
-              type="text"
-              value={scanPath}
-              onChange={(e) => { setScanPath(e.target.value); setScanError(null); }}
-              placeholder="/path/to/audiobooks"
-              className="w-full pl-10 pr-4 py-3 glass-card rounded-xl text-sm focus-ring"
-              onKeyDown={(e) => e.key === 'Enter' && handleScan()}
-              autoFocus
-            />
-          </div>
+          <PathInput
+            value={scanPath}
+            onChange={(path) => { setScanPath(path); setScanError(null); }}
+            placeholder="/path/to/audiobooks"
+            fallbackBrowsePath={settings?.library?.path || '/'}
+            onKeyDown={(e) => e.key === 'Enter' && handleScan()}
+            autoFocus
+          />
 
           {scanError && (
             <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-amber-500/5 border border-amber-500/20">
@@ -164,18 +150,6 @@ export function ManualImportPage() {
           onClose={() => setEditIndex(null)}
         />
       )}
-
-      {/* Directory Browser Modal */}
-      <DirectoryBrowserModal
-        isOpen={browseOpen}
-        initialPath={scanPath || settings?.library?.path || '/'}
-        onSelect={(path) => {
-          setScanPath(path);
-          setScanError(null);
-          setBrowseOpen(false);
-        }}
-        onClose={() => setBrowseOpen(false)}
-      />
     </div>
   );
 }

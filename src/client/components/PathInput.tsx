@@ -11,6 +11,8 @@ interface PathInputProps {
   error?: FieldError;
   className?: string;
   fallbackBrowsePath?: string;
+  onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
+  autoFocus?: boolean;
 }
 
 export function PathInput({
@@ -21,6 +23,8 @@ export function PathInput({
   error,
   className,
   fallbackBrowsePath,
+  onKeyDown,
+  autoFocus,
 }: PathInputProps) {
   const [browseOpen, setBrowseOpen] = useState(false);
   const browseButtonRef = useRef<HTMLButtonElement>(null);
@@ -55,6 +59,8 @@ export function PathInput({
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onKeyDown={onKeyDown}
+          autoFocus={autoFocus}
           placeholder={placeholder}
           className={`w-full pl-10 pr-20 py-3 glass-card rounded-xl text-sm focus-ring${error ? ' border-destructive' : ''}`}
           {...registration}
