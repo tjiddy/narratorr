@@ -193,6 +193,18 @@ describe('QualityGateOrchestrator', () => {
       expect(qualityGateService.setStatus).toHaveBeenCalledWith(1, 'pending_review');
     });
 
+    it('calls processDownload (not setStatus pending_review) when resolved path is a single audio file', async () => {
+      const { orchestrator, qualityGateService } = createOrchestrator();
+      qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue('/downloads/SingleBook.m4b');
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(makeScan());
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(qualityGateService.processDownload).toHaveBeenCalledWith(baseDownload, baseBook, makeScan());
+      expect(qualityGateService.setStatus).not.toHaveBeenCalledWith(1, 'pending_review');
+    });
+
     it('emits SSE and records probeFailure event on probe failure', async () => {
       const { orchestrator, qualityGateService, broadcaster, eventHistory } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
