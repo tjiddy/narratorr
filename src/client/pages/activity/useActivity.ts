@@ -56,6 +56,26 @@ export function useActivity(queueParams: ActivityListParams = {}, historyParams:
     onSuccess: invalidateActivity,
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: ({ id, bookId }: { id: number; bookId?: number | null }) =>
+      api.deleteHistoryDownload(id).then((result) => ({ ...result, bookId })),
+    onSuccess: ({ bookId }) => {
+      invalidateActivity();
+      queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
+      if (bookId != null) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.byBookId(bookId) });
+      }
+    },
+  });
+
+  const deleteHistoryMutation = useMutation({
+    mutationFn: api.deleteDownloadHistory,
+    onSuccess: () => {
+      invalidateActivity();
+      queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
+    },
+  });
+
   return {
     queue, queueTotal,
     history, historyTotal,
@@ -65,5 +85,7 @@ export function useActivity(queueParams: ActivityListParams = {}, historyParams:
     retryMutation,
     approveMutation,
     rejectMutation,
+    deleteMutation,
+    deleteHistoryMutation,
   };
 }
