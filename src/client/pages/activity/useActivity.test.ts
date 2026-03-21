@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { useActivity } from './useActivity';
 import type { Download } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -12,6 +13,8 @@ vi.mock('@/lib/api', () => ({
     retryDownload: vi.fn(),
     approveDownload: vi.fn(),
     rejectDownload: vi.fn(),
+    deleteHistoryDownload: vi.fn(),
+    deleteDownloadHistory: vi.fn(),
   },
 }));
 
@@ -27,6 +30,15 @@ function createWrapper() {
   });
   return ({ children }: { children: React.ReactNode }) =>
     createElement(QueryClientProvider, { client: queryClient }, children);
+}
+
+function createWrapperWithClient() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const wrapper = ({ children }: { children: React.ReactNode }) =>
+    createElement(QueryClientProvider, { client: queryClient }, children);
+  return { wrapper, queryClient };
 }
 
 function makeDownload(overrides: Partial<Download> = {}): Download {
@@ -180,5 +192,97 @@ describe('useActivity', () => {
     await waitFor(() => {
       expect(result.current.isError).toBe(true);
     });
+  });
+
+  it('deleteMutation calls deleteHistoryDownload with correct id', async () => {
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.deleteHistoryDownload).mockResolvedValue({ success: true });
+
+    const { result } = renderHook(() => useActivity(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    await act(async () => {
+      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+    });
+
+    await waitFor(() => {
+      expect(api.deleteHistoryDownload).toHaveBeenCalledWith(7);
+    });
+  });
+
+  it('deleteMutation invalidates eventHistory.root() and eventHistory.byBookId() when bookId is non-null', async () => {
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.deleteHistoryDownload).mockResolvedValue({ success: true });
+
+    const { wrapper, queryClient } = createWrapperWithClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const { result } = renderHook(() => useActivity(), { wrapper });
+
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    await act(async () => {
+      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+    });
+
+    await waitFor(() => {
+      expect(api.deleteHistoryDownload).toHaveBeenCalledWith(7);
+    });
+
+    const invalidatedKeys = invalidateSpy.mock.calls.map((c) => c[0]);
+    expect(invalidatedKeys).toContainEqual({ queryKey: queryKeys.eventHistory.root() });
+    expect(invalidatedKeys).toContainEqual({ queryKey: queryKeys.eventHistory.byBookId(99) });
+  });
+
+  it('deleteMutation skips eventHistory.byBookId() invalidation when bookId is null', async () => {
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.deleteHistoryDownload).mockResolvedValue({ success: true });
+
+    const { wrapper, queryClient } = createWrapperWithClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const { result } = renderHook(() => useActivity(), { wrapper });
+
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    await act(async () => {
+      result.current.deleteMutation.mutate({ id: 7, bookId: null });
+    });
+
+    await waitFor(() => {
+      expect(api.deleteHistoryDownload).toHaveBeenCalledWith(7);
+    });
+
+    const invalidatedKeys = invalidateSpy.mock.calls.map((c) => c[0]);
+    expect(invalidatedKeys).toContainEqual({ queryKey: queryKeys.eventHistory.root() });
+    expect(invalidatedKeys).not.toContainEqual(
+      expect.objectContaining({ queryKey: expect.arrayContaining(['eventHistory', 'book']) }),
+    );
+  });
+
+  it('deleteHistoryMutation calls deleteDownloadHistory and invalidates eventHistory.root()', async () => {
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.deleteDownloadHistory).mockResolvedValue({ deleted: 3 });
+
+    const { wrapper, queryClient } = createWrapperWithClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const { result } = renderHook(() => useActivity(), { wrapper });
+
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    await act(async () => {
+      result.current.deleteHistoryMutation.mutate();
+    });
+
+    await waitFor(() => {
+      expect(api.deleteDownloadHistory).toHaveBeenCalled();
+    });
+
+    const invalidatedKeys = invalidateSpy.mock.calls.map((c) => c[0]);
+    expect(invalidatedKeys).toContainEqual({ queryKey: queryKeys.eventHistory.root() });
   });
 });
