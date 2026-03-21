@@ -3,7 +3,7 @@ import type { DownloadStatus } from '../../../shared/schemas.js';
 
 export interface Download {
   id: number;
-  bookId?: number;
+  bookId?: number | null;
   indexerId?: number;
   downloadClientId?: number;
   title: string;

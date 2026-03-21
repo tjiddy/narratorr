@@ -248,6 +248,33 @@ describe('DownloadCard', () => {
     });
   });
 
+  describe('orphaned downloads (bookId null)', () => {
+    it('shows title and errorMessage for an orphaned failed download', () => {
+      render(
+        <DownloadCard
+          download={createMockDownload({
+            status: 'failed',
+            bookId: null,
+            title: 'Orphaned Audiobook',
+            errorMessage: 'Download failed — source unavailable',
+          })}
+        />,
+      );
+      expect(screen.getByText('Orphaned Audiobook')).toBeInTheDocument();
+      expect(screen.getByText('Download failed — source unavailable')).toBeInTheDocument();
+    });
+
+    it('does not show retry button for an orphaned failed download with bookId null', () => {
+      render(
+        <DownloadCard
+          download={createMockDownload({ status: 'failed', bookId: null })}
+          onRetry={vi.fn()}
+        />,
+      );
+      expect(screen.queryByText('Retry')).not.toBeInTheDocument();
+    });
+  });
+
   describe('compact mode', () => {
     it('renders with compact styling', () => {
       const { container } = render(

@@ -11,7 +11,7 @@ beforeEach(() => {
 describe('DownloadActions', () => {
   describe('retry button', () => {
     it('shows retry button for failed status when onRetry provided', () => {
-      const download = createMockDownload({ status: 'failed' });
+      const download = createMockDownload({ status: 'failed', bookId: 1 });
       render(<DownloadActions download={download} onRetry={vi.fn()} />);
 
       expect(screen.getByText('Retry')).toBeInTheDocument();
@@ -27,7 +27,7 @@ describe('DownloadActions', () => {
     it('calls onRetry when retry button is clicked', async () => {
       const user = userEvent.setup();
       const onRetry = vi.fn();
-      const download = createMockDownload({ status: 'failed' });
+      const download = createMockDownload({ status: 'failed', bookId: 1 });
       render(<DownloadActions download={download} onRetry={onRetry} />);
 
       await user.click(screen.getByText('Retry'));
@@ -43,6 +43,20 @@ describe('DownloadActions', () => {
         expect(screen.queryByText('Retry')).not.toBeInTheDocument();
         unmount();
       }
+    });
+
+    it('does not show retry button when bookId is null (orphaned download — primary runtime case from SET NULL FK)', () => {
+      const download = createMockDownload({ status: 'failed', bookId: null });
+      render(<DownloadActions download={download} onRetry={vi.fn()} />);
+
+      expect(screen.queryByText('Retry')).not.toBeInTheDocument();
+    });
+
+    it('does not show retry button when bookId is undefined (defensive: missing field)', () => {
+      const download = createMockDownload({ status: 'failed', bookId: undefined });
+      render(<DownloadActions download={download} onRetry={vi.fn()} />);
+
+      expect(screen.queryByText('Retry')).not.toBeInTheDocument();
     });
   });
 

@@ -50,7 +50,7 @@ export function DownloadActions({
           </span>
         </button>
       )}
-      {download.status === 'failed' && onRetry && (
+      {download.status === 'failed' && download.bookId != null && onRetry && (
         <button
           onClick={onRetry}
           className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-opacity focus-ring"

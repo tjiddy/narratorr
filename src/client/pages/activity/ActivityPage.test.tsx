@@ -126,6 +126,7 @@ describe('ActivityPage', () => {
   it('shows failed item with error message and retry button', async () => {
     const failed = makeDownload({
       id: 3,
+      bookId: 1,
       title: 'Failed Audiobook',
       status: 'failed',
       errorMessage: 'Connection timed out',
@@ -199,7 +200,7 @@ describe('ActivityPage', () => {
 
   it('retries failed download and invalidates query on success', async () => {
     const user = userEvent.setup();
-    const failed = makeDownload({ id: 9, title: 'Retry Me', status: 'failed', errorMessage: 'Timed out' });
+    const failed = makeDownload({ id: 9, bookId: 1, title: 'Retry Me', status: 'failed', errorMessage: 'Timed out' });
     const retried = makeDownload({ id: 9, title: 'Retry Me', status: 'queued' });
 
     mockActivitySections([], [failed]);
@@ -307,6 +308,36 @@ describe('ActivityPage', () => {
     await waitFor(() => {
       expect(vi.mocked(api.rejectDownload).mock.calls[0][0]).toBe(21);
     });
+  });
+
+  it('shows retry button only on linked failed download in a mixed history list', async () => {
+    const orphaned = makeDownload({
+      id: 10,
+      bookId: null,
+      title: 'Orphaned Audiobook',
+      status: 'failed',
+      errorMessage: 'Book was deleted',
+    });
+    const linked = makeDownload({
+      id: 11,
+      bookId: 2,
+      title: 'Linked Audiobook',
+      status: 'failed',
+      errorMessage: 'Timed out',
+    });
+    mockActivitySections([], [orphaned, linked]);
+
+    renderWithProviders(<ActivityPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Orphaned Audiobook')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Linked Audiobook')).toBeInTheDocument();
+
+    // Only one Retry button — for the linked download
+    expect(screen.getAllByText('Retry')).toHaveLength(1);
+    expect(screen.getByText('Book was deleted')).toBeInTheDocument();
+    expect(screen.getByText('Timed out')).toBeInTheDocument();
   });
 
   it('shows error message on non-failed downloads with errorMessage', async () => {
