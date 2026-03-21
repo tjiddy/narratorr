@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #54 Delete download history items — 2026-03-21
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #56
+
+### Metrics
+- Files changed: 10 | Tests added/modified: 4 test files (311 tests total pass)
+- Quality gate runs: 3 (lint pass on attempt 2, tests blocked by 5 pre-existing failures on main)
+- Fix iterations: 2 (cyclomatic complexity in DownloadActions, return-await in route catch block)
+- Context compactions: 1 (mid-implementation, caused no rework)
+
+### Workflow experience
+- What went smoothly: TDD red/green cycle worked well per module; Drizzle `.returning()` for bulk delete count was clean; ConfirmModal integration straightforward
+- Friction / issues encountered: (1) Cyclomatic complexity 16 > 15 in DownloadActions — extracting ternaries had net-zero effect; fix was merging two `pending_review` conditional blocks into one. (2) `return-await` lint rule requires `await` in try but forbids it in catch — easy to mix up. (3) 5 pre-existing auth test failures on main blocked `VERIFY: pass` throughout; had to document and skip. (4) Context compaction mid-implementation required re-reading files to recover state.
+
+### Token efficiency
+- Highest-token actions: 3 rounds of spec review (`/respond-to-spec-review`) before implementation, coverage review subagent
+- Avoidable waste: Three spec review rounds could have been consolidated if AC6 cache invalidation details were specified upfront
+- Suggestions: Spec the queryKey invalidation contract explicitly from the start to avoid iterative clarification
+
+### Infrastructure gaps
+- Repeated workarounds: `VERIFY: fail` due to pre-existing test failures in discover/prowlarr routes blocks every issue — needs a mechanism to baseline-ignore pre-existing failures
+- Missing tooling / config: `frontend-design` skill not available in this environment
+- Unresolved debt: 5 failing auth integration tests on main need investigation
+
+### Wish I'd Known
+1. Fastify route ordering matters for literal vs param siblings — `DELETE /api/activity/history` must come before `DELETE /api/activity/:id/history` or "history" gets matched as an id param
+2. ESLint complexity counts JSX short-circuit `&&` operators — merging sibling conditional blocks is the only way to reduce complexity when near the limit, not extracting ternaries to variables
+3. TanStack Query `mutationFn: () => api.fn()` (ignore-variables signature) is required for zero-argument bulk mutations to avoid `undefined` being passed to the API client
+
+
 ## #18 Prompt to scan library when path is set or changed — 2026-03-21
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #55
