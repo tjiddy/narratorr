@@ -1234,6 +1234,18 @@ describe('DownloadService', () => {
       const result = await service.deleteHistory();
       expect(result).toEqual({ deleted: 0 });
     });
+
+    it('filters deletes to terminal statuses via getTerminalStatuses()', async () => {
+      const chain = mockDbChain([]);
+      db.delete.mockReturnValue(chain);
+
+      const spy = vi.spyOn(statusRegistry, 'getTerminalStatuses');
+
+      await service.deleteHistory();
+
+      expect(spy).toHaveBeenCalled();
+      expect(chain.where).toHaveBeenCalledOnce();
+    });
   });
 
 });

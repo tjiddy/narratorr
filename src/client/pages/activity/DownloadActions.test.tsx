@@ -186,5 +186,14 @@ describe('DownloadActions', () => {
       expect(screen.getByText('Retry')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument();
     });
+
+    it('disables delete button and shows Deleting... label when isDeleting is true', () => {
+      const download = createMockDownload({ status: 'completed' });
+      render(<DownloadActions download={download} onDelete={vi.fn()} isDeleting />);
+
+      const btn = screen.getByRole('button', { name: /delete/i });
+      expect(btn).toBeDisabled();
+      expect(btn).toHaveTextContent('Deleting...');
+    });
   });
 });

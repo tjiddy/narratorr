@@ -641,6 +641,15 @@ describe('activity routes', () => {
       const res = await app.inject({ method: 'DELETE', url: '/api/activity/abc/history' });
       expect(res.statusCode).toBe(400);
     });
+
+    it('returns 500 when service throws unexpected error', async () => {
+      (services.download.delete as Mock).mockRejectedValue(new Error('db unavailable'));
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/activity/1/history' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'db unavailable' });
+    });
   });
 
   describe('DELETE /api/activity/history', () => {
