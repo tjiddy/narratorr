@@ -5,7 +5,7 @@ import { DirectoryBrowserModal } from './DirectoryBrowserModal.js';
 
 interface PathInputProps {
   value: string;
-  onChange: (path: string) => void;
+  onChange?: (path: string) => void;
   registration?: UseFormRegisterReturn;
   placeholder?: string;
   error?: FieldError;
@@ -30,10 +30,7 @@ export function PathInput({
   const browseButtonRef = useRef<HTMLButtonElement>(null);
 
   function handleSelect(path: string) {
-    onChange(path);
-    if (registration) {
-      registration.onChange({ target: { value: path } } as React.ChangeEvent<HTMLInputElement>);
-    }
+    onChange?.(path);
     setBrowseOpen(false);
     browseButtonRef.current?.focus();
   }
@@ -58,7 +55,7 @@ export function PathInput({
         <input
           type="text"
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange?.(e.target.value)}
           onKeyDown={onKeyDown}
           autoFocus={autoFocus}
           placeholder={placeholder}

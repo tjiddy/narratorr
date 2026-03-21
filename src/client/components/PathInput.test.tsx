@@ -144,17 +144,16 @@ describe('PathInput', () => {
   });
 
   describe('RHF registration mode', () => {
-    it('selecting a path via Browse calls registration.onChange so RHF field value is updated', async () => {
+    it('selecting a path via Browse calls onChange prop so the parent can update RHF field value', async () => {
+      const onChange = vi.fn();
       const registration = makeRegistration();
-      renderWithProviders(<PathInput value="" onChange={vi.fn()} registration={registration} />);
+      renderWithProviders(<PathInput value="" onChange={onChange} registration={registration} />);
 
       await userEvent.click(screen.getByRole('button', { name: /browse/i }));
       await screen.findByRole('dialog');
       await userEvent.click(await screen.findByRole('button', { name: 'Select' }));
 
-      expect(registration.onChange).toHaveBeenCalledWith(
-        expect.objectContaining({ target: expect.objectContaining({ value: '/' }) }),
-      );
+      expect(onChange).toHaveBeenCalledWith('/');
     });
 
     it('spreading registration onto PathInput exposes the input name for RHF field tracking', () => {

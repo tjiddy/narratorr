@@ -13,6 +13,7 @@ vi.mock('@/lib/api', () => ({
   api: {
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
+    browseDirectory: vi.fn().mockResolvedValue({ dirs: [], parent: '/' }),
   },
 }));
 
@@ -242,6 +243,75 @@ describe('LibrarySettingsSection', () => {
 
     await waitFor(() => {
       expect(mockToast.error).toHaveBeenCalledWith('Save failed');
+    });
+  });
+
+  describe('library path browse integration', () => {
+    it('Library Path field renders a Browse button', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /browse/i })).toBeInTheDocument();
+      });
+    });
+
+    it('selecting a path via Browse updates the RHF field value and form becomes dirty', async () => {
+      const { api: mockApiModule } = await import('@/lib/api');
+      // Return a subdirectory so user can navigate into it and select a new path
+      (mockApiModule.browseDirectory as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ dirs: ['new-library'], parent: '/' })
+        .mockResolvedValueOnce({ dirs: [], parent: '/audiobooks' });
+
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /browse/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+
+      // Navigate into a different directory
+      await user.click(await screen.findByText('new-library'));
+      await user.click(screen.getByRole('button', { name: 'Select' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      // Input should show the selected path
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks/new-library');
+      });
+    });
+
+    it('saving the form after a browse selection persists the chosen path', async () => {
+      const { api: mockApiModule } = await import('@/lib/api');
+      (mockApiModule.browseDirectory as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ dirs: ['new-library'], parent: '/' })
+        .mockResolvedValueOnce({ dirs: [], parent: '/' });
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /browse/i })).toBeInTheDocument();
+      });
+
+      // Open browse modal, navigate into new-library, select it
+      await user.click(screen.getByRole('button', { name: /browse/i }));
+      await screen.findByRole('dialog');
+      await user.click(await screen.findByText('new-library'));
+      await user.click(screen.getByRole('button', { name: 'Select' }));
+
+      // Submit the form
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            library: expect.objectContaining({ path: '/audiobooks/new-library' }),
+          }),
+        );
+      });
     });
   });
 });
