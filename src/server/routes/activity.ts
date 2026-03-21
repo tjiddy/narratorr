@@ -90,7 +90,7 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
       try {
         const deleted = await downloadService.delete(id);
         if (!deleted) {
-          return reply.status(404).send({ error: 'Download not found' });
+          return await reply.status(404).send({ error: 'Download not found' });
         }
         request.log.info({ id }, 'Download history item deleted');
         return { success: true };
