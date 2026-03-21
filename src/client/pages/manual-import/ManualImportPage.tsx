@@ -11,7 +11,7 @@ import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useManualImport } from './useManualImport.js';
 
-// eslint-disable-next-line complexity, max-lines-per-function -- 3-step page with 21 hook props, path input, and conditional step rendering
+// eslint-disable-next-line complexity -- 3-step page with 21 hook props, path input, and conditional step rendering
 export function ManualImportPage() {
   const { data: settings } = useQuery({ queryKey: queryKeys.settings(), queryFn: api.getSettings });
 
