@@ -5,7 +5,7 @@ import { type DownloadClientService } from './download-client.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 
-import { createMockDbBook } from '../__tests__/factories.js';
+import { createMockDbBook, createMockDbIndexer } from '../__tests__/factories.js';
 import * as statusRegistry from '../../shared/download-status-registry.js';
 
 const now = new Date();
@@ -1449,4 +1449,74 @@ describe('DownloadService', () => {
     });
   });
 
+  describe('indexer name projection (#57)', () => {
+    const mockIndexer = createMockDbIndexer();
+    const mockDownloadNoIndexer = { ...mockDownload, indexerId: null };
+
+    describe('getAll', () => {
+      it('returns indexerName for downloads with an existing indexer', async () => {
+        db.select
+          .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+          .mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook, indexer: mockIndexer }]));
+
+        const result = await service.getAll();
+        expect(result.data[0].indexerName).toBe('AudioBookBay');
+      });
+
+      it('returns null indexerName for downloads whose indexer was deleted (null FK)', async () => {
+        db.select
+          .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+          .mockReturnValueOnce(mockDbChain([{ download: mockDownloadNoIndexer, book: mockBook, indexer: null }]));
+
+        const result = await service.getAll();
+        expect(result.data[0].indexerName).toBeNull();
+      });
+
+      it('handles mixed batch: some downloads with indexer, some without', async () => {
+        db.select
+          .mockReturnValueOnce(mockDbChain([{ value: 2 }]))
+          .mockReturnValueOnce(mockDbChain([
+            { download: mockDownload, book: mockBook, indexer: mockIndexer },
+            { download: mockDownloadNoIndexer, book: mockBook, indexer: null },
+          ]));
+
+        const result = await service.getAll();
+        expect(result.data[0].indexerName).toBe('AudioBookBay');
+        expect(result.data[1].indexerName).toBeNull();
+      });
+    });
+
+    describe('getById', () => {
+      it('returns null indexerName for deleted-indexer case', async () => {
+        db.select.mockReturnValue(
+          mockDbChain([{ download: mockDownloadNoIndexer, book: null, indexer: null }]),
+        );
+
+        const result = await service.getById(1);
+        expect(result?.indexerName).toBeNull();
+      });
+    });
+
+    describe('getActive', () => {
+      it('returns null indexerName for deleted-indexer case', async () => {
+        db.select.mockReturnValue(
+          mockDbChain([{ download: mockDownloadNoIndexer, book: null, indexer: null }]),
+        );
+
+        const result = await service.getActive();
+        expect(result[0].indexerName).toBeNull();
+      });
+    });
+
+    describe('getActiveByBookId', () => {
+      it('returns null indexerName for deleted-indexer case', async () => {
+        db.select.mockReturnValue(
+          mockDbChain([{ download: mockDownloadNoIndexer, book: mockBook, indexer: null }]),
+        );
+
+        const result = await service.getActiveByBookId(1);
+        expect(result[0].indexerName).toBeNull();
+      });
+    });
+  });
 });
