@@ -1487,6 +1487,15 @@ describe('DownloadService', () => {
     });
 
     describe('getById', () => {
+      it('returns indexerName for downloads with an existing indexer', async () => {
+        db.select.mockReturnValue(
+          mockDbChain([{ download: mockDownload, book: mockBook, indexer: mockIndexer }]),
+        );
+
+        const result = await service.getById(1);
+        expect(result?.indexerName).toBe('AudioBookBay');
+      });
+
       it('returns null indexerName for deleted-indexer case', async () => {
         db.select.mockReturnValue(
           mockDbChain([{ download: mockDownloadNoIndexer, book: null, indexer: null }]),
@@ -1498,6 +1507,15 @@ describe('DownloadService', () => {
     });
 
     describe('getActive', () => {
+      it('returns indexerName for downloads with an existing indexer', async () => {
+        db.select.mockReturnValue(
+          mockDbChain([{ download: mockDownload, book: mockBook, indexer: mockIndexer }]),
+        );
+
+        const result = await service.getActive();
+        expect(result[0].indexerName).toBe('AudioBookBay');
+      });
+
       it('returns null indexerName for deleted-indexer case', async () => {
         db.select.mockReturnValue(
           mockDbChain([{ download: mockDownloadNoIndexer, book: null, indexer: null }]),
@@ -1509,6 +1527,15 @@ describe('DownloadService', () => {
     });
 
     describe('getActiveByBookId', () => {
+      it('returns indexerName for downloads with an existing indexer', async () => {
+        db.select.mockReturnValue(
+          mockDbChain([{ download: mockDownload, book: mockBook, indexer: mockIndexer }]),
+        );
+
+        const result = await service.getActiveByBookId(1);
+        expect(result[0].indexerName).toBe('AudioBookBay');
+      });
+
       it('returns null indexerName for deleted-indexer case', async () => {
         db.select.mockReturnValue(
           mockDbChain([{ download: mockDownloadNoIndexer, book: mockBook, indexer: null }]),
