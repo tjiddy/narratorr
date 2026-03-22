@@ -174,6 +174,7 @@ export function DownloadCard({
                   <span>{download.seeders} seeders</span>
                 )}
                 <ProtocolBadge protocol={download.protocol} />
+                {download.indexerName && <span>{download.indexerName}</span>}
                 <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-xs font-medium ${config.bgColor} ${config.textColor}`}>
                   <StatusIcon className="w-3 h-3" />
                   {config.label}
