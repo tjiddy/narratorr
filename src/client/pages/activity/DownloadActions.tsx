@@ -18,6 +18,7 @@ export function DownloadActions({
   isApproving,
   isRejecting,
   isDeleting,
+  isRetrying,
 }: {
   download: Download;
   onCancel?: () => void;
@@ -29,6 +30,7 @@ export function DownloadActions({
   isApproving?: boolean;
   isRejecting?: boolean;
   isDeleting?: boolean;
+  isRetrying?: boolean;
 }) {
   const isRetryable = download.status === 'failed' && download.bookId != null;
   const deleteLabel = isDeleting ? 'Deleting...' : 'Delete';
@@ -65,11 +67,15 @@ export function DownloadActions({
       )}
       {isRetryable && onRetry && (
         <button
+          type="button"
           onClick={onRetry}
-          className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-opacity focus-ring"
+          disabled={isRetrying}
+          className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 disabled:opacity-50 transition-opacity focus-ring"
         >
           <RefreshCwIcon className="w-4 h-4" />
-          <span className="hidden sm:inline">Retry</span>
+          <span className="hidden sm:inline">
+            {isRetrying ? 'Retrying...' : 'Retry'}
+          </span>
         </button>
       )}
       {['queued', 'downloading', 'paused'].includes(download.status) &&
