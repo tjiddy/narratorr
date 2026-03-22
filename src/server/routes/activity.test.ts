@@ -672,4 +672,77 @@ describe('activity routes', () => {
       expect(JSON.parse(res.payload)).toEqual({ deleted: 0 });
     });
   });
+
+  describe('indexer name in responses (#57)', () => {
+    describe('GET /api/activity', () => {
+      it('includes indexerName in each download object', async () => {
+        (services.download.getAll as Mock).mockResolvedValue({
+          data: [{ ...mockDownload, indexerName: 'AudioBookBay' }],
+          total: 1,
+        });
+
+        const res = await app.inject({ method: 'GET', url: '/api/activity' });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload);
+        expect(body.data[0].indexerName).toBe('AudioBookBay');
+      });
+
+      it('returns indexerName: null for downloads with a deleted indexer', async () => {
+        (services.download.getAll as Mock).mockResolvedValue({
+          data: [{ ...mockDownload, indexerId: null, indexerName: null }],
+          total: 1,
+        });
+
+        const res = await app.inject({ method: 'GET', url: '/api/activity' });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload);
+        expect(body.data[0].indexerName).toBeNull();
+      });
+    });
+
+    describe('GET /api/activity/active', () => {
+      it('includes indexerName in response', async () => {
+        (services.download.getActive as Mock).mockResolvedValue([
+          { ...mockDownload, indexerName: 'AudioBookBay' },
+        ]);
+
+        const res = await app.inject({ method: 'GET', url: '/api/activity/active' });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload);
+        expect(body[0].indexerName).toBe('AudioBookBay');
+      });
+    });
+
+    describe('GET /api/activity/:id', () => {
+      it('returns indexerName for an existing indexer', async () => {
+        (services.download.getById as Mock).mockResolvedValue({
+          ...mockDownload,
+          indexerName: 'AudioBookBay',
+        });
+
+        const res = await app.inject({ method: 'GET', url: '/api/activity/1' });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload);
+        expect(body.indexerName).toBe('AudioBookBay');
+      });
+
+      it('returns indexerName: null for a deleted indexer', async () => {
+        (services.download.getById as Mock).mockResolvedValue({
+          ...mockDownload,
+          indexerId: null,
+          indexerName: null,
+        });
+
+        const res = await app.inject({ method: 'GET', url: '/api/activity/1' });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.payload);
+        expect(body.indexerName).toBeNull();
+      });
+    });
+  });
 });
