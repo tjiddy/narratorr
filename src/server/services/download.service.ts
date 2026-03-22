@@ -12,7 +12,6 @@ import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import type { DownloadRow } from './types.js';
 
 type BookRow = typeof books.$inferSelect;
-type IndexerRow = typeof indexers.$inferSelect;
 
 export interface DownloadWithBook extends DownloadRow {
   book?: BookRow;
