@@ -4,7 +4,8 @@ import type { DownloadStatus } from '../../../shared/schemas.js';
 export interface Download {
   id: number;
   bookId?: number | null;
-  indexerId?: number;
+  indexerId?: number | null;
+  indexerName?: string | null;
   downloadClientId?: number;
   title: string;
   protocol: 'torrent' | 'usenet';
