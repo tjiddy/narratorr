@@ -44,6 +44,7 @@ const mockDownload: DownloadWithBook = {
   addedAt: new Date(),
   completedAt: null,
   progressUpdatedAt: null,
+  indexerName: null,
 };
 
 function createDeps(overrides?: Partial<RetrySearchDeps>): RetrySearchDeps {
