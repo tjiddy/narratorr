@@ -60,7 +60,8 @@ export function useActivity(queueParams: ActivityListParams = {}, historyParams:
   const deleteMutation = useMutation({
     mutationFn: ({ id, bookId }: { id: number; bookId?: number | null }) =>
       api.deleteHistoryDownload(id).then((result) => ({ ...result, bookId })),
-    onMutate: ({ id }) => {
+    onMutate: async ({ id }) => {
+      await queryClient.cancelQueries({ queryKey: ['activity'] });
       type HistoryCache = { data: Download[]; total: number };
       const entries = queryClient.getQueriesData<HistoryCache>({ queryKey: ['activity'] });
       const snapshot: [QueryKey, HistoryCache][] = [];

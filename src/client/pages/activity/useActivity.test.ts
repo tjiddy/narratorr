@@ -458,4 +458,63 @@ describe('useActivity', () => {
     expect(invalidatedKeys).toContainEqual({ queryKey: ['activity'] });
     expect(invalidatedKeys).toContainEqual({ queryKey: queryKeys.eventHistory.root() });
   });
+
+  it('deleteMutation onMutate cancels in-flight activity queries so a stale refetch cannot overwrite the optimistic removal', async () => {
+    const targetItem = makeDownload({ id: 7, bookId: 99, status: 'completed' });
+    const otherItem = makeDownload({ id: 8, bookId: null, status: 'failed' });
+
+    const { wrapper, queryClient } = createWrapperWithClient();
+
+    let resolveStaleRefetch!: (v: { data: Download[]; total: number }) => void;
+    const staleRefetchPromise = new Promise<{ data: Download[]; total: number }>(
+      (r) => { resolveStaleRefetch = r; },
+    );
+
+    // Initial loads resolve immediately; subsequent history refetches are deferred
+    vi.mocked(api.getActivity)
+      .mockResolvedValueOnce({ data: [], total: 0 }) // queue initial
+      .mockResolvedValueOnce({ data: [targetItem, otherItem], total: 2 }) // history initial
+      .mockImplementation((params: { section?: string }) => {
+        if (params.section === 'history') return staleRefetchPromise;
+        return Promise.resolve({ data: [], total: 0 });
+      });
+
+    let resolveDelete!: (v: { success: boolean }) => void;
+    vi.mocked(api.deleteHistoryDownload).mockReturnValue(
+      new Promise<{ success: boolean }>((r) => { resolveDelete = r; }),
+    );
+
+    const { result } = renderHook(() => useActivity(), { wrapper });
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    // The hook calls useActivity() with no args so the history key is params={section:'history'}
+    const historyKey = queryKeys.activity({ section: 'history' });
+
+    // Trigger a background invalidation simulating SSE or another mutation firing
+    act(() => {
+      queryClient.invalidateQueries({ queryKey: ['activity'] });
+    });
+
+    // Delete while the refetch is still in-flight
+    act(() => {
+      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+    });
+
+    // onMutate ran: item 7 should be removed
+    await waitFor(() => {
+      const cached = queryClient.getQueryData<{ data: Download[]; total: number }>(historyKey);
+      expect(cached?.data.map((d) => d.id)).toEqual([8]);
+    });
+
+    // Resolve the stale refetch with original data still containing item 7
+    act(() => { resolveStaleRefetch({ data: [targetItem, otherItem], total: 2 }); });
+
+    // Let microtasks settle — the stale response should be discarded because cancelQueries ran
+    await act(async () => { await new Promise<void>((r) => { setTimeout(r, 50); }); });
+
+    const cached = queryClient.getQueryData<{ data: Download[]; total: number }>(historyKey);
+    expect(cached?.data.map((d) => d.id)).not.toContain(7);
+
+    resolveDelete({ success: true });
+  });
 });
