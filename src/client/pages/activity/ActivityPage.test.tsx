@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { ActivityPage } from './ActivityPage';
@@ -423,6 +423,202 @@ describe('ActivityPage', () => {
 
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith('Failed to delete download');
+      });
+    });
+
+    it('card is removed from the list immediately (before delete API resolves) — optimistic update', async () => {
+      const user = userEvent.setup();
+      let resolveDelete!: (v: { success: boolean }) => void;
+      vi.mocked(api.deleteHistoryDownload).mockReturnValue(
+        new Promise<{ success: boolean }>((r) => { resolveDelete = r; }),
+      );
+
+      const item = makeDownload({ id: 13, title: 'Optimistic Delete', status: 'completed' });
+      mockActivitySections([], [item]);
+
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByText('Optimistic Delete')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /delete/i }));
+
+      // Card should disappear before the promise resolves
+      await waitFor(() => {
+        expect(screen.queryByText('Optimistic Delete')).not.toBeInTheDocument();
+      });
+
+      resolveDelete({ success: true });
+    });
+
+    it('card reappears in the list when delete fails (rollback from optimistic removal)', async () => {
+      const user = userEvent.setup();
+      const { toast } = await import('sonner');
+
+      let rejectDelete!: (e: Error) => void;
+      vi.mocked(api.deleteHistoryDownload).mockReturnValue(
+        new Promise<{ success: boolean }>((_, rej) => { rejectDelete = rej; }),
+      );
+
+      const item = makeDownload({ id: 14, title: 'Rollback Me', status: 'completed' });
+      mockActivitySections([], [item]);
+
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByText('Rollback Me')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /delete/i }));
+
+      // Verify optimistic removal
+      await waitFor(() => {
+        expect(screen.queryByText('Rollback Me')).not.toBeInTheDocument();
+      });
+
+      // Reject → card should reappear
+      act(() => { rejectDelete(new Error('Server error')); });
+
+      await waitFor(() => {
+        expect(screen.getByText('Rollback Me')).toBeInTheDocument();
+      });
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to delete download');
+      });
+    });
+
+    it('success toast shown and card stays removed after delete resolves', async () => {
+      const user = userEvent.setup();
+      const { toast } = await import('sonner');
+
+      let resolveDelete!: (v: { success: boolean }) => void;
+      vi.mocked(api.deleteHistoryDownload).mockReturnValue(
+        new Promise<{ success: boolean }>((r) => { resolveDelete = r; }),
+      );
+
+      const item = makeDownload({ id: 15, title: 'Stay Gone', status: 'completed' });
+      // Initial call returns item; subsequent calls (after invalidation) return empty
+      let historyCallCount = 0;
+      vi.mocked(api.getActivity).mockImplementation((params) => {
+        if (params?.section === 'history') {
+          historyCallCount++;
+          if (historyCallCount === 1) return Promise.resolve({ data: [item], total: 1 });
+          return Promise.resolve({ data: [], total: 0 });
+        }
+        return Promise.resolve({ data: [], total: 0 });
+      });
+
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByText('Stay Gone')).toBeInTheDocument());
+
+      await user.click(screen.getByRole('button', { name: /delete/i }));
+
+      // Optimistic removal
+      await waitFor(() => {
+        expect(screen.queryByText('Stay Gone')).not.toBeInTheDocument();
+      });
+
+      // No "Deleting..." label visible during optimistic removal
+      expect(screen.queryByText('Deleting...')).not.toBeInTheDocument();
+
+      act(() => { resolveDelete({ success: true }); });
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Download deleted');
+      });
+      expect(screen.queryByText('Stay Gone')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('retry loading state', () => {
+    it('retry button is disabled and shows Retrying... while retryMutation is pending', async () => {
+      const user = userEvent.setup();
+      let resolveRetry!: (v: ReturnType<typeof makeDownload>) => void;
+      vi.mocked(api.retryDownload).mockReturnValue(
+        new Promise<ReturnType<typeof makeDownload>>((r) => { resolveRetry = r; }),
+      );
+
+      const item = makeDownload({ id: 20, bookId: 1, title: 'Retry Me', status: 'failed' });
+      mockActivitySections([], [item]);
+
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByText('Retry Me')).toBeInTheDocument());
+
+      const retryBtn = screen.getByText('Retry').closest('button')!;
+      await user.click(retryBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText('Retrying...')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Retrying...').closest('button')).toBeDisabled();
+
+      resolveRetry(makeDownload({ id: 20, status: 'queued' }));
+    });
+
+    it('all retry buttons across all cards are disabled while any retry is in-flight', async () => {
+      const user = userEvent.setup();
+      let resolveRetry!: (v: ReturnType<typeof makeDownload>) => void;
+      vi.mocked(api.retryDownload).mockReturnValue(
+        new Promise<ReturnType<typeof makeDownload>>((r) => { resolveRetry = r; }),
+      );
+
+      const item1 = makeDownload({ id: 30, bookId: 1, title: 'Failed A', status: 'failed' });
+      const item2 = makeDownload({ id: 31, bookId: 2, title: 'Failed B', status: 'failed' });
+      mockActivitySections([], [item1, item2]);
+
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByText('Failed A')).toBeInTheDocument());
+
+      // Click retry on first card
+      const retryBtns = screen.getAllByText('Retry');
+      await user.click(retryBtns[0].closest('button')!);
+
+      // Both retry buttons should show Retrying...
+      await waitFor(() => {
+        expect(screen.getAllByText('Retrying...')).toHaveLength(2);
+      });
+
+      resolveRetry(makeDownload({ id: 30, status: 'queued' }));
+    });
+
+    it('retry button returns to enabled Retry label after mutation succeeds', async () => {
+      const user = userEvent.setup();
+      let resolveRetry!: (v: ReturnType<typeof makeDownload>) => void;
+      vi.mocked(api.retryDownload).mockReturnValue(
+        new Promise<ReturnType<typeof makeDownload>>((r) => { resolveRetry = r; }),
+      );
+
+      const item = makeDownload({ id: 40, bookId: 1, title: 'Retry Success', status: 'failed' });
+      mockActivitySections([], [item]);
+
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByText('Retry Success')).toBeInTheDocument());
+
+      await user.click(screen.getByText('Retry').closest('button')!);
+      await waitFor(() => expect(screen.getByText('Retrying...')).toBeInTheDocument());
+
+      act(() => { resolveRetry(makeDownload({ id: 40, status: 'queued' })); });
+
+      await waitFor(() => {
+        expect(screen.queryByText('Retrying...')).not.toBeInTheDocument();
+      });
+    });
+
+    it('retry button returns to enabled Retry label after mutation fails', async () => {
+      const user = userEvent.setup();
+      let rejectRetry!: (e: Error) => void;
+      vi.mocked(api.retryDownload).mockReturnValue(
+        new Promise<ReturnType<typeof makeDownload>>((_, rej) => { rejectRetry = rej; }),
+      );
+
+      const item = makeDownload({ id: 41, bookId: 1, title: 'Retry Fail', status: 'failed' });
+      mockActivitySections([], [item]);
+
+      renderWithProviders(<ActivityPage />);
+      await waitFor(() => expect(screen.getByText('Retry Fail')).toBeInTheDocument());
+
+      await user.click(screen.getByText('Retry').closest('button')!);
+      await waitFor(() => expect(screen.getByText('Retrying...')).toBeInTheDocument());
+
+      act(() => { rejectRetry(new Error('server error')); });
+
+      await waitFor(() => {
+        expect(screen.queryByText('Retrying...')).not.toBeInTheDocument();
       });
     });
   });
