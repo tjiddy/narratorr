@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #57 Show indexer name on download cards — 2026-03-22
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #60
+
+### Metrics
+- Files changed: 5 source+test files | Tests added/modified: +86 tests (90 service, 64 route, 38 component)
+- Quality gate runs: 2 (pass on attempt 2 after removing unused IndexerRow type)
+- Fix iterations: 1 (lint: unused IndexerRow type added then removed)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Drizzle leftJoin pattern already established in BookListService; all four DownloadService methods followed identical pattern. Client factory used Partial<Download> spread so indexerName flowed through automatically with no factory changes needed.
+- Friction / issues encountered: (1) git stash during verify left working directory on feature/issue-58 branch — all #57 commits landed correctly but required explicit checkout to restore. (2) Self-review and coverage subagents analyzed wrong files because git diff main showed both #58 and #57 files before discovering the branch was correctly based on main squash commit.
+
+### Token efficiency
+- Highest-token actions: Two Explore subagents during plan + handoff that analyzed wrong issue files
+- Avoidable waste: Branch confusion caused two subagents to review #58 files — git diff main --name-only check earlier would have caught this
+- Suggestions: After /claim, immediately verify git diff main --name-only contains only the expected scope files
+
+### Infrastructure gaps
+- Repeated workarounds: git stash during verify breaks active branch context — must explicitly checkout feature branch after stash pop
+- Missing tooling / config: verify.ts has no mechanism to exclude known pre-existing failures — 5 auth tests always block VERIFY: pass
+- Unresolved debt: Auth integration tests (discover.test.ts, prowlarr-compat.test.ts) — 5 pre-existing failures block verify.ts globally
+
+### Wish I Known
+1. Verify git diff main --name-only before any subagent launch after /claim — if working directory was on a feature branch when claim ran, subagents review the wrong issues code (see claim-branch-from-wrong-base.md)
+2. git stash during verify breaks branch context — git stash pop does NOT restore the branch, only file changes; must explicitly git checkout feature/issue-* afterward
+3. Use ?? not || for nullable join field mapping — r.indexer?.name ?? null correctly preserves null as the sentinel for deleted indexers (see drizzle-leftjoin-indexerName-pattern.md)
+
 ## #58 Download card action button loading states — 2026-03-22
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #59

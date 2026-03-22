@@ -35,3 +35,5 @@ No active items. All prior debt graduated and resolved in #448.
 - **src/client/pages/activity/ActivityPage.tsx**: `usePagination.clampToTotal()` useEffect not covered by tests — pagination clamping behavior when totals shrink is untested. Low risk but gap noted. (discovered in #58)
 - **src/client/pages/activity/DownloadCard.tsx**: Seeders visibility for usenet protocol (`download.protocol !== 'usenet'` guard) has no test. Pre-existing gap. (discovered in #58)
 - **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 auth-related tests failing on `main` — pre-existing broken tests unrelated to activity page work. Needs investigation. (noted in #58)
+
+- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 auth integration tests failing on main (returns 401 when no auth credentials, rejects routes without credentials). Pre-existing before #57, not introduced here. Blocks `verify.ts VERIFY: pass` globally. (discovered in #57)
