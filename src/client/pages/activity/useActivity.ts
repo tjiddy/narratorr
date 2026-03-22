@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type Download, type ActivityListParams } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -60,16 +60,39 @@ export function useActivity(queueParams: ActivityListParams = {}, historyParams:
   const deleteMutation = useMutation({
     mutationFn: ({ id, bookId }: { id: number; bookId?: number | null }) =>
       api.deleteHistoryDownload(id).then((result) => ({ ...result, bookId })),
-    onSuccess: ({ bookId }) => {
+    onMutate: ({ id }) => {
+      type HistoryCache = { data: Download[]; total: number };
+      const entries = queryClient.getQueriesData<HistoryCache>({ queryKey: ['activity'] });
+      const snapshot: [QueryKey, HistoryCache][] = [];
+      for (const [key, data] of entries) {
+        if (!data) continue;
+        const params = key[1] as (ActivityListParams & { section?: string }) | undefined;
+        if (params?.section !== 'history') continue;
+        snapshot.push([key, data]);
+        queryClient.setQueryData<HistoryCache>(key, {
+          data: data.data.filter((d) => d.id !== id),
+          total: Math.max(0, data.total - 1),
+        });
+      }
+      return { snapshot };
+    },
+    onSuccess: () => {
+      toast.success('Download deleted');
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.snapshot) {
+        for (const [key, data] of context.snapshot) {
+          queryClient.setQueryData(key, data);
+        }
+      }
+      toast.error('Failed to delete download');
+    },
+    onSettled: (_data, _err, { bookId }) => {
       invalidateActivity();
       queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
       if (bookId != null) {
         queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.byBookId(bookId) });
       }
-      toast.success('Download deleted');
-    },
-    onError: () => {
-      toast.error('Failed to delete download');
     },
   });
 
