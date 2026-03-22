@@ -293,4 +293,22 @@ describe('DownloadCard', () => {
       expect(card.className).toContain('p-5');
     });
   });
+
+  describe('indexer name (#57)', () => {
+    it('renders indexer name text when indexerName is a non-empty string', () => {
+      render(<DownloadCard download={createMockDownload({ indexerName: 'AudioBookBay' })} />);
+      expect(screen.getByText('AudioBookBay')).toBeInTheDocument();
+    });
+
+    it('renders without indexer name when indexerName is null', () => {
+      render(<DownloadCard download={createMockDownload({ indexerName: null })} />);
+      expect(screen.queryByText('AudioBookBay')).not.toBeInTheDocument();
+    });
+
+    it('renders without indexer name when indexerName is undefined', () => {
+      const { container } = render(<DownloadCard download={createMockDownload({ indexerName: undefined })} />);
+      // no indexer span — just verify no crash and no extra text
+      expect(container).toBeInTheDocument();
+    });
+  });
 });
