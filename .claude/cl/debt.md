@@ -31,3 +31,7 @@ No active items. All prior debt graduated and resolved in #448.
 - **src/client/pages/settings/LibrarySettingsSection.tsx**: Pre-existing untested behaviors (cursor position after token insertion, pending button state text, dirty-reset after save, regex variant coverage for title/author tokens) — not introduced by #18 but visible when reading the file. Low urgency. (discovered in #18)
 - **src/client/components/ConfirmModal.tsx**: Buttons lack `type="button"` — safe only when rendered outside a `<form>`, but any future usage inside a form would silently break. Should add `type="button"` to both buttons. (discovered in #18)
 - **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 auth integration tests failing on `main` — blocking all verify runs. Root cause unknown; needs investigation before next issue. (discovered in #54)
+
+- **src/client/pages/activity/ActivityPage.tsx**: `usePagination.clampToTotal()` useEffect not covered by tests — pagination clamping behavior when totals shrink is untested. Low risk but gap noted. (discovered in #58)
+- **src/client/pages/activity/DownloadCard.tsx**: Seeders visibility for usenet protocol (`download.protocol !== 'usenet'` guard) has no test. Pre-existing gap. (discovered in #58)
+- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 auth-related tests failing on `main` — pre-existing broken tests unrelated to activity page work. Needs investigation. (noted in #58)

@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #58 Download card action button loading states — 2026-03-22
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #59
+
+### Metrics
+- Files changed: 5 source + 3 test | Tests added/modified: 168 total (167 activity + 1 multi-page)
+- Quality gate runs: 1 (VERIFY: fail due to 5 pre-existing server failures, not new failures)
+- Fix iterations: 1 (ESLint complexity — `PendingActionButtons` extraction)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: TDD cycle was clean — onMutate/onError implementation matched the spec exactly; deferred promise pattern for optimistic tests worked first try
+- Friction / issues encountered: (1) ESLint complexity rule counted JSX ternaries — extracting `retryLabel` to a const didn't reduce complexity, needed sub-component extraction. (2) Git remote had stale embedded token after ~1hr — needed manual refresh via scripts/lib.ts. (3) `act` not imported in ActivityPage.test.tsx — needed import addition before rollback tests could run.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for self-review (detailed analysis of all 4 changed files)
+- Avoidable waste: Second Explore subagent (coverage review) was thorough but 3/4 flagged gaps were pre-existing, not new; could have been faster
+- Suggestions: Coverage review prompt could filter to only NEW behaviors in the diff, not all behaviors in touched files
+
+### Infrastructure gaps
+- Repeated workarounds: Git remote token refresh — happens every time the implementation takes >1hr. Should be automated in the push step.
+- Missing tooling / config: No wrapper script that auto-refreshes the remote token before git push
+- Unresolved debt: 5 pre-existing failing tests in discover/prowlarr-compat; pagination clamping untested; seeders-usenet guard untested
+
+### Wish I'd Known
+1. The activity cache is paginated — `['activity', params]` produces multiple cache entries (different offsets), not one. `setQueryData` on a single key would silently miss other pages; `getQueriesData` with section filtering is required.
+2. ESLint complexity counts every `&&` and `? :` in JSX, not just control flow. Adding one loading-state ternary to a component at the limit requires extracting a sub-component, not just a const variable.
+3. The git remote embeds a time-limited installation token. After ~1hr of work the token expires and `git push` fails silently with "Authentication failed" — refresh via `scripts/lib.ts` before pushing.
+
 ## #54 Delete download history items — 2026-03-21
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #56
