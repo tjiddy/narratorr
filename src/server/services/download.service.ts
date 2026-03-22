@@ -1,7 +1,7 @@
 import { eq, desc, inArray, and, count, sql } from 'drizzle-orm';
 import { type Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books } from '../../db/schema.js';
+import { downloads, books, indexers } from '../../db/schema.js';
 import { parseInfoHash, type DownloadProtocol } from '../../core/index.js';
 import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses, isTerminalStatus } from '../../shared/download-status-registry.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
@@ -12,9 +12,11 @@ import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import type { DownloadRow } from './types.js';
 
 type BookRow = typeof books.$inferSelect;
+type IndexerRow = typeof indexers.$inferSelect;
 
 export interface DownloadWithBook extends DownloadRow {
   book?: BookRow;
+  indexerName: string | null;
 }
 
 export type RetryResult =
@@ -61,9 +63,11 @@ export class DownloadService {
       .select({
         download: downloads,
         book: books,
+        indexer: indexers,
       })
       .from(downloads)
       .leftJoin(books, eq(downloads.bookId, books.id))
+      .leftJoin(indexers, eq(downloads.indexerId, indexers.id))
       .where(where)
       .orderBy(desc(downloads.addedAt), desc(downloads.id));
 
@@ -79,6 +83,7 @@ export class DownloadService {
     const data = results.map((r) => ({
       ...r.download,
       book: r.book || undefined,
+      indexerName: r.indexer?.name ?? null,
     }));
 
     return { data, total };
@@ -89,9 +94,11 @@ export class DownloadService {
       .select({
         download: downloads,
         book: books,
+        indexer: indexers,
       })
       .from(downloads)
       .leftJoin(books, eq(downloads.bookId, books.id))
+      .leftJoin(indexers, eq(downloads.indexerId, indexers.id))
       .where(eq(downloads.id, id))
       .limit(1);
 
@@ -100,6 +107,7 @@ export class DownloadService {
     return {
       ...results[0].download,
       book: results[0].book || undefined,
+      indexerName: results[0].indexer?.name ?? null,
     };
   }
 
@@ -110,15 +118,18 @@ export class DownloadService {
       .select({
         download: downloads,
         book: books,
+        indexer: indexers,
       })
       .from(downloads)
       .leftJoin(books, eq(downloads.bookId, books.id))
+      .leftJoin(indexers, eq(downloads.indexerId, indexers.id))
       .where(inArray(downloads.status, activeStatuses))
       .orderBy(desc(downloads.addedAt));
 
     return results.map((r) => ({
       ...r.download,
       book: r.book || undefined,
+      indexerName: r.indexer?.name ?? null,
     }));
   }
 
@@ -152,9 +163,11 @@ export class DownloadService {
       .select({
         download: downloads,
         book: books,
+        indexer: indexers,
       })
       .from(downloads)
       .leftJoin(books, eq(downloads.bookId, books.id))
+      .leftJoin(indexers, eq(downloads.indexerId, indexers.id))
       .where(and(
         inArray(downloads.status, activeStatuses),
         eq(downloads.bookId, bookId),
@@ -164,6 +177,7 @@ export class DownloadService {
     return results.map((r) => ({
       ...r.download,
       book: r.book || undefined,
+      indexerName: r.indexer?.name ?? null,
     }));
   }
 
