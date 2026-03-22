@@ -298,6 +298,45 @@ describe('useActivity', () => {
     resolveDelete({ success: true });
   });
 
+  it('deleteMutation onMutate patches all history page caches when item spans multiple paginated entries', async () => {
+    const targetItem = makeDownload({ id: 7, bookId: 99, status: 'completed' });
+    const otherItem = makeDownload({ id: 8, bookId: null, status: 'failed' });
+
+    const { wrapper, queryClient } = createWrapperWithClient();
+
+    // Seed two different history pages (different offsets)
+    const historyPage1 = queryKeys.activity({ section: 'history', limit: 10, offset: 0 });
+    const historyPage2 = queryKeys.activity({ section: 'history', limit: 10, offset: 10 });
+    queryClient.setQueryData(historyPage1, { data: [targetItem, otherItem], total: 12 });
+    queryClient.setQueryData(historyPage2, { data: [targetItem], total: 12 });
+
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    let resolveDelete!: (v: { success: boolean }) => void;
+    vi.mocked(api.deleteHistoryDownload).mockReturnValue(
+      new Promise<{ success: boolean }>((r) => { resolveDelete = r; }),
+    );
+
+    const { result } = renderHook(() => useActivity(), { wrapper });
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    act(() => {
+      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+    });
+
+    // Both history pages should have the item removed and total decremented
+    await waitFor(() => {
+      const page1 = queryClient.getQueryData<{ data: Download[]; total: number }>(historyPage1);
+      expect(page1?.data.map((d) => d.id)).toEqual([8]);
+      expect(page1?.total).toBe(11);
+    });
+
+    const page2 = queryClient.getQueryData<{ data: Download[]; total: number }>(historyPage2);
+    expect(page2?.data).toHaveLength(0);
+    expect(page2?.total).toBe(11);
+
+    resolveDelete({ success: true });
+  });
+
   it('deleteMutation onMutate leaves queue cache entries untouched', async () => {
     const queueItem = makeDownload({ id: 5, status: 'downloading' });
     const historyItem = makeDownload({ id: 7, bookId: 99, status: 'completed' });
