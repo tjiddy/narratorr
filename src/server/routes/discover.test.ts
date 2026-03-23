@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import type { Mock } from 'vitest';
 import Fastify from 'fastify';
-
-vi.mock('../config.js', () => ({ config: { authBypass: false, isDev: true } }));
 import cookie from '@fastify/cookie';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';

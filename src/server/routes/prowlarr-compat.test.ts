@@ -2,8 +2,6 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi, type Mock } 
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import authPlugin from '../plugins/auth.js';
-
-vi.mock('../config.js', () => ({ config: { authBypass: false, isDev: true } }));
 import type { AuthService } from '../services/auth.service.js';
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
