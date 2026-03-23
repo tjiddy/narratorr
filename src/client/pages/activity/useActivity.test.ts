@@ -3,6 +3,7 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { useActivity } from './useActivity';
+import type { ActivityListParams } from '@/lib/api/activity';
 import type { Download } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 
@@ -264,6 +265,177 @@ describe('useActivity', () => {
     );
   });
 
+  it('deleteMutation onMutate removes the target item from all matching history activity cache entries and decrements total', async () => {
+    const item1 = makeDownload({ id: 7, bookId: 99, status: 'completed' });
+    const item2 = makeDownload({ id: 8, bookId: null, status: 'failed' });
+
+    const { wrapper, queryClient } = createWrapperWithClient();
+
+    // Pre-populate a history cache entry
+    const historyKey = queryKeys.activity({ section: 'history', limit: 10, offset: 0 });
+    queryClient.setQueryData(historyKey, { data: [item1, item2], total: 2 });
+
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    // Use a deferred promise so onMutate runs but mutation doesn't complete
+    let resolveDelete!: (v: { success: boolean }) => void;
+    vi.mocked(api.deleteHistoryDownload).mockReturnValue(
+      new Promise<{ success: boolean }>((r) => { resolveDelete = r; }),
+    );
+
+    const { result } = renderHook(() => useActivity(), { wrapper });
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    act(() => {
+      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+    });
+
+    // onMutate should have run synchronously — cache should be updated before resolve
+    await waitFor(() => {
+      const cached = queryClient.getQueryData<{ data: Download[]; total: number }>(historyKey);
+      expect(cached?.data.map((d) => d.id)).toEqual([8]);
+      expect(cached?.total).toBe(1);
+    });
+
+    resolveDelete({ success: true });
+  });
+
+  it('deleteMutation onMutate patches all history page caches when item spans multiple paginated entries', async () => {
+    const targetItem = makeDownload({ id: 7, bookId: 99, status: 'completed' });
+    const otherItem = makeDownload({ id: 8, bookId: null, status: 'failed' });
+
+    const { wrapper, queryClient } = createWrapperWithClient();
+
+    // Seed two different history pages (different offsets)
+    const historyPage1 = queryKeys.activity({ section: 'history', limit: 10, offset: 0 });
+    const historyPage2 = queryKeys.activity({ section: 'history', limit: 10, offset: 10 });
+    queryClient.setQueryData(historyPage1, { data: [targetItem, otherItem], total: 12 });
+    queryClient.setQueryData(historyPage2, { data: [targetItem], total: 12 });
+
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    let resolveDelete!: (v: { success: boolean }) => void;
+    vi.mocked(api.deleteHistoryDownload).mockReturnValue(
+      new Promise<{ success: boolean }>((r) => { resolveDelete = r; }),
+    );
+
+    const { result } = renderHook(() => useActivity(), { wrapper });
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    act(() => {
+      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+    });
+
+    // Both history pages should have the item removed and total decremented
+    await waitFor(() => {
+      const page1 = queryClient.getQueryData<{ data: Download[]; total: number }>(historyPage1);
+      expect(page1?.data.map((d) => d.id)).toEqual([8]);
+      expect(page1?.total).toBe(11);
+    });
+
+    const page2 = queryClient.getQueryData<{ data: Download[]; total: number }>(historyPage2);
+    expect(page2?.data).toHaveLength(0);
+    expect(page2?.total).toBe(11);
+
+    resolveDelete({ success: true });
+  });
+
+  it('deleteMutation onMutate leaves queue cache entries untouched', async () => {
+    const queueItem = makeDownload({ id: 5, status: 'downloading' });
+    const historyItem = makeDownload({ id: 7, bookId: 99, status: 'completed' });
+
+    const { wrapper, queryClient } = createWrapperWithClient();
+
+    const queueKey = queryKeys.activity({ section: 'queue', limit: 10, offset: 0 });
+    const historyKey = queryKeys.activity({ section: 'history', limit: 10, offset: 0 });
+    queryClient.setQueryData(queueKey, { data: [queueItem], total: 1 });
+    queryClient.setQueryData(historyKey, { data: [historyItem], total: 1 });
+
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    let resolveDelete!: (v: { success: boolean }) => void;
+    vi.mocked(api.deleteHistoryDownload).mockReturnValue(
+      new Promise<{ success: boolean }>((r) => { resolveDelete = r; }),
+    );
+
+    const { result } = renderHook(() => useActivity(), { wrapper });
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    act(() => {
+      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+    });
+
+    await waitFor(() => {
+      const history = queryClient.getQueryData<{ data: Download[]; total: number }>(historyKey);
+      expect(history?.data).toHaveLength(0);
+    });
+
+    // Queue should be untouched
+    const queue = queryClient.getQueryData<{ data: Download[]; total: number }>(queueKey);
+    expect(queue?.data).toHaveLength(1);
+    expect(queue?.total).toBe(1);
+
+    resolveDelete({ success: true });
+  });
+
+  it('deleteMutation onError restores both data and total from the onMutate snapshot', async () => {
+    const item1 = makeDownload({ id: 7, bookId: 99, status: 'completed' });
+    const item2 = makeDownload({ id: 8, bookId: null, status: 'failed' });
+
+    const { wrapper, queryClient } = createWrapperWithClient();
+    const historyKey = queryKeys.activity({ section: 'history', limit: 10, offset: 0 });
+    queryClient.setQueryData(historyKey, { data: [item1, item2], total: 2 });
+
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    let rejectDelete!: (e: Error) => void;
+    vi.mocked(api.deleteHistoryDownload).mockReturnValue(
+      new Promise<{ success: boolean }>((_, rej) => { rejectDelete = rej; }),
+    );
+
+    const { result } = renderHook(() => useActivity(), { wrapper });
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    act(() => {
+      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+    });
+
+    // Verify optimistic removal happened
+    await waitFor(() => {
+      const cached = queryClient.getQueryData<{ data: Download[]; total: number }>(historyKey);
+      expect(cached?.data).toHaveLength(1);
+    });
+
+    // Reject → should restore
+    act(() => { rejectDelete(new Error('Server error')); });
+
+    await waitFor(() => {
+      const cached = queryClient.getQueryData<{ data: Download[]; total: number }>(historyKey);
+      expect(cached?.data.map((d) => d.id)).toEqual([7, 8]);
+      expect(cached?.total).toBe(2);
+    });
+  });
+
+  it('deleteMutation onSettled invalidates activity, eventHistory.root(), and eventHistory.byBookId() when bookId is non-null', async () => {
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.deleteHistoryDownload).mockResolvedValue({ success: true });
+
+    const { wrapper, queryClient } = createWrapperWithClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const { result } = renderHook(() => useActivity(), { wrapper });
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    await act(async () => {
+      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+    });
+
+    await waitFor(() => {
+      expect(api.deleteHistoryDownload).toHaveBeenCalledWith(7);
+    });
+
+    const invalidatedKeys = invalidateSpy.mock.calls.map((c) => c[0]);
+    expect(invalidatedKeys).toContainEqual({ queryKey: ['activity'] });
+    expect(invalidatedKeys).toContainEqual({ queryKey: queryKeys.eventHistory.root() });
+    expect(invalidatedKeys).toContainEqual({ queryKey: queryKeys.eventHistory.byBookId(99) });
+  });
+
   it('deleteHistoryMutation calls deleteDownloadHistory and invalidates eventHistory.root()', async () => {
     vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
     vi.mocked(api.deleteDownloadHistory).mockResolvedValue({ deleted: 3 });
@@ -286,5 +458,64 @@ describe('useActivity', () => {
     const invalidatedKeys = invalidateSpy.mock.calls.map((c) => c[0]);
     expect(invalidatedKeys).toContainEqual({ queryKey: ['activity'] });
     expect(invalidatedKeys).toContainEqual({ queryKey: queryKeys.eventHistory.root() });
+  });
+
+  it('deleteMutation onMutate cancels in-flight activity queries so a stale refetch cannot overwrite the optimistic removal', async () => {
+    const targetItem = makeDownload({ id: 7, bookId: 99, status: 'completed' });
+    const otherItem = makeDownload({ id: 8, bookId: null, status: 'failed' });
+
+    const { wrapper, queryClient } = createWrapperWithClient();
+
+    let resolveStaleRefetch!: (v: { data: Download[]; total: number }) => void;
+    const staleRefetchPromise = new Promise<{ data: Download[]; total: number }>(
+      (r) => { resolveStaleRefetch = r; },
+    );
+
+    // Initial loads resolve immediately; subsequent history refetches are deferred
+    vi.mocked(api.getActivity)
+      .mockResolvedValueOnce({ data: [], total: 0 }) // queue initial
+      .mockResolvedValueOnce({ data: [targetItem, otherItem], total: 2 }) // history initial
+      .mockImplementation((params?: ActivityListParams) => {
+        if (params?.section === 'history') return staleRefetchPromise;
+        return Promise.resolve({ data: [], total: 0 });
+      });
+
+    let resolveDelete!: (v: { success: boolean }) => void;
+    vi.mocked(api.deleteHistoryDownload).mockReturnValue(
+      new Promise<{ success: boolean }>((r) => { resolveDelete = r; }),
+    );
+
+    const { result } = renderHook(() => useActivity(), { wrapper });
+    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+
+    // The hook calls useActivity() with no args so the history key is params={section:'history'}
+    const historyKey = queryKeys.activity({ section: 'history' });
+
+    // Trigger a background invalidation simulating SSE or another mutation firing
+    act(() => {
+      queryClient.invalidateQueries({ queryKey: ['activity'] });
+    });
+
+    // Delete while the refetch is still in-flight
+    act(() => {
+      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+    });
+
+    // onMutate ran: item 7 should be removed
+    await waitFor(() => {
+      const cached = queryClient.getQueryData<{ data: Download[]; total: number }>(historyKey);
+      expect(cached?.data.map((d) => d.id)).toEqual([8]);
+    });
+
+    // Resolve the stale refetch with original data still containing item 7
+    act(() => { resolveStaleRefetch({ data: [targetItem, otherItem], total: 2 }); });
+
+    // Let microtasks settle — the stale response should be discarded because cancelQueries ran
+    await act(async () => { await new Promise<void>((r) => { setTimeout(r, 50); }); });
+
+    const cached = queryClient.getQueryData<{ data: Download[]; total: number }>(historyKey);
+    expect(cached?.data.map((d) => d.id)).not.toContain(7);
+
+    resolveDelete({ success: true });
   });
 });

@@ -58,6 +58,23 @@ describe('DownloadActions', () => {
 
       expect(screen.queryByText('Retry')).not.toBeInTheDocument();
     });
+
+    it('disables retry button and shows Retrying... label when isRetrying is true', () => {
+      const download = createMockDownload({ status: 'failed', bookId: 1 });
+      render(<DownloadActions download={download} onRetry={vi.fn()} isRetrying />);
+
+      const button = screen.getByRole('button', { name: /retrying/i });
+      expect(button).toBeDisabled();
+      expect(button).toHaveTextContent('Retrying...');
+    });
+
+    it('enables retry button and shows Retry label when isRetrying is false', () => {
+      const download = createMockDownload({ status: 'failed', bookId: 1 });
+      render(<DownloadActions download={download} onRetry={vi.fn()} isRetrying={false} />);
+
+      const button = screen.getByRole('button', { name: /^retry$/i });
+      expect(button).not.toBeDisabled();
+    });
   });
 
   describe('cancel button', () => {

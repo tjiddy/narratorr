@@ -131,6 +131,7 @@ export function ActivityPage() {
                     isCancelling={cancelMutation.isPending}
                     isApproving={approveMutation.isPending}
                     isRejecting={rejectMutation.isPending}
+                    isRetrying={retryMutation.isPending}
                     index={index}
                   />
                 ))}
@@ -187,6 +188,7 @@ export function ActivityPage() {
                     onRetry={() => retryMutation.mutate(download.id)}
                     onDelete={() => deleteMutation.mutate({ id: download.id, bookId: download.bookId })}
                     isDeleting={deleteMutation.isPending && deleteMutation.variables?.id === download.id}
+                    isRetrying={retryMutation.isPending}
                     showProgress={false}
                     index={index}
                     compact

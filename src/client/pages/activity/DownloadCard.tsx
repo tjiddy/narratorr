@@ -123,6 +123,7 @@ export function DownloadCard({
   isApproving,
   isRejecting,
   isDeleting,
+  isRetrying,
   showProgress = true,
   index = 0,
   compact = false,
@@ -137,6 +138,7 @@ export function DownloadCard({
   isApproving?: boolean;
   isRejecting?: boolean;
   isDeleting?: boolean;
+  isRetrying?: boolean;
   showProgress?: boolean;
   index?: number;
   compact?: boolean;
@@ -192,6 +194,7 @@ export function DownloadCard({
                 isApproving={isApproving}
                 isRejecting={isRejecting}
                 isDeleting={isDeleting}
+                isRetrying={isRetrying}
               />
             )}
           </div>
