@@ -3,6 +3,7 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement } from 'react';
 import { useActivity } from './useActivity';
+import type { ActivityListParams } from '@/lib/api/activity';
 import type { Download } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 
@@ -474,8 +475,8 @@ describe('useActivity', () => {
     vi.mocked(api.getActivity)
       .mockResolvedValueOnce({ data: [], total: 0 }) // queue initial
       .mockResolvedValueOnce({ data: [targetItem, otherItem], total: 2 }) // history initial
-      .mockImplementation((params: { section?: string }) => {
-        if (params.section === 'history') return staleRefetchPromise;
+      .mockImplementation((params?: ActivityListParams) => {
+        if (params?.section === 'history') return staleRefetchPromise;
         return Promise.resolve({ data: [], total: 0 });
       });
 
