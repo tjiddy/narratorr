@@ -133,6 +133,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
       title: result.title,
       protocol: result.protocol,
       bookId: book.id,
+      indexerId: result.indexerId,
       size: result.size,
       seeders: result.seeders,
     });

@@ -56,6 +56,7 @@ const mockResults: SearchResult[] = [
     size: 5 * 1024 * 1024 * 1024,
     seeders: 24,
     indexer: 'AudioBookBay',
+    indexerId: 3,
   },
   {
     title: 'Way of Kings (Graphic Audio)',
@@ -182,6 +183,7 @@ describe('SearchReleasesModal', () => {
           downloadUrl: 'magnet:?xt=urn:btih:abc123',
           title: 'The Way of Kings [Unabridged]',
           bookId: 1,
+          indexerId: 3,
         }),
       );
     });

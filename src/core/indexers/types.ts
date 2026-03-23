@@ -13,6 +13,7 @@ export interface SearchResult {
   leechers?: number;
   grabs?: number;
   indexer: string;
+  indexerId?: number;
   detailsUrl?: string;
   coverUrl?: string;
   matchScore?: number;
