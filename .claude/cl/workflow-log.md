@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #57 Show indexer name on download cards — 2026-03-23
+**Skill path:** /implement → /claim (resumed) → /plan → /handoff
+**Outcome:** success — PR #61
+
+### Metrics
+- Files changed: 13 (source + test + CL + auth test fixes) | Tests added/modified: 5 test files from #57 scope + 2 auth test files fixed
+- Quality gate runs: 2 (fail on attempt 1 due to 5 pre-existing auth test failures; pass on attempt 2 after re-applying config.authBypass mock)
+- Fix iterations: 1 (pre-existing discover.test.ts + prowlarr-compat.test.ts auth failures — mock was applied, reverted, re-applied)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Branch was a resumed branch — full implementation already committed from prior session. Verify, self-review, and coverage all passed cleanly. Token refresh needed for git push (same issue as #58 session).
+- Friction / issues encountered: (1) scripts/claim.ts calls git fetch origin <specific-branch> which fails when the remote tracking ref exists but the remote rejects the narrow fetch spec. Workaround: git checkout -t origin/<branch> first, then re-run claim. (2) 5 pre-existing auth test failures blocked verify.ts — vi.mock config.authBypass had been applied then reverted on the branch for unknown reasons; re-applied to fix.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for self-review and coverage review (extensive but justified for a multi-file blast-radius change)
+- Avoidable waste: Plan subagent correctly identified the branch was already implemented but still ran full exploration
+- Suggestions: /implement could detect resumed branch with full implementation and skip to verify faster
+
+### Infrastructure gaps
+- Repeated workarounds: Git remote token refresh (second time needed — same pattern as #58)
+- Missing tooling / config: scripts/claim.ts uses git fetch origin <branch> which fails for some ref specs; should use git fetch origin then checkout
+- Unresolved debt: The vi.mock config.authBypass for auth tests is fragile — anyone removing it will break 5 tests without a clear explanation
+
+### Wish I'd Known
+1. scripts/claim.ts fails with fatal: couldn't find remote ref <branch> even when the remote tracking ref exists — git checkout -t origin/<branch> first resolves it
+2. The auth bypass mock on discover/prowlarr-compat tests was reverted at some point with no explanation — always verify the mock is present and that tests fail without it
+3. The git remote embeds a time-limited installation token (same as #58) — refresh before pushing after >1hr of work
+
 ## #57 Show indexer name on download cards — 2026-03-22
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #60
