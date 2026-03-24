@@ -171,10 +171,19 @@ export class BookService {
         .values({ bookId, authorId: authorIds[i], position: i });
     }
 
-    // Find or create narrators and insert bookNarrators junction rows
+    // Deduplicate and insert narrator junction rows
     if (data.narrators && data.narrators.length > 0) {
-      for (let i = 0; i < data.narrators.length; i++) {
-        const narratorId = await this.findOrCreateNarrator(data.narrators[i]);
+      const seenNarratorSlugs = new Set<string>();
+      const uniqueNarrators: string[] = [];
+      for (const name of data.narrators) {
+        const slug = slugify(name);
+        if (!seenNarratorSlugs.has(slug)) {
+          seenNarratorSlugs.add(slug);
+          uniqueNarrators.push(name);
+        }
+      }
+      for (let i = 0; i < uniqueNarrators.length; i++) {
+        const narratorId = await this.findOrCreateNarrator(uniqueNarrators[i]);
         await this.db
           .insert(bookNarrators)
           .values({ bookId, narratorId, position: i });
@@ -203,8 +212,17 @@ export class BookService {
     if (narratorNames !== undefined) {
       await this.db.delete(bookNarrators).where(eq(bookNarrators.bookId, id));
 
-      for (let i = 0; i < narratorNames.length; i++) {
-        const narratorId = await this.findOrCreateNarrator(narratorNames[i]);
+      const seenNarratorSlugs = new Set<string>();
+      const uniqueNarrators: string[] = [];
+      for (const name of narratorNames) {
+        const slug = slugify(name);
+        if (!seenNarratorSlugs.has(slug)) {
+          seenNarratorSlugs.add(slug);
+          uniqueNarrators.push(name);
+        }
+      }
+      for (let i = 0; i < uniqueNarrators.length; i++) {
+        const narratorId = await this.findOrCreateNarrator(uniqueNarrators[i]);
         await this.db
           .insert(bookNarrators)
           .values({ bookId: id, narratorId, position: i });

@@ -292,6 +292,47 @@ describe('BookService', () => {
       // author lookup (1) + getById (3 selects: book, authors, narrators) = 4
       expect(db.select).toHaveBeenCalledTimes(4);
     });
+
+    it('deduplicates duplicate narrator names within a single create payload', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))    // author found
+        .mockReturnValueOnce(mockDbChain([mockNarrator]))  // narrator found (first lookup)
+        // second narrator skipped due to dedup
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([{ narrator: mockNarrator, position: 0 }]));
+      db.insert
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // book
+        .mockReturnValueOnce(mockDbChain([]))            // bookAuthors
+        .mockReturnValueOnce(mockDbChain([]));           // one bookNarrators row
+
+      await service.create({
+        title: 'Test',
+        authors: [{ name: 'Brandon Sanderson' }],
+        narrators: ['Michael Kramer', 'Michael Kramer'],  // duplicate
+      });
+
+      // Only one bookNarrators insert (not two) despite two narrator entries in payload
+      expect(db.insert).toHaveBeenCalledTimes(3);
+    });
+
+    it('deduplicates duplicate narrator names within a single update payload', async () => {
+      db.update.mockReturnValue(mockDbChain([mockBook]));
+      db.delete.mockReturnValue(mockDbChain([]));
+      db.select
+        .mockReturnValueOnce(mockDbChain([mockNarrator]))  // narrator found (first lookup only)
+        // second narrator skipped due to dedup
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([{ narrator: mockNarrator, position: 0 }]));
+      db.insert
+        .mockReturnValueOnce(mockDbChain([]));  // one bookNarrators row
+
+      await service.update(1, { narrators: ['Michael Kramer', 'Michael Kramer'] });
+
+      // Only one bookNarrators insert (not two) despite two narrator entries in payload
+      expect(db.insert).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('update() junction table CRUD', () => {
