@@ -26,7 +26,7 @@ Reviews a PR by checking the diff against the linked issue's acceptance criteria
 
 ## Guardrails
 
-**This skill is READ-ONLY for source code.** Never stage, commit, or modify any files outside of `.claude/cl/` and `.claude/state/`. The reviewer does not fix code — it reports findings for the author to address. If you find yourself editing source files, test files, config files, or anything under `src/`, STOP — you are doing the author's job.
+**This skill is READ-ONLY for source code.** Never stage, commit, or modify any files outside of `.claude/cl/` and `.claude/state/` (aliased as `.agents/cl/` and `.agents/state/` in some clones). The reviewer does not fix code — it reports findings for the author to address. If you find yourself editing source files, test files, config files, or anything under `src/`, STOP — you are doing the author's job.
 
 ## GitHub CLI
 

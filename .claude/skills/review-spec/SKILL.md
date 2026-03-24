@@ -26,6 +26,10 @@ Reviews an elaborated issue spec with fresh eyes. Explores the codebase exhausti
 
 **Review policy: high recall.** Prefer false positives over missed defects. The cost of a spec author dismissing a noisy suggestion is far lower than the cost of a missed gap reaching implementation. Do not cap the number of findings — report everything you find. Use `suggestion` liberally for anything that *might* matter; reserve `blocking` strictly for issues that would cause implementation failure, incorrect behavior, or untestable requirements.
 
+## Guardrails
+
+**This skill is READ-ONLY.** Never stage, commit, or modify any files outside of `.claude/cl/` and `.claude/state/` (aliased as `.agents/cl/` and `.agents/state/` in some clones). The reviewer does not edit specs — it reports findings for the author to address. If you find yourself editing issue bodies, source files, or anything under `src/`, STOP — you are doing the author's job.
+
 ## GitHub CLI
 
 All GitHub commands use: `gh` (referred to as `gh` below).
