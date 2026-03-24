@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { BookService } from './book.service.js';
+import { books } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { MetadataService } from './metadata.service.js';
@@ -718,6 +719,26 @@ describe('BookService', () => {
           authors: [{ name: 'Ghost Author' }],
         }),
       ).rejects.toThrow('Failed to find or create author');
+    });
+
+    it('deletes orphaned book row when post-insert author sync fails (compensating delete)', async () => {
+      // Book insert succeeds, then syncAuthors fails immediately (no author found, no retry)
+      db.insert
+        .mockReturnValueOnce(mockDbChain([{ id: 42 }]));  // book insert succeeds
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // author lookup: not found
+        .mockReturnValueOnce(mockDbChain([]));  // retry: still not found
+
+      const failChain = mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') });
+      db.insert.mockReturnValueOnce(failChain);  // author insert fails
+
+      await expect(
+        service.create({ title: 'Orphan Book', authors: [{ name: 'Ghost Author' }] }),
+      ).rejects.toThrow();
+
+      // Compensating delete must remove the book row with id=42
+      expect(db.delete).toHaveBeenCalledWith(books);
     });
   });
 });

@@ -197,9 +197,15 @@ export class BookService {
 
     const bookId = result[0].id;
 
-    await this.syncAuthors(bookId, data.authors);
-    if (data.narrators && data.narrators.length > 0) {
-      await this.syncNarrators(bookId, data.narrators);
+    try {
+      await this.syncAuthors(bookId, data.authors);
+      if (data.narrators && data.narrators.length > 0) {
+        await this.syncNarrators(bookId, data.narrators);
+      }
+    } catch (error) {
+      // Compensating delete: remove the orphaned book row so create() remains all-or-nothing.
+      await this.db.delete(books).where(eq(books.id, bookId));
+      throw error;
     }
 
     this.log.info({ title: data.title }, 'Book added to library');
