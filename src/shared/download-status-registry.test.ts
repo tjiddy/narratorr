@@ -8,6 +8,7 @@ import {
   getTerminalStatuses,
   getCompletedStatuses,
   getClientPolledStatuses,
+  getReplacableStatuses,
 } from './download-status-registry.js';
 
 describe('download-status-registry', () => {
@@ -200,6 +201,20 @@ describe('download-status-registry', () => {
     it('registry keys exactly match Zod schema options', () => {
       const registryKeys = Object.keys(DOWNLOAD_STATUS_REGISTRY).sort();
       expect(registryKeys).toEqual([...allStatuses].sort());
+    });
+  });
+
+  describe('getReplacableStatuses', () => {
+    it('returns exactly the five replaceable statuses', () => {
+      expect(getReplacableStatuses().sort()).toEqual(
+        ['checking', 'downloading', 'paused', 'pending_review', 'queued'],
+      );
+    });
+
+    it('excludes processing_queued and importing (import-pipeline statuses)', () => {
+      const replaceable = getReplacableStatuses();
+      expect(replaceable).not.toContain('processing_queued');
+      expect(replaceable).not.toContain('importing');
     });
   });
 });

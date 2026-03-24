@@ -101,6 +101,9 @@ export async function searchRoutes(
         request.log.debug({ downloadId: download.id, status: download.status, externalId: download.externalId }, 'Grab completed');
         return await reply.status(201).send(download);
       } catch (error) {
+        if ((error as { code?: string }).code === 'ACTIVE_DOWNLOAD_EXISTS') {
+          return reply.status(409).send({ code: 'ACTIVE_DOWNLOAD_EXISTS' });
+        }
         request.log.error(error, 'Grab failed');
         const message = getErrorMessage(error);
         return reply.status(500).send({ error: message });

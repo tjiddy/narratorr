@@ -3,7 +3,7 @@ import { type Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books } from '../../db/schema.js';
 import { parseInfoHash, type DownloadProtocol } from '../../core/index.js';
-import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses, isTerminalStatus } from '../../shared/download-status-registry.js';
+import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses, isTerminalStatus, getReplacableStatuses } from '../../shared/download-status-registry.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import { type DownloadClientService } from './download-client.service.js';
 import { type CreateEventInput } from './event-history.service.js';
@@ -201,13 +201,39 @@ export class DownloadService {
     size?: number;
     seeders?: number;
     skipDuplicateCheck?: boolean;
+    replaceExisting?: boolean;
     source?: CreateEventInput['source'];
   }): Promise<DownloadWithBook> {
-    // Check for existing active downloads for this book
+    // Check for active downloads for this book
     if (params.bookId && !params.skipDuplicateCheck) {
-      const active = await this.getActiveByBookId(params.bookId);
-      if (active.length > 0) {
-        throw new Error(`Book ${params.bookId} already has an active download (id: ${active[0].id})`);
+      const allActive = await this.getActiveByBookId(params.bookId);
+      const replaceableSet = new Set<string>(getReplacableStatuses());
+      const replaceableActive = allActive.filter((dl) => replaceableSet.has(dl.status));
+
+      if (replaceableActive.length > 0) {
+        if (params.replaceExisting) {
+          // Cancel each replaceable active download (best-effort: proceed even if cancel fails)
+          for (const dl of replaceableActive) {
+            try {
+              await this.cancel(dl.id, 'Replaced by new download');
+            } catch (cancelErr) {
+              this.log.warn({ id: dl.id, error: cancelErr }, 'Failed to cancel replaceable download — proceeding with replacement anyway');
+            }
+          }
+          // Revert book status to wanted so a failed grab leaves the book in a recoverable state
+          await this.db.update(books).set({ status: 'wanted' }).where(eq(books.id, params.bookId));
+        } else {
+          const err = new Error(`Book ${params.bookId} already has an active download (id: ${replaceableActive[0].id})`);
+          (err as Error & { code: string }).code = 'ACTIVE_DOWNLOAD_EXISTS';
+          throw err;
+        }
+      } else {
+        // No replaceable downloads — apply existing duplicate-check for import-pipeline statuses
+        // (processing_queued/importing are not replaceable but still block grabs)
+        const pipelineActive = allActive.filter((dl) => !replaceableSet.has(dl.status));
+        if (pipelineActive.length > 0) {
+          throw new Error(`Book ${params.bookId} already has an active download (id: ${pipelineActive[0].id})`);
+        }
       }
     }
 
@@ -283,7 +309,7 @@ export class DownloadService {
     this.log.warn({ id, error: errorMessage }, 'Download error recorded');
   }
 
-  async cancel(id: number): Promise<boolean> {
+  async cancel(id: number, reason = 'Cancelled by user'): Promise<boolean> {
     const download = await this.getById(id);
     if (!download) return false;
 
@@ -302,7 +328,7 @@ export class DownloadService {
     // Update download status
     await this.db
       .update(downloads)
-      .set({ status: 'failed', errorMessage: 'Cancelled by user' })
+      .set({ status: 'failed', errorMessage: reason })
       .where(eq(downloads.id, id));
 
     this.log.info({ id }, 'Download cancelled');

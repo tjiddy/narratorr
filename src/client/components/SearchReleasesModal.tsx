@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { api, formatBytes, type BookWithAuthor, type SearchResult } from '@/lib/api';
+import { api, ApiError, formatBytes, type BookWithAuthor, type SearchResult } from '@/lib/api';
 import { searchResultKey, deduplicateKeys } from '@/lib/stableKeys.js';
 import { calculateQuality, compareQuality, resolveBookQualityInputs, qualityTierBg } from '@core/utils/index.js';
 import { queryKeys } from '@/lib/queryKeys';
@@ -20,6 +20,7 @@ import {
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { CoverImage } from '@/components/CoverImage';
 import { ProtocolBadge } from '@/components/ProtocolBadge';
+import { ConfirmModal } from '@/components/ConfirmModal';
 
 // ============================================================================
 // Props
@@ -34,6 +35,15 @@ interface SearchReleasesModalProps {
 // ============================================================================
 // Component
 // ============================================================================
+
+interface PendingGrabParams {
+  downloadUrl: string;
+  title: string;
+  protocol: 'torrent' | 'usenet';
+  bookId?: number;
+  size?: number;
+  seeders?: number;
+}
 
 // eslint-disable-next-line max-lines-per-function, complexity -- modal orchestrates query + mutations + 5 conditional states
 export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesModalProps) {
@@ -93,9 +103,22 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
       toast.success('Download started! Check the Activity page.');
       queryClient.invalidateQueries({ queryKey: queryKeys.books() });
       queryClient.invalidateQueries({ queryKey: queryKeys.activity() });
+      setPendingReplace(null);
       onClose();
     },
-    onError: (err: Error) => {
+    onError: (err: Error, variables) => {
+      if (err instanceof ApiError && err.status === 409 && (err.body as { code?: string })?.code === 'ACTIVE_DOWNLOAD_EXISTS') {
+        setPendingReplace({
+          downloadUrl: variables.downloadUrl,
+          title: variables.title,
+          protocol: variables.protocol ?? 'torrent',
+          bookId: variables.bookId,
+          size: variables.size,
+          seeders: variables.seeders,
+        });
+        return;
+      }
+      setPendingReplace(null);
       toast.error(`Failed to grab: ${err.message}`);
     },
   });
@@ -115,12 +138,28 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
     });
   };
 
+  const [pendingReplace, setPendingReplace] = useState<PendingGrabParams | null>(null);
+
   const modalRef = useRef<HTMLDivElement>(null);
   useEscapeKey(isOpen, onClose, modalRef);
 
   if (!isOpen) return null;
 
   return (
+    <>
+    <ConfirmModal
+      isOpen={pendingReplace !== null}
+      title="Replace active download?"
+      message={`"${pendingReplace?.title ?? ''}" already has an active download. Replace it with this release?`}
+      confirmLabel="Replace"
+      cancelLabel="Cancel"
+      onConfirm={() => {
+        if (pendingReplace) {
+          grabMutation.mutate({ ...pendingReplace, replaceExisting: true });
+        }
+      }}
+      onCancel={() => setPendingReplace(null)}
+    />
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"
       onClick={onClose}
@@ -232,6 +271,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
         </div>
       </div>
     </div>
+    </>
   );
 }
 

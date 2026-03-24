@@ -126,6 +126,17 @@ export function getCompletedStatuses(): DownloadStatus[] {
 }
 
 /**
+ * Statuses that can be replaced by a new grab.
+ * Excludes import-pipeline statuses (processing_queued, importing) which require
+ * a separate cancellation mechanism beyond the download-client cancel path.
+ */
+const REPLACEABLE_STATUSES: DownloadStatus[] = ['queued', 'downloading', 'paused', 'checking', 'pending_review'];
+
+export function getReplacableStatuses(): DownloadStatus[] {
+  return REPLACEABLE_STATUSES;
+}
+
+/**
  * Statuses that should be polled from external download clients.
  * Excludes internal pipeline statuses (checking, pending_review, processing_queued, importing)
  * that are managed by quality-gate/import flows, not download client APIs.

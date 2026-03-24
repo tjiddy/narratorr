@@ -1248,4 +1248,205 @@ describe('DownloadService', () => {
     });
   });
 
+  describe('grab — replaceExisting', () => {
+    let mockAdapter: { addDownload: ReturnType<typeof vi.fn>; removeDownload: ReturnType<typeof vi.fn> };
+
+    beforeEach(() => {
+      mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-new'),
+        removeDownload: vi.fn().mockResolvedValue(undefined),
+      };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue({ id: 1, name: 'qBit' });
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+    });
+
+    it('cancels replaceable active download with reason "Replaced by new download" when replaceExisting is true', async () => {
+      const replaceableDownload = { ...mockDownload, id: 5, status: 'pending_review' as const };
+      // First select: getActiveByBookId (returns replaceable download)
+      db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
+      // Second select: getById (for cancel)
+      db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
+      // Third select: getById for return after grab
+      db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.insert.mockReturnValue(mockDbChain([{ id: 10 }]));
+
+      await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+        bookId: 1,
+        replaceExisting: true,
+      });
+
+      // cancel() DB update should be called with 'Replaced by new download'
+      // At least one set() call should contain the replacement reason
+      const hasReplacedMessage = (db.update as Mock).mock.results.some(
+        (r: { value: ReturnType<typeof mockDbChain> }) => r.value?.set?.mock?.calls?.some(
+          (args: unknown[]) => (args[0] as Record<string, unknown>)?.errorMessage === 'Replaced by new download',
+        ),
+      );
+      expect(hasReplacedMessage).toBe(true);
+    });
+
+    it('cancels multiple replaceable active downloads before grabbing', async () => {
+      const dl1 = { ...mockDownload, id: 5, status: 'queued' as const, externalId: 'ext-5' };
+      const dl2 = { ...mockDownload, id: 6, status: 'downloading' as const, externalId: 'ext-6' };
+      // First select: getActiveByBookId
+      db.select.mockReturnValueOnce(mockDbChain([
+        { download: dl1, book: mockBook },
+        { download: dl2, book: mockBook },
+      ]));
+      // Second select: getById for dl1 cancel
+      db.select.mockReturnValueOnce(mockDbChain([{ download: dl1, book: mockBook }]));
+      // Third select: getById for dl2 cancel
+      db.select.mockReturnValueOnce(mockDbChain([{ download: dl2, book: mockBook }]));
+      // Fourth select: getById for grab return
+      db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.insert.mockReturnValue(mockDbChain([{ id: 10 }]));
+
+      await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+        bookId: 1,
+        replaceExisting: true,
+      });
+
+      // removeDownload called once per active download
+      expect(mockAdapter.removeDownload).toHaveBeenCalledTimes(2);
+      expect(mockAdapter.addDownload).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws error with code ACTIVE_DOWNLOAD_EXISTS when replaceable active download exists and replaceExisting is false/undefined', async () => {
+      const replaceableDownload = { ...mockDownload, id: 5, status: 'queued' as const };
+      db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
+
+      const err = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+        bookId: 1,
+      }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect((err as { code?: string }).code).toBe('ACTIVE_DOWNLOAD_EXISTS');
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('throws generic duplicate error (not 409) when only processing_queued/importing downloads exist', async () => {
+      const pipelineDownload = { ...mockDownload, id: 5, status: 'processing_queued' as const };
+      // getActiveByBookId returns only pipeline download
+      db.select.mockReturnValueOnce(mockDbChain([{ download: pipelineDownload, book: mockBook }]));
+
+      const err = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+        bookId: 1,
+      }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect((err as { code?: string }).code).toBeUndefined(); // NOT ACTIVE_DOWNLOAD_EXISTS
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('reverts book status to wanted when cancel succeeds but follow-up grab fails', async () => {
+      const replaceableDownload = { ...mockDownload, id: 5, status: 'downloading' as const };
+      // getActiveByBookId returns replaceable download
+      db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
+      // cancel's getById
+      db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
+      const cancelUpdateChain = mockDbChain();
+      const bookUpdateChain = mockDbChain();
+      db.update.mockReturnValueOnce(cancelUpdateChain);  // cancel status update
+      db.update.mockReturnValueOnce(bookUpdateChain);    // book status → wanted
+      // sendToClient fails
+      mockAdapter.addDownload.mockRejectedValue(new Error('Client rejected'));
+
+      const err = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+        bookId: 1,
+        replaceExisting: true,
+      }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(db.insert).not.toHaveBeenCalled();
+      expect(cancelUpdateChain.set).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'failed',
+        errorMessage: 'Replaced by new download',
+      }));
+      expect(bookUpdateChain.set).toHaveBeenCalledWith({ status: 'wanted' });
+    });
+
+    it('proceeds when no replaceable active downloads exist and replaceExisting is true', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
+      db.insert.mockReturnValue(mockDbChain([{ id: 10 }]));
+      db.update.mockReturnValue(mockDbChain());
+
+      const result = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+        bookId: 1,
+        replaceExisting: true,
+      });
+
+      expect(result).toBeDefined();
+      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+      expect(db.insert).toHaveBeenCalledTimes(1);
+    });
+
+    it('continues grab even if cancel client call throws (best-effort cleanup)', async () => {
+      const replaceableDownload = { ...mockDownload, id: 5, status: 'downloading' as const };
+      mockAdapter.removeDownload.mockRejectedValue(new Error('Client unreachable'));
+      db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
+      db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
+      db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.insert.mockReturnValue(mockDbChain([{ id: 10 }]));
+
+      // Should not throw
+      const result = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+        bookId: 1,
+        replaceExisting: true,
+      });
+
+      expect(result).toBeDefined();
+      expect(db.insert).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('cancel — reason param', () => {
+    it('sets errorMessage to custom reason when reason param provided', async () => {
+      const mockAdapter = { removeDownload: vi.fn().mockResolvedValue(undefined) };
+      db.select.mockReturnValue(mockDbChain([{ download: mockDownload, book: mockBook }]));
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      await service.cancel(1, 'Replaced by new download');
+
+      expect(chain.set).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'failed',
+        errorMessage: 'Replaced by new download',
+      }));
+    });
+
+    it('defaults errorMessage to "Cancelled by user" when no reason provided', async () => {
+      const mockAdapter = { removeDownload: vi.fn().mockResolvedValue(undefined) };
+      db.select.mockReturnValue(mockDbChain([{ download: mockDownload, book: mockBook }]));
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      await service.cancel(1);
+
+      expect(chain.set).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'failed',
+        errorMessage: 'Cancelled by user',
+      }));
+    });
+  });
+
 });

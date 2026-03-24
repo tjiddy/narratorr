@@ -6,6 +6,20 @@ import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import type { SearchResult, SearchResponse } from '@/lib/api';
 import { createMockBook } from '@/__tests__/factories';
 
+const { MockApiError } = vi.hoisted(() => {
+  class MockApiError extends Error {
+    status: number;
+    body: unknown;
+    constructor(status: number, body: unknown) {
+      const message = (body as { error?: string })?.error || (body as { message?: string })?.message || `HTTP ${status}`;
+      super(message);
+      this.status = status;
+      this.body = body;
+    }
+  }
+  return { MockApiError };
+});
+
 vi.mock('@/lib/api', () => ({
   api: {
     searchBooks: vi.fn(),
@@ -16,6 +30,7 @@ vi.mock('@/lib/api', () => ({
     if (!bytes) return '0 B';
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
   },
+  ApiError: MockApiError,
 }));
 
 vi.mock('sonner', () => ({
@@ -230,6 +245,192 @@ describe('SearchReleasesModal', () => {
 
     await waitFor(() => {
       expect(onClose).toHaveBeenCalled();
+    });
+  });
+
+  describe('replacement confirmation flow', () => {
+    it('shows ConfirmModal instead of error toast when grab returns 409 ACTIVE_DOWNLOAD_EXISTS', async () => {
+      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      vi.mocked(api.searchGrab).mockRejectedValue(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }));
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it('releases modal remains visible behind the confirmation modal', async () => {
+      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      vi.mocked(api.searchGrab).mockRejectedValue(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }));
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+      // Releases modal content still present
+      expect(screen.getByText('Releases for: The Way of Kings')).toBeInTheDocument();
+    });
+
+    it('confirming replacement calls searchGrab with replaceExisting: true and same release params', async () => {
+      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      vi.mocked(api.searchGrab)
+        .mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }))
+        .mockResolvedValueOnce({
+          id: 2,
+          title: 'The Way of Kings [Unabridged]',
+          protocol: 'torrent',
+          status: 'queued' as const,
+          progress: 0,
+          addedAt: '2024-01-01T00:00:00Z',
+        });
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+
+      // Click confirm
+      await user.click(screen.getByRole('button', { name: /replace/i }));
+
+      await waitFor(() => {
+        const lastCallArgs = vi.mocked(api.searchGrab).mock.calls.at(-1)![0];
+        expect(lastCallArgs).toEqual(expect.objectContaining({
+          downloadUrl: 'magnet:?xt=urn:btih:abc123',
+          title: 'The Way of Kings [Unabridged]',
+          bookId: 1,
+          replaceExisting: true,
+        }));
+      });
+    });
+
+    it('both modals close and queue invalidates on replacement success', async () => {
+      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      vi.mocked(api.searchGrab)
+        .mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }))
+        .mockResolvedValueOnce({
+          id: 2,
+          title: 'The Way of Kings [Unabridged]',
+          protocol: 'torrent',
+          status: 'queued' as const,
+          progress: 0,
+          addedAt: '2024-01-01T00:00:00Z',
+        });
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />,
+      );
+
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /replace/i }));
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Download started! Check the Activity page.');
+        expect(onClose).toHaveBeenCalled();
+      });
+    });
+
+    it('cancelling confirmation modal closes it and leaves releases modal open', async () => {
+      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      vi.mocked(api.searchGrab).mockRejectedValue(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }));
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />,
+      );
+
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /cancel/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: /replace/i })).not.toBeInTheDocument();
+      });
+      // Releases modal still open
+      expect(screen.getByText('Releases for: The Way of Kings')).toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('confirmed retry failure closes the confirm modal, keeps releases modal open, and shows an error toast', async () => {
+      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      vi.mocked(api.searchGrab)
+        .mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }))
+        .mockRejectedValue(new MockApiError(500, { error: 'Client unavailable' }));
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />,
+      );
+
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /replace/i }));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to grab: Client unavailable');
+      });
+      expect(screen.queryByRole('dialog', { name: /replace/i })).not.toBeInTheDocument();
+      expect(screen.getByText('Releases for: The Way of Kings')).toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('shows error toast for non-409 grab failures (not treated as replacement)', async () => {
+      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      vi.mocked(api.searchGrab).mockRejectedValue(new MockApiError(500, { error: 'Internal server error' }));
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to grab: Internal server error');
+      });
+      expect(screen.queryByRole('dialog', { name: /replace/i })).not.toBeInTheDocument();
     });
   });
 

@@ -51,6 +51,7 @@ export const searchApi = {
     indexerId?: number;
     size?: number;
     seeders?: number;
+    replaceExisting?: boolean;
   }) =>
     fetchApi<Download>('/search/grab', {
       method: 'POST',

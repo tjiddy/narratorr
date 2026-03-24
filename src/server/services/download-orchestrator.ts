@@ -40,6 +40,7 @@ export class DownloadOrchestrator {
     size?: number;
     seeders?: number;
     skipDuplicateCheck?: boolean;
+    replaceExisting?: boolean;
     source?: CreateEventInput['source'];
   }): Promise<DownloadWithBook> {
     // Core grab — let errors (including duplicate detection) propagate
