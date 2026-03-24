@@ -4,33 +4,37 @@ const MAX_AUTHOR_STRENGTH = 5;
 
 interface BookRow {
   book: {
+    id: number;
     genres: string[] | null;
-    narrator: string | null;
     duration: number | null;
     seriesName: string | null;
     seriesPosition: number | null;
   };
-  author: { name: string } | null;
+  authorName: string | null;
+}
+
+interface NarratorRow {
+  bookId: number;
+  narratorName: string;
 }
 
 /**
- * Extract library signals from imported book rows.
+ * Extract library signals from imported book rows and narrator junction rows.
  * Pure function — no DB access, no side effects.
  */
-export function extractSignals(importedBooks: BookRow[]): LibrarySignals {
+export function extractSignals(importedBooks: BookRow[], narratorRows: NarratorRow[]): LibrarySignals {
   const authorAffinity = new Map<string, { count: number; strength: number; name: string }>();
   const genreDistribution = new Map<string, number>();
-  const narratorCounts = new Map<string, number>();
   const durations: number[] = [];
   const seriesMap = new Map<string, { authorName: string; positions: number[] }>();
 
   for (const row of importedBooks) {
-    accumulateBookSignals(row, authorAffinity, genreDistribution, narratorCounts, durations, seriesMap);
+    accumulateBookSignals(row, authorAffinity, genreDistribution, durations, seriesMap);
   }
 
   const seriesGaps = computeSeriesGaps(seriesMap);
   const durationStats = computeDurationStats(durations);
-  const narratorAffinity = filterNarratorThreshold(narratorCounts, 3);
+  const narratorAffinity = computeNarratorAffinity(importedBooks.map(r => r.book.id), narratorRows);
 
   return { authorAffinity, genreDistribution, seriesGaps, narratorAffinity, durationStats };
 }
@@ -39,12 +43,11 @@ function accumulateBookSignals(
   row: BookRow,
   authorAffinity: Map<string, { count: number; strength: number; name: string }>,
   genreDistribution: Map<string, number>,
-  narratorCounts: Map<string, number>,
   durations: number[],
   seriesMap: Map<string, { authorName: string; positions: number[] }>,
 ) {
-  const { book, author } = row;
-  const authorName = author?.name ?? 'Unknown';
+  const { book } = row;
+  const authorName = row.authorName ?? 'Unknown';
 
   // Author affinity
   const existing = authorAffinity.get(authorName);
@@ -66,11 +69,6 @@ function accumulateBookSignals(
     }
   }
 
-  // Narrator affinity
-  if (book.narrator) {
-    narratorCounts.set(book.narrator, (narratorCounts.get(book.narrator) ?? 0) + 1);
-  }
-
   // Duration
   if (book.duration != null) {
     durations.push(book.duration);
@@ -85,6 +83,27 @@ function accumulateBookSignals(
       seriesMap.set(book.seriesName, { authorName, positions: [book.seriesPosition] });
     }
   }
+}
+
+/**
+ * Build narrator affinity counts from junction table rows.
+ * Each narrator is counted once per book (deduped by bookId within the filtered set).
+ */
+function computeNarratorAffinity(importedBookIds: number[], narratorRows: NarratorRow[]): Map<string, number> {
+  const importedSet = new Set(importedBookIds);
+  const counts = new Map<string, number>();
+
+  // Track (narratorName, bookId) pairs to avoid double-counting if a narrator appears twice for same book
+  const seen = new Set<string>();
+  for (const row of narratorRows) {
+    if (!importedSet.has(row.bookId)) continue;
+    const key = `${row.narratorName}|${row.bookId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    counts.set(row.narratorName, (counts.get(row.narratorName) ?? 0) + 1);
+  }
+
+  return filterNarratorThreshold(counts, 3);
 }
 
 function computeSeriesGaps(seriesMap: Map<string, { authorName: string; positions: number[] }>): LibrarySignals['seriesGaps'] {

@@ -1,7 +1,7 @@
 import { eq, and, lte } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { importLists, books, bookEvents, authors } from '../../db/schema.js';
+import { importLists, books, bookEvents, authors, bookAuthors } from '../../db/schema.js';
 import { IMPORT_LIST_ADAPTER_FACTORIES } from '../../core/import-lists/index.js';
 import type { ImportListItem } from '../../core/import-lists/index.js';
 import type { MetadataService } from './metadata.service.js';
@@ -181,26 +181,24 @@ export class ImportListService {
     }
   }
 
-  private async resolveOrCreateAuthor(authorName: string | undefined): Promise<number | null> {
-    if (!authorName) return null;
-    const existing = await this.db.select().from(authors).where(eq(authors.name, authorName)).limit(1);
+  private async findOrCreateAuthor(authorName: string): Promise<number | null> {
+    const slug = slugify(authorName);
+    const existing = await this.db.select().from(authors).where(eq(authors.slug, slug)).limit(1);
     if (existing.length > 0) return existing[0].id;
-    const inserted = await this.db.insert(authors).values({ name: authorName, slug: slugify(authorName) }).onConflictDoNothing().returning();
+    const inserted = await this.db.insert(authors).values({ name: authorName, slug }).onConflictDoNothing().returning();
     if (inserted.length > 0) return inserted[0].id;
     // Race condition: another sync inserted same author between select and insert
-    const retry = await this.db.select().from(authors).where(eq(authors.name, authorName)).limit(1);
+    const retry = await this.db.select().from(authors).where(eq(authors.slug, slug)).limit(1);
     return retry.length > 0 ? retry[0].id : null;
   }
 
   private async processItem(item: ImportListItem, list: ImportListRow): Promise<void> {
     const enriched = await this.enrichItem(item);
-    const authorId = await this.resolveOrCreateAuthor(enriched.author);
 
     const insertResult = await this.db
       .insert(books)
       .values({
         title: item.title,
-        authorId,
         asin: enriched.asin || null,
         isbn: item.isbn || null,
         status: 'wanted',
@@ -217,6 +215,15 @@ export class ImportListService {
     }
 
     const newBook = insertResult[0];
+
+    // Insert author junction row if author is known
+    if (enriched.author) {
+      const authorId = await this.findOrCreateAuthor(enriched.author);
+      if (authorId !== null) {
+        await this.db.insert(bookAuthors).values({ bookId: newBook.id, authorId, position: 0 });
+      }
+    }
+
     await this.db.insert(bookEvents).values({
       bookId: newBook.id,
       bookTitle: newBook.title,

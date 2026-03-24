@@ -3,8 +3,8 @@ import { access, readdir, stat, mkdir, cp, rm } from 'node:fs/promises';
 import { join, extname, relative, resolve, isAbsolute } from 'node:path';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, authors } from '../../db/schema.js';
-import { eq, inArray } from 'drizzle-orm';
+import { books, authors, bookAuthors } from '../../db/schema.js';
+import { eq, inArray, and } from 'drizzle-orm';
 import { slugify } from '../../core/utils/parse.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import { discoverBooks } from '../../core/utils/book-discovery.js';
@@ -164,7 +164,8 @@ export class LibraryScanService {
     const titleAuthorRows = await this.db
       .select({ title: books.title, slug: authors.slug })
       .from(books)
-      .leftJoin(authors, eq(books.authorId, authors.id));
+      .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
+      .leftJoin(authors, eq(bookAuthors.authorId, authors.id));
     const existingTitleAuthorKeys = new Set(
       titleAuthorRows
         .filter((r) => r.title && r.slug)
@@ -278,7 +279,7 @@ export class LibraryScanService {
    */
   async importSingleBook(item: ImportConfirmItem, metadata?: BookMetadata | null, mode?: ImportMode): Promise<ImportSingleResult> {
     // Duplicate check
-    const existing = await this.bookService.findDuplicate(item.title, item.authorName);
+    const existing = await this.bookService.findDuplicate(item.title, item.authorName ? [{ name: item.authorName }] : undefined);
     if (existing) {
       this.log.debug({ title: item.title }, 'Skipping duplicate during import');
       return { imported: false, enriched: false, error: 'duplicate' };
@@ -307,7 +308,7 @@ export class LibraryScanService {
     const audioResult = await enrichBookFromAudio(
       book.id,
       finalPath,
-      { narrator: book.narrator, duration: book.duration, coverUrl: book.coverUrl },
+      { narrator: book.narrators?.[0]?.name ?? null, duration: book.duration, coverUrl: book.coverUrl },
       this.db,
       this.log,
     );
@@ -316,7 +317,7 @@ export class LibraryScanService {
     await this.applyAudnexusEnrichment(book.id, {
       primaryAsin: item.asin || meta?.asin,
       alternateAsins: meta?.alternateAsins,
-      existingNarrator: book.narrator,
+      existingNarrator: book.narrators?.[0]?.name ?? null,
       existingDuration: book.duration,
     });
 
@@ -330,7 +331,7 @@ export class LibraryScanService {
    */
   private async copyToLibrary(
     item: ImportConfirmItem,
-    book: { id: number; title: string; seriesName?: string | null; seriesPosition?: number | null; narrator?: string | null; publishedDate?: string | null },
+    book: { id: number; title: string; seriesName?: string | null; seriesPosition?: number | null; publishedDate?: string | null },
     meta: BookMetadata | null,
     mode: ImportMode,
   ): Promise<string> {
@@ -342,7 +343,7 @@ export class LibraryScanService {
         title: item.title,
         seriesName: item.seriesName || meta?.series?.[0]?.name,
         seriesPosition: meta?.series?.[0]?.position,
-        narrator: book.narrator,
+        narrator: meta?.narrators?.[0] ?? null,
         publishedDate: meta?.publishedDate,
       },
       item.authorName ?? null,
@@ -384,7 +385,7 @@ export class LibraryScanService {
     for (const item of items) {
       try {
         // Duplicate check
-        const existing = await this.bookService.findDuplicate(item.title, item.authorName);
+        const existing = await this.bookService.findDuplicate(item.title, item.authorName ? [{ name: item.authorName }] : undefined);
         if (existing) {
           this.log.debug({ title: item.title }, 'Skipping duplicate during import');
           continue;
@@ -444,7 +445,7 @@ export class LibraryScanService {
     this.log.debug({ bookId, title: item.title, mode: mode ?? 'pointer' }, 'Processing import');
 
     const meta = item.metadata;
-    const narrator = meta?.narrators?.join(', ') ?? null;
+    const narratorName = meta?.narrators?.[0] ?? null;
     const duration = meta?.duration ?? null;
     const coverUrl = item.coverUrl || meta?.coverUrl || null;
     const primaryAsin = item.asin || meta?.asin;
@@ -469,13 +470,13 @@ export class LibraryScanService {
 
     // Enrich with audio file metadata (WITH cover extraction)
     this.log.debug({ bookId }, 'Starting audio enrichment');
-    await enrichBookFromAudio(bookId, finalPath, { narrator, duration, coverUrl }, this.db, this.log);
+    await enrichBookFromAudio(bookId, finalPath, { narrator: narratorName, duration, coverUrl }, this.db, this.log);
 
     // Audnexus enrichment
     await this.applyAudnexusEnrichment(bookId, {
       primaryAsin,
       alternateAsins: meta?.alternateAsins,
-      existingNarrator: narrator,
+      existingNarrator: narratorName,
       existingDuration: duration,
     });
 
@@ -607,18 +608,18 @@ export class LibraryScanService {
       try {
         const data = await this.metadataService.enrichBook(asin);
         if (data) {
-          const updates: Record<string, unknown> = {
+          const updates: Partial<{ enrichmentStatus: string; asin: string; duration: number; updatedAt: Date }> = {
             enrichmentStatus: 'enriched',
             updatedAt: new Date(),
           };
           if (asin !== opts.primaryAsin) updates.asin = asin;
-          if (!opts.existingNarrator && data.narrators?.length) {
-            updates.narrator = data.narrators.join(', ');
-          }
           if (!opts.existingDuration && data.duration) {
             updates.duration = data.duration;
           }
           await this.db.update(books).set(updates).where(eq(books.id, bookId));
+          if (!opts.existingNarrator && data.narrators?.length) {
+            await this.bookService.update(bookId, { narrators: data.narrators });
+          }
           this.log.info({ bookId, asin, wasAlternate: asin !== opts.primaryAsin }, 'Audnexus enrichment applied');
           break;
         }
@@ -637,13 +638,13 @@ function buildBookCreatePayload(
 ) {
   return {
     title: item.title,
-    authorName: item.authorName,
+    authors: item.authorName ? [{ name: item.authorName }] : [],
+    narrators: meta?.narrators,
     seriesName: item.seriesName || meta?.series?.[0]?.name,
     seriesPosition: meta?.series?.[0]?.position,
     coverUrl: item.coverUrl || meta?.coverUrl,
     asin: item.asin || meta?.asin,
     isbn: meta?.isbn,
-    narrator: meta?.narrators?.join(', '),
     description: meta?.description,
     duration: meta?.duration,
     publishedDate: meta?.publishedDate,
