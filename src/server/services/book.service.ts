@@ -1,6 +1,6 @@
 import { rm } from 'node:fs/promises';
 import { cleanEmptyParents } from '../utils/paths.js';
-import { eq, and, like, desc, sql } from 'drizzle-orm';
+import { eq, and, like, desc, sql, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
@@ -94,7 +94,58 @@ export class BookService {
     return null;
   }
 
-  // eslint-disable-next-line complexity -- sequential find-or-create for authors and narrators
+  /**
+   * Replace all author junction rows for a book with the given list.
+   * Deduplicates by slug within the payload, find-or-creates each author.
+   * Called by create(), update(), and RecyclingBinService.restore().
+   */
+  async syncAuthors(bookId: number, authorList: { name: string; asin?: string }[]): Promise<void> {
+    await this.db.delete(bookAuthors).where(eq(bookAuthors.bookId, bookId));
+
+    const seenSlugs = new Set<string>();
+    const uniqueAuthors: { name: string; asin?: string }[] = [];
+    for (const a of authorList) {
+      const slug = slugify(a.name);
+      if (!seenSlugs.has(slug)) {
+        seenSlugs.add(slug);
+        uniqueAuthors.push(a);
+      }
+    }
+
+    for (let i = 0; i < uniqueAuthors.length; i++) {
+      const authorId = await this.findOrCreateAuthor(uniqueAuthors[i].name, uniqueAuthors[i].asin);
+      await this.db
+        .insert(bookAuthors)
+        .values({ bookId, authorId, position: i });
+    }
+  }
+
+  /**
+   * Replace all narrator junction rows for a book with the given list.
+   * Deduplicates by slug within the payload, find-or-creates each narrator.
+   * Called by create(), update(), and RecyclingBinService.restore().
+   */
+  async syncNarrators(bookId: number, narratorNames: string[]): Promise<void> {
+    await this.db.delete(bookNarrators).where(eq(bookNarrators.bookId, bookId));
+
+    const seenSlugs = new Set<string>();
+    const uniqueNarrators: string[] = [];
+    for (const name of narratorNames) {
+      const slug = slugify(name);
+      if (!seenSlugs.has(slug)) {
+        seenSlugs.add(slug);
+        uniqueNarrators.push(name);
+      }
+    }
+
+    for (let i = 0; i < uniqueNarrators.length; i++) {
+      const narratorId = await this.findOrCreateNarrator(uniqueNarrators[i]);
+      await this.db
+        .insert(bookNarrators)
+        .values({ bookId, narratorId, position: i });
+    }
+  }
+
   async create(data: {
     title: string;
     authors: { name: string; asin?: string }[];
@@ -126,24 +177,6 @@ export class BookService {
       }
     }
 
-    // Deduplicate authors by slug within the payload
-    const seenSlugs = new Set<string>();
-    const uniqueAuthors: { name: string; asin?: string }[] = [];
-    for (const a of data.authors) {
-      const slug = slugify(a.name);
-      if (!seenSlugs.has(slug)) {
-        seenSlugs.add(slug);
-        uniqueAuthors.push(a);
-      }
-    }
-
-    // Find or create each author
-    const authorIds: number[] = [];
-    for (const a of uniqueAuthors) {
-      const authorId = await this.findOrCreateAuthor(a.name, a.asin);
-      authorIds.push(authorId);
-    }
-
     const result = await this.db
       .insert(books)
       .values({
@@ -164,30 +197,9 @@ export class BookService {
 
     const bookId = result[0].id;
 
-    // Insert bookAuthors junction rows
-    for (let i = 0; i < authorIds.length; i++) {
-      await this.db
-        .insert(bookAuthors)
-        .values({ bookId, authorId: authorIds[i], position: i });
-    }
-
-    // Deduplicate and insert narrator junction rows
+    await this.syncAuthors(bookId, data.authors);
     if (data.narrators && data.narrators.length > 0) {
-      const seenNarratorSlugs = new Set<string>();
-      const uniqueNarrators: string[] = [];
-      for (const name of data.narrators) {
-        const slug = slugify(name);
-        if (!seenNarratorSlugs.has(slug)) {
-          seenNarratorSlugs.add(slug);
-          uniqueNarrators.push(name);
-        }
-      }
-      for (let i = 0; i < uniqueNarrators.length; i++) {
-        const narratorId = await this.findOrCreateNarrator(uniqueNarrators[i]);
-        await this.db
-          .insert(bookNarrators)
-          .values({ bookId, narratorId, position: i });
-      }
+      await this.syncNarrators(bookId, data.narrators);
     }
 
     this.log.info({ title: data.title }, 'Book added to library');
@@ -208,47 +220,12 @@ export class BookService {
 
     if (result.length === 0) return null;
 
-    // Replace narrator junction rows if narrators were provided
     if (narratorNames !== undefined) {
-      await this.db.delete(bookNarrators).where(eq(bookNarrators.bookId, id));
-
-      const seenNarratorSlugs = new Set<string>();
-      const uniqueNarrators: string[] = [];
-      for (const name of narratorNames) {
-        const slug = slugify(name);
-        if (!seenNarratorSlugs.has(slug)) {
-          seenNarratorSlugs.add(slug);
-          uniqueNarrators.push(name);
-        }
-      }
-      for (let i = 0; i < uniqueNarrators.length; i++) {
-        const narratorId = await this.findOrCreateNarrator(uniqueNarrators[i]);
-        await this.db
-          .insert(bookNarrators)
-          .values({ bookId: id, narratorId, position: i });
-      }
+      await this.syncNarrators(id, narratorNames);
     }
 
-    // Replace author junction rows if authors were provided
     if (authorList !== undefined) {
-      await this.db.delete(bookAuthors).where(eq(bookAuthors.bookId, id));
-
-      const seenSlugs = new Set<string>();
-      const uniqueAuthors: { name: string; asin?: string }[] = [];
-      for (const a of authorList) {
-        const slug = slugify(a.name);
-        if (!seenSlugs.has(slug)) {
-          seenSlugs.add(slug);
-          uniqueAuthors.push(a);
-        }
-      }
-
-      for (let i = 0; i < uniqueAuthors.length; i++) {
-        const authorId = await this.findOrCreateAuthor(uniqueAuthors[i].name, uniqueAuthors[i].asin);
-        await this.db
-          .insert(bookAuthors)
-          .values({ bookId: id, authorId, position: i });
-      }
+      await this.syncAuthors(id, authorList);
     }
 
     this.log.info({ id }, 'Book updated');
@@ -288,32 +265,64 @@ export class BookService {
 
   async getMonitoredBooks(): Promise<BookWithAuthor[]> {
     const rows = await this.db
-      .select({ id: books.id })
+      .select()
       .from(books)
       .where(and(eq(books.monitorForUpgrades, true), eq(books.status, 'imported')));
 
-    const results: BookWithAuthor[] = [];
-    for (const row of rows) {
-      const book = await this.getById(row.id);
-      if (book) results.push(book);
-    }
-    return results;
+    return this.batchLoadAuthorsNarrators(rows);
   }
 
   async search(query: string): Promise<BookWithAuthor[]> {
     const rows = await this.db
-      .select({ id: books.id })
+      .select()
       .from(books)
       .where(like(books.title, `%${query}%`))
       .orderBy(desc(books.createdAt))
       .limit(50);
 
-    const results: BookWithAuthor[] = [];
-    for (const row of rows) {
-      const book = await this.getById(row.id);
-      if (book) results.push(book);
+    return this.batchLoadAuthorsNarrators(rows);
+  }
+
+  /** Batch-load authors and narrators for a list of book rows (3 queries total regardless of row count). */
+  private async batchLoadAuthorsNarrators(bookRows: BookRow[]): Promise<BookWithAuthor[]> {
+    if (bookRows.length === 0) return [];
+
+    const bookIds = bookRows.map((r) => r.id);
+
+    const authorResults = await this.db
+      .select({ bookId: bookAuthors.bookId, author: authors, position: bookAuthors.position })
+      .from(bookAuthors)
+      .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
+      .where(inArray(bookAuthors.bookId, bookIds));
+
+    const narratorResults = await this.db
+      .select({ bookId: bookNarrators.bookId, narrator: narrators, position: bookNarrators.position })
+      .from(bookNarrators)
+      .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
+      .where(inArray(bookNarrators.bookId, bookIds));
+
+    const authorsMap = new Map<number, Array<{ author: AuthorRow; position: number }>>();
+    for (const r of authorResults) {
+      if (!authorsMap.has(r.bookId)) authorsMap.set(r.bookId, []);
+      authorsMap.get(r.bookId)!.push({ author: r.author, position: r.position });
     }
-    return results;
+
+    const narratorsMap = new Map<number, Array<{ narrator: NarratorRow; position: number }>>();
+    for (const r of narratorResults) {
+      if (!narratorsMap.has(r.bookId)) narratorsMap.set(r.bookId, []);
+      narratorsMap.get(r.bookId)!.push({ narrator: r.narrator, position: r.position });
+    }
+
+    return bookRows.map((book) => ({
+      ...book,
+      importListName: null,
+      authors: (authorsMap.get(book.id) ?? [])
+        .sort((a, b) => a.position - b.position)
+        .map((r) => r.author),
+      narrators: (narratorsMap.get(book.id) ?? [])
+        .sort((a, b) => a.position - b.position)
+        .map((r) => r.narrator),
+    }));
   }
 
   private async findOrCreateAuthor(name: string, asin?: string): Promise<number> {
