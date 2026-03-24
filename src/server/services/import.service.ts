@@ -1,12 +1,13 @@
 import { eq, and, inArray, isNotNull } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books, authors, bookAuthors, bookNarrators, narrators } from '../../db/schema.js';
+import { downloads, books } from '../../db/schema.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { RemotePathMappingService } from './remote-path-mapping.service.js';
+import type { BookService, BookWithAuthor } from './book.service.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { resolveSavePath } from '../utils/download-path.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
@@ -16,7 +17,7 @@ import {
 } from '../utils/import-steps.js';
 import type { DownloadRow } from './types.js';
 
-import type { ImportResult, BookRow, AuthorRow } from '../utils/import-helpers.js';
+import type { ImportResult } from '../utils/import-helpers.js';
 export type { ImportResult } from '../utils/import-helpers.js';
 
 /** Milliseconds per minute — used for seed time calculations. */
@@ -33,7 +34,7 @@ export interface ImportContext {
   bookPath: string | null;
   authorName: string | null;
   narratorStr: string | null;
-  book: BookRow & { narrators: Array<{ name: string }> };
+  book: BookWithAuthor;
 }
 
 export class ImportService {
@@ -55,6 +56,7 @@ export class ImportService {
     private settingsService: SettingsService,
     private log: FastifyBaseLogger,
     private remotePathMappingService?: RemotePathMappingService,
+    private bookService?: BookService,
   ) {}
 
   /**
@@ -66,10 +68,11 @@ export class ImportService {
     if (!download) throw new Error(`Download ${downloadId} not found`);
     if (!download.bookId) throw new Error(`Download ${downloadId} has no linked book`);
 
-    const bookData = await this.getBookWithAuthor(download.bookId);
-    if (!bookData) throw new Error(`Book ${download.bookId} not found`);
-    const { book, author, narratorNames } = bookData;
-    const narratorStr = narratorNames.length > 0 ? narratorNames.join('; ') : null;
+    const book = await this.bookService!.getById(download.bookId);
+    if (!book) throw new Error(`Book ${download.bookId} not found`);
+    const authorName = book.authors[0]?.name ?? null;
+    const narratorNames = book.narrators.map(n => n.name);
+    const narratorStr = narratorNames.length > 0 ? narratorNames.join(', ') : null;
 
     return {
       downloadId,
@@ -79,9 +82,9 @@ export class ImportService {
       bookTitle: book.title,
       bookStatus: book.status,
       bookPath: book.path,
-      authorName: author?.name ?? null,
+      authorName,
       narratorStr,
-      book: { ...book, narrators: narratorNames.map(n => ({ name: n })) },
+      book,
     };
   }
 
@@ -95,11 +98,9 @@ export class ImportService {
     if (!download) throw new Error(`Download ${downloadId} not found`);
     if (!download.bookId) throw new Error(`Download ${downloadId} has no linked book`);
 
-    const bookData = await this.getBookWithAuthor(download.bookId);
-    if (!bookData) throw new Error(`Book ${download.bookId} not found`);
-    const { book, author, narratorNames } = bookData;
-    const authorName = author?.name ?? null;
-    const bookWithNarrators = { ...book, narrators: narratorNames.map(n => ({ name: n })) };
+    const book = await this.bookService!.getById(download.bookId);
+    if (!book) throw new Error(`Book ${download.bookId} not found`);
+    const authorName = book.authors[0]?.name ?? null;
 
     await this.db.update(downloads).set({ status: 'importing' }).where(eq(downloads.id, downloadId));
 
@@ -112,15 +113,15 @@ export class ImportService {
         this.settingsService.get('processing'),
       ]);
       const processingEnabled = !!processingSettings?.enabled;
-      targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, bookWithNarrators, authorName);
+      targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName);
 
       const { sourcePath, fileCount, sourceStats } = await validateSource(savePath, this.remotePathMappingService, download.downloadClientId);
       await checkDiskSpace({ sourcePath, sourceStats, libraryPath: librarySettings.path, minFreeSpaceGB: importSettings.minFreeSpaceGB, processingEnabled });
       await copyToLibrary({ sourcePath, targetPath, sourceStats, log: this.log });
-      await runAudioProcessing({ processingSettings, librarySettings, targetPath, book: bookWithNarrators, authorName: authorName || 'Unknown Author', db: this.db, log: this.log });
+      await runAudioProcessing({ processingSettings, librarySettings, targetPath, book: book, authorName: authorName || 'Unknown Author', db: this.db, log: this.log });
 
       if (librarySettings.fileFormat) {
-        await renameFilesWithTemplate(targetPath, librarySettings.fileFormat, bookWithNarrators, authorName, this.log);
+        await renameFilesWithTemplate(targetPath, librarySettings.fileFormat, book, authorName, this.log);
       }
       const targetSize = await verifyCopy({ targetPath, sourcePath, processingEnabled });
       await cleanupOldBookPath({ bookPath: book.path, targetPath, log: this.log });
@@ -200,37 +201,6 @@ export class ImportService {
   private async getDownload(id: number): Promise<DownloadRow | null> {
     const results = await this.db.select().from(downloads).where(eq(downloads.id, id)).limit(1);
     return results[0] ?? null;
-  }
-
-  private async getBookWithAuthor(bookId: number): Promise<{ book: BookRow; author: AuthorRow | undefined; narratorNames: string[] } | null> {
-    const bookResults = await this.db
-      .select({ book: books })
-      .from(books)
-      .where(eq(books.id, bookId))
-      .limit(1);
-
-    if (bookResults.length === 0) return null;
-    const book = bookResults[0].book;
-
-    const [authorResult, narratorResult] = await Promise.all([
-      this.db
-        .select({ author: authors })
-        .from(bookAuthors)
-        .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
-        .where(and(eq(bookAuthors.bookId, bookId), eq(bookAuthors.position, 0)))
-        .limit(1),
-      this.db
-        .select({ name: narrators.name })
-        .from(bookNarrators)
-        .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
-        .where(eq(bookNarrators.bookId, bookId)),
-    ]);
-
-    return {
-      book,
-      author: authorResult[0]?.author ?? undefined,
-      narratorNames: narratorResult.map(r => r.name),
-    };
   }
 
   private async handleTorrentRemoval(download: DownloadRow, minSeedTimeMinutes: number): Promise<void> {
