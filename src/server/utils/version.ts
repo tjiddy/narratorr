@@ -18,10 +18,11 @@ export function getVersion(): string {
   return packageVersion!;
 }
 
-/** Returns the build-injected git commit SHA, or "unknown" when not set. */
+/** Returns the build-injected git commit SHA truncated to 7 characters, or "unknown" when not set. */
 export function getCommit(): string {
   if (!packageCommit) {
-    packageCommit = process.env.GIT_COMMIT || 'unknown';
+    const raw = process.env.GIT_COMMIT || 'unknown';
+    packageCommit = raw === 'unknown' ? 'unknown' : raw.slice(0, 7);
   }
   return packageCommit;
 }
