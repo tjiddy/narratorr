@@ -207,7 +207,7 @@ export class DownloadService {
     // Check for active downloads for this book
     if (params.bookId && !params.skipDuplicateCheck) {
       const allActive = await this.getActiveByBookId(params.bookId);
-      const replaceableSet = new Set(getReplacableStatuses());
+      const replaceableSet = new Set<string>(getReplacableStatuses());
       const replaceableActive = allActive.filter((dl) => replaceableSet.has(dl.status));
 
       if (replaceableActive.length > 0) {
