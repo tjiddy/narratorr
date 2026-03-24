@@ -340,3 +340,78 @@ describe('enrichment-utils — narrator junction writes (#71)', () => {
     ).resolves.toEqual({ enriched: true });
   });
 });
+
+describe('enrichBookFromAudio narrator splitting (issue #79)', () => {
+  let mockDb: { update: ReturnType<typeof vi.fn> };
+  let log: FastifyBaseLogger;
+  let mockBookService: { update: ReturnType<typeof vi.fn> };
+
+  function scanWithNarrator(tagNarrator: string | undefined) {
+    vi.mocked(scanAudioDirectory).mockResolvedValue({
+      codec: 'mp3', bitrate: 128000, sampleRate: 44100, channels: 2,
+      bitrateMode: 'cbr' as const, fileFormat: 'MPEG', fileCount: 1,
+      totalSize: 1000, totalDuration: 100, hasCoverArt: false,
+      tagNarrator,
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDb = {
+      update: vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) }),
+      }),
+    };
+    log = inject<FastifyBaseLogger>({
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      fatal: vi.fn(), trace: vi.fn(), child: vi.fn().mockReturnThis(), silent: vi.fn(), level: 'info',
+    });
+    mockBookService = { update: vi.fn().mockResolvedValue(null) };
+  });
+
+  async function callEnrich(tagNarrator: string | undefined) {
+    scanWithNarrator(tagNarrator);
+    return enrichBookFromAudio(
+      5, '/books/test',
+      { narrators: null, duration: null, coverUrl: null },
+      inject<Db>(mockDb),
+      log,
+      inject<BookService>(mockBookService),
+    );
+  }
+
+  it('single narrator string → one narrator entity created', async () => {
+    await callEnrich('Michael Kramer');
+    expect(mockBookService.update).toHaveBeenCalledWith(5, { narrators: ['Michael Kramer'] });
+  });
+
+  it('"Alice, Bob" → two narrator entities (comma split)', async () => {
+    await callEnrich('Alice, Bob');
+    expect(mockBookService.update).toHaveBeenCalledWith(5, { narrators: ['Alice', 'Bob'] });
+  });
+
+  it('"Alice; Bob" → two narrator entities (semicolon split)', async () => {
+    await callEnrich('Alice; Bob');
+    expect(mockBookService.update).toHaveBeenCalledWith(5, { narrators: ['Alice', 'Bob'] });
+  });
+
+  it('"Alice & Bob" → two narrator entities (ampersand split)', async () => {
+    await callEnrich('Alice & Bob');
+    expect(mockBookService.update).toHaveBeenCalledWith(5, { narrators: ['Alice', 'Bob'] });
+  });
+
+  it('"  Alice  ,  Bob  " → names trimmed before junction write', async () => {
+    await callEnrich('  Alice  ,  Bob  ');
+    expect(mockBookService.update).toHaveBeenCalledWith(5, { narrators: ['Alice', 'Bob'] });
+  });
+
+  it('empty string "" → no narrator entities created', async () => {
+    await callEnrich('');
+    expect(mockBookService.update).not.toHaveBeenCalled();
+  });
+
+  it('null/missing narrator tag → no narrator entities created; existing junctions unchanged', async () => {
+    await callEnrich(undefined);
+    expect(mockBookService.update).not.toHaveBeenCalled();
+  });
+});

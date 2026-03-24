@@ -56,7 +56,8 @@ export async function enrichBookFromAudio(
     // Tag data: only fill empty fields (don't overwrite user edits)
     // Narrator writes go through the junction table via bookService
     if (!book.narrators?.length && scanResult.tagNarrator && bookService) {
-      await bookService.update(bookId, { narrators: [scanResult.tagNarrator] });
+      const narratorNames = scanResult.tagNarrator.split(/[,;&]/).map(n => n.trim()).filter(n => n.length > 0);
+      await bookService.update(bookId, { narrators: narratorNames });
     }
     if (!book.duration && scanResult.totalDuration) {
       update.duration = Math.round(scanResult.totalDuration / 60);
