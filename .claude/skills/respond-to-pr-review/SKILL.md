@@ -34,7 +34,8 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    - Run `gh pr view <pr-number> --json number,state,title,headRefName,baseRefName,author,headRefOid,url,labels,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\n\(.headRefName) → \(.baseRefName) | author: \(.author.login) | sha: \(.headRefOid) | \(.url)\nlabels: \([.labels[].name] | join(", "))\n\n\(.body // "")"'` to get head branch and linked issue (`Refs #<id>`)
    - `git fetch origin <head-branch> && git checkout <head-branch>`
 
-2. **Read review comments:**
+2. **Read review comments (MUST re-fetch every invocation):**
+   - **IMPORTANT: Always execute this API call — do not reuse comment data from earlier in the conversation. New comments may have been posted since the last invocation. Ignore any comment data already in your context and treat this fresh API response as the sole source of truth.**
    - Run `gh api repos/{owner}/{repo}/issues/<pr-number>/comments --paginate --jq '.[] | "--- comment \(.id) | \(.user.login) | \(.created_at) ---\n\(.body)\n"'`
    - Find the most recent comment containing `## Verdict:` — this is the active review
    - Parse the `## Findings` JSON block from that comment
