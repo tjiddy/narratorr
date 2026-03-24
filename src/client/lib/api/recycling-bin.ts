@@ -4,9 +4,9 @@ export interface RecyclingBinEntry {
   id: number;
   bookId: number | null;
   title: string;
-  authorName: string | null;
+  authorName: string[] | null;
   authorAsin: string | null;
-  narrator: string | null;
+  narrator: string[] | null;
   description: string | null;
   coverUrl: string | null;
   asin: string | null;

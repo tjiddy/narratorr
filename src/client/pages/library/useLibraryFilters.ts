@@ -99,10 +99,12 @@ export function applyClientFilters(
 ): DisplayBook[] {
   let result = books;
   if (filters.authorFilter) {
-    result = result.filter((b) => b.authors?.some((a) => a.name === filters.authorFilter));
+    const authorLower = filters.authorFilter.toLowerCase();
+    result = result.filter((b) => b.authors?.some((a) => a.name.toLowerCase() === authorLower));
   }
   if (filters.seriesFilter) {
-    result = result.filter((b) => b.seriesName === filters.seriesFilter);
+    const seriesLower = filters.seriesFilter.toLowerCase();
+    result = result.filter((b) => b.seriesName?.toLowerCase() === seriesLower);
   }
   if (filters.narratorFilter) {
     const filterLower = filters.narratorFilter.toLowerCase();

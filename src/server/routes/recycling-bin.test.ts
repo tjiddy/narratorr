@@ -169,3 +169,45 @@ describe('recycling-bin routes', () => {
     });
   });
 });
+
+describe('GET /api/system/recycling-bin array contract (issue #79)', () => {
+  let app: Awaited<ReturnType<typeof createTestApp>>;
+  let services: Services;
+
+  beforeAll(async () => {
+    services = createMockServices();
+    app = await createTestApp(services);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    resetMockServices(services);
+  });
+
+  it('returns authorName as string[] for a two-author book (not a joined string)', async () => {
+    (services.recyclingBin.list as Mock).mockResolvedValue([
+      { id: 1, title: 'Dune', authorName: ['Frank Herbert', 'Brian Herbert'], narrator: null, deletedAt: new Date().toISOString() },
+    ]);
+
+    const res = await app.inject({ method: 'GET', url: '/api/system/recycling-bin' });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    expect(body[0].authorName).toEqual(['Frank Herbert', 'Brian Herbert']);
+  });
+
+  it('returns narrator as string[] for a book with a comma-containing narrator name', async () => {
+    (services.recyclingBin.list as Mock).mockResolvedValue([
+      { id: 2, title: 'Dune', authorName: null, narrator: ['Kate Reading, Michael Kramer'], deletedAt: new Date().toISOString() },
+    ]);
+
+    const res = await app.inject({ method: 'GET', url: '/api/system/recycling-bin' });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    expect(body[0].narrator).toEqual(['Kate Reading, Michael Kramer']);
+  });
+});

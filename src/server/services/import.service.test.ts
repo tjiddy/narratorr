@@ -224,6 +224,16 @@ describe('ImportService', () => {
   let clientService: ReturnType<typeof createMockDownloadClientService>;
   let settingsService: ReturnType<typeof createMockSettingsService>;
   let service: ImportService;
+  let mockBookService: { getById: ReturnType<typeof vi.fn> };
+
+  /** Wrap a bare book row in a BookWithAuthor shell (authors + narrators arrays). */
+  function withAuthor(book: Record<string, unknown>, narratorNames: string[] = []) {
+    return {
+      ...book,
+      authors: [mockAuthor],
+      narrators: narratorNames.map((name, i) => ({ id: i + 1, name, slug: name.toLowerCase().replace(/\s+/g, '-'), createdAt: new Date(), updatedAt: new Date() })),
+    };
+  }
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -231,7 +241,8 @@ describe('ImportService', () => {
     log = createMockLogger();
     clientService = createMockDownloadClientService();
     settingsService = createMockSettingsService();
-    service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined);
+    mockBookService = { getById: vi.fn().mockResolvedValue(withAuthor(mockBook)) };
+    service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
 
     // Default: stat returns a directory for source, then directory for target (size verification)
     const statMock = vi.mocked(stat);
@@ -249,7 +260,6 @@ describe('ImportService', () => {
       // First select: get download
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       // Second select: get book with author
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       // update calls: set importing, then update book, then update download to imported
       db.update.mockReturnValue(mockDbChain());
 
@@ -276,7 +286,6 @@ describe('ImportService', () => {
 
     it('sets download to failed on error and rethrows', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       // Make stat throw to simulate file not found
@@ -296,7 +305,6 @@ describe('ImportService', () => {
       });
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       await service.importDownload(1);
@@ -315,7 +323,6 @@ describe('ImportService', () => {
       mockAdapter.removeDownload.mockRejectedValueOnce(new Error('Connection refused'));
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       // Should NOT throw — error is logged but swallowed
@@ -335,7 +342,6 @@ describe('ImportService', () => {
 
       // Download completed 1 hour ago, min seed time is 2 hours
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       await service.importDownload(1);
@@ -377,7 +383,6 @@ describe('ImportService', () => {
 
     function setupImportMocks() {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
     }
 
@@ -405,9 +410,9 @@ describe('ImportService', () => {
     });
 
     it('does not overwrite existing narrator', async () => {
-      const bookWithNarrator = { ...mockBook, narrator: 'Existing Narrator' };
+      const bookWithNarrator = withAuthor(mockBook, ['Existing Narrator']);
+      mockBookService.getById.mockResolvedValueOnce(bookWithNarrator);
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: bookWithNarrator, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       const mockScan = vi.mocked(scanAudioDirectory);
@@ -422,8 +427,8 @@ describe('ImportService', () => {
 
     it('does not overwrite existing duration', async () => {
       const bookWithDuration = { ...mockBook, duration: 150 };
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(bookWithDuration));
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: bookWithDuration, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       const mockScan = vi.mocked(scanAudioDirectory);
@@ -460,8 +465,8 @@ describe('ImportService', () => {
 
     it('does not save cover when book already has coverUrl', async () => {
       const bookWithCover = { ...mockBook, coverUrl: 'https://example.com/cover.jpg' };
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(bookWithCover));
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: bookWithCover, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       const coverData = Buffer.from([0xff, 0xd8, 0xff]);
@@ -515,7 +520,6 @@ describe('ImportService', () => {
     it('throws when download has no downloadClientId (missing clientId early return)', async () => {
       const downloadNoClient = { ...mockDownload, downloadClientId: null, externalId: null };
       db.select.mockReturnValueOnce(mockDbChain([downloadNoClient]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       await expect(service.importDownload(1)).rejects.toThrow('missing client or external ID');
@@ -524,7 +528,6 @@ describe('ImportService', () => {
     it('throws when download has no externalId', async () => {
       const downloadNoExtId = { ...mockDownload, externalId: null };
       db.select.mockReturnValueOnce(mockDbChain([downloadNoExtId]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       await expect(service.importDownload(1)).rejects.toThrow('missing client or external ID');
@@ -538,7 +541,6 @@ describe('ImportService', () => {
       (clientService.getAdapter as Mock).mockResolvedValue(adapterNoDownload);
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       await expect(service.importDownload(1)).rejects.toThrow('not found in client');
@@ -552,7 +554,6 @@ describe('ImportService', () => {
       (clientService.getAdapter as Mock).mockResolvedValue(adapterThrows);
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       await expect(service.importDownload(1)).rejects.toThrow('Client connection refused');
@@ -560,7 +561,6 @@ describe('ImportService', () => {
 
     it('throws when no audio files in directory', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       // readdir returns no audio files
@@ -575,7 +575,6 @@ describe('ImportService', () => {
 
     it('sets download to failed when file copy fails mid-import', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       // readdir returns audio file
@@ -594,8 +593,8 @@ describe('ImportService', () => {
     });
 
     it('throws when book not found for linked bookId', async () => {
+      mockBookService.getById.mockResolvedValueOnce(null);
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([]));  // book not found
 
       await expect(service.importDownload(1)).rejects.toThrow('Book 1 not found');
     });
@@ -604,7 +603,6 @@ describe('ImportService', () => {
       (clientService.getAdapter as Mock).mockResolvedValue(null);
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       await expect(service.importDownload(1)).rejects.toThrow('not found');
@@ -618,9 +616,13 @@ describe('ImportService', () => {
       size: 400_000_000,
     });
 
+    beforeEach(() => {
+      // Default book for upgrade tests has an existing path
+      mockBookService.getById.mockResolvedValue(withAuthor(importedBook));
+    });
+
     it('deletes old files when book has existing path at different location', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       await service.importDownload(1);
@@ -631,10 +633,9 @@ describe('ImportService', () => {
 
     it('logs old path at info level during upgrade', async () => {
       const log = createMockLogger();
-      const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log));
+      const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       await svc.importDownload(1);
@@ -662,10 +663,8 @@ describe('ImportService', () => {
         return Promise.resolve({});
       });
 
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(samePathBook));
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: samePathBook }]));
-      db.select.mockReturnValueOnce(mockDbChain([{ author: mockAuthor }]));
-      db.select.mockReturnValueOnce(mockDbChain([]));
       db.update.mockReturnValue(mockDbChain());
 
       await service.importDownload(1);
@@ -679,7 +678,6 @@ describe('ImportService', () => {
       rmMock.mockRejectedValueOnce(new Error('EACCES: permission denied'));
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       // Should NOT throw — import still succeeds
@@ -692,7 +690,6 @@ describe('ImportService', () => {
       rmMock.mockRejectedValueOnce(new Error('EACCES'));
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       await service.importDownload(1);
@@ -703,8 +700,8 @@ describe('ImportService', () => {
     });
 
     it('does not attempt deletion when book has no path', async () => {
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(mockBook)); // override upgrade-flow default (no path)
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       await service.importDownload(1);
@@ -715,7 +712,6 @@ describe('ImportService', () => {
 
     it('preserves old download record during upgrade (history)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       await service.importDownload(1);
@@ -731,9 +727,8 @@ describe('ImportService', () => {
         status: 'downloading' as const,
         path: '/audiobooks/existing',
       });
-
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(importedBook));
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       // Make stat throw to trigger failure
@@ -753,7 +748,6 @@ describe('ImportService', () => {
 
     it('reverts book to wanted when import fails and book has no path', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       const statMock = vi.mocked(stat);
@@ -774,9 +768,8 @@ describe('ImportService', () => {
         status: 'downloading' as const,
         path: '/audiobooks/existing',
       });
-
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(importedBook));
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       const cpMock = vi.mocked(cp);
@@ -797,6 +790,7 @@ describe('ImportService', () => {
         status: 'downloading' as const,
         path: '/audiobooks/existing',
       });
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(importedBook));
 
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
@@ -810,7 +804,6 @@ describe('ImportService', () => {
       });
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       const mockProcess = vi.mocked(processAudioFiles);
@@ -831,7 +824,6 @@ describe('ImportService', () => {
   describe('target path cleanup on import failure', () => {
     it('removes targetPath when DB update throws after copy', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
 
       // First two updates succeed (book status='importing', download status='importing')
       // Then fail on the book update (status='imported', path=targetPath)
@@ -869,7 +861,6 @@ describe('ImportService', () => {
 
     it('logs warning and continues DB revert when rm(targetPath) throws', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
 
       let updateCallCount = 0;
       db.update.mockImplementation(() => {
@@ -914,7 +905,6 @@ describe('ImportService', () => {
   describe('file renaming with template (non-processing path)', () => {
     it('renames audio files using fileFormat template after import', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       // readdir returns audio files for the rename step (second call after containsAudioFiles)
@@ -948,9 +938,6 @@ describe('ImportService', () => {
       });
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook }]));
-      db.select.mockReturnValueOnce(mockDbChain([{ author: mockAuthor }]));
-      db.select.mockReturnValueOnce(mockDbChain([]));
       db.update.mockReturnValue(mockDbChain());
     }
 
@@ -1010,7 +997,6 @@ describe('ImportService', () => {
       });
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       const mockProcess = vi.mocked(processAudioFiles);
@@ -1050,6 +1036,7 @@ describe('ImportService', () => {
         inject<Db>(db), clientService, settingsService,
         inject<FastifyBaseLogger>(createMockLogger()),
         mockMappingService,
+        mockBookService as never,
       );
     });
 
@@ -1059,7 +1046,6 @@ describe('ImportService', () => {
       ]);
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       const statMock = vi.mocked(stat);
@@ -1086,7 +1072,6 @@ describe('ImportService', () => {
       ]);
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       const result = await serviceWithMappings.importDownload(1);
@@ -1097,7 +1082,6 @@ describe('ImportService', () => {
 
     it('includes ENOENT guidance suggesting path mapping when none configured', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       const statMock = vi.mocked(stat);
@@ -1116,7 +1100,6 @@ describe('ImportService', () => {
       ]);
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       const statMock = vi.mocked(stat);
@@ -1133,7 +1116,6 @@ describe('ImportService', () => {
   describe('import atomicity failures (#235 Tier 1)', () => {
     it('cleans up copied files when DB update throws after copy (#237)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
 
       // First update (set importing) succeeds, then book update at step 8 throws
       let updateCallCount = 0;
@@ -1172,12 +1154,12 @@ describe('ImportService', () => {
         status: 'downloading' as const,
         path: '/audiobooks/Old Author/Old Book',
       });
+      mockBookService.getById.mockResolvedValueOnce(withAuthor(importedBook));
 
       const log = createMockLogger();
-      const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log));
+      const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: importedBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       // rm rejects for old path cleanup
@@ -1202,10 +1184,9 @@ describe('ImportService', () => {
 
     it('reverts download and book status when enrichBookFromAudio throws', async () => {
       const log = createMockLogger();
-      const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log));
+      const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       // Make enrichBookFromAudio throw (simulating a scenario where internal catch is absent)
@@ -1234,7 +1215,6 @@ describe('ImportService', () => {
   describe('audio-only copy filtering', () => {
     it('directory import only copies audio files, skips .nzb/.sfv/.nfo', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       const readdirMock = vi.mocked(readdir);
@@ -1264,7 +1244,6 @@ describe('ImportService', () => {
 
     it('single non-audio file import throws', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
 
       // stat returns a file (not directory)
@@ -1412,13 +1391,12 @@ describe('ImportService', () => {
 
     function setupImportMocks() {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
       db.update.mockReturnValue(mockDbChain());
     }
 
     it('import proceeds when free space >= threshold + estimated output size', async () => {
       const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 5 });
-      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
       // 100GB free, 5GB threshold + ~500MB source = plenty of space
@@ -1430,7 +1408,7 @@ describe('ImportService', () => {
 
     it('import aborts when free space < threshold + estimated output size', async () => {
       const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 5 });
-      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
       // Only 1GB free, need 5GB threshold + source
@@ -1441,7 +1419,7 @@ describe('ImportService', () => {
 
     it('free space at exactly threshold + estimated size proceeds (>= boundary)', async () => {
       const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 5 });
-      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
       // Source size is 500_000_000 (from stat mock), processing disabled so multiplier=1
@@ -1456,7 +1434,7 @@ describe('ImportService', () => {
     it('estimated output uses sourceSize * 1.5 when processing enabled', async () => {
       // Use minFreeSpaceGB=1 so disk check actually runs (0 skips it)
       const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 1, processingEnabled: true });
-      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
       // Source = 500MB, with processing: estimated = 750MB, threshold = 1GB
@@ -1470,7 +1448,7 @@ describe('ImportService', () => {
     it('estimated output uses sourceSize * 1 when processing disabled', async () => {
       // Use minFreeSpaceGB=1 so disk check actually runs (0 skips it)
       const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 1, processingEnabled: false });
-      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
       // Source = 500MB, no processing: estimated = 500MB, threshold = 1GB
@@ -1484,7 +1462,7 @@ describe('ImportService', () => {
 
     it('statfs failure aborts import with clear error', async () => {
       const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 5 });
-      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
       vi.mocked(statfs).mockReset();
@@ -1495,7 +1473,7 @@ describe('ImportService', () => {
 
     it('disk space check skipped when minFreeSpaceGB=0', async () => {
       const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 0 });
-      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
       // statfs should not be called
@@ -1506,7 +1484,7 @@ describe('ImportService', () => {
 
     it('download set to failed with descriptive errorMessage on disk-space abort', async () => {
       const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 5 });
-      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
       vi.mocked(statfs).mockResolvedValueOnce({ bavail: BigInt(1_000_000_000), bsize: BigInt(1) } as never);
@@ -1530,7 +1508,7 @@ describe('ImportService', () => {
 
     it('book status reverted per existing recovery logic on disk-space abort', async () => {
       const customSettings = setupDiskCheckMocks({ minFreeSpaceGB: 5 });
-      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log));
+      const svc = new ImportService(inject<Db>(db), clientService, customSettings, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
       setupImportMocks();
 
       vi.mocked(statfs).mockResolvedValueOnce({ bavail: BigInt(1_000_000_000), bsize: BigInt(1) } as never);
@@ -1555,9 +1533,6 @@ describe('ImportService', () => {
   describe('getImportContext', () => {
     it('returns download and book context for side effect dispatch', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook }]));
-      db.select.mockReturnValueOnce(mockDbChain([{ author: mockAuthor }]));
-      db.select.mockReturnValueOnce(mockDbChain([]));
 
       const ctx = await service.getImportContext(1);
 
@@ -1612,5 +1587,50 @@ describe('ImportService', () => {
         .flatMap((s: ReturnType<typeof vi.fn>) => s.mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>));
       expect(updateSetCalls).toContainEqual({ status: 'processing_queued' });
     });
+  });
+});
+
+describe('ImportService consolidation (issue #79)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let log: ReturnType<typeof createMockLogger>;
+  let clientService: ReturnType<typeof createMockDownloadClientService>;
+  let settingsService: ReturnType<typeof createMockSettingsService>;
+
+  function makeBookWithNarrators(narrators: string[]) {
+    return {
+      ...createMockDbBook({ id: 1 }),
+      authors: [createMockDbAuthor()],
+      narrators: narrators.map((name, i) => ({ id: i + 1, name, slug: name.toLowerCase().replace(/\s+/g, '-'), createdAt: now, updatedAt: now })),
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    db = createMockDb();
+    log = createMockLogger();
+    clientService = createMockDownloadClientService();
+    settingsService = createMockSettingsService();
+  });
+
+  it('getImportContext() narrator delimiter is ", " (comma-space), not "; "', async () => {
+    const bookSvc = { getById: vi.fn().mockResolvedValue(makeBookWithNarrators(['Kate Reading', 'Michael Kramer'])) };
+    const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, bookSvc as never);
+
+    db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+
+    const ctx = await svc.getImportContext(1);
+    expect(ctx.narratorStr).toBe('Kate Reading, Michael Kramer');
+    expect(ctx.narratorStr).not.toContain(';');
+  });
+
+  it('getImportContext() returns authorName from junction position-0 author', async () => {
+    const bookSvc = { getById: vi.fn().mockResolvedValue(makeBookWithNarrators([])) };
+    const svc = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, bookSvc as never);
+
+    db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+
+    const ctx = await svc.getImportContext(1);
+    expect(ctx.authorName).toBe('Brandon Sanderson');
+    expect(ctx.narratorStr).toBeNull();
   });
 });

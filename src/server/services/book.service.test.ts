@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { BookService } from './book.service.js';
+import { books } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { MetadataService } from './metadata.service.js';
@@ -641,11 +642,11 @@ describe('BookService', () => {
 
   describe('search', () => {
     it('returns matching books with authors and narrators', async () => {
+      // Batch-load pattern: 1 book query + 1 author batch + 1 narrator batch
       db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // title search returning book ids
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
-        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
-        .mockReturnValueOnce(mockDbChain([]));
+        .mockReturnValueOnce(mockDbChain([mockBook]))  // full books
+        .mockReturnValueOnce(mockDbChain([{ bookId: mockBook.id, author: mockAuthor, position: 0 }]))  // batch authors
+        .mockReturnValueOnce(mockDbChain([]));  // batch narrators
 
       const result = await service.search('Way of Kings');
       expect(result).toHaveLength(1);
@@ -663,9 +664,7 @@ describe('BookService', () => {
 
   describe('create edge cases', () => {
     it('throws when book insert fails', async () => {
-      db.select
-        .mockReturnValueOnce(mockDbChain([mockAuthor]));  // author found
-
+      // Book insert is first; author find-or-create happens in syncAuthors after
       db.insert
         .mockImplementationOnce(() => { throw new Error('UNIQUE constraint failed: books.asin'); });
 
@@ -679,19 +678,20 @@ describe('BookService', () => {
     });
 
     it('handles concurrent author creation race condition', async () => {
+      // New order: book insert first, then syncAuthors (delete + find/create + insert junction)
+      const raceChain = mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') });
+
+      db.insert
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // book insert
+        .mockReturnValueOnce(raceChain)                  // author insert race (in syncAuthors)
+        .mockReturnValueOnce(mockDbChain([]));            // bookAuthors junction
+
       db.select
-        .mockReturnValueOnce(mockDbChain([]))       // author lookup: not found
+        .mockReturnValueOnce(mockDbChain([]))            // author lookup: not found
         .mockReturnValueOnce(mockDbChain([mockAuthor]))  // retry after constraint: found
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([]));
-
-      const raceChain = mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') });
-
-      db.insert
-        .mockReturnValueOnce(raceChain)              // author insert race
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // book insert
-        .mockReturnValueOnce(mockDbChain([]));            // bookAuthors
 
       const result = await service.create({
         title: 'The Way of Kings',
@@ -702,6 +702,10 @@ describe('BookService', () => {
     });
 
     it('throws when author race retry also fails to find author', async () => {
+      // Book insert succeeds; author insert in syncAuthors fails with race
+      db.insert
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]));  // book insert succeeds
+
       db.select
         .mockReturnValueOnce(mockDbChain([]))  // author not found
         .mockReturnValueOnce(mockDbChain([]));  // retry: still not found
@@ -716,5 +720,146 @@ describe('BookService', () => {
         }),
       ).rejects.toThrow('Failed to find or create author');
     });
+
+    it('deletes orphaned book row when post-insert author sync fails (compensating delete)', async () => {
+      // Book insert succeeds, then syncAuthors fails immediately (no author found, no retry)
+      db.insert
+        .mockReturnValueOnce(mockDbChain([{ id: 42 }]));  // book insert succeeds
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // author lookup: not found
+        .mockReturnValueOnce(mockDbChain([]));  // retry: still not found
+
+      const failChain = mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') });
+      db.insert.mockReturnValueOnce(failChain);  // author insert fails
+
+      await expect(
+        service.create({ title: 'Orphan Book', authors: [{ name: 'Ghost Author' }] }),
+      ).rejects.toThrow();
+
+      // Compensating delete must remove the book row with id=42
+      expect(db.delete).toHaveBeenCalledWith(books);
+    });
+  });
+});
+
+describe('BookService batch-load (N+1 fix)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let service: BookService;
+
+  beforeEach(() => {
+    db = createMockDb();
+    service = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+  });
+
+  it('getMonitoredBooks() with 3 monitored books issues exactly 3 DB queries total', async () => {
+    const book1 = createMockDbBook({ id: 1 });
+    const book2 = createMockDbBook({ id: 2, title: 'Words of Radiance' });
+    const book3 = createMockDbBook({ id: 3, title: 'Oathbringer' });
+    // 1st select: books query with monitorForUpgrades + status filter
+    db.select.mockReturnValueOnce(mockDbChain([book1, book2, book3]));
+    // 2nd select: batch authors for all 3 books
+    db.select.mockReturnValueOnce(mockDbChain([
+      { bookId: 1, author: mockAuthor, position: 0 },
+      { bookId: 2, author: mockAuthor, position: 0 },
+      { bookId: 3, author: mockAuthor, position: 0 },
+    ]));
+    // 3rd select: batch narrators for all 3 books
+    db.select.mockReturnValueOnce(mockDbChain([]));
+
+    await service.getMonitoredBooks();
+
+    expect(db.select).toHaveBeenCalledTimes(3);
+  });
+
+  it('getMonitoredBooks() returns BookWithAuthor[] with authors/narrators arrays populated', async () => {
+    const book1 = createMockDbBook({ id: 1 });
+    db.select
+      .mockReturnValueOnce(mockDbChain([book1]))
+      .mockReturnValueOnce(mockDbChain([{ bookId: 1, author: mockAuthor, position: 0 }]))
+      .mockReturnValueOnce(mockDbChain([{ bookId: 1, narrator: mockNarrator, position: 0 }]));
+
+    const results = await service.getMonitoredBooks();
+
+    expect(results).toHaveLength(1);
+    expect(results[0].authors).toEqual([mockAuthor]);
+    expect(results[0].narrators).toEqual([mockNarrator]);
+  });
+
+  it('search() with multiple results issues exactly 3 DB queries total', async () => {
+    const book1 = createMockDbBook({ id: 1 });
+    const book2 = createMockDbBook({ id: 2, title: 'Words of Radiance' });
+    db.select
+      .mockReturnValueOnce(mockDbChain([book1, book2]))
+      .mockReturnValueOnce(mockDbChain([]))
+      .mockReturnValueOnce(mockDbChain([]));
+
+    await service.search('Stormlight');
+
+    expect(db.select).toHaveBeenCalledTimes(3);
+  });
+
+  it('search() returns BookWithAuthor[] with authors/narrators arrays populated', async () => {
+    const book1 = createMockDbBook({ id: 5 });
+    db.select
+      .mockReturnValueOnce(mockDbChain([book1]))
+      .mockReturnValueOnce(mockDbChain([{ bookId: 5, author: mockAuthor, position: 0 }]))
+      .mockReturnValueOnce(mockDbChain([]));
+
+    const results = await service.search('Kings');
+
+    expect(results).toHaveLength(1);
+    expect(results[0].authors).toEqual([mockAuthor]);
+    expect(results[0].narrators).toEqual([]);
+  });
+});
+
+describe('BookService.syncAuthors / syncNarrators', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let service: BookService;
+
+  beforeEach(() => {
+    db = createMockDb();
+    service = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+  });
+
+  it('syncAuthors(bookId, []) clears all author junctions without error', async () => {
+    db.delete.mockReturnValue(mockDbChain([]));
+
+    await service.syncAuthors(10, []);
+
+    expect(db.delete).toHaveBeenCalledTimes(1);
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('syncNarrators(bookId, []) clears all narrator junctions without error', async () => {
+    db.delete.mockReturnValue(mockDbChain([]));
+
+    await service.syncNarrators(10, []);
+
+    expect(db.delete).toHaveBeenCalledTimes(1);
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('syncAuthors deduplicates by slug — two authors with same slug produce one junction row', async () => {
+    db.select.mockReturnValue(mockDbChain([{ id: 1 }]));  // author found
+    db.delete.mockReturnValue(mockDbChain([]));
+    db.insert.mockReturnValue(mockDbChain([]));
+
+    await service.syncAuthors(10, [{ name: 'Brandon Sanderson' }, { name: 'Brandon Sanderson' }]);
+
+    // 1 delete (clear junctions) + 1 bookAuthors insert (not 2)
+    expect(db.insert).toHaveBeenCalledTimes(1);
+  });
+
+  it('syncNarrators replaces all narrator junctions with new list', async () => {
+    db.select.mockReturnValue(mockDbChain([{ id: 5 }]));  // narrator found
+    db.delete.mockReturnValue(mockDbChain([]));
+    db.insert.mockReturnValue(mockDbChain([]));
+
+    await service.syncNarrators(10, ['Kate Reading', 'Michael Kramer']);
+
+    expect(db.delete).toHaveBeenCalledTimes(1);
+    expect(db.insert).toHaveBeenCalledTimes(2);  // 2 bookNarrators rows
   });
 });
