@@ -306,6 +306,23 @@ describe('DiscoverySettingsSection', () => {
     });
   });
 
+  it('renders Enable Discovery toggle as a hidden-checkbox slider (sr-only peer pattern)', async () => {
+    renderWithProviders(<DiscoverySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/enable discovery/i)).toBeInTheDocument();
+    });
+
+    const checkbox = screen.getByLabelText(/enable discovery/i);
+    // Checkbox must be visually hidden (sr-only) — not a raw visible checkbox
+    expect(checkbox).toHaveClass('sr-only');
+    // Visual slider track div must be rendered immediately after the hidden checkbox
+    const sliderTrack = checkbox.nextElementSibling as HTMLElement | null;
+    expect(sliderTrack).toBeInTheDocument();
+    expect(sliderTrack!.tagName).toBe('DIV');
+    expect(sliderTrack).toHaveClass('rounded-full');
+  });
+
   it('save failure shows error toast', async () => {
     vi.mock('sonner', () => ({
       toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },

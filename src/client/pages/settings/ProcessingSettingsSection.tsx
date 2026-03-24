@@ -278,8 +278,9 @@ export function ProcessingSettingsSection() {
                   id="keepOriginalBitrate"
                   type="checkbox"
                   {...register('keepOriginalBitrate')}
-                  className="rounded border-border text-primary focus:ring-primary"
+                  className="sr-only peer"
                 />
+                <div className="w-9 h-5 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4 relative" />
                 Keep original
               </label>
             </div>
@@ -288,7 +289,7 @@ export function ProcessingSettingsSection() {
               type="number"
               {...register('bitrate', { valueAsNumber: true })}
               disabled={keepOriginalBitrate}
-              className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed ${
+              className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
                 errors.bitrate ? 'border-destructive' : 'border-border'
               }`}
               min={32}
