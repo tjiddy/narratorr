@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index, uniqueIndex, primaryKey } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 import { downloadStatusSchema } from '../shared/schemas/activity';
 import { SUGGESTION_REASONS } from '../shared/schemas/discovery';
@@ -28,11 +28,18 @@ export const authors = sqliteTable('authors', {
     .default(sql`(unixepoch())`),
 });
 
+export const narrators = sqliteTable('narrators', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  slug: text('slug').notNull().unique(),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 export const books = sqliteTable('books', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   title: text('title').notNull(),
-  authorId: integer('author_id').references(() => authors.id, { onDelete: 'set null' }),
-  narrator: text('narrator'),
   description: text('description'),
   coverUrl: text('cover_url'),
   goodreadsId: text('goodreads_id'),
@@ -75,12 +82,30 @@ export const books = sqliteTable('books', {
     .notNull()
     .default(sql`(unixepoch())`),
 }, (table) => [
-  index('idx_books_author_id').on(table.authorId),
   index('idx_books_status').on(table.status),
   index('idx_books_path').on(table.path),
   index('idx_books_enrichment_status').on(table.enrichmentStatus),
   uniqueIndex('idx_books_asin_unique').on(table.asin).where(sql`asin IS NOT NULL`),
-  uniqueIndex('idx_books_title_author_unique').on(table.title, table.authorId),
+]);
+
+export const bookAuthors = sqliteTable('book_authors', {
+  bookId: integer('book_id').notNull().references(() => books.id, { onDelete: 'cascade' }),
+  authorId: integer('author_id').notNull().references(() => authors.id, { onDelete: 'cascade' }),
+  position: integer('position').notNull().default(0),
+}, (table) => [
+  primaryKey({ columns: [table.bookId, table.authorId] }),
+  index('idx_book_authors_book_id').on(table.bookId),
+  index('idx_book_authors_author_id').on(table.authorId),
+]);
+
+export const bookNarrators = sqliteTable('book_narrators', {
+  bookId: integer('book_id').notNull().references(() => books.id, { onDelete: 'cascade' }),
+  narratorId: integer('narrator_id').notNull().references(() => narrators.id, { onDelete: 'cascade' }),
+  position: integer('position').notNull().default(0),
+}, (table) => [
+  primaryKey({ columns: [table.bookId, table.narratorId] }),
+  index('idx_book_narrators_book_id').on(table.bookId),
+  index('idx_book_narrators_narrator_id').on(table.narratorId),
 ]);
 
 // ============ INTEGRATIONS ============
@@ -202,6 +227,7 @@ export const bookEvents = sqliteTable('book_events', {
   downloadId: integer('download_id').references(() => downloads.id, { onDelete: 'set null' }),
   bookTitle: text('book_title').notNull(),
   authorName: text('author_name'),
+  narratorName: text('narrator_name'),
   eventType: text('event_type', {
     enum: [
       'grabbed', 'download_completed', 'download_failed',
