@@ -154,14 +154,7 @@ if (!mergeOk) {
   die(`ERROR: merge failed (${errorType}): ${mergeOut}`);
 }
 
-// 6. Update local repo
-git("checkout", "main");
-git("pull", "origin", "main");
-if (headBranch) {
-  try { git("branch", "-d", headBranch); } catch { /* already deleted or not local */ }
-}
-
-// 7. Update closing issues to status/done
+// 6. Update closing issues to status/done (before local cleanup — this is the critical side effect)
 for (const issueId of closingIssueIds) {
   const issueOut = gh("issue", "view", issueId, "--json", GH_FIELDS.ISSUE, "--jq", JQ.ISSUE);
   let labels = parseLabels(issueOut);
@@ -170,6 +163,15 @@ for (const issueId of closingIssueIds) {
   ghSetLabels(issueId, labels);
   ghSafe("issue", "close", issueId);
 }
+
+// 7. Update local repo
+try {
+  git("checkout", "main");
+  git("pull", "origin", "main");
+  if (headBranch) {
+    try { git("branch", "-d", headBranch); } catch { /* already deleted or not local */ }
+  }
+} catch { /* local repo cleanup is best-effort — don't block on it */ }
 
 const closedSummary = closingIssueIds.length > 0
   ? ` — ${closingIssueIds.map(id => `#${id}`).join(", ")} closed`

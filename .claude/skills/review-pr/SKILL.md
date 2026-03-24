@@ -376,7 +376,17 @@ All GitHub commands use: `gh` (referred to as `gh` below).
       ```
     - Clean up temp file
 
-13. **Update labels (MANDATORY — the orchestrator depends on these transitions):**
+13. **Commit and push CL files:** Retrospective files from step 10 need to be committed to main so all clones stay in sync. This MUST happen before the merge so the clone is clean for `merge.ts`'s `git pull`.
+    ```bash
+    git checkout main
+    git pull origin main
+    git add .claude/cl/
+    git commit -m "CL from PR #<pr-number> review"
+    git push origin main
+    ```
+    If there's nothing to commit (no new CL files), skip this step.
+
+14. **Update labels (MANDATORY — the orchestrator depends on these transitions):**
 
     **If verdict is `approve`:**
     - Set `stage/approved` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/approved"`
@@ -407,14 +417,6 @@ All GitHub commands use: `gh` (referred to as `gh` below).
     - Set `status/in-progress` on the **issue**: `node scripts/update-labels.ts <id> --replace "status/" "status/in-progress"`
     - Verify the PR shows `stage/fixes-pr` and the issue shows `status/in-progress`
     - **STOP.** Do not attempt to fix anything — that's the author's job via `/respond-to-pr-review`
-
-14. **Commit and push CL files:** Retrospective files from step 10 need to be committed to main so all clones stay in sync:
-    ```bash
-    git add .claude/cl/
-    git commit -m "CL from PR #<pr-number> review"
-    git push origin main
-    ```
-    If there's nothing to commit (no new CL files), skip this step.
 
 15. **Write final phase marker and clean up:** `echo done > .claude/state/review-pr-<pr-number>/posted`
     - Then clean up state: `rm -rf .claude/state/review-pr-<pr-number>/`
