@@ -9,7 +9,7 @@ import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import {
   HeadphonesIcon,
-  SearchIcon,
+  PlusIcon,
   ActivityIcon,
   SettingsIcon,
   SunIcon,
@@ -28,7 +28,7 @@ type NavItem = { to: string; label: string; icon: React.ComponentType<{ classNam
 
 const baseNavItems: NavItem[] = [
   { to: '/library', label: 'Library', icon: LibraryIcon },
-  { to: '/search', label: 'Search', icon: SearchIcon },
+  { to: '/search', label: 'Add Book', icon: PlusIcon },
 ];
 
 const postDiscoverNavItems: NavItem[] = [

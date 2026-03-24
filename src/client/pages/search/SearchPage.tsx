@@ -18,14 +18,10 @@ export function SearchPage() {
 
   return (
     <div className="space-y-8">
-      {/* Hero Section */}
-      <div className="text-center space-y-4 animate-fade-in-up">
-        <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight">
-          Discover <span className="text-gradient">Audiobooks</span>
-        </h1>
-        <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-          Search metadata providers to find books and authors
-        </p>
+      {/* Page Header */}
+      <div className="animate-fade-in-up">
+        <h1 className="font-display text-3xl sm:text-4xl font-bold tracking-tight">Add Book</h1>
+        <p className="text-muted-foreground mt-1">Search metadata providers to find audiobooks to add</p>
       </div>
 
       {/* Search Form */}

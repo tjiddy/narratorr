@@ -224,4 +224,18 @@ describe('SearchResults', () => {
       expect(screen.getAllByText('(1)')).toHaveLength(2);
     });
   });
+
+  describe('Add Book empty state copy', () => {
+    it('pre-search empty state description does not contain "discover" language', () => {
+      renderResults({ searchTerm: '' });
+      expect(screen.queryByText(/discover/i)).not.toBeInTheDocument();
+    });
+
+    it('pre-search empty state description matches the Add Book copy', () => {
+      renderResults({ searchTerm: '' });
+      expect(
+        screen.getByText('Enter a title, author, or series to find audiobooks to add'),
+      ).toBeInTheDocument();
+    });
+  });
 });
