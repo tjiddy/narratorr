@@ -282,6 +282,26 @@ describe('IndexerService', () => {
       expect(results[0].title).toBe('The Way of Kings');
     });
 
+    it('populates indexerId on results from the indexer row id', async () => {
+      const mockResult = {
+        title: 'The Way of Kings',
+        indexer: 'AudioBookBay',
+        protocol: 'torrent' as const,
+        downloadUrl: 'magnet:?xt=urn:btih:abc123',
+      };
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      const mockAdapter = {
+        type: 'abb',
+        name: 'AudioBookBay',
+        search: vi.fn().mockResolvedValue([mockResult]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      const results = await service.searchAll('sanderson');
+      expect(results[0].indexerId).toBe(mockIndexer.id);
+    });
+
     it('continues searching when one indexer errors', async () => {
       const indexer2 = { ...mockIndexer, id: 2, name: 'Indexer2' };
       db.select.mockReturnValue(mockDbChain([mockIndexer, indexer2]));

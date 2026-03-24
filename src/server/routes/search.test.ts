@@ -595,6 +595,25 @@ describe('search routes', () => {
       expect(res.statusCode).toBe(201);
     });
 
+    it('forwards indexerId from request body to orchestrator.grab', async () => {
+      const mockDownload = { id: 1, title: 'Test', status: 'downloading' };
+      (services.downloadOrchestrator.grab as Mock).mockResolvedValue(mockDownload);
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: {
+          downloadUrl: 'magnet:?xt=urn:btih:abc123',
+          title: 'The Way of Kings',
+          indexerId: 7,
+        },
+      });
+
+      expect(services.downloadOrchestrator.grab).toHaveBeenCalledWith(
+        expect.objectContaining({ indexerId: 7 }),
+      );
+    });
+
     it('returns 400 for empty download URL', async () => {
       const res = await app.inject({
         method: 'POST',

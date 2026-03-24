@@ -56,6 +56,7 @@ const mockResults: SearchResult[] = [
     size: 5 * 1024 * 1024 * 1024,
     seeders: 24,
     indexer: 'AudioBookBay',
+    indexerId: 3,
   },
   {
     title: 'Way of Kings (Graphic Audio)',
@@ -155,6 +156,7 @@ describe('SearchReleasesModal', () => {
       status: 'queued' as const,
       progress: 0,
       addedAt: '2024-01-01T00:00:00Z',
+      indexerName: null,
     });
     const onClose = vi.fn();
     const user = userEvent.setup();
@@ -181,6 +183,7 @@ describe('SearchReleasesModal', () => {
           downloadUrl: 'magnet:?xt=urn:btih:abc123',
           title: 'The Way of Kings [Unabridged]',
           bookId: 1,
+          indexerId: 3,
         }),
       );
     });
@@ -297,6 +300,7 @@ describe('SearchReleasesModal', () => {
           status: 'queued' as const,
           progress: 0,
           addedAt: '2024-01-01T00:00:00Z',
+          indexerName: null,
         });
       const user = userEvent.setup();
 
@@ -320,6 +324,7 @@ describe('SearchReleasesModal', () => {
           downloadUrl: 'magnet:?xt=urn:btih:abc123',
           title: 'The Way of Kings [Unabridged]',
           bookId: 1,
+          indexerId: 3,
           replaceExisting: true,
         }));
       });
@@ -336,6 +341,7 @@ describe('SearchReleasesModal', () => {
           status: 'queued' as const,
           progress: 0,
           addedAt: '2024-01-01T00:00:00Z',
+          indexerName: null,
         });
       const onClose = vi.fn();
       const user = userEvent.setup();

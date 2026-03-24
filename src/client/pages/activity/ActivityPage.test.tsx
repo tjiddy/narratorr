@@ -41,6 +41,7 @@ const makeDownload = (overrides: Partial<Download> = {}): Download => ({
   status: 'queued',
   progress: 0,
   addedAt: '2024-06-01T00:00:00Z',
+  indexerName: null,
   ...overrides,
 });
 

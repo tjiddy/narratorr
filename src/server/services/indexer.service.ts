@@ -270,7 +270,7 @@ export class IndexerService {
         const adapter = await this.getAdapter(indexer);
         const indexerResults = await adapter.search(query, options);
         this.log.debug({ indexer: indexer.name, results: indexerResults.length }, 'Indexer search completed');
-        results.push(...indexerResults);
+        results.push(...indexerResults.map(r => ({ ...r, indexerId: indexer.id })));
       } catch (error) {
         this.log.warn({ indexer: indexer.name, query, error }, 'Error searching indexer');
       }

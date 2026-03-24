@@ -41,6 +41,7 @@ interface PendingGrabParams {
   title: string;
   protocol: 'torrent' | 'usenet';
   bookId?: number;
+  indexerId?: number;
   size?: number;
   seeders?: number;
 }
@@ -113,6 +114,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
           title: variables.title,
           protocol: variables.protocol ?? 'torrent',
           bookId: variables.bookId,
+          indexerId: variables.indexerId,
           size: variables.size,
           seeders: variables.seeders,
         });
@@ -133,6 +135,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
       title: result.title,
       protocol: result.protocol,
       bookId: book.id,
+      indexerId: result.indexerId,
       size: result.size,
       seeders: result.seeders,
     });
