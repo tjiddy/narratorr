@@ -1,4 +1,32 @@
 # Workflow Log
+## #63 Allow replacing an active download with a new release — 2026-03-24
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #65
+
+### Metrics
+- Files changed: 10 | Tests added/modified: 7 test files
+- Quality gate runs: 1 (pre-existing failures in discover/prowlarr-compat, not caused by this PR)
+- Fix iterations: 2 (1. unused variable in download.service.test.ts; 2. missing best-effort try-catch around cancel() in grab() — caught by self-review)
+- Context compactions: 1 (conversation was compacted mid-implementation; resumed cleanly)
+
+### Workflow experience
+- What went smoothly: TDD cycle worked well — tests failed before implementation, went green after. E2e tests were straightforward to implement. The mockDbChain thenable proxy pattern was already solid.
+- Friction / issues encountered: (1) `vi.mock` factory hoisting — class defined outside `vi.hoisted()` caused "Cannot access before initialization" error. (2) TanStack Query passes a second `{ client, meta, mutationKey }` arg to mutationFn mocks, breaking `toHaveBeenLastCalledWith` assertions. (3) Git token expired mid-push — needed `gh auth token` to refresh remote URL. (4) Pre-existing failures in discover/prowlarr-compat block verify.ts even though unrelated to branch.
+
+### Token efficiency
+- Highest-token actions: Self-review and coverage Explore subagents — both long-running
+- Avoidable waste: Context compaction mid-implementation required re-reading several files; scratch.md would have helped
+- Suggestions: Write scratch.md during implementation when context is getting large
+
+### Infrastructure gaps
+- Repeated workarounds: Git token expiry requiring manual `gh auth token` refresh — seen before
+- Missing tooling / config: verify.ts doesn't distinguish pre-existing vs new test failures; 5 pre-existing failures block verify even on unrelated branches
+- Unresolved debt: `getReplacableStatuses` spelling typo (logged in debt.md)
+
+### Wish I'd Known
+1. `vi.hoisted()` is required for any class/value referenced inside `vi.mock()` factory AND in test bodies — the hoisting error only manifests at runtime, not at write time
+2. TanStack Query's `mutationFn` mock receives a second internal arg; always use `mock.calls.at(-1)![0]` for variable assertions instead of `toHaveBeenCalledWith`
+3. "Best-effort" semantics in AC means wrapping the outer call in try-catch, not just trusting internal error handling of the called function
 
 ## #62 Fix quality gate narrator comparison for first imports and multi-narrator books — 2026-03-24
 **Skill path:** /implement → /claim → /plan → /handoff
