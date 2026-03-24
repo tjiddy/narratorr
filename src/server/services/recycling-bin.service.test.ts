@@ -42,6 +42,7 @@ describe('RecyclingBinService', () => {
   let service: RecyclingBinService;
   let db: ReturnType<typeof createMockDb>;
   let settingsService: ReturnType<typeof createMockSettingsService>;
+  let mockBookService: { syncAuthors: ReturnType<typeof vi.fn>; syncNarrators: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -55,7 +56,11 @@ describe('RecyclingBinService', () => {
     db = createMockDb();
     const log = createMockLog();
     settingsService = createMockSettingsService();
-    service = new RecyclingBinService(db as never, log as never, './config', settingsService as never);
+    mockBookService = {
+      syncAuthors: vi.fn().mockResolvedValue(undefined),
+      syncNarrators: vi.fn().mockResolvedValue(undefined),
+    };
+    service = new RecyclingBinService(db as never, log as never, './config', settingsService as never, mockBookService as never);
   });
 
   describe('moveToRecycleBin', () => {
@@ -135,11 +140,10 @@ describe('RecyclingBinService', () => {
      * Queue the happy-path restore flow:
      * 1. getById returns entry
      * 2. conflict check (books with same path) returns empty
-     * 3. author lookup returns existing author
-     * 4. insert returns new book
+     * 3. insert returns new book (author/narrator sync delegated to bookService)
      */
     function queueHappyRestore() {
-      db.onSelect([mockEntry], [], [{ id: 10 }]);
+      db.onSelect([mockEntry], []);
       db.onInsert([createMockDbBook({ id: 99 })]);
     }
 
@@ -183,10 +187,10 @@ describe('RecyclingBinService', () => {
         id: 7,
         originalPath: '',
         recyclePath: './config/recycle/7',
-        authorName: 'Test Author',
+        authorName: ['Test Author'],
       });
-      // getById returns entry, author lookup finds existing
-      db.onSelect([metadataEntry], [{ id: 5 }]);
+      // getById returns entry (conflict check skipped since originalPath is empty)
+      db.onSelect([metadataEntry]);
       db.onInsert([createMockDbBook({ id: 100, status: 'wanted', path: null })]);
 
       await service.restore(7);
@@ -198,47 +202,42 @@ describe('RecyclingBinService', () => {
       expect(db.insert).toHaveBeenCalled();
     });
 
-    it('restores book with existing author (reuses authorId)', async () => {
+    it('restores book with existing author — delegates author sync to bookService', async () => {
       const entry = createMockDbRecyclingBinEntry({
         id: 5,
-        authorName: 'Brandon Sanderson',
+        authorName: ['Brandon Sanderson'],
         authorAsin: 'B001',
         narrator: null,
         originalPath: '/audiobooks/Brandon Sanderson/The Way of Kings',
         recyclePath: './config/recycle/1',
       });
-      // getById, conflict check empty, author lookup finds existing author
-      db.onSelect([entry], [], [{ id: 42 }]);
+      db.onSelect([entry], []);
       db.onInsert([createMockDbBook({ id: 99 })]);
 
       await service.restore(5);
 
-      // Should look up author by name
-      const selectCalls = db.select.mock.results;
-      expect(selectCalls.length).toBeGreaterThanOrEqual(3);
-      // Book insert + bookAuthors junction insert
-      const insertArgs = db.insert.mock.calls;
-      expect(insertArgs.length).toBe(2);
+      expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [{ name: 'Brandon Sanderson', asin: 'B001' }]);
+      // Only 1 insert (book) — junction managed by bookService
+      expect(db.insert).toHaveBeenCalledTimes(1);
     });
 
-    it('creates new author when restoring book with unknown author', async () => {
+    it('creates new author when restoring book with unknown author — delegates to syncAuthors', async () => {
       const entry = createMockDbRecyclingBinEntry({
         id: 5,
-        authorName: 'New Author',
+        authorName: ['New Author'],
         authorAsin: 'B999',
         narrator: null,
         originalPath: '/audiobooks/New Author/Book',
         recyclePath: './config/recycle/1',
       });
-      // getById, conflict check empty, author lookup returns nothing
-      db.onSelect([entry], [], []);
-      // book insert, author insert, bookAuthors insert (no returning)
-      db.onInsert([createMockDbBook({ id: 99 })], [{ id: 77, name: 'New Author', slug: 'new-author', asin: 'B999' }]);
+      db.onSelect([entry], []);
+      db.onInsert([createMockDbBook({ id: 99 })]);
 
       await service.restore(5);
 
-      // Should insert book + author + bookAuthors junction (3 insert calls)
-      expect(db.insert).toHaveBeenCalledTimes(3);
+      expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [{ name: 'New Author', asin: 'B999' }]);
+      // Only 1 insert (book) — junction managed by bookService
+      expect(db.insert).toHaveBeenCalledTimes(1);
     });
 
     it('restores book with null authorName (no author association)', async () => {
@@ -417,6 +416,7 @@ describe('RecyclingBinService', () => {
 describe('RecyclingBinService — many-to-many snapshot and restore (#71)', () => {
   let db: ReturnType<typeof createMockDb>;
   let service: RecyclingBinService;
+  let mockBookService: { syncAuthors: ReturnType<typeof vi.fn>; syncNarrators: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -428,11 +428,15 @@ describe('RecyclingBinService — many-to-many snapshot and restore (#71)', () =
     db = createMockDb();
     const log = createMockLogger();
     const settingsService = createMockSettingsService();
-    service = new RecyclingBinService(db as never, log as never, './config', settingsService as never);
+    mockBookService = {
+      syncAuthors: vi.fn().mockResolvedValue(undefined),
+      syncNarrators: vi.fn().mockResolvedValue(undefined),
+    };
+    service = new RecyclingBinService(db as never, log as never, './config', settingsService as never, mockBookService as never);
   });
 
   describe('snapshot on delete', () => {
-    it('delete book with two narrators → recyclingBin.narrator stores ", "-joined string', async () => {
+    it('delete book with two narrators → recyclingBin.narrator stores JSON array', async () => {
       const book = {
         ...createMockDbBook({ id: 1, path: '/audiobooks/test', status: 'imported' }),
         authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'bs', asin: null, imageUrl: null, bio: null, monitored: false, lastCheckedAt: null, createdAt: new Date(), updatedAt: new Date() }],
@@ -447,11 +451,11 @@ describe('RecyclingBinService — many-to-many snapshot and restore (#71)', () =
 
       const insertChain = db.insert.mock.results[0].value;
       expect(insertChain.values).toHaveBeenCalledWith(
-        expect.objectContaining({ narrator: 'Kate Reading, Michael Kramer' }),
+        expect.objectContaining({ narrator: ['Kate Reading', 'Michael Kramer'] }),
       );
     });
 
-    it('delete book with two authors → recyclingBin.authorName stores comma-joined author names', async () => {
+    it('delete book with two authors → recyclingBin.authorName stores JSON array', async () => {
       const book = {
         ...createMockDbBook({ id: 1, path: '/audiobooks/test', status: 'imported' }),
         authors: [
@@ -466,50 +470,133 @@ describe('RecyclingBinService — many-to-many snapshot and restore (#71)', () =
 
       const insertChain = db.insert.mock.results[0].value;
       expect(insertChain.values).toHaveBeenCalledWith(
-        expect.objectContaining({ authorName: 'Brandon Sanderson, Robert Jordan' }),
+        expect.objectContaining({ authorName: ['Brandon Sanderson', 'Robert Jordan'] }),
+      );
+    });
+
+    it('delete book with narrator whose name contains a comma → JSON array preserves name intact', async () => {
+      const book = {
+        ...createMockDbBook({ id: 1, path: '/audiobooks/test', status: 'imported' }),
+        authors: [],
+        narrators: [{ id: 1, name: 'Smith, John', slug: 'smith-john', createdAt: new Date(), updatedAt: new Date() }],
+      };
+      db.onInsert([createMockDbRecyclingBinEntry()]);
+
+      await service.moveToRecycleBin(book, '/audiobooks/test');
+
+      const insertChain = db.insert.mock.results[0].value;
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ narrator: ['Smith, John'] }),
       );
     });
   });
 
   describe('restore via find-or-create', () => {
-    it('restore from bin → splits narrator snapshot, find-or-creates each narrator, inserts bookNarrators junction rows', async () => {
+    it('restore from bin with two narrators → calls syncNarrators with both names', async () => {
       const entry = createMockDbRecyclingBinEntry({
         id: 1, authorName: null,
-        narrator: 'Kate Reading, Michael Kramer',
+        narrator: ['Kate Reading', 'Michael Kramer'],
         originalPath: '/audiobooks/test',
         recyclePath: './config/recycle/1',
       });
-      // getById, conflict check, Kate lookup (not found), Michael lookup (not found)
-      db.onSelect([entry], [], [], []);
-      // book insert, Kate narrator insert (consumed by bookNarrators chain), Michael narrator insert, placeholder
-      db.onInsert(
-        [createMockDbBook({ id: 99 })],
-        [{ id: 10, name: 'Kate Reading', slug: 'kate-reading' }],
-        [],  // bookNarrators for Kate (no returning — consumed from queue)
-        [{ id: 11, name: 'Michael Kramer', slug: 'michael-kramer' }],
-      );
-
-      await service.restore(1);
-
-      // At minimum: book + both narrator inserts
-      expect(db.insert.mock.calls.length).toBeGreaterThanOrEqual(3);
-    });
-
-    it('restore with narrator name already in narrators table → finds existing, does not duplicate', async () => {
-      const entry = createMockDbRecyclingBinEntry({
-        id: 1, authorName: null,
-        narrator: 'Michael Kramer',
-        originalPath: '/audiobooks/test',
-        recyclePath: './config/recycle/1',
-      });
-      // getById, conflict check, narrator lookup (found)
-      db.onSelect([entry], [], [{ id: 42 }]);
+      db.onSelect([entry], []);
       db.onInsert([createMockDbBook({ id: 99 })]);
 
       await service.restore(1);
 
-      // book insert + bookNarrators insert = 2 (no narrator insert since existing found)
-      expect(db.insert).toHaveBeenCalledTimes(2);
+      expect(mockBookService.syncNarrators).toHaveBeenCalledWith(99, ['Kate Reading', 'Michael Kramer']);
     });
+
+    it('restore with single narrator → calls syncNarrators with one name', async () => {
+      const entry = createMockDbRecyclingBinEntry({
+        id: 1, authorName: null,
+        narrator: ['Michael Kramer'],
+        originalPath: '/audiobooks/test',
+        recyclePath: './config/recycle/1',
+      });
+      db.onSelect([entry], []);
+      db.onInsert([createMockDbBook({ id: 99 })]);
+
+      await service.restore(1);
+
+      expect(mockBookService.syncNarrators).toHaveBeenCalledWith(99, ['Michael Kramer']);
+    });
+  });
+});
+
+describe('RecyclingBinService JSON array storage (issue #79)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let service: RecyclingBinService;
+  let mockBookService: { syncAuthors: ReturnType<typeof vi.fn>; syncNarrators: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (mkdir as Mock).mockResolvedValue(undefined);
+    (rename as Mock).mockResolvedValue(undefined);
+    (cp as Mock).mockResolvedValue(undefined);
+    (rm as Mock).mockResolvedValue(undefined);
+    (access as Mock).mockResolvedValue(undefined);
+    db = createMockDb();
+    const log = createMockLogger() as unknown as FastifyBaseLogger;
+    const settingsService = createMockSettingsService();
+    mockBookService = {
+      syncAuthors: vi.fn().mockResolvedValue(undefined),
+      syncNarrators: vi.fn().mockResolvedValue(undefined),
+    };
+    service = new RecyclingBinService(db as never, log as never, './config', settingsService as never, mockBookService as never);
+  });
+
+  it('restore() parses JSON author array and calls syncAuthors with both names', async () => {
+    const entry = createMockDbRecyclingBinEntry({
+      id: 1,
+      authorName: ['Author A', 'Author B'],
+      narrator: null,
+      originalPath: '/audiobooks/test',
+      recyclePath: './config/recycle/1',
+    });
+    db.onSelect([entry], []);
+    db.onInsert([createMockDbBook({ id: 99 })]);
+
+    await service.restore(1);
+
+    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [
+      { name: 'Author A', asin: undefined },
+      { name: 'Author B', asin: undefined },
+    ]);
+  });
+
+  it('restore() on record with single-element JSON array → syncAuthors called with one element', async () => {
+    const entry = createMockDbRecyclingBinEntry({
+      id: 1,
+      authorName: ['Brandon Sanderson'],
+      narrator: null,
+      originalPath: '/audiobooks/test',
+      recyclePath: './config/recycle/1',
+    });
+    db.onSelect([entry], []);
+    db.onInsert([createMockDbBook({ id: 99 })]);
+
+    await service.restore(1);
+
+    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [
+      { name: 'Brandon Sanderson', asin: undefined },
+    ]);
+  });
+
+  it('restore() on record with authorName = null → skips author junction rebuild gracefully', async () => {
+    const entry = createMockDbRecyclingBinEntry({
+      id: 1,
+      authorName: null,
+      narrator: null,
+      originalPath: '/audiobooks/test',
+      recyclePath: './config/recycle/1',
+    });
+    db.onSelect([entry], []);
+    db.onInsert([createMockDbBook({ id: 99 })]);
+
+    await service.restore(1);
+
+    expect(mockBookService.syncAuthors).not.toHaveBeenCalled();
+    expect(mockBookService.syncNarrators).not.toHaveBeenCalled();
   });
 });
