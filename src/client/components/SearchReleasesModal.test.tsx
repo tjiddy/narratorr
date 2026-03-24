@@ -324,6 +324,7 @@ describe('SearchReleasesModal', () => {
           downloadUrl: 'magnet:?xt=urn:btih:abc123',
           title: 'The Way of Kings [Unabridged]',
           bookId: 1,
+          indexerId: 3,
           replaceExisting: true,
         }));
       });
