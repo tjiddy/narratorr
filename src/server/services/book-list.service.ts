@@ -45,6 +45,7 @@ export class BookListService {
     private db: Db,
   ) {}
 
+  // eslint-disable-next-line complexity -- batch-load pipeline for author/narrator/importList joins
   async getAll(
     status?: string,
     pagination?: { limit?: number; offset?: number },

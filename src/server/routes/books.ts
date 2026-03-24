@@ -39,7 +39,7 @@ import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 
 /** Fire-and-forget: search indexers and grab the best result for a newly added book. */
 function triggerImmediateSearch(
-  book: { id: number; title: string; duration?: number | null; author?: { name: string } | null },
+  book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null },
   deps: Pick<BookRouteDeps, 'indexerService' | 'downloadOrchestrator' | 'settingsService'>,
   log: FastifyBaseLogger,
 ) {
@@ -105,7 +105,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
       deps.eventHistory.create({
         bookId: id,
         bookTitle: book.title,
-        authorName: book.author?.name,
+        authorName: book.authors?.[0]?.name,
         eventType: 'deleted',
         source: 'manual',
       }).catch((err) => request.log.warn(err, 'Failed to record deleted event'));
@@ -205,7 +205,7 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       const body = request.body;
 
       // Check for duplicates
-      const existing = await bookService.findDuplicate(body.title, body.authorName, body.asin);
+      const existing = await bookService.findDuplicate(body.title, body.authors, body.asin);
       if (existing) {
         request.log.info({ title: body.title, existingId: existing.id }, 'Duplicate book detected');
         return reply.status(409).send(existing);

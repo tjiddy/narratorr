@@ -27,11 +27,11 @@ export class RenameService {
   ) {}
 
   /** Fire-and-forget event recording. */
-  private emitEvent(bookId: number, book: { title: string; author?: { name: string } }, oldPath: string, newPath: string, filesRenamed: number): void {
+  private emitEvent(bookId: number, book: { title: string; authors?: Array<{ name: string }> }, oldPath: string, newPath: string, filesRenamed: number): void {
     this.eventHistory?.create({
       bookId,
       bookTitle: book.title,
-      authorName: book.author?.name,
+      authorName: book.authors?.[0]?.name,
       eventType: 'renamed',
       source: 'manual',
       reason: { oldPath, newPath, filesRenamed },
@@ -54,7 +54,7 @@ export class RenameService {
     const librarySettings = await this.settingsService.get('library');
 
     // Build the target path from current metadata
-    const authorName = book.author?.name ?? null;
+    const authorName = book.authors?.[0]?.name ?? null;
     const targetPath = buildTargetPath(
       librarySettings.path,
       librarySettings.folderFormat,

@@ -15,7 +15,6 @@ function makeBook(id: number, overrides?: Partial<{
 
 describe('discovery-signals — narrator affinity from junction tables (#71)', () => {
   it('book with two narrators contributes each name once to narrator affinity counts', () => {
-    const books = [makeBook(1)];
     // 3+ narrators needed for threshold — use 3 books each with same narrator to trigger threshold
     const books3 = [makeBook(1), makeBook(2), makeBook(3)];
     const narratorRows = [

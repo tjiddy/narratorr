@@ -63,7 +63,7 @@ describe('enrichBookFromAudio', () => {
     const result = await enrichBookFromAudio(
       1,
       '/books/test',
-      { narrator: null, duration: null, coverUrl: null },
+      { narrators: null, duration: null, coverUrl: null },
       inject<Db>(mockDb),
       log,
     );
@@ -88,7 +88,7 @@ describe('enrichBookFromAudio', () => {
     const result = await enrichBookFromAudio(
       1,
       '/books/empty',
-      { narrator: null, duration: null, coverUrl: null },
+      { narrators: null, duration: null, coverUrl: null },
       inject<Db>(mockDb),
       log,
     );
@@ -118,7 +118,7 @@ describe('enrichBookFromAudio', () => {
     await enrichBookFromAudio(
       1,
       '/books/test',
-      { narrator: null, duration: null, coverUrl: null },
+      { narrators: null, duration: null, coverUrl: null },
       inject<Db>(mockDb),
       log,
       mockBookService,
@@ -150,7 +150,7 @@ describe('enrichBookFromAudio', () => {
     await enrichBookFromAudio(
       1,
       '/books/test',
-      { narrator: 'Correct Narrator', duration: null, coverUrl: null },
+      { narrators: [{ name: 'Correct Narrator' }], duration: null, coverUrl: null },
       inject<Db>(mockDb),
       log,
       mockBookService,
@@ -178,7 +178,7 @@ describe('enrichBookFromAudio', () => {
     await enrichBookFromAudio(
       42,
       '/books/test',
-      { narrator: null, duration: null, coverUrl: null },
+      { narrators: null, duration: null, coverUrl: null },
       inject<Db>(mockDb),
       log,
     );
@@ -208,7 +208,7 @@ describe('enrichBookFromAudio', () => {
     await enrichBookFromAudio(
       1,
       '/books/test',
-      { narrator: null, duration: null, coverUrl: '/api/books/1/cover' },
+      { narrators: null, duration: null, coverUrl: '/api/books/1/cover' },
       inject<Db>(mockDb),
       log,
     );
@@ -222,7 +222,7 @@ describe('enrichBookFromAudio', () => {
     const result = await enrichBookFromAudio(
       1,
       '/books/locked',
-      { narrator: null, duration: null, coverUrl: null },
+      { narrators: null, duration: null, coverUrl: null },
       inject<Db>(mockDb),
       log,
     );
@@ -251,7 +251,7 @@ describe('enrichBookFromAudio', () => {
     await enrichBookFromAudio(
       1,
       '/books/test',
-      { narrator: null, duration: null, coverUrl: null },
+      { narrators: null, duration: null, coverUrl: null },
       inject<Db>(mockDb),
       log,
     );
@@ -293,7 +293,7 @@ describe('enrichment-utils — narrator junction writes (#71)', () => {
     await enrichBookFromAudio(
       5,
       '/books/test',
-      { narrator: null, duration: null, coverUrl: null },
+      { narrators: null, duration: null, coverUrl: null },
       inject<Db>(mockDb),
       log,
       mockBookService,
@@ -316,7 +316,7 @@ describe('enrichment-utils — narrator junction writes (#71)', () => {
     await enrichBookFromAudio(
       5,
       '/books/test',
-      { narrator: null, duration: null, coverUrl: null },
+      { narrators: null, duration: null, coverUrl: null },
       inject<Db>(mockDb),
       log,
       mockBookService,
@@ -336,7 +336,7 @@ describe('enrichment-utils — narrator junction writes (#71)', () => {
 
     // No bookService — should not throw
     await expect(
-      enrichBookFromAudio(5, '/books/test', { narrator: null, duration: null, coverUrl: null }, inject<Db>(mockDb), log),
+      enrichBookFromAudio(5, '/books/test', { narrators: null, duration: null, coverUrl: null }, inject<Db>(mockDb), log),
     ).resolves.toEqual({ enriched: true });
   });
 });

@@ -23,12 +23,12 @@ vi.mock('@/hooks/useEscapeKey', () => ({
 
 const mockBook = createMockBook({
   title: 'The Way of Kings',
-  narrator: 'Michael Kramer',
+  narrators: [{ id: 1, name: 'Michael Kramer', slug: 'michael-kramer' }],
   seriesName: 'The Stormlight Archive',
   seriesPosition: 1,
   path: '/library/Brandon Sanderson/The Way of Kings',
   status: 'imported',
-  author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' },
+  authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' }],
 });
 
 const defaultProps = {
@@ -294,7 +294,7 @@ describe('BookMetadataModal', () => {
 
     it('pre-fills with title only when book has no author', async () => {
       const user = userEvent.setup();
-      const bookNoAuthor = { ...mockBook, author: undefined };
+      const bookNoAuthor = { ...mockBook, authors: [] };
       renderModal({ book: bookNoAuthor });
 
       await user.click(screen.getByText('Search Audnexus for metadata'));
@@ -530,7 +530,7 @@ describe('BookMetadataModal', () => {
         expect(onSave).toHaveBeenCalledWith(
           expect.objectContaining({
             title: 'New Title',
-            narrator: 'New Narrator',
+            narrators: ['New Narrator'],
             seriesName: 'New Series',
             seriesPosition: 3,
           }),

@@ -23,6 +23,7 @@ export interface CreateEventInput {
   bookId: number;
   bookTitle: string;
   authorName?: string | null;
+  narratorName?: string | null;
   downloadId?: number | null;
   eventType: EventType;
   source: EventSource;
@@ -49,6 +50,7 @@ export class EventHistoryService {
       bookId: input.bookId,
       bookTitle: input.bookTitle,
       authorName: input.authorName ?? null,
+      narratorName: input.narratorName ?? null,
       downloadId: input.downloadId ?? null,
       eventType: input.eventType,
       source: input.source,

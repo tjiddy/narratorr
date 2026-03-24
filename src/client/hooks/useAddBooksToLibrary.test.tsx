@@ -33,7 +33,7 @@ function makeBook(overrides: Partial<BookMetadata> = {}): BookMetadata {
 function makeLibraryBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
   return createMockBook({
     title: 'Test Book',
-    author: { id: 1, name: 'Test Author', slug: 'test-author' },
+    authors: [{ id: 1, name: 'Test Author', slug: 'test-author' }],
     ...overrides,
   });
 }
@@ -74,7 +74,7 @@ describe('useAddBooksToLibrary', () => {
     });
 
     it('detects book already in library by title + author (case-insensitive)', () => {
-      const libraryBooks = [makeLibraryBook({ title: 'My Book', asin: undefined, author: { id: 1, name: 'John Smith', slug: 'john-smith' } })];
+      const libraryBooks = [makeLibraryBook({ title: 'My Book', asin: undefined, authors: [{ id: 1, name: 'John Smith', slug: 'john-smith' }] })];
       const book = makeBook({ title: 'my book', authors: [{ name: 'john smith' }], asin: undefined });
 
       const { result } = renderHook(
@@ -86,7 +86,7 @@ describe('useAddBooksToLibrary', () => {
     });
 
     it('title match alone is NOT sufficient', () => {
-      const libraryBooks = [makeLibraryBook({ title: 'My Book', asin: undefined, author: { id: 1, name: 'John Smith', slug: 'john-smith' } })];
+      const libraryBooks = [makeLibraryBook({ title: 'My Book', asin: undefined, authors: [{ id: 1, name: 'John Smith', slug: 'john-smith' }] })];
       const book = makeBook({ title: 'My Book', authors: [{ name: 'Different Author' }], asin: undefined });
 
       const { result } = renderHook(
@@ -367,3 +367,4 @@ describe('useAddBooksToLibrary', () => {
     });
   });
 });
+

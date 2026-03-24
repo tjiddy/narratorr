@@ -48,13 +48,12 @@ function createService(dbOverrides?: ReturnType<typeof createMockDb>) {
 }
 
 // Helper: a minimal imported book row for signal extraction tests
+// Shape matches analyzeLibrary query: { book: books, authorName: authors.name }
 function makeBookRow(overrides: Record<string, unknown> = {}) {
   return {
     book: {
       id: 1,
       title: 'Test Book',
-      authorId: 1,
-      narrator: null,
       description: null,
       coverUrl: null,
       goodreadsId: null,
@@ -85,7 +84,7 @@ function makeBookRow(overrides: Record<string, unknown> = {}) {
       updatedAt: new Date(),
       ...overrides,
     },
-    author: { id: 1, name: 'Author A', slug: 'author-a', asin: null, imageUrl: null, bio: null, monitored: false, lastCheckedAt: null, createdAt: new Date(), updatedAt: new Date() },
+    authorName: 'Author A',
   };
 }
 
@@ -177,14 +176,23 @@ describe('DiscoveryService', () => {
 
     it('counts narrator affinity with 3+ threshold', async () => {
       const db = createMockDb();
-      const rows = [
-        makeBookRow({ id: 1, narrator: 'Narrator X' }),
-        makeBookRow({ id: 2, narrator: 'Narrator X' }),
-        makeBookRow({ id: 3, narrator: 'Narrator X' }),
-        makeBookRow({ id: 4, narrator: 'Narrator Y' }),
-        makeBookRow({ id: 5, narrator: 'Narrator Y' }),
+      const bookRows = [
+        makeBookRow({ id: 1 }),
+        makeBookRow({ id: 2 }),
+        makeBookRow({ id: 3 }),
+        makeBookRow({ id: 4 }),
+        makeBookRow({ id: 5 }),
       ];
-      db.select.mockReturnValue(mockDbChain(rows));
+      const narratorRows = [
+        { bookId: 1, narratorName: 'Narrator X' },
+        { bookId: 2, narratorName: 'Narrator X' },
+        { bookId: 3, narratorName: 'Narrator X' },
+        { bookId: 4, narratorName: 'Narrator Y' },
+        { bookId: 5, narratorName: 'Narrator Y' },
+      ];
+      db.select
+        .mockReturnValueOnce(mockDbChain(bookRows))
+        .mockReturnValueOnce(mockDbChain(narratorRows));
       const { service } = createService(db);
 
       const signals = await service.analyzeLibrary();
@@ -235,9 +243,11 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 4, duration: 1000, genres: ['Fantasy'] }),
           makeBookRow({ id: 5, duration: 1000, genres: ['Fantasy'] }),
         ]))
-        // Second call: existing books for exclusion
+        // Second call: analyzeLibrary (narrator rows)
         .mockReturnValueOnce(mockDbChain([]))
-        // Third call: dismissed suggestions
+        // Third call: existing books for exclusion
+        .mockReturnValueOnce(mockDbChain([]))
+        // Fourth call: dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]));
 
       const recentDate = new Date();
@@ -275,6 +285,8 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 2, genres: ['Fantasy'], duration: 1000 }),
           makeBookRow({ id: 3, genres: ['Fantasy'], duration: 1000 }),
         ]))
+        // analyzeLibrary query (narrator rows)
+        .mockReturnValueOnce(mockDbChain([]))
         // existing books for exclusion (now includes title + authorName for fuzzy match)
         .mockReturnValueOnce(mockDbChain([{ asin: 'EXISTING1', title: 'Already Owned Book', authorName: 'Some Other Author' }]))
         // dismissed suggestions
@@ -352,6 +364,8 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 2, genres: ['Fantasy'], duration: 1000 }),
           makeBookRow({ id: 3, genres: ['Fantasy'], duration: 1000 }),
         ]))
+        // analyzeLibrary narrator rows
+        .mockReturnValueOnce(mockDbChain([]))
         // existing books — title+author close to candidate
         .mockReturnValueOnce(mockDbChain([{ asin: 'OTHER_ASIN', title: 'The Name of the Wind', authorName: 'Patrick Rothfuss' }]))
         .mockReturnValueOnce(mockDbChain([]));
@@ -380,6 +394,8 @@ describe('DiscoveryService', () => {
           makeBookRow({ id: 2, genres: ['Fantasy'], duration: 1000 }),
           makeBookRow({ id: 3, genres: ['Fantasy'], duration: 1000 }),
         ]))
+        // analyzeLibrary narrator rows
+        .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([]));
 
@@ -454,6 +470,8 @@ describe('DiscoveryService', () => {
         .mockReturnValueOnce(mockDbChain([]))
         // analyzeLibrary: one imported book
         .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
+        // analyzeLibrary: narrator rows
+        .mockReturnValueOnce(mockDbChain([]))
         // existing books for exclusion
         .mockReturnValueOnce(mockDbChain([]))
         // dismissed suggestions
@@ -481,8 +499,13 @@ describe('DiscoveryService', () => {
       db.select
         // dismissal stats (#406)
         .mockReturnValueOnce(mockDbChain([]))
+        // analyzeLibrary: imported books
         .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
+        // analyzeLibrary: narrator rows
         .mockReturnValueOnce(mockDbChain([]))
+        // existing books for exclusion
+        .mockReturnValueOnce(mockDbChain([]))
+        // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
         // currentPending: no pending
         .mockReturnValueOnce(mockDbChain([]))
@@ -508,8 +531,13 @@ describe('DiscoveryService', () => {
       db.select
         // dismissal stats (#406)
         .mockReturnValueOnce(mockDbChain([]))
+        // analyzeLibrary: imported books
         .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
+        // analyzeLibrary: narrator rows
         .mockReturnValueOnce(mockDbChain([]))
+        // existing books for exclusion
+        .mockReturnValueOnce(mockDbChain([]))
+        // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
         // currentPending: one existing pending
         .mockReturnValueOnce(mockDbChain([{ id: 5, asin: 'EXISTING_PENDING' }]))
@@ -534,8 +562,13 @@ describe('DiscoveryService', () => {
       db.select
         // dismissal stats (#406)
         .mockReturnValueOnce(mockDbChain([]))
+        // analyzeLibrary: imported books
         .mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]))
+        // analyzeLibrary: narrator rows
         .mockReturnValueOnce(mockDbChain([]))
+        // existing books for exclusion
+        .mockReturnValueOnce(mockDbChain([]))
+        // dismissed suggestions
         .mockReturnValueOnce(mockDbChain([]))
         // currentPending: one stale pending (won't be regenerated)
         .mockReturnValueOnce(mockDbChain([{ id: 99, asin: 'STALE1' }]));
@@ -635,7 +668,7 @@ describe('DiscoveryService', () => {
       expect(result!.suggestion.status).toBe('added');
       expect(mockBookService.create).toHaveBeenCalledWith({
         title: 'Test',
-        authorName: 'Author',
+        authors: [{ name: 'Author' }],
         asin: 'B001',
       });
     });
@@ -835,6 +868,8 @@ describe('DiscoveryService', () => {
         makeBookRow({ id: 2, genres: ['Fantasy'], duration: 1000 }),
         makeBookRow({ id: 3, genres: ['Fantasy'], duration: 1000 }),
       ]));
+      // analyzeLibrary narrator rows
+      db.select.mockReturnValueOnce(mockDbChain([]));
       // existing books
       db.select.mockReturnValueOnce(mockDbChain([]));
       // dismissed
@@ -877,10 +912,17 @@ describe('DiscoveryService', () => {
       // analyzeLibrary — 4 books narrated by "Narrator N" gives narratorAffinity count=4, strength=4/5=0.8
       // Author A has 4 books → strength 4/5=0.8
       db.select.mockReturnValueOnce(mockDbChain([
-        makeBookRow({ id: 1, narrator: 'Narrator N', genres: ['Fantasy'], duration: 1000 }),
-        makeBookRow({ id: 2, narrator: 'Narrator N', genres: ['Fantasy'], duration: 1000 }),
-        makeBookRow({ id: 3, narrator: 'Narrator N', genres: ['Fantasy'], duration: 1000 }),
-        makeBookRow({ id: 4, narrator: 'Narrator N', genres: ['Fantasy'], duration: 1000 }),
+        makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 }),
+        makeBookRow({ id: 2, genres: ['Fantasy'], duration: 1000 }),
+        makeBookRow({ id: 3, genres: ['Fantasy'], duration: 1000 }),
+        makeBookRow({ id: 4, genres: ['Fantasy'], duration: 1000 }),
+      ]));
+      // analyzeLibrary narrator rows — 4 books narrated by "Narrator N"
+      db.select.mockReturnValueOnce(mockDbChain([
+        { bookId: 1, narratorName: 'Narrator N' },
+        { bookId: 2, narratorName: 'Narrator N' },
+        { bookId: 3, narratorName: 'Narrator N' },
+        { bookId: 4, narratorName: 'Narrator N' },
       ]));
       // existing books
       db.select.mockReturnValueOnce(mockDbChain([]));
@@ -919,6 +961,8 @@ describe('DiscoveryService', () => {
         makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 }),
         makeBookRow({ id: 2, genres: ['Fantasy'], duration: 1000 }),
       ]));
+      // analyzeLibrary narrator rows
+      db.select.mockReturnValueOnce(mockDbChain([]));
       // existing books
       db.select.mockReturnValueOnce(mockDbChain([]));
       // dismissed
@@ -960,6 +1004,8 @@ describe('DiscoveryService', () => {
       db.select.mockReturnValueOnce(mockDbChain([]));
       // analyzeLibrary
       db.select.mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]));
+      // analyzeLibrary narrator rows
+      db.select.mockReturnValueOnce(mockDbChain([]));
       // existing books
       db.select.mockReturnValueOnce(mockDbChain([]));
       // dismissed
@@ -988,6 +1034,8 @@ describe('DiscoveryService', () => {
       db.select.mockReturnValueOnce(mockDbChain([]));
       // analyzeLibrary
       db.select.mockReturnValueOnce(mockDbChain([makeBookRow({ id: 1, genres: ['Fantasy'], duration: 1000 })]));
+      // analyzeLibrary narrator rows
+      db.select.mockReturnValueOnce(mockDbChain([]));
       // existing books
       db.select.mockReturnValueOnce(mockDbChain([]));
       // dismissed
@@ -1687,7 +1735,9 @@ describe('DiscoveryService', () => {
       // computeDismissalStats query (#406)
       db.select
         .mockReturnValueOnce(mockDbChain(ratioRows))
-        // analyzeLibrary
+        // analyzeLibrary: imported books
+        .mockReturnValueOnce(mockDbChain([]))
+        // analyzeLibrary: narrator rows
         .mockReturnValueOnce(mockDbChain([]))
         // existing books for exclusion
         .mockReturnValueOnce(mockDbChain([]))
@@ -1791,7 +1841,9 @@ describe('DiscoveryService', () => {
           { reason: 'author', status: 'dismissed', count: 9 },
           { reason: 'author', status: 'added', count: 1 },
         ]))
-        // analyzeLibrary: empty → no affinity signals
+        // analyzeLibrary: imported books (empty)
+        .mockReturnValueOnce(mockDbChain([]))
+        // analyzeLibrary: narrator rows (empty)
         .mockReturnValueOnce(mockDbChain([]))
         // existing books for exclusion
         .mockReturnValueOnce(mockDbChain([]))

@@ -132,9 +132,9 @@ describe('useLibraryFilters', () => {
 
 describe('applyClientFilters', () => {
   const books: BookWithAuthor[] = [
-    createMockBook({ id: 1, title: 'Alpha', status: 'wanted', author: { id: 1, name: 'Author A', slug: 'author-a', asin: null, imageUrl: null, bio: null }, seriesName: 'Series X', narrator: 'Michael Kramer', createdAt: '2024-01-01T00:00:00Z' }),
-    createMockBook({ id: 2, title: 'Zulu', status: 'imported', author: { id: 2, name: 'Author B', slug: 'author-b', asin: null, imageUrl: null, bio: null }, seriesName: 'Series Y', narrator: 'Tim Gerard Reynolds', createdAt: '2024-01-02T00:00:00Z' }),
-    createMockBook({ id: 3, title: 'Middle', status: 'downloading', author: { id: 1, name: 'Author A', slug: 'author-a', asin: null, imageUrl: null, bio: null }, seriesName: null, narrator: null, createdAt: '2024-01-03T00:00:00Z' }),
+    createMockBook({ id: 1, title: 'Alpha', status: 'wanted', authors: [{ id: 1, name: 'Author A', slug: 'author-a' }], seriesName: 'Series X', narrators: [{ id: 1, name: 'Michael Kramer', slug: 'michael-kramer' }], createdAt: '2024-01-01T00:00:00Z' }),
+    createMockBook({ id: 2, title: 'Zulu', status: 'imported', authors: [{ id: 2, name: 'Author B', slug: 'author-b' }], seriesName: 'Series Y', narrators: [{ id: 2, name: 'Tim Gerard Reynolds', slug: 'tim-gerard-reynolds' }], createdAt: '2024-01-02T00:00:00Z' }),
+    createMockBook({ id: 3, title: 'Middle', status: 'downloading', authors: [{ id: 1, name: 'Author A', slug: 'author-a' }], seriesName: null, narrators: [], createdAt: '2024-01-03T00:00:00Z' }),
   ];
 
   const defaultFilters = { authorFilter: '', seriesFilter: '', narratorFilter: '', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const };
@@ -147,7 +147,7 @@ describe('applyClientFilters', () => {
   it('filters by author', () => {
     const result = applyClientFilters(books, { ...defaultFilters, authorFilter: 'Author A' });
     expect(result).toHaveLength(2);
-    expect(result.every((b) => b.author?.name === 'Author A')).toBe(true);
+    expect(result.every((b) => b.authors?.[0]?.name === 'Author A')).toBe(true);
   });
 
   it('filters by series', () => {
@@ -171,5 +171,67 @@ describe('applyClientFilters', () => {
     const result = applyClientFilters(seriesBooks, { ...defaultFilters, collapseSeriesEnabled: true });
     // 1 representative for Stormlight + 1 standalone = 2
     expect(result).toHaveLength(2);
+  });
+});
+
+describe('applyClientFilters — many-to-many author/narrator (#71)', () => {
+  it('author filter matches when author is ANY of book.authors (not just first)', () => {
+    const multiAuthorBook = createMockBook({
+      id: 10,
+      authors: [
+        { id: 1, name: 'Author A', slug: 'author-a' },
+        { id: 2, name: 'Author B', slug: 'author-b' },
+      ],
+      createdAt: '2024-01-01T00:00:00Z',
+    });
+    const result = applyClientFilters([multiAuthorBook], {
+      ...{ authorFilter: '', seriesFilter: '', narratorFilter: '', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const },
+      authorFilter: 'Author B',
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe(10);
+  });
+
+  it('narrator filter matches when narrator is ANY of book.narrators (not just first)', () => {
+    const multiNarratorBook = createMockBook({
+      id: 11,
+      narrators: [
+        { id: 1, name: 'Michael Kramer', slug: 'michael-kramer' },
+        { id: 2, name: 'Kate Reading', slug: 'kate-reading' },
+      ],
+      createdAt: '2024-01-01T00:00:00Z',
+    });
+    const result = applyClientFilters([multiNarratorBook], {
+      ...{ authorFilter: '', seriesFilter: '', narratorFilter: '', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const },
+      narratorFilter: 'Kate Reading',
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe(11);
+  });
+
+  it('author filter does not match book where no author matches', () => {
+    const book = createMockBook({
+      id: 12,
+      authors: [{ id: 1, name: 'Author A', slug: 'author-a' }],
+      createdAt: '2024-01-01T00:00:00Z',
+    });
+    const result = applyClientFilters([book], {
+      ...{ authorFilter: '', seriesFilter: '', narratorFilter: '', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const },
+      authorFilter: 'Author Z',
+    });
+    expect(result).toHaveLength(0);
+  });
+
+  it('narrator filter does not match book where no narrator matches', () => {
+    const book = createMockBook({
+      id: 13,
+      narrators: [{ id: 1, name: 'Michael Kramer', slug: 'michael-kramer' }],
+      createdAt: '2024-01-01T00:00:00Z',
+    });
+    const result = applyClientFilters([book], {
+      ...{ authorFilter: '', seriesFilter: '', narratorFilter: '', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const },
+      narratorFilter: 'Kate Reading',
+    });
+    expect(result).toHaveLength(0);
   });
 });

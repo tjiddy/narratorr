@@ -104,8 +104,8 @@ describe('runSearchJob', () => {
 
   it('searches each wanted book', async () => {
     const wantedBooks = [
-      { id: 1, title: 'Book One', author: { name: 'Author A' } },
-      { id: 2, title: 'Book Two', author: { name: 'Author B' } },
+      { id: 1, title: 'Book One', authors: [{ name: 'Author A' }] },
+      { id: 2, title: 'Book Two', authors: [{ name: 'Author B' }] },
     ];
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
@@ -121,7 +121,7 @@ describe('runSearchJob', () => {
   });
 
   it('grabs best result when search finds matches', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
     const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
@@ -141,8 +141,8 @@ describe('runSearchJob', () => {
 
   it('returns searched count but zero grabbed when no indexer returns results', async () => {
     const wantedBooks = [
-      { id: 1, title: 'Obscure Book', author: { name: 'Unknown Author' } },
-      { id: 2, title: 'Another Rare Book', author: { name: 'Nobody' } },
+      { id: 1, title: 'Obscure Book', authors: [{ name: 'Unknown Author' }] },
+      { id: 2, title: 'Another Rare Book', authors: [{ name: 'Nobody' }] },
     ];
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
@@ -167,9 +167,9 @@ describe('runSearchJob', () => {
 
   it('counts only successful searches when one book throws during processing', async () => {
     const wantedBooks = [
-      { id: 1, title: 'Book A', author: { name: 'Author' } },
-      { id: 2, title: 'Book B', author: { name: 'Author' } },
-      { id: 3, title: 'Book C', author: { name: 'Author' } },
+      { id: 1, title: 'Book A', authors: [{ name: 'Author' }] },
+      { id: 2, title: 'Book B', authors: [{ name: 'Author' }] },
+      { id: 3, title: 'Book C', authors: [{ name: 'Author' }] },
     ];
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
@@ -196,7 +196,7 @@ describe('runSearchJob', () => {
 
   it('handles book with no author gracefully', async () => {
     const wantedBooks = [
-      { id: 1, title: 'Anonymous Work', author: null },
+      { id: 1, title: 'Anonymous Work', authors: null },
     ];
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
@@ -211,7 +211,7 @@ describe('runSearchJob', () => {
   });
 
   it('skips grab when book already has active download', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
     const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
@@ -234,7 +234,7 @@ describe('runSearchJob', () => {
   });
 
   it('re-throws non-duplicate grab errors to outer catch', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
     const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
@@ -259,8 +259,8 @@ describe('runSearchJob', () => {
 
   it('continues on per-book failure', async () => {
     const wantedBooks = [
-      { id: 1, title: 'Failing Book', author: { name: 'Author' } },
-      { id: 2, title: 'Good Book', author: { name: 'Author' } },
+      { id: 1, title: 'Failing Book', authors: [{ name: 'Author' }] },
+      { id: 2, title: 'Good Book', authors: [{ name: 'Author' }] },
     ];
     const settings = createMockSettingsService({ search: { enabled: true, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
@@ -277,7 +277,7 @@ describe('runSearchJob', () => {
   });
 
   it('applies word filtering via filterAndRankResults (reject words)', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
     const settings = createMockSettingsService({
       search: { enabled: true, intervalMinutes: 60 },
       quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: 'German', requiredWords: '' },
@@ -299,7 +299,7 @@ describe('runSearchJob', () => {
   });
 
   it('applies word filtering via filterAndRankResults (required words)', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
     const settings = createMockSettingsService({
       search: { enabled: true, intervalMinutes: 60 },
       quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none', rejectWords: '', requiredWords: 'M4B' },
@@ -321,7 +321,7 @@ describe('runSearchJob', () => {
   });
 
   it('applies quality filtering to search results (min seeders)', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' }, duration: 3600 }];
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }], duration: 3600 }];
     // minSeeders = 5 should filter out the low-seeder result
     const settings = createMockSettingsService({
       search: { enabled: true, intervalMinutes: 60 },
@@ -353,7 +353,7 @@ describe('runUpgradeSearchJob', () => {
     return {
       id: 1,
       title: 'Monitored Book',
-      author: { name: 'Author' },
+      authors: [{ name: 'Author' }],
       status: 'imported',
       path: '/library/monitored-book',
       monitorForUpgrades: true,
@@ -616,8 +616,8 @@ describe('searchAllWanted', () => {
 
   it('searches each wanted book against all enabled indexers', async () => {
     const wantedBooks = [
-      { id: 1, title: 'Book One', author: { name: 'Author A' } },
-      { id: 2, title: 'Book Two', author: { name: 'Author B' } },
+      { id: 1, title: 'Book One', authors: [{ name: 'Author A' }] },
+      { id: 2, title: 'Book Two', authors: [{ name: 'Author B' }] },
     ];
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
@@ -633,7 +633,7 @@ describe('searchAllWanted', () => {
   });
 
   it('grabs the best ranked result per book', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
     const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa'), mockResult(5, 'magnet:?xt=urn:btih:bbb')];
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
@@ -649,7 +649,7 @@ describe('searchAllWanted', () => {
   });
 
   it('skips books where grab throws "already has an active download" — increments skipped', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
     const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
@@ -666,9 +666,9 @@ describe('searchAllWanted', () => {
 
   it('continues searching remaining books when one book search throws — increments errors', async () => {
     const wantedBooks = [
-      { id: 1, title: 'Book A', author: { name: 'Author' } },
-      { id: 2, title: 'Book B', author: { name: 'Author' } },
-      { id: 3, title: 'Book C', author: { name: 'Author' } },
+      { id: 1, title: 'Book A', authors: [{ name: 'Author' }] },
+      { id: 2, title: 'Book B', authors: [{ name: 'Author' }] },
+      { id: 3, title: 'Book C', authors: [{ name: 'Author' }] },
     ];
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
@@ -689,7 +689,7 @@ describe('searchAllWanted', () => {
   });
 
   it('does NOT check searchSettings.enabled — manual trigger always runs', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
     const settings = createMockSettingsService({ search: { enabled: false, intervalMinutes: 60 } });
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([mockResult(10, 'magnet:?xt=urn:btih:aaa')]);
@@ -703,9 +703,9 @@ describe('searchAllWanted', () => {
 
   it('returns accurate searched, grabbed, skipped, and errors counts', async () => {
     const wantedBooks = [
-      { id: 1, title: 'Book A', author: { name: 'Author' } },
-      { id: 2, title: 'Book B', author: { name: 'Author' } },
-      { id: 3, title: 'Book C', author: { name: 'Author' } },
+      { id: 1, title: 'Book A', authors: [{ name: 'Author' }] },
+      { id: 2, title: 'Book B', authors: [{ name: 'Author' }] },
+      { id: 3, title: 'Book C', authors: [{ name: 'Author' }] },
     ];
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
@@ -727,7 +727,7 @@ describe('searchAllWanted', () => {
   });
 
   it('filters results below grab floor (no grab attempted)', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author' }, duration: 36000 }];
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author' }], duration: 36000 }];
     // size=1000 bytes, duration=36000s → very low MB/hr, should be filtered out
     const searchResults: SearchResult[] = [{ title: 'Test', protocol: 'torrent', indexer: 'abb', seeders: 10, downloadUrl: 'magnet:?aaa', size: 1000 }];
     const settings = createMockSettingsService({ quality: { grabFloor: 100, minSeeders: 0, protocolPreference: 'none' } });
@@ -743,7 +743,7 @@ describe('searchAllWanted', () => {
   });
 
   it('grabFloor=0 disables quality filtering (all results eligible)', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author' }, duration: 36000 }];
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author' }], duration: 36000 }];
     const searchResults: SearchResult[] = [{ title: 'Test', protocol: 'torrent', indexer: 'abb', seeders: 10, downloadUrl: 'magnet:?aaa', size: 1000 }];
     const settings = createMockSettingsService({ quality: { grabFloor: 0, minSeeders: 0, protocolPreference: 'none' } });
     const bookList = createMockBookListService(wantedBooks);
@@ -756,7 +756,7 @@ describe('searchAllWanted', () => {
   });
 
   it('results without downloadUrl are skipped (not grabbable)', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author' } }];
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author' }] }];
     const searchResults = [mockResult(10, undefined)]; // no downloadUrl
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
@@ -783,8 +783,8 @@ describe('searchAllWanted', () => {
 
   it('all books already have active downloads — grabbed: 0, skipped: N', async () => {
     const wantedBooks = [
-      { id: 1, title: 'Book A', author: { name: 'Author' } },
-      { id: 2, title: 'Book B', author: { name: 'Author' } },
+      { id: 1, title: 'Book A', authors: [{ name: 'Author' }] },
+      { id: 2, title: 'Book B', authors: [{ name: 'Author' }] },
     ];
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
@@ -800,8 +800,8 @@ describe('searchAllWanted', () => {
 
   it('all indexer searches return zero results — searched: N, grabbed: 0', async () => {
     const wantedBooks = [
-      { id: 1, title: 'Book A', author: { name: 'Author' } },
-      { id: 2, title: 'Book B', author: { name: 'Author' } },
+      { id: 1, title: 'Book A', authors: [{ name: 'Author' }] },
+      { id: 2, title: 'Book B', authors: [{ name: 'Author' }] },
     ];
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
@@ -815,7 +815,7 @@ describe('searchAllWanted', () => {
   });
 
   it('book with author=null — query uses title only', async () => {
-    const wantedBooks = [{ id: 1, title: 'Anonymous Work', author: null }];
+    const wantedBooks = [{ id: 1, title: 'Anonymous Work', authors: null }];
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([]);
@@ -828,10 +828,10 @@ describe('searchAllWanted', () => {
 
   it('mixed success/failure: accurate partial counts', async () => {
     const wantedBooks = [
-      { id: 1, title: 'Book A', author: { name: 'Author' } },
-      { id: 2, title: 'Book B', author: { name: 'Author' } },
-      { id: 3, title: 'Book C', author: { name: 'Author' } },
-      { id: 4, title: 'Book D', author: { name: 'Author' } },
+      { id: 1, title: 'Book A', authors: [{ name: 'Author' }] },
+      { id: 2, title: 'Book B', authors: [{ name: 'Author' }] },
+      { id: 3, title: 'Book C', authors: [{ name: 'Author' }] },
+      { id: 4, title: 'Book D', authors: [{ name: 'Author' }] },
     ];
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
@@ -853,7 +853,7 @@ describe('searchAllWanted', () => {
   });
 
   it('non-Error thrown from grab — String(grabError) fallback handles message check', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author' } }];
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author' }] }];
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([mockResult(10, 'magnet:?aaa')]);
@@ -867,7 +867,7 @@ describe('searchAllWanted', () => {
   });
 
   it('counts searched and errors when grab fails with non-duplicate error', async () => {
-    const wantedBooks = [{ id: 1, title: 'Book One', author: { name: 'Author A' } }];
+    const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
     const settings = createMockSettingsService();
     const bookList = createMockBookListService(wantedBooks);
     const indexer = createMockIndexerService([mockResult(10, 'magnet:?xt=urn:btih:aaa')]);

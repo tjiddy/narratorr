@@ -214,7 +214,7 @@ describe('Multi-entity E2E', () => {
     const bookRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/books',
-      payload: { title: 'Priority Test Book', authorName: 'Test Author' },
+      payload: { title: 'Priority Test Book', authors: [{ name: 'Test Author' }] },
     });
     const bookId = bookRes.json().id;
 
@@ -321,7 +321,7 @@ describe('Job lifecycle E2E', () => {
     const bookRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/books',
-      payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson' },
+      payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }] },
     });
     expect(bookRes.statusCode).toBe(201);
 
@@ -358,7 +358,7 @@ describe('Job lifecycle E2E', () => {
     const bookRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/books',
-      payload: { title: 'Monitor Test Book', authorName: 'Monitor Author' },
+      payload: { title: 'Monitor Test Book', authors: [{ name: 'Monitor Author' }] },
     });
     const bookId = bookRes.json().id;
 

@@ -214,7 +214,7 @@ describe('Library scan → Discovery flow E2E', () => {
       url: '/api/books',
       payload: {
         title: 'The Way of Kings',
-        authorName: 'Brandon Sanderson',
+        authors: [{ name: 'Brandon Sanderson' }],
       },
     });
     expect(bookRes.statusCode).toBe(201);

@@ -78,7 +78,7 @@ export async function retrySearch(
     const query = buildSearchQuery(book);
     const rawResults = await indexerService.searchAll(query, {
       title: book.title,
-      author: book.author?.name,
+      author: book.authors?.[0]?.name,
     });
 
     if (rawResults.length === 0) {

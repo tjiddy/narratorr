@@ -28,8 +28,8 @@ const baseDownload = {
 };
 
 const baseBook = {
-  id: 1, title: 'Test Book', authorId: 1, status: 'imported' as const,
-  narrator: 'John Smith', size: 400_000_000, duration: 600,
+  id: 1, title: 'Test Book', status: 'imported' as const,
+  narrators: [{ name: 'John Smith' }], size: 400_000_000, duration: 600,
   audioTotalSize: null, audioDuration: 36000, path: '/library/test',
   asin: null, isbn: null, coverUrl: null, description: null,
   publishedDate: null, publisher: null, language: null,
@@ -63,7 +63,9 @@ describe('QualityGateService', () => {
     it('returns completed downloads with externalId, left-joined with books', async () => {
       const { service, db } = createService();
       const expected = [{ download: baseDownload, book: baseBook }];
-      db.select.mockReturnValue(mockDbChain(expected));
+      db.select
+        .mockReturnValueOnce(mockDbChain(expected))
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, name: 'John Smith' }]));
 
       const result = await service.getCompletedDownloads();
 
@@ -180,7 +182,7 @@ describe('QualityGateService', () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
-      const result = await service.processDownload(baseDownload, { ...baseBook, narrator: null }, makeScan({ totalSize: 600_000_000, tagNarrator: 'John Smith' }));
+      const result = await service.processDownload(baseDownload, { ...baseBook, narrators: [] }, makeScan({ totalSize: 600_000_000, tagNarrator: 'John Smith' }));
 
       expect(result.reason.narratorMatch).toBeNull();
     });
@@ -191,7 +193,7 @@ describe('QualityGateService', () => {
 
       const result = await service.processDownload(
         baseDownload,
-        { ...baseBook, narrator: 'John Smith, Jane Doe; Bob Ross' },
+        { ...baseBook, narrators: [{ name: 'John Smith' }, { name: 'Jane Doe' }, { name: 'Bob Ross' }] },
         makeScan({ totalSize: 600_000_000, tagNarrator: 'Jane Doe' }),
       );
 
@@ -232,7 +234,7 @@ describe('QualityGateService', () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
-      const result = await service.processDownload(baseDownload, { ...baseBook, narrator: null }, makeScan({ totalSize: 600_000_000, tagNarrator: 'John Smith' }));
+      const result = await service.processDownload(baseDownload, { ...baseBook, narrators: [] }, makeScan({ totalSize: 600_000_000, tagNarrator: 'John Smith' }));
 
       expect(result.reason.existingNarrator).toBeNull();
       expect(result.reason.downloadNarrator).toBeNull();
@@ -254,7 +256,7 @@ describe('QualityGateService', () => {
 
       const result = await service.processDownload(
         baseDownload,
-        { ...baseBook, narrator: 'John Smith; Jane Doe' },
+        { ...baseBook, narrators: [{ name: 'John Smith' }, { name: 'Jane Doe' }] },
         makeScan({ totalSize: 600_000_000, tagNarrator: 'Jane Doe' }),
       );
 
@@ -268,7 +270,7 @@ describe('QualityGateService', () => {
 
       const result = await service.processDownload(
         baseDownload,
-        { ...baseBook, narrator: 'Travis Baldree, Jeff Hays' },
+        { ...baseBook, narrators: [{ name: 'Travis Baldree' }, { name: 'Jeff Hays' }] },
         makeScan({ totalSize: 600_000_000, tagNarrator: 'travis baldree, jeff hays' }),
       );
 
@@ -282,7 +284,7 @@ describe('QualityGateService', () => {
 
       const result = await service.processDownload(
         baseDownload,
-        { ...baseBook, narrator: 'Travis Baldree, Jeff Hays' },
+        { ...baseBook, narrators: [{ name: 'Travis Baldree' }, { name: 'Jeff Hays' }] },
         makeScan({ totalSize: 600_000_000, tagNarrator: 'Jeff Hays, Travis Baldree' }),
       );
 
@@ -296,7 +298,7 @@ describe('QualityGateService', () => {
 
       const result = await service.processDownload(
         baseDownload,
-        { ...baseBook, narrator: 'Travis Baldree; Jeff Hays' },
+        { ...baseBook, narrators: [{ name: 'Travis Baldree' }, { name: 'Jeff Hays' }] },
         makeScan({ totalSize: 600_000_000, tagNarrator: 'Travis Baldree, Jeff Hays' }),
       );
 
@@ -310,7 +312,7 @@ describe('QualityGateService', () => {
 
       const result = await service.processDownload(
         baseDownload,
-        { ...baseBook, narrator: 'Travis Baldree, Jeff Hays' },
+        { ...baseBook, narrators: [{ name: 'Travis Baldree' }, { name: 'Jeff Hays' }] },
         makeScan({ totalSize: 600_000_000, tagNarrator: 'Michael Kramer, Scott Brick' }),
       );
 
@@ -325,7 +327,7 @@ describe('QualityGateService', () => {
       // "Travis Baldree, , Jeff Hays" splits to ["travis baldree", "", "jeff hays"] — empty token removed
       const result = await service.processDownload(
         baseDownload,
-        { ...baseBook, narrator: 'Travis Baldree, , Jeff Hays' },
+        { ...baseBook, narrators: [{ name: 'Travis Baldree' }, { name: 'Jeff Hays' }] },
         makeScan({ totalSize: 600_000_000, tagNarrator: 'Jeff Hays' }),
       );
 
@@ -339,7 +341,7 @@ describe('QualityGateService', () => {
 
       const result = await service.processDownload(
         baseDownload,
-        { ...baseBook, narrator: '  ' },
+        { ...baseBook, narrators: [{ name: '  ' }] },
         makeScan({ totalSize: 600_000_000, tagNarrator: 'Jeff Hays' }),
       );
 
@@ -461,7 +463,7 @@ describe('QualityGateService', () => {
     it('auto-imports when book.path is null even if narrator does not match (narrator comparison skipped for first imports)', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
-      const bookWithNarrator = { ...placeholderBook, narrator: 'Jane Doe' };
+      const bookWithNarrator = { ...placeholderBook, narrators: [{ name: 'Jane Doe' }] };
 
       const result = await service.processDownload(baseDownload, bookWithNarrator, makeScan({ tagNarrator: 'John Smith' }));
 
@@ -472,7 +474,7 @@ describe('QualityGateService', () => {
     it('sets narratorMatch to null for first import regardless of narrator values', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
-      const bookWithNarrator = { ...placeholderBook, narrator: 'Jane Doe' };
+      const bookWithNarrator = { ...placeholderBook, narrators: [{ name: 'Jane Doe' }] };
 
       const result = await service.processDownload(baseDownload, bookWithNarrator, makeScan({ tagNarrator: 'John Smith' }));
 
@@ -482,7 +484,7 @@ describe('QualityGateService', () => {
     it('auto-imports when book.path is null and narrator does not match (narrator comparison skipped, regression guard)', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
-      const bookWithNarrator = { ...placeholderBook, narrator: 'Jane Doe' };
+      const bookWithNarrator = { ...placeholderBook, narrators: [{ name: 'Jane Doe' }] };
 
       const result = await service.processDownload(baseDownload, bookWithNarrator, makeScan({ tagNarrator: 'John Smith' }));
 
@@ -806,5 +808,90 @@ describe('QualityGateService', () => {
       const result = await service.getQualityGateDataBatch([1]);
       expect(result.get(1)).toEqual(newestReason);
     });
+  });
+});
+
+describe('Quality gate — narrator array comparison (#71)', () => {
+  const bookWithPath = { ...baseBook, path: '/library/test' };
+
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('narrator comparison skips (no hold) when book has no narrators (narrators: [])', async () => {
+    const { service, db } = createService();
+    db.update.mockReturnValue(mockDbChain([]));
+    const book = { ...bookWithPath, narrators: [] };
+
+    const result = await service.processDownload(baseDownload, book, { ...makeScan(), tagNarrator: 'John Smith' });
+
+    expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
+    expect(result.reason.narratorMatch).toBeNull();
+  });
+
+  it('narrator comparison skips when download has no narrators — not treated as mismatch', async () => {
+    const { service, db } = createService();
+    db.update.mockReturnValue(mockDbChain([]));
+    const book = { ...bookWithPath, narrators: [{ name: 'John Smith' }] };
+
+    const result = await service.processDownload(baseDownload, book, makeScan());
+
+    expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
+    expect(result.reason.narratorMatch).toBeNull();
+  });
+
+  it('download narrator matches any one of multiple book narrators → accepted (set intersection)', async () => {
+    const { service, db } = createService();
+    db.update.mockReturnValue(mockDbChain([]));
+    const book = { ...bookWithPath, narrators: [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }] };
+
+    const result = await service.processDownload(
+      baseDownload, book,
+      { ...makeScan(), tagNarrator: 'Michael Kramer' },
+    );
+
+    expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
+    expect(result.reason.narratorMatch).toBe(true);
+  });
+
+  it('download narrator matches none of multiple book narrators → held', async () => {
+    const { service, db } = createService();
+    db.update.mockReturnValue(mockDbChain([]));
+    const book = { ...bookWithPath, narrators: [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }] };
+
+    const result = await service.processDownload(
+      baseDownload, book,
+      { ...makeScan(), tagNarrator: 'Jim Dale' },
+    );
+
+    expect(result.action).toBe('held');
+    expect(result.reason.holdReasons).toContain('narrator_mismatch');
+    expect(result.reason.narratorMatch).toBe(false);
+  });
+
+  it('whitespace-only narrator in existing book → tokenizes to empty, comparison skipped', async () => {
+    const { service, db } = createService();
+    db.update.mockReturnValue(mockDbChain([]));
+    const book = { ...bookWithPath, narrators: [{ name: '   ' }] };
+
+    const result = await service.processDownload(
+      baseDownload, book,
+      { ...makeScan(), tagNarrator: 'Jim Dale' },
+    );
+
+    expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
+    expect(result.reason.narratorMatch).toBeNull();
+  });
+
+  it('first import (book.path === null) with narrator mismatch → auto-import, narrator check bypassed', async () => {
+    const { service, db } = createService();
+    db.update.mockReturnValue(mockDbChain([]));
+    const book = { ...baseBook, path: null, narrators: [{ name: 'Michael Kramer' }] };
+
+    const result = await service.processDownload(
+      baseDownload, book,
+      { ...makeScan(), tagNarrator: 'Jim Dale' },
+    );
+
+    expect(result.action).toBe('imported');
+    expect(result.reason.narratorMatch).toBeNull();
   });
 });

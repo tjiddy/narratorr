@@ -169,8 +169,8 @@ export function LibraryTableView({
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2.5 text-muted-foreground truncate max-w-[150px] hidden md:table-cell">{book.author?.name ?? '—'}</td>
-                  <td className="px-3 py-2.5 text-muted-foreground truncate max-w-[150px] hidden lg:table-cell">{book.narrator ?? '—'}</td>
+                  <td className="px-3 py-2.5 text-muted-foreground truncate max-w-[150px] hidden md:table-cell">{book.authors[0]?.name ?? '—'}</td>
+                  <td className="px-3 py-2.5 text-muted-foreground truncate max-w-[150px] hidden lg:table-cell">{book.narrators[0]?.name ?? '—'}</td>
                   <td className="px-3 py-2.5 text-muted-foreground truncate max-w-[150px] hidden lg:table-cell">
                     {book.seriesName ? `${book.seriesName}${book.seriesPosition ? ` #${book.seriesPosition}` : ''}` : '—'}
                   </td>

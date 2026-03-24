@@ -1,7 +1,7 @@
 import { eq, and, desc, isNotNull, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books, bookEvents } from '../../db/schema.js';
+import { downloads, books, bookEvents, bookNarrators, narrators } from '../../db/schema.js';
 
 import type { DownloadRow } from './types.js';
 import { buildQualityAssessment } from './quality-gate.helpers.js';
@@ -11,6 +11,7 @@ import type { QualityDecisionReason } from './quality-gate.types.js';
 export { QualityGateServiceError, type QualityDecisionReason } from './quality-gate.types.js';
 
 type BookRow = typeof books.$inferSelect;
+type BookWithNarrators = BookRow & { narrators?: Array<{ name: string }> };
 
 export type QualityDecision = {
   action: 'imported' | 'rejected' | 'held';
@@ -25,15 +26,36 @@ export class QualityGateService {
   ) {}
 
   /**
-   * Query completed downloads with externalId, left-joined with books.
+   * Query completed downloads with externalId, left-joined with books + narrators.
    * Batch-input seam for QualityGateOrchestrator (mirrors ImportService.getEligibleDownloads).
    */
-  async getCompletedDownloads(): Promise<Array<{ download: DownloadRow; book: BookRow | null }>> {
-    return this.db
+  async getCompletedDownloads(): Promise<Array<{ download: DownloadRow; book: BookWithNarrators | null }>> {
+    const rows = await this.db
       .select({ download: downloads, book: books })
       .from(downloads)
       .leftJoin(books, eq(downloads.bookId, books.id))
       .where(and(eq(downloads.status, 'completed'), isNotNull(downloads.externalId)));
+
+    if (rows.length === 0) return rows;
+
+    const bookIds = rows.map(r => r.book?.id).filter((id): id is number => id != null);
+    const narratorRows = bookIds.length > 0
+      ? await this.db
+          .select({ bookId: bookNarrators.bookId, name: narrators.name })
+          .from(bookNarrators)
+          .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
+          .where(inArray(bookNarrators.bookId, bookIds))
+      : [];
+    const narratorMap = new Map<number, Array<{ name: string }>>();
+    for (const r of narratorRows) {
+      if (!narratorMap.has(r.bookId)) narratorMap.set(r.bookId, []);
+      narratorMap.get(r.bookId)!.push({ name: r.name });
+    }
+
+    return rows.map(r => ({
+      download: r.download,
+      book: r.book ? { ...r.book, narrators: narratorMap.get(r.book.id) ?? [] } : null,
+    }));
   }
 
   /**
@@ -43,7 +65,7 @@ export class QualityGateService {
    */
   async processDownload(
     download: DownloadRow,
-    book: BookRow | null,
+    book: BookWithNarrators | null,
     scanResult: { totalSize: number; totalDuration: number; tagNarrator?: string; channels: number; codec: string },
   ): Promise<QualityDecision> {
     // Build quality assessment (pure computation)

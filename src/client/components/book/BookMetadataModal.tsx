@@ -20,7 +20,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
   const [title, setTitle] = useState(book.title);
   const [seriesName, setSeriesName] = useState(book.seriesName ?? '');
   const [seriesPosition, setSeriesPosition] = useState(book.seriesPosition?.toString() ?? '');
-  const [narrator, setNarrator] = useState(book.narrator ?? '');
+  const [narrator, setNarrator] = useState(book.narrators.map((n) => n.name).join(', '));
   const [renameFiles, setRenameFiles] = useState(false);
 
   const [view, setView] = useState<SearchView>('edit');
@@ -36,7 +36,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
     : null;
 
   const handleOpenSearch = () => {
-    const prefill = [book.title, book.author?.name ?? ''].filter(Boolean).join(' ').trim();
+    const prefill = [book.title, book.authors[0]?.name ?? ''].filter(Boolean).join(' ').trim();
     setSearchQuery(prefill);
     setView('search');
   };
@@ -82,8 +82,9 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
       data.seriesPosition = newPos;
     }
 
-    if (narrator.trim() !== (book.narrator ?? '')) {
-      data.narrator = narrator.trim() || undefined;
+    const existingNarrator = book.narrators.map((n) => n.name).join(', ');
+    if (narrator.trim() !== existingNarrator) {
+      data.narrators = narrator.trim() ? narrator.trim().split(',').map((n) => n.trim()).filter(Boolean) : [];
     }
 
     onSave(data, renameFiles);

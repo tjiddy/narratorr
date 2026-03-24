@@ -24,8 +24,8 @@ describe('Books E2E', () => {
       url: '/api/books',
       payload: {
         title: 'The Way of Kings',
-        authorName: 'Brandon Sanderson',
-        narrator: 'Michael Kramer',
+        authors: [{ name: 'Brandon Sanderson' }],
+        narrators: ['Michael Kramer'],
         seriesName: 'The Stormlight Archive',
         seriesPosition: 1,
       },
@@ -35,8 +35,8 @@ describe('Books E2E', () => {
     const book = res.json();
     expect(book.id).toBeDefined();
     expect(book.title).toBe('The Way of Kings');
-    expect(book.author?.name).toBe('Brandon Sanderson');
-    expect(book.narrator).toBe('Michael Kramer');
+    expect(book.authors[0]?.name).toBe('Brandon Sanderson');
+    expect(book.narrators[0]?.name).toBe('Michael Kramer');
     expect(book.status).toBe('wanted');
   });
 
@@ -70,11 +70,11 @@ describe('Books E2E', () => {
     const res = await e2e.app.inject({
       method: 'PUT',
       url: `/api/books/${bookId}`,
-      payload: { narrator: 'Kate Reading' },
+      payload: { narrators: ['Kate Reading'] },
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json().narrator).toBe('Kate Reading');
+    expect(res.json().narrators[0]?.name).toBe('Kate Reading');
   });
 
   it('POST /api/books rejects duplicates with 409', async () => {
@@ -83,7 +83,7 @@ describe('Books E2E', () => {
       url: '/api/books',
       payload: {
         title: 'The Way of Kings',
-        authorName: 'Brandon Sanderson',
+        authors: [{ name: 'Brandon Sanderson' }],
       },
     });
 
@@ -94,7 +94,7 @@ describe('Books E2E', () => {
     const res = await e2e.app.inject({
       method: 'POST',
       url: '/api/books',
-      payload: { authorName: 'Someone' },
+      payload: { authors: [{ name: 'Someone' }] },
     });
 
     expect(res.statusCode).toBe(400);

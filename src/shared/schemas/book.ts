@@ -23,11 +23,15 @@ export const bookListQuerySchema = z.object({
   sortDirection: bookSortDirectionSchema.optional(),
 });
 
+export const bookAuthorInputSchema = z.object({
+  name: z.string().trim().min(1, 'Author name cannot be empty'),
+  asin: z.string().optional(),
+});
+
 export const createBookBodySchema = z.object({
   title: z.string().min(1, 'Title is required'),
-  authorName: z.string().optional(),
-  authorAsin: z.string().optional(),
-  narrator: z.string().optional(),
+  authors: z.array(bookAuthorInputSchema).min(1, 'At least one author is required'),
+  narrators: z.array(z.string().trim().min(1, 'Narrator name cannot be empty')).optional(),
   description: z.string().optional(),
   coverUrl: z.string().optional(),
   asin: z.string().optional(),
@@ -44,7 +48,8 @@ export const createBookBodySchema = z.object({
 
 export const updateBookBodySchema = z.object({
   title: z.string().trim().min(1, 'Title cannot be empty').optional(),
-  narrator: z.string().optional(),
+  authors: z.array(bookAuthorInputSchema).min(1).optional(),
+  narrators: z.array(z.string()).optional(),
   description: z.string().optional(),
   coverUrl: z.string().optional(),
   status: bookStatusSchema.optional(),
@@ -57,6 +62,7 @@ export const deleteBookQuerySchema = z.object({
   deleteFiles: z.string().optional(),
 });
 
+export type BookAuthorInput = z.infer<typeof bookAuthorInputSchema>;
 export type BookListQuery = z.infer<typeof bookListQuerySchema>;
 export type CreateBookBody = z.infer<typeof createBookBodySchema>;
 export type UpdateBookBody = z.infer<typeof updateBookBodySchema>;

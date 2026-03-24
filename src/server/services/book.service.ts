@@ -1,6 +1,6 @@
 import { rm } from 'node:fs/promises';
 import { cleanEmptyParents } from '../utils/paths.js';
-import { eq, and, like, desc, sql, inArray } from 'drizzle-orm';
+import { eq, and, like, desc, sql } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
@@ -94,6 +94,7 @@ export class BookService {
     return null;
   }
 
+  // eslint-disable-next-line complexity -- sequential find-or-create for authors and narrators
   async create(data: {
     title: string;
     authors: { name: string; asin?: string }[];

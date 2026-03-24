@@ -8,7 +8,7 @@ export interface RenameableBook {
   title: string;
   seriesName?: string | null;
   seriesPosition?: number | null;
-  narrator?: string | null;
+  narrators?: Array<{ name: string }> | null;
   publishedDate?: string | null;
 }
 
@@ -56,6 +56,7 @@ export async function cleanEmptyParents(
  * Rename audio files in a directory using the file format template.
  * Returns count of files renamed. Rolls back on failure.
  */
+// eslint-disable-next-line complexity -- rename pipeline with rollback, covers all file formats
 export async function renameFilesWithTemplate(
   targetPath: string,
   fileFormat: string,
@@ -72,6 +73,7 @@ export async function renameFilesWithTemplate(
   if (audioFiles.length === 0) return 0;
 
   const author = authorName || 'Unknown Author';
+  const primaryNarrator = book.narrators?.[0]?.name;
   const baseTokens: Record<string, string | number | undefined | null> = {
     author,
     authorLastFirst: toLastFirst(author),
@@ -79,8 +81,8 @@ export async function renameFilesWithTemplate(
     titleSort: toSortTitle(book.title),
     series: book.seriesName || undefined,
     seriesPosition: book.seriesPosition ?? undefined,
-    narrator: book.narrator || undefined,
-    narratorLastFirst: book.narrator ? toLastFirst(book.narrator) : undefined,
+    narrator: primaryNarrator || undefined,
+    narratorLastFirst: primaryNarrator ? toLastFirst(primaryNarrator) : undefined,
     year: extractYear(book.publishedDate),
   };
 

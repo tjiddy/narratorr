@@ -6,7 +6,6 @@ import type { Db } from '../../db/index.js';
 
 const mockAuthor = createMockDbAuthor();
 const mockBook = createMockDbBook();
-const mockNarrator = { id: 1, name: 'Michael Kramer', slug: 'michael-kramer', createdAt: new Date('2024-01-01') };
 
 describe('BookListService', () => {
   let db: ReturnType<typeof createMockDb>;

@@ -13,7 +13,7 @@ export interface EnrichmentResult {
 }
 
 export interface AudioEnrichmentBook {
-  narrator: string | null;
+  narrators?: Array<{ name: string }> | null;
   duration: number | null;
   coverUrl: string | null;
 }
@@ -55,7 +55,7 @@ export async function enrichBookFromAudio(
 
     // Tag data: only fill empty fields (don't overwrite user edits)
     // Narrator writes go through the junction table via bookService
-    if (!book.narrator && scanResult.tagNarrator && bookService) {
+    if (!book.narrators?.length && scanResult.tagNarrator && bookService) {
       await bookService.update(bookId, { narrators: [scanResult.tagNarrator] });
     }
     if (!book.duration && scanResult.totalDuration) {

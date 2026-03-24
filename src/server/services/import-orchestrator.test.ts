@@ -55,9 +55,10 @@ const mockContext: ImportContext = {
   bookStatus: 'wanted',
   bookPath: null,
   authorName: 'Brandon Sanderson',
+  narratorStr: 'Michael Kramer',
   book: {
     id: 1, title: 'The Way of Kings', status: 'wanted', path: null,
-    narrator: 'Michael Kramer', seriesName: 'Stormlight', seriesPosition: 1, coverUrl: '/covers/1.jpg',
+    narrators: [{ name: 'Michael Kramer' }], seriesName: 'Stormlight', seriesPosition: 1, coverUrl: '/covers/1.jpg',
   } as ImportContext['book'],
 };
 

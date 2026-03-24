@@ -151,7 +151,7 @@ export interface RunAudioProcessingArgs {
     title: string;
     seriesName: string | null;
     seriesPosition: number | null;
-    narrator: string | null;
+    narrators?: Array<{ name: string }> | null;
     publishedDate: string | null;
   };
   authorName: string;
@@ -179,8 +179,8 @@ export async function runAudioProcessing(args: RunAudioProcessingArgs): Promise<
     bookTokens: {
       authorLastFirst: toLastFirst(authorName), titleSort: toSortTitle(book.title),
       series: book.seriesName || undefined, seriesPosition: book.seriesPosition ?? undefined,
-      narrator: book.narrator || undefined,
-      narratorLastFirst: book.narrator ? toLastFirst(book.narrator) : undefined,
+      narrator: book.narrators?.[0]?.name || undefined,
+      narratorLastFirst: book.narrators?.[0]?.name ? toLastFirst(book.narrators[0].name) : undefined,
       year: extractYear(book.publishedDate),
     },
   });

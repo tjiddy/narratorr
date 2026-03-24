@@ -87,7 +87,7 @@ const mockLibraryBooks = [
     id: 1,
     title: 'Project Hail Mary',
     asin: 'B00OTHER',
-    author: createMockAuthor({ id: 1, name: 'Andy Weir', slug: 'andy-weir' }),
+    authors: [createMockAuthor({ id: 1, name: 'Andy Weir', slug: 'andy-weir' })],
   }),
 ];
 
@@ -114,7 +114,7 @@ describe('AuthorPage', () => {
     vi.clearAllMocks();
     vi.mocked(api.getAuthor).mockResolvedValue(mockAuthor);
     vi.mocked(api.getAuthorBooks).mockResolvedValue(mockBooks);
-    vi.mocked(api.getBookIdentifiers).mockResolvedValue(mockLibraryBooks.map((b) => ({ asin: b.asin ?? null, title: b.title, authorName: b.author?.name ?? null })));
+    vi.mocked(api.getBookIdentifiers).mockResolvedValue(mockLibraryBooks.map((b) => ({ asin: b.asin ?? null, title: b.title, authorName: b.authors[0]?.name ?? null })));
     vi.mocked(api.getSettings).mockResolvedValue({
       quality: { grabFloor: 0, protocolPreference: 'none', minSeeders: 0, searchImmediately: false, monitorForUpgrades: false, rejectWords: '', requiredWords: '' },
     } as never);

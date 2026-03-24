@@ -49,7 +49,7 @@ interface PendingGrabParams {
 // eslint-disable-next-line max-lines-per-function, complexity -- modal orchestrates query + mutations + 5 conditional states
 export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesModalProps) {
   const queryClient = useQueryClient();
-  const searchQuery = `${book.title} ${book.author?.name ?? ''}`.trim();
+  const searchQuery = `${book.title} ${book.authors[0]?.name ?? ''}`.trim();
 
   const {
     data,
@@ -63,7 +63,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
       const { durationSeconds } = resolveBookQualityInputs(book);
       return api.searchBooks(searchQuery, {
         title: book.title,
-        author: book.author?.name,
+        author: book.authors[0]?.name,
         bookDuration: durationSeconds ?? undefined,
       });
     },
@@ -185,8 +185,8 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
             <h3 className="font-display text-lg font-semibold truncate">
               Releases for: {book.title}
             </h3>
-            {book.author?.name && (
-              <p className="text-sm text-muted-foreground truncate">by {book.author.name}</p>
+            {book.authors[0]?.name && (
+              <p className="text-sm text-muted-foreground truncate">by {book.authors[0].name}</p>
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0 ml-4">

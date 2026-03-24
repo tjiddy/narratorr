@@ -4,9 +4,9 @@ import type { SearchResult } from '../../core/index.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
 
-/** Build a search query string from a book's title and author. */
-export function buildSearchQuery(book: { title: string; author?: { name: string } | null }): string {
-  return [book.title, book.author?.name].filter(Boolean).join(' ');
+/** Build a search query string from a book's title and primary author. */
+export function buildSearchQuery(book: { title: string; authors?: Array<{ name: string }> | null }): string {
+  return [book.title, book.authors?.[0]?.name].filter(Boolean).join(' ');
 }
 
 /**
@@ -132,7 +132,7 @@ export type SingleBookSearchResult =
  * Core search-and-grab logic shared by all callers (jobs, routes).
  */
 export async function searchAndGrabForBook(
-  book: { id: number; title: string; duration?: number | null; author?: { name: string } | null },
+  book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null },
   indexerService: IndexerService,
   downloadOrchestrator: DownloadOrchestrator,
   qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string },
@@ -141,7 +141,7 @@ export async function searchAndGrabForBook(
   const query = buildSearchQuery(book);
   const rawResults = await indexerService.searchAll(query, {
     title: book.title,
-    author: book.author?.name,
+    author: book.authors?.[0]?.name,
   });
 
   if (rawResults.length === 0) {

@@ -82,7 +82,7 @@ export async function seedBookAndDownload(
   const bookRes = await e2e.app.inject({
     method: 'POST',
     url: '/api/books',
-    payload: { title, authorName },
+    payload: { title, authors: [{ name: authorName }] },
   });
   expect(bookRes.statusCode).toBe(201);
   const bookId = bookRes.json().id;

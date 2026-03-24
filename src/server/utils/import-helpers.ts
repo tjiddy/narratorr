@@ -33,12 +33,14 @@ export function buildTargetPath(
     title: string;
     seriesName?: string | null;
     seriesPosition?: number | null;
-    narrator?: string | null;
+    narrators?: Array<{ name: string }> | null;
     publishedDate?: string | null;
   },
   authorName: string | null,
 ): string {
   const author = authorName || 'Unknown Author';
+  const narratorNames = book.narrators?.map(n => n.name) ?? [];
+  const primaryNarrator = narratorNames[0];
   const tokens: Record<string, string | number | undefined> = {
     author,
     authorLastFirst: toLastFirst(author),
@@ -46,8 +48,8 @@ export function buildTargetPath(
     titleSort: toSortTitle(book.title),
     series: book.seriesName || undefined,
     seriesPosition: book.seriesPosition ?? undefined,
-    narrator: book.narrator || undefined,
-    narratorLastFirst: book.narrator ? toLastFirst(book.narrator) : undefined,
+    narrator: primaryNarrator || undefined,
+    narratorLastFirst: narratorNames.length > 0 ? narratorNames.map(toLastFirst).join(' & ') : undefined,
     year: extractYear(book.publishedDate),
   };
 

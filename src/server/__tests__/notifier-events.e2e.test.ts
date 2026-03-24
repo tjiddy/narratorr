@@ -175,7 +175,7 @@ describe('Notifier event triggers E2E', () => {
     const bookRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/books',
-      payload: { title, authorName: 'Test Author' },
+      payload: { title, authors: [{ name: 'Test Author' }] },
     });
     expect(bookRes.statusCode).toBe(201);
     const bookId = bookRes.json().id;

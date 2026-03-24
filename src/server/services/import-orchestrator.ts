@@ -90,7 +90,7 @@ export class ImportOrchestrator {
         taggingService: this.taggingService, taggingEnabled: taggingSettings.enabled,
         ffmpegPath: processingSettings.ffmpegPath, taggingMode: taggingSettings.mode, embedCover: taggingSettings.embedCover,
         bookId: ctx.bookId, targetPath: result.targetPath,
-        book: { title: ctx.book.title, authorName: ctx.authorName, narrator: ctx.book.narrator, seriesName: ctx.book.seriesName, seriesPosition: ctx.book.seriesPosition, coverUrl: ctx.book.coverUrl },
+        book: { title: ctx.book.title, authorName: ctx.authorName, narrator: ctx.narratorStr, seriesName: ctx.book.seriesName, seriesPosition: ctx.book.seriesPosition, coverUrl: ctx.book.coverUrl },
         log: this.log,
       });
     } catch (tagError) {

@@ -70,8 +70,8 @@ const baseDownload = {
 };
 
 const baseBook = {
-  id: 1, title: 'Test Book', authorId: 1, status: 'imported' as const,
-  narrator: 'John Smith', size: 400_000_000, duration: 600,
+  id: 1, title: 'Test Book', status: 'imported' as const,
+  narrators: [{ name: 'John Smith' }], size: 400_000_000, duration: 600,
   audioTotalSize: null, audioDuration: 36000, path: '/library/test',
   asin: null, isbn: null, coverUrl: null, description: null,
   publishedDate: null, publisher: null, language: null,

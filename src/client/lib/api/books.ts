@@ -10,11 +10,17 @@ export interface Author {
   bio?: string | null;
 }
 
+export interface Narrator {
+  id: number;
+  name: string;
+  slug: string;
+}
+
 export interface BookWithAuthor {
   id: number;
   title: string;
-  authorId?: number | null;
-  narrator?: string | null;
+  authors: Author[];
+  narrators: Narrator[];
   description?: string | null;
   coverUrl?: string | null;
   asin?: string | null;
@@ -43,14 +49,12 @@ export interface BookWithAuthor {
   importListName?: string | null;
   createdAt: string;
   updatedAt: string;
-  author?: Author;
 }
 
 export interface CreateBookPayload {
   title: string;
-  authorName?: string;
-  authorAsin?: string;
-  narrator?: string;
+  authors: { name: string; asin?: string }[];
+  narrators?: string[];
   description?: string;
   coverUrl?: string;
   asin?: string;
@@ -109,7 +113,11 @@ export interface BookFile {
 
 export interface UpdateBookPayload {
   title?: string;
-  narrator?: string;
+  authors?: { name: string; asin?: string }[];
+  narrators?: string[];
+  description?: string;
+  coverUrl?: string;
+  status?: string;
   seriesName?: string | null;
   seriesPosition?: number | null;
   monitorForUpgrades?: boolean;

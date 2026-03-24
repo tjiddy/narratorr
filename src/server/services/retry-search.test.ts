@@ -13,7 +13,8 @@ import type { FastifyBaseLogger } from 'fastify';
 
 const mockBook: BookWithAuthor = {
   ...createMockDbBook({ duration: 3600 }),
-  author: createMockDbAuthor(),
+  authors: [createMockDbAuthor()],
+  narrators: [],
 };
 
 const mockSearchResult = {

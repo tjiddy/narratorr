@@ -39,7 +39,7 @@ const defaultQualitySettings = {
 
 describe('buildSearchQuery', () => {
   it('returns "title authorname" when book has title and author', () => {
-    expect(buildSearchQuery({ title: 'The Way of Kings', author: { name: 'Brandon Sanderson' } }))
+    expect(buildSearchQuery({ title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }] }))
       .toBe('The Way of Kings Brandon Sanderson');
   });
 
@@ -49,22 +49,22 @@ describe('buildSearchQuery', () => {
   });
 
   it('returns title only when author is null', () => {
-    expect(buildSearchQuery({ title: 'The Way of Kings', author: null }))
+    expect(buildSearchQuery({ title: 'The Way of Kings', authors: null }))
       .toBe('The Way of Kings');
   });
 
   it('returns title only when author.name is undefined', () => {
-    expect(buildSearchQuery({ title: 'The Way of Kings', author: { name: undefined } as unknown as { name: string } }))
+    expect(buildSearchQuery({ title: 'The Way of Kings', authors: [{ name: undefined } as unknown as { name: string }] }))
       .toBe('The Way of Kings');
   });
 
   it('returns author only when title is empty string', () => {
-    expect(buildSearchQuery({ title: '', author: { name: 'Brandon Sanderson' } }))
+    expect(buildSearchQuery({ title: '', authors: [{ name: 'Brandon Sanderson' }] }))
       .toBe('Brandon Sanderson');
   });
 
   it('returns empty string when both title and author are missing', () => {
-    expect(buildSearchQuery({ title: '', author: null }))
+    expect(buildSearchQuery({ title: '', authors: null }))
       .toBe('');
   });
 });
@@ -86,7 +86,7 @@ describe('searchAndGrabForBook', () => {
     log = createMockLogger();
   });
 
-  const book = { id: 1, title: 'Test Book', duration: 3600, author: { name: 'Author' } };
+  const book = { id: 1, title: 'Test Book', duration: 3600, authors: [{ name: 'Author' }] };
 
   it('returns grabbed result on happy path (search → filter → grab)', async () => {
     const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log);
