@@ -211,9 +211,10 @@ describe('buildTargetPath', () => {
     expect(result).toMatch(/Kramer, Michael/);
   });
 
-  it('renders {narratorLastFirst} for multiple narrators', () => {
+  it('renders {narratorLastFirst} for multiple narrators → uses position-0 narrator only', () => {
     const result = buildTargetPath('/audiobooks', '{author}/{title} [{narratorLastFirst}]', { title: 'Book', narrators: [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }] }, 'Author');
-    expect(result).toMatch(/Kramer, Michael & Reading, Kate/);
+    expect(result).toMatch(/Kramer, Michael/);
+    expect(result).not.toMatch(/Reading, Kate/);
   });
 });
 

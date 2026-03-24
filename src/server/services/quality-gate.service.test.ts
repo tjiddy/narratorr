@@ -362,6 +362,22 @@ describe('QualityGateService', () => {
       expect(result.reason.narratorMatch).toBeNull();
       expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
     });
+
+    it('compares narrator array values directly without rejoining — entity names are not re-split on punctuation (#71)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      // Book has two narrators stored as discrete entities
+      const result = await service.processDownload(
+        baseDownload,
+        { ...baseBook, narrators: [{ name: 'Travis Baldree' }, { name: 'Jeff Hays' }] },
+        makeScan({ totalSize: 600_000_000, tagNarrator: 'Travis Baldree' }),
+      );
+
+      // Direct array comparison should match 'Travis Baldree' without re-splitting via delimiter heuristics
+      expect(result.reason.narratorMatch).toBe(true);
+      expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
+    });
   });
 
   describe('processDownload — duration delta', () => {
