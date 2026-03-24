@@ -261,6 +261,77 @@ describe('QualityGateService', () => {
       expect(result.reason.existingNarrator).toBe('John Smith; Jane Doe');
       expect(result.reason.downloadNarrator).toBe('Jane Doe');
     });
+
+    it('passes when multi-narrator tag matches all book narrators (same order, case-insensitive)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(
+        baseDownload,
+        { ...baseBook, narrator: 'Travis Baldree, Jeff Hays' },
+        makeScan({ totalSize: 600_000_000, tagNarrator: 'travis baldree, jeff hays' }),
+      );
+
+      expect(result.reason.narratorMatch).toBe(true);
+      expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
+    });
+
+    it('passes when multi-narrator tag matches book narrators in different order', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(
+        baseDownload,
+        { ...baseBook, narrator: 'Travis Baldree, Jeff Hays' },
+        makeScan({ totalSize: 600_000_000, tagNarrator: 'Jeff Hays, Travis Baldree' }),
+      );
+
+      expect(result.reason.narratorMatch).toBe(true);
+      expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
+    });
+
+    it('passes when multi-narrator tag uses different delimiter than book narrator (mixed ; vs ,)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(
+        baseDownload,
+        { ...baseBook, narrator: 'Travis Baldree; Jeff Hays' },
+        makeScan({ totalSize: 600_000_000, tagNarrator: 'Travis Baldree, Jeff Hays' }),
+      );
+
+      expect(result.reason.narratorMatch).toBe(true);
+      expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
+    });
+
+    it('holds when multi-narrator tag has no narrator overlap with book narrators', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(
+        baseDownload,
+        { ...baseBook, narrator: 'Travis Baldree, Jeff Hays' },
+        makeScan({ totalSize: 600_000_000, tagNarrator: 'Michael Kramer, Scott Brick' }),
+      );
+
+      expect(result.reason.narratorMatch).toBe(false);
+      expect(result.reason.holdReasons).toContain('narrator_mismatch');
+    });
+
+    it('skips narrator comparison and removes empty tokens from malformed delimiter string (e.g. "A, , B")', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      // "Travis Baldree, , Jeff Hays" splits to ["travis baldree", "", "jeff hays"] — empty token removed
+      const result = await service.processDownload(
+        baseDownload,
+        { ...baseBook, narrator: 'Travis Baldree, , Jeff Hays' },
+        makeScan({ totalSize: 600_000_000, tagNarrator: 'Jeff Hays' }),
+      );
+
+      expect(result.reason.narratorMatch).toBe(true);
+      expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
+    });
   });
 
   describe('processDownload — duration delta', () => {
@@ -359,15 +430,36 @@ describe('QualityGateService', () => {
       expect(result.reason.holdReasons).not.toContain('duration_delta');
     });
 
-    it('holds with narrator_mismatch only when book.path is null but narrator does not match', async () => {
+    it('auto-imports when book.path is null even if narrator does not match (narrator comparison skipped for first imports)', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
       const bookWithNarrator = { ...placeholderBook, narrator: 'Jane Doe' };
 
       const result = await service.processDownload(baseDownload, bookWithNarrator, makeScan({ tagNarrator: 'John Smith' }));
 
-      expect(result.action).toBe('held');
-      expect(result.reason.holdReasons).toContain('narrator_mismatch');
+      expect(result.action).toBe('imported');
+      expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
+    });
+
+    it('sets narratorMatch to null for first import regardless of narrator values', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+      const bookWithNarrator = { ...placeholderBook, narrator: 'Jane Doe' };
+
+      const result = await service.processDownload(baseDownload, bookWithNarrator, makeScan({ tagNarrator: 'John Smith' }));
+
+      expect(result.reason.narratorMatch).toBeNull();
+    });
+
+    it('auto-imports when book.path is null and narrator does not match (narrator comparison skipped, regression guard)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+      const bookWithNarrator = { ...placeholderBook, narrator: 'Jane Doe' };
+
+      const result = await service.processDownload(baseDownload, bookWithNarrator, makeScan({ tagNarrator: 'John Smith' }));
+
+      expect(result.action).toBe('imported');
+      expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
       expect(result.reason.holdReasons).not.toContain('no_quality_data');
       expect(result.reason.holdReasons).not.toContain('duration_delta');
     });
