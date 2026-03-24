@@ -65,7 +65,7 @@ export function ImportCard({ row, onToggle, onEdit }: ImportCardProps) {
   const showPencilAlways = !confidence || confidence === 'medium' || confidence === 'none';
   const displayTitle = row.edited.title;
   const displayAuthor = row.edited.author || row.book.parsedAuthor || '';
-  const displayNarrator = row.matchResult?.bestMatch?.narrators?.join(', ');
+  const displayNarrator = row.edited.metadata?.narrators?.join(', ');
   // Show last 3 path segments for context (e.g. "Author/Series/Book Folder")
   const pathParts = row.book.path.split(/[\\/]/).filter(Boolean);
   const shortPath = pathParts.slice(-3).join('/') || row.book.path;
