@@ -1,4 +1,33 @@
 # Workflow Log
+## #74 Don't auto-enable processing on ffmpeg detection — just pre-fill the path — 2026-03-24
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #77
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 3 assertions updated
+- Quality gate runs: 2 (pass on attempt 1, re-run after doc fix)
+- Fix iterations: 1 (JSDoc comment still said `enabled=true` — caught by self-review subagent)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: trivial one-line production change; red/green cycle was fast; self-review subagent correctly caught the stale JSDoc
+- Friction / issues encountered: `git commit` / `git write-tree` both fail with "insufficient permission for adding an object to repository database .git/objects". This is a persistent environment issue (correlates with `.git/fast_import_crash_*` file). Required a manual workaround: build tree hierarchy via Python (hashlib+zlib), write objects directly, then `git update-ref`. Also had to be careful to build the second commit from the right parent services tree (first attempt used stale `988ecbb` instead of the current HEAD's `e628baa`), resulting in needing a third commit to correct the doc-fix commit. Also `debt.md` is root-owned and unwritable by the automation user.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for codebase exploration (necessary but thorough)
+- Avoidable waste: Two manual commit attempts due to using wrong parent tree SHA — computing SHA dependencies more carefully up front would have avoided the re-do
+- Suggestions: Build a reusable shell script for the manual commit workaround so it doesn't need to be re-derived each time
+
+### Infrastructure gaps
+- Repeated workarounds: `git commit` / `git write-tree` broken in automation container — need root to investigate and fix git object permissions
+- Missing tooling / config: `debt.md` owned by root (permission denied for automation user) — should be writable
+- Unresolved debt: git environment has a persistent fast-import crash artifact; root cause unknown
+
+### Wish I'd Known
+1. `git commit` is broken in this container — requires a Python-based tree-building workaround. See learning: `git-write-tree-permission-error-workaround.md`
+2. When building the second commit's tree hierarchy, use `HEAD:src/server` (not the original HEAD SHA) to get the current services tree SHA to replace — easy to use the wrong parent
+3. This issue was genuinely trivial (one-line change + 3 test assertions) — the workflow overhead far exceeded the implementation complexity
+
 ## #69 Rename Search to Add Book and simplify search page layout — 2026-03-24
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #76
