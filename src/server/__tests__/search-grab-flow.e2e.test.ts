@@ -323,4 +323,133 @@ describe('Search → Grab flow E2E', () => {
     });
     expect(bookCheck.json().status).toBe('wanted');
   });
+
+  describe('replace existing download', () => {
+    it('returns 409 with code ACTIVE_DOWNLOAD_EXISTS when book has replaceable active download and replaceExisting not set', async () => {
+      mswServer.use(qbLoginHandler(), qbAddTorrentHandler());
+
+      const bookRes = await e2e.app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'Conflict Book', authorName: 'Test Author' },
+      });
+      const conflictBookId = bookRes.json().id;
+
+      const firstGrab = await e2e.app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: {
+          downloadUrl: MAGNET_URI,
+          title: 'Conflict Book',
+          protocol: 'torrent',
+          bookId: conflictBookId,
+          indexerId,
+        },
+      });
+      expect(firstGrab.statusCode).toBe(201);
+
+      const secondGrab = await e2e.app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: {
+          downloadUrl: MAGNET_URI,
+          title: 'Conflict Book',
+          protocol: 'torrent',
+          bookId: conflictBookId,
+          indexerId,
+        },
+      });
+
+      expect(secondGrab.statusCode).toBe(409);
+      expect(secondGrab.json()).toEqual({ code: 'ACTIVE_DOWNLOAD_EXISTS' });
+    });
+
+    it('replaceExisting: true cancels active download and grabs new release — old download has errorMessage "Replaced by new download"', async () => {
+      mswServer.use(qbLoginHandler(), qbAddTorrentHandler());
+
+      const bookRes = await e2e.app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'Replace Book', authorName: 'Test Author' },
+      });
+      const replaceBookId = bookRes.json().id;
+
+      const firstGrab = await e2e.app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: {
+          downloadUrl: MAGNET_URI,
+          title: 'Replace Book',
+          protocol: 'torrent',
+          bookId: replaceBookId,
+          indexerId,
+        },
+      });
+      expect(firstGrab.statusCode).toBe(201);
+      const firstDownloadId = firstGrab.json().id;
+
+      mswServer.use(qbLoginHandler(), qbAddTorrentHandler());
+      const replaceGrab = await e2e.app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: {
+          downloadUrl: MAGNET_URI,
+          title: 'Replace Book',
+          protocol: 'torrent',
+          bookId: replaceBookId,
+          indexerId,
+          replaceExisting: true,
+        },
+      });
+      expect(replaceGrab.statusCode).toBe(201);
+
+      const activityRes = await e2e.app.inject({ method: 'GET', url: '/api/activity' });
+      const downloads = (activityRes.json() as { data: { id: number; errorMessage?: string | null; status: string }[] }).data;
+      const oldDownload = downloads.find((d) => d.id === firstDownloadId);
+      expect(oldDownload).toBeDefined();
+      expect(oldDownload!.errorMessage).toBe('Replaced by new download');
+      expect(oldDownload!.status).toBe('failed');
+    });
+
+    it('book status is downloading after successful replacement', async () => {
+      mswServer.use(qbLoginHandler(), qbAddTorrentHandler());
+
+      const bookRes = await e2e.app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'Status Check Book', authorName: 'Test Author' },
+      });
+      const statusBookId = bookRes.json().id;
+
+      await e2e.app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: {
+          downloadUrl: MAGNET_URI,
+          title: 'Status Check Book',
+          protocol: 'torrent',
+          bookId: statusBookId,
+          indexerId,
+        },
+      });
+
+      mswServer.use(qbLoginHandler(), qbAddTorrentHandler());
+      const replaceRes = await e2e.app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: {
+          downloadUrl: MAGNET_URI,
+          title: 'Status Check Book',
+          protocol: 'torrent',
+          bookId: statusBookId,
+          indexerId,
+          replaceExisting: true,
+        },
+      });
+      expect(replaceRes.statusCode).toBe(201);
+
+      const bookCheck = await e2e.app.inject({ method: 'GET', url: `/api/books/${statusBookId}` });
+      expect(bookCheck.json().status).toBe('downloading');
+    });
+  });
 });
