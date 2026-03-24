@@ -1,4 +1,33 @@
 # Workflow Log
+## #67 Pass GIT_COMMIT build arg in Docker workflow — 2026-03-24
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #70
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 5 new test cases
+- Quality gate runs: 2 (pass on attempt 1 both times; second run after re-claiming post-permission fix)
+- Fix iterations: 0 (implementation was straightforward; only blocker was push permission)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Red/green TDD was clean — exactly 1 test failed before implementing truncation (the 40-char case), all others passed immediately because `||` already handled empty/unset. Spec review process was thorough and caught the real test surface issue (tsup-inject can't call getCommit() directly).
+- Friction / issues encountered: Push blocked on first handoff attempt because the GitHub App token lacked `workflows` permission. Required user to grant the permission and re-run `/implement`. The re-run used `(resumed)` claim path cleanly.
+
+### Token efficiency
+- Highest-token actions: 3 rounds of spec review elaboration (each round required an Explore subagent for the reviewer bot); self-review + coverage subagents on each handoff attempt
+- Avoidable waste: First handoff attempt ran full self-review + coverage + verify before hitting the push permission wall — those checks had to be repeated on the second attempt
+- Suggestions: Could detect `workflows` permission before running quality gates if the diff contains workflow file changes (early-exit on permission check)
+
+### Infrastructure gaps
+- Repeated workarounds: `git push` requires `GH_TOKEN=$(gh auth token)` re-injection each time because the remote URL token is stale — recurring pattern across issues
+- Missing tooling / config: No pre-flight check for GitHub App `workflows` permission before attempting to push branches with workflow file changes
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. GitHub Apps need the `workflows` permission separately from `contents: write` — without it, any push touching `.github/workflows/` is silently blocked at the remote, not at auth setup time. See `github-app-workflows-permission.md`.
+2. `scripts/tsup-inject.test.ts` is a bundle-text inspector only — it cannot call exported server functions because `src/server/index.ts` calls `main()` at import time. The only way to test runtime behavior from the built artifact is via a running container (Docker smoke test). See `tsup-bundle-inspection-not-callable.md`.
+3. The `getCommit()` truncation was the only code change needed — all other infrastructure (Dockerfile ARG, tsup esbuildOptions.define, route exposure, UI rendering) was already wired from PR #44 (issue #37). The workflow file change was the real fix.
+
 ## #63 Allow replacing an active download with a new release — 2026-03-24
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #65
