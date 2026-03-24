@@ -318,7 +318,7 @@ describe('QualityGateService', () => {
       expect(result.reason.holdReasons).toContain('narrator_mismatch');
     });
 
-    it('skips narrator comparison and removes empty tokens from malformed delimiter string (e.g. "A, , B")', async () => {
+    it('filters empty tokens from malformed delimiter string in book narrator (e.g. "A, , B")', async () => {
       const { service, db } = createService();
       db.update.mockReturnValue(mockDbChain([]));
 
@@ -330,6 +330,34 @@ describe('QualityGateService', () => {
       );
 
       expect(result.reason.narratorMatch).toBe(true);
+      expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
+    });
+
+    it('skips narrator comparison when book narrator normalizes to zero tokens (whitespace-only)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(
+        baseDownload,
+        { ...baseBook, narrator: '  ' },
+        makeScan({ totalSize: 600_000_000, tagNarrator: 'Jeff Hays' }),
+      );
+
+      expect(result.reason.narratorMatch).toBeNull();
+      expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
+    });
+
+    it('skips narrator comparison when download tag normalizes to zero tokens (whitespace-only)', async () => {
+      const { service, db } = createService();
+      db.update.mockReturnValue(mockDbChain([]));
+
+      const result = await service.processDownload(
+        baseDownload,
+        baseBook,
+        makeScan({ totalSize: 600_000_000, tagNarrator: '  ' }),
+      );
+
+      expect(result.reason.narratorMatch).toBeNull();
       expect(result.reason.holdReasons).not.toContain('narrator_mismatch');
     });
   });

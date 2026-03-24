@@ -44,14 +44,18 @@ export function buildQualityAssessment(
   let existingNarrator: string | null = null;
   let downloadNarrator: string | null = null;
   if (book && book.path !== null && scanResult.tagNarrator && book.narrator) {
-    existingNarrator = book.narrator;
-    downloadNarrator = scanResult.tagNarrator;
     const tokenize = (s: string) => s.split(/[,;&]/).map(n => n.trim().toLowerCase()).filter(n => n.length > 0);
-    const existingSet = new Set(tokenize(book.narrator));
+    const existingTokens = tokenize(book.narrator);
     const downloadTokens = tokenize(scanResult.tagNarrator);
-    narratorMatch = downloadTokens.some(n => existingSet.has(n));
-    if (!narratorMatch) {
-      holdReasons.push('narrator_mismatch');
+    // Skip if either side produces no tokens after normalization (AC5)
+    if (existingTokens.length > 0 && downloadTokens.length > 0) {
+      existingNarrator = book.narrator;
+      downloadNarrator = scanResult.tagNarrator;
+      const existingSet = new Set(existingTokens);
+      narratorMatch = downloadTokens.some(n => existingSet.has(n));
+      if (!narratorMatch) {
+        holdReasons.push('narrator_mismatch');
+      }
     }
   }
 
