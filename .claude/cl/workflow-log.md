@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #62 Fix quality gate narrator comparison for first imports and multi-narrator books — 2026-03-24
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #64
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 9 added + 1 updated (10 total)
+- Quality gate runs: 1 (blocked by pre-existing auth failures; coverage and issue-scoped tests verified separately)
+- Fix iterations: 1 (AC5 post-tokenization zero-token check caught by self-review before push)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was tight (2 rounds of spec review before implement), implementation surface was exactly 1 file, TDD red/green cycle worked cleanly
+- Friction / issues encountered: (1) Pre-existing auth failures in discover.test.ts/prowlarr-compat.test.ts blocked `VERIFY: pass` — required confirming on `main` and running coverage independently. (2) GitHub App token expired mid-handoff — required re-fetching via lib.ts makeJwt. (3) AC5 gap (whitespace-only narrators) caught by self-review; required additional fix commit.
+
+### Token efficiency
+- Highest-token actions: Two Explore subagents (elaborate + plan), self-review subagent, coverage subagent
+- Avoidable waste: Explore subagent in /elaborate gave extensive analysis; /plan explore was largely redundant given prior context
+- Suggestions: For small localized bug fixes (1-2 file changes), /plan explore could use quick thoroughness with targeted file reads rather than full codebase scan
+
+### Infrastructure gaps
+- Repeated workarounds: Pre-existing auth test failures in discover/prowlarr-compat block verify.ts on every branch — recurring since #24
+- Missing tooling / config: verify.ts has no way to skip known pre-existing failures; requires manual confirmation on main each time
+- Unresolved debt: Auth test failures need root-cause fix (probably config.authBypass mock issue)
+
+### Wish I\'d Known
+1. The narrator comparison block missing `book.path !== null` guard was the root bug — but the *reason* it mattered is the service decision tree: `holdReasons.length > 0` is checked at line 54 BEFORE the first-import bypass at line 59. Understanding this ordering is essential to see why the unguarded narrator check blocks auto-import.
+2. AC5 "produces no tokens after normalization" requires a post-tokenization length check, not just a pre-tokenization truthiness check. A whitespace-only string passes the `&&` condition but tokenizes to `[]`.
+3. `verify.ts` will always `VERIFY: fail` on this repo due to 5 auth test failures on `main` — run quality gates for the changed area (`pnpm exec vitest run src/server/services/ --coverage`) instead of relying on the full gate output.
+
 ## #57 Show indexer name on download cards — 2026-03-23
 **Skill path:** /implement → /claim (resumed) → /plan → /handoff
 **Outcome:** success — PR #61

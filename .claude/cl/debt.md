@@ -39,3 +39,5 @@ No active items. All prior debt graduated and resolved in #448.
 - **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 auth integration tests failing on main (returns 401 when no auth credentials, rejects routes without credentials). Pre-existing before #57, not introduced here. Blocks `verify.ts VERIFY: pass` globally. (discovered in #57)
 
 - **`src/server/routes/discover.test.ts` + `prowlarr-compat.test.ts`**: Auth integration tests depend on `vi.mock('../config.js')` to override `AUTH_BYPASS=true` test env — this mock was applied, reverted, and re-applied during #57. Root cause not documented; risk of future regressions if someone removes the mock again without understanding why it's needed. (discovered in #57)
+
+- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 pre-existing auth test failures block `VERIFY: pass` on all branches. Unrelated to narrator or quality gate work. Recurring blocker since at least #24. (discovered in #62)
