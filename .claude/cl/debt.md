@@ -13,6 +13,14 @@
 - **src/client/pages/activity/ActivityPage.tsx**: `usePagination.clampToTotal()` useEffect not covered by tests — pagination clamping behavior when totals shrink is untested. (discovered in #58)
 - **src/client/pages/activity/DownloadCard.tsx**: Seeders visibility for usenet protocol (`download.protocol !== 'usenet'` guard) has no test. (discovered in #58)
 
+## Orchestrator
+
+- **Stale skills on first dispatch:** Automation worker clones only pull main during container startup (entrypoint). If a skill file changes on main mid-session, the first dispatch after the change runs the old version — the `git pull` inside the skill updates the clone but the skill is already loaded. Fix: add `git fetch origin main && git reset --hard origin/main` to orchestrator pre-dispatch. Low urgency — only matters when skills change, and the second dispatch picks it up.
+
+## Workflow Scripts
+
+- **scripts/claim.ts**: Does not handle existing branches gracefully — if a branch already exists (e.g., from a previous failed claim or manual creation), the script fails instead of recovering. Should detect existing branch and offer to reuse or clean up. (discovered during CL graduation)
+
 ## Code Hardening
 
 - **src/core/metadata/ (audible.ts, audnexus.ts)**: Direct `fetch()` calls without timeout or redirect protection — consider migrating to `fetchWithTimeout`. (discovered in #23)
