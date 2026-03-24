@@ -381,8 +381,21 @@ All GitHub commands use: `gh` (referred to as `gh` below).
     - If merge output starts with `REBASE:` — the branch is behind main. Attempt a clean rebase:
       1. `git checkout <head-branch> && git fetch origin main && git rebase origin/main`
       2. If the rebase succeeds (no conflicts): `git push --force-with-lease` then re-run `node scripts/merge.ts <pr-number>`
-      3. If the rebase has conflicts: `git rebase --abort && git checkout main`, then run `node scripts/merge.ts <pr-number>` — it will detect the conflict, set `stage/fixes-pr`, post a rebase comment on the issue, and send it back to the implementer
-    - If merge output starts with `REBASE_CONFLICT:` — the implementer needs to resolve conflicts. Report it and stop.
+      3. If the rebase has conflicts: `git rebase --abort && git checkout main` — fall through to the `REBASE_CONFLICT` handling below
+    - If merge output starts with `REBASE_CONFLICT:` (or a `REBASE:` rebase attempt failed with conflicts above):
+      1. Post a structured verdict comment on the **PR** so `/respond-to-pr-review` can process it:
+         ```
+         ## Verdict: needs-work
+
+         ## Findings
+         ```json
+         [{"id":"F1","severity":"blocking","category":"rebase","description":"Branch has merge conflicts with main. Run `git fetch origin main && git rebase origin/main`, resolve all conflicts, and push.","files":[]}]
+         ```
+         ```
+         Write the comment body to a temp file, then: `gh pr comment <pr-number> --body-file <temp-file-path>`. Clean up the temp file.
+      2. Set `stage/fixes-pr` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/fixes-pr"`
+      3. Set `status/in-progress` on the **issue**: `node scripts/update-labels.ts <id> --replace "status/" "status/in-progress"`
+      4. **STOP.** The implementer will pick this up via `/respond-to-pr-review`.
     - If merge output starts with `ERROR:` — report the error, do not retry
 
     **If verdict is `needs-work`:**

@@ -40,6 +40,13 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    - Parse the `## Findings` JSON block from that comment
    - If no findings JSON found, report error and stop
 
+2b. **Handle rebase findings first:** If any finding has `"category": "rebase"`:
+   1. `git fetch origin main && git rebase origin/main`
+   2. Resolve any merge conflicts that arise during the rebase
+   3. After all conflicts are resolved and the rebase completes: `git push --force-with-lease`
+   4. Mark the rebase finding as `fixed` (resolution for the response table)
+   5. Continue to step 3 for any remaining non-rebase findings. If the rebase finding was the only finding, skip step 3 entirely.
+
 3. **Address each finding** — For every finding in the JSON array, choose exactly one resolution:
 
    - **`fixed`** — Make the code change that addresses the finding, then `git add` and `git commit` with message referencing the finding ID (e.g., `fix: address F1 — add missing test for edge case`)

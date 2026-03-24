@@ -1,44 +1,21 @@
 # Technical Debt
 
-No active items. All prior debt graduated and resolved in #448.
+## Auth Test Failures (BLOCKING)
+
+- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 auth integration tests failing on `main` — tests expect 401 but get 500/200. Blocks `scripts/verify.ts` from returning `VERIFY: pass` on any branch. Auth tests depend on `vi.mock('../config.js')` to override `AUTH_BYPASS=true` — this mock was applied, reverted, and re-applied during #57; root cause not documented. Recurring blocker since #16, rediscovered in #17, #21, #24, #28, #30, #37, #40, #50, #54, #57, #58, #62.
+
+## Test Coverage Gaps
 
 - **src/server/services/auth.service.test.ts**: `updateLocalBypass()`, `changePassword()` selective field updates (username-only vs password-only), and timing-safe comparison have no direct unit tests — only covered via route integration tests. (discovered in #8)
 - **src/client/pages/settings/SecuritySettings.test.tsx**: `LocalBypassSection` toggle behavior and `ApiKeySection` clipboard copy button have no interaction tests — only existence tests. (discovered in #8)
-- **src/client/pages/settings/SecuritySettings.tsx**: AuthModeSection mutation flow (immediate mode changes without confirmation, toast messages, query invalidation) and LocalBypassSection mutation flow (checkbox onChange, success/error toasts, query invalidation) have no interaction tests. These are pre-existing gaps unrelated to the clipboard fix. (discovered in #11)
+- **src/client/pages/settings/SecuritySettings.tsx**: AuthModeSection and LocalBypassSection mutation flows (mode changes, toast messages, query invalidation) have no interaction tests. (discovered in #11)
+- **src/client/pages/settings/LibrarySettingsSection.tsx**: File format token insertion test missing. Also missing: file format title-missing error, preview output assertions, Save button disabled-during-mutation test, cursor position after token insertion, pending button state text, dirty-reset after save. (discovered in #50, #18)
+- **src/client/pages/activity/ActivityPage.tsx**: `usePagination.clampToTotal()` useEffect not covered by tests — pagination clamping behavior when totals shrink is untested. (discovered in #58)
+- **src/client/pages/activity/DownloadCard.tsx**: Seeders visibility for usenet protocol (`download.protocol !== 'usenet'` guard) has no test. (discovered in #58)
 
-- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 auth integration tests failing on main — pre-existing, unrelated to CSP work. Root cause unknown but blocks `node scripts/verify.ts` from returning `VERIFY: pass` even on unrelated changes. (discovered in #16)
+## Code Hardening
 
-- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 pre-existing auth integration test failures on main — these poison `scripts/verify.ts` for all branches. Root cause unrelated to #17 but discovered during quality gate run. (discovered in #17)
-
-- **src/server/routes/discover.test.ts** and **src/server/routes/prowlarr-compat.test.ts**: 5 auth-integration tests failing on `main` ("returns 401" getting 500 instead) — pre-existing failures unrelated to CSP work. Need investigation into why the auth plugin isn't rejecting unauthenticated requests in these test setups. (discovered in #21)
-
-- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 auth integration tests failing on main — pre-existing before #28, unrelated to size parsing. Blocks `scripts/verify.ts` from returning `VERIFY: pass` on any branch. (discovered in #28)
-
-- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 pre-existing auth test failures — tests assert 401 but something in the auth integration is broken; unrelated to #30 but blocking `verify.ts` pass for every branch (discovered in #30)
-
-- **src/server/routes/discover.test.ts, src/server/routes/prowlarr-compat.test.ts**: 5 pre-existing auth test failures on `main` — unrelated to qBittorrent but block `scripts/verify.ts` from returning `VERIFY: pass` on any branch (discovered in #24)
-- **src/core/metadata/ (audible.ts, audnexus.ts)**: These use direct `fetch()` calls without timeout or redirect protection — they won't benefit from auth-proxy detection or timeout enforcement. Consider migrating to `fetchWithTimeout` in a follow-up. (discovered in #23)
-
-- **src/core/utils/parse.ts:315**: Second `formatBytes` helper with same negative/Infinity edge-case profile as the client formatter — no guards for `bytes < 0`, `!isFinite`, or out-of-bounds index. Server-side metadata display, low urgency, but should be hardened for consistency. (discovered in #29)
-
-- **src/server/routes/discover.test.ts, src/server/routes/prowlarr-compat.test.ts**: Pre-existing auth test failures (5 tests) noted again in #40 — still present on main, still blocking `VERIFY: pass`. These need investigation and a fix, not just a note. (rediscovered in #40)
-
-- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 pre-existing auth test failures (`returns 401 when no auth credentials provided`, `rejects /api/v1/* without credentials`) poison `verify.ts` on all branches. Needs investigation into the auth plugin test setup. (discovered in #37)
-
-- **src/client/pages/settings/LibrarySettingsSection.tsx**: File format token insertion test missing (folder format token insertion is tested but not file format). Also missing: file format title-missing error, preview output assertions, Save button disabled-during-mutation test. (discovered in #50)
-- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 pre-existing auth 401 test failures exist on main — these tests expect 401 but get 500/200. Root cause unknown; unrelated to frontend work but blocks verify.ts from returning VERIFY:pass. (discovered in #50)
-
-- **src/client/pages/settings/LibrarySettingsSection.tsx**: Pre-existing untested behaviors (cursor position after token insertion, pending button state text, dirty-reset after save, regex variant coverage for title/author tokens) — not introduced by #18 but visible when reading the file. Low urgency. (discovered in #18)
-- **src/client/components/ConfirmModal.tsx**: Buttons lack `type="button"` — safe only when rendered outside a `<form>`, but any future usage inside a form would silently break. Should add `type="button"` to both buttons. (discovered in #18)
-- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 auth integration tests failing on `main` — blocking all verify runs. Root cause unknown; needs investigation before next issue. (discovered in #54)
-
-- **src/client/pages/activity/ActivityPage.tsx**: `usePagination.clampToTotal()` useEffect not covered by tests — pagination clamping behavior when totals shrink is untested. Low risk but gap noted. (discovered in #58)
-- **src/client/pages/activity/DownloadCard.tsx**: Seeders visibility for usenet protocol (`download.protocol !== 'usenet'` guard) has no test. Pre-existing gap. (discovered in #58)
-- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 auth-related tests failing on `main` — pre-existing broken tests unrelated to activity page work. Needs investigation. (noted in #58)
-
-- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 auth integration tests failing on main (returns 401 when no auth credentials, rejects routes without credentials). Pre-existing before #57, not introduced here. Blocks `verify.ts VERIFY: pass` globally. (discovered in #57)
-
-- **`src/server/routes/discover.test.ts` + `prowlarr-compat.test.ts`**: Auth integration tests depend on `vi.mock('../config.js')` to override `AUTH_BYPASS=true` test env — this mock was applied, reverted, and re-applied during #57. Root cause not documented; risk of future regressions if someone removes the mock again without understanding why it's needed. (discovered in #57)
-
-- **src/server/routes/discover.test.ts + prowlarr-compat.test.ts**: 5 pre-existing auth test failures block `VERIFY: pass` on all branches. Unrelated to narrator or quality gate work. Recurring blocker since at least #24. (discovered in #62)
-- **src/shared/download-status-registry.ts**: `getReplacableStatuses` has a spelling typo (should be `getReplaceable`) — consistent with existing style but technically incorrect; rename in a future chore (discovered in #63)
+- **src/core/metadata/ (audible.ts, audnexus.ts)**: Direct `fetch()` calls without timeout or redirect protection — consider migrating to `fetchWithTimeout`. (discovered in #23)
+- **src/core/utils/parse.ts:315**: Server-side `formatBytes` helper has no guards for `bytes < 0`, `!isFinite`, or out-of-bounds index. Low urgency. (discovered in #29)
+- **src/client/components/ConfirmModal.tsx**: Buttons lack `type="button"` — safe only when rendered outside a `<form>`, but any future usage inside a form would silently break. (discovered in #18)
+- **src/shared/download-status-registry.ts**: `getReplacableStatuses` has a spelling typo (should be `getReplaceable`) — rename in a future chore. (discovered in #63)
