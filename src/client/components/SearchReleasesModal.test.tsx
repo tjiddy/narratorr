@@ -300,6 +300,7 @@ describe('SearchReleasesModal', () => {
           status: 'queued' as const,
           progress: 0,
           addedAt: '2024-01-01T00:00:00Z',
+          indexerName: null,
         });
       const user = userEvent.setup();
 
@@ -339,6 +340,7 @@ describe('SearchReleasesModal', () => {
           status: 'queued' as const,
           progress: 0,
           addedAt: '2024-01-01T00:00:00Z',
+          indexerName: null,
         });
       const onClose = vi.fn();
       const user = userEvent.setup();
