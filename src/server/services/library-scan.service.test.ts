@@ -184,6 +184,7 @@ describe('LibraryScanService', () => {
   let mockBookService: {
     findDuplicate: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
   };
   let mockMetadataService: {
     searchBooks: ReturnType<typeof vi.fn>;
@@ -214,6 +215,7 @@ describe('LibraryScanService', () => {
         title: data.title,
         status: 'imported',
       })),
+      update: vi.fn().mockResolvedValue({ id: 1, title: 'Test', authors: [], narrators: [] }),
     };
     mockMetadataService = {
       searchBooks: vi.fn().mockResolvedValue([]),
@@ -245,7 +247,7 @@ describe('LibraryScanService', () => {
       expect(result.bookId).toBe(1);
       expect(result.enriched).toBe(true);
       expect(mockBookService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Test Book', authorName: 'Test Author', status: 'imported' }),
+        expect.objectContaining({ title: 'Test Book', authors: [{ name: 'Test Author' }], status: 'imported' }),
       );
     });
 
@@ -448,7 +450,7 @@ describe('LibraryScanService', () => {
         expect.objectContaining({
           title: 'Bare Book',
           asin: undefined,
-          narrator: undefined,
+          narrators: undefined,
         }),
       );
     });
@@ -570,7 +572,7 @@ describe('LibraryScanService', () => {
       ]);
 
       expect(mockBookService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Title', authorName: 'Author', status: 'importing' }),
+        expect.objectContaining({ title: 'Title', authors: [{ name: 'Author' }], status: 'importing' }),
       );
       expect(result.accepted).toBe(1);
     });
@@ -628,10 +630,10 @@ describe('LibraryScanService', () => {
       expect(mockBookService.create).toHaveBeenCalledWith(
         expect.objectContaining({
           title: 'Harry Potter',
-          authorName: 'J.K. Rowling',
+          authors: [{ name: 'J.K. Rowling' }],
           asin: 'B017V4IM1G',
           description: 'The boy who lived...',
-          narrator: 'Stephen Fry',
+          narrators: ['Stephen Fry'],
           genres: ['fantasy', 'young-adult'],
           coverUrl: 'https://example.com/cover.jpg',
           duration: 480,
@@ -678,7 +680,7 @@ describe('LibraryScanService', () => {
       expect(mockBookService.create).toHaveBeenCalledWith(
         expect.objectContaining({
           title: 'My Title',
-          authorName: 'My Author',
+          authors: [{ name: 'My Author' }],
           coverUrl: '/my/cover.jpg',
           asin: 'MY-ASIN',
         }),
@@ -1235,9 +1237,10 @@ describe('LibraryScanService', () => {
         expect(enrichBookFromAudio).toHaveBeenCalledWith(
           1,
           '/audiobooks/Book',
-          expect.objectContaining({ narrator: null, duration: null }),
+          expect.objectContaining({ narrators: null, duration: null }),
           mockDb,
           log,
+          mockBookService,
         );
       });
     });

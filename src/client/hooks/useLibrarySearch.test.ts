@@ -21,13 +21,13 @@ const mockBooks: BookWithAuthor[] = [
   createMockBook({
     id: 3,
     title: 'Dune',
-    narrator: 'Scott Brick',
+    narrators: [{ id: 5, name: 'Scott Brick', slug: 'scott-brick' }],
     seriesName: 'Dune Saga',
     genres: ['Science Fiction'],
     status: 'imported',
     createdAt: '2024-01-03',
     updatedAt: '2024-01-03',
-    author: createMockAuthor({ id: 2, name: 'Frank Herbert', slug: 'frank-herbert' }),
+    authors: [createMockAuthor({ id: 2, name: 'Frank Herbert', slug: 'frank-herbert' })],
   }),
 ];
 
@@ -69,7 +69,7 @@ describe('useLibrarySearch', () => {
     });
 
     expect(result.current.results.length).toBe(2);
-    expect(result.current.results.every((b) => b.author?.name === 'Brandon Sanderson')).toBe(true);
+    expect(result.current.results.every((b) => b.authors[0]?.name === 'Brandon Sanderson')).toBe(true);
   });
 
   it('fuzzy matches on series name', () => {
@@ -93,7 +93,7 @@ describe('useLibrarySearch', () => {
     });
 
     expect(result.current.results.length).toBe(2);
-    expect(result.current.results.every((b) => b.narrator === 'Michael Kramer')).toBe(true);
+    expect(result.current.results.every((b) => b.narrators[0]?.name === 'Michael Kramer')).toBe(true);
   });
 
   it('fuzzy matches on genres', () => {

@@ -3,7 +3,8 @@ import { mkdir, rename, cp, rm, access } from 'node:fs/promises';
 import { eq, lte } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { recyclingBin, books, authors } from '../../db/schema.js';
+import { recyclingBin, books, authors, bookAuthors, bookNarrators, narrators } from '../../db/schema.js';
+import { slugify } from '../../core/index.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookWithAuthor } from './book.service.js';
 
@@ -49,9 +50,9 @@ export class RecyclingBinService {
     const record: NewRecyclingBinRow = {
       bookId: book.id,
       title: book.title,
-      authorName: book.author?.name ?? null,
-      authorAsin: book.author?.asin ?? null,
-      narrator: book.narrator,
+      authorName: book.authors?.map(a => a.name).join(', ') ?? null,
+      authorAsin: book.authors?.[0]?.asin ?? null,
+      narrator: book.narrators?.map(n => n.name).join(', ') ?? null,
       description: book.description,
       coverUrl: book.coverUrl,
       asin: book.asin,
@@ -72,6 +73,7 @@ export class RecyclingBinService {
   }
 
   /** Restore a recycling bin entry — move files back and re-create the book in DB. */
+  // eslint-disable-next-line complexity -- restore pipeline: find-or-create authors, narrators, junction rows
   async restore(entryId: number): Promise<{ bookId: number }> {
     const entry = await this.getById(entryId);
     if (!entry) {
@@ -106,35 +108,11 @@ export class RecyclingBinService {
       }
     }
 
-    // Restore author relationship — find by name or create
-    let authorId: number | null = null;
-    if (entry.authorName) {
-      const [existing] = await this.db
-        .select({ id: authors.id })
-        .from(authors)
-        .where(eq(authors.name, entry.authorName))
-        .limit(1);
-
-      if (existing) {
-        authorId = existing.id;
-      } else {
-        const slug = entry.authorName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-        const [created] = await this.db.insert(authors).values({
-          name: entry.authorName,
-          slug,
-          asin: entry.authorAsin,
-        }).returning();
-        authorId = created.id;
-      }
-    }
-
     // Re-create book in DB with snapshot metadata
     // If originalPath is empty (metadata-only recycling record), set path=null and status='wanted'
     const hasPath = Boolean(entry.originalPath);
     const [newBook] = await this.db.insert(books).values({
       title: entry.title,
-      authorId,
-      narrator: entry.narrator,
       description: entry.description,
       coverUrl: entry.coverUrl,
       asin: entry.asin,
@@ -149,6 +127,49 @@ export class RecyclingBinService {
       enrichmentStatus: 'pending',
       path: hasPath ? entry.originalPath : null,
     }).returning();
+
+    // Restore author junction rows from snapshot (authorName stores ", "-separated names)
+    if (entry.authorName) {
+      const authorNames = entry.authorName.split(', ').map(n => n.trim()).filter(Boolean);
+      for (let i = 0; i < authorNames.length; i++) {
+        const name = authorNames[i];
+        const asin = i === 0 ? entry.authorAsin : null;
+        const slug = slugify(name);
+        let [existingAuthor] = await this.db.select({ id: authors.id }).from(authors).where(eq(authors.slug, slug)).limit(1);
+        if (!existingAuthor) {
+          const [created] = await this.db.insert(authors).values({ name, slug, asin }).onConflictDoNothing().returning();
+          if (created) {
+            existingAuthor = created;
+          } else {
+            [existingAuthor] = await this.db.select({ id: authors.id }).from(authors).where(eq(authors.slug, slug)).limit(1);
+          }
+        }
+        if (existingAuthor) {
+          await this.db.insert(bookAuthors).values({ bookId: newBook.id, authorId: existingAuthor.id, position: i }).onConflictDoNothing();
+        }
+      }
+    }
+
+    // Restore narrator junction rows from snapshot (narrator field stores ", "-separated names)
+    if (entry.narrator) {
+      const narratorNames = entry.narrator.split(', ').map(n => n.trim()).filter(Boolean);
+      for (let i = 0; i < narratorNames.length; i++) {
+        const name = narratorNames[i];
+        const slug = slugify(name);
+        let [existingNarrator] = await this.db.select({ id: narrators.id }).from(narrators).where(eq(narrators.slug, slug)).limit(1);
+        if (!existingNarrator) {
+          const [created] = await this.db.insert(narrators).values({ name, slug }).onConflictDoNothing().returning();
+          if (created) {
+            existingNarrator = created;
+          } else {
+            [existingNarrator] = await this.db.select({ id: narrators.id }).from(narrators).where(eq(narrators.slug, slug)).limit(1);
+          }
+        }
+        if (existingNarrator) {
+          await this.db.insert(bookNarrators).values({ bookId: newBook.id, narratorId: existingNarrator.id, position: i }).onConflictDoNothing();
+        }
+      }
+    }
 
     // Remove recycling bin record
     await this.db.delete(recyclingBin).where(eq(recyclingBin.id, entryId));

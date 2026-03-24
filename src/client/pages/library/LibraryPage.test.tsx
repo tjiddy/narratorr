@@ -50,28 +50,26 @@ const mockBooks = [
   createMockBook({
     id: 2,
     title: 'Project Hail Mary',
-    authorId: 2,
-    narrator: 'Ray Porter',
+    narrators: [{ id: 1, name: 'Ray Porter', slug: 'ray-porter' }],
     coverUrl: 'https://example.com/cover2.jpg',
     seriesName: null,
     seriesPosition: null,
     status: 'downloading',
     createdAt: '2024-01-02T00:00:00Z',
     updatedAt: '2024-01-02T00:00:00Z',
-    author: createMockAuthor({ id: 2, name: 'Andy Weir', slug: 'andy-weir' }),
+    authors: [createMockAuthor({ id: 2, name: 'Andy Weir', slug: 'andy-weir' })],
   }),
   createMockBook({
     id: 3,
     title: 'Recursion',
-    authorId: 3,
-    narrator: null,
+    narrators: [],
     coverUrl: null,
     seriesName: null,
     seriesPosition: null,
     status: 'imported',
     createdAt: '2024-01-03T00:00:00Z',
     updatedAt: '2024-01-03T00:00:00Z',
-    author: createMockAuthor({ id: 3, name: 'Blake Crouch', slug: 'blake-crouch' }),
+    authors: [createMockAuthor({ id: 3, name: 'Blake Crouch', slug: 'blake-crouch' })],
   }),
   createMockBook({
     id: 4,
@@ -99,8 +97,8 @@ function mockLibraryData(books: BookWithAuthor[]) {
       const q = params.search.toLowerCase();
       filtered = filtered.filter(b =>
         b.title.toLowerCase().includes(q) ||
-        (b.author?.name ?? '').toLowerCase().includes(q) ||
-        (b.narrator ?? '').toLowerCase().includes(q),
+        (b.authors[0]?.name ?? '').toLowerCase().includes(q) ||
+        (b.narrators[0]?.name ?? '').toLowerCase().includes(q),
       );
     }
     if (params?.sortField) {
@@ -116,9 +114,9 @@ function mockLibraryData(books: BookWithAuthor[]) {
     else if (b.status === 'failed') counts.failed++;
     else if (b.status === 'missing') counts.missing++;
   }
-  const authors = [...new Set(books.map(b => b.author?.name).filter(Boolean))].sort() as string[];
+  const authors = [...new Set(books.map(b => b.authors[0]?.name).filter(Boolean))].sort() as string[];
   const series = [...new Set(books.map(b => b.seriesName).filter(Boolean))].sort() as string[];
-  const narrators = [...new Set(books.map(b => b.narrator).filter(Boolean))].sort() as string[];
+  const narrators = [...new Set(books.flatMap(b => b.narrators.map(n => n.name)).filter(Boolean))].sort() as string[];
   vi.mocked(api.getBookStats).mockResolvedValue({ counts, authors, series, narrators });
 }
 

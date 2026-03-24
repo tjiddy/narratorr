@@ -25,8 +25,6 @@ export function createMockDbBook(overrides?: Record<string, unknown>) {
   return {
     id: 1,
     title: 'The Way of Kings',
-    authorId: 1 as number | null,
-    narrator: 'Michael Kramer' as string | null,
     description: 'An epic fantasy' as string | null,
     coverUrl: null as string | null,
     goodreadsId: null as string | null,
@@ -122,6 +120,7 @@ export function createMockDbBookEvent(overrides?: Record<string, unknown>) {
     downloadId: null as number | null,
     bookTitle: 'The Way of Kings',
     authorName: 'Brandon Sanderson' as string | null,
+    narratorName: null as string | null,
     eventType: 'grabbed' as const,
     source: 'auto' as const,
     reason: null as Record<string, unknown> | null,

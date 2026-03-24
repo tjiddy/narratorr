@@ -67,7 +67,7 @@ describe('Search → Grab flow E2E', () => {
       url: '/api/books',
       payload: {
         title: 'The Way of Kings',
-        authorName: 'Brandon Sanderson',
+        authors: [{ name: 'Brandon Sanderson' }],
       },
     });
     expect(bookRes.statusCode).toBe(201);
@@ -201,7 +201,7 @@ describe('Search → Grab flow E2E', () => {
       url: '/api/books',
       payload: {
         title: 'Notification Test Book',
-        authorName: 'Test Author',
+        authors: [{ name: 'Test Author' }],
       },
     });
     const newBookId = bookRes.json().id;
@@ -246,7 +246,7 @@ describe('Search → Grab flow E2E', () => {
       url: '/api/books',
       payload: {
         title: 'Rejected Grab Book',
-        authorName: 'Test Author',
+        authors: [{ name: 'Test Author' }],
       },
     });
     const rejectedBookId = bookRes.json().id;
@@ -291,7 +291,7 @@ describe('Search → Grab flow E2E', () => {
       url: '/api/books',
       payload: {
         title: 'Unreachable Client Book',
-        authorName: 'Test Author',
+        authors: [{ name: 'Test Author' }],
       },
     });
     const unreachableBookId = bookRes.json().id;
@@ -332,7 +332,7 @@ describe('Search → Grab flow E2E', () => {
       const bookRes = await e2e.app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'Conflict Book', authorName: 'Test Author' },
+        payload: { title: 'Conflict Book', authors: [{ name: 'Test Author' }] },
       });
       const conflictBookId = bookRes.json().id;
 
@@ -371,7 +371,7 @@ describe('Search → Grab flow E2E', () => {
       const bookRes = await e2e.app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'Replace Book', authorName: 'Test Author' },
+        payload: { title: 'Replace Book', authors: [{ name: 'Test Author' }] },
       });
       const replaceBookId = bookRes.json().id;
 
@@ -418,7 +418,7 @@ describe('Search → Grab flow E2E', () => {
       const bookRes = await e2e.app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'Status Check Book', authorName: 'Test Author' },
+        payload: { title: 'Status Check Book', authors: [{ name: 'Test Author' }] },
       });
       const statusBookId = bookRes.json().id;
 
@@ -459,7 +459,7 @@ describe('Search → Grab flow E2E', () => {
       const bookRes = await e2e.app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'Revert Book', authorName: 'Test Author' },
+        payload: { title: 'Revert Book', authors: [{ name: 'Test Author' }] },
       });
       const revertBookId = bookRes.json().id;
 

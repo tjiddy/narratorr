@@ -5,24 +5,31 @@ import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books } from '../../db/schema.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
-
-type BookRow = typeof books.$inferSelect;
+import type { BookService } from './book.service.js';
 
 export interface EnrichmentResult {
   enriched: boolean;
   error?: string;
 }
 
+export interface AudioEnrichmentBook {
+  narrators?: Array<{ name: string }> | null;
+  duration: number | null;
+  coverUrl: string | null;
+}
+
 /**
  * Scan audio files in a directory and enrich the book record.
  * Tag data only fills empty fields; technical info is always written.
+ * Narrator writes go through the junction table via bookService.
  */
 export async function enrichBookFromAudio(
   bookId: number,
   targetPath: string,
-  book: Pick<BookRow, 'narrator' | 'duration' | 'coverUrl'>,
+  book: AudioEnrichmentBook,
   db: Db,
   log: FastifyBaseLogger,
+  bookService?: BookService,
 ): Promise<EnrichmentResult> {
   try {
     const scanResult = await scanAudioDirectory(targetPath);
@@ -47,8 +54,9 @@ export async function enrichBookFromAudio(
     };
 
     // Tag data: only fill empty fields (don't overwrite user edits)
-    if (!book.narrator && scanResult.tagNarrator) {
-      update.narrator = scanResult.tagNarrator;
+    // Narrator writes go through the junction table via bookService
+    if (!book.narrators?.length && scanResult.tagNarrator && bookService) {
+      await bookService.update(bookId, { narrators: [scanResult.tagNarrator] });
     }
     if (!book.duration && scanResult.totalDuration) {
       update.duration = Math.round(scanResult.totalDuration / 60);

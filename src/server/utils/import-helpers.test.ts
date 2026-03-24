@@ -229,3 +229,42 @@ describe('countAudioFiles', () => {
     expect(await countAudioFiles('/dir')).toBe(0);
   });
 });
+
+describe('buildTargetPath — first-by-position author/narrator tokens (#71)', () => {
+  it('two authors → {author} token resolves to authors[0].name (position=0)', () => {
+    // Callers pass authors[0].name as authorName — buildTargetPath receives the resolved string
+    const result = buildTargetPath('/library', '{author}/{title}', { title: 'The Way of Kings', narrators: null }, 'Brandon Sanderson');
+    expect(result).toBe('/library/Brandon Sanderson/The Way of Kings');
+  });
+
+  it('two narrators → {narrator} token resolves to narrators[0].name (position=0)', () => {
+    const result = buildTargetPath('/library', '{narrator}/{title}', {
+      title: 'The Way of Kings',
+      narrators: [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }],
+    }, 'Brandon Sanderson');
+    expect(result).toBe('/library/Michael Kramer/The Way of Kings');
+  });
+
+  it('empty narrators array → {narrator} token is omitted (undefined)', () => {
+    // renderTemplate skips tokens with undefined value — the segment is dropped
+    const result = buildTargetPath('/library', '{narrator}/{title}', {
+      title: 'The Way of Kings',
+      narrators: [],
+    }, 'Brandon Sanderson');
+    expect(result).toBe('/library/The Way of Kings');
+  });
+
+  it('{authorLastFirst} formats passed authorName; {narratorLastFirst} uses position-0 narrator only (not all narrators joined)', () => {
+    const result = buildTargetPath(
+      '/library',
+      '{authorLastFirst}/{narratorLastFirst}/{title}',
+      {
+        title: 'The Way of Kings',
+        narrators: [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }],
+      },
+      'Brandon Sanderson',
+    );
+    expect(result).toBe('/library/Sanderson, Brandon/Kramer, Michael/The Way of Kings');
+  });
+});
+

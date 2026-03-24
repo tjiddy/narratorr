@@ -27,9 +27,9 @@ import { api } from '@/lib/api';
 
 const mockLibraryBook = createMockBook({
   asin: 'B00ABC1234',
-  narrator: 'Michael Kramer, Kate Reading',
+  narrators: [{ id: 1, name: 'Michael Kramer', slug: 'michael-kramer' }, { id: 2, name: 'Kate Reading', slug: 'kate-reading' }],
   duration: 872,
-  author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson', asin: 'A00SAND1234' },
+  authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson', asin: 'A00SAND1234' }],
 });
 
 const mockMetadataBook = {

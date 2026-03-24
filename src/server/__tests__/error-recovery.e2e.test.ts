@@ -239,13 +239,13 @@ describe('Error recovery E2E', () => {
     const bookRes = await e2e.app.inject({
       method: 'POST',
       url: '/api/books',
-      payload: { title: 'Enrichment Test Book', authorName: 'Enrich Author', asin: TEST_ASIN },
+      payload: { title: 'Enrichment Test Book', authors: [{ name: 'Enrich Author' }], asin: TEST_ASIN },
     });
     expect(bookRes.statusCode).toBe(201);
     const bookId = bookRes.json().id;
 
-    // Set narrator so we can verify existing data is preserved on failure
-    await e2e.db.update(books).set({ narrator: 'Original Narrator', enrichmentStatus: 'pending' }).where(eq(books.id, bookId));
+    // Reset enrichmentStatus to pending so enrichment runs
+    await e2e.db.update(books).set({ enrichmentStatus: 'pending' }).where(eq(books.id, bookId));
 
     // Audnexus returns 500 — enrichment should fail gracefully
     mswServer.use(
@@ -261,7 +261,7 @@ describe('Error recovery E2E', () => {
     // Book should be marked failed but existing data preserved
     const [bookAfterFail] = await e2e.db.select().from(books).where(eq(books.id, bookId));
     expect(bookAfterFail.enrichmentStatus).toBe('failed');
-    expect(bookAfterFail.narrator).toBe('Original Narrator');
+    expect(bookAfterFail.title).toBe('Enrichment Test Book');
 
     // Run enrichment again immediately — should NOT retry (updatedAt is recent)
     // Switch Audnexus to return valid data for when retry eventually fires
@@ -281,7 +281,7 @@ describe('Error recovery E2E', () => {
     const [bookAfterImmediate] = await e2e.db.select().from(books).where(eq(books.id, bookId));
     // Still failed — not retried because updatedAt is recent
     expect(bookAfterImmediate.enrichmentStatus).toBe('failed');
-    expect(bookAfterImmediate.narrator).toBe('Original Narrator');
+    expect(bookAfterImmediate.title).toBe('Enrichment Test Book');
 
     // Set updatedAt to 2 hours ago to simulate passage of time
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);

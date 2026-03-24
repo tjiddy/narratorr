@@ -1,4 +1,4 @@
-import type { Author, BookWithAuthor, BookMetadata, AuthorMetadata } from '../lib/api/books.js';
+import type { Author, Narrator, BookWithAuthor, BookMetadata, AuthorMetadata } from '../lib/api/books.js';
 import type { Download } from '../lib/api/activity.js';
 import type { DownloadClient } from '../lib/api/download-clients.js';
 import type { Indexer } from '../lib/api/indexers.js';
@@ -19,13 +19,23 @@ export function createMockAuthor(overrides?: Partial<Author>): Author {
   };
 }
 
+export function createMockNarrator(overrides?: Partial<Narrator>): Narrator {
+  const id = overrides?.id ?? nextId++;
+  return {
+    id,
+    name: 'Michael Kramer',
+    slug: 'michael-kramer',
+    ...overrides,
+  };
+}
+
 export function createMockBook(overrides?: Partial<BookWithAuthor>): BookWithAuthor {
   const id = overrides?.id ?? nextId++;
   return {
     id,
     title: 'The Way of Kings',
-    authorId: 1,
-    narrator: 'Michael Kramer',
+    authors: [createMockAuthor({ id: 1 })],
+    narrators: [createMockNarrator({ id: 1 })],
     description: '<p>An epic fantasy novel.</p>',
     coverUrl: 'https://example.com/cover.jpg',
     asin: 'B003P2WO5E',
@@ -51,7 +61,6 @@ export function createMockBook(overrides?: Partial<BookWithAuthor>): BookWithAut
     monitorForUpgrades: false,
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
-    author: createMockAuthor({ id: 1 }),
     ...overrides,
   };
 }

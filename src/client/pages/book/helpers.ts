@@ -23,7 +23,7 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
   const duration = formatDuration(libraryBook.duration ?? metadataBook?.duration);
   const publisher = metadataBook?.publisher;
   const status = bookStatusConfig[libraryBook.status] ?? bookStatusConfig.wanted;
-  const narratorNames = libraryBook.narrator || metadataBook?.narrators?.join(', ');
+  const narratorNames = (libraryBook.narrators.length > 0 ? libraryBook.narrators.map((n) => n.name).join(', ') : null) || metadataBook?.narrators?.join(', ');
 
   const metaDots: string[] = [];
   if (seriesName) {
@@ -42,7 +42,7 @@ export function mergeBookData(libraryBook: BookWithAuthor, metadataBook?: Metada
     statusDotClass: status.dotClass,
     statusBarClass: status.barClass,
     subtitle: metadataBook?.subtitle,
-    authorName: libraryBook.author?.name,
-    authorAsin: libraryBook.author?.asin,
+    authorName: libraryBook.authors[0]?.name,
+    authorAsin: libraryBook.authors[0]?.asin,
   };
 }

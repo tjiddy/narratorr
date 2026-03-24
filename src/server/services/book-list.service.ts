@@ -1,10 +1,12 @@
 import { eq, and, like, desc, asc, sql, count as countFn, inArray, or, getTableColumns, type SQL } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
-import { books, authors, importLists } from '../../db/schema.js';
+import { books, authors, narrators, bookAuthors, bookNarrators, importLists } from '../../db/schema.js';
 import type { BookSortField, BookSortDirection } from '../../shared/schemas/book.js';
 import type { BookWithAuthor } from './book.service.js';
 
 type BookRow = typeof books.$inferSelect;
+type AuthorRow = typeof authors.$inferSelect;
+type NarratorRow = typeof narrators.$inferSelect;
 
 /** Slim select: all book columns except heavy text fields excluded from list views. */
 function getSlimBookColumns() {
@@ -43,6 +45,7 @@ export class BookListService {
     private db: Db,
   ) {}
 
+  // eslint-disable-next-line complexity -- batch-load pipeline for author/narrator/importList joins
   async getAll(
     status?: string,
     pagination?: { limit?: number; offset?: number },
@@ -61,48 +64,38 @@ export class BookListService {
       }
     }
 
-    // Search filter — SQL LIKE across multiple fields
+    // Search filter — SQL LIKE across title/series/genres + subqueries for author/narrator names
     if (options?.search) {
       const pattern = `%${options.search}%`;
       conditions.push(or(
         like(books.title, pattern),
-        like(books.narrator, pattern),
         like(books.seriesName, pattern),
         like(books.genres, pattern),
-        like(authors.name, pattern),
+        sql`EXISTS (SELECT 1 FROM book_authors ba JOIN authors a ON a.id = ba.author_id WHERE ba.book_id = ${books.id} AND a.name LIKE ${pattern})`,
+        sql`EXISTS (SELECT 1 FROM book_narrators bn JOIN narrators n ON n.id = bn.narrator_id WHERE bn.book_id = ${books.id} AND n.name LIKE ${pattern})`,
       )!);
     }
 
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-    // Get total count (with filters, before pagination)
+    // Get total count (filters only, no pagination)
     const [{ value: total }] = await this.db
       .select({ value: countFn() })
       .from(books)
-      .leftJoin(authors, eq(books.authorId, authors.id))
       .where(where);
 
     // Build select — slim mode excludes description, genres for list views
-    const selectFields = options?.slim
-      ? {
-          book: getSlimBookColumns(),
-          author: authors,
-          importListName: importLists.name,
-        }
-      : {
-          book: books,
-          author: authors,
-          importListName: importLists.name,
-        };
+    const bookFields = options?.slim ? getSlimBookColumns() : books;
 
-    // Build ORDER BY
+    // Build ORDER BY — join position-0 author for author sort
     const orderClauses = this.buildOrderBy(options?.sortField, options?.sortDirection);
 
     let query = this.db
-      .select(selectFields)
+      .select({ book: bookFields, importListName: importLists.name, primaryAuthorName: authors.name })
       .from(books)
-      .leftJoin(authors, eq(books.authorId, authors.id))
       .leftJoin(importLists, eq(books.importListId, importLists.id))
+      .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
+      .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
       .where(where)
       .orderBy(...orderClauses);
 
@@ -115,11 +108,55 @@ export class BookListService {
 
     const results = await query;
 
-    const data = results.map((r) => ({
-      ...r.book,
-      author: r.author || undefined,
-      importListName: r.importListName ?? null,
-    })) as BookWithAuthor[];
+    if (results.length === 0) {
+      return { data: [], total };
+    }
+
+    const bookIds = results.map((r) => (r.book as BookRow).id);
+
+    // Batch-load authors for this page
+    const authorResults = await this.db
+      .select({ bookId: bookAuthors.bookId, author: authors, position: bookAuthors.position })
+      .from(bookAuthors)
+      .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
+      .where(inArray(bookAuthors.bookId, bookIds));
+
+    // Batch-load narrators for this page
+    const narratorResults = await this.db
+      .select({ bookId: bookNarrators.bookId, narrator: narrators, position: bookNarrators.position })
+      .from(bookNarrators)
+      .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
+      .where(inArray(bookNarrators.bookId, bookIds));
+
+    // Build lookup maps
+    const authorsMap = new Map<number, Array<{ author: AuthorRow; position: number }>>();
+    for (const r of authorResults) {
+      if (!authorsMap.has(r.bookId)) authorsMap.set(r.bookId, []);
+      authorsMap.get(r.bookId)!.push({ author: r.author, position: r.position });
+    }
+
+    const narratorsMap = new Map<number, Array<{ narrator: NarratorRow; position: number }>>();
+    for (const r of narratorResults) {
+      if (!narratorsMap.has(r.bookId)) narratorsMap.set(r.bookId, []);
+      narratorsMap.get(r.bookId)!.push({ narrator: r.narrator, position: r.position });
+    }
+
+    const data = results.map((r) => {
+      const bookId = (r.book as BookRow).id;
+      const sortedAuthors = (authorsMap.get(bookId) ?? [])
+        .sort((a, b) => a.position - b.position)
+        .map((a) => a.author);
+      const sortedNarrators = (narratorsMap.get(bookId) ?? [])
+        .sort((a, b) => a.position - b.position)
+        .map((n) => n.narrator);
+
+      return {
+        ...r.book,
+        importListName: r.importListName ?? null,
+        authors: sortedAuthors,
+        narrators: sortedNarrators,
+      };
+    }) as BookWithAuthor[];
 
     return { data, total };
   }
@@ -141,15 +178,17 @@ export class BookListService {
           secondaryDir(books.id),
         ];
       case 'author':
+        // Sort by position-0 author (joined in main query)
         return [
           sql`CASE WHEN ${authors.name} IS NULL THEN 1 ELSE 0 END`,
           dir(authors.name),
           secondaryDir(books.id),
         ];
       case 'narrator':
+        // Sort by position-0 narrator name via subquery
         return [
-          sql`CASE WHEN ${books.narrator} IS NULL THEN 1 ELSE 0 END`,
-          dir(books.narrator),
+          sql`CASE WHEN (SELECT n.name FROM book_narrators bn JOIN narrators n ON n.id = bn.narrator_id WHERE bn.book_id = ${books.id} AND bn.position = 0 LIMIT 1) IS NULL THEN 1 ELSE 0 END`,
+          dir(sql`(SELECT n.name FROM book_narrators bn JOIN narrators n ON n.id = bn.narrator_id WHERE bn.book_id = ${books.id} AND bn.position = 0 LIMIT 1)`),
           secondaryDir(books.id),
         ];
       case 'series':
@@ -192,7 +231,8 @@ export class BookListService {
         authorName: authors.name,
       })
       .from(books)
-      .leftJoin(authors, eq(books.authorId, authors.id));
+      .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
+      .leftJoin(authors, eq(bookAuthors.authorId, authors.id));
 
     return results;
   }
@@ -219,7 +259,8 @@ export class BookListService {
       this.db
         .select({ name: authors.name })
         .from(authors)
-        .where(sql`${authors.id} IN (SELECT DISTINCT ${books.authorId} FROM ${books} WHERE ${books.authorId} IS NOT NULL)`)
+        .innerJoin(bookAuthors, eq(bookAuthors.authorId, authors.id))
+        .groupBy(authors.name)
         .orderBy(asc(authors.name)),
       this.db
         .select({ seriesName: books.seriesName })
@@ -228,18 +269,18 @@ export class BookListService {
         .groupBy(books.seriesName)
         .orderBy(asc(books.seriesName)),
       this.db
-        .select({ narrator: books.narrator })
-        .from(books)
-        .where(sql`${books.narrator} IS NOT NULL AND ${books.narrator} != ''`)
-        .groupBy(books.narrator)
-        .orderBy(asc(books.narrator)),
+        .select({ name: narrators.name })
+        .from(narrators)
+        .innerJoin(bookNarrators, eq(bookNarrators.narratorId, narrators.id))
+        .groupBy(narrators.name)
+        .orderBy(asc(narrators.name)),
     ]);
 
     return {
       counts,
       authors: authorRows.map((r) => r.name),
       series: seriesRows.map((r) => r.seriesName!),
-      narrators: narratorRows.map((r) => r.narrator!),
+      narrators: narratorRows.map((r) => r.name),
     };
   }
 }

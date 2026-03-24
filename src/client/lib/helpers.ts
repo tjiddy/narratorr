@@ -13,12 +13,10 @@ export function mapBookMetadataToPayload(
   book: BookMetadata,
   qualityDefaults?: { searchImmediately?: boolean; monitorForUpgrades?: boolean },
 ): CreateBookPayload {
-  const author = book.authors[0];
   return {
     title: book.title,
-    authorName: author?.name,
-    authorAsin: author?.asin,
-    narrator: book.narrators?.join(', '),
+    authors: book.authors.map((a) => ({ name: a.name, asin: a.asin })),
+    narrators: book.narrators,
     description: book.description,
     coverUrl: book.coverUrl,
     asin: book.asin,
@@ -36,7 +34,7 @@ type LibraryEntry = BookIdentifier | BookWithAuthor;
 
 function getAuthorName(entry: LibraryEntry): string | null | undefined {
   if ('authorName' in entry) return entry.authorName;
-  return (entry as BookWithAuthor).author?.name;
+  return (entry as BookWithAuthor).authors?.[0]?.name;
 }
 
 export function isBookInLibrary(book: BookMetadata, libraryBooks?: LibraryEntry[]): boolean {

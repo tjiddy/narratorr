@@ -55,9 +55,8 @@ describe('mapBookMetadataToPayload', () => {
     const payload = mapBookMetadataToPayload(fullBook);
     expect(payload).toEqual({
       title: 'The Way of Kings',
-      authorName: 'Brandon Sanderson',
-      authorAsin: 'B001IGFHW6',
-      narrator: 'Michael Kramer, Kate Reading',
+      authors: [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }, { name: 'Co-Author', asin: 'B999' }],
+      narrators: ['Michael Kramer', 'Kate Reading'],
       description: 'Epic fantasy',
       coverUrl: 'https://example.com/cover.jpg',
       asin: 'B003P2WO5E',
@@ -69,9 +68,10 @@ describe('mapBookMetadataToPayload', () => {
     });
   });
 
-  it('uses only the first author', () => {
+  it('includes all authors as array', () => {
     const payload = mapBookMetadataToPayload(fullBook);
-    expect(payload.authorName).toBe('Brandon Sanderson');
+    expect(payload.authors[0].name).toBe('Brandon Sanderson');
+    expect(payload.authors).toHaveLength(2);
   });
 
   it('uses only the first series entry', () => {
@@ -83,14 +83,13 @@ describe('mapBookMetadataToPayload', () => {
   it('handles no authors', () => {
     const book: BookMetadata = { title: 'Orphan Book', authors: [] };
     const payload = mapBookMetadataToPayload(book);
-    expect(payload.authorName).toBeUndefined();
-    expect(payload.authorAsin).toBeUndefined();
+    expect(payload.authors).toHaveLength(0);
   });
 
   it('handles no narrators', () => {
     const book: BookMetadata = { title: 'Silent Book', authors: [{ name: 'Author' }] };
     const payload = mapBookMetadataToPayload(book);
-    expect(payload.narrator).toBeUndefined();
+    expect(payload.narrators).toBeUndefined();
   });
 
   it('handles no series', () => {
@@ -169,7 +168,76 @@ describe('isBookInLibrary', () => {
       title: 'The Way of Kings',
       authors: [{ name: 'Brandon Sanderson' }],
     };
-    const libBook: BookWithAuthor = { ...libraryBook, asin: null, author: undefined };
+    const libBook: BookWithAuthor = { ...libraryBook, asin: null, authors: [] };
     expect(isBookInLibrary(book, [libBook])).toBe(false);
+  });
+});
+
+describe('mapBookMetadataToPayload — array shape (#71)', () => {
+  it('BookMetadata with one author → authors: [{ name, asin }] in payload', () => {
+    const book: BookMetadata = {
+      title: 'Test',
+      authors: [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }],
+    };
+    const payload = mapBookMetadataToPayload(book);
+    expect(payload.authors).toEqual([{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }]);
+  });
+
+  it('BookMetadata with two authors → authors: [{ name, asin }, { name, asin }] (all, not just first)', () => {
+    const book: BookMetadata = {
+      title: 'Test',
+      authors: [
+        { name: 'Author One', asin: 'AAAA' },
+        { name: 'Author Two', asin: 'BBBB' },
+      ],
+    };
+    const payload = mapBookMetadataToPayload(book);
+    expect(payload.authors).toHaveLength(2);
+    expect(payload.authors[1]).toEqual({ name: 'Author Two', asin: 'BBBB' });
+  });
+
+  it('narrators: ["Kate Reading", "Michael Kramer"] → narrators: ["Kate Reading", "Michael Kramer"] in payload (array not joined)', () => {
+    const book: BookMetadata = {
+      title: 'Test',
+      authors: [{ name: 'Author' }],
+      narrators: ['Kate Reading', 'Michael Kramer'],
+    };
+    const payload = mapBookMetadataToPayload(book);
+    expect(payload.narrators).toEqual(['Kate Reading', 'Michael Kramer']);
+  });
+
+  it('no narrators → narrators: [] in payload', () => {
+    const book: BookMetadata = {
+      title: 'Test',
+      authors: [{ name: 'Author' }],
+      narrators: [],
+    };
+    const payload = mapBookMetadataToPayload(book);
+    expect(payload.narrators).toEqual([]);
+  });
+});
+
+describe('isBookInLibrary — array author matching (#71)', () => {
+  it('BookWithAuthor branch matches on lb.authors[0]?.name', () => {
+    const libBook: BookWithAuthor = {
+      ...createMockBook(),
+      asin: null,
+      authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' }],
+    };
+    const searchBook: BookMetadata = {
+      title: 'The Way of Kings',
+      authors: [{ name: 'Brandon Sanderson' }],
+    };
+    expect(isBookInLibrary(searchBook, [libBook])).toBe(true);
+  });
+
+  it('BookIdentifier branch retains lb.authorName lookup (unchanged)', () => {
+    const bookId = { id: 1, title: 'The Way of Kings', asin: null, authorName: 'Brandon Sanderson' };
+    const searchBook: BookMetadata = {
+      title: 'The Way of Kings',
+      authors: [{ name: 'Brandon Sanderson' }],
+    };
+    // BookIdentifier has authorName (not authors array) — should still match
+    expect(isBookInLibrary(searchBook, [bookId as never])).toBe(true);
   });
 });

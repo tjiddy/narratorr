@@ -114,12 +114,11 @@ describe('useLibraryBook', () => {
     const mockBook = createMockBook({
       id: 42,
       title: 'Another Book',
-      authorId: 2,
-      narrator: null,
       status: 'monitored',
       path: '/library/another-book',
       size: 1024000,
-      author: { id: 2, name: 'Another Author', slug: 'another-author' },
+      authors: [{ id: 2, name: 'Another Author', slug: 'another-author' }],
+      narrators: [],
     });
 
     vi.mocked(api.getBookById).mockResolvedValue(mockBook);

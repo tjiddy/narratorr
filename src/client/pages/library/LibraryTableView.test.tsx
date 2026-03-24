@@ -76,7 +76,7 @@ describe('LibraryTableView', () => {
       const book = createMockBook({
         id: 42,
         title: 'Mistborn',
-        narrator: 'Michael Kramer',
+        narrators: [{ id: 1, name: 'Michael Kramer', slug: 'michael-kramer' }],
         seriesName: 'Cosmere',
         seriesPosition: 1,
         status: 'imported',
@@ -113,7 +113,7 @@ describe('LibraryTableView', () => {
     });
 
     it('shows dash for null narrator', () => {
-      const book = createMockBook({ narrator: null });
+      const book = createMockBook({ narrators: [] });
       renderTable({ books: [book] });
 
       const rows = screen.getAllByRole('row');

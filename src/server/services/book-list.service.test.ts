@@ -20,12 +20,14 @@ describe('BookListService', () => {
     it('returns books in { data, total } envelope', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor, importListName: null }]));
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null, primaryAuthorName: 'Brandon Sanderson' }]))
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getAll();
       expect(result.data).toHaveLength(1);
       expect(result.data[0].title).toBe('The Way of Kings');
-      expect(result.data[0].author?.name).toBe('Brandon Sanderson');
+      expect(result.data[0].authors[0]?.name).toBe('Brandon Sanderson');
       expect(result.total).toBe(1);
     });
 
@@ -38,19 +40,23 @@ describe('BookListService', () => {
       expect(result).toEqual({ data: [], total: 0 });
     });
 
-    it('sets author to undefined when no join match', async () => {
+    it('sets authors to empty array when no join match', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: null, importListName: null }]));
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null, primaryAuthorName: null }]))
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getAll();
-      expect(result.data[0].author).toBeUndefined();
+      expect(result.data[0].authors).toEqual([]);
     });
 
     it('populates importListName via left join', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor, importListName: 'My Import List' }]));
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: 'My Import List', primaryAuthorName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getAll();
       expect(result.data[0].importListName).toBe('My Import List');
@@ -59,7 +65,9 @@ describe('BookListService', () => {
     it('applies limit and offset when provided', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ value: 100 }]))
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor, importListName: null }]));
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null, primaryAuthorName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getAll(undefined, { limit: 10, offset: 20 });
       expect(result.total).toBe(100);
@@ -70,10 +78,12 @@ describe('BookListService', () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ value: 3 }]))
         .mockReturnValueOnce(mockDbChain([
-          { book: mockBook, author: mockAuthor, importListName: null },
-          { book: { ...mockBook, id: 2 }, author: mockAuthor, importListName: null },
-          { book: { ...mockBook, id: 3 }, author: mockAuthor, importListName: null },
-        ]));
+          { book: mockBook, importListName: null, primaryAuthorName: null },
+          { book: { ...mockBook, id: 2 }, importListName: null, primaryAuthorName: null },
+          { book: { ...mockBook, id: 3 }, importListName: null, primaryAuthorName: null },
+        ]))
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getAll('wanted');
       expect(result.total).toBe(3);
@@ -83,7 +93,9 @@ describe('BookListService', () => {
     it('composes status filter with pagination', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ value: 25 }]))
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor, importListName: null }]));
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null, primaryAuthorName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getAll('wanted', { limit: 10, offset: 0 });
       expect(result.total).toBe(25);
@@ -92,7 +104,9 @@ describe('BookListService', () => {
     it('slim mode excludes description and genres but retains other book columns', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor, importListName: null }]));
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null, primaryAuthorName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
 
       await service.getAll(undefined, undefined, { slim: true });
 
@@ -110,7 +124,9 @@ describe('BookListService', () => {
     it('non-slim mode uses the full books table selection', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor, importListName: null }]));
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null, primaryAuthorName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
 
       await service.getAll(undefined, undefined, { slim: false });
 
@@ -139,7 +155,9 @@ describe('BookListService', () => {
     it('accepts search param and returns results', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor, importListName: null }]));
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null, primaryAuthorName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getAll(undefined, undefined, { search: 'Kings' });
       expect(result.data).toHaveLength(1);
@@ -149,7 +167,9 @@ describe('BookListService', () => {
     it('accepts sortField and sortDirection params', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor, importListName: null }]));
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null, primaryAuthorName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getAll(undefined, undefined, { sortField: 'title', sortDirection: 'asc' });
       expect(result.data).toHaveLength(1);
@@ -195,7 +215,9 @@ describe('BookListService', () => {
     it('combines search with status filter and pagination', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ value: 2 }]))
-        .mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor, importListName: null }]));
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null, primaryAuthorName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ bookId: 1, author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
 
       const result = await service.getAll('wanted', { limit: 10, offset: 0 }, { search: 'Kings' });
       expect(result.total).toBe(2);
@@ -306,7 +328,7 @@ describe('BookListService', () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ name: 'Author A' }, { name: 'Author B' }]))
         .mockReturnValueOnce(mockDbChain([{ seriesName: 'Series A' }]))
-        .mockReturnValueOnce(mockDbChain([{ narrator: 'Narrator A' }]));
+        .mockReturnValueOnce(mockDbChain([{ name: 'Narrator A' }]));
 
       const stats = await service.getStats();
       expect(stats.counts.wanted).toBe(5);
@@ -365,7 +387,7 @@ describe('BookListService', () => {
       db.select
         .mockReturnValueOnce(mockDbChain([]))
         .mockReturnValueOnce(mockDbChain([]))
-        .mockReturnValueOnce(mockDbChain([{ narrator: 'Valid Narrator' }]));
+        .mockReturnValueOnce(mockDbChain([{ name: 'Valid Narrator' }]));
 
       const stats = await service.getStats();
       expect(stats.narrators).toEqual(['Valid Narrator']);
@@ -378,12 +400,77 @@ describe('BookListService', () => {
       db.select
         .mockReturnValueOnce(mockDbChain([{ name: 'Author' }]))
         .mockReturnValueOnce(mockDbChain([{ seriesName: 'Series' }]))
-        .mockReturnValueOnce(mockDbChain([{ narrator: 'Narrator' }]));
+        .mockReturnValueOnce(mockDbChain([{ name: 'Narrator' }]));
 
       const stats = await service.getStats();
       expect(typeof stats.authors[0]).toBe('string');
       expect(typeof stats.series[0]).toBe('string');
       expect(typeof stats.narrators[0]).toBe('string');
+    });
+  });
+});
+
+describe('BookListService — many-to-many authors/narrators stats and sorting (#71)', () => {
+  describe('getStats() junction aggregation', () => {
+    it('narrator stats list contains individual names, not comma-joined blobs', async () => {
+      // Setup: 3 books with distinct narrators → narrator stats returns individual names
+      const db = createMockDb();
+      const service = new BookListService(inject<Db>(db));
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // status counts
+        .mockReturnValueOnce(mockDbChain([]))  // author names
+        .mockReturnValueOnce(mockDbChain([]))  // series
+        .mockReturnValueOnce(mockDbChain([{ name: 'Michael Kramer' }, { name: 'Kate Reading' }]));  // distinct narrators from junction
+
+      const stats = await service.getStats();
+      expect(stats.narrators).toEqual(['Michael Kramer', 'Kate Reading']);
+      // Not comma-joined like 'Michael Kramer, Kate Reading'
+      expect(stats.narrators).not.toContain('Michael Kramer, Kate Reading');
+    });
+
+    it('two books sharing one narrator → narrator name appears once in stats list', async () => {
+      // db returns just one narrator despite multiple books sharing it (GROUP BY deduplicates)
+      const db = createMockDb();
+      const service = new BookListService(inject<Db>(db));
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // status counts
+        .mockReturnValueOnce(mockDbChain([]))  // author names
+        .mockReturnValueOnce(mockDbChain([]))  // series
+        .mockReturnValueOnce(mockDbChain([{ name: 'Tim Gerard Reynolds' }]));  // one entry despite 2 books
+
+      const stats = await service.getStats();
+      expect(stats.narrators).toHaveLength(1);
+      expect(stats.narrators[0]).toBe('Tim Gerard Reynolds');
+    });
+  });
+
+  describe('getAll() sorting by position=0', () => {
+    it('sort by narrator uses position=0 entry (first narrator by metadata order)', async () => {
+      const db = createMockDb();
+      const service = new BookListService(inject<Db>(db));
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAll(undefined, undefined, { sortField: 'narrator', sortDirection: 'asc' });
+      expect(dataChain.orderBy).toHaveBeenCalledTimes(1);
+      const args = (dataChain.orderBy as Mock).mock.calls[0];
+      expect(args.length).toBeGreaterThanOrEqual(3);  // null-sort + name-sort + id-sort
+    });
+
+    it('sort by author uses position=0 entry (first author by metadata order)', async () => {
+      const db = createMockDb();
+      const service = new BookListService(inject<Db>(db));
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAll(undefined, undefined, { sortField: 'author', sortDirection: 'asc' });
+      expect(dataChain.orderBy).toHaveBeenCalledTimes(1);
+      const args = (dataChain.orderBy as Mock).mock.calls[0];
+      expect(args.length).toBeGreaterThanOrEqual(3);  // null-sort + name-sort + id-sort
     });
   });
 });

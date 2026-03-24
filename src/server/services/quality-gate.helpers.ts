@@ -4,6 +4,7 @@ import type { QualityDecisionReason } from './quality-gate.types.js';
 import { DURATION_TOLERANCE } from './quality-gate.types.js';
 
 type BookRow = typeof books.$inferSelect;
+type BookWithNarrators = BookRow & { narrators?: Array<{ name: string }> };
 
 interface ScanResult {
   totalSize: number;
@@ -21,7 +22,7 @@ interface ScanResult {
 // eslint-disable-next-line complexity -- linear quality assessment with null-guarded branches
 export function buildQualityAssessment(
   scanResult: ScanResult,
-  book: BookRow | null,
+  book: BookWithNarrators | null,
 ): QualityDecisionReason {
   const holdReasons: string[] = [];
   const newSizeBytes = scanResult.totalSize;
@@ -43,15 +44,16 @@ export function buildQualityAssessment(
   let narratorMatch: boolean | null = null;
   let existingNarrator: string | null = null;
   let downloadNarrator: string | null = null;
-  if (book && book.path !== null && scanResult.tagNarrator && book.narrator) {
+  // Use narrator array directly — no re-join+split to avoid punctuation heuristics
+  const existingNarratorNames = book?.narrators?.map(n => n.name.trim().toLowerCase()).filter(n => n.length > 0) ?? [];
+  if (book && book.path !== null && scanResult.tagNarrator && existingNarratorNames.length > 0) {
     const tokenize = (s: string) => s.split(/[,;&]/).map(n => n.trim().toLowerCase()).filter(n => n.length > 0);
-    const existingTokens = tokenize(book.narrator);
     const downloadTokens = tokenize(scanResult.tagNarrator);
-    // Skip if either side produces no tokens after normalization (AC5)
-    if (existingTokens.length > 0 && downloadTokens.length > 0) {
-      existingNarrator = book.narrator;
+    // Skip if download tag produces no tokens after normalization (AC5)
+    if (downloadTokens.length > 0) {
+      existingNarrator = book.narrators!.map(n => n.name).join('; ');
       downloadNarrator = scanResult.tagNarrator;
-      const existingSet = new Set(existingTokens);
+      const existingSet = new Set(existingNarratorNames);
       narratorMatch = downloadTokens.some(n => existingSet.has(n));
       if (!narratorMatch) {
         holdReasons.push('narrator_mismatch');

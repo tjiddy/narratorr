@@ -77,8 +77,8 @@ function compareNullable(a: string | number | null, b: string | number | null): 
 
 const fieldExtractors: Record<string, (book: BookWithAuthor) => string | number | null> = {
   title: (b) => toSortTitle(b.title),
-  author: (b) => b.author?.name ?? '',
-  narrator: (b) => b.narrator ?? null,
+  author: (b) => b.authors?.[0]?.name ?? '',
+  narrator: (b) => b.narrators?.[0]?.name ?? null,
   series: (b) => b.seriesName ?? null,
   quality: (b) => computeMbPerHour(b),
   size: (b) => getEffectiveSize(b),
@@ -142,3 +142,4 @@ export function collapseSeries(
 
   return collapsed;
 }
+

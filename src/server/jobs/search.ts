@@ -159,7 +159,7 @@ export async function runUpgradeSearchJob(
     try {
       const rawResults = await indexerService.searchAll(query, {
         title: book.title,
-        author: book.author?.name,
+        author: book.authors?.[0]?.name,
       });
       searched++;
 

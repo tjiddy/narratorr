@@ -1,7 +1,7 @@
 import { eq, and, desc, sql, inArray, lt, isNull, or, lte as drizzleLte } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { suggestions, books, authors } from '../../db/schema.js';
+import { suggestions, books, authors, bookAuthors, bookNarrators, narrators } from '../../db/schema.js';
 import { REGION_LANGUAGES, type BookMetadata } from '../../core/index.js';
 import type { MetadataService } from './metadata.service.js';
 import type { BookService } from './book.service.js';
@@ -48,12 +48,19 @@ export class DiscoveryService {
   ) {}
 
   async analyzeLibrary(): Promise<LibrarySignals> {
-    const rows = await this.db
-      .select({ book: books, author: authors })
+    const bookRows = await this.db
+      .select({ book: books, authorName: authors.name })
       .from(books)
-      .leftJoin(authors, eq(books.authorId, authors.id))
+      .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
+      .leftJoin(authors, eq(bookAuthors.authorId, authors.id))
       .where(eq(books.status, 'imported'));
-    return extractSignals(rows);
+
+    const narratorRows = await this.db
+      .select({ bookId: bookNarrators.bookId, narratorName: narrators.name })
+      .from(bookNarrators)
+      .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id));
+
+    return extractSignals(bookRows, narratorRows);
   }
 
   async generateCandidates(signals: LibrarySignals, multipliers?: WeightMultipliers): Promise<ScoredCandidate[]> {
@@ -62,7 +69,11 @@ export class DiscoveryService {
     const regionLang = REGION_LANGUAGES[metadataSettings.audibleRegion] ?? 'english';
     const warnings: string[] = [];
 
-    const existingRows = await this.db.select({ asin: books.asin, title: books.title, authorName: authors.name }).from(books).leftJoin(authors, eq(books.authorId, authors.id));
+    const existingRows = await this.db
+      .select({ asin: books.asin, title: books.title, authorName: authors.name })
+      .from(books)
+      .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
+      .leftJoin(authors, eq(bookAuthors.authorId, authors.id));
     const existingAsins = new Set(existingRows.filter(b => b.asin).map(b => b.asin!));
     const existingTitleAuthors = existingRows.map(b => ({ title: b.title, author: b.authorName ?? '' }));
     const dismissedRows = await this.db.select({ asin: suggestions.asin }).from(suggestions).where(eq(suggestions.status, 'dismissed'));
@@ -252,13 +263,13 @@ export class DiscoveryService {
     const row = rows[0];
     if (row.status === 'added') return { suggestion: row, alreadyAdded: true };
 
-    const dup = await this.bookService.findDuplicate(row.title, row.authorName, row.asin);
+    const dup = await this.bookService.findDuplicate(row.title, row.authorName ? [{ name: row.authorName }] : undefined, row.asin);
     if (dup) {
       await this.db.update(suggestions).set({ status: 'added' }).where(eq(suggestions.id, id));
       return { suggestion: { ...row, status: 'added' }, book: dup, duplicate: true };
     }
 
-    const book = await this.bookService.create({ title: row.title, authorName: row.authorName, asin: row.asin });
+    const book = await this.bookService.create({ title: row.title, authors: row.authorName ? [{ name: row.authorName }] : [], asin: row.asin });
     await this.db.update(suggestions).set({ status: 'added' }).where(eq(suggestions.id, id));
     return { suggestion: { ...row, status: 'added' }, book };
   }

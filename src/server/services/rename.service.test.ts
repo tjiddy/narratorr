@@ -32,7 +32,7 @@ const mockBook = {
     seriesName: 'The Stormlight Archive',
     seriesPosition: 1,
   }),
-  author: mockAuthor,
+  authors: [mockAuthor],
 };
 
 const libraryOverrides = {

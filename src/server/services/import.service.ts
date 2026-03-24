@@ -1,7 +1,7 @@
 import { eq, and, inArray, isNotNull } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloads, books, authors } from '../../db/schema.js';
+import { downloads, books, authors, bookAuthors, bookNarrators, narrators } from '../../db/schema.js';
 import { renameFilesWithTemplate } from '../utils/paths.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import type { DownloadClientService } from './download-client.service.js';
@@ -32,7 +32,8 @@ export interface ImportContext {
   bookStatus: string;
   bookPath: string | null;
   authorName: string | null;
-  book: BookRow;
+  narratorStr: string | null;
+  book: BookRow & { narrators: Array<{ name: string }> };
 }
 
 export class ImportService {
@@ -67,7 +68,8 @@ export class ImportService {
 
     const bookData = await this.getBookWithAuthor(download.bookId);
     if (!bookData) throw new Error(`Book ${download.bookId} not found`);
-    const { book, author } = bookData;
+    const { book, author, narratorNames } = bookData;
+    const narratorStr = narratorNames.length > 0 ? narratorNames.join('; ') : null;
 
     return {
       downloadId,
@@ -78,7 +80,8 @@ export class ImportService {
       bookStatus: book.status,
       bookPath: book.path,
       authorName: author?.name ?? null,
-      book,
+      narratorStr,
+      book: { ...book, narrators: narratorNames.map(n => ({ name: n })) },
     };
   }
 
@@ -94,8 +97,9 @@ export class ImportService {
 
     const bookData = await this.getBookWithAuthor(download.bookId);
     if (!bookData) throw new Error(`Book ${download.bookId} not found`);
-    const { book, author } = bookData;
+    const { book, author, narratorNames } = bookData;
     const authorName = author?.name ?? null;
+    const bookWithNarrators = { ...book, narrators: narratorNames.map(n => ({ name: n })) };
 
     await this.db.update(downloads).set({ status: 'importing' }).where(eq(downloads.id, downloadId));
 
@@ -108,15 +112,15 @@ export class ImportService {
         this.settingsService.get('processing'),
       ]);
       const processingEnabled = !!processingSettings?.enabled;
-      targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName);
+      targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, bookWithNarrators, authorName);
 
       const { sourcePath, fileCount, sourceStats } = await validateSource(savePath, this.remotePathMappingService, download.downloadClientId);
       await checkDiskSpace({ sourcePath, sourceStats, libraryPath: librarySettings.path, minFreeSpaceGB: importSettings.minFreeSpaceGB, processingEnabled });
       await copyToLibrary({ sourcePath, targetPath, sourceStats, log: this.log });
-      await runAudioProcessing({ processingSettings, librarySettings, targetPath, book, authorName: authorName || 'Unknown Author', db: this.db, log: this.log });
+      await runAudioProcessing({ processingSettings, librarySettings, targetPath, book: bookWithNarrators, authorName: authorName || 'Unknown Author', db: this.db, log: this.log });
 
       if (librarySettings.fileFormat) {
-        await renameFilesWithTemplate(targetPath, librarySettings.fileFormat, book, authorName, this.log);
+        await renameFilesWithTemplate(targetPath, librarySettings.fileFormat, bookWithNarrators, authorName, this.log);
       }
       const targetSize = await verifyCopy({ targetPath, sourcePath, processingEnabled });
       await cleanupOldBookPath({ bookPath: book.path, targetPath, log: this.log });
@@ -198,16 +202,35 @@ export class ImportService {
     return results[0] ?? null;
   }
 
-  private async getBookWithAuthor(bookId: number): Promise<{ book: BookRow; author: AuthorRow | undefined } | null> {
-    const results = await this.db
-      .select({ book: books, author: authors })
+  private async getBookWithAuthor(bookId: number): Promise<{ book: BookRow; author: AuthorRow | undefined; narratorNames: string[] } | null> {
+    const bookResults = await this.db
+      .select({ book: books })
       .from(books)
-      .leftJoin(authors, eq(books.authorId, authors.id))
       .where(eq(books.id, bookId))
       .limit(1);
 
-    if (results.length === 0) return null;
-    return { book: results[0].book, author: results[0].author ?? undefined };
+    if (bookResults.length === 0) return null;
+    const book = bookResults[0].book;
+
+    const [authorResult, narratorResult] = await Promise.all([
+      this.db
+        .select({ author: authors })
+        .from(bookAuthors)
+        .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
+        .where(and(eq(bookAuthors.bookId, bookId), eq(bookAuthors.position, 0)))
+        .limit(1),
+      this.db
+        .select({ name: narrators.name })
+        .from(bookNarrators)
+        .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
+        .where(eq(bookNarrators.bookId, bookId)),
+    ]);
+
+    return {
+      book,
+      author: authorResult[0]?.author ?? undefined,
+      narratorNames: narratorResult.map(r => r.name),
+    };
   }
 
   private async handleTorrentRemoval(download: DownloadRow, minSeedTimeMinutes: number): Promise<void> {

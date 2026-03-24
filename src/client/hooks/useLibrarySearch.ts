@@ -7,9 +7,9 @@ const DEBOUNCE_MS = 250;
 const fuseOptions: IFuseOptions<BookWithAuthor> = {
   keys: [
     { name: 'title', weight: 1.0 },
-    { name: 'author.name', weight: 0.8 },
+    { name: 'authors.name', weight: 0.8 },
     { name: 'seriesName', weight: 0.7 },
-    { name: 'narrator', weight: 0.6 },
+    { name: 'narrators.name', weight: 0.6 },
     { name: 'genres', weight: 0.4 },
   ],
   threshold: 0.4,
@@ -57,3 +57,4 @@ export function useLibrarySearch(books: BookWithAuthor[]) {
     isSearching: debouncedQuery.trim().length > 0,
   };
 }
+

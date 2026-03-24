@@ -39,8 +39,8 @@ const mockBookMetadata: BookMetadata = {
 const mockLibraryBook = createMockBook({
   title: 'Existing Book',
   asin: 'B000EXISTING',
-  narrator: null,
-  author: { id: 1, name: 'Some Author', slug: 'some-author' },
+  narrators: [],
+  authors: [{ id: 1, name: 'Some Author', slug: 'some-author' }],
 });
 
 describe('SearchPage', () => {
@@ -124,8 +124,8 @@ describe('SearchPage', () => {
     await waitFor(() => {
       expect(api.addBook).toHaveBeenCalledWith(expect.objectContaining({
         title: 'The Way of Kings',
-        authorName: 'Brandon Sanderson',
-        narrator: 'Michael Kramer',
+        authors: expect.arrayContaining([expect.objectContaining({ name: 'Brandon Sanderson' })]),
+        narrators: expect.arrayContaining(['Michael Kramer']),
         seriesName: 'The Stormlight Archive',
       }));
     });

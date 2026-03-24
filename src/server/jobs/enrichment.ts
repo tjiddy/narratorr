@@ -2,7 +2,8 @@ import cron from 'node-cron';
 import { eq, and, isNotNull, or, sql } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books } from '../../db/schema.js';
+import { books, narrators, bookNarrators } from '../../db/schema.js';
+import { slugify } from '../../core/index.js';
 import { RateLimitError } from '../../core/index.js';
 import type { MetadataService } from '../services/metadata.service.js';
 
@@ -21,6 +22,7 @@ export function startEnrichmentJob(db: Db, metadataService: MetadataService, log
   log.info('Enrichment job started (every 5 minutes)');
 }
 
+// eslint-disable-next-line complexity -- linear enrichment pipeline with null guards per category
 export async function runEnrichment(db: Db, metadataService: MetadataService, log: FastifyBaseLogger) {
   // Skip books without ASIN → set to 'skipped'
   const noAsinBooks = await db
@@ -89,18 +91,43 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, lo
 
       // Only fill in fields that are currently empty
       const existing = await db
-        .select({ narrator: books.narrator, duration: books.duration })
+        .select({ duration: books.duration })
         .from(books)
         .where(eq(books.id, candidate.id))
         .limit(1);
 
       if (existing.length > 0) {
         const book = existing[0];
-        if (!book.narrator && result.narrators?.length) {
-          updates.narrator = result.narrators.join(', ');
-        }
         if (!book.duration && result.duration) {
           updates.duration = result.duration;
+        }
+      }
+
+      // Fill in narrators from metadata if none in junction table yet
+      if (result.narrators?.length) {
+        const existingNarrators = await db
+          .select({ id: bookNarrators.narratorId })
+          .from(bookNarrators)
+          .where(eq(bookNarrators.bookId, candidate.id))
+          .limit(1);
+        if (existingNarrators.length === 0) {
+          for (let i = 0; i < result.narrators.length; i++) {
+            const name = result.narrators[i].trim();
+            if (!name) continue;
+            const slug = slugify(name);
+            let [existing_n] = await db.select({ id: narrators.id }).from(narrators).where(eq(narrators.slug, slug)).limit(1);
+            if (!existing_n) {
+              const [created] = await db.insert(narrators).values({ name, slug }).onConflictDoNothing().returning();
+              if (created) {
+                existing_n = created;
+              } else {
+                [existing_n] = await db.select({ id: narrators.id }).from(narrators).where(eq(narrators.slug, slug)).limit(1);
+              }
+            }
+            if (existing_n) {
+              await db.insert(bookNarrators).values({ bookId: candidate.id, narratorId: existing_n.id, position: i }).onConflictDoNothing();
+            }
+          }
         }
       }
 

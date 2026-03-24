@@ -207,7 +207,7 @@ describe('booksApi', () => {
   });
 
   it('addBook → POST /books with payload', async () => {
-    const data = { title: 'Test Book', authorName: 'Author' };
+    const data = { title: 'Test Book', authors: [{ name: 'Author' }] };
     await booksApi.addBook(data);
     expect(mockFetchApi).toHaveBeenCalledWith('/books', expect.objectContaining({
       method: 'POST',

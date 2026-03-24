@@ -3,10 +3,10 @@ import { readdir, rename, unlink, stat } from 'node:fs/promises';
 import { join, extname, basename, dirname } from 'node:path';
 import { promisify } from 'node:util';
 import { parseFile } from 'music-metadata';
-import { eq } from 'drizzle-orm';
+import { eq, asc } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, authors } from '../../db/schema.js';
+import { books, authors, bookAuthors, bookNarrators, narrators } from '../../db/schema.js';
 import type { TagMode } from '../../shared/schemas.js';
 import type { SettingsService } from './settings.service.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
@@ -358,11 +358,10 @@ export class TaggingService {
       throw new RetagError('FFMPEG_NOT_CONFIGURED', 'ffmpeg is not configured. Set the ffmpeg path in Settings > Post Processing.');
     }
 
-    // Get book with author
+    // Get book with author (position=0) and narrators
     const bookResults = await this.db
-      .select({ book: books, author: authors })
+      .select({ book: books })
       .from(books)
-      .leftJoin(authors, eq(books.authorId, authors.id))
       .where(eq(books.id, bookId))
       .limit(1);
 
@@ -370,7 +369,7 @@ export class TaggingService {
       throw new RetagError('NOT_FOUND', `Book ${bookId} not found`);
     }
 
-    const { book, author } = bookResults[0];
+    const { book } = bookResults[0];
 
     if (!book.path) {
       throw new RetagError('NO_PATH', `Book ${bookId} has no library path — import it first`);
@@ -383,13 +382,30 @@ export class TaggingService {
       throw new RetagError('PATH_MISSING', `Book path does not exist on disk: ${book.path}`);
     }
 
+    const [authorResult, narratorResult] = await Promise.all([
+      this.db
+        .select({ name: authors.name })
+        .from(bookAuthors)
+        .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
+        .where(eq(bookAuthors.bookId, bookId))
+        .orderBy(asc(bookAuthors.position)),
+      this.db
+        .select({ name: narrators.name })
+        .from(bookNarrators)
+        .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
+        .where(eq(bookNarrators.bookId, bookId)),
+    ]);
+
+    const authorStr = authorResult.length > 0 ? authorResult.map(r => r.name).join('; ') : null;
+    const narratorStr = narratorResult.length > 0 ? narratorResult.map(r => r.name).join('; ') : null;
+
     return this.tagBook(
       bookId,
       book.path,
       {
         title: book.title,
-        authorName: author?.name ?? null,
-        narrator: book.narrator,
+        authorName: authorStr,
+        narrator: narratorStr,
         seriesName: book.seriesName,
         seriesPosition: book.seriesPosition,
         coverUrl: book.coverUrl,

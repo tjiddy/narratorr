@@ -161,7 +161,7 @@ describe('buildTargetPath', () => {
   });
 
   it('includes narrator token', () => {
-    const result = buildTargetPath('/audiobooks', '{author}/{title} [{narrator}]', { title: 'Book', narrator: 'John Smith' }, 'Author');
+    const result = buildTargetPath('/audiobooks', '{author}/{title} [{narrator}]', { title: 'Book', narrators: [{ name: 'John Smith' }] }, 'Author');
     expect(result).toMatch(/John Smith/);
   });
 
@@ -207,13 +207,14 @@ describe('buildTargetPath', () => {
   });
 
   it('renders {narratorLastFirst} for single narrator', () => {
-    const result = buildTargetPath('/audiobooks', '{author}/{title} [{narratorLastFirst}]', { title: 'Book', narrator: 'Michael Kramer' }, 'Author');
+    const result = buildTargetPath('/audiobooks', '{author}/{title} [{narratorLastFirst}]', { title: 'Book', narrators: [{ name: 'Michael Kramer' }] }, 'Author');
     expect(result).toMatch(/Kramer, Michael/);
   });
 
-  it('renders {narratorLastFirst} for multiple narrators', () => {
-    const result = buildTargetPath('/audiobooks', '{author}/{title} [{narratorLastFirst}]', { title: 'Book', narrator: 'Michael Kramer, Kate Reading' }, 'Author');
-    expect(result).toMatch(/Kramer, Michael & Reading, Kate/);
+  it('renders {narratorLastFirst} for multiple narrators → uses position-0 narrator only', () => {
+    const result = buildTargetPath('/audiobooks', '{author}/{title} [{narratorLastFirst}]', { title: 'Book', narrators: [{ name: 'Michael Kramer' }, { name: 'Kate Reading' }] }, 'Author');
+    expect(result).toMatch(/Kramer, Michael/);
+    expect(result).not.toMatch(/Reading, Kate/);
   });
 });
 
@@ -662,7 +663,9 @@ describe('ImportService', () => {
       });
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: samePathBook, author: mockAuthor }]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: samePathBook }]));
+      db.select.mockReturnValueOnce(mockDbChain([{ author: mockAuthor }]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.update.mockReturnValue(mockDbChain());
 
       await service.importDownload(1);
@@ -945,7 +948,9 @@ describe('ImportService', () => {
       });
 
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook }]));
+      db.select.mockReturnValueOnce(mockDbChain([{ author: mockAuthor }]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
       db.update.mockReturnValue(mockDbChain());
     }
 
@@ -1550,7 +1555,9 @@ describe('ImportService', () => {
   describe('getImportContext', () => {
     it('returns download and book context for side effect dispatch', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
-      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook, author: mockAuthor }]));
+      db.select.mockReturnValueOnce(mockDbChain([{ book: mockBook }]));
+      db.select.mockReturnValueOnce(mockDbChain([{ author: mockAuthor }]));
+      db.select.mockReturnValueOnce(mockDbChain([]));
 
       const ctx = await service.getImportContext(1);
 

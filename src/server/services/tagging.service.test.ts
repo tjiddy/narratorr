@@ -40,11 +40,15 @@ vi.mock('drizzle-orm', async (importOriginal) => {
 
 // Mock db schema
 vi.mock('../../db/schema.js', () => ({
-  books: { id: 'books.id', authorId: 'books.authorId' },
-  authors: { id: 'authors.id' },
+  books: { id: 'books.id' },
+  authors: { id: 'authors.id', name: 'authors.name' },
+  bookAuthors: { bookId: 'bookAuthors.bookId', authorId: 'bookAuthors.authorId', position: 'bookAuthors.position' },
+  bookNarrators: { bookId: 'bookNarrators.bookId', narratorId: 'bookNarrators.narratorId' },
+  narrators: { id: 'narrators.id', name: 'narrators.name' },
 }));
 
 import { readdir, rename, unlink, stat } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import { parseFile } from 'music-metadata';
 
 describe('buildFfmpegArgs', () => {
@@ -371,15 +375,37 @@ describe('tagFile', () => {
 
 describe('TaggingService', () => {
   function createMockDb() {
-    const chain = {
+    // retagBook makes 3 select calls: (1) book, (2) authors junction, (3) narrators junction
+    const makeChain = (limitResult: unknown[] = []) => ({
       from: vi.fn().mockReturnThis(),
-      leftJoin: vi.fn().mockReturnThis(),
+      innerJoin: vi.fn().mockReturnThis(),
       where: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockResolvedValue([]),
+      limit: vi.fn().mockResolvedValue(limitResult),
+    });
+    const narratorChain = {
+      from: vi.fn().mockReturnThis(),
+      innerJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue([]), // narrator query ends with .where()
+    };
+    const bookChain = makeChain();
+    // Author query ends with .orderBy() (all authors in position order, joined with "; ")
+    const authorChain = {
+      from: vi.fn().mockReturnThis(),
+      innerJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockResolvedValue([]),
     };
     return {
-      select: vi.fn().mockReturnValue(chain),
-      chain,
+      select: vi.fn()
+        .mockReturnValueOnce(bookChain)
+        .mockReturnValueOnce(authorChain)
+        .mockReturnValueOnce(narratorChain)
+        .mockReturnValue(makeChain()),
+      bookChain,
+      authorChain,
+      narratorChain,
+      // legacy alias so existing tests that use db.chain still work
+      get chain() { return bookChain; },
     };
   }
 
@@ -452,18 +478,18 @@ describe('TaggingService', () => {
 
     it('fetches book with author join and calls tagBook with correct metadata', async () => {
       const db = createMockDb();
-      db.chain.limit.mockResolvedValue([{
+      db.bookChain.limit.mockResolvedValue([{
         book: {
           id: 42,
           title: 'The Final Empire',
           path: '/library/sanderson/final-empire',
-          narrator: 'Michael Kramer',
           seriesName: 'Mistborn',
           seriesPosition: 1,
           coverUrl: 'https://example.com/cover.jpg',
         },
-        author: { name: 'Brandon Sanderson' },
       }]);
+      db.authorChain.orderBy.mockResolvedValue([{ name: 'Brandon Sanderson' }]);
+      db.narratorChain.where.mockResolvedValue([{ name: 'Michael Kramer' }]);
       const settings = createMockSettingsService({
         processing: { ffmpegPath: '/usr/bin/ffmpeg' },
         tagging: { enabled: true, mode: 'populate_missing', embedCover: true },
@@ -487,13 +513,13 @@ describe('TaggingService', () => {
 
     it('passes null author name when book has no author', async () => {
       const db = createMockDb();
-      db.chain.limit.mockResolvedValue([{
+      db.bookChain.limit.mockResolvedValue([{
         book: {
           id: 1, title: 'Orphan Book', path: '/library/orphan',
-          narrator: null, seriesName: null, seriesPosition: null, coverUrl: null,
+          seriesName: null, seriesPosition: null, coverUrl: null,
         },
-        author: null,  // LEFT JOIN returned no author
       }]);
+      // authorChain.limit default returns [] → no author
       const settings = createMockSettingsService(taggingDefaults);
       (stat as Mock).mockResolvedValue({ size: 1000 });
       (readdir as Mock).mockResolvedValue(['book.mp3']);
@@ -643,5 +669,91 @@ describe('TaggingService', () => {
 
       expect(result.warnings.some(w => w.includes('cover image found'))).toBe(true);
     });
+  });
+});
+
+describe('TaggingService — multi-value serialization (#71)', () => {
+  const taggingDefaults = {
+    processing: { ffmpegPath: '/usr/bin/ffmpeg' },
+    tagging: { enabled: true, mode: 'overwrite' as const },
+  };
+
+  function createLog() {
+    return {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      trace: vi.fn(), fatal: vi.fn(), child: vi.fn().mockReturnThis(), level: 'info', silent: vi.fn(),
+    };
+  }
+
+  function createRetagDb(authors: { name: string }[], narrators: { name: string }[]) {
+    const makeChain = (limitResult: unknown[] = []) => ({
+      from: vi.fn().mockReturnThis(), innerJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue(limitResult),
+    });
+    const authorChain = {
+      from: vi.fn().mockReturnThis(), innerJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockResolvedValue(authors),
+    };
+    const narratorChain = {
+      from: vi.fn().mockReturnThis(), innerJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue(narrators),
+    };
+    const bookChain = makeChain([{
+      book: { id: 1, title: 'Test Book', path: '/library/test', seriesName: null, seriesPosition: null, coverUrl: null },
+    }]);
+    return { select: vi.fn().mockReturnValueOnce(bookChain).mockReturnValueOnce(authorChain).mockReturnValueOnce(narratorChain) };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (stat as Mock).mockResolvedValue({ size: 1000 });
+    (readdir as Mock).mockResolvedValue(['book.mp3']);
+  });
+
+  it('authors ["Brandon Sanderson", "Robert Jordan"] → artist tag = "Brandon Sanderson; Robert Jordan"', async () => {
+    const db = createRetagDb(
+      [{ name: 'Brandon Sanderson' }, { name: 'Robert Jordan' }],
+      [],
+    );
+    const settings = createMockSettingsService(taggingDefaults);
+    const service = new TaggingService(db as never, settings as never, createLog() as never);
+
+    await service.retagBook(1);
+
+    const calls = (execFile as unknown as Mock).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const args = calls[0][1] as string[];
+    const artistArg = args.find((a, i) => args[i - 1] === '-metadata' && a.startsWith('artist='));
+    expect(artistArg).toBe('artist=Brandon Sanderson; Robert Jordan');
+  });
+
+  it('narrators ["Kate Reading", "Michael Kramer"] → composer tag = "Kate Reading; Michael Kramer"', async () => {
+    const db = createRetagDb(
+      [{ name: 'Brandon Sanderson' }],
+      [{ name: 'Kate Reading' }, { name: 'Michael Kramer' }],
+    );
+    const settings = createMockSettingsService(taggingDefaults);
+    const service = new TaggingService(db as never, settings as never, createLog() as never);
+
+    await service.retagBook(1);
+
+    const args = (execFile as unknown as Mock).mock.calls[0][1] as string[];
+    const composerArg = args.find((a, i) => args[i - 1] === '-metadata' && a.startsWith('composer='));
+    expect(composerArg).toBe('composer=Kate Reading; Michael Kramer');
+  });
+
+  it('single narrator → composer tag = narrator name only (no trailing "; ")', async () => {
+    const db = createRetagDb(
+      [{ name: 'Brandon Sanderson' }],
+      [{ name: 'Michael Kramer' }],
+    );
+    const settings = createMockSettingsService(taggingDefaults);
+    const service = new TaggingService(db as never, settings as never, createLog() as never);
+
+    await service.retagBook(1);
+
+    const args = (execFile as unknown as Mock).mock.calls[0][1] as string[];
+    const composerArg = args.find((a, i) => args[i - 1] === '-metadata' && a.startsWith('composer='));
+    expect(composerArg).toBe('composer=Michael Kramer');
   });
 });

@@ -10,9 +10,8 @@ function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
     enrichmentStatus: 'pending',
     createdAt: '2024-01-01T00:00:00Z',
     updatedAt: '2024-01-01T00:00:00Z',
-    author: undefined,
-    authorId: null,
-    narrator: null,
+    authors: [],
+    narrators: [],
     description: null,
     coverUrl: null,
     asin: null,
@@ -54,13 +53,13 @@ describe('sortBooks', () => {
 
   it('sorts by author alphabetically', () => {
     const books = [
-      makeBook({ id: 1, author: { id: 1, name: 'Sanderson', slug: 's', asin: null, imageUrl: null, bio: null } }),
-      makeBook({ id: 2, author: { id: 2, name: 'Abercrombie', slug: 'a', asin: null, imageUrl: null, bio: null } }),
+      makeBook({ id: 1, authors: [{ id: 1, name: 'Sanderson', slug: 's' }] }),
+      makeBook({ id: 2, authors: [{ id: 2, name: 'Abercrombie', slug: 'a' }] }),
     ];
 
     const sorted = sortBooks(books, 'author', 'asc');
-    expect(sorted[0].author?.name).toBe('Abercrombie');
-    expect(sorted[1].author?.name).toBe('Sanderson');
+    expect(sorted[0].authors[0]?.name).toBe('Abercrombie');
+    expect(sorted[1].authors[0]?.name).toBe('Sanderson');
   });
 
   it('sorts by createdAt', () => {
@@ -238,9 +237,9 @@ describe('getStatusCount', () => {
 describe('sortBooks — extended sort fields (#282)', () => {
   it('sorts by narrator alphabetically, nulls last', () => {
     const books = [
-      makeBook({ id: 1, narrator: 'Zelda' }),
-      makeBook({ id: 2, narrator: null }),
-      makeBook({ id: 3, narrator: 'Alice' }),
+      makeBook({ id: 1, narrators: [{ id: 1, name: 'Zelda', slug: 'zelda' }] }),
+      makeBook({ id: 2, narrators: [] }),
+      makeBook({ id: 3, narrators: [{ id: 2, name: 'Alice', slug: 'alice' }] }),
     ];
 
     const sorted = sortBooks(books, 'narrator', 'asc');
@@ -295,8 +294,8 @@ describe('sortBooks — extended sort fields (#282)', () => {
 
   it('reverses sort direction for all extended fields', () => {
     const narratorBooks = [
-      makeBook({ id: 1, narrator: 'Alice' }),
-      makeBook({ id: 2, narrator: 'Zelda' }),
+      makeBook({ id: 1, narrators: [{ id: 1, name: 'Alice', slug: 'alice' }] }),
+      makeBook({ id: 2, narrators: [{ id: 2, name: 'Zelda', slug: 'zelda' }] }),
     ];
     const sortedNarrator = sortBooks(narratorBooks, 'narrator', 'desc');
     expect(sortedNarrator.map((b) => b.id)).toEqual([2, 1]);

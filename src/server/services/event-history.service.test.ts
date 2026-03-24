@@ -496,3 +496,57 @@ describe('EventHistoryService', () => {
     });
   });
 });
+
+describe('EventHistoryService — narrator snapshot (#71)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let log: ReturnType<typeof createMockLogger>;
+  let service: EventHistoryService;
+
+  beforeEach(() => {
+    db = createMockDb();
+    log = createMockLogger();
+    service = new EventHistoryService(
+      inject<Db>(db),
+      inject<FastifyBaseLogger>(log),
+      inject<BlacklistService>({ create: vi.fn() }),
+      inject<BookService>({ updateStatus: vi.fn() }),
+    );
+  });
+
+  it('create() with narratorName persists to book_events.narrator_name', async () => {
+    const mockEvent = createMockDbBookEvent({ narratorName: 'Michael Kramer' });
+    const chain = mockDbChain([mockEvent]);
+    db.insert.mockReturnValue(chain);
+
+    await service.create({
+      bookId: 1,
+      bookTitle: 'The Way of Kings',
+      authorName: 'Brandon Sanderson',
+      narratorName: 'Michael Kramer',
+      eventType: 'imported',
+      source: 'auto',
+    });
+
+    expect((chain.values as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(expect.objectContaining({
+      narratorName: 'Michael Kramer',
+    }));
+  });
+
+  it('create() with narratorName omitted → stored as null', async () => {
+    const mockEvent = createMockDbBookEvent({ narratorName: null });
+    const chain = mockDbChain([mockEvent]);
+    db.insert.mockReturnValue(chain);
+
+    await service.create({
+      bookId: 1,
+      bookTitle: 'The Way of Kings',
+      authorName: 'Brandon Sanderson',
+      eventType: 'imported',
+      source: 'auto',
+    });
+
+    expect((chain.values as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(expect.objectContaining({
+      narratorName: null,
+    }));
+  });
+});

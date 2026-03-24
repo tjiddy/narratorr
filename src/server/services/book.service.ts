@@ -3,16 +3,18 @@ import { cleanEmptyParents } from '../utils/paths.js';
 import { eq, and, like, desc, sql } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { books, authors, unmatchedGenres, importLists } from '../../db/schema.js';
+import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
 import { slugify, findUnmatchedGenres } from '../../core/index.js';
 import { type MetadataService } from './metadata.service.js';
 
 type BookRow = typeof books.$inferSelect;
 type NewBook = typeof books.$inferInsert;
 type AuthorRow = typeof authors.$inferSelect;
+type NarratorRow = typeof narrators.$inferSelect;
 
 export interface BookWithAuthor extends BookRow {
-  author?: AuthorRow;
+  authors: AuthorRow[];
+  narrators: NarratorRow[];
   importListName?: string | null;
 }
 
@@ -24,65 +26,79 @@ export class BookService {
   ) {}
 
   async getById(id: number): Promise<BookWithAuthor | null> {
-    const results = await this.db
-      .select({
-        book: books,
-        author: authors,
-        importListName: importLists.name,
-      })
+    const bookResults = await this.db
+      .select({ book: books, importListName: importLists.name })
       .from(books)
-      .leftJoin(authors, eq(books.authorId, authors.id))
       .leftJoin(importLists, eq(books.importListId, importLists.id))
       .where(eq(books.id, id))
       .limit(1);
 
-    if (results.length === 0) return null;
+    if (bookResults.length === 0) return null;
+
+    const authorResults = await this.db
+      .select({ author: authors, position: bookAuthors.position })
+      .from(bookAuthors)
+      .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
+      .where(eq(bookAuthors.bookId, id))
+      .orderBy(bookAuthors.position);
+
+    const narratorResults = await this.db
+      .select({ narrator: narrators, position: bookNarrators.position })
+      .from(bookNarrators)
+      .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
+      .where(eq(bookNarrators.bookId, id))
+      .orderBy(bookNarrators.position);
 
     return {
-      ...results[0].book,
-      author: results[0].author || undefined,
-      importListName: results[0].importListName ?? null,
+      ...bookResults[0].book,
+      importListName: bookResults[0].importListName ?? null,
+      authors: authorResults.sort((a, b) => a.position - b.position).map((r) => r.author),
+      narrators: narratorResults.sort((a, b) => a.position - b.position).map((r) => r.narrator),
     };
   }
 
-  async findDuplicate(title: string, authorName?: string, asin?: string): Promise<BookWithAuthor | null> {
+  async findDuplicate(
+    title: string,
+    authorList?: { name: string; asin?: string }[],
+    asin?: string,
+  ): Promise<BookWithAuthor | null> {
     // Check by ASIN first if available (opportunistic)
     if (asin) {
       const byAsin = await this.db
-        .select({ book: books, author: authors })
+        .select({ id: books.id })
         .from(books)
-        .leftJoin(authors, eq(books.authorId, authors.id))
         .where(eq(books.asin, asin))
         .limit(1);
 
       if (byAsin.length > 0) {
-        return { ...byAsin[0].book, author: byAsin[0].author || undefined };
+        return this.getById(byAsin[0].id);
       }
     }
 
-    // Check by title + author slug
-    if (authorName) {
-      const authorSlug = slugify(authorName);
+    // Check by title + position-0 author slug
+    if (authorList && authorList.length > 0) {
+      const primarySlug = slugify(authorList[0].name);
       const byTitleAuthor = await this.db
-        .select({ book: books, author: authors })
+        .select({ id: books.id })
         .from(books)
-        .leftJoin(authors, eq(books.authorId, authors.id))
-        .where(and(eq(books.title, title), eq(authors.slug, authorSlug)))
+        .innerJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
+        .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
+        .where(and(eq(books.title, title), eq(authors.slug, primarySlug)))
         .limit(1);
 
       if (byTitleAuthor.length > 0) {
-        return { ...byTitleAuthor[0].book, author: byTitleAuthor[0].author || undefined };
+        return this.getById(byTitleAuthor[0].id);
       }
     }
 
     return null;
   }
 
+  // eslint-disable-next-line complexity -- sequential find-or-create for authors and narrators
   async create(data: {
     title: string;
-    authorName?: string;
-    authorAsin?: string;
-    narrator?: string;
+    authors: { name: string; asin?: string }[];
+    narrators?: string[];
     description?: string;
     coverUrl?: string;
     asin?: string;
@@ -110,48 +126,28 @@ export class BookService {
       }
     }
 
-    let authorId: number | undefined;
-
-    if (data.authorName) {
-      // Find or create author (upsert to avoid TOCTOU race on unique slug)
-      const slug = slugify(data.authorName);
-      const existingAuthor = await this.db
-        .select()
-        .from(authors)
-        .where(eq(authors.slug, slug))
-        .limit(1);
-
-      if (existingAuthor.length > 0) {
-        authorId = existingAuthor[0].id;
-      } else {
-        try {
-          const newAuthor = await this.db
-            .insert(authors)
-            .values({ name: data.authorName, slug, asin: data.authorAsin })
-            .returning();
-          authorId = newAuthor[0].id;
-        } catch {
-          // Unique constraint violation — another request created the author concurrently
-          const retryAuthor = await this.db
-            .select()
-            .from(authors)
-            .where(eq(authors.slug, slug))
-            .limit(1);
-          if (retryAuthor.length > 0) {
-            authorId = retryAuthor[0].id;
-          } else {
-            throw new Error(`Failed to find or create author: ${data.authorName}`);
-          }
-        }
+    // Deduplicate authors by slug within the payload
+    const seenSlugs = new Set<string>();
+    const uniqueAuthors: { name: string; asin?: string }[] = [];
+    for (const a of data.authors) {
+      const slug = slugify(a.name);
+      if (!seenSlugs.has(slug)) {
+        seenSlugs.add(slug);
+        uniqueAuthors.push(a);
       }
+    }
+
+    // Find or create each author
+    const authorIds: number[] = [];
+    for (const a of uniqueAuthors) {
+      const authorId = await this.findOrCreateAuthor(a.name, a.asin);
+      authorIds.push(authorId);
     }
 
     const result = await this.db
       .insert(books)
       .values({
         title: data.title,
-        authorId,
-        narrator: data.narrator,
         description: data.description,
         coverUrl: data.coverUrl,
         asin: enrichedAsin,
@@ -166,21 +162,94 @@ export class BookService {
       })
       .returning();
 
+    const bookId = result[0].id;
+
+    // Insert bookAuthors junction rows
+    for (let i = 0; i < authorIds.length; i++) {
+      await this.db
+        .insert(bookAuthors)
+        .values({ bookId, authorId: authorIds[i], position: i });
+    }
+
+    // Deduplicate and insert narrator junction rows
+    if (data.narrators && data.narrators.length > 0) {
+      const seenNarratorSlugs = new Set<string>();
+      const uniqueNarrators: string[] = [];
+      for (const name of data.narrators) {
+        const slug = slugify(name);
+        if (!seenNarratorSlugs.has(slug)) {
+          seenNarratorSlugs.add(slug);
+          uniqueNarrators.push(name);
+        }
+      }
+      for (let i = 0; i < uniqueNarrators.length; i++) {
+        const narratorId = await this.findOrCreateNarrator(uniqueNarrators[i]);
+        await this.db
+          .insert(bookNarrators)
+          .values({ bookId, narratorId, position: i });
+      }
+    }
+
     this.log.info({ title: data.title }, 'Book added to library');
     this.trackUnmatchedGenres(data.genres).catch((error) => {
       this.log.debug({ error }, 'Failed to track unmatched genres');
     });
-    return this.getById(result[0].id) as Promise<BookWithAuthor>;
+    return this.getById(bookId) as Promise<BookWithAuthor>;
   }
 
-  async update(id: number, data: Partial<NewBook>): Promise<BookWithAuthor | null> {
+  async update(id: number, data: Partial<NewBook> & { narrators?: string[]; authors?: { name: string; asin?: string }[] }): Promise<BookWithAuthor | null> {
+    const { narrators: narratorNames, authors: authorList, ...bookData } = data;
+
     const result = await this.db
       .update(books)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...bookData, updatedAt: new Date() })
       .where(eq(books.id, id))
       .returning();
 
     if (result.length === 0) return null;
+
+    // Replace narrator junction rows if narrators were provided
+    if (narratorNames !== undefined) {
+      await this.db.delete(bookNarrators).where(eq(bookNarrators.bookId, id));
+
+      const seenNarratorSlugs = new Set<string>();
+      const uniqueNarrators: string[] = [];
+      for (const name of narratorNames) {
+        const slug = slugify(name);
+        if (!seenNarratorSlugs.has(slug)) {
+          seenNarratorSlugs.add(slug);
+          uniqueNarrators.push(name);
+        }
+      }
+      for (let i = 0; i < uniqueNarrators.length; i++) {
+        const narratorId = await this.findOrCreateNarrator(uniqueNarrators[i]);
+        await this.db
+          .insert(bookNarrators)
+          .values({ bookId: id, narratorId, position: i });
+      }
+    }
+
+    // Replace author junction rows if authors were provided
+    if (authorList !== undefined) {
+      await this.db.delete(bookAuthors).where(eq(bookAuthors.bookId, id));
+
+      const seenSlugs = new Set<string>();
+      const uniqueAuthors: { name: string; asin?: string }[] = [];
+      for (const a of authorList) {
+        const slug = slugify(a.name);
+        if (!seenSlugs.has(slug)) {
+          seenSlugs.add(slug);
+          uniqueAuthors.push(a);
+        }
+      }
+
+      for (let i = 0; i < uniqueAuthors.length; i++) {
+        const authorId = await this.findOrCreateAuthor(uniqueAuthors[i].name, uniqueAuthors[i].asin);
+        await this.db
+          .insert(bookAuthors)
+          .values({ bookId: id, authorId, position: i });
+      }
+    }
 
     this.log.info({ id }, 'Book updated');
     return this.getById(id);
@@ -218,34 +287,97 @@ export class BookService {
   }
 
   async getMonitoredBooks(): Promise<BookWithAuthor[]> {
-    const results = await this.db
-      .select({ book: books, author: authors })
+    const rows = await this.db
+      .select({ id: books.id })
       .from(books)
-      .leftJoin(authors, eq(books.authorId, authors.id))
       .where(and(eq(books.monitorForUpgrades, true), eq(books.status, 'imported')));
 
-    return results.map((r) => ({
-      ...r.book,
-      author: r.author || undefined,
-    }));
+    const results: BookWithAuthor[] = [];
+    for (const row of rows) {
+      const book = await this.getById(row.id);
+      if (book) results.push(book);
+    }
+    return results;
   }
 
   async search(query: string): Promise<BookWithAuthor[]> {
-    const results = await this.db
-      .select({
-        book: books,
-        author: authors,
-      })
+    const rows = await this.db
+      .select({ id: books.id })
       .from(books)
-      .leftJoin(authors, eq(books.authorId, authors.id))
       .where(like(books.title, `%${query}%`))
       .orderBy(desc(books.createdAt))
       .limit(50);
 
-    return results.map((r) => ({
-      ...r.book,
-      author: r.author || undefined,
-    }));
+    const results: BookWithAuthor[] = [];
+    for (const row of rows) {
+      const book = await this.getById(row.id);
+      if (book) results.push(book);
+    }
+    return results;
+  }
+
+  private async findOrCreateAuthor(name: string, asin?: string): Promise<number> {
+    const slug = slugify(name);
+    const existing = await this.db
+      .select()
+      .from(authors)
+      .where(eq(authors.slug, slug))
+      .limit(1);
+
+    if (existing.length > 0) {
+      return existing[0].id;
+    }
+
+    try {
+      const newAuthor = await this.db
+        .insert(authors)
+        .values({ name, slug, asin })
+        .returning();
+      return newAuthor[0].id;
+    } catch {
+      // Unique constraint violation — concurrent creation
+      const retryAuthor = await this.db
+        .select()
+        .from(authors)
+        .where(eq(authors.slug, slug))
+        .limit(1);
+      if (retryAuthor.length > 0) {
+        return retryAuthor[0].id;
+      }
+      throw new Error(`Failed to find or create author: ${name}`);
+    }
+  }
+
+  private async findOrCreateNarrator(name: string): Promise<number> {
+    const slug = slugify(name);
+    const existing = await this.db
+      .select()
+      .from(narrators)
+      .where(eq(narrators.slug, slug))
+      .limit(1);
+
+    if (existing.length > 0) {
+      return existing[0].id;
+    }
+
+    try {
+      const newNarrator = await this.db
+        .insert(narrators)
+        .values({ name, slug })
+        .returning();
+      return newNarrator[0].id;
+    } catch {
+      // Unique constraint violation — concurrent creation
+      const retryNarrator = await this.db
+        .select()
+        .from(narrators)
+        .where(eq(narrators.slug, slug))
+        .limit(1);
+      if (retryNarrator.length > 0) {
+        return retryNarrator[0].id;
+      }
+      throw new Error(`Failed to find or create narrator: ${name}`);
+    }
   }
 
   /** Fire-and-forget: track genres not in the synonym/known lists for future analysis */

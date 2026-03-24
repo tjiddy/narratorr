@@ -19,7 +19,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
 const mockBook = {
   ...createMockDbBook(),
-  author: createMockDbAuthor(),
+  authors: [createMockDbAuthor()],
+  narrators: [],
 };
 
 describe('books routes', () => {
@@ -126,7 +127,7 @@ describe('books routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson' },
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }] },
       });
 
       expect(res.statusCode).toBe(201);
@@ -147,11 +148,10 @@ describe('books routes', () => {
         url: '/api/books',
         payload: {
           title: 'The Way of Kings',
-          authorName: 'Brandon Sanderson',
-          authorAsin: 'B001IGFHW6',
+          authors: [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }],
           asin: 'B003P2WO5E',
           isbn: '978-0-7653-2635-5',
-          narrator: 'Michael Kramer, Kate Reading',
+          narrators: ['Michael Kramer', 'Kate Reading'],
           seriesName: 'The Stormlight Archive',
           seriesPosition: 1,
           duration: 2700,
@@ -176,7 +176,7 @@ describe('books routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson' },
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }] },
       });
 
       expect(res.statusCode).toBe(409);
@@ -205,7 +205,7 @@ describe('books routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson', searchImmediately: true },
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: true },
       });
 
       expect(res.statusCode).toBe(201);
@@ -234,7 +234,7 @@ describe('books routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson', searchImmediately: true },
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: true },
       });
 
       expect(res.statusCode).toBe(201);
@@ -261,7 +261,7 @@ describe('books routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson', searchImmediately: true },
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: true },
       });
 
       expect(res.statusCode).toBe(201);
@@ -277,7 +277,7 @@ describe('books routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson', searchImmediately: false },
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: false },
       });
 
       expect(res.statusCode).toBe(201);
@@ -291,7 +291,7 @@ describe('books routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson' },
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }] },
       });
 
       expect(res.statusCode).toBe(201);
@@ -307,7 +307,7 @@ describe('books routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson', searchImmediately: true },
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: true },
       });
 
       expect(res.statusCode).toBe(201);
@@ -324,7 +324,7 @@ describe('books routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson', searchImmediately: true },
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], searchImmediately: true },
       });
 
       expect(res.statusCode).toBe(201);
@@ -338,7 +338,7 @@ describe('books routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson', monitorForUpgrades: true },
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], monitorForUpgrades: true },
       });
 
       expect(res.statusCode).toBe(201);
@@ -352,7 +352,7 @@ describe('books routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'The Way of Kings', authorName: 'Brandon Sanderson' },
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }] },
       });
 
       expect(res.statusCode).toBe(201);
@@ -366,7 +366,7 @@ describe('books routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'The Way of Kings', providerId: '386446' },
+        payload: { title: 'The Way of Kings', authors: [{ name: 'Brandon Sanderson' }], providerId: '386446' },
       });
 
       expect(res.statusCode).toBe(201);
@@ -726,6 +726,33 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(404);
     });
+
+    it('delete event snapshot includes comma-joined authors and narratorName (#71)', async () => {
+      const multiAuthorBook = {
+        ...mockBook,
+        authors: [
+          createMockDbAuthor({ id: 1, name: 'Brandon Sanderson' }),
+          createMockDbAuthor({ id: 2, name: 'Robert Jordan' }),
+        ],
+        narrators: [
+          { id: 1, name: 'Michael Kramer', slug: 'michael-kramer', createdAt: new Date(), updatedAt: new Date() },
+          { id: 2, name: 'Kate Reading', slug: 'kate-reading', createdAt: new Date(), updatedAt: new Date() },
+        ],
+      };
+      (services.book.getById as Mock).mockResolvedValue(multiAuthorBook);
+      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
+      (services.book.delete as Mock).mockResolvedValue(true);
+
+      await app.inject({ method: 'DELETE', url: '/api/books/1' });
+
+      expect(services.eventHistory.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          authorName: 'Brandon Sanderson, Robert Jordan',
+          narratorName: 'Michael Kramer, Kate Reading',
+          eventType: 'deleted',
+        }),
+      );
+    });
   });
 
   describe('GET /api/books/:id/files', () => {
@@ -935,7 +962,7 @@ describe('books routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/books',
-        payload: { title: 'Test Book', authorName: 'Author' },
+        payload: { title: 'Test Book', authors: [{ name: 'Author' }] },
       });
 
       expect(res.statusCode).toBe(500);
@@ -1202,5 +1229,197 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(500);
     });
+  });
+});
+
+describe('POST /api/books — array payload schema (#71)', () => {
+  let app: Awaited<ReturnType<typeof createTestApp>>;
+  let services: Services;
+
+  beforeAll(async () => {
+    services = createMockServices();
+    app = await createTestApp(services);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    resetMockServices(services);
+  });
+
+  it('accepts authors: [{ name, asin }] and narrators: string[] arrays', async () => {
+    const bookWithNarrators = {
+      ...createMockDbBook(),
+      authors: [createMockDbAuthor()],
+      narrators: [],
+    };
+    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    (services.book.create as Mock).mockResolvedValue(bookWithNarrators);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: {
+        title: 'The Way of Kings',
+        authors: [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }],
+        narrators: ['Michael Kramer', 'Kate Reading'],
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({
+      authors: [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }],
+      narrators: ['Michael Kramer', 'Kate Reading'],
+    }));
+  });
+
+  it('rejects authors: [] with 400 (min(1))', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: {
+        title: 'The Way of Kings',
+        authors: [],
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(services.book.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects narrators: [""] with 400 (element min(1))', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: {
+        title: 'The Way of Kings',
+        authors: [{ name: 'Brandon Sanderson' }],
+        narrators: [''],
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(services.book.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts narrators omitted', async () => {
+    const bookNoNarrators = {
+      ...createMockDbBook(),
+      authors: [createMockDbAuthor()],
+      narrators: [],
+    };
+    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    (services.book.create as Mock).mockResolvedValue(bookNoNarrators);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/books',
+      payload: {
+        title: 'The Way of Kings',
+        authors: [{ name: 'Brandon Sanderson' }],
+        // narrators omitted
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'The Way of Kings',
+    }));
+  });
+});
+
+describe('PUT /api/books/:id — array update contract (#71)', () => {
+  let app: Awaited<ReturnType<typeof createTestApp>>;
+  let services: Services;
+
+  beforeAll(async () => {
+    services = createMockServices();
+    app = await createTestApp(services);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    resetMockServices(services);
+  });
+
+  it('authors omitted → existing author junction rows unchanged', async () => {
+    const existingBook = {
+      ...createMockDbBook(),
+      authors: [createMockDbAuthor()],
+      narrators: [],
+    };
+    (services.book.update as Mock).mockResolvedValue(existingBook);
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/books/1',
+      payload: { title: 'Updated Title' }, // no authors field
+    });
+
+    expect(res.statusCode).toBe(200);
+    // Service called without authors — junction rows left unchanged
+    expect(services.book.update).toHaveBeenCalledWith(1, { title: 'Updated Title' });
+  });
+
+  it('narrators: [] → clears all narrator junction rows', async () => {
+    const bookNoNarrators = {
+      ...createMockDbBook(),
+      authors: [createMockDbAuthor()],
+      narrators: [],
+    };
+    (services.book.update as Mock).mockResolvedValue(bookNoNarrators);
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/books/1',
+      payload: { narrators: [] },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(services.book.update).toHaveBeenCalledWith(1, { narrators: [] });
+  });
+
+  it('authors: [] → 400 error (min(1))', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/books/1',
+      payload: { authors: [] },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(services.book.update).not.toHaveBeenCalled();
+  });
+
+  it('existing scalar fields (title, description, etc.) still update correctly', async () => {
+    const updatedBook = {
+      ...createMockDbBook({ title: 'New Title', description: 'New description' }),
+      authors: [createMockDbAuthor()],
+      narrators: [],
+    };
+    (services.book.update as Mock).mockResolvedValue(updatedBook);
+
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/books/1',
+      payload: {
+        title: 'New Title',
+        description: 'New description',
+        authors: [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }],
+        narrators: ['Michael Kramer'],
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(services.book.update).toHaveBeenCalledWith(1, expect.objectContaining({
+      title: 'New Title',
+      description: 'New description',
+      authors: [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }],
+      narrators: ['Michael Kramer'],
+    }));
   });
 });

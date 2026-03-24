@@ -305,7 +305,7 @@ describe('LibraryBookCard', () => {
     });
 
     it('does not render narrator/series section when both are absent', () => {
-      const book = createMockBook({ narrator: null, seriesName: null });
+      const book = createMockBook({ narrators: [], seriesName: null });
       render(<LibraryBookCard {...defaultProps({ book })} />);
       expect(screen.queryByText('Michael Kramer')).not.toBeInTheDocument();
     });

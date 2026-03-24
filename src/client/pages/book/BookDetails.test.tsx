@@ -45,7 +45,7 @@ function makeBook(overrides: Partial<BookWithAuthor> = {}): BookWithAuthor {
     audioFileCount: 12,
     audioTotalSize: 500_000_000,
     audioDuration: 36000,
-    author: { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson', asin: 'A001' },
+    authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson', asin: 'A001' }],
     ...overrides,
   });
 }
@@ -153,7 +153,7 @@ describe('BookDetails', () => {
   describe('author without ASIN', () => {
     it('renders author name as plain text instead of link', () => {
       renderBookDetails({
-        author: { id: 1, name: 'Unknown Author', slug: 'unknown-author', asin: null },
+        authors: [{ id: 1, name: 'Unknown Author', slug: 'unknown-author', asin: null }],
       });
 
       const authorText = screen.getByText('Unknown Author');

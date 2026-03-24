@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import type { BookListParams, BookWithAuthor } from '@/lib/api';
-import { type StatusFilter, type SortField, type SortDirection, type DisplayBook, filterTabs, collapseSeries, extractNarrators } from './helpers.js';
+import { type StatusFilter, type SortField, type SortDirection, type DisplayBook, filterTabs, collapseSeries } from './helpers.js';
 import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 import { usePagination } from '@/hooks/usePagination';
 
@@ -99,17 +99,16 @@ export function applyClientFilters(
 ): DisplayBook[] {
   let result = books;
   if (filters.authorFilter) {
-    result = result.filter((b) => b.author?.name === filters.authorFilter);
+    result = result.filter((b) => b.authors?.some((a) => a.name === filters.authorFilter));
   }
   if (filters.seriesFilter) {
     result = result.filter((b) => b.seriesName === filters.seriesFilter);
   }
   if (filters.narratorFilter) {
     const filterLower = filters.narratorFilter.toLowerCase();
-    result = result.filter((b) => {
-      const narrators = extractNarrators(b.narrator);
-      return narrators.some((n) => n.toLowerCase() === filterLower);
-    });
+    result = result.filter((b) =>
+      b.narrators.some((n) => n.name.toLowerCase() === filterLower),
+    );
   }
   if (filters.collapseSeriesEnabled) {
     return collapseSeries(result, filters.sortField, filters.sortDirection);
