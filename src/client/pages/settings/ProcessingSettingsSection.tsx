@@ -218,7 +218,7 @@ export function ProcessingSettingsSection() {
           </label>
         </div>
 
-        <div className={`space-y-5 transition-opacity duration-200 ${enabled ? 'opacity-100' : 'opacity-40'}`}>
+        {enabled && <div className="space-y-5">
           <div>
             <label htmlFor="ffmpegPath" className="block text-sm font-medium mb-2">ffmpeg Path</label>
             <div className="flex gap-2">
@@ -226,8 +226,7 @@ export function ProcessingSettingsSection() {
                 id="ffmpegPath"
                 type="text"
                 {...register('ffmpegPath')}
-                disabled={!enabled}
-                className={`flex-1 px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed ${
+                className={`flex-1 px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
                   errors.ffmpegPath ? 'border-destructive' : 'border-border'
                 }`}
                 placeholder="/usr/bin/ffmpeg"
@@ -235,7 +234,7 @@ export function ProcessingSettingsSection() {
               <button
                 type="button"
                 onClick={handleProbe}
-                disabled={!enabled || !ffmpegPath?.trim() || probing}
+                disabled={!ffmpegPath?.trim() || probing}
                 className="px-4 py-3 bg-muted text-foreground font-medium rounded-xl hover:bg-muted/80 disabled:opacity-50 disabled:cursor-not-allowed transition-all whitespace-nowrap flex items-center gap-2"
               >
                 {probing ? <LoadingSpinner className="w-4 h-4" /> : 'Test'}
@@ -255,8 +254,7 @@ export function ProcessingSettingsSection() {
             <select
               id="outputFormat"
               {...register('outputFormat')}
-              disabled={!enabled}
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed"
+              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
             >
               {outputFormatSchema.options.map((format) => (
                 <option key={format} value={format}>
@@ -280,8 +278,7 @@ export function ProcessingSettingsSection() {
                   id="keepOriginalBitrate"
                   type="checkbox"
                   {...register('keepOriginalBitrate')}
-                  disabled={!enabled}
-                  className="rounded border-border text-primary focus:ring-primary disabled:cursor-not-allowed"
+                  className="rounded border-border text-primary focus:ring-primary"
                 />
                 Keep original
               </label>
@@ -290,7 +287,7 @@ export function ProcessingSettingsSection() {
               id="bitrate"
               type="number"
               {...register('bitrate', { valueAsNumber: true })}
-              disabled={!enabled || keepOriginalBitrate}
+              disabled={keepOriginalBitrate}
               className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed ${
                 errors.bitrate ? 'border-destructive' : 'border-border'
               }`}
@@ -313,8 +310,7 @@ export function ProcessingSettingsSection() {
             <select
               id="mergeBehavior"
               {...register('mergeBehavior')}
-              disabled={!enabled}
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed"
+              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
             >
               {mergeBehaviorSchema.options.map((behavior) => (
                 <option key={behavior} value={behavior}>
@@ -333,12 +329,11 @@ export function ProcessingSettingsSection() {
             type="number"
             registration={register('maxConcurrentProcessing', { valueAsNumber: true })}
             error={errors.maxConcurrentProcessing}
-            disabled={!enabled}
             min={1}
             placeholder="2"
             hint="Maximum number of imports that can run simultaneously. Higher values use more CPU and disk I/O."
           />
-        </div>
+        </div>}
 
         <div className="pt-6 mt-6 border-t border-border">
           <div className="flex items-center justify-between">
@@ -354,14 +349,13 @@ export function ProcessingSettingsSection() {
             </label>
           </div>
 
-          <div className={`space-y-5 mt-5 transition-opacity duration-200 ${taggingEnabled ? 'opacity-100' : 'opacity-40'}`}>
+          {taggingEnabled && <div className="space-y-5 mt-5">
             <div>
               <label htmlFor="tagMode" className="block text-sm font-medium mb-2">Tag Mode</label>
               <select
                 id="tagMode"
                 {...register('tagMode')}
-                disabled={!taggingEnabled}
-                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed"
+                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
               >
                 {tagModeSchema.options.map((mode) => (
                   <option key={mode} value={mode}>
@@ -382,11 +376,11 @@ export function ProcessingSettingsSection() {
                 </p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
-                <input id="embedCover" type="checkbox" {...register('embedCover')} disabled={!taggingEnabled} className="sr-only peer" />
+                <input id="embedCover" type="checkbox" {...register('embedCover')} className="sr-only peer" />
                 <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full disabled:cursor-not-allowed" />
               </label>
             </div>
-          </div>
+          </div>}
         </div>
 
         <CustomScriptSection register={register} errors={errors} />
