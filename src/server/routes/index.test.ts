@@ -1,8 +1,53 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { routeRegistry } from './index.js';
 import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
 import type { Services } from './index.js';
+
+// ---------------------------------------------------------------------------
+// Module mocks for createServices tests
+// ---------------------------------------------------------------------------
+
+// All service constructors mocked as bare vi.fn() (returns empty object when called with new).
+// DownloadService and EventHistoryService need setRetrySearchDeps; use regular-function constructors.
+vi.mock('../services', () => ({
+  SettingsService: vi.fn(),  // configured per test
+  AuthService: vi.fn(),
+  IndexerService: vi.fn(),
+  DownloadClientService: vi.fn(),
+  BookService: vi.fn(),
+  BookListService: vi.fn(),
+
+  DownloadService: vi.fn().mockImplementation(function(this: Record<string, unknown>) { this.setRetrySearchDeps = vi.fn(); }),
+  MetadataService: vi.fn(),
+  NotifierService: vi.fn(),
+  BlacklistService: vi.fn(),
+  RemotePathMappingService: vi.fn(),
+  RenameService: vi.fn(),
+
+  EventHistoryService: vi.fn().mockImplementation(function(this: Record<string, unknown>) { this.setRetrySearchDeps = vi.fn(); }),
+  TaggingService: vi.fn(),
+  QualityGateService: vi.fn(),
+  RetryBudget: vi.fn(),
+  DiscoveryService: vi.fn(),
+}));
+vi.mock('../services/import.service.js', () => ({ ImportService: vi.fn() }));
+vi.mock('../services/import-orchestrator.js', () => ({ ImportOrchestrator: vi.fn() }));
+vi.mock('../services/download-orchestrator.js', () => ({ DownloadOrchestrator: vi.fn() }));
+vi.mock('../services/quality-gate-orchestrator.js', () => ({ QualityGateOrchestrator: vi.fn() }));
+vi.mock('../services/import-list.service.js', () => ({ ImportListService: vi.fn() }));
+vi.mock('../services/library-scan.service.js', () => ({ LibraryScanService: vi.fn() }));
+vi.mock('../services/match-job.service.js', () => ({ MatchJobService: vi.fn() }));
+vi.mock('../services/backup.service.js', () => ({ BackupService: vi.fn() }));
+vi.mock('../services/health-check.service.js', () => ({ HealthCheckService: vi.fn() }));
+vi.mock('../services/task-registry.js', () => ({ TaskRegistry: vi.fn() }));
+vi.mock('../services/event-broadcaster.service.js', () => ({ EventBroadcasterService: vi.fn() }));
+vi.mock('../services/recycling-bin.service.js', () => ({ RecyclingBinService: vi.fn() }));
+vi.mock('../services/retry-search.js', () => ({ createRetrySearchDeps: vi.fn().mockReturnValue({}) }));
+vi.mock('../config.js', () => ({ config: { configPath: '/tmp/config', dbPath: '/tmp/db.sqlite' } }));
+vi.mock('../../core/utils/audio-processor.js', () => ({ detectFfmpegPath: vi.fn(), probeFfmpeg: vi.fn() }));
+vi.mock('../../core/indexers/proxy.js', () => ({ resolveProxyIp: vi.fn() }));
 
 describe('routeRegistry', () => {
   it('contains all 22 route factories', () => {
@@ -71,5 +116,36 @@ describe('registerRoutes', () => {
         (routeRegistry as unknown[])[i] = originals[i];
       }
     }
+  });
+});
+
+describe('createServices', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('invokes bootstrapProcessingDefaults with detectFfmpegPath on startup', async () => {
+    const { SettingsService } = await import('../services/index.js');
+    const { detectFfmpegPath } = await import('../../core/utils/audio-processor.js');
+
+    // Capture the bootstrap mock so we can assert on it
+    const mockBootstrap = vi.fn().mockResolvedValue(undefined);
+  
+    vi.mocked(SettingsService).mockImplementation(function(this: Record<string, unknown>) {
+      this.get = vi.fn().mockResolvedValue({ audibleRegion: 'us' });
+      this.bootstrapProcessingDefaults = mockBootstrap;
+    } as never);
+
+    const { createServices } = await import('./index.js');
+    const db = {} as unknown as Db;
+    const log = {
+      info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(),
+      child: vi.fn().mockReturnThis(), trace: vi.fn(), fatal: vi.fn(),
+    } as unknown as FastifyBaseLogger;
+
+    await createServices(db, log);
+
+    expect(mockBootstrap).toHaveBeenCalledOnce();
+    expect(mockBootstrap).toHaveBeenCalledWith(detectFfmpegPath);
   });
 });

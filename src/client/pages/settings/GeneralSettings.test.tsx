@@ -52,8 +52,8 @@ describe('GeneralSettings', () => {
     expect(screen.getByText('Quality')).toBeInTheDocument();
     expect(screen.queryByText('Post Processing')).not.toBeInTheDocument();
     expect(screen.getByText('Network')).toBeInTheDocument();
-    expect(screen.getByText('Housekeeping')).toBeInTheDocument();
-    expect(screen.getByText('Logging')).toBeInTheDocument();
+    expect(screen.queryByText('Housekeeping')).not.toBeInTheDocument();
+    expect(screen.queryByText('Logging')).not.toBeInTheDocument();
     expect(screen.getByText('Metadata')).toBeInTheDocument();
   });
 
@@ -88,13 +88,13 @@ describe('GeneralSettings', () => {
 
     // Wait for sections to load
     await waitFor(() => {
-      expect(screen.getByLabelText('Event History Retention (days)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Blacklist TTL (days)')).toBeInTheDocument();
     });
 
-    // Make General section dirty by changing retention days
-    const retentionInput = screen.getByLabelText('Event History Retention (days)');
-    await user.clear(retentionInput);
-    await user.type(retentionInput, '42');
+    // Make Search section dirty by changing blacklist TTL
+    const blacklistInput = screen.getByLabelText('Blacklist TTL (days)');
+    await user.clear(blacklistInput);
+    await user.type(blacklistInput, '14');
 
     // Also make Network section dirty with a valid proxy URL
     const proxyInput = screen.getByLabelText('Proxy URL');
@@ -113,9 +113,9 @@ describe('GeneralSettings', () => {
       expect(mockApi.updateSettings).toHaveBeenCalled();
     });
 
-    // After Network save + cache invalidation refetch, General section should
+    // After Network save + cache invalidation refetch, Search section should
     // still have its dirty value preserved (the !isDirty guard prevents reset)
-    expect(retentionInput).toHaveValue(42);
+    expect(blacklistInput).toHaveValue(14);
 
     // General section save button should still be visible (still dirty)
     const remainingSaveButtons = screen.getAllByRole('button', { name: /^save$/i });

@@ -3,7 +3,6 @@ import { SearchSettingsSection } from './SearchSettingsSection';
 import { ImportSettingsSection } from './ImportSettingsSection';
 import { QualitySettingsSection } from './QualitySettingsSection';
 import { NetworkSettingsSection } from './NetworkSettingsSection';
-import { GeneralSettingsForm } from './GeneralSettingsForm';
 import { MetadataSettingsForm } from './MetadataSettingsForm';
 import { DiscoverySettingsSection } from '../discover/DiscoverySettingsSection';
 
@@ -16,7 +15,6 @@ export function GeneralSettings() {
       <QualitySettingsSection />
       <NetworkSettingsSection />
       <DiscoverySettingsSection />
-      <GeneralSettingsForm />
       <MetadataSettingsForm />
     </div>
   );
