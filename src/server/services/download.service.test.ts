@@ -1279,11 +1279,6 @@ describe('DownloadService', () => {
       });
 
       // cancel() DB update should be called with 'Replaced by new download'
-      const updateCalls = (db.update as Mock).mock.calls;
-      const setCalls = updateCalls.flatMap((_, i) => {
-        const chain = (db.update as Mock).mock.results[i]?.value;
-        return chain?.set?.mock?.calls ?? [];
-      });
       // At least one set() call should contain the replacement reason
       const hasReplacedMessage = (db.update as Mock).mock.results.some(
         (r: { value: ReturnType<typeof mockDbChain> }) => r.value?.set?.mock?.calls?.some(
