@@ -1477,3 +1477,77 @@ describe('LibraryScanService', () => {
     });
   });
 });
+
+describe('buildBookCreatePayload multi-author (issue #79)', () => {
+  let service: LibraryScanService;
+  let mockBookService: { findDuplicate: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(enrichBookFromAudio).mockResolvedValue({ enriched: true });
+    const db = createMockDb();
+    const chainMethods = {
+      from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue([]), set: vi.fn().mockReturnThis(),
+    };
+    db.select.mockReturnValue(chainMethods as never);
+    db.update.mockReturnValue(chainMethods as never);
+    mockBookService = {
+      findDuplicate: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockImplementation(async (data: { title: string }) => ({ id: 99, title: data.title, status: 'imported' })),
+      update: vi.fn().mockResolvedValue({ id: 99, title: 'Test', authors: [], narrators: [] }),
+    };
+    const settings = createMockSettingsService({
+      library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '' },
+      import: { minFreeSpaceGB: 0, deleteAfterImport: false, minSeedTime: 0 },
+    });
+    service = new LibraryScanService(
+      db as never,
+      mockBookService as never,
+      { searchBooks: vi.fn().mockResolvedValue([]), getBook: vi.fn().mockResolvedValue(null), enrichBook: vi.fn().mockResolvedValue(null) } as never,
+      settings as never,
+      { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), trace: vi.fn(), fatal: vi.fn(), child: vi.fn().mockReturnThis(), level: 'info', silent: vi.fn() } as never,
+    );
+  });
+
+  it('with meta.authors = [{name:"A"},{name:"B"}] passes both to bookService.create', async () => {
+    await service.confirmImport([{
+      path: '/audiobooks/test',
+      title: 'Multi Author Book',
+      metadata: {
+        title: 'Multi Author Book',
+        authors: [{ name: 'Author A' }, { name: 'Author B' }],
+        narrators: [],
+      },
+    }]);
+
+    expect(mockBookService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ authors: [{ name: 'Author A' }, { name: 'Author B' }] }),
+    );
+  });
+
+  it('fallback: when meta.authors is absent, uses item.authorName', async () => {
+    await service.confirmImport([{
+      path: '/audiobooks/test',
+      title: 'Single Author Book',
+      authorName: 'Frank Herbert',
+    }]);
+
+    expect(mockBookService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ authors: [{ name: 'Frank Herbert' }] }),
+    );
+  });
+
+  it('with meta.authors = [] falls back to item.authorName (not zero-author book)', async () => {
+    await service.confirmImport([{
+      path: '/audiobooks/test',
+      title: 'Fallback Book',
+      authorName: 'Isaac Asimov',
+      metadata: { title: 'Fallback Book', authors: [], narrators: [] },
+    }]);
+
+    expect(mockBookService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ authors: [{ name: 'Isaac Asimov' }] }),
+    );
+  });
+});

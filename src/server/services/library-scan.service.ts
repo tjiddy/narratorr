@@ -345,7 +345,7 @@ export class LibraryScanService {
         title: item.title,
         seriesName: item.seriesName || meta?.series?.[0]?.name,
         seriesPosition: meta?.series?.[0]?.position,
-        narrators: meta?.narrators?.[0] ? [{ name: meta.narrators[0] }] : undefined,
+        narrators: meta?.narrators?.length ? meta.narrators.map(n => ({ name: n })) : undefined,
         publishedDate: meta?.publishedDate,
       },
       item.authorName ?? null,
@@ -640,7 +640,7 @@ function buildBookCreatePayload(
 ) {
   return {
     title: item.title,
-    authors: item.authorName ? [{ name: item.authorName }] : [],
+    authors: item.authorName ? [{ name: item.authorName }] : (meta?.authors?.length ? meta.authors : []),
     narrators: meta?.narrators,
     seriesName: item.seriesName || meta?.series?.[0]?.name,
     seriesPosition: meta?.series?.[0]?.position,
