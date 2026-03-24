@@ -46,7 +46,15 @@ describe('SettingsLayout', () => {
     expect(systemLink.className).toContain('bg-primary');
   });
 
-  it.todo('applies active styling to Post Processing when at /settings/post-processing');
+  it('applies active styling to Post Processing when at /settings/post-processing', () => {
+    renderWithProviders(<SettingsLayout />, { route: '/settings/post-processing' });
+
+    const generalLink = screen.getByText('General').closest('a')!;
+    const postProcessingLink = screen.getByText('Post Processing').closest('a')!;
+
+    expect(generalLink.className).not.toContain('bg-primary');
+    expect(postProcessingLink.className).toContain('bg-primary');
+  });
 
   it('navigates between settings sections', async () => {
     const user = userEvent.setup();
