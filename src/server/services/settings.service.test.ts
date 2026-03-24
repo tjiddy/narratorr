@@ -390,7 +390,7 @@ describe('SettingsService.bootstrapProcessingDefaults', () => {
     _resetKey();
   });
 
-  it('writes processing.enabled=true and detected ffmpegPath when no processing row exists and detectFfmpegPath returns a path', async () => {
+  it('writes processing.enabled=false and detected ffmpegPath when no processing row exists and detectFfmpegPath returns a path', async () => {
     // No existing processing row
     db.select.mockReturnValue(mockDbChain([]));
     const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
@@ -403,7 +403,7 @@ describe('SettingsService.bootstrapProcessingDefaults', () => {
     expect(insertCall.values).toHaveBeenCalledWith(
       expect.objectContaining({
         key: 'processing',
-        value: expect.objectContaining({ enabled: true, ffmpegPath: '/usr/bin/ffmpeg' }),
+        value: expect.objectContaining({ enabled: false, ffmpegPath: '/usr/bin/ffmpeg' }),
       }),
     );
   });
@@ -432,7 +432,7 @@ describe('SettingsService.bootstrapProcessingDefaults', () => {
     // First call: no row
     db.select.mockReturnValueOnce(mockDbChain([]));
     // After first insert, second call finds the row
-    db.select.mockReturnValueOnce(mockDbChain([{ key: 'processing', value: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg' } }]));
+    db.select.mockReturnValueOnce(mockDbChain([{ key: 'processing', value: { enabled: false, ffmpegPath: '/usr/bin/ffmpeg' } }]));
     const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
 
     await service.bootstrapProcessingDefaults(detectFfmpegPath);

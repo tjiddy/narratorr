@@ -114,7 +114,8 @@ export class SettingsService {
 
   /**
    * Run once at startup: if no processing row exists and ffmpeg can be found,
-   * write processing.enabled=true with the detected path as a sensible default.
+   * pre-fill ffmpegPath with the detected path but leave processing.enabled=false
+   * so the user must explicitly opt in before audio files are modified.
    */
   async bootstrapProcessingDefaults(detectFfmpegPath: () => Promise<string | null>): Promise<void> {
     const existing = await this.db.select().from(settings).where(eq(settings.key, 'processing')).limit(1);
@@ -123,6 +124,6 @@ export class SettingsService {
     const ffmpegPath = await detectFfmpegPath();
     if (!ffmpegPath) return;
 
-    await this.set('processing', { ...DEFAULT_SETTINGS.processing, enabled: true, ffmpegPath });
+    await this.set('processing', { ...DEFAULT_SETTINGS.processing, enabled: false, ffmpegPath });
   }
 }
