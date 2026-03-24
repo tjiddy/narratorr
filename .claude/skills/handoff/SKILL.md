@@ -226,7 +226,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
         <One or two sentences: what you learned, why it matters, and what would have prevented the friction.>
         ```
 
-   c. **Log debt observations:** If you noticed anything out of scope that needs fixing (bad patterns, missing tests, poor abstractions, confusing naming), append one-liner bullets to `.claude/cl/debt.md`. Create the file with a `# Technical Debt` heading if it doesn't exist. Format: `- **<file or area>**: <what's wrong and why it matters> (discovered in #<id>)`
+   c. **Log debt observations:** If you noticed anything out of scope that needs fixing (bad patterns, missing tests, poor abstractions, confusing naming), append one-liner bullets to `.claude/cl/debt.md`. Create the file with a `# Technical Debt` heading if it doesn't exist. Format: `- **<file or area>**: <what's wrong and why it matters> (discovered in #<id>)`. **Dedup check:** Before appending, read the existing debt file and check if the same issue is already logged (same file/area and same problem). If it is, do NOT add a duplicate entry — the existing entry is sufficient regardless of which issue discovered it first.
 
    d. **Rank top 3:** Ask yourself: "What are 3 things I wish I'd known before starting this issue?" Write these to a `### Wish I'd Known` section in the workflow log entry (step 13). Reference the full learning files from 12b where applicable.
 
