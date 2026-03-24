@@ -24,6 +24,10 @@ Reviews a PR by checking the diff against the linked issue's acceptance criteria
 
 **Review policy: high recall.** Prefer false positives over missed defects. The cost of a PR author dismissing a noisy suggestion is far lower than the cost of a defect reaching main. Do not cap the number of findings — report everything you find. Use `suggestion` liberally for anything that *might* matter; reserve `blocking` strictly for issues backed by concrete evidence (broken behavior, missing tests for new code paths, verified design violations). No speculative blockers — if you can't point to a specific line and a specific consequence, it's a suggestion.
 
+## Guardrails
+
+**This skill is READ-ONLY for source code.** Never stage, commit, or modify any files outside of `.claude/cl/` and `.claude/state/`. The reviewer does not fix code — it reports findings for the author to address. If you find yourself editing source files, test files, config files, or anything under `src/`, STOP — you are doing the author's job.
+
 ## GitHub CLI
 
 All GitHub commands use: `gh` (referred to as `gh` below).
