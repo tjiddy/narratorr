@@ -1,4 +1,33 @@
 # Workflow Log
+## #69 Rename Search to Add Book and simplify search page layout — 2026-03-24
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #76
+
+### Metrics
+- Files changed: 6 | Tests added/modified: 49 (Layout.test.tsx, SearchPage.test.tsx, SearchResults.test.tsx)
+- Quality gate runs: 2 (both pass)
+- Fix iterations: 0 (one natural module ordering adjustment — empty state copy fixed alongside hero removal when test coupling surfaced)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-groomed by /implement time (two spec review rounds resolved all blockers). Module scoping clear, no new files needed.
+- Friction / issues encountered: (1) GH_TOKEN env var stale at PR creation — had to regenerate manually via JWT→installation token flow. (2) `debt.md` is root-owned and not writable by automation user. (3) Test module ordering: SearchPage test asserting `/discover/i` absence caught child component (SearchResults) "discover" text — blocked Module 2 until Module 3 empty state copy was also fixed.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for self-review and coverage analysis
+- Avoidable waste: Two separate Explore subagents could be merged for copy-only rename issues
+- Suggestions: For label/copy-only issues, consolidate self-review + coverage into a single subagent call
+
+### Infrastructure gaps
+- Repeated workarounds: GH_TOKEN stale at PR creation — recurring pattern; scripts/lib.ts handles it when called via node scripts but gh CLI doesn't auto-refresh
+- Missing tooling / config: `debt.md` is root-owned and unwritable by automation user — deferred debt item cannot be logged
+- Unresolved debt: `EmptyLibraryState.tsx:33-39` — "Discover Books" CTA uses "Discover" language for `/search` route; explicitly deferred from #69, needs follow-up
+
+### Wish I'd Known
+1. Cross-component text assertions (`queryByText(/discover/i)` on SearchPage) catch text from child components too — scoping to `queryAllByRole('heading')` avoids coupling trap (see `search-empty-state-couples-to-page-tests.md`)
+2. GH_TOKEN in env is a cached installation token that expires — always regenerate via JWT flow at PR creation time rather than relying on cached env var
+3. `debt.md` is root-owned and unwritable — debt items must be captured in the workflow log entry instead
+
 ## #71 Many-to-many authors and narrators — 2026-03-24
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #75
