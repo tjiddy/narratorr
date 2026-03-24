@@ -1332,22 +1332,49 @@ describe('DownloadService', () => {
       expect(db.insert).not.toHaveBeenCalled();
     });
 
-    it('proceeds without cancellation when only processing_queued/importing downloads exist', async () => {
-      // No replaceable active downloads
-      db.select.mockReturnValueOnce(mockDbChain([]));
-      // getById for return
-      db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
-      db.insert.mockReturnValue(mockDbChain([{ id: 10 }]));
-      db.update.mockReturnValue(mockDbChain());
+    it('throws generic duplicate error (not 409) when only processing_queued/importing downloads exist', async () => {
+      const pipelineDownload = { ...mockDownload, id: 5, status: 'processing_queued' as const };
+      // getActiveByBookId returns only pipeline download
+      db.select.mockReturnValueOnce(mockDbChain([{ download: pipelineDownload, book: mockBook }]));
 
-      const result = await service.grab({
+      const err = await service.grab({
         downloadUrl: 'magnet:?xt=urn:btih:abc',
         title: 'Test',
         bookId: 1,
-      });
+      }).catch((e: unknown) => e);
 
-      expect(result).toBeDefined();
-      expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
+      expect(err).toBeInstanceOf(Error);
+      expect((err as { code?: string }).code).toBeUndefined(); // NOT ACTIVE_DOWNLOAD_EXISTS
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('reverts book status to wanted when cancel succeeds but follow-up grab fails', async () => {
+      const replaceableDownload = { ...mockDownload, id: 5, status: 'downloading' as const };
+      // getActiveByBookId returns replaceable download
+      db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
+      // cancel's getById
+      db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
+      const cancelUpdateChain = mockDbChain();
+      const bookUpdateChain = mockDbChain();
+      db.update.mockReturnValueOnce(cancelUpdateChain);  // cancel status update
+      db.update.mockReturnValueOnce(bookUpdateChain);    // book status → wanted
+      // sendToClient fails
+      mockAdapter.addDownload.mockRejectedValue(new Error('Client rejected'));
+
+      const err = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+        bookId: 1,
+        replaceExisting: true,
+      }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect(db.insert).not.toHaveBeenCalled();
+      expect(cancelUpdateChain.set).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'failed',
+        errorMessage: 'Replaced by new download',
+      }));
+      expect(bookUpdateChain.set).toHaveBeenCalledWith({ status: 'wanted' });
     });
 
     it('proceeds when no replaceable active downloads exist and replaceExisting is true', async () => {

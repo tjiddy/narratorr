@@ -204,19 +204,11 @@ export class DownloadService {
     replaceExisting?: boolean;
     source?: CreateEventInput['source'];
   }): Promise<DownloadWithBook> {
-    // Check for replaceable active downloads for this book
+    // Check for active downloads for this book
     if (params.bookId && !params.skipDuplicateCheck) {
-      const replaceableStatuses = getReplacableStatuses();
-      const replaceableActive = await this.db
-        .select({ download: downloads, book: books })
-        .from(downloads)
-        .leftJoin(books, eq(downloads.bookId, books.id))
-        .where(and(
-          inArray(downloads.status, replaceableStatuses),
-          eq(downloads.bookId, params.bookId),
-        ))
-        .orderBy(desc(downloads.addedAt))
-        .then((rows) => rows.map((r) => ({ ...r.download, book: r.book || undefined })));
+      const allActive = await this.getActiveByBookId(params.bookId);
+      const replaceableSet = new Set(getReplacableStatuses());
+      const replaceableActive = allActive.filter((dl) => replaceableSet.has(dl.status));
 
       if (replaceableActive.length > 0) {
         if (params.replaceExisting) {
@@ -228,10 +220,19 @@ export class DownloadService {
               this.log.warn({ id: dl.id, error: cancelErr }, 'Failed to cancel replaceable download — proceeding with replacement anyway');
             }
           }
+          // Revert book status to wanted so a failed grab leaves the book in a recoverable state
+          await this.db.update(books).set({ status: 'wanted' }).where(eq(books.id, params.bookId));
         } else {
           const err = new Error(`Book ${params.bookId} already has an active download (id: ${replaceableActive[0].id})`);
           (err as Error & { code: string }).code = 'ACTIVE_DOWNLOAD_EXISTS';
           throw err;
+        }
+      } else {
+        // No replaceable downloads — apply existing duplicate-check for import-pipeline statuses
+        // (processing_queued/importing are not replaceable but still block grabs)
+        const pipelineActive = allActive.filter((dl) => !replaceableSet.has(dl.status));
+        if (pipelineActive.length > 0) {
+          throw new Error(`Book ${params.bookId} already has an active download (id: ${pipelineActive[0].id})`);
         }
       }
     }
