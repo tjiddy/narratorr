@@ -422,4 +422,24 @@ describe('ProcessingSettingsSection', () => {
       expect(screen.getByLabelText('Target Bitrate (kbps)')).not.toBeDisabled();
     });
   });
+
+  it('renders Keep Original toggle as a compact hidden-checkbox slider (sr-only peer pattern)', async () => {
+    mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
+    renderWithProviders(<ProcessingSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Keep original')).toBeInTheDocument();
+    });
+
+    const checkbox = screen.getByLabelText('Keep original');
+    // Checkbox must be visually hidden (sr-only) — not a raw visible checkbox
+    expect(checkbox).toHaveClass('sr-only');
+    // Compact slider track div (w-9 h-5) must be rendered immediately after the hidden checkbox
+    const sliderTrack = checkbox.nextElementSibling as HTMLElement | null;
+    expect(sliderTrack).toBeInTheDocument();
+    expect(sliderTrack!.tagName).toBe('DIV');
+    expect(sliderTrack).toHaveClass('rounded-full');
+    expect(sliderTrack).toHaveClass('w-9');
+    expect(sliderTrack).toHaveClass('h-5');
+  });
 });
