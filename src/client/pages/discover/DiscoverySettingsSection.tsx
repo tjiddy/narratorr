@@ -59,19 +59,23 @@ export function DiscoverySettingsSection() {
     >
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
         {/* Enable/Disable Toggle */}
-        <label className="flex items-center justify-between gap-4">
-          <div>
+        <div className="flex items-center justify-between gap-4">
+          <label htmlFor="discovery-enabled" className="cursor-pointer">
             <span className="text-sm font-medium">Enable Discovery</span>
             <p className="text-xs text-muted-foreground mt-0.5">
               Automatically generate book recommendations based on your library
             </p>
-          </div>
-          <input
-            type="checkbox"
-            {...register('enabled')}
-            className="w-5 h-5 rounded border-border text-primary focus:ring-primary cursor-pointer"
-          />
-        </label>
+          </label>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              id="discovery-enabled"
+              type="checkbox"
+              {...register('enabled')}
+              className="sr-only peer"
+            />
+            <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+          </label>
+        </div>
 
         {/* Refresh Interval */}
         <div>

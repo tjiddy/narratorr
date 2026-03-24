@@ -387,4 +387,41 @@ describe('ProcessingSettingsSection', () => {
       expect(mockToast.error).toHaveBeenCalledWith('Server error');
     });
   });
+
+  it('shows reduced opacity on bitrate input when "Keep original" is checked', async () => {
+    const user = userEvent.setup();
+    mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
+    renderWithProviders(<ProcessingSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Target Bitrate (kbps)')).not.toBeDisabled();
+    });
+
+    await user.click(screen.getByLabelText('Keep original'));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Target Bitrate (kbps)')).toBeDisabled();
+      expect(screen.getByLabelText('Target Bitrate (kbps)')).toHaveClass('opacity-50');
+    });
+  });
+
+  it('removes reduced opacity from bitrate input when "Keep original" is unchecked', async () => {
+    const user = userEvent.setup();
+    mockApi.getSettings.mockResolvedValue(
+      createMockSettings({ processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: true, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 } })
+    );
+    renderWithProviders(<ProcessingSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Target Bitrate (kbps)')).toBeDisabled();
+      expect(screen.getByLabelText('Target Bitrate (kbps)')).toHaveClass('opacity-50');
+    });
+
+    await user.click(screen.getByLabelText('Keep original'));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Target Bitrate (kbps)')).not.toBeDisabled();
+      expect(screen.getByLabelText('Target Bitrate (kbps)')).not.toHaveClass('opacity-50');
+    });
+  });
 });
