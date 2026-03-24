@@ -26,6 +26,20 @@ describe('tsup GIT_COMMIT build-time injection', () => {
     expect(bundle).toContain('"testsha1"');
   }, 60_000);
 
+  it('inlines full 40-char GIT_COMMIT value into emitted server bundle', () => {
+    const fullSha = 'abc1234def456789abc1234def456789abc12345';
+    const result = spawnSync('pnpm', ['build:server'], {
+      env: { ...process.env, GIT_COMMIT: fullSha },
+      encoding: 'utf-8',
+      timeout: 60_000,
+    });
+
+    expect(result.status, `tsup build failed:\n${result.stderr}`).toBe(0);
+
+    const bundle = readFileSync(bundlePath, 'utf-8');
+    expect(bundle).toContain(`"${fullSha}"`);
+  }, 60_000);
+
   it('inlines "unknown" when GIT_COMMIT env var is absent', () => {
     const env = { ...process.env };
     delete env.GIT_COMMIT;
