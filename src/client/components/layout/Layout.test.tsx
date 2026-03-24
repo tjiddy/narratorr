@@ -67,7 +67,7 @@ describe('Layout', () => {
     renderWithProviders(<Layout />);
 
     expect(screen.getByText('Library')).toBeInTheDocument();
-    expect(screen.getByText('Search')).toBeInTheDocument();
+    expect(screen.getByText('Add Book')).toBeInTheDocument();
     expect(screen.getByText('Activity')).toBeInTheDocument();
     expect(screen.getByText('Settings')).toBeInTheDocument();
   });
@@ -205,9 +205,9 @@ describe('Layout', () => {
 
       const navLabels = screen.getAllByRole('link')
         .map((el) => el.textContent?.trim())
-        .filter((t) => ['Library', 'Search', 'Discover', 'Activity', 'Settings'].includes(t ?? ''));
+        .filter((t) => ['Library', 'Add Book', 'Discover', 'Activity', 'Settings'].includes(t ?? ''));
 
-      expect(navLabels).toEqual(['Library', 'Search', 'Discover', 'Activity', 'Settings']);
+      expect(navLabels).toEqual(['Library', 'Add Book', 'Discover', 'Activity', 'Settings']);
     });
 
     it('hides Discover nav item when discovery setting is disabled', async () => {
