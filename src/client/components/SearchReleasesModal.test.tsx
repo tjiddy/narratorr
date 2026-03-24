@@ -386,6 +386,35 @@ describe('SearchReleasesModal', () => {
       expect(onClose).not.toHaveBeenCalled();
     });
 
+    it('confirmed retry failure closes the confirm modal, keeps releases modal open, and shows an error toast', async () => {
+      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      vi.mocked(api.searchGrab)
+        .mockRejectedValueOnce(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }))
+        .mockRejectedValue(new MockApiError(500, { error: 'Client unavailable' }));
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />,
+      );
+
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /replace/i }));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to grab: Client unavailable');
+      });
+      expect(screen.queryByRole('dialog', { name: /replace/i })).not.toBeInTheDocument();
+      expect(screen.getByText('Releases for: The Way of Kings')).toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
     it('shows error toast for non-409 grab failures (not treated as replacement)', async () => {
       vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
       vi.mocked(api.searchGrab).mockRejectedValue(new MockApiError(500, { error: 'Internal server error' }));

@@ -118,6 +118,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
         });
         return;
       }
+      setPendingReplace(null);
       toast.error(`Failed to grab: ${err.message}`);
     },
   });
