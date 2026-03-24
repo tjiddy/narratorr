@@ -56,6 +56,7 @@ async function registerDeleteBookRoute(app: FastifyInstance, deps: Pick<BookRout
 app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
   '/api/books/:id',
   { schema: { params: idParamSchema, querystring: deleteBookQuerySchema } },
+  // eslint-disable-next-line complexity -- delete pipeline: recycling bin, file deletion, download cancellation, event snapshot
   async (request, reply) => {
     const { id } = request.params;
     const { deleteFiles } = request.query;
