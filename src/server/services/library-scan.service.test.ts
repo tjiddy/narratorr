@@ -1538,6 +1538,23 @@ describe('buildBookCreatePayload multi-author (issue #79)', () => {
     );
   });
 
+  it('with both authorName and multi-author meta.authors, preserves metadata array', async () => {
+    await service.confirmImport([{
+      path: '/audiobooks/test',
+      title: 'Co-authored Book',
+      authorName: 'Author A',
+      metadata: {
+        title: 'Co-authored Book',
+        authors: [{ name: 'Author A' }, { name: 'Author B' }],
+        narrators: [],
+      },
+    }]);
+
+    expect(mockBookService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ authors: [{ name: 'Author A' }, { name: 'Author B' }] }),
+    );
+  });
+
   it('with meta.authors = [] falls back to item.authorName (not zero-author book)', async () => {
     await service.confirmImport([{
       path: '/audiobooks/test',
