@@ -38,6 +38,7 @@ beforeEach(() => {
   mockApi.getSettings.mockResolvedValue(createMockSettings());
 });
 
+// Tests verify section composition after #66 refactoring
 describe('GeneralSettings', () => {
   it('renders all settings sections', async () => {
     renderWithProviders(<GeneralSettings />);
@@ -49,7 +50,7 @@ describe('GeneralSettings', () => {
     expect(screen.getByText('Discovery')).toBeInTheDocument();
     expect(screen.getByText('Import')).toBeInTheDocument();
     expect(screen.getByText('Quality')).toBeInTheDocument();
-    expect(screen.getByText('Post Processing')).toBeInTheDocument();
+    expect(screen.queryByText('Post Processing')).not.toBeInTheDocument();
     expect(screen.getByText('Network')).toBeInTheDocument();
     expect(screen.getByText('Housekeeping')).toBeInTheDocument();
     expect(screen.getByText('Logging')).toBeInTheDocument();
