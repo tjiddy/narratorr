@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { settingsPageRegistry } from './registry';
 
 describe('settingsPageRegistry', () => {
-  it('exports an array with all 8 settings page entries', () => {
-    expect(settingsPageRegistry).toHaveLength(8);
+  it('exports an array with all 9 settings page entries', () => {
+    expect(settingsPageRegistry).toHaveLength(9);
   });
 
   it('each entry has path, label, icon, and component', () => {
@@ -23,7 +23,7 @@ describe('settingsPageRegistry', () => {
 
   it('non-General entries do not have end: true', () => {
     const nonGeneral = settingsPageRegistry.filter((e) => e.label !== 'General');
-    expect(nonGeneral.length).toBe(7);
+    expect(nonGeneral.length).toBe(8);
     for (const entry of nonGeneral) {
       expect(entry.end).toBeUndefined();
     }
@@ -39,6 +39,7 @@ describe('settingsPageRegistry', () => {
     const paths = settingsPageRegistry.map((e) => e.path);
     expect(paths).toEqual([
       '',
+      'post-processing',
       'indexers',
       'download-clients',
       'notifications',
@@ -47,5 +48,12 @@ describe('settingsPageRegistry', () => {
       'import-lists',
       'system',
     ]);
+  });
+
+  it('Post Processing entry is present at index 1', () => {
+    const entry = settingsPageRegistry.find((e) => e.label === 'Post Processing');
+    expect(entry).toBeDefined();
+    expect(entry!.path).toBe('post-processing');
+    expect(entry!.end).toBeUndefined();
   });
 });
