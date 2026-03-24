@@ -289,7 +289,7 @@ export function ProcessingSettingsSection() {
               type="number"
               {...register('bitrate', { valueAsNumber: true })}
               disabled={keepOriginalBitrate}
-              className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed ${keepOriginalBitrate ? 'opacity-50' : ''} ${
+              className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
                 errors.bitrate ? 'border-destructive' : 'border-border'
               }`}
               min={32}
