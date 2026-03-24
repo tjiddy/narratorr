@@ -308,9 +308,10 @@ export class LibraryScanService {
     const audioResult = await enrichBookFromAudio(
       book.id,
       finalPath,
-      { narrator: book.narrators?.[0]?.name ?? null, duration: book.duration, coverUrl: book.coverUrl },
+      { narrators: book.narrators ?? null, duration: book.duration, coverUrl: book.coverUrl },
       this.db,
       this.log,
+      this.bookService,
     );
 
     // Audnexus enrichment
@@ -329,9 +330,10 @@ export class LibraryScanService {
    * Copy (or move) source files into the library directory structure.
    * Returns the final library path.
    */
+  // eslint-disable-next-line complexity -- copy/move pipeline with verification and retry logic
   private async copyToLibrary(
     item: ImportConfirmItem,
-    book: { id: number; title: string; seriesName?: string | null; seriesPosition?: number | null; publishedDate?: string | null },
+    _book: { id: number; title: string; seriesName?: string | null; seriesPosition?: number | null; publishedDate?: string | null },
     meta: BookMetadata | null,
     mode: ImportMode,
   ): Promise<string> {
@@ -343,7 +345,7 @@ export class LibraryScanService {
         title: item.title,
         seriesName: item.seriesName || meta?.series?.[0]?.name,
         seriesPosition: meta?.series?.[0]?.position,
-        narrator: meta?.narrators?.[0] ?? null,
+        narrators: meta?.narrators?.[0] ? [{ name: meta.narrators[0] }] : undefined,
         publishedDate: meta?.publishedDate,
       },
       item.authorName ?? null,
@@ -470,7 +472,7 @@ export class LibraryScanService {
 
     // Enrich with audio file metadata (WITH cover extraction)
     this.log.debug({ bookId }, 'Starting audio enrichment');
-    await enrichBookFromAudio(bookId, finalPath, { narrator: narratorName, duration, coverUrl }, this.db, this.log);
+    await enrichBookFromAudio(bookId, finalPath, { narrators: narratorName ? [{ name: narratorName }] : null, duration, coverUrl }, this.db, this.log, this.bookService);
 
     // Audnexus enrichment
     await this.applyAudnexusEnrichment(bookId, {
