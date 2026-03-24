@@ -105,7 +105,8 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
       deps.eventHistory.create({
         bookId: id,
         bookTitle: book.title,
-        authorName: book.authors?.[0]?.name,
+        authorName: book.authors?.map(a => a.name).join(', ') || undefined,
+        narratorName: book.narrators?.map(n => n.name).join(', ') || undefined,
         eventType: 'deleted',
         source: 'manual',
       }).catch((err) => request.log.warn(err, 'Failed to record deleted event'));

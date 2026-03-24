@@ -726,6 +726,33 @@ describe('books routes', () => {
 
       expect(res.statusCode).toBe(404);
     });
+
+    it('delete event snapshot includes comma-joined authors and narratorName (#71)', async () => {
+      const multiAuthorBook = {
+        ...mockBook,
+        authors: [
+          createMockDbAuthor({ id: 1, name: 'Brandon Sanderson' }),
+          createMockDbAuthor({ id: 2, name: 'Robert Jordan' }),
+        ],
+        narrators: [
+          { id: 1, name: 'Michael Kramer', slug: 'michael-kramer', createdAt: new Date(), updatedAt: new Date() },
+          { id: 2, name: 'Kate Reading', slug: 'kate-reading', createdAt: new Date(), updatedAt: new Date() },
+        ],
+      };
+      (services.book.getById as Mock).mockResolvedValue(multiAuthorBook);
+      (services.download.getActiveByBookId as Mock).mockResolvedValue([]);
+      (services.book.delete as Mock).mockResolvedValue(true);
+
+      await app.inject({ method: 'DELETE', url: '/api/books/1' });
+
+      expect(services.eventHistory.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          authorName: 'Brandon Sanderson, Robert Jordan',
+          narratorName: 'Michael Kramer, Kate Reading',
+          eventType: 'deleted',
+        }),
+      );
+    });
   });
 
   describe('GET /api/books/:id/files', () => {
