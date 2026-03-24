@@ -72,6 +72,18 @@ describe('Layout', () => {
     expect(screen.getByText('Settings')).toBeInTheDocument();
   });
 
+  it('renders PlusIcon for the Add Book nav item (not SearchIcon)', () => {
+    mockCounts(0);
+    mockAuth();
+    renderWithProviders(<Layout />);
+
+    const addBookLink = screen.getByRole('link', { name: /add book/i });
+    // PlusIcon has straight-line paths; SearchIcon has a <circle> — regression to SearchIcon fails this
+    expect(addBookLink.querySelector('circle')).toBeNull();
+    const paths = Array.from(addBookLink.querySelectorAll('path'));
+    expect(paths.some(p => p.getAttribute('d') === 'M5 12h14')).toBe(true);
+  });
+
   it('renders footer', () => {
     mockCounts(0);
     mockAuth();

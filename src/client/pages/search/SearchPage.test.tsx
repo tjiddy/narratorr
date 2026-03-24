@@ -258,12 +258,21 @@ describe('SearchPage', () => {
       }
     });
 
-    it('search form is the first interactive control on the page', () => {
+    it('shows subtitle copy with "find audiobooks to add" and no discover language', () => {
       renderWithProviders(<SearchPage />);
+      expect(
+        screen.getByText('Search metadata providers to find audiobooks to add'),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/discover/i)).not.toBeInTheDocument();
+    });
+
+    it('search input is the first interactive control on the page', () => {
+      const { container } = renderWithProviders(<SearchPage />);
       const input = screen.getByPlaceholderText(/search by title/i);
-      expect(input).toBeInTheDocument();
-      // The search input should be present and precede any results area
-      expect(input.tagName).toBe('INPUT');
+      const allInteractive = Array.from(
+        container.querySelectorAll('a[href], button, input, select, textarea'),
+      );
+      expect(allInteractive[0]).toBe(input);
     });
   });
 });
