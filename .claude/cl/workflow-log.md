@@ -1,4 +1,37 @@
 # Workflow Log
+## #66 Refactor settings page: Post Processing tab + relocate Housekeeping/Logging to System — 2026-03-24
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #72
+
+### Metrics
+- Files changed: 12 | Tests added/modified: 8 test files
+- Quality gate runs: 2 (pass on attempt 2 — lint violation from stale eslint-disable)
+- Fix iterations: 3 (SHA conflicts × many, multi-form save button targeting, vi import missing in test)
+- Context compactions: 1 (session resumed from summary; no rework needed)
+
+### Workflow experience
+- What went smoothly: TDD cycle was clean; conditional render change reduced complexity; all test adaptations were predictable
+- Friction / issues encountered:
+  - Root-owned `.git/objects` dirs (prefixes 05, 78, 2b, 38, ca, d1, df, f8): multiple commits required Python SHA pre-check + content tweak before staging. ~15 min overhead per affected commit.
+  - Multi-form save button conflict: `getByRole('button', { name: /save/i })` threw after SystemSettings gained a second form. Fixed by field-proximity targeting.
+  - Missing `vi` import in settings.service.test.ts bootstrap describe block.
+  - Stale `eslint-disable complexity` triggered lint violation after conditional render reduced cyclomatic complexity.
+
+### Token efficiency
+- Highest-token actions: Context compaction; coverage review Explore subagent
+- Avoidable waste: SHA conflict overhead per commit — could be batched into a pre-commit check script
+- Suggestions: A one-time fix-git-objects-permissions setup step would eliminate SHA-shift workaround
+
+### Infrastructure gaps
+- Repeated workarounds: SHA prefix check + content tweak before every commit (root-owned .git/objects dirs)
+- Missing tooling / config: No sudo available to fix permissions; no pre-commit hook to detect conflict early
+- Unresolved debt: `redactProxyUrl` in `src/server/routes/settings.ts` has no tests (debt.md is root-owned, could not append)
+
+### Wish I'd Known
+1. Root-owned `.git/objects` subdirectories will block ~30% of commits — compute SHA prefix and check before writing any file change
+2. When refactoring opacity-disabled to conditional render, grep test files for `.toBeDisabled()` and `eslint-disable complexity` upfront — both need updating
+3. Adding a second form with a save button to a page breaks all `getByRole('button', { name: /save/i })` selectors — switch to field-proximity targeting from the start
+
 ## #67 Pass GIT_COMMIT build arg in Docker workflow — 2026-03-24
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #70
