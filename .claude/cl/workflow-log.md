@@ -1,4 +1,33 @@
 # Workflow Log
+## #80 Fix file browser modal opacity and scan edit narrator persistence — 2026-03-24
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #86
+
+### Metrics
+- Files changed: 3 source, 4 test | Tests added/modified: +46 new assertions
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0 (all tests green on first attempt)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Bug sites were precisely identified during elaboration — implementation was 3 single-line changes. Red/green TDD cycle was tight.
+- Friction / issues encountered: (1) Git push failed with expired installation token in remote URL — needed inline token refresh using GH App JWT. (2) `useMatchJob` setInterval polling made the `mergeMatchResults` test timeout — needed `vi.useFakeTimers({ toFake: ['setInterval','clearInterval'] })` + `vi.advanceTimersByTimeAsync(2100)`.
+
+### Token efficiency
+- Highest-token actions: Elaborate + spec review cycle (3 rounds: initial → needs-work → respond → approve) consumed most context
+- Avoidable waste: Spec review round-trip could have been avoided with a more thorough initial elaboration
+- Suggestions: When elaborating frontend bugs, always check BOTH the rendering source AND the data shape passed to it
+
+### Infrastructure gaps
+- Repeated workarounds: Git push requires fresh installation token — remote URL contains cached token that expires; must re-fetch via GitHub App JWT flow
+- Missing tooling / config: No helper for refreshing git push auth in the handoff flow — each session must inline the token refresh
+- Unresolved debt: 17 pre-existing behavioral gaps in ImportCard/BookEditModal/DirectoryBrowserModal (see debt.md)
+
+### Wish I'd Known
+1. The backdrop fix needs only `bg-black/80` (not full opaque) — the translucent panel then shows the dark backdrop instead of page content, which is acceptable for a glass-card design
+2. `ImportCard.tsx` reads from `matchResult.bestMatch` (stale) not `edited` (live) — any display component in the manual import flow should always read from `row.edited` as the single source of truth
+3. `useMatchJob` polling requires fake timer advance in tests — `vi.useFakeTimers({ toFake: ['setInterval','clearInterval'] })` plus `vi.advanceTimersByTimeAsync(2100)` is the correct pattern; full fake timers break Promise resolution
+
 ## #79 Polish many-to-many authors/narrators — N+1, DRY, delimiter fixes — 2026-03-24
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #84
