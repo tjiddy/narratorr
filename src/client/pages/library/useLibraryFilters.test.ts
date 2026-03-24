@@ -235,3 +235,34 @@ describe('applyClientFilters — many-to-many author/narrator (#71)', () => {
     expect(result).toHaveLength(0);
   });
 });
+
+describe('applyClientFilters case-insensitive (issue #79)', () => {
+  const defaultFilters = { authorFilter: '', seriesFilter: '', narratorFilter: '', collapseSeriesEnabled: false, sortField: 'createdAt' as const, sortDirection: 'desc' as const };
+
+  it('author filter matches book with different casing (e.g. "brandon sanderson" matches "Brandon Sanderson")', () => {
+    const book = createMockBook({
+      id: 20, createdAt: '2024-01-01T00:00:00Z',
+      authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' }],
+    });
+    const result = applyClientFilters([book], { ...defaultFilters, authorFilter: 'brandon sanderson' });
+    expect(result).toHaveLength(1);
+  });
+
+  it('series filter matches book with different casing (e.g. "the stormlight archive" matches "The Stormlight Archive")', () => {
+    const book = createMockBook({
+      id: 21, createdAt: '2024-01-01T00:00:00Z',
+      seriesName: 'The Stormlight Archive',
+    });
+    const result = applyClientFilters([book], { ...defaultFilters, seriesFilter: 'the stormlight archive' });
+    expect(result).toHaveLength(1);
+  });
+
+  it('narrator filter regression-free after refactor (case-insensitive behavior preserved)', () => {
+    const book = createMockBook({
+      id: 22, createdAt: '2024-01-01T00:00:00Z',
+      narrators: [{ id: 1, name: 'Kate Reading', slug: 'kate-reading' }],
+    });
+    const result = applyClientFilters([book], { ...defaultFilters, narratorFilter: 'KATE READING' });
+    expect(result).toHaveLength(1);
+  });
+});

@@ -151,8 +151,8 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const download = new DownloadService(db, downloadClient, log);
   const downloadOrchestrator = new DownloadOrchestrator(download, db, log, notifier, eventHistory, eventBroadcaster);
   const remotePathMapping = new RemotePathMappingService(db, log);
-  const taggingService = new TaggingService(db, settings, log);
-  const importService = new ImportService(db, downloadClient, settings, log, remotePathMapping);
+  const taggingService = new TaggingService(db, settings, log, book);
+  const importService = new ImportService(db, downloadClient, settings, log, remotePathMapping, book);
   const importOrchestrator = new ImportOrchestrator(importService, settings, log, notifier, taggingService, eventHistory, eventBroadcaster);
   const libraryScan = new LibraryScanService(db, book, metadata, settings, log);
   const matchJob = new MatchJobService(metadata, log);
@@ -162,7 +162,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const renameService = new RenameService(db, book, settings, log, eventHistory);
   const retryBudget = new RetryBudget();
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
-  const recyclingBin = new RecyclingBinService(db, log, config.configPath, settings);
+  const recyclingBin = new RecyclingBinService(db, log, config.configPath, settings, book);
   const importList = new ImportListService(db, log, metadata);
   const taskRegistry = new TaskRegistry();
   const discovery = new DiscoveryService(db, log, metadata, book, settings);
