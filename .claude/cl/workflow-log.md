@@ -1,4 +1,32 @@
 # Workflow Log
+## #71 Many-to-many authors and narrators — 2026-03-24
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #75
+
+### Metrics
+- Files changed: 37 source files, ~60 test files | Tests added/modified: ~200 new tests
+- Quality gate runs: 3 (pass on attempt 3 after fixing unused import + execFile cast)
+- Fix iterations: 6 (mockReturnValueOnce chain shifts, factory default narrator, enrichBookFromAudio missing bookService, unused 'and' import, execFile TS cast, git objects root permission workaround)
+- Context compactions: 2 (caused rework on mockReturnValueOnce chain debugging)
+
+### Workflow experience
+- What went smoothly: Self-review Explore subagent caught the enrichBookFromAudio missing bookService bug before push; batch-load pattern in BookListService cleanly prevented N+1
+- Friction: mockReturnValueOnce chains silently shift when a service gains a new DB query — 5 separate test files needed this fix; factory default narrator caused unexpected insert counts; enrichBookFromAudio optional param silently dropped narrators at 2 call sites; root-owned .git/objects/ dirs blocked git add for 4 files
+
+### Token efficiency
+- Highest-token actions: Two context compactions required re-reading service files to understand mock chain offsets
+- Avoidable waste: Should have counted DB operations in each service before writing any mocks
+- Suggestions: grep -c '.select|.insert|.update|.delete' on a service file predicts mockReturnValueOnce chain length
+
+### Infrastructure gaps
+- Repeated workarounds: GIT_OBJECT_DIRECTORY + pack file trick for root-owned git object dirs
+- Missing tooling: Some .git/objects/ dirs are root-owned — blocks git add for ~4-8 files per large PR. debt.md is also root-owned.
+- Unresolved debt: book.service.ts getMonitoredBooks/search use N+1 queries (intentional tradeoff) — optimize when lists grow (#71)
+
+### Wish I'd Known
+1. mockReturnValueOnce shifts are the #1 failure source after junction table additions — adding one SELECT shifts all subsequent mocks. Audit every test in the file first. See junction-table-mockdb-chain-shift.md.
+2. Optional parameters for side effects fail silently at call sites — enrichBookFromAudio's optional bookService param was never passed at 2 sites, silently dropping narrator tags. Grep all call sites immediately. See enrichbookaudio-optional-param-silent-drop.md.
+3. Root-owned .git/objects/ subdirs block git add unpredictably — no warning, just "insufficient permission". Workaround: GIT_OBJECT_DIRECTORY=/tmp/git-objects + pack file injection. See git-objects-root-owned-dirs.md.
 ## #66 Refactor settings page: Post Processing tab + relocate Housekeeping/Logging to System — 2026-03-24
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #72
