@@ -1,4 +1,33 @@
 # Workflow Log
+## #73 Replace raw checkboxes with slider toggles and improve disabled field feedback — 2026-03-24
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #78
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 2 new tests
+- Quality gate runs: 2 (fail on attempt 1 due to complexity lint, pass on attempt 2)
+- Fix iterations: 1 (initial ternary pushed ProcessingSettingsSection complexity from 15→16; replaced with disabled:opacity-50 Tailwind variant)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Slider pattern well-established; existing tests required zero changes after markup replacement
+- Friction / issues encountered: Tailwind disabled: variant classes are always present in DOM className, making class removal assertions impossible
+
+### Token efficiency
+- Highest-token actions: Coverage subagent analyzed all pre-existing behaviors in two large components (not just the changed ones)
+- Avoidable waste: 14 pre-existing gaps flagged; should filter to new-in-this-PR behaviors only
+- Suggestions: For markup-only chores, pre-flight coverage subagent on the diff only
+
+### Infrastructure gaps
+- Repeated workarounds: GitHub token expiry during push — resolved with gh auth token refresh
+- Missing tooling / config: frontend-design skill unavailable (external plugin)
+- Unresolved debt: ProcessingSettingsSection and DiscoverySettingsSection have pre-existing coverage gaps (save button pending, probe retry, bitrate validation, dropdown selection)
+
+### Wish I Had Known
+1. Tailwind disabled:opacity-50 class is always in DOM — test with not.toBeDisabled() not class removal
+2. Check current cyclomatic complexity before adding ternaries to large components (ProcessingSettingsSection limit is 15)
+3. Coverage subagent scans all behaviors including pre-existing ones; for markup-only chores most gaps are out of scope
+
 ## #74 Don't auto-enable processing on ffmpeg detection — just pre-fill the path — 2026-03-24
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #77
