@@ -47,6 +47,8 @@ function accumulateBookSignals(
   seriesMap: Map<string, { authorName: string; positions: number[] }>,
 ) {
   const { book } = row;
+  // Intentionally tracks position-0 author only — multi-author books are rare in audiobooks,
+  // and affinity is based on the primary author. This is a conscious design choice, not a gap.
   const authorName = row.authorName ?? 'Unknown';
 
   // Author affinity
