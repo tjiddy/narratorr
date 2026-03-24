@@ -40,7 +40,8 @@ describe('ProcessingSettingsSection', () => {
     mockApi.getSettings.mockResolvedValue(defaultMockSettings);
   });
 
-  it('renders all processing fields', async () => {
+  it('renders all processing fields when processing is enabled', async () => {
+    mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
     renderWithProviders(<ProcessingSettingsSection />);
 
     await waitFor(() => {
@@ -54,21 +55,41 @@ describe('ProcessingSettingsSection', () => {
     });
   });
 
-  it('disables fields when processing is disabled', async () => {
+  it('does not render processing child fields when processing is disabled', async () => {
     renderWithProviders(<ProcessingSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('ffmpeg Path')).toBeInTheDocument();
+      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
     });
 
-    expect(screen.getByLabelText('ffmpeg Path')).toBeDisabled();
-    expect(screen.getByLabelText('Output Format')).toBeDisabled();
-    expect(screen.getByLabelText('Target Bitrate (kbps)')).toBeDisabled();
-    expect(screen.getByLabelText('Keep original')).toBeDisabled();
-    expect(screen.getByLabelText('Merge Behavior')).toBeDisabled();
+    expect(screen.queryByLabelText('ffmpeg Path')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Output Format')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Target Bitrate (kbps)')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Keep original')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Merge Behavior')).not.toBeInTheDocument();
   });
 
-  it('enables fields when processing toggle is turned on', async () => {
+  it('keeps Tag Embedding section visible when processing is disabled', async () => {
+    renderWithProviders(<ProcessingSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
+    });
+
+    expect(screen.getByLabelText('Tag Embedding')).toBeInTheDocument();
+  });
+
+  it('keeps Custom Script section visible when processing is disabled', async () => {
+    renderWithProviders(<ProcessingSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
+    });
+
+    expect(screen.getByLabelText('Post-Processing Script')).toBeInTheDocument();
+  });
+
+  it('renders processing child fields when processing toggle is turned on', async () => {
     const user = userEvent.setup();
     renderWithProviders(<ProcessingSettingsSection />);
 
@@ -79,11 +100,11 @@ describe('ProcessingSettingsSection', () => {
     await user.click(screen.getByLabelText('Enable Post Processing'));
 
     await waitFor(() => {
-      expect(screen.getByLabelText('ffmpeg Path')).not.toBeDisabled();
-      expect(screen.getByLabelText('Output Format')).not.toBeDisabled();
-      expect(screen.getByLabelText('Target Bitrate (kbps)')).not.toBeDisabled();
-      expect(screen.getByLabelText('Keep original')).not.toBeDisabled();
-      expect(screen.getByLabelText('Merge Behavior')).not.toBeDisabled();
+      expect(screen.getByLabelText('ffmpeg Path')).toBeInTheDocument();
+      expect(screen.getByLabelText('Output Format')).toBeInTheDocument();
+      expect(screen.getByLabelText('Target Bitrate (kbps)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Keep original')).toBeInTheDocument();
+      expect(screen.getByLabelText('Merge Behavior')).toBeInTheDocument();
     });
   });
 
@@ -141,27 +162,18 @@ describe('ProcessingSettingsSection', () => {
     });
   });
 
-  it('renders tag embedding controls', async () => {
+  it('renders tag embedding toggle but not tag controls when tagging is disabled', async () => {
     renderWithProviders(<ProcessingSettingsSection />);
 
     await waitFor(() => {
       expect(screen.getByLabelText('Tag Embedding')).toBeInTheDocument();
-      expect(screen.getByLabelText('Tag Mode')).toBeInTheDocument();
-      expect(screen.getByLabelText('Embed Cover Art')).toBeInTheDocument();
-    });
-  });
-
-  it('disables tag controls when tagging is disabled', async () => {
-    renderWithProviders(<ProcessingSettingsSection />);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText('Tag Mode')).toBeInTheDocument();
     });
 
-    expect(screen.getByLabelText('Tag Mode')).toBeDisabled();
+    expect(screen.queryByLabelText('Tag Mode')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Embed Cover Art')).not.toBeInTheDocument();
   });
 
-  it('enables tag controls when tagging toggle is turned on', async () => {
+  it('renders tag controls when tagging toggle is turned on', async () => {
     const user = userEvent.setup();
     renderWithProviders(<ProcessingSettingsSection />);
 
@@ -172,7 +184,8 @@ describe('ProcessingSettingsSection', () => {
     await user.click(screen.getByLabelText('Tag Embedding'));
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Tag Mode')).not.toBeDisabled();
+      expect(screen.getByLabelText('Tag Mode')).toBeInTheDocument();
+      expect(screen.getByLabelText('Embed Cover Art')).toBeInTheDocument();
     });
   });
 
@@ -186,13 +199,14 @@ describe('ProcessingSettingsSection', () => {
     });
   });
 
-  it('disables max concurrent jobs when processing is disabled', async () => {
+  it('does not render max concurrent jobs when processing is disabled', async () => {
     renderWithProviders(<ProcessingSettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Max Concurrent Jobs')).toBeInTheDocument();
-      expect(screen.getByLabelText('Max Concurrent Jobs')).toBeDisabled();
+      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
     });
+
+    expect(screen.queryByLabelText('Max Concurrent Jobs')).not.toBeInTheDocument();
   });
 
   it('shows mp3 chapter warning when mp3 format selected', async () => {
@@ -261,7 +275,7 @@ describe('ProcessingSettingsSection', () => {
     await user.click(screen.getByLabelText('Enable Post Processing'));
 
     await waitFor(() => {
-      expect(screen.getByLabelText('ffmpeg Path')).not.toBeDisabled();
+      expect(screen.getByLabelText('ffmpeg Path')).toBeInTheDocument();
     });
 
     // Submit without filling ffmpegPath

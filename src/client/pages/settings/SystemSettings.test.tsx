@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { SystemSettings } from './SystemSettings';
@@ -299,6 +299,72 @@ describe('SystemSettings', () => {
         expect(screen.getByText('System Information')).toBeInTheDocument();
         expect(screen.getByText('Scheduled Tasks')).toBeInTheDocument();
       });
+    });
+  });
+});
+
+describe('GeneralSettingsForm (housekeeping and logging)', () => {
+  it('renders housekeeping retention and log level fields on System tab', async () => {
+    mockApi.getSettings.mockResolvedValue({
+      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+      general: { logLevel: 'info', housekeepingRetentionDays: 30, recycleRetentionDays: 7 },
+    });
+    mockApi.getBackups.mockResolvedValue([]);
+
+    renderWithProviders(<SystemSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Event History Retention (days)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Recycling Bin Retention (days)')).toBeInTheDocument();
+      expect(screen.getByLabelText('Log Level')).toBeInTheDocument();
+    });
+  });
+
+  it('submits general settings with correct payload when log level changed', async () => {
+    const user = userEvent.setup();
+    mockApi.getSettings.mockResolvedValue({
+      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+      general: { logLevel: 'warn', housekeepingRetentionDays: 30, recycleRetentionDays: 7 },
+    });
+    mockApi.getBackups.mockResolvedValue([]);
+    mockApi.updateSettings.mockResolvedValue({});
+
+    renderWithProviders(<SystemSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Log Level')).toHaveValue('warn');
+    });
+
+    await user.selectOptions(screen.getByLabelText('Log Level'), 'debug');
+    fireEvent.submit(screen.getByLabelText('Log Level').closest('form')!);
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith({
+        general: { logLevel: 'debug', housekeepingRetentionDays: 30, recycleRetentionDays: 7 },
+      });
+    });
+  });
+
+  it('shows error toast when general settings save fails', async () => {
+    const user = userEvent.setup();
+    mockApi.getSettings.mockResolvedValue({
+      system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
+      general: { logLevel: 'warn', housekeepingRetentionDays: 30, recycleRetentionDays: 7 },
+    });
+    mockApi.getBackups.mockResolvedValue([]);
+    mockApi.updateSettings.mockRejectedValue(new Error('Save failed'));
+
+    renderWithProviders(<SystemSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Log Level')).toHaveValue('warn');
+    });
+
+    await user.selectOptions(screen.getByLabelText('Log Level'), 'debug');
+    fireEvent.submit(screen.getByLabelText('Log Level').closest('form')!);
+
+    await waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalledWith('Save failed');
     });
   });
 });

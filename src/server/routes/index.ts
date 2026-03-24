@@ -167,8 +167,11 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const taskRegistry = new TaskRegistry();
   const discovery = new DiscoveryService(db, log, metadata, book, settings);
 
+  // Bootstrap processing defaults on first run (no-op if row exists)
+  const { probeFfmpeg, detectFfmpegPath } = await import('../../core/utils/audio-processor.js');
+  await settings.bootstrapProcessingDefaults(detectFfmpegPath);
+
   // Health check service with system deps
-  const { probeFfmpeg } = await import('../../core/utils/audio-processor.js');
   const { resolveProxyIp } = await import('../../core/indexers/proxy.js');
   const healthCheck = new HealthCheckService(
     indexer, downloadClient, settings, notifier, db, log,

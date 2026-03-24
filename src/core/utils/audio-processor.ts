@@ -33,6 +33,28 @@ export type ProcessingResult =
   | { success: false; error: string };
 
 /**
+ * Discover ffmpeg on the system. Returns the absolute path if found, null otherwise.
+ * Tries /usr/bin/ffmpeg first, then falls back to `which ffmpeg`.
+ */
+export async function detectFfmpegPath(): Promise<string | null> {
+  const knownPath = '/usr/bin/ffmpeg';
+  try {
+    await probeFfmpeg(knownPath);
+    return knownPath;
+  } catch {
+    // fall through to which
+  }
+  try {
+    const { stdout } = await execFileAsync('which', ['ffmpeg']);
+    const resolved = stdout.trim();
+    if (resolved) return resolved;
+  } catch {
+    // not found
+  }
+  return null;
+}
+
+/**
  * Probe an ffmpeg binary at the given path. Returns the version string on success.
  */
 export async function probeFfmpeg(ffmpegPath: string): Promise<string> {

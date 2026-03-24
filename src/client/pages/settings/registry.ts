@@ -8,8 +8,10 @@ import {
   ShieldIcon,
   HardDriveIcon,
   ListIcon,
+  ZapIcon,
 } from '@/components/icons';
 import { GeneralSettings } from './GeneralSettings.js';
+import { PostProcessingSettings } from './PostProcessingSettings.js';
 import { IndexersSettings } from './IndexersSettings.js';
 import { DownloadClientsSettings } from './DownloadClientsSettings.js';
 import { NotificationsSettings } from './NotificationsSettings.js';
@@ -30,6 +32,7 @@ export interface SettingsPageEntry {
 
 export const settingsPageRegistry: readonly SettingsPageEntry[] = [
   { path: '', label: 'General', icon: SettingsIcon, component: GeneralSettings, end: true },
+  { path: 'post-processing', label: 'Post Processing', icon: ZapIcon, component: PostProcessingSettings },
   { path: 'indexers', label: 'Indexers', icon: SearchIcon, component: IndexersSettings },
   { path: 'download-clients', label: 'Download Clients', icon: ServerIcon, component: DownloadClientsSettings },
   { path: 'notifications', label: 'Notifications', icon: BellIcon, component: NotificationsSettings },

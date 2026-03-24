@@ -2,6 +2,7 @@ export { SettingsLayout } from './SettingsLayout.js';
 export { settingsPageRegistry } from './registry.js';
 export type { SettingsPageEntry } from './registry.js';
 export { GeneralSettings } from './GeneralSettings.js';
+export { PostProcessingSettings } from './PostProcessingSettings.js';
 export { IndexersSettings } from './IndexersSettings.js';
 export { DownloadClientsSettings } from './DownloadClientsSettings.js';
 export { NotificationsSettings } from './NotificationsSettings.js';

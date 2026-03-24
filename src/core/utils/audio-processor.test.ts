@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   probeFfmpeg,
+  detectFfmpegPath,
   processAudioFiles,
   buildChapterMetadata,
   type ProcessingConfig,
@@ -98,6 +99,37 @@ describe('probeFfmpeg', () => {
   it('throws on non-zero exit', async () => {
     mockExecFileFailure('Command failed');
     await expect(probeFfmpeg('/bad/path')).rejects.toThrow('Command failed');
+  });
+});
+
+describe('detectFfmpegPath', () => {
+  it('returns /usr/bin/ffmpeg when probe succeeds at known path', async () => {
+    mockExecFileSuccess('ffmpeg version 6.1.1 Copyright');
+    const result = await detectFfmpegPath();
+    expect(result).toBe('/usr/bin/ffmpeg');
+  });
+
+  it('falls back to which ffmpeg when /usr/bin/ffmpeg probe fails', async () => {
+    mockExecFile
+      .mockImplementationOnce((...args: unknown[]) => {
+        const cb = args[args.length - 1] as (err: Error) => void;
+        cb(new Error('spawn ENOENT'));
+        return {} as never;
+      })
+      .mockImplementationOnce((...args: unknown[]) => {
+        const cb = args[args.length - 1] as (err: null, result: { stdout: string }) => void;
+        cb(null, { stdout: '/usr/local/bin/ffmpeg\n' });
+        return {} as never;
+      });
+
+    const result = await detectFfmpegPath();
+    expect(result).toBe('/usr/local/bin/ffmpeg');
+  });
+
+  it('returns null when both probe and which fail', async () => {
+    mockExecFileFailure('spawn ENOENT');
+    const result = await detectFfmpegPath();
+    expect(result).toBeNull();
   });
 });
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { SettingsService } from './settings.service.js';
 import type { UpdateSettingsInput } from '../../shared/schemas/settings/registry.js';
@@ -373,5 +373,71 @@ describe('SettingsService', () => {
       expect(db.insert).not.toHaveBeenCalled();
       expect(result).toBeDefined();
     });
+  });
+});
+
+describe('SettingsService.bootstrapProcessingDefaults', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let service: SettingsService;
+
+  beforeEach(() => {
+    initializeKey(TEST_KEY);
+    db = createMockDb();
+    service = new SettingsService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+  });
+
+  afterEach(() => {
+    _resetKey();
+  });
+
+  it('writes processing.enabled=true and detected ffmpegPath when no processing row exists and detectFfmpegPath returns a path', async () => {
+    // No existing processing row
+    db.select.mockReturnValue(mockDbChain([]));
+    const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
+
+    await service.bootstrapProcessingDefaults(detectFfmpegPath);
+
+    expect(detectFfmpegPath).toHaveBeenCalled();
+    expect(db.insert).toHaveBeenCalled();
+    const insertCall = db.insert.mock.results[0].value;
+    expect(insertCall.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: 'processing',
+        value: expect.objectContaining({ enabled: true, ffmpegPath: '/usr/bin/ffmpeg' }),
+      }),
+    );
+  });
+
+  it('writes nothing when no processing row exists and detectFfmpegPath returns null', async () => {
+    db.select.mockReturnValue(mockDbChain([]));
+    const detectFfmpegPath = vi.fn().mockResolvedValue(null);
+
+    await service.bootstrapProcessingDefaults(detectFfmpegPath);
+
+    expect(detectFfmpegPath).toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('does not call detectFfmpegPath when processing row already exists', async () => {
+    db.select.mockReturnValue(mockDbChain([{ key: 'processing', value: { enabled: false, ffmpegPath: '' } }]));
+    const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
+
+    await service.bootstrapProcessingDefaults(detectFfmpegPath);
+
+    expect(detectFfmpegPath).not.toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('is idempotent: second call with row written by first call skips detection', async () => {
+    // First call: no row
+    db.select.mockReturnValueOnce(mockDbChain([]));
+    // After first insert, second call finds the row
+    db.select.mockReturnValueOnce(mockDbChain([{ key: 'processing', value: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg' } }]));
+    const detectFfmpegPath = vi.fn().mockResolvedValue('/usr/bin/ffmpeg');
+
+    await service.bootstrapProcessingDefaults(detectFfmpegPath);
+    await service.bootstrapProcessingDefaults(detectFfmpegPath);
+
+    expect(detectFfmpegPath).toHaveBeenCalledTimes(1);
   });
 });

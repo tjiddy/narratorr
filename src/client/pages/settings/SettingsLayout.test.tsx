@@ -11,6 +11,7 @@ describe('SettingsLayout', () => {
 
     expect(screen.getByText('Settings')).toBeInTheDocument();
     expect(screen.getByText('General').closest('a')).toHaveAttribute('href', '/settings');
+    expect(screen.getByText('Post Processing').closest('a')).toHaveAttribute('href', '/settings/post-processing');
     expect(screen.getByText('Indexers').closest('a')).toHaveAttribute('href', '/settings/indexers');
     expect(screen.getByText('Download Clients').closest('a')).toHaveAttribute('href', '/settings/download-clients');
     expect(screen.getByText('Notifications').closest('a')).toHaveAttribute('href', '/settings/notifications');
@@ -43,6 +44,16 @@ describe('SettingsLayout', () => {
     // General (end: true) should NOT be active at /settings/system
     expect(generalLink.className).not.toContain('bg-primary');
     expect(systemLink.className).toContain('bg-primary');
+  });
+
+  it('applies active styling to Post Processing when at /settings/post-processing', () => {
+    renderWithProviders(<SettingsLayout />, { route: '/settings/post-processing' });
+
+    const generalLink = screen.getByText('General').closest('a')!;
+    const postProcessingLink = screen.getByText('Post Processing').closest('a')!;
+
+    expect(generalLink.className).not.toContain('bg-primary');
+    expect(postProcessingLink.className).toContain('bg-primary');
   });
 
   it('navigates between settings sections', async () => {

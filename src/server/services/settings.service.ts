@@ -111,4 +111,18 @@ export class SettingsService {
     }
     return this.getAll();
   }
+
+  /**
+   * Run once at startup: if no processing row exists and ffmpeg can be found,
+   * write processing.enabled=true with the detected path as a sensible default.
+   */
+  async bootstrapProcessingDefaults(detectFfmpegPath: () => Promise<string | null>): Promise<void> {
+    const existing = await this.db.select().from(settings).where(eq(settings.key, 'processing')).limit(1);
+    if (existing.length > 0) return;
+
+    const ffmpegPath = await detectFfmpegPath();
+    if (!ffmpegPath) return;
+
+    await this.set('processing', { ...DEFAULT_SETTINGS.processing, enabled: true, ffmpegPath });
+  }
 }
