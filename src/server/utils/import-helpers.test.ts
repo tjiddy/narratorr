@@ -254,7 +254,7 @@ describe('buildTargetPath — first-by-position author/narrator tokens (#71)', (
     expect(result).toBe('/library/The Way of Kings');
   });
 
-  it('{authorLastFirst} formats passed authorName; {narratorLastFirst} joins all narrators last-first with " & "', () => {
+  it('{authorLastFirst} formats passed authorName; {narratorLastFirst} uses position-0 narrator only (not all narrators joined)', () => {
     const result = buildTargetPath(
       '/library',
       '{authorLastFirst}/{narratorLastFirst}/{title}',
@@ -264,7 +264,7 @@ describe('buildTargetPath — first-by-position author/narrator tokens (#71)', (
       },
       'Brandon Sanderson',
     );
-    expect(result).toBe('/library/Sanderson, Brandon/Kramer, Michael & Reading, Kate/The Way of Kings');
+    expect(result).toBe('/library/Sanderson, Brandon/Kramer, Michael/The Way of Kings');
   });
 });
 

@@ -49,7 +49,7 @@ export function buildTargetPath(
     series: book.seriesName || undefined,
     seriesPosition: book.seriesPosition ?? undefined,
     narrator: primaryNarrator || undefined,
-    narratorLastFirst: narratorNames.length > 0 ? narratorNames.map(toLastFirst).join(' & ') : undefined,
+    narratorLastFirst: primaryNarrator ? toLastFirst(primaryNarrator) : undefined,
     year: extractYear(book.publishedDate),
   };
 
