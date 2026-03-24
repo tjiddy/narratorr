@@ -39,18 +39,23 @@ export function buildQualityAssessment(
     }
   }
 
-  // Check narrator match
+  // Check narrator match (skip for first imports — no existing file to protect)
   let narratorMatch: boolean | null = null;
   let existingNarrator: string | null = null;
   let downloadNarrator: string | null = null;
-  if (scanResult.tagNarrator && book?.narrator) {
-    existingNarrator = book.narrator;
-    downloadNarrator = scanResult.tagNarrator;
-    const existingNarrators = book.narrator.split(/[,;&]/).map(n => n.trim().toLowerCase());
-    const normalizedDownload = scanResult.tagNarrator.trim().toLowerCase();
-    narratorMatch = existingNarrators.some(n => n === normalizedDownload);
-    if (!narratorMatch) {
-      holdReasons.push('narrator_mismatch');
+  if (book && book.path !== null && scanResult.tagNarrator && book.narrator) {
+    const tokenize = (s: string) => s.split(/[,;&]/).map(n => n.trim().toLowerCase()).filter(n => n.length > 0);
+    const existingTokens = tokenize(book.narrator);
+    const downloadTokens = tokenize(scanResult.tagNarrator);
+    // Skip if either side produces no tokens after normalization (AC5)
+    if (existingTokens.length > 0 && downloadTokens.length > 0) {
+      existingNarrator = book.narrator;
+      downloadNarrator = scanResult.tagNarrator;
+      const existingSet = new Set(existingTokens);
+      narratorMatch = downloadTokens.some(n => existingSet.has(n));
+      if (!narratorMatch) {
+        holdReasons.push('narrator_mismatch');
+      }
     }
   }
 
