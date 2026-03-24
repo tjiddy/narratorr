@@ -116,7 +116,7 @@ export function RecyclingBinSection() {
               <div className="min-w-0">
                 <p className="font-medium truncate">{entry.title}</p>
                 <p className="text-sm text-muted-foreground truncate">
-                  {entry.authorName && <span>{entry.authorName} &middot; </span>}
+                  {entry.authorName?.length ? <span>{entry.authorName.join(', ')} &middot; </span> : null}
                   Deleted {formatDeletedDate(entry.deletedAt)}
                 </p>
               </div>

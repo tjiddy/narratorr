@@ -38,12 +38,12 @@ function createMockEntry(overrides: Partial<RecyclingBinEntry> & { id: number; t
 
 const mockEntries: RecyclingBinEntry[] = [
   createMockEntry({
-    id: 1, bookId: 42, title: 'The Way of Kings', authorName: 'Brandon Sanderson',
+    id: 1, bookId: 42, title: 'The Way of Kings', authorName: ['Brandon Sanderson'],
     deletedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
     originalPath: '/audiobooks/Sanderson/Way of Kings', recyclePath: './config/recycle/42',
   }),
   createMockEntry({
-    id: 2, bookId: 43, title: 'Mistborn', authorName: 'Brandon Sanderson',
+    id: 2, bookId: 43, title: 'Mistborn', authorName: ['Brandon Sanderson'],
     deletedAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(),
     originalPath: '/audiobooks/Sanderson/Mistborn', recyclePath: './config/recycle/43',
   }),
