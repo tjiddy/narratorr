@@ -138,7 +138,7 @@ function ProbeResultFeedback({ result, error }: { result: { version: string } | 
   return null;
 }
 
-// eslint-disable-next-line complexity, max-lines-per-function -- linear form with ffmpeg, processing, and tagging sections
+// eslint-disable-next-line max-lines-per-function -- linear form: ffmpeg, processing, and tagging sections
 export function ProcessingSettingsSection() {
   const queryClient = useQueryClient();
   const [probeResult, setProbeResult] = useState<{ version: string } | null>(null);
