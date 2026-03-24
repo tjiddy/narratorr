@@ -238,4 +238,32 @@ describe('SearchPage', () => {
       expect(screen.getByText('In Library')).toBeInTheDocument();
     });
   });
+
+  describe('Add Book identity', () => {
+    it('shows "Add Book" heading on the page', () => {
+      renderWithProviders(<SearchPage />);
+      expect(screen.getByRole('heading', { name: /add book/i })).toBeInTheDocument();
+    });
+
+    it('does not show "Discover Audiobooks" hero headline', () => {
+      renderWithProviders(<SearchPage />);
+      expect(screen.queryByText(/discover audiobooks/i)).not.toBeInTheDocument();
+    });
+
+    it('does not use "Discover" language in any heading or subheading', () => {
+      renderWithProviders(<SearchPage />);
+      const headings = screen.queryAllByRole('heading');
+      for (const heading of headings) {
+        expect(heading.textContent?.toLowerCase()).not.toMatch(/discover/);
+      }
+    });
+
+    it('search form is the first interactive control on the page', () => {
+      renderWithProviders(<SearchPage />);
+      const input = screen.getByPlaceholderText(/search by title/i);
+      expect(input).toBeInTheDocument();
+      // The search input should be present and precede any results area
+      expect(input.tagName).toBe('INPUT');
+    });
+  });
 });

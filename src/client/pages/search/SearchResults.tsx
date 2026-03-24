@@ -119,7 +119,7 @@ export function SearchResults({
       <EmptyState
         icon={<BookOpenIcon className="w-16 h-16" />}
         title="Start your search"
-        description="Enter a title, author, or series to discover audiobooks"
+        description="Enter a title, author, or series to find audiobooks to add"
       />
     );
   }
