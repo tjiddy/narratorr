@@ -386,6 +386,22 @@ describe('BookEditModal', () => {
     });
   });
 
+  describe('modal opacity', () => {
+    it('backdrop uses a sufficiently opaque background class (bg-black/80 or darker, not bg-black/60)', () => {
+      renderModal();
+      const backdrop = screen.getByTestId('modal-backdrop');
+      expect(backdrop).toHaveClass('bg-black/80');
+      expect(backdrop).not.toHaveClass('bg-black/60');
+    });
+
+    it('backdrop still calls onClose when clicked after opacity fix', async () => {
+      const onClose = vi.fn();
+      renderModal({ onClose });
+      await userEvent.click(screen.getByTestId('modal-backdrop'));
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+  });
+
   describe('duplicate detection via identifiers', () => {
     afterEach(() => {
       mockIdentifiers = [];
