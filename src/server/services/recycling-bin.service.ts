@@ -73,6 +73,7 @@ export class RecyclingBinService {
   }
 
   /** Restore a recycling bin entry — move files back and re-create the book in DB. */
+  // eslint-disable-next-line complexity -- restore pipeline: path conflict check, file move, DB insert, author/narrator sync
   async restore(entryId: number): Promise<{ bookId: number }> {
     const entry = await this.getById(entryId);
     if (!entry) {
