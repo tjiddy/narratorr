@@ -18,6 +18,7 @@ import { HealthDashboard } from './HealthDashboard';
 import { ScheduledTasks } from './ScheduledTasks';
 import { SystemInfo } from './SystemInfo';
 import { RecyclingBinSection } from './RecyclingBinSection';
+import { GeneralSettingsForm } from './GeneralSettingsForm';
 
 export function SystemSettings() {
   const queryClient = useQueryClient();
@@ -128,6 +129,8 @@ export function SystemSettings() {
       </SettingsSection>
 
       <SystemInfo />
+
+      <GeneralSettingsForm />
 
       <RecyclingBinSection />
 
