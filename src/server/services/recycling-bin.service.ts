@@ -50,9 +50,9 @@ export class RecyclingBinService {
     const record: NewRecyclingBinRow = {
       bookId: book.id,
       title: book.title,
-      authorName: book.authors?.[0]?.name ?? null,
+      authorName: book.authors?.map(a => a.name).join(', ') ?? null,
       authorAsin: book.authors?.[0]?.asin ?? null,
-      narrator: book.narrators?.map(n => n.name).join('; ') ?? null,
+      narrator: book.narrators?.map(n => n.name).join(', ') ?? null,
       description: book.description,
       coverUrl: book.coverUrl,
       asin: book.asin,
@@ -128,26 +128,31 @@ export class RecyclingBinService {
       path: hasPath ? entry.originalPath : null,
     }).returning();
 
-    // Restore author junction row
+    // Restore author junction rows from snapshot (authorName stores ", "-separated names)
     if (entry.authorName) {
-      const slug = slugify(entry.authorName);
-      let [existingAuthor] = await this.db.select({ id: authors.id }).from(authors).where(eq(authors.slug, slug)).limit(1);
-      if (!existingAuthor) {
-        const [created] = await this.db.insert(authors).values({ name: entry.authorName, slug, asin: entry.authorAsin }).onConflictDoNothing().returning();
-        if (created) {
-          existingAuthor = created;
-        } else {
-          [existingAuthor] = await this.db.select({ id: authors.id }).from(authors).where(eq(authors.slug, slug)).limit(1);
+      const authorNames = entry.authorName.split(', ').map(n => n.trim()).filter(Boolean);
+      for (let i = 0; i < authorNames.length; i++) {
+        const name = authorNames[i];
+        const asin = i === 0 ? entry.authorAsin : null;
+        const slug = slugify(name);
+        let [existingAuthor] = await this.db.select({ id: authors.id }).from(authors).where(eq(authors.slug, slug)).limit(1);
+        if (!existingAuthor) {
+          const [created] = await this.db.insert(authors).values({ name, slug, asin }).onConflictDoNothing().returning();
+          if (created) {
+            existingAuthor = created;
+          } else {
+            [existingAuthor] = await this.db.select({ id: authors.id }).from(authors).where(eq(authors.slug, slug)).limit(1);
+          }
         }
-      }
-      if (existingAuthor) {
-        await this.db.insert(bookAuthors).values({ bookId: newBook.id, authorId: existingAuthor.id, position: 0 }).onConflictDoNothing();
+        if (existingAuthor) {
+          await this.db.insert(bookAuthors).values({ bookId: newBook.id, authorId: existingAuthor.id, position: i }).onConflictDoNothing();
+        }
       }
     }
 
-    // Restore narrator junction rows from snapshot (narrator field stores "; "-separated names)
+    // Restore narrator junction rows from snapshot (narrator field stores ", "-separated names)
     if (entry.narrator) {
-      const narratorNames = entry.narrator.split('; ').map(n => n.trim()).filter(Boolean);
+      const narratorNames = entry.narrator.split(', ').map(n => n.trim()).filter(Boolean);
       for (let i = 0; i < narratorNames.length; i++) {
         const name = narratorNames[i];
         const slug = slugify(name);

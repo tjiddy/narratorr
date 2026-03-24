@@ -432,7 +432,7 @@ describe('RecyclingBinService — many-to-many snapshot and restore (#71)', () =
   });
 
   describe('snapshot on delete', () => {
-    it('delete book with two narrators → recyclingBin.narrator stores "; "-joined string', async () => {
+    it('delete book with two narrators → recyclingBin.narrator stores ", "-joined string', async () => {
       const book = {
         ...createMockDbBook({ id: 1, path: '/audiobooks/test', status: 'imported' }),
         authors: [{ id: 1, name: 'Brandon Sanderson', slug: 'bs', asin: null, imageUrl: null, bio: null, monitored: false, lastCheckedAt: null, createdAt: new Date(), updatedAt: new Date() }],
@@ -447,11 +447,11 @@ describe('RecyclingBinService — many-to-many snapshot and restore (#71)', () =
 
       const insertChain = db.insert.mock.results[0].value;
       expect(insertChain.values).toHaveBeenCalledWith(
-        expect.objectContaining({ narrator: 'Kate Reading; Michael Kramer' }),
+        expect.objectContaining({ narrator: 'Kate Reading, Michael Kramer' }),
       );
     });
 
-    it('delete book with two authors → recyclingBin.authorName stores first author name', async () => {
+    it('delete book with two authors → recyclingBin.authorName stores comma-joined author names', async () => {
       const book = {
         ...createMockDbBook({ id: 1, path: '/audiobooks/test', status: 'imported' }),
         authors: [
@@ -466,7 +466,7 @@ describe('RecyclingBinService — many-to-many snapshot and restore (#71)', () =
 
       const insertChain = db.insert.mock.results[0].value;
       expect(insertChain.values).toHaveBeenCalledWith(
-        expect.objectContaining({ authorName: 'Brandon Sanderson' }),
+        expect.objectContaining({ authorName: 'Brandon Sanderson, Robert Jordan' }),
       );
     });
   });
@@ -475,7 +475,7 @@ describe('RecyclingBinService — many-to-many snapshot and restore (#71)', () =
     it('restore from bin → splits narrator snapshot, find-or-creates each narrator, inserts bookNarrators junction rows', async () => {
       const entry = createMockDbRecyclingBinEntry({
         id: 1, authorName: null,
-        narrator: 'Kate Reading; Michael Kramer',
+        narrator: 'Kate Reading, Michael Kramer',
         originalPath: '/audiobooks/test',
         recyclePath: './config/recycle/1',
       });
