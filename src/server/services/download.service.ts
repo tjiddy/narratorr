@@ -222,7 +222,11 @@ export class DownloadService {
         if (params.replaceExisting) {
           // Cancel each replaceable active download (best-effort: proceed even if cancel fails)
           for (const dl of replaceableActive) {
-            await this.cancel(dl.id, 'Replaced by new download');
+            try {
+              await this.cancel(dl.id, 'Replaced by new download');
+            } catch (cancelErr) {
+              this.log.warn({ id: dl.id, error: cancelErr }, 'Failed to cancel replaceable download — proceeding with replacement anyway');
+            }
           }
         } else {
           const err = new Error(`Book ${params.bookId} already has an active download (id: ${replaceableActive[0].id})`);
