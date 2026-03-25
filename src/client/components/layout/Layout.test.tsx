@@ -219,6 +219,12 @@ describe('Layout', () => {
         expect(screen.getByText('Library')).toBeInTheDocument();
       });
       expect(screen.queryByText('Discover')).not.toBeInTheDocument();
+
+      const navLabels = screen.getAllByRole('link')
+        .map((el) => el.textContent?.trim())
+        .filter((t) => ['Library', 'Add Book', 'Discover', 'Activity', 'Settings'].includes(t ?? ''));
+
+      expect(navLabels).toEqual(['Library', 'Add Book', 'Activity', 'Settings']);
     });
 
     it('hides Discover nav item when settings query is still loading', () => {
