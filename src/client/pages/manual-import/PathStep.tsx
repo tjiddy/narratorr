@@ -71,7 +71,7 @@ export function PathStep({
                   type="button"
                   onClick={() => handleFolderClick(entry.path)}
                   aria-label={entry.path}
-                  className="flex-1 text-left text-sm truncate text-foreground/80 hover:text-foreground transition-colors focus-ring rounded"
+                  className="flex-1 text-left text-sm truncate text-foreground/80 hover:text-foreground active:opacity-75 transition-colors focus-ring rounded"
                 >
                   {entry.path}
                 </button>
@@ -82,7 +82,7 @@ export function PathStep({
                   type="button"
                   onClick={() => demoteToRecent(entry.path)}
                   aria-label={`Unfavorite ${entry.path}`}
-                  className="p-0.5 text-primary hover:text-primary/80 transition-colors focus-ring rounded shrink-0"
+                  className="p-0.5 text-primary hover:text-amber-300 active:scale-90 transition-all focus-ring rounded shrink-0"
                 >
                   <HeartFillIcon className="w-3.5 h-3.5" />
                 </button>
@@ -90,7 +90,7 @@ export function PathStep({
                   type="button"
                   onClick={() => removeFavorite(entry.path)}
                   aria-label={`Remove favorite ${entry.path}`}
-                  className="p-0.5 text-muted-foreground/40 hover:text-destructive transition-colors focus-ring rounded shrink-0"
+                  className="p-0.5 text-muted-foreground/40 hover:text-destructive active:scale-90 transition-all focus-ring rounded shrink-0"
                 >
                   <XIcon className="w-3.5 h-3.5" />
                 </button>
@@ -116,7 +116,7 @@ export function PathStep({
                   type="button"
                   onClick={() => handleFolderClick(entry.path)}
                   aria-label={entry.path}
-                  className="flex-1 text-left text-sm truncate text-foreground/80 hover:text-foreground transition-colors focus-ring rounded"
+                  className="flex-1 text-left text-sm truncate text-foreground/80 hover:text-foreground active:opacity-75 transition-colors focus-ring rounded"
                 >
                   {entry.path}
                 </button>
@@ -127,7 +127,7 @@ export function PathStep({
                   type="button"
                   onClick={() => promoteToFavorite(entry.path)}
                   aria-label={`Favorite ${entry.path}`}
-                  className="p-0.5 text-muted-foreground/40 hover:text-primary transition-colors focus-ring rounded shrink-0"
+                  className="p-0.5 text-muted-foreground/40 hover:text-primary active:scale-90 transition-all focus-ring rounded shrink-0"
                 >
                   <HeartIcon className="w-3.5 h-3.5" />
                 </button>
@@ -135,7 +135,7 @@ export function PathStep({
                   type="button"
                   onClick={() => removeRecent(entry.path)}
                   aria-label={`Remove recent ${entry.path}`}
-                  className="p-0.5 text-muted-foreground/40 hover:text-destructive transition-colors focus-ring rounded shrink-0"
+                  className="p-0.5 text-muted-foreground/40 hover:text-destructive active:scale-90 transition-all focus-ring rounded shrink-0"
                 >
                   <XIcon className="w-3.5 h-3.5" />
                 </button>
@@ -170,7 +170,7 @@ export function PathStep({
           type="button"
           onClick={handleScan}
           disabled={!scanPath.trim() || isPending}
-          className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
+          className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 active:opacity-80 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
         >
           {isPending && <LoadingSpinner className="w-3.5 h-3.5" />}
           {isPending ? 'Scanning...' : 'Scan'}
