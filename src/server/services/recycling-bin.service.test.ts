@@ -489,6 +489,22 @@ describe('RecyclingBinService — many-to-many snapshot and restore (#71)', () =
         expect.objectContaining({ narrator: ['Smith, John'] }),
       );
     });
+
+    it('delete book with author whose name contains a comma → JSON array preserves name intact', async () => {
+      const book = {
+        ...createMockDbBook({ id: 1, path: '/audiobooks/test', status: 'imported' }),
+        authors: [{ id: 1, name: 'Jordan, Robert', slug: 'jordan-robert', asin: null, imageUrl: null, bio: null, monitored: false, lastCheckedAt: null, createdAt: new Date(), updatedAt: new Date() }],
+        narrators: [],
+      };
+      db.onInsert([createMockDbRecyclingBinEntry()]);
+
+      await service.moveToRecycleBin(book, '/audiobooks/test');
+
+      const insertChain = db.insert.mock.results[0].value;
+      expect(insertChain.values).toHaveBeenCalledWith(
+        expect.objectContaining({ authorName: ['Jordan, Robert'] }),
+      );
+    });
   });
 
   describe('restore via find-or-create', () => {
@@ -580,6 +596,24 @@ describe('RecyclingBinService JSON array storage (issue #79)', () => {
 
     expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [
       { name: 'Brandon Sanderson', asin: undefined },
+    ]);
+  });
+
+  it('restore() passes comma-containing author name intact to syncAuthors (round-trip)', async () => {
+    const entry = createMockDbRecyclingBinEntry({
+      id: 1,
+      authorName: ['Jordan, Robert'],
+      narrator: null,
+      originalPath: '/audiobooks/test',
+      recyclePath: './config/recycle/1',
+    });
+    db.onSelect([entry], []);
+    db.onInsert([createMockDbBook({ id: 99 })]);
+
+    await service.restore(1);
+
+    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [
+      { name: 'Jordan, Robert', asin: undefined },
     ]);
   });
 

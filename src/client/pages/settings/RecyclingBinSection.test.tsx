@@ -78,6 +78,22 @@ describe('RecyclingBinSection', () => {
     expect(screen.getByText(/10 days ago/)).toBeInTheDocument();
   });
 
+  it('displays multi-author entry with author names joined by ", "', async () => {
+    const multiAuthorEntry = createMockEntry({
+      id: 3, title: 'The Eye of the World',
+      authorName: ['Jordan, Robert', 'Sanderson, Brandon'],
+      deletedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    vi.mocked(api.getRecyclingBinEntries).mockResolvedValue([multiAuthorEntry]);
+
+    renderWithProviders(<RecyclingBinSection />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The Eye of the World')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Jordan, Robert, Sanderson, Brandon/)).toBeInTheDocument();
+  });
+
   it('restore button triggers restore API call and removes item from list on success', async () => {
     const user = userEvent.setup();
     vi.mocked(api.getRecyclingBinEntries).mockResolvedValue(mockEntries);
