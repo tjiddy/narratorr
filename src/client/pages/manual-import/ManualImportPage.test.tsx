@@ -186,6 +186,12 @@ describe('ManualImportPage', () => {
       expect(screen.getByText('Scan')).toBeDisabled();
     });
 
+    it('disables Scan button when path is whitespace-only', async () => {
+      renderPage();
+      await userEvent.type(screen.getByPlaceholderText('/path/to/audiobooks'), '   ');
+      expect(screen.getByText('Scan')).toBeDisabled();
+    });
+
     it('enables Scan button when path is entered', async () => {
       renderPage();
       await userEvent.type(screen.getByPlaceholderText('/path/to/audiobooks'), '/media');
