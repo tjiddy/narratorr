@@ -81,6 +81,7 @@ describe('ActivityPage pagination clamp (#93)', () => {
     );
   }
 
+  // timeout: 15s — test navigates 4 pages via userEvent, each needing a fetch + waitFor
   it('queue page clamps to last valid page when total shrinks (page 3 → page 2 of 2)', async () => {
     const user = userEvent.setup();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -135,7 +136,7 @@ describe('ActivityPage pagination clamp (#93)', () => {
     // History is completely unaffected — its independent clamp effect sees total=150, no change.
     await waitFor(() => expect(pageLabels()[0]).toHaveTextContent('Page 2 of 2'));
     expect(pageLabels()[1]).toHaveTextContent('Page 1 of 3');
-  });
+  }, 15000);
 });
 
 describe('ActivityPage', () => {

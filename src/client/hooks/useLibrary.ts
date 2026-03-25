@@ -7,7 +7,7 @@ export function useLibrary(params?: BookListParams) {
     queryKey: queryKeys.books(params),
     queryFn: () => api.getBooks(params),
     staleTime: 30_000,
-    placeholderData: (previousData: unknown) => previousData,
+    placeholderData: (previousData) => previousData,
   });
 }
 
