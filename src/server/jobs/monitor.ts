@@ -88,7 +88,7 @@ export async function monitorDownloads(
 
 import type { DownloadRow } from '../services/types.js';
 
-type DownloadItem = { progress: number; status: 'downloading' | 'seeding' | 'paused' | 'completed' | 'error'; savePath: string; size: number };
+type DownloadItem = { progress: number; status: 'downloading' | 'seeding' | 'paused' | 'completed' | 'error'; savePath: string; size: number; errorMessage?: string };
 
 /** Handle a download that has been removed from the client externally. */
 async function handleMissingItem(
@@ -135,7 +135,8 @@ async function processDownloadUpdate(
   broadcaster?: EventBroadcasterService,
 ): Promise<void> {
   const progress = item.progress / 100;
-  const isCompleted = progress >= 1;
+  const isError = item.status === 'error';
+  const isCompleted = !isError && progress >= 1;
   const newStatus = isCompleted ? 'completed' : mapDownloadStatus(item.status);
 
   if (download.status !== newStatus) {
@@ -152,6 +153,7 @@ async function processDownloadUpdate(
       status: newStatus,
       completedAt: isCompleted && !download.completedAt ? new Date() : download.completedAt,
       ...(progressChanged ? { progressUpdatedAt: new Date() } : {}),
+      ...(item.errorMessage ? { errorMessage: item.errorMessage } : {}),
     })
     .where(eq(downloads.id, download.id));
 
