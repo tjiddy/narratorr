@@ -44,7 +44,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
 2b. **Handle rebase findings first:** If any finding has `"category": "rebase"`:
    1. `git fetch origin main && git rebase origin/main`
    2. Resolve any merge conflicts that arise during the rebase
-   3. After all conflicts are resolved and the rebase completes: `git push --force-with-lease`
+   3. After all conflicts are resolved and the rebase completes: `node scripts/git-push.ts --force-with-lease`
    4. Mark the rebase finding as `fixed` (resolution for the response table)
    5. Continue to step 3 for any remaining non-rebase findings. If the rebase finding was the only finding, skip step 3 entirely.
 
@@ -89,13 +89,13 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    - Run quality gates: `node scripts/verify.ts`
      - If output starts with `VERIFY: fail` → fix issues and re-run until clean
      - If output starts with `VERIFY: pass` → write phase marker: `echo done > .claude/state/respond-to-pr-review-<pr-number>/verify-complete` and continue to push RIGHT NOW. You still need to push, post the response comment, and update labels.
-   - Push: `git push origin <head-branch>`
+   - Push: `node scripts/git-push.ts origin <head-branch>`
    - Post response comment (see template below)
    - **Update labels:** Set `stage/review-pr` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/review-pr"`
    - Set `status/in-review` on the **issue**: `node scripts/update-labels.ts <id> --replace "status/" "status/in-review"`
 
    **Dispute flow** (any blocking finding is disputed):
-   - Push any fixes made so far: `git push origin <head-branch>`
+   - Push any fixes made so far: `node scripts/git-push.ts origin <head-branch>`
    - Post response comment with rebuttal reasoning
    - Find linked issue number from PR body (`Refs #<id>`, `closes #<id>`, or `fixes #<id>`)
    - Add `blocked` flag to issue: `node scripts/block.ts <id> "PR #<pr-number> has disputed blocking findings requiring human input. See PR comments."`

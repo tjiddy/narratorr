@@ -385,7 +385,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
     git pull origin main
     git add .claude/cl/
     git commit -m "CL from PR #<pr-number> review"
-    git push origin main
+    node scripts/git-push.ts origin main
     ```
     If there's nothing to commit (no new CL files), skip this step.
 
@@ -397,7 +397,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
     - Then run `node scripts/merge.ts <pr-number>` to squash merge, update issue labels, and clean up the branch
     - If merge output starts with `REBASE:` — the branch is behind main. Attempt a clean rebase:
       1. `git checkout <head-branch> && git fetch origin main && git rebase origin/main`
-      2. If the rebase succeeds (no conflicts): `git push --force-with-lease` then re-run `node scripts/merge.ts <pr-number>`
+      2. If the rebase succeeds (no conflicts): `node scripts/git-push.ts --force-with-lease` then re-run `node scripts/merge.ts <pr-number>`
       3. If the rebase has conflicts: `git rebase --abort && git checkout main` — fall through to the `REBASE_CONFLICT` handling below
     - If merge output starts with `REBASE_CONFLICT:` (or a `REBASE:` rebase attempt failed with conflicts above):
       1. Overwrite `.claude/state/review-pr-<pr-number>/review.md` with a conflict verdict:

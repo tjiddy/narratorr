@@ -167,6 +167,28 @@ export function git(...args: string[]): string {
   return execFileSync("git", args, EXEC_OPTS).trim();
 }
 
+// Token-aware git push. Mints a fresh GitHub App token and temporarily embeds
+// it in the remote URL to bypass stale credential manager cache. Restores the
+// original URL after push (even on failure). Falls back to regular git push
+// when no GitHub App credentials are configured.
+export function gitPush(...args: string[]): string {
+  const token = getGhToken();
+  if (token) {
+    const originalUrl = git("remote", "get-url", "origin");
+    const tokenUrl = originalUrl.replace(
+      "https://github.com/",
+      `https://x-access-token:${token}@github.com/`,
+    );
+    git("remote", "set-url", "origin", tokenUrl);
+    try {
+      return git("push", ...args);
+    } finally {
+      git("remote", "set-url", "origin", originalUrl);
+    }
+  }
+  return git("push", ...args);
+}
+
 // Run a shell command, return structured result (never throws).
 export function run(cmd: string): { ok: boolean; stdout: string; stderr: string } {
   try {

@@ -151,7 +151,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
 
 6. **Push the branch:**
    ```bash
-   git push -u origin $(git branch --show-current)
+   node scripts/git-push.ts -u origin $(git branch --show-current)
    ```
 
 7. **Read the issue** to get the title and details: `gh issue view $ARGUMENTS --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`
@@ -275,7 +275,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
     ```bash
     git add .claude/cl/
     git commit -m "CL from #<id>"
-    git push origin main
+    node scripts/git-push.ts origin main
     ```
     If there's nothing to commit (no new CL files), skip this step.
 
