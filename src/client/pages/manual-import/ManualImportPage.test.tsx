@@ -882,29 +882,36 @@ describe('ManualImportPage', () => {
   });
 
   describe('path input layout order (#100)', () => {
-    it('path input renders before the Favorite Folders heading in the DOM', () => {
+    it('path input and Scan button render before the Favorite Folders heading in the DOM', () => {
       mockFavorites = [{ path: '/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
       renderPage();
       const input = screen.getByPlaceholderText('/path/to/audiobooks');
+      const scanBtn = screen.getByRole('button', { name: 'Scan' });
       const favHeading = screen.getByText('Favorite Folders');
       expect(input.compareDocumentPosition(favHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(scanBtn.compareDocumentPosition(favHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
-    it('path input renders before the Recent Folders heading in the DOM', () => {
+    it('path input and Scan button render before the Recent Folders heading in the DOM', () => {
       mockRecents = [{ path: '/podcasts', lastUsedAt: '2026-01-02T00:00:00.000Z' }];
       renderPage();
       const input = screen.getByPlaceholderText('/path/to/audiobooks');
+      const scanBtn = screen.getByRole('button', { name: 'Scan' });
       const recentHeading = screen.getByText('Recent Folders');
       expect(input.compareDocumentPosition(recentHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(scanBtn.compareDocumentPosition(recentHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
-    it('with empty favorites and empty recents, path input appears before both section headings', () => {
+    it('with empty favorites and empty recents, path input and Scan button appear before both section headings', () => {
       renderPage();
       const input = screen.getByPlaceholderText('/path/to/audiobooks');
+      const scanBtn = screen.getByRole('button', { name: 'Scan' });
       const favHeading = screen.getByText('Favorite Folders');
       const recentHeading = screen.getByText('Recent Folders');
       expect(input.compareDocumentPosition(favHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(input.compareDocumentPosition(recentHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(scanBtn.compareDocumentPosition(favHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(scanBtn.compareDocumentPosition(recentHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
     it('clicking a favorite folder entry still populates the path input after reorder (regression)', async () => {
