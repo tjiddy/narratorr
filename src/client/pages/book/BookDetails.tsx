@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
+import { ConfirmModal } from '@/components/ConfirmModal.js';
 import { HistoryIcon, BookOpenIcon } from '@/components/icons';
 import type { BookWithAuthor } from '@/lib/api';
 import { BookHero } from './BookHero.js';
@@ -23,6 +24,8 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const navigate = useNavigate();
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
+  const [confirmRenameOpen, setConfirmRenameOpen] = useState(false);
+  const [confirmRetagOpen, setConfirmRetagOpen] = useState(false);
   const [tab, setTab] = useState<'details' | 'history'>('details');
 
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -57,9 +60,9 @@ export function BookDetails({ libraryBook, metadataBook }: {
         onBackClick={() => navigate('/library')}
         onSearchClick={() => setSearchModalOpen(true)}
         onEditClick={() => setEditModalOpen(true)}
-        onRenameClick={() => renameMutation.mutate()}
+        onRenameClick={() => setConfirmRenameOpen(true)}
         isRenaming={renameMutation.isPending}
-        onRetagClick={() => retagMutation.mutate()}
+        onRetagClick={() => setConfirmRetagOpen(true)}
         isRetagging={retagMutation.isPending}
         retagDisabled={!ffmpegConfigured}
         retagTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
@@ -138,6 +141,24 @@ export function BookDetails({ libraryBook, metadataBook }: {
           isSaving={isSaving}
         />
       )}
+
+      <ConfirmModal
+        isOpen={confirmRenameOpen}
+        title="Rename files?"
+        message={`Rename files for "${libraryBook.title}"? This will move files to match your folder format template. This cannot be undone.`}
+        confirmLabel="Rename"
+        onConfirm={() => { setConfirmRenameOpen(false); renameMutation.mutate(); }}
+        onCancel={() => setConfirmRenameOpen(false)}
+      />
+
+      <ConfirmModal
+        isOpen={confirmRetagOpen}
+        title="Re-tag audio files?"
+        message={`Re-tag audio files for "${libraryBook.title}"? This will overwrite existing audio metadata tags. This cannot be undone.`}
+        confirmLabel="Re-tag"
+        onConfirm={() => { setConfirmRetagOpen(false); retagMutation.mutate(); }}
+        onCancel={() => setConfirmRetagOpen(false)}
+      />
     </div>
   );
 }
