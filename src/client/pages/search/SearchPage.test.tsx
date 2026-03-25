@@ -254,19 +254,20 @@ describe('SearchPage', () => {
   });
 
   describe('#99 blank empty states', () => {
-    it('shows blank content area (no empty-state text) before searching', () => {
-      renderWithProviders(<SearchPage />);
+    it('shows blank content area (no empty-state text or icon) before searching', () => {
+      const { container } = renderWithProviders(<SearchPage />);
       expect(screen.queryByText('Start your search')).not.toBeInTheDocument();
       expect(screen.queryByText(/enter a title/i)).not.toBeInTheDocument();
+      expect(container.querySelector('[class*="empty"]')).toBeNull();
     });
 
-    it('shows blank content area (no empty-state text) when search returns no results', async () => {
+    it('shows blank content area (no empty-state text or icon) when search returns no results', async () => {
       (api.searchMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
         books: [],
         authors: [],
       });
 
-      renderWithProviders(<SearchPage />);
+      const { container } = renderWithProviders(<SearchPage />);
       const user = userEvent.setup();
 
       const input = screen.getByPlaceholderText(/search by title/i);
@@ -275,6 +276,8 @@ describe('SearchPage', () => {
 
       await waitFor(() => {
         expect(screen.queryByText(/no results/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/try different/i)).not.toBeInTheDocument();
+        expect(container.querySelector('[class*="empty"]')).toBeNull();
       });
     });
   });

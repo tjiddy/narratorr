@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { Layout } from '@/components/layout/Layout';
@@ -294,31 +296,53 @@ describe('Layout', () => {
       expect(main.classList.contains('flex-1')).toBe(true);
     });
 
-    it('renders header/nav on /library route with no footer text', () => {
+    function renderWithNestedRoute(path: string, testId: string) {
       mockCounts(0);
       mockAuth();
-      renderWithProviders(<Layout />, { route: '/library' });
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      return render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={[path]}>
+            <Routes>
+              <Route path="/" element={<Layout />}>
+                <Route path="library" element={<div data-testid={testId}>Library Content</div>} />
+                <Route path="activity" element={<div data-testid={testId}>Activity Content</div>} />
+                <Route path="settings" element={<div data-testid={testId}>Settings Content</div>} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    }
+
+    it('renders route content inside main on /library route with no footer text', () => {
+      const { container } = renderWithNestedRoute('/library', 'library-content');
 
       expect(screen.getByRole('navigation')).toBeInTheDocument();
       expect(screen.queryByText(/your personal audiobook library/i)).not.toBeInTheDocument();
+      const main = container.querySelector('main');
+      expect(main).not.toBeNull();
+      expect(main!.querySelector('[data-testid="library-content"]')).not.toBeNull();
     });
 
-    it('renders header/nav on /activity route with no footer text', () => {
-      mockCounts(0);
-      mockAuth();
-      renderWithProviders(<Layout />, { route: '/activity' });
+    it('renders route content inside main on /activity route with no footer text', () => {
+      const { container } = renderWithNestedRoute('/activity', 'activity-content');
 
       expect(screen.getByRole('navigation')).toBeInTheDocument();
       expect(screen.queryByText(/your personal audiobook library/i)).not.toBeInTheDocument();
+      const main = container.querySelector('main');
+      expect(main).not.toBeNull();
+      expect(main!.querySelector('[data-testid="activity-content"]')).not.toBeNull();
     });
 
-    it('renders header/nav on /settings route with no footer text', () => {
-      mockCounts(0);
-      mockAuth();
-      renderWithProviders(<Layout />, { route: '/settings' });
+    it('renders route content inside main on /settings route with no footer text', () => {
+      const { container } = renderWithNestedRoute('/settings', 'settings-content');
 
       expect(screen.getByRole('navigation')).toBeInTheDocument();
       expect(screen.queryByText(/your personal audiobook library/i)).not.toBeInTheDocument();
+      const main = container.querySelector('main');
+      expect(main).not.toBeNull();
+      expect(main!.querySelector('[data-testid="settings-content"]')).not.toBeNull();
     });
   });
 });

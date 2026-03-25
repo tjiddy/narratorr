@@ -214,17 +214,20 @@ describe('SearchResults', () => {
 
   describe('#99 blank empty states', () => {
     it('renders blank content when no search term (no icon, no text)', () => {
-      renderResults({ searchTerm: '' });
+      const { container } = renderResults({ searchTerm: '' });
       expect(screen.queryByText('Start your search')).not.toBeInTheDocument();
       expect(screen.queryByText(/enter a title/i)).not.toBeInTheDocument();
+      expect(container.querySelector('svg')).toBeNull();
     });
 
     it('renders blank content when search has no results (no icon, no text)', () => {
-      renderResults({
+      const { container } = renderResults({
         searchTerm: 'nonexistent',
         results: { books: [], authors: [] },
       });
       expect(screen.queryByText(/no results/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/try different/i)).not.toBeInTheDocument();
+      expect(container.querySelector('svg')).toBeNull();
     });
   });
 });
