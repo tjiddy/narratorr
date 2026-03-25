@@ -29,6 +29,7 @@ export function LibraryBookCard({
 }) {
   const { hasError: imageError, onError: onImageError } = useImageError();
   const isMissing = book.status === 'missing' || book.status === 'failed';
+  const isCollapsed = (collapsedCount ?? 0) > 0;
 
   return (
     <div
@@ -108,12 +109,12 @@ export function LibraryBookCard({
           <div className={`h-0.5 ${(bookStatusConfig[book.status] ?? bookStatusConfig.wanted).barClass}`} data-testid="status-bar" />
           {/* Default: title + author */}
           <div className="px-3 py-2">
-            <h3 className="text-sm font-semibold text-white leading-tight truncate drop-shadow-sm">{book.title}</h3>
+            <h3 className="text-sm font-semibold text-white leading-tight truncate drop-shadow-sm">{isCollapsed ? (book.seriesName || book.title) : book.title}</h3>
             <p className="text-xs text-white/70 truncate mt-0.5">{book.authors[0]?.name}</p>
           </div>
 
           {/* Hover expand: narrator + series */}
-          {(book.narrators.length > 0 || book.seriesName) && (
+          {!isCollapsed && (book.narrators.length > 0 || book.seriesName) && (
             <div className="max-h-0 opacity-0 group-hover:max-h-16 group-hover:opacity-100 overflow-hidden transition-all duration-300 ease-out">
               <div className="px-3 pb-2 flex flex-wrap gap-x-3 gap-y-0.5">
                 {book.narrators.length > 0 && (
