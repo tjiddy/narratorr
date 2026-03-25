@@ -65,7 +65,7 @@ export function PathStep({
             {favorites.map((entry) => (
               <div
                 key={entry.path}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/3 border border-white/5 hover:border-primary/20 transition-colors group"
+                className="flex items-center gap-2 px-3 py-2 rounded-lg glass-card hover:shadow-card-hover hover:border-primary/30 transition-all duration-300 ease-out group"
               >
                 <button
                   type="button"
@@ -82,7 +82,7 @@ export function PathStep({
                   type="button"
                   onClick={() => demoteToRecent(entry.path)}
                   aria-label={`Unfavorite ${entry.path}`}
-                  className="p-0.5 text-primary/70 hover:text-primary transition-colors focus-ring rounded shrink-0"
+                  className="p-0.5 text-primary hover:text-primary/80 transition-colors focus-ring rounded shrink-0"
                 >
                   <HeartFillIcon className="w-3.5 h-3.5" />
                 </button>
@@ -90,7 +90,7 @@ export function PathStep({
                   type="button"
                   onClick={() => removeFavorite(entry.path)}
                   aria-label={`Remove favorite ${entry.path}`}
-                  className="p-0.5 text-muted-foreground/40 hover:text-muted-foreground transition-colors focus-ring rounded shrink-0"
+                  className="p-0.5 text-muted-foreground/40 hover:text-destructive transition-colors focus-ring rounded shrink-0"
                 >
                   <XIcon className="w-3.5 h-3.5" />
                 </button>
@@ -110,7 +110,7 @@ export function PathStep({
             {recents.map((entry) => (
               <div
                 key={entry.path}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/3 border border-white/5 hover:border-primary/20 transition-colors group"
+                className="flex items-center gap-2 px-3 py-2 rounded-lg glass-card hover:shadow-card-hover hover:border-primary/30 transition-all duration-300 ease-out group"
               >
                 <button
                   type="button"
@@ -135,7 +135,7 @@ export function PathStep({
                   type="button"
                   onClick={() => removeRecent(entry.path)}
                   aria-label={`Remove recent ${entry.path}`}
-                  className="p-0.5 text-muted-foreground/40 hover:text-muted-foreground transition-colors focus-ring rounded shrink-0"
+                  className="p-0.5 text-muted-foreground/40 hover:text-destructive transition-colors focus-ring rounded shrink-0"
                 >
                   <XIcon className="w-3.5 h-3.5" />
                 </button>
