@@ -543,7 +543,7 @@ describe('SecuritySettings', () => {
       await user.click(screen.getByRole('button', { name: /disable auth/i }));
 
       await waitFor(() => expect(api.updateAuthConfig).toHaveBeenCalledWith({ mode: 'none' }));
-      await waitFor(() => expect((toast as { success: ReturnType<typeof vi.fn> }).success).toHaveBeenCalledWith('Authentication mode updated'));
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Authentication mode updated'));
       // Both auth queries should be invalidated (refetched)
       await waitFor(() => expect(api.getAuthConfig).toHaveBeenCalled());
       await waitFor(() => expect(api.getAuthStatus).toHaveBeenCalled());
@@ -571,7 +571,7 @@ describe('SecuritySettings', () => {
       expect(screen.queryByText(/are you sure you want to disable authentication/i)).not.toBeInTheDocument();
 
       await waitFor(() => expect(api.updateAuthConfig).toHaveBeenCalledWith({ mode: 'basic' }));
-      await waitFor(() => expect((toast as { success: ReturnType<typeof vi.fn> }).success).toHaveBeenCalledWith('Authentication mode updated'));
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Authentication mode updated'));
       await waitFor(() => expect(api.getAuthConfig).toHaveBeenCalled());
       await waitFor(() => expect(api.getAuthStatus).toHaveBeenCalled());
     });
@@ -605,7 +605,7 @@ describe('SecuritySettings', () => {
       await waitFor(() => expect(screen.getByRole('button', { name: /disable auth/i })).toBeInTheDocument());
       await user.click(screen.getByRole('button', { name: /disable auth/i }));
 
-      await waitFor(() => expect((toast as { error: ReturnType<typeof vi.fn> }).error).toHaveBeenCalledWith('Custom error'));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Custom error'));
     });
   });
 
