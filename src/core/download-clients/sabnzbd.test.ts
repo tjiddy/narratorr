@@ -442,6 +442,77 @@ describe('SABnzbdClient', () => {
       const item = await client.getDownload('SABnzbd_nzo_def456');
       expect(item!.status).toBe('error');
     });
+
+    it('sets progress to 0 for Failed history items (not hardcoded 100)', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({ queue: { slots: [] } });
+          }
+          return HttpResponse.json({
+            history: { slots: [{ ...historySlot, status: 'Failed' }] },
+          });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_def456');
+      expect(item!.progress).toBe(0);
+    });
+
+    it('maps non-empty fail_message to errorMessage on failed history item', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({ queue: { slots: [] } });
+          }
+          return HttpResponse.json({
+            history: {
+              slots: [{ ...historySlot, status: 'Failed', fail_message: 'CRC error in articles' }],
+            },
+          });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_def456');
+      expect(item!.errorMessage).toBe('CRC error in articles');
+    });
+
+    it('omits errorMessage when fail_message is empty string', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({ queue: { slots: [] } });
+          }
+          return HttpResponse.json({
+            history: { slots: [{ ...historySlot, status: 'Failed', fail_message: '' }] },
+          });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_def456');
+      expect(item!.errorMessage).toBeUndefined();
+    });
+
+    it('keeps progress at 100 for Completed history items (regression guard)', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          const url = new URL(request.url);
+          if (url.searchParams.get('mode') === 'queue') {
+            return HttpResponse.json({ queue: { slots: [] } });
+          }
+          return HttpResponse.json({
+            history: { slots: [{ ...historySlot, status: 'Completed' }] },
+          });
+        }),
+      );
+
+      const item = await client.getDownload('SABnzbd_nzo_def456');
+      expect(item!.progress).toBe(100);
+      expect(item!.errorMessage).toBeUndefined();
+    });
   });
 
   describe('timeleft parsing', () => {

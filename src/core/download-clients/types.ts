@@ -20,6 +20,7 @@ export interface DownloadItemInfo {
   eta?: number; // Seconds
   addedAt: Date;
   completedAt?: Date;
+  errorMessage?: string;
 }
 
 export interface AddDownloadOptions {

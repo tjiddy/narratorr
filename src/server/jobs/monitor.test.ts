@@ -256,6 +256,62 @@ describe('monitor job', () => {
     expect(log.info).toHaveBeenCalledWith({ id: 1, status: 'failed' }, 'Download state changed');
   });
 
+  it('routes error + progress 100% to failure path — newStatus is failed not completed', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null },
+    ]));
+    adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'error' });
+    db.update.mockReturnValue(mockDbChain());
+
+    await runMonitor();
+
+    expect(log.info).toHaveBeenCalledWith({ id: 1, status: 'failed' }, 'Download state changed');
+  });
+
+  it('does not set completedAt when status is error and progress is 100', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null },
+    ]));
+    adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'error' });
+    const chain = mockDbChain();
+    db.update.mockReturnValue(chain);
+
+    await runMonitor();
+
+    const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+    const progressUpdate = setCalls.find((c) => 'progress' in c);
+    expect(progressUpdate).toBeDefined();
+    expect(progressUpdate!.completedAt).toBeNull();
+  });
+
+  it('does not fire on_download_complete notification when status is error and progress is 100', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42, title: 'Test Book' },
+    ]));
+    adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'error', savePath: '/downloads/test', size: 1000 });
+    db.update.mockReturnValue(mockDbChain());
+
+    await runMonitor();
+
+    expect(notifierService.notify).not.toHaveBeenCalledWith('on_download_complete', expect.anything());
+  });
+
+  it('writes DownloadItemInfo.errorMessage to downloads.errorMessage on initial failure detection', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null },
+    ]));
+    adapter.getDownload.mockResolvedValueOnce({ progress: 0, status: 'error', errorMessage: 'CRC mismatch in article 42' });
+    const chain = mockDbChain();
+    db.update.mockReturnValue(chain);
+
+    await runMonitor();
+
+    const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+    const progressUpdate = setCalls.find((c) => 'progress' in c);
+    expect(progressUpdate).toBeDefined();
+    expect(progressUpdate!.errorMessage).toBe('CRC mismatch in article 42');
+  });
+
   it('preserves existing completedAt on re-download (already completed)', async () => {
     const existingCompletedAt = new Date('2025-01-15T10:00:00Z');
     db.select.mockReturnValueOnce(mockDbChain([
@@ -795,6 +851,27 @@ describe('monitor job', () => {
         expect.objectContaining({ status: 'wanted' }),
         'Book status recovered after download failure',
       );
+    });
+
+    it('writes adapter errorMessage before retry-state overwrite when retry succeeds via processDownloadUpdate', async () => {
+      const searchResult = { title: 'New Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:new123', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
+      retryDeps.retrySearchDeps.indexerService.searchAll.mockResolvedValue([searchResult]);
+
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42, title: 'Test Book', infoHash: null },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 0, status: 'error', errorMessage: 'CRC mismatch' });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+      db.delete.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      const initialFailureIdx = setCalls.findIndex((c) => c['errorMessage'] === 'CRC mismatch');
+      const retryingIdx = setCalls.findIndex((c) => c['errorMessage'] === 'Retrying');
+      expect(initialFailureIdx).toBeGreaterThanOrEqual(0);
+      expect(retryingIdx).toBeGreaterThan(initialFailureIdx);
     });
 
     it('falls back to book status recovery without retry when no retryDeps', async () => {

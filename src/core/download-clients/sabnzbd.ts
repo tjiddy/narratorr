@@ -273,12 +273,13 @@ export class SABnzbdClient implements DownloadClientAdapter {
   private mapHistorySlot(slot: SABnzbdHistorySlot): DownloadItemInfo {
     // SABnzbd's `storage` is the full destination path — split into parent + name
     const { parent, base } = splitStorage(slot.storage, slot.name);
+    const status = this.mapHistoryStatus(slot.status);
 
     return {
       id: slot.nzo_id,
       name: base,
-      progress: 100,
-      status: this.mapHistoryStatus(slot.status),
+      progress: status === 'error' ? 0 : 100,
+      status,
       savePath: parent,
       size: slot.bytes,
       downloaded: slot.bytes,
@@ -292,6 +293,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
       completedAt: slot.completed
         ? new Date(slot.completed * 1000)
         : undefined,
+      ...(slot.fail_message ? { errorMessage: slot.fail_message } : {}),
     };
   }
 
