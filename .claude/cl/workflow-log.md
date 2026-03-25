@@ -1,4 +1,34 @@
 # Workflow Log
+
+## #93 Fill remaining frontend test coverage gaps — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #107
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 10 new tests across 3 files
+- Quality gate runs: 2 (pass on attempt 2 — typecheck caught `toast as { ... }` cast error)
+- Fix iterations: 3 (1. ApiError mock import; 2. getAllByText for multiple identical elements; 3. pagination clamp approach switched from button-click nav to renderHook)
+- Context compactions: 1 (context was compacted mid-session; no rework needed)
+
+### Workflow experience
+- What went smoothly: LibrarySettingsSection and SecuritySettings tests followed clear patterns; existing mocks were reusable
+- Friction / issues encountered: TanStack Query page-navigation race in ActivityPage — clicking "Next page" triggers a new query key, data briefly becomes undefined, queueTotal drops to 0, clamp effect resets page to 1. Took 3 approaches before switching to renderHook on usePagination directly.
+
+### Token efficiency
+- Highest-token actions: Debugging the TanStack Query pagination race (multiple failed test approaches), context compaction recovery
+- Avoidable waste: Could have gone directly to renderHook for pagination clamp tests — would have saved 2 failed attempts
+- Suggestions: For any test that needs a TQ-backed component on page N, reach for renderHook on the underlying hook or pre-seed the query cache first
+
+### Infrastructure gaps
+- Repeated workarounds: Button-click navigation in TQ-backed components is unreliable for testing pagination state
+- Missing tooling / config: useActivitySection lacks placeholderData:keepPreviousData — would prevent the race and enable E2E navigation tests
+- Unresolved debt: ActivityPage production race condition (page reset during navigation) logged in debt.md
+
+### Wish I'd Known
+1. TanStack Query sets data=undefined synchronously when navigating to an uncached query key — useEffect clamp fires with total=0 before the data resolves
+2. toast as { success: ReturnType<typeof vi.fn> } causes TS2352 — just use toast.success directly
+3. getAllByText(...) is needed when both Zod error messages and watch-based real-time warnings render the same text
+
 ## #98 PathStep visual polish pass — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #101
