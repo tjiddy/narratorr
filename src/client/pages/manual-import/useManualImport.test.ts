@@ -219,6 +219,8 @@ describe('useManualImport', () => {
     });
     expect(result.current.rows).toHaveLength(1);
     expect(result.current.rows[0].book.isDuplicate).toBe(true);
+    // No match job started when all books are duplicates — empty candidates list guard
+    expect(vi.mocked(api.startMatchJob)).not.toHaveBeenCalled();
   });
 
   it('sets scanError when scan API rejects', async () => {
@@ -370,6 +372,32 @@ describe('useManualImport', () => {
     });
     expect(result.current.allSelected).toBe(true);
     expect(result.current.selectedCount).toBe(2);
+  });
+
+  it('select-all then import sends forceImport: true for duplicate rows (intended behavior per spec)', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
+    vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 3 });
+
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    act(() => { result.current.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.handleScan(); });
+    await waitFor(() => { expect(result.current.rows).toHaveLength(3); });
+
+    // Select all rows including duplicates
+    act(() => { result.current.handleToggleAll(); });
+    expect(result.current.allSelected).toBe(true);
+    expect(result.current.selectedCount).toBe(3);
+
+    await act(async () => { result.current.handleImport(); });
+    await waitFor(() => { expect(vi.mocked(api.confirmImport)).toHaveBeenCalled(); });
+
+    const [books] = vi.mocked(api.confirmImport).mock.calls[0];
+    const dupItems = books.filter(b =>
+      SCAN_RESULT_WITH_DUPLICATES.discoveries.find(d => d.path === b.path && d.isDuplicate),
+    );
+    // All selected duplicate rows must have forceImport: true
+    expect(dupItems).toHaveLength(2);
+    expect(dupItems.every(b => b.forceImport === true)).toBe(true);
   });
 
   it('handleEdit updates row edited state', async () => {
