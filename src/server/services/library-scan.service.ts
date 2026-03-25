@@ -174,10 +174,10 @@ export class LibraryScanService {
       .from(books)
       .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
       .leftJoin(authors, eq(bookAuthors.authorId, authors.id));
-    const existingTitleAuthorMap = new Map(
+    const existingTitleAuthorMap = new Map<string, number>(
       titleAuthorRows
         .filter((r) => r.title && r.slug)
-        .map((r) => [`${r.title}|${r.slug}`, r.id] as const),
+        .map((r) => [`${r.title}|${r.slug}`, r.id] as [string, number]),
     );
 
     const discoveries: DiscoveredBook[] = [];
@@ -291,6 +291,7 @@ export class LibraryScanService {
       parsedSeries: parsed.series,
       fileCount,
       totalSize,
+      isDuplicate: false,
     };
 
     // Look up metadata providers

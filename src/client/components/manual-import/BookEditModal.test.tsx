@@ -36,6 +36,7 @@ function makeBook(overrides?: Partial<DiscoveredBook>): DiscoveredBook {
     parsedSeries: 'Series Name',
     fileCount: 12,
     totalSize: 524288000,
+    isDuplicate: false,
     ...overrides,
   };
 }
