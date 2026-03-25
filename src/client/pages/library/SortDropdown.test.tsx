@@ -55,17 +55,17 @@ describe('SortDropdown', () => {
       expect(screen.getByRole('listbox')).toBeInTheDocument();
     });
 
-    it('panel covers all 8 sort fields in both directions (16 total options)', async () => {
+    it('panel covers all 5 sort fields in both directions (10 total options)', async () => {
       const user = userEvent.setup();
       render(<SortDropdown {...defaultProps()} />);
 
       await user.click(screen.getByRole('button', { name: /date added/i }));
 
       const options = screen.getAllByRole('option');
-      expect(options).toHaveLength(16);
+      expect(options).toHaveLength(10);
     });
 
-    it('includes Date Added, Title, Author, Narrator, Series, Quality, Size, Format options', async () => {
+    it('includes Date Added, Title, Author, Narrator, Series options', async () => {
       const user = userEvent.setup();
       render(<SortDropdown {...defaultProps()} />);
 
@@ -76,6 +76,17 @@ describe('SortDropdown', () => {
       expect(screen.getByRole('option', { name: /author.*a.*z/i })).toBeInTheDocument();
       expect(screen.getByRole('option', { name: /narrator.*a.*z/i })).toBeInTheDocument();
       expect(screen.getByRole('option', { name: /series.*a.*z/i })).toBeInTheDocument();
+    });
+
+    it('does not render Quality, Size, or Format options', async () => {
+      const user = userEvent.setup();
+      render(<SortDropdown {...defaultProps()} />);
+
+      await user.click(screen.getByRole('button', { name: /date added/i }));
+
+      expect(screen.queryByRole('option', { name: /quality/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('option', { name: /size/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('option', { name: /format/i })).not.toBeInTheDocument();
     });
 
     it('closes panel when Escape is pressed', async () => {
