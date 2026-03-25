@@ -1,5 +1,36 @@
 # Workflow Log
 
+## #106 Simplify library toolbar — status dropdown, actions menu, search-first layout — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #116
+
+### Metrics
+- Files changed: 14 (4 new components + tests, 3 deleted components + tests, 2 modified test files, 1 modified toolbar)
+- Tests added/modified: ~80 new tests across 4 new test files + updates to LibraryToolbar.test.tsx and LibraryPage.test.tsx
+- Quality gate runs: 2 (failed on attempt 1 — lint violation; pass on attempt 2)
+- Fix iterations: 2 (react-hooks/refs lint violation in ToolbarDropdown.tsx; 25 LibraryPage.test.tsx failures from old UI patterns)
+- Context compactions: 1 (mid-implementation; resumed without rework)
+
+### Workflow experience
+- What went smoothly: DRY extraction of ToolbarDropdown worked cleanly; red/green TDD per module kept scope contained; SortDropdown and StatusDropdown tests straightforward
+- Friction / issues encountered: (1) react-hooks/refs ESLint violation — refs accessed in render body, caught only at verify time; needed useEffect+useState pattern. (2) LibraryPage.test.tsx blast radius — 25 failures from old status pills/sort selects/action buttons; required systematic updates across 8 describe blocks. (3) Stale GH_TOKEN for git push — required manual token refresh workaround.
+
+### Token efficiency
+- Highest-token actions: LibraryPage.test.tsx blast radius updates (large file, many test blocks); context compaction during this phase
+- Avoidable waste: The react-hooks/refs violation could have been caught earlier with a lint check before running full verify
+- Suggestions: Run `pnpm lint` before `node scripts/verify.ts` during implementation to catch lint violations early
+
+### Infrastructure gaps
+- Repeated workarounds: Stale GH_TOKEN requiring manual `git remote set-url` refresh with freshly-minted token (also hit in #79)
+- Missing tooling / config: `scripts/lib.ts` has no `git push` helper that embeds a fresh token automatically
+- Unresolved debt: LibraryPage.test.tsx toolbar interaction helper extraction (see debt.md)
+
+### Wish I'd Known
+1. `react-hooks/refs` forbids ref access in render — always use useEffect + state for portal positioning (see learnings/react-hooks-refs-render-violation.md)
+2. LibraryPage.test.tsx has deep integration tests for every toolbar control — any toolbar refactor has 25+ test updates; budget for this upfront
+3. GH_TOKEN stale issue: need to re-mint via get-token.ts before any git push in long-running sessions
+
+
 ## #100 Move path input above favorites/recents on Manual Import page — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #113
