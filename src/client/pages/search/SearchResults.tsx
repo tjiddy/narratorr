@@ -2,8 +2,7 @@ import { useRef, useState } from 'react';
 import { useQuery, type useQueryClient } from '@tanstack/react-query';
 import { api, type BookMetadata, type AuthorMetadata } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
-import { BookOpenIcon, UsersIcon, SearchIcon } from '@/components/icons';
-import { EmptyState } from '@/components/EmptyState';
+import { BookOpenIcon, UsersIcon } from '@/components/icons';
 import { BooksTabContent, AuthorsTabContent } from './SearchTabContent.js';
 
 type DiscoverTab = 'books' | 'authors';
@@ -104,24 +103,8 @@ export function SearchResults({
     select: (response) => response.data,
   });
 
-  if (searchTerm && !isLoading && !hasResults) {
-    return (
-      <EmptyState
-        icon={<SearchIcon className="w-12 h-12" />}
-        title={`No results for "${searchTerm}"`}
-        description="Try different keywords or check the spelling"
-      />
-    );
-  }
-
-  if (!searchTerm) {
-    return (
-      <EmptyState
-        icon={<BookOpenIcon className="w-16 h-16" />}
-        title="Start your search"
-        description="Enter a title, author, or series to find audiobooks to add"
-      />
-    );
+  if (!searchTerm || (searchTerm && !isLoading && !hasResults)) {
+    return null;
   }
 
   if (!results) return null;

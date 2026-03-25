@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { Layout } from '@/components/layout/Layout';
@@ -82,14 +84,6 @@ describe('Layout', () => {
     expect(addBookLink.querySelector('circle')).toBeNull();
     const paths = Array.from(addBookLink.querySelectorAll('path'));
     expect(paths.some(p => p.getAttribute('d') === 'M5 12h14')).toBe(true);
-  });
-
-  it('renders footer', () => {
-    mockCounts(0);
-    mockAuth();
-    renderWithProviders(<Layout />);
-
-    expect(screen.getByText(/your personal audiobook library/i)).toBeInTheDocument();
   });
 
   it('renders theme toggle button', () => {
@@ -268,6 +262,87 @@ describe('Layout', () => {
         expect(screen.getByText(/update available/i)).toBeInTheDocument();
       });
       expect(screen.getByText(/0\.2\.0/)).toBeInTheDocument();
+    });
+  });
+
+  describe('#99 footer removal and flex layout contract', () => {
+    it('renders no footer text anywhere in the DOM', () => {
+      mockCounts(0);
+      mockAuth();
+      const { container } = renderWithProviders(<Layout />);
+
+      expect(container.querySelector('footer')).toBeNull();
+      expect(screen.queryByText(/your personal audiobook library/i)).not.toBeInTheDocument();
+    });
+
+    it('root layout div has flex and flex-col classes', () => {
+      mockCounts(0);
+      mockAuth();
+      const { container } = renderWithProviders(<Layout />);
+
+      const root = container.firstChild as HTMLElement;
+      expect(root.classList.contains('flex')).toBe(true);
+      expect(root.classList.contains('flex-col')).toBe(true);
+      expect(root.classList.contains('min-h-screen')).toBe(true);
+    });
+
+    it('main content element has flex-1 class', () => {
+      mockCounts(0);
+      mockAuth();
+      const { container } = renderWithProviders(<Layout />);
+
+      const main = container.querySelector('main') as HTMLElement;
+      expect(main).not.toBeNull();
+      expect(main.classList.contains('flex-1')).toBe(true);
+    });
+
+    function renderWithNestedRoute(path: string, testId: string) {
+      mockCounts(0);
+      mockAuth();
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      return render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={[path]}>
+            <Routes>
+              <Route path="/" element={<Layout />}>
+                <Route path="library" element={<div data-testid={testId}>Library Content</div>} />
+                <Route path="activity" element={<div data-testid={testId}>Activity Content</div>} />
+                <Route path="settings" element={<div data-testid={testId}>Settings Content</div>} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    }
+
+    it('renders route content inside main on /library route with no footer text', () => {
+      const { container } = renderWithNestedRoute('/library', 'library-content');
+
+      expect(screen.getByRole('navigation')).toBeInTheDocument();
+      expect(screen.queryByText(/your personal audiobook library/i)).not.toBeInTheDocument();
+      const main = container.querySelector('main');
+      expect(main).not.toBeNull();
+      expect(main!.querySelector('[data-testid="library-content"]')).not.toBeNull();
+    });
+
+    it('renders route content inside main on /activity route with no footer text', () => {
+      const { container } = renderWithNestedRoute('/activity', 'activity-content');
+
+      expect(screen.getByRole('navigation')).toBeInTheDocument();
+      expect(screen.queryByText(/your personal audiobook library/i)).not.toBeInTheDocument();
+      const main = container.querySelector('main');
+      expect(main).not.toBeNull();
+      expect(main!.querySelector('[data-testid="activity-content"]')).not.toBeNull();
+    });
+
+    it('renders route content inside main on /settings route with no footer text', () => {
+      const { container } = renderWithNestedRoute('/settings', 'settings-content');
+
+      expect(screen.getByRole('navigation')).toBeInTheDocument();
+      expect(screen.queryByText(/your personal audiobook library/i)).not.toBeInTheDocument();
+      const main = container.querySelector('main');
+      expect(main).not.toBeNull();
+      expect(main!.querySelector('[data-testid="settings-content"]')).not.toBeNull();
     });
   });
 });

@@ -136,29 +136,6 @@ describe('SearchPage', () => {
     });
   });
 
-  it('shows empty state before searching', () => {
-    renderWithProviders(<SearchPage />);
-    expect(screen.getByText('Start your search')).toBeInTheDocument();
-  });
-
-  it('shows no results message when search returns empty', async () => {
-    (api.searchMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
-      books: [],
-      authors: [],
-    });
-
-    renderWithProviders(<SearchPage />);
-    const user = userEvent.setup();
-
-    const input = screen.getByPlaceholderText(/search by title/i);
-    await user.type(input, 'nonexistent book');
-    await user.click(screen.getByRole('button', { name: /^search$/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/No results for "nonexistent book"/)).toBeInTheDocument();
-    });
-  });
-
   it('shows error message when search fails', async () => {
     (api.searchMetadata as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error('Network error'),
@@ -273,6 +250,35 @@ describe('SearchPage', () => {
         container.querySelectorAll('a[href], button, input, select, textarea'),
       );
       expect(allInteractive[0]).toBe(input);
+    });
+  });
+
+  describe('#99 blank empty states', () => {
+    it('shows blank content area (no empty-state text or icon) before searching', () => {
+      const { container } = renderWithProviders(<SearchPage />);
+      expect(screen.queryByText('Start your search')).not.toBeInTheDocument();
+      expect(screen.queryByText(/enter a title/i)).not.toBeInTheDocument();
+      expect(container.querySelector('[class*="empty"]')).toBeNull();
+    });
+
+    it('shows blank content area (no empty-state text or icon) when search returns no results', async () => {
+      (api.searchMetadata as ReturnType<typeof vi.fn>).mockResolvedValue({
+        books: [],
+        authors: [],
+      });
+
+      const { container } = renderWithProviders(<SearchPage />);
+      const user = userEvent.setup();
+
+      const input = screen.getByPlaceholderText(/search by title/i);
+      await user.type(input, 'nonexistent book');
+      await user.click(screen.getByRole('button', { name: /^search$/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByText(/no results/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/try different/i)).not.toBeInTheDocument();
+        expect(container.querySelector('[class*="empty"]')).toBeNull();
+      });
     });
   });
 });

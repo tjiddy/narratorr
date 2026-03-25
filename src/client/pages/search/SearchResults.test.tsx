@@ -49,19 +49,6 @@ describe('SearchResults', () => {
     vi.clearAllMocks();
   });
 
-  it('shows Start your search empty state when no search term', () => {
-    renderResults({ searchTerm: '' });
-    expect(screen.getByText('Start your search')).toBeInTheDocument();
-  });
-
-  it('shows No results empty state when search has no results', () => {
-    renderResults({
-      searchTerm: 'nonexistent',
-      results: { books: [], authors: [] },
-    });
-    expect(screen.getByText('No results for "nonexistent"')).toBeInTheDocument();
-  });
-
   it('returns null when results is undefined but searchTerm exists', () => {
     renderResults({
       searchTerm: 'searching',
@@ -225,17 +212,22 @@ describe('SearchResults', () => {
     });
   });
 
-  describe('Add Book empty state copy', () => {
-    it('pre-search empty state description does not contain "discover" language', () => {
-      renderResults({ searchTerm: '' });
-      expect(screen.queryByText(/discover/i)).not.toBeInTheDocument();
+  describe('#99 blank empty states', () => {
+    it('renders blank content when no search term (no icon, no text)', () => {
+      const { container } = renderResults({ searchTerm: '' });
+      expect(screen.queryByText('Start your search')).not.toBeInTheDocument();
+      expect(screen.queryByText(/enter a title/i)).not.toBeInTheDocument();
+      expect(container.querySelector('svg')).toBeNull();
     });
 
-    it('pre-search empty state description matches the Add Book copy', () => {
-      renderResults({ searchTerm: '' });
-      expect(
-        screen.getByText('Enter a title, author, or series to find audiobooks to add'),
-      ).toBeInTheDocument();
+    it('renders blank content when search has no results (no icon, no text)', () => {
+      const { container } = renderResults({
+        searchTerm: 'nonexistent',
+        results: { books: [], authors: [] },
+      });
+      expect(screen.queryByText(/no results/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/try different/i)).not.toBeInTheDocument();
+      expect(container.querySelector('svg')).toBeNull();
     });
   });
 });
