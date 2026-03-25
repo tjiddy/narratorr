@@ -79,14 +79,15 @@ describe('ActivityPage', () => {
     });
   });
 
-  it('shows empty queue and history when no downloads exist', async () => {
+  it('shows empty active and history sections when no downloads exist', async () => {
     mockActivitySections([], []);
 
     renderWithProviders(<ActivityPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('No active downloads')).toBeInTheDocument();
+      expect(screen.getByText('Active')).toBeInTheDocument();
     });
+    expect(screen.getByText('No active downloads')).toBeInTheDocument();
     expect(screen.getByText('No download history')).toBeInTheDocument();
   });
 
