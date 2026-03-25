@@ -224,6 +224,55 @@ describe('useEventHistory', () => {
       expect(toast.error).toHaveBeenCalledWith('Mark as failed: Network error');
     });
   });
+
+  it('preserves previous page events while next params key is loading (placeholderData)', async () => {
+    const page1Event = {
+      id: 1,
+      bookId: 1,
+      downloadId: 1,
+      bookTitle: 'Page 1 Event',
+      authorName: 'Author',
+      eventType: 'grab',
+      source: 'search',
+      reason: null,
+      createdAt: '2026-01-01',
+    };
+
+    let resolveP2!: (v: { data: typeof page1Event[]; total: number }) => void;
+    const pendingP2 = new Promise<{ data: typeof page1Event[]; total: number }>((r) => {
+      resolveP2 = r;
+    });
+
+    vi.mocked(api.getEventHistory)
+      .mockResolvedValueOnce({ data: [page1Event], total: 50 })
+      .mockReturnValueOnce(pendingP2 as never);
+
+    const { wrapper } = createWrapper();
+    const { result, rerender } = renderHook(
+      (props: { limit: number; offset: number }) => useEventHistory(props),
+      { wrapper, initialProps: { limit: 50, offset: 0 } },
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.events[0].bookTitle).toBe('Page 1 Event');
+    expect(result.current.total).toBe(50);
+
+    // Rerender with new params — triggers page 2 fetch (which is pending)
+    rerender({ limit: 50, offset: 50 });
+
+    // placeholderData keeps page 1 events visible synchronously
+    expect(result.current.events[0].bookTitle).toBe('Page 1 Event');
+    expect(result.current.total).toBe(50);
+
+    // Resolve page 2
+    act(() => {
+      resolveP2({ data: [], total: 0 });
+    });
+
+    await waitFor(() => expect(result.current.total).toBe(0));
+    expect(result.current.events).toHaveLength(0);
+  });
 });
 
 describe('useBookEventHistory', () => {

@@ -34,7 +34,7 @@ vi.mock('sonner', () => ({
   },
 }));
 
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 
 const mockConfig = {
   mode: 'none' as const,
@@ -520,7 +520,117 @@ describe('SecuritySettings', () => {
     });
   });
 
+  describe('AuthModeSection mutation flow (#93)', () => {
+    it('switch to none shows confirmation dialog, then fires mutation, toast, and invalidates both auth queries', async () => {
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, mode: 'forms' });
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockStatus, mode: 'forms', hasUser: true });
+      (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ mode: 'none', apiKey: 'test-api-key-12345', localBypass: false });
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByText('Authentication Mode')).toBeInTheDocument());
+
+      // Clear call counts after initial load so we can assert refetch separately
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockClear();
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockClear();
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, mode: 'none' });
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockStatus, mode: 'none' });
+
+      const noneRadio = screen.getByLabelText('None (No Authentication)');
+      await user.click(noneRadio);
+
+      await waitFor(() => expect(screen.getByRole('button', { name: /disable auth/i })).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: /disable auth/i }));
+
+      await waitFor(() => expect(api.updateAuthConfig).toHaveBeenCalledWith({ mode: 'none' }));
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Authentication mode updated'));
+      // Both auth queries should be invalidated (refetched)
+      await waitFor(() => expect(api.getAuthConfig).toHaveBeenCalled());
+      await waitFor(() => expect(api.getAuthStatus).toHaveBeenCalled());
+    });
+
+    it('switch to non-none mode fires mutation directly without confirmation dialog', async () => {
+      // Start from none, hasUser=true (basic/forms enabled)
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, mode: 'none' });
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockStatus, mode: 'none', hasUser: true });
+      (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ mode: 'basic', apiKey: 'test-api-key-12345', localBypass: false });
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByText('Authentication Mode')).toBeInTheDocument());
+
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockClear();
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockClear();
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, mode: 'basic' });
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockStatus, mode: 'basic', hasUser: true });
+
+      const basicRadio = screen.getByLabelText('Basic (Browser Prompt)');
+      await user.click(basicRadio);
+
+      // No confirmation dialog for non-none switch
+      expect(screen.queryByText(/are you sure you want to disable authentication/i)).not.toBeInTheDocument();
+
+      await waitFor(() => expect(api.updateAuthConfig).toHaveBeenCalledWith({ mode: 'basic' }));
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Authentication mode updated'));
+      await waitFor(() => expect(api.getAuthConfig).toHaveBeenCalled());
+      await waitFor(() => expect(api.getAuthStatus).toHaveBeenCalled());
+    });
+
+    it('clicking already-selected mode radio is a no-op (no dialog, no mutation)', async () => {
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, mode: 'forms' });
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockStatus, mode: 'forms', hasUser: true });
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByText('Authentication Mode')).toBeInTheDocument());
+      vi.clearAllMocks();
+
+      const formsRadio = screen.getByLabelText('Forms (Login Page)');
+      await user.click(formsRadio);
+
+      expect(screen.queryByText(/are you sure you want to disable authentication/i)).not.toBeInTheDocument();
+      expect(api.updateAuthConfig).not.toHaveBeenCalled();
+    });
+
+    it('mutation error on mode change shows error toast', async () => {
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, mode: 'forms' });
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockStatus, mode: 'forms', hasUser: true });
+      (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockRejectedValue(new ApiError(403, { error: 'Custom error' }));
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByText('Authentication Mode')).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText('None (No Authentication)'));
+      await waitFor(() => expect(screen.getByRole('button', { name: /disable auth/i })).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: /disable auth/i }));
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Custom error'));
+    });
+  });
+
   describe('LocalBypassSection toggle (#82)', () => {
+    it('toggle fires mutation and invalidates both auth.config and auth.status queries', async () => {
+      (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, localBypass: true });
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByRole('checkbox', { name: /enable local bypass/i })).toBeInTheDocument());
+
+      // Clear call counts after initial load
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockClear();
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockClear();
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, localBypass: true });
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockStatus, localBypass: true });
+
+      await user.click(screen.getByRole('checkbox', { name: /enable local bypass/i }));
+
+      await waitFor(() => expect(api.updateAuthConfig).toHaveBeenCalledWith({ localBypass: true }));
+      // Both auth queries should be invalidated (refetched) on success
+      await waitFor(() => expect(api.getAuthConfig).toHaveBeenCalled());
+      await waitFor(() => expect(api.getAuthStatus).toHaveBeenCalled());
+    });
+
     it('toggling localBypass from false to true fires mutation and reflects checked state after refetch', async () => {
       (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ mode: 'none', apiKey: 'test-api-key-12345', localBypass: true });
       const user = userEvent.setup();

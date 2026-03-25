@@ -1,9 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { ActivityPage } from './ActivityPage';
-import type { Download } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
+import type { ActivityListParams, Download } from '@/lib/api';
 
 vi.mock('sonner', () => ({
   toast: {
@@ -55,6 +58,139 @@ function mockActivitySections(queue: Download[], history: Download[]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe('ActivityPage pagination clamp (#93)', () => {
+  const LIMIT = 50; // DEFAULT_LIMITS.activity
+
+  // Build the exact query key that useActivitySection constructs via { ...params, section }
+  const activityKey = (params: ActivityListParams & { section: 'queue' | 'history' }) =>
+    queryKeys.activity(params);
+
+  // Use status:'completed' so refetchInterval returns false (no polling interference)
+  const makeCompletedDownloads = (n: number, startId = 1) =>
+    Array.from({ length: n }, (_, i) => makeDownload({ id: startId + i, status: 'completed' }));
+
+  function renderWithCustomClient(queryClient: QueryClient) {
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <ActivityPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  // timeout: 15s — test navigates 4 pages via userEvent, each needing a fetch + waitFor
+  it('queue page clamps to last valid page when total shrinks (page 3 → page 2 of 2)', async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    // Return 150 items for every getActivity call so both sections always show 3 pages
+    vi.mocked(api.getActivity).mockImplementation(async (params) => {
+      const offset = params?.offset ?? 0;
+      const section = params?.section;
+      return {
+        data: makeCompletedDownloads(LIMIT, (section === 'history' ? 1000 : 0) + offset),
+        total: 150,
+      };
+    });
+
+    renderWithCustomClient(queryClient);
+
+    // Wait for initial render: both queue and history paginators at page 1 of 3
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(2);
+      expect(labels[0]).toHaveTextContent('Page 1 of 3');
+    });
+
+    const pageLabels = () => screen.getAllByText(/Page \d+ of \d+/);
+
+    // Navigate queue to page 3 via rendered Next page controls.
+    // placeholderData in useActivitySection prevents data→undefined during key change,
+    // so the clamp useEffect never fires spuriously and navigation succeeds.
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]); // queue 1→2
+    await waitFor(() => expect(pageLabels()[0]).toHaveTextContent('Page 2 of 3'));
+
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[0]); // queue 2→3
+    await waitFor(() => expect(pageLabels()[0]).toHaveTextContent('Page 3 of 3'));
+
+    // History was never navigated — still on page 1 of 3
+    expect(pageLabels()[1]).toHaveTextContent('Page 1 of 3');
+
+    // Simulate queue total shrinking to 100 (2 pages). Update both the current page
+    // (offset=100) and the clamped-to page (offset=50) so totalPages reflects the new total.
+    act(() => {
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 100 }),
+        { data: makeCompletedDownloads(50, 9000), total: 100 },
+      );
+      queryClient.setQueryData(
+        activityKey({ section: 'queue', limit: LIMIT, offset: 50 }),
+        { data: makeCompletedDownloads(50, 8000), total: 100 },
+      );
+    });
+
+    // Queue's clampToTotal useEffect fires: page 3 > totalPages(100)=2 → clamps to page 2.
+    // History is completely unaffected — its independent clamp effect sees total=150, no change.
+    await waitFor(() => expect(pageLabels()[0]).toHaveTextContent('Page 2 of 2'));
+    expect(pageLabels()[1]).toHaveTextContent('Page 1 of 3');
+  }, 15000);
+
+  it('history page clamps to last valid page when historyTotal shrinks, leaving queue unchanged', async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    vi.mocked(api.getActivity).mockImplementation(async (params) => {
+      const offset = params?.offset ?? 0;
+      const section = params?.section;
+      return {
+        data: makeCompletedDownloads(LIMIT, (section === 'history' ? 1000 : 0) + offset),
+        total: 150,
+      };
+    });
+
+    renderWithCustomClient(queryClient);
+
+    // Wait for initial render: both queue and history paginators at page 1 of 3
+    await waitFor(() => {
+      const labels = screen.getAllByText(/Page \d+ of \d+/);
+      expect(labels).toHaveLength(2);
+      expect(labels[0]).toHaveTextContent('Page 1 of 3');
+      expect(labels[1]).toHaveTextContent('Page 1 of 3');
+    });
+
+    const pageLabels = () => screen.getAllByText(/Page \d+ of \d+/);
+
+    // Navigate history pager (index 1) to page 3 — queue (index 0) stays on page 1
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[1]); // history 1→2
+    await waitFor(() => expect(pageLabels()[1]).toHaveTextContent('Page 2 of 3'));
+
+    await user.click(screen.getAllByRole('button', { name: /next page/i })[1]); // history 2→3
+    await waitFor(() => expect(pageLabels()[1]).toHaveTextContent('Page 3 of 3'));
+
+    // Queue was never navigated — still on page 1 of 3
+    expect(pageLabels()[0]).toHaveTextContent('Page 1 of 3');
+
+    // Simulate history total shrinking to 100 (2 pages). Update both the current page
+    // (offset=100) and the clamped-to page (offset=50) so totalPages reflects the new total.
+    act(() => {
+      queryClient.setQueryData(
+        activityKey({ section: 'history', limit: LIMIT, offset: 100 }),
+        { data: makeCompletedDownloads(50, 9000), total: 100 },
+      );
+      queryClient.setQueryData(
+        activityKey({ section: 'history', limit: LIMIT, offset: 50 }),
+        { data: makeCompletedDownloads(50, 8000), total: 100 },
+      );
+    });
+
+    // History's clampToTotal useEffect fires: page 3 > totalPages(100)=2 → clamps to page 2.
+    // Queue is completely unaffected — its independent clamp effect sees total=150, no change.
+    await waitFor(() => expect(pageLabels()[1]).toHaveTextContent('Page 2 of 2'));
+    expect(pageLabels()[0]).toHaveTextContent('Page 1 of 3');
+  }, 15000);
 });
 
 describe('ActivityPage', () => {

@@ -649,6 +649,71 @@ describe('LibrarySettingsSection', () => {
     });
   });
 
+  describe('format coverage (#93)', () => {
+    it('fileFormat missing title token shows validation error and does not call updateSettings', async () => {
+      mockApi.getSettings.mockResolvedValue(createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author}-{narrator}' },
+      }));
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => expect(screen.getByPlaceholderText('{author} - {title}')).toHaveValue('{author}-{narrator}'));
+
+      // The watch-based warning is already visible (1 instance) before any submit attempt
+      expect(screen.getAllByText(/Template must include/).length).toBe(1);
+
+      // Dirty the form so Save button appears
+      const fileInput = screen.getByPlaceholderText('{author} - {title}');
+      await user.tripleClick(fileInput);
+      await user.keyboard(' ');
+
+      const saveBtn = await screen.findByRole('button', { name: /save/i });
+      await user.click(saveBtn);
+
+      // After submit: watch-based warning + resolver errors.fileFormat = 2 instances.
+      // The count increasing to 2 proves the submit-time errors.fileFormat render path fired,
+      // not just the pre-existing watch warning.
+      await waitFor(() => expect(screen.getAllByText(/Template must include/).length).toBe(2));
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+    });
+
+    it('preview with series shows interpolated folder and file path from format tokens', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+
+      // Default mockSettings: folderFormat='{author}/{title}', fileFormat='{author} - {title}'
+      // renderTemplate mock: {author}→'Brandon Sanderson', {title}→'The Way of Kings'
+      // renderFilename mock: {author}→'Brandon Sanderson', {title}→'The Way of Kings'
+      // renderTemplate mock substitutes {author}/{title} with sample values for both "With series" and "Without series" sections
+      // (mock ignores the token map argument, so both sections produce the same output)
+      await waitFor(() => {
+        const pathSpans = screen.getAllByText('Brandon Sanderson/The Way of Kings/');
+        expect(pathSpans.length).toBeGreaterThanOrEqual(1);
+        const fileSpans = screen.getAllByText('Brandon Sanderson - The Way of Kings.m4b');
+        expect(fileSpans.length).toBeGreaterThanOrEqual(1);
+      });
+    });
+
+    it('Save button disappears after successful save (dirty state resets)', async () => {
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}'));
+
+      // Dirty the form
+      const folderInput = screen.getByPlaceholderText('{author}/{title}');
+      await user.click(folderInput);
+      await user.type(folderInput, '/extra');
+
+      const saveBtn = await screen.findByRole('button', { name: /save/i });
+      await user.click(saveBtn);
+
+      await waitFor(() => expect(mockToast.success).toHaveBeenCalledWith('Library settings saved'));
+      // After successful save, form is reset (isDirty=false) → Save button hidden
+      await waitFor(() => expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument());
+    });
+  });
+
   describe('form validation (#82)', () => {
     it('submitting with empty folderFormat shows "Folder format is required" and does not call updateSettings', async () => {
       const user = userEvent.setup();

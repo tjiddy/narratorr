@@ -45,6 +45,7 @@ export function BlacklistSettings() {
   const { data: response, isLoading } = useQuery({
     queryKey: queryKeys.blacklist(paginationParams),
     queryFn: () => api.getBlacklist(paginationParams),
+    placeholderData: (previousData) => previousData,
   });
   const entries = response?.data ?? [];
   const total = response?.total ?? 0;

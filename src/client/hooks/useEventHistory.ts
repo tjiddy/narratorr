@@ -9,6 +9,7 @@ export function useEventHistory(params?: EventHistoryParams) {
   const query = useQuery({
     queryKey: queryKeys.eventHistory.all(params),
     queryFn: () => api.getEventHistory(params),
+    placeholderData: (previousData) => previousData,
   });
 
   const events = query.data?.data ?? [];

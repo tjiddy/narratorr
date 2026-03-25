@@ -12,6 +12,9 @@ function useActivitySection(section: 'queue' | 'history', params: ActivityListPa
   return useQuery({
     queryKey: queryKeys.activity(fullParams),
     queryFn: () => api.getActivity(fullParams),
+    // Keep previous page's data while the next page loads so the clamp useEffect
+    // in ActivityPage never sees total=0 mid-navigation (which would reset the page).
+    placeholderData: (previousData) => previousData,
     refetchInterval: (query) => {
       if (section === 'history') return false;
       if (sseConnected) return false;

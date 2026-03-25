@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 import { useLibrary, useLibraryBook, useBookFiles, useBookIdentifiers, useBookStats } from './useLibrary';
@@ -65,6 +65,41 @@ describe('useLibrary', () => {
 
     expect(result.current.isLoading).toBe(true);
     expect(result.current.data).toBeUndefined();
+  });
+
+  it('preserves previous page data while next params key is loading (placeholderData)', async () => {
+    const page1Books = [createMockBook({ id: 1, title: 'Page 1 Book' })];
+
+    let resolveP2!: (v: { data: ReturnType<typeof createMockBook>[]; total: number }) => void;
+    const pendingP2: Promise<{ data: ReturnType<typeof createMockBook>[]; total: number }> = new Promise((r) => {
+      resolveP2 = r;
+    });
+
+    vi.mocked(api.getBooks)
+      .mockResolvedValueOnce({ data: page1Books, total: page1Books.length })
+      .mockReturnValueOnce(pendingP2 as never);
+
+    const { result, rerender } = renderHook(
+      (props: { limit: number; offset: number }) => useLibrary(props),
+      { wrapper: createWrapper(), initialProps: { limit: 100, offset: 0 } },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data?.data?.[0]?.title).toBe('Page 1 Book');
+
+    // Rerender with new params — triggers page 2 fetch (which is pending)
+    rerender({ limit: 100, offset: 100 });
+
+    // placeholderData keeps page 1 data visible synchronously
+    expect(result.current.data?.data?.[0]?.title).toBe('Page 1 Book');
+
+    // Resolve page 2
+    act(() => {
+      resolveP2({ data: [], total: page1Books.length });
+    });
+
+    await waitFor(() => expect(result.current.data?.data).toHaveLength(0));
   });
 });
 
