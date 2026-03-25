@@ -426,6 +426,42 @@ describe('NZBGetClient', () => {
       const item = await client.getDownload('456');
       expect(item!.status).toBe('error');
     });
+
+    it('sets progress to 0 for FAILURE/* history items (not hardcoded 100)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'FAILURE/CRC' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.progress).toBe(0);
+    });
+
+    it('sets progress to 0 for DELETED/* history items (not hardcoded 100)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'DELETED/MANUAL' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.progress).toBe(0);
+    });
+
+    it('keeps progress at 100 for SUCCESS/* history items (regression guard)', async () => {
+      server.use(
+        rpcHandler({
+          listgroups: () => [],
+          history: () => [{ ...historyItem, Status: 'SUCCESS/ALL' }],
+        }),
+      );
+
+      const item = await client.getDownload('456');
+      expect(item!.progress).toBe(100);
+    });
   });
 
   describe('getCategories', () => {

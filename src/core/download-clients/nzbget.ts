@@ -217,12 +217,13 @@ export class NZBGetClient implements DownloadClientAdapter {
 
   private mapHistoryItem(item: NZBGetHistoryItem): DownloadItemInfo {
     const size = Math.round((item.FileSizeMB || 0) * 1024 * 1024);
+    const status = this.mapHistoryStatus(item.Status);
 
     return {
       id: String(item.NZBID),
       name: item.Name,
-      progress: 100,
-      status: this.mapHistoryStatus(item.Status),
+      progress: status === 'error' ? 0 : 100,
+      status,
       savePath: item.DestDir || '',
       size,
       downloaded: size,
