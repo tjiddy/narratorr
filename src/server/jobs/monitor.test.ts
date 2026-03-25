@@ -853,6 +853,27 @@ describe('monitor job', () => {
       );
     });
 
+    it('writes adapter errorMessage before retry-state overwrite when retry succeeds via processDownloadUpdate', async () => {
+      const searchResult = { title: 'New Release', protocol: 'torrent', downloadUrl: 'magnet:?xt=urn:btih:new123', infoHash: 'new123', size: 500000000, seeders: 5, indexer: 'Test' };
+      retryDeps.retrySearchDeps.indexerService.searchAll.mockResolvedValue([searchResult]);
+
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: 42, title: 'Test Book', infoHash: null },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 0, status: 'error', errorMessage: 'CRC mismatch' });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+      db.delete.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      const initialFailureIdx = setCalls.findIndex((c) => c['errorMessage'] === 'CRC mismatch');
+      const retryingIdx = setCalls.findIndex((c) => c['errorMessage'] === 'Retrying');
+      expect(initialFailureIdx).toBeGreaterThanOrEqual(0);
+      expect(retryingIdx).toBeGreaterThan(initialFailureIdx);
+    });
+
     it('falls back to book status recovery without retry when no retryDeps', async () => {
       db.select
         .mockReturnValueOnce(mockDbChain([
