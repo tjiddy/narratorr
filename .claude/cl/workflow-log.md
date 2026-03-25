@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #110 Remove non-visible sort options from library grid view — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #121
+
+### Metrics
+- Files changed: 4 (SortDropdown.tsx, SortDropdown.test.tsx, LibraryPage.tsx, LibraryPage.test.tsx) | Tests added/modified: 8 new tests (3 SortDropdown, 5 LibraryPage coercion)
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 2 minor test assertion fixes (ambiguous button selector in table view; wrong direction assumption for inactive column header click)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-prepared by elaborate/spec-review cycle. All touch points identified in plan phase were accurate. Two-module TDD split (SortDropdown then LibraryPage) kept each red→green cycle tight.
+- Friction / issues encountered: (1) Test selector ambiguity — in table view, both the toolbar trigger and column header match `/date added/i`, throwing "multiple elements found". Fixed with anchored regex. (2) Table header direction assumption — clicking an inactive column header does NOT set direction, only field. Initial test asserted `title.*a.*z` but actual was `title.*z.*a` (desc stays). (3) GitHub token expiry on push.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for codebase exploration, self-review, and coverage analysis
+- Avoidable waste: None significant
+- Suggestions: When writing cross-view integration tests, read the exact aria-labels of both toolbar AND table interactive elements upfront to avoid selector collision
+
+### Infrastructure gaps
+- Repeated workarounds: GitHub token expiry on push (second occurrence)
+- Missing tooling / config: frontend-design skill not installed
+- Unresolved debt: Pre-existing LibraryPage.test.tsx toolbar helper extraction debt (logged in #106)
+
+### Wish I'd Known
+1. In table view, toolbar sort trigger and table column header buttons share "date added" text — use `/^Date Added \(Newest\)$/i` (anchored) to avoid "multiple elements" error
+2. Table column header click sets field only, not direction — clicking "Title" from default (desc) gives "Title (Z→A)" not "Title (A→Z)"
+3. Keep full sortFieldLabels/sortDirectionLabels maps covering all 8 SortField values even when trimming the rendered options array — getTriggerLabel needs them for any SortField prop value
+
 ## #105 Show series name instead of book title on collapsed series cards — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #120
