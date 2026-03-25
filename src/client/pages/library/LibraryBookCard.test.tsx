@@ -287,6 +287,89 @@ describe('LibraryBookCard', () => {
     });
   });
 
+  describe('collapsed series card display (collapsedCount > 0)', () => {
+    it('shows series name as card title when collapsedCount > 0', () => {
+      render(<LibraryBookCard {...defaultProps({ collapsedCount: 3 })} />);
+      expect(screen.getByRole('heading')).toHaveTextContent('The Stormlight Archive');
+    });
+
+    it('does not show book title when collapsedCount > 0 and seriesName is present', () => {
+      render(<LibraryBookCard {...defaultProps({ collapsedCount: 3 })} />);
+      expect(screen.queryByText('The Way of Kings')).not.toBeInTheDocument();
+    });
+
+    it('falls back to book title when collapsedCount > 0 and seriesName is null', () => {
+      const book = createMockBook({ seriesName: null });
+      render(<LibraryBookCard {...defaultProps({ book, collapsedCount: 3 })} />);
+      expect(screen.getByRole('heading')).toHaveTextContent('The Way of Kings');
+    });
+
+    it('falls back to book title when collapsedCount > 0 and seriesName is empty string', () => {
+      const book = createMockBook({ seriesName: '' });
+      render(<LibraryBookCard {...defaultProps({ book, collapsedCount: 3 })} />);
+      expect(screen.getByRole('heading')).toHaveTextContent('The Way of Kings');
+    });
+
+    it('shows first author name only when collapsedCount > 0 with multiple authors', () => {
+      const book = createMockBook({
+        authors: [
+          { id: 1, name: 'Brandon Sanderson', slug: 'brandon-sanderson' },
+          { id: 2, name: 'Co-Author', slug: 'co-author' },
+        ],
+      });
+      render(<LibraryBookCard {...defaultProps({ book, collapsedCount: 3 })} />);
+      expect(screen.getByText('Brandon Sanderson')).toBeInTheDocument();
+      expect(screen.queryByText('Co-Author')).not.toBeInTheDocument();
+    });
+
+    it('hides narrator DOM node when collapsedCount > 0', () => {
+      render(<LibraryBookCard {...defaultProps({ collapsedCount: 3 })} />);
+      expect(screen.queryByText('Michael Kramer')).not.toBeInTheDocument();
+    });
+
+    it('hides series name/position DOM node when collapsedCount > 0', () => {
+      render(<LibraryBookCard {...defaultProps({ collapsedCount: 3 })} />);
+      expect(screen.queryByText('The Stormlight Archive #1')).not.toBeInTheDocument();
+    });
+
+    it('hides narrator and series DOM nodes together when collapsedCount > 0', () => {
+      render(<LibraryBookCard {...defaultProps({ collapsedCount: 3 })} />);
+      expect(screen.queryByText('Michael Kramer')).not.toBeInTheDocument();
+      // Series position label is specific to the hover section (title shows series name without position)
+      expect(screen.queryByText('The Stormlight Archive #1')).not.toBeInTheDocument();
+    });
+
+    it('still renders cover image and +N more badge when collapsedCount > 0', () => {
+      render(<LibraryBookCard {...defaultProps({ collapsedCount: 3 })} />);
+      expect(screen.getByRole('img')).toBeInTheDocument();
+      expect(screen.getByTestId('collapsed-badge')).toBeInTheDocument();
+      expect(screen.getByText('+3 more')).toBeInTheDocument();
+    });
+
+    it('calls onClick when collapsed card is clicked', () => {
+      const onClick = vi.fn();
+      render(<LibraryBookCard {...defaultProps({ collapsedCount: 3, onClick })} />);
+      fireEvent.click(screen.getByRole('link'));
+      expect(onClick).toHaveBeenCalledOnce();
+    });
+
+    it('singleton-series card (collapsedCount=0) shows book title unchanged', () => {
+      const book = createMockBook({ title: 'The Final Empire', seriesName: 'Mistborn' });
+      render(<LibraryBookCard {...defaultProps({ book, collapsedCount: 0 })} />);
+      expect(screen.getByRole('heading')).toHaveTextContent('The Final Empire');
+    });
+
+    it('singleton-series card (collapsedCount=0) renders narrator DOM node', () => {
+      render(<LibraryBookCard {...defaultProps({ collapsedCount: 0 })} />);
+      expect(screen.getByText('Michael Kramer')).toBeInTheDocument();
+    });
+
+    it('singleton-series card (collapsedCount=0) renders series DOM node', () => {
+      render(<LibraryBookCard {...defaultProps({ collapsedCount: 0 })} />);
+      expect(screen.getByText('The Stormlight Archive #1')).toBeInTheDocument();
+    });
+  });
+
   describe('series and narrator info', () => {
     it('renders narrator text when present', () => {
       render(<LibraryBookCard {...defaultProps()} />);
