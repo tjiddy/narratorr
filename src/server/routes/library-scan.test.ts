@@ -653,6 +653,19 @@ describe('library-scan routes', () => {
       expect(body).not.toHaveProperty('skippedDuplicates');
     });
 
+    it('returns 500 when service returns isDuplicate as wrong type (runtime schema enforcement)', async () => {
+      (services.libraryScan.scanDirectory as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({
+          discoveries: [
+            { path: '/a/bad', parsedTitle: 'Bad', parsedAuthor: null, parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: 'yes' },
+          ],
+          totalFolders: 1,
+        });
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/import/scan', payload: { path: '/a' } });
+      expect(res.statusCode).toBe(500);
+    });
+
     it('duplicate entries have isDuplicate: true; new entries have isDuplicate: false', async () => {
       (services.libraryScan.scanDirectory as ReturnType<typeof vi.fn>)
         .mockResolvedValue({

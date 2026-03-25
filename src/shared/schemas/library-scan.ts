@@ -15,6 +15,22 @@ export const scanDirectoryBodySchema = z.object({
   path: z.string().min(1, 'path is required'),
 });
 
+export const discoveredBookSchema = z.object({
+  path: z.string(),
+  parsedTitle: z.string(),
+  parsedAuthor: z.string().nullable(),
+  parsedSeries: z.string().nullable(),
+  fileCount: z.number(),
+  totalSize: z.number(),
+  isDuplicate: z.boolean(),
+  existingBookId: z.number().optional(),
+});
+
+export const scanResultSchema = z.object({
+  discoveries: z.array(discoveredBookSchema),
+  totalFolders: z.number(),
+});
+
 export const importConfirmItemSchema = z.object({
   path: z.string().min(1),
   title: z.string().min(1),
