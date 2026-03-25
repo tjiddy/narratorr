@@ -16,9 +16,6 @@
 ## Code Hardening
 
 - **src/core/metadata/ (audible.ts, audnexus.ts)**: Direct `fetch()` calls without timeout or redirect protection — consider migrating to `fetchWithTimeout`. (discovered in #23)
-- **src/core/utils/parse.ts:315**: Server-side `formatBytes` helper has no guards for `bytes < 0`, `!isFinite`, or out-of-bounds index. Low urgency. (discovered in #29)
-- **src/client/components/ConfirmModal.tsx**: Buttons lack `type="button"` — safe only when rendered outside a `<form>`, but any future usage inside a form would silently break. (discovered in #18)
-- **src/shared/download-status-registry.ts**: `getReplacableStatuses` has a spelling typo (should be `getReplaceable`) — rename in a future chore. (discovered in #63)
 - **scripts/lib.ts**: No `git push` helper that embeds a fresh installation token — `git push` fails with stale GH_TOKEN; workaround is manual inline token refresh each session. (discovered in #79)
 - **src/server/services/import.service.test.ts**: Large describe block complexity — the main describe has 80+ tests with a complex `beforeEach` setup. Could be split by concern (getEligibleDownloads, importDownload, getImportContext). (discovered in #79)
 

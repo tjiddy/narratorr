@@ -1,4 +1,32 @@
 # Workflow Log
+## #83 Code hardening: formatBytes guards, ConfirmModal button types, typo rename — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #89
+
+### Metrics
+- Files changed: 5 (3 source, 3 test — download-status-registry.test.ts counts for both rename modules)
+- Tests added/modified: 5 formatBytes + 3 ConfirmModal + 2 registry rename = 10 new/updated tests
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0
+
+### Workflow experience
+- What went smoothly: All three modules were genuinely isolated — each had a clear red state before implementation. The `!isFinite()` single-check pattern was already in the client-side utils as a reference.
+- Friction / issues encountered: `git push` failed with stale GH_TOKEN in the handoff step; required manual `gh auth token` inline substitution. Same workaround as #79 — see debt entry for `scripts/lib.ts`.
+
+### Token efficiency
+- Highest-token actions: Coverage review subagent (flagged many pre-existing gaps unrelated to this PR's changes, requiring triage)
+- Avoidable waste: Coverage subagent reviewed entire files rather than just the diff; most findings were pre-existing
+- Suggestions: Coverage subagent prompt could be scoped to `git diff main` lines only rather than full file behavioral audit
+
+### Infrastructure gaps
+- Repeated workarounds: `git push` token refresh — same `gh auth token` inline substitution as #79; `scripts/lib.ts` still has no push helper
+- Missing tooling / config: none new
+- Unresolved debt: none introduced by this issue
+
+### Wish I'd Known
+1. `!isFinite()` covers NaN and Infinity together — no need for a separate `isNaN()` check (saves one condition)
+2. For button type tests, wrap in a form and assert `onSubmit` not called — attribute assertion alone is weaker and reviewers will flag it
+3. For export renames, update consumers first (import + call sites) before renaming the export itself — this guarantees the red phase is genuine
 ## #85 Finalize many-to-many authors/narrators — recycling bin, N+1, dead code — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #88
