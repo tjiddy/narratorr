@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, act } from '@testing-library/react';
+import { screen, waitFor, act, renderHook } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { ActivityPage } from './ActivityPage';
+import { usePagination } from '@/hooks/usePagination';
 import type { Download } from '@/lib/api';
 
 vi.mock('sonner', () => ({
@@ -55,6 +56,47 @@ function mockActivitySections(queue: Download[], history: Download[]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+// Test usePagination.clampToTotal directly — the ActivityPage integration path is
+// unsuitable for E2E nav tests because changing query key briefly sets data=undefined,
+// causing queueTotal=0 and the clamp to reset the page.  These unit tests exercise
+// exactly the same hook logic that ActivityPage's useEffect calls.
+describe('pagination clamp (#93)', () => {
+  it('clamps page to last valid page when total shrinks (page 3 → page 2 of 2)', () => {
+    const { result } = renderHook(() => usePagination(50));
+
+    act(() => { result.current.setPage(3); });
+    expect(result.current.page).toBe(3);
+    expect(result.current.offset).toBe(100);
+
+    // Total shrinks from 200 to 100 — now only 2 pages
+    act(() => { result.current.clampToTotal(100); });
+    expect(result.current.page).toBe(2);
+    expect(result.current.offset).toBe(50); // page 2 → offset 50
+  });
+
+  it('two usePagination instances clamp independently (queue and history do not interfere)', () => {
+    const { result: queue } = renderHook(() => usePagination(50));
+    const { result: history } = renderHook(() => usePagination(50));
+
+    act(() => {
+      queue.current.setPage(3);
+      history.current.setPage(3);
+    });
+    expect(queue.current.page).toBe(3);
+    expect(history.current.page).toBe(3);
+
+    // Clamp only queue — history must not change
+    act(() => { queue.current.clampToTotal(100); }); // queue: 100/50 = 2 pages
+    expect(queue.current.page).toBe(2);
+    expect(history.current.page).toBe(3); // unaffected
+
+    // Clamp history separately
+    act(() => { history.current.clampToTotal(100); }); // history: 100/50 = 2 pages
+    expect(history.current.page).toBe(2);
+    expect(queue.current.page).toBe(2); // still 2, not affected by history clamp
+  });
 });
 
 describe('ActivityPage', () => {
