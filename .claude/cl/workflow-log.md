@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #108 Move theme toggle from nav bar to Settings page — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #123
+
+### Metrics
+- Files changed: 6 | Tests added/modified: 3 files (+10 new tests, +2 modified tests)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 2 (one test red→green fix for mockReset; one self-review fix for nav-order assertion completeness)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was clear and well-scoped; codebase exploration surfaced all wiring points accurately; SettingsSection wrapper pattern made the new component trivial to build; red/green cycle worked cleanly
+- Friction / issues encountered: (1) `vi.fn().mockClear()` doesn't reset implementation — caused one test failure on the matchMedia light-preference test; fixed by switching to `mockReset()` + re-applying default in beforeEach. (2) Self-review caught that the discovery-disabled nav-order test only asserted Discover's absence but not the full sequence — required an additional commit to add the nav order assertion
+
+### Token efficiency
+- Highest-token actions: Two Explore subagent passes (plan codebase exploration + handoff coverage review) — both necessary
+- Avoidable waste: None significant
+- Suggestions: When writing tests for hooks that use matchMedia, always use `mockReset()` + re-apply implementation in `beforeEach` rather than `mockClear()`
+
+### Infrastructure gaps
+- Repeated workarounds: Git remote token expiry — had to refresh via `gh auth token` before push
+- Missing tooling / config: `frontend-design` skill not available in this environment
+- Unresolved debt: SSEProvider has no dedicated lifecycle tests (pre-existing, logged to debt.md)
+
+### Wish I'd Known
+1. `mockClear()` vs `mockReset()` distinction — `mockClear()` only clears call counts, not the implementation. When tests override `mockImplementation`, subsequent tests inherit the override unless `mockReset()` is called. See `.claude/cl/learnings/vitest-mock-reset-vs-clear.md`.
+2. Nav-order tests must assert the full sequence, not just presence/absence of individual items — the spec explicitly required both discovery-enabled and discovery-disabled order contracts; the existing test only asserted Discover's absence.
+3. Client-only settings sections should NOT use react-hook-form/dirty-state/save pattern — the toggle fires directly via the hook; no mutation or save button needed. See `.claude/cl/learnings/settings-section-no-form-pattern.md`.
+
 ## #117 Fix monitor routing failed SABnzbd/NZBGet downloads to failure path — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #122
