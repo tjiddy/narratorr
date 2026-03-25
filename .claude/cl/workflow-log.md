@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #105 Show series name instead of book title on collapsed series cards — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #120
+
+### Metrics
+- Files changed: 2 (LibraryBookCard.tsx + LibraryBookCard.test.tsx) | Tests added: 13
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 1 (one test assertion needed tightening — regex matched h3 title after implementation)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Change was exactly as scoped — one component, three line changes, clean red/green cycle
+- Friction / issues encountered: Test "hides narrator and series DOM nodes together" used `/The Stormlight Archive/` regex which unexpectedly matched the h3 title after implementation (since the title now shows the series name). Fixed by using the position-specific string `'The Stormlight Archive #1'` which only appears in the hover section.
+
+### Token efficiency
+- Highest-token actions: Elaborate/spec review cycle (3 rounds), Explore subagents for plan + self-review + coverage
+- Avoidable waste: Spec review required 3 rounds due to `collapsedCount: 0` edge case not initially covered; upfront codebase exploration would have caught this
+- Suggestions: When a conditional render change is planned, immediately enumerate all `collapsedCount` values (undefined, 0, >0) and ensure spec covers each path
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill unavailable (not in skills list)
+- Unresolved debt: `onMenuToggle` callback invocation untested in LibraryBookCard.test.tsx (pre-existing, logged in debt.md)
+
+### Wish I'd Known
+1. When a feature shows `seriesName` in the card title, any "not in document" test assertion using a broad regex on that series name will match the title h3 — use position-specific text to target hover-section elements uniquely
+2. `collapsedCount: 0` (singleton-series) is a real value emitted by `collapseSeries()` — specs for collapsed-card features need an explicit AC for this case or reviewers will raise it as a blocker
+3. The test file already had a comprehensive "collapsed series badge" describe block — reading it first would have given the exact pattern for passing `collapsedCount` via `defaultProps({ collapsedCount: N })`
+
+
 ## #99 Remove footer and Add Book empty state illustration — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #119
