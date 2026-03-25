@@ -216,7 +216,7 @@ describe('ImportSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        import: expect.objectContaining({ redownloadFailed: false }),
+        import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: false },
       });
     });
   });
