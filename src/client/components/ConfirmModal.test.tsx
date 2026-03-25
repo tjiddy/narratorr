@@ -62,4 +62,38 @@ describe('ConfirmModal', () => {
 
     expect(onCancel).toHaveBeenCalledOnce();
   });
+
+  it('buttons have explicit type="button" attribute', () => {
+    render(<ConfirmModal {...defaultProps} />);
+
+    const buttons = screen.getAllByRole('button');
+    expect(buttons).toHaveLength(2);
+    buttons.forEach((btn) => expect(btn).toHaveAttribute('type', 'button'));
+  });
+
+  it('clicking Cancel inside a form does not trigger form onSubmit', async () => {
+    const onSubmit = vi.fn((e: React.FormEvent) => e.preventDefault());
+    render(
+      <form onSubmit={onSubmit}>
+        <ConfirmModal {...defaultProps} />
+      </form>,
+    );
+
+    await userEvent.click(screen.getByText('Cancel'));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('clicking Confirm inside a form does not trigger form onSubmit', async () => {
+    const onSubmit = vi.fn((e: React.FormEvent) => e.preventDefault());
+    render(
+      <form onSubmit={onSubmit}>
+        <ConfirmModal {...defaultProps} />
+      </form>,
+    );
+
+    await userEvent.click(screen.getByText('Delete'));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
 });
