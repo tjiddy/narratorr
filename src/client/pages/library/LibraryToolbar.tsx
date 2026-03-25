@@ -1,10 +1,10 @@
 import { SearchIcon, XIcon, ChevronDownIcon, LibraryIcon } from '@/components/icons';
 import { type StatusFilter } from './helpers.js';
-import { StatusPills } from './StatusPills';
+import { StatusDropdown } from './StatusDropdown';
 import { FilterRow, type FilterProps } from './FilterRow';
-import { SortControls, type SortProps } from './SortControls';
+import { SortDropdown, type SortProps } from './SortDropdown';
 import { ViewToggle } from './ViewToggle.js';
-import { LibraryActions } from './LibraryActions.js';
+import { OverflowMenu } from './OverflowMenu.js';
 
 export type ViewMode = 'grid' | 'table';
 
@@ -45,7 +45,7 @@ export function LibraryToolbar({
   return (
     <div className="space-y-3 animate-fade-in-up stagger-1">
       <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-xs">
+        <div className="relative flex-1 min-w-[200px]">
           <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
           <input
             type="text"
@@ -65,7 +65,7 @@ export function LibraryToolbar({
           )}
         </div>
 
-        <StatusPills
+        <StatusDropdown
           statusFilter={statusFilter}
           onStatusFilterChange={onStatusFilterChange}
           statusCounts={statusCounts}
@@ -91,7 +91,7 @@ export function LibraryToolbar({
           )}
         </button>
 
-        <SortControls {...sortProps} />
+        <SortDropdown {...sortProps} />
 
         <button
           onClick={onCollapseSeriesToggle}
@@ -111,7 +111,7 @@ export function LibraryToolbar({
 
         <ViewToggle viewMode={viewMode} onViewModeChange={onViewModeChange} />
 
-        <LibraryActions
+        <OverflowMenu
           missingCount={missingCount}
           onRemoveMissing={onRemoveMissing}
           onSearchAllWanted={onSearchAllWanted}

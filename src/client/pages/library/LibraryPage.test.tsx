@@ -158,28 +158,7 @@ describe('LibraryPage', () => {
     });
   });
 
-  it('shows status counts in pills', async () => {
-    mockLibraryData(mockBooks);
-
-    renderWithProviders(<LibraryPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText('4')).toBeInTheDocument(); // All count
-    });
-    // Wanted count = 2
-    await waitFor(() => {
-      const wantedPill = screen.getByRole('button', { name: /^Wanted\s*\d*$/i });
-      expect(within(wantedPill).getByText('2')).toBeInTheDocument();
-      // Downloading count = 1
-      const downloadingPill = screen.getByRole('button', { name: /Downloading/i });
-      expect(within(downloadingPill).getByText('1')).toBeInTheDocument();
-      // Imported count = 1
-      const importedPill = screen.getByRole('button', { name: /Imported/i });
-      expect(within(importedPill).getByText('1')).toBeInTheDocument();
-    });
-  });
-
-  it('filters by status pill click', async () => {
+  it('shows status counts in dropdown options', async () => {
     mockLibraryData(mockBooks);
     const user = userEvent.setup();
 
@@ -189,8 +168,34 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Click Imported tab
-    await user.click(screen.getByRole('button', { name: /Imported/i }));
+    // Open the status dropdown to see all options with counts
+    await user.click(screen.getByRole('button', { name: /all.*4/i }));
+
+    await waitFor(() => {
+      // All count = 4
+      expect(screen.getByRole('option', { name: /all.*4/i })).toBeInTheDocument();
+      // Wanted count = 2
+      expect(screen.getByRole('option', { name: /wanted.*2/i })).toBeInTheDocument();
+      // Downloading count = 1
+      expect(screen.getByRole('option', { name: /downloading.*1/i })).toBeInTheDocument();
+      // Imported count = 1
+      expect(screen.getByRole('option', { name: /imported.*1/i })).toBeInTheDocument();
+    });
+  });
+
+  it('filters by status dropdown selection', async () => {
+    mockLibraryData(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    // Open status dropdown and select Imported
+    await user.click(screen.getByRole('button', { name: /all.*4/i }));
+    await user.click(screen.getByRole('option', { name: /imported/i }));
 
     await waitFor(() => {
       expect(screen.getByText('Recursion')).toBeInTheDocument();
@@ -250,7 +255,7 @@ describe('LibraryPage', () => {
     });
   });
 
-  it('sorts by title when filters are open', async () => {
+  it('sorts by title using the sort dropdown', async () => {
     mockLibraryData(mockBooks);
     const user = userEvent.setup();
 
@@ -260,12 +265,9 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Open filters to access sort
-    await user.click(screen.getByRole('button', { name: /Toggle filters/i }));
-
-    // Change sort to title
-    const sortSelect = screen.getByDisplayValue('Date Added');
-    await user.selectOptions(sortSelect, 'title');
+    // Open sort dropdown and select Title (A→Z)
+    await user.click(screen.getByRole('button', { name: /date added.*newest/i }));
+    await user.click(screen.getByRole('option', { name: /title.*a.*z/i }));
 
     // All books still present after sort change
     await waitFor(() => {
@@ -485,8 +487,9 @@ describe('LibraryPage', () => {
     const authorSelect = screen.getByDisplayValue('All Authors');
     await user.selectOptions(authorSelect, 'Andy Weir');
 
-    // Then switch to imported tab (Andy Weir's book is downloading, not imported)
-    await user.click(screen.getByRole('button', { name: /Imported/i }));
+    // Then switch to Imported via status dropdown (Andy Weir's book is downloading, not imported)
+    await user.click(screen.getByRole('button', { name: /all.*\d+/i }));
+    await user.click(screen.getByRole('option', { name: /^imported/i }));
 
     await waitFor(() => {
       expect(screen.getByText('No books match your filters')).toBeInTheDocument();
@@ -664,17 +667,9 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    // Open filters to access sort
-    await user.click(screen.getByRole('button', { name: /Toggle filters/i }));
-
-    // Change sort to title
-    const sortSelect = screen.getByDisplayValue('Date Added');
-    await user.selectOptions(sortSelect, 'title');
-
-    // Default sort direction is desc, so title desc = reverse alphabetical
-    // Switch to asc for alphabetical
-    const sortButton = screen.getByLabelText(/Sort descending/i);
-    await user.click(sortButton);
+    // Open sort dropdown and select Title (A→Z) for ascending alphabetical order
+    await user.click(screen.getByRole('button', { name: /date added.*newest/i }));
+    await user.click(screen.getByRole('option', { name: /title.*a.*z/i }));
 
     await waitFor(() => {
       const bookCardsAsc = screen.getAllByRole('link').filter(el => el.getAttribute('tabIndex') === '0');
@@ -706,8 +701,9 @@ describe('LibraryPage', () => {
     });
   });
 
-  it('shows import link in toolbar', async () => {
+  it('shows import link in overflow menu', async () => {
     mockLibraryData(mockBooks);
+    const user = userEvent.setup();
 
     renderWithProviders(<LibraryPage />);
 
@@ -715,9 +711,11 @@ describe('LibraryPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
+    await user.click(screen.getByRole('button', { name: /more actions/i }));
+
     await waitFor(() => {
-      const importLink = screen.getByText('Import');
-      expect(importLink.closest('a')).toHaveAttribute('href', '/import');
+      const importLink = screen.getByRole('menuitem', { name: /import/i });
+      expect(importLink).toHaveAttribute('href', '/import');
     });
   });
 
@@ -740,18 +738,30 @@ describe('LibraryPage', () => {
       }),
     ];
 
-    it('shows Remove Missing button when missing books exist', async () => {
+    async function openOverflowMenu(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole('button', { name: /more actions/i }));
+    }
+
+    it('shows Remove Missing item in overflow menu when missing books exist', async () => {
       mockLibraryData(booksWithMissing);
+      const user = userEvent.setup();
 
       renderWithProviders(<LibraryPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Remove Missing')).toBeInTheDocument();
+        expect(screen.getByText('Missing Book 1')).toBeInTheDocument();
+      });
+
+      await openOverflowMenu(user);
+
+      await waitFor(() => {
+        expect(screen.getByRole('menuitem', { name: /remove missing/i })).toBeInTheDocument();
       });
     });
 
-    it('hides Remove Missing button when no missing books', async () => {
+    it('hides Remove Missing item when no missing books', async () => {
       mockLibraryData(mockBooks);
+      const user = userEvent.setup();
 
       renderWithProviders(<LibraryPage />);
 
@@ -759,8 +769,10 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
+      await openOverflowMenu(user);
+
       await waitFor(() => {
-        expect(screen.queryByText('Remove Missing')).not.toBeInTheDocument();
+        expect(screen.queryByRole('menuitem', { name: /remove missing/i })).not.toBeInTheDocument();
       });
     });
 
@@ -771,10 +783,11 @@ describe('LibraryPage', () => {
       renderWithProviders(<LibraryPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Remove Missing')).toBeInTheDocument();
+        expect(screen.getByText('Missing Book 1')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByText('Remove Missing'));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole('menuitem', { name: /remove missing/i }));
 
       await waitFor(() => {
         expect(screen.getByText('Remove 2 missing books from library?')).toBeInTheDocument();
@@ -789,10 +802,11 @@ describe('LibraryPage', () => {
       renderWithProviders(<LibraryPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Remove Missing')).toBeInTheDocument();
+        expect(screen.getByText('Missing Book 1')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByText('Remove Missing'));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole('menuitem', { name: /remove missing/i }));
 
       const modal = screen.getByText('Remove 2 missing books from library?').closest('div[class*="relative w-full"]') as HTMLElement;
       await user.click(within(modal).getByRole('button', { name: 'Remove' }));
@@ -810,10 +824,11 @@ describe('LibraryPage', () => {
       renderWithProviders(<LibraryPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Remove Missing')).toBeInTheDocument();
+        expect(screen.getByText('Missing Book 1')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByText('Remove Missing'));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole('menuitem', { name: /remove missing/i }));
       await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
       await waitFor(() => {
@@ -830,10 +845,11 @@ describe('LibraryPage', () => {
       renderWithProviders(<LibraryPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Remove Missing')).toBeInTheDocument();
+        expect(screen.getByText('Missing Book 1')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByText('Remove Missing'));
+      await openOverflowMenu(user);
+      await user.click(screen.getByRole('menuitem', { name: /remove missing/i }));
 
       const modal = screen.getByText('Remove 2 missing books from library?').closest('div[class*="relative w-full"]') as HTMLElement;
       await user.click(within(modal).getByRole('button', { name: 'Remove' }));
@@ -845,7 +861,7 @@ describe('LibraryPage', () => {
   });
 
   describe('rescan', () => {
-    it('calls rescanLibrary API when Rescan button is clicked', async () => {
+    it('calls rescanLibrary API when Rescan is clicked in overflow menu', async () => {
       mockLibraryData(mockBooks);
       vi.mocked(api.rescanLibrary).mockResolvedValue({ scanned: 10, missing: 2, restored: 1 });
       const user = userEvent.setup();
@@ -856,7 +872,8 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByText('Rescan'));
+      await user.click(screen.getByRole('button', { name: /more actions/i }));
+      await user.click(screen.getByRole('menuitem', { name: /rescan/i }));
 
       await waitFor(() => {
         expect(api.rescanLibrary).toHaveBeenCalledTimes(1);
@@ -874,7 +891,8 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByText('Rescan'));
+      await user.click(screen.getByRole('button', { name: /more actions/i }));
+      await user.click(screen.getByRole('menuitem', { name: /rescan/i }));
 
       await waitFor(() => {
         expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
@@ -894,7 +912,8 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByText('Rescan'));
+      await user.click(screen.getByRole('button', { name: /more actions/i }));
+      await user.click(screen.getByRole('menuitem', { name: /rescan/i }));
 
       await waitFor(() => {
         expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
@@ -1057,7 +1076,12 @@ describe('LibraryPage', () => {
   });
 
   describe('Search All Wanted', () => {
-    it('shows confirmation modal with book count, indexer count, and estimated API calls when button clicked', async () => {
+    async function openSearchWanted(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole('button', { name: /more actions/i }));
+      await user.click(screen.getByRole('menuitem', { name: /search wanted/i }));
+    }
+
+    it('shows confirmation modal with book count, indexer count, and estimated API calls when overflow item clicked', async () => {
       mockLibraryData(mockBooks);
       const user = userEvent.setup();
 
@@ -1067,7 +1091,7 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByText('Search Wanted'));
+      await openSearchWanted(user);
 
       await waitFor(() => {
         // mockBooks has 2 wanted books (id 1 and 4), 2 enabled indexers → 4 API calls
@@ -1087,7 +1111,7 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByText('Search Wanted'));
+      await openSearchWanted(user);
 
       await waitFor(() => {
         expect(screen.getByText('Search', { selector: 'button' })).toBeInTheDocument();
@@ -1110,7 +1134,7 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByText('Search Wanted'));
+      await openSearchWanted(user);
 
       await waitFor(() => {
         expect(screen.getByText('Cancel', { selector: 'button' })).toBeInTheDocument();
@@ -1134,7 +1158,7 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByText('Search Wanted'));
+      await openSearchWanted(user);
 
       await waitFor(() => {
         expect(screen.getByText('Search', { selector: 'button' })).toBeInTheDocument();
@@ -1147,7 +1171,7 @@ describe('LibraryPage', () => {
       });
     });
 
-    it('disables Search Wanted button while mutation is pending', async () => {
+    it('disables Search Wanted overflow item while mutation is pending', async () => {
       mockLibraryData(mockBooks);
       // Return a promise that never resolves to keep mutation pending
       vi.mocked(api.searchAllWanted).mockReturnValue(new Promise(() => {}));
@@ -1159,12 +1183,13 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      // Button should be enabled initially
-      const searchWantedButton = screen.getByRole('button', { name: /Search Wanted/ });
-      expect(searchWantedButton).toBeEnabled();
+      // Open overflow menu — Search Wanted item should be enabled initially
+      await user.click(screen.getByRole('button', { name: /more actions/i }));
+      const searchWantedItem = screen.getByRole('menuitem', { name: /search wanted/i });
+      expect(searchWantedItem).toBeEnabled();
 
-      // Open modal and confirm
-      await user.click(searchWantedButton);
+      // Click it — opens confirm modal, menu closes
+      await user.click(searchWantedItem);
 
       await waitFor(() => {
         expect(screen.getByText('Search', { selector: 'button' })).toBeInTheDocument();
@@ -1172,9 +1197,10 @@ describe('LibraryPage', () => {
 
       await user.click(screen.getByText('Search', { selector: 'button' }));
 
-      // Button should now be disabled while mutation is pending
+      // Reopen overflow menu — Search Wanted should now be disabled while mutation is pending
+      await user.click(screen.getByRole('button', { name: /more actions/i }));
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /Search Wanted/ })).toBeDisabled();
+        expect(screen.getByRole('menuitem', { name: /search wanted/i })).toBeDisabled();
       });
     });
 
@@ -1189,7 +1215,7 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByText('Search Wanted'));
+      await openSearchWanted(user);
 
       await waitFor(() => {
         expect(screen.getByText('Search', { selector: 'button' })).toBeInTheDocument();
@@ -1225,7 +1251,7 @@ describe('LibraryPage', () => {
       }),
     ];
 
-    it('clicking Failed pill shows only failed-status books', async () => {
+    it('clicking Failed option shows only failed-status books', async () => {
       mockLibraryData(booksWithAllStatuses);
       const user = userEvent.setup();
 
@@ -1235,7 +1261,8 @@ describe('LibraryPage', () => {
         expect(screen.getByText('Failed Download')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('button', { name: /Failed/i }));
+      await user.click(screen.getByRole('button', { name: /all/i }));
+      await user.click(screen.getByRole('option', { name: /failed/i }));
 
       await waitFor(() => {
         expect(screen.getByText('Failed Download')).toBeInTheDocument();
@@ -1244,7 +1271,7 @@ describe('LibraryPage', () => {
       });
     });
 
-    it('clicking Missing pill shows only missing-status books', async () => {
+    it('clicking Missing option shows only missing-status books', async () => {
       mockLibraryData(booksWithAllStatuses);
       const user = userEvent.setup();
 
@@ -1254,7 +1281,8 @@ describe('LibraryPage', () => {
         expect(screen.getByText('Missing Audiobook')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('button', { name: /^Missing\s*\d*$/i }));
+      await user.click(screen.getByRole('button', { name: /all/i }));
+      await user.click(screen.getByRole('option', { name: /missing/i }));
 
       await waitFor(() => {
         expect(screen.getByText('Missing Audiobook')).toBeInTheDocument();
@@ -1263,7 +1291,7 @@ describe('LibraryPage', () => {
       });
     });
 
-    it('clicking Failed pill with no failed books shows NoMatchState', async () => {
+    it('clicking Failed option with no failed books shows NoMatchState', async () => {
       mockLibraryData(mockBooks);
       const user = userEvent.setup();
 
@@ -1273,14 +1301,15 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('button', { name: /Failed/i }));
+      await user.click(screen.getByRole('button', { name: /all/i }));
+      await user.click(screen.getByRole('option', { name: /failed/i }));
 
       await waitFor(() => {
         expect(screen.getByText('No books match your filters')).toBeInTheDocument();
       });
     });
 
-    it('clicking Missing pill with no missing books shows NoMatchState', async () => {
+    it('clicking Missing option with no missing books shows NoMatchState', async () => {
       mockLibraryData(mockBooks);
       const user = userEvent.setup();
 
@@ -1290,15 +1319,17 @@ describe('LibraryPage', () => {
         expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('button', { name: /^Missing\s*\d*$/i }));
+      await user.click(screen.getByRole('button', { name: /all/i }));
+      await user.click(screen.getByRole('option', { name: /missing/i }));
 
       await waitFor(() => {
         expect(screen.getByText('No books match your filters')).toBeInTheDocument();
       });
     });
 
-    it('status count pills show correct failed and missing counts', async () => {
+    it('status dropdown shows correct failed and missing counts', async () => {
       mockLibraryData(booksWithAllStatuses);
+      const user = userEvent.setup();
 
       renderWithProviders(<LibraryPage />);
 
@@ -1306,11 +1337,11 @@ describe('LibraryPage', () => {
         expect(screen.getByText('Failed Download')).toBeInTheDocument();
       });
 
+      await user.click(screen.getByRole('button', { name: /all/i }));
+
       await waitFor(() => {
-        const failedPill = screen.getByRole('button', { name: /^Failed\s*\d*$/i });
-        expect(within(failedPill).getByText('1')).toBeInTheDocument();
-        const missingPill = screen.getByRole('button', { name: /^Missing\s*\d*$/i });
-        expect(within(missingPill).getByText('1')).toBeInTheDocument();
+        expect(screen.getByRole('option', { name: /failed.*1/i })).toBeInTheDocument();
+        expect(screen.getByRole('option', { name: /missing.*1/i })).toBeInTheDocument();
       });
     });
   });

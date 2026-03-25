@@ -5,7 +5,7 @@ import { renderWithProviders } from '@/__tests__/helpers';
 import { LibraryToolbar } from './LibraryToolbar';
 import type { StatusFilter } from './helpers';
 import type { FilterProps } from './FilterRow';
-import type { SortProps } from './SortControls';
+import type { SortProps } from './SortDropdown';
 
 function defaultFilterProps(overrides: Partial<FilterProps> = {}): FilterProps {
   return {
@@ -107,11 +107,37 @@ describe('LibraryToolbar', () => {
     });
   });
 
-  describe('status pills', () => {
-    it('renders status pills', () => {
+  describe('status dropdown', () => {
+    it('renders a status dropdown trigger showing current status label and count', () => {
+      renderWithProviders(<LibraryToolbar {...defaultProps({ statusFilter: 'wanted' as StatusFilter })} />);
+      expect(screen.getByRole('button', { name: /wanted.*10/i })).toBeInTheDocument();
+    });
+
+    it('does not render 6 individual status pill buttons', () => {
       renderWithProviders(<LibraryToolbar {...defaultProps()} />);
-      expect(screen.getByText('All')).toBeInTheDocument();
-      expect(screen.getByText('Wanted')).toBeInTheDocument();
+      // Should have one dropdown trigger, not 6 pills. The trigger opens options on click.
+      expect(screen.queryByRole('option', { name: /wanted/i })).not.toBeInTheDocument();
+    });
+
+    it('opens status options panel when trigger is clicked', async () => {
+      const user = userEvent.setup();
+      const props = defaultProps();
+      renderWithProviders(<LibraryToolbar {...props} />);
+
+      await user.click(screen.getByRole('button', { name: /all.*25/i }));
+
+      expect(screen.getByRole('option', { name: /wanted/i })).toBeInTheDocument();
+    });
+
+    it('calls onStatusFilterChange when a status option is selected', async () => {
+      const user = userEvent.setup();
+      const props = defaultProps();
+      renderWithProviders(<LibraryToolbar {...props} />);
+
+      await user.click(screen.getByRole('button', { name: /all.*25/i }));
+      await user.click(screen.getByRole('option', { name: /wanted/i }));
+
+      expect(props.onStatusFilterChange).toHaveBeenCalledWith('wanted');
     });
   });
 
@@ -160,84 +186,98 @@ describe('LibraryToolbar', () => {
     });
   });
 
-  describe('rescan button', () => {
-    it('renders Rescan button', () => {
+  describe('sort dropdown', () => {
+    it('renders a combined sort dropdown trigger (not a separate field select + direction button)', () => {
       renderWithProviders(<LibraryToolbar {...defaultProps()} />);
-      expect(screen.getByText('Rescan')).toBeInTheDocument();
+      // The combined trigger shows "Date Added (Newest)" for createdAt/desc defaults
+      expect(screen.getByRole('button', { name: /date added.*newest/i })).toBeInTheDocument();
+      // No more separate field select or direction button
+      expect(screen.queryByLabelText('Sort field')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Sort descending')).not.toBeInTheDocument();
     });
 
-    it('calls onRescan when clicked', async () => {
+    it('fires onSortFieldChange and onSortDirectionChange when a sort option is selected', async () => {
       const user = userEvent.setup();
       const props = defaultProps();
       renderWithProviders(<LibraryToolbar {...props} />);
 
-      await user.click(screen.getByText('Rescan'));
-      expect(props.onRescan).toHaveBeenCalledTimes(1);
-    });
+      await user.click(screen.getByRole('button', { name: /date added.*newest/i }));
+      await user.click(screen.getByRole('option', { name: /title.*a.*z/i }));
 
-    it('disables button while rescanning', () => {
-      renderWithProviders(
-        <LibraryToolbar {...defaultProps({ isRescanning: true })} />,
-      );
-      const button = screen.getByText('Rescan').closest('button');
-      expect(button).toBeDisabled();
-    });
-
-    it('does not call onRescan when disabled', async () => {
-      const user = userEvent.setup();
-      const props = defaultProps({ isRescanning: true });
-      renderWithProviders(<LibraryToolbar {...props} />);
-
-      await user.click(screen.getByText('Rescan'));
-      expect(props.onRescan).not.toHaveBeenCalled();
+      expect(props.sortProps.onSortFieldChange).toHaveBeenCalledWith('title');
+      expect(props.sortProps.onSortDirectionChange).toHaveBeenCalledWith('asc');
     });
   });
 
-  describe('remove missing button', () => {
-    it('shows Remove Missing button when missingCount > 0', () => {
+  describe('overflow menu (replaces top-level action buttons)', () => {
+    it('renders a ⋮ overflow menu trigger instead of top-level Rescan/Search Wanted/Import buttons', () => {
+      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
+      expect(screen.getByRole('button', { name: /more actions/i })).toBeInTheDocument();
+      // Top-level Rescan and Search Wanted buttons should not be present outside the menu
+      expect(screen.queryByText('Rescan')).not.toBeInTheDocument();
+      expect(screen.queryByText('Search Wanted')).not.toBeInTheDocument();
+    });
+
+    it('clicking ⋮ opens menu with Rescan, Search Wanted, Import items', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
+
+      await user.click(screen.getByRole('button', { name: /more actions/i }));
+
+      expect(screen.getByRole('menuitem', { name: /rescan/i })).toBeInTheDocument();
+      expect(screen.getByRole('menuitem', { name: /search wanted/i })).toBeInTheDocument();
+      expect(screen.getByRole('menuitem', { name: /import/i })).toBeInTheDocument();
+    });
+
+    it('overflow menu Rescan item calls onRescan', async () => {
+      const user = userEvent.setup();
+      const props = defaultProps();
+      renderWithProviders(<LibraryToolbar {...props} />);
+
+      await user.click(screen.getByRole('button', { name: /more actions/i }));
+      await user.click(screen.getByRole('menuitem', { name: /rescan/i }));
+
+      expect(props.onRescan).toHaveBeenCalledTimes(1);
+    });
+
+    it('overflow menu Search Wanted item calls onSearchAllWanted', async () => {
+      const user = userEvent.setup();
+      const props = defaultProps();
+      renderWithProviders(<LibraryToolbar {...props} />);
+
+      await user.click(screen.getByRole('button', { name: /more actions/i }));
+      await user.click(screen.getByRole('menuitem', { name: /search wanted/i }));
+
+      expect(props.onSearchAllWanted).toHaveBeenCalledTimes(1);
+    });
+
+    it('Remove Missing item appears in overflow menu when missingCount > 0', async () => {
+      const user = userEvent.setup();
       renderWithProviders(<LibraryToolbar {...defaultProps({ missingCount: 3 })} />);
-      expect(screen.getByText('Remove Missing')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /more actions/i }));
+
+      expect(screen.getByRole('menuitem', { name: /remove missing/i })).toBeInTheDocument();
     });
 
-    it('hides Remove Missing button when missingCount is 0', () => {
+    it('Remove Missing item absent from overflow menu when missingCount is 0', async () => {
+      const user = userEvent.setup();
       renderWithProviders(<LibraryToolbar {...defaultProps({ missingCount: 0 })} />);
-      expect(screen.queryByText('Remove Missing')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /more actions/i }));
+
+      expect(screen.queryByRole('menuitem', { name: /remove missing/i })).not.toBeInTheDocument();
     });
 
-    it('calls onRemoveMissing when clicked', async () => {
+    it('overflow menu Remove Missing item calls onRemoveMissing', async () => {
       const user = userEvent.setup();
       const props = defaultProps({ missingCount: 5 });
       renderWithProviders(<LibraryToolbar {...props} />);
 
-      await user.click(screen.getByText('Remove Missing'));
+      await user.click(screen.getByRole('button', { name: /more actions/i }));
+      await user.click(screen.getByRole('menuitem', { name: /remove missing/i }));
+
       expect(props.onRemoveMissing).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('sort controls', () => {
-    it('renders sort dropdown in main toolbar', () => {
-      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
-      expect(screen.getByText('Date Added')).toBeInTheDocument();
-      expect(screen.getByText('Title')).toBeInTheDocument();
-      expect(screen.getByText('Author')).toBeInTheDocument();
-    });
-
-    it('fires onSortFieldChange when sort field is changed', async () => {
-      const user = userEvent.setup();
-      const props = defaultProps();
-      renderWithProviders(<LibraryToolbar {...props} />);
-
-      await user.selectOptions(screen.getByDisplayValue('Date Added'), 'title');
-      expect(props.sortProps.onSortFieldChange).toHaveBeenCalledWith('title');
-    });
-
-    it('fires onSortDirectionChange when direction toggle is clicked', async () => {
-      const user = userEvent.setup();
-      const props = defaultProps();
-      renderWithProviders(<LibraryToolbar {...props} />);
-
-      await user.click(screen.getByLabelText('Sort descending'));
-      expect(props.sortProps.onSortDirectionChange).toHaveBeenCalledWith('asc');
     });
   });
 
@@ -266,19 +306,6 @@ describe('LibraryToolbar', () => {
     });
   });
 
-  describe('import link', () => {
-    it('renders Import link', () => {
-      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
-      expect(screen.getByText('Import')).toBeInTheDocument();
-    });
-
-    it('Import link points to /import', () => {
-      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
-      const link = screen.getByText('Import').closest('a');
-      expect(link).toHaveAttribute('href', '/import');
-    });
-  });
-
   describe('grouped prop interface', () => {
     it('passes filter props through to FilterRow', () => {
       renderWithProviders(
@@ -290,9 +317,61 @@ describe('LibraryToolbar', () => {
       expect(screen.getByText('All Narrators')).toBeInTheDocument();
     });
 
-    it('passes sort props through to SortControls', () => {
+    it('passes sort props through to SortDropdown (trigger reflects active sort)', () => {
+      renderWithProviders(
+        <LibraryToolbar
+          {...defaultProps({ sortProps: defaultSortProps({ sortField: 'author' as const, sortDirection: 'asc' as const }) })}
+        />,
+      );
+      expect(screen.getByRole('button', { name: /author.*a.*z/i })).toBeInTheDocument();
+    });
+  });
+
+  describe('toolbar layout contract (search-first, overflow-last)', () => {
+    it('search input container is the first direct child of the toolbar row', () => {
       renderWithProviders(<LibraryToolbar {...defaultProps()} />);
-      expect(screen.getByDisplayValue('Date Added')).toBeInTheDocument();
+
+      const searchInput = screen.getByPlaceholderText('Search library...');
+      const searchContainer = searchInput.parentElement!;
+      const toolbarRow = searchContainer.parentElement!;
+
+      expect(toolbarRow.firstElementChild).toBe(searchContainer);
+    });
+
+    it('overflow trigger is the last direct child of the toolbar row', () => {
+      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
+
+      const searchInput = screen.getByPlaceholderText('Search library...');
+      const toolbarRow = searchInput.parentElement!.parentElement!;
+      const overflowTrigger = screen.getByRole('button', { name: /more actions/i });
+
+      expect(toolbarRow.lastElementChild).toContainElement(overflowTrigger);
+    });
+
+    it('search input container carries the min-w-[200px] width contract', () => {
+      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
+
+      const searchInput = screen.getByPlaceholderText('Search library...');
+      const searchContainer = searchInput.parentElement!;
+
+      expect(searchContainer.className).toContain('min-w-[200px]');
+    });
+  });
+
+  describe('view toggle (must remain top-level)', () => {
+    it('view toggle is still rendered as a top-level element', () => {
+      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
+      // ViewToggle renders grid/table toggle buttons
+      expect(screen.getByLabelText('Grid view')).toBeInTheDocument();
+    });
+
+    it('calls onViewModeChange when view toggle is used', async () => {
+      const user = userEvent.setup();
+      const props = defaultProps({ viewMode: 'grid' as const });
+      renderWithProviders(<LibraryToolbar {...props} />);
+
+      await user.click(screen.getByLabelText('Table view'));
+      expect(props.onViewModeChange).toHaveBeenCalledWith('table');
     });
   });
 });
