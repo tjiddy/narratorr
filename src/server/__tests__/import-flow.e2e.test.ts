@@ -142,7 +142,7 @@ describe('Import flow E2E', () => {
     const result = await e2e.services.import.importDownload(downloadId);
 
     // Import result
-    const expectedTarget = join(libraryDir, 'Brandon Sanderson', 'The Way of Kings');
+    const expectedTarget = join(libraryDir, 'Brandon Sanderson', 'The Way of Kings').split('\\').join('/');
     expect(result.downloadId).toBe(downloadId);
     expect(result.bookId).toBe(bookId);
     expect(result.targetPath).toBe(expectedTarget);

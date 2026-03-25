@@ -54,7 +54,8 @@ export function buildTargetPath(
   };
 
   const rendered = renderTemplate(folderFormat, tokens);
-  return join(libraryPath, ...rendered.split('/'));
+  // Always use POSIX separators — paths are stored in DB and consumed inside Docker (Linux)
+  return join(libraryPath, ...rendered.split('/')).split('\\').join('/');
 }
 
 /** Recursively get total size of a path (file or directory). */
