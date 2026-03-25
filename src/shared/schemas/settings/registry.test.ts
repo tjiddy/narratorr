@@ -66,11 +66,22 @@ describe('settingsRegistry', () => {
     });
 
     it('import schema defaults match registry defaults', () => {
-      expect(DEFAULT_SETTINGS.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 });
+      expect(DEFAULT_SETTINGS.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true });
       const schemaParsed = settingsRegistry.import.schema.parse({});
       expect(schemaParsed.minSeedTime).toBe(60);
       expect(schemaParsed.minFreeSpaceGB).toBe(5);
+      expect(schemaParsed.redownloadFailed).toBe(true);
       expect(schemaParsed).toEqual(DEFAULT_SETTINGS.import);
+    });
+
+    it('importSettingsSchema accepts redownloadFailed: true and false', () => {
+      expect(settingsRegistry.import.schema.parse({ redownloadFailed: true }).redownloadFailed).toBe(true);
+      expect(settingsRegistry.import.schema.parse({ redownloadFailed: false }).redownloadFailed).toBe(false);
+    });
+
+    it('importSettingsSchema defaults redownloadFailed to true when omitted', () => {
+      const parsed = settingsRegistry.import.schema.parse({});
+      expect(parsed.redownloadFailed).toBe(true);
     });
 
     it('general defaults have logLevel info, housekeepingRetentionDays 90, and recycleRetentionDays 30', () => {
