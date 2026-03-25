@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -355,5 +355,63 @@ describe('BlacklistSettings', () => {
         expect(toast.error).toHaveBeenCalledWith('Failed to update blacklist entry');
       });
     });
+  });
+});
+
+describe('pagination placeholderData', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('shows previous page items while next page is loading (placeholderData keeps data stable)', async () => {
+    const page2Entry = {
+      id: 99,
+      infoHash: 'page2hash',
+      title: 'Page 2 Release',
+      reason: 'spam' as const,
+      blacklistType: 'permanent' as const,
+      expiresAt: null,
+      blacklistedAt: '2024-07-01T00:00:00Z',
+    };
+
+    let resolveP2!: (v: { data: typeof mockEntries; total: number }) => void;
+    const pendingP2 = new Promise<{ data: typeof mockEntries; total: number }>((r) => {
+      resolveP2 = r;
+    });
+
+    vi.mocked(api.getBlacklist)
+      .mockResolvedValueOnce({ data: mockEntries, total: 110 })
+      .mockReturnValueOnce(pendingP2);
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <BlacklistSettings />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // Wait for page 1 to render
+    await waitFor(() => expect(screen.getByText('Bad Release [Unabridged]')).toBeInTheDocument());
+
+    // Verify pagination is showing (total=110 > DEFAULT_LIMITS.blacklist=100)
+    expect(screen.getByText(/Page 1 of/)).toBeInTheDocument();
+
+    // Click next page — triggers page 2 fetch (pending)
+    await user.click(screen.getByRole('button', { name: /next page/i }));
+
+    // placeholderData: page 1 items still visible while page 2 is loading
+    expect(screen.getByText('Bad Release [Unabridged]')).toBeInTheDocument();
+
+    // Resolve page 2
+    act(() => {
+      resolveP2({ data: [page2Entry as typeof mockEntries[0]], total: 110 });
+    });
+
+    await waitFor(() => expect(screen.queryByText('Bad Release [Unabridged]')).not.toBeInTheDocument());
+    expect(screen.getByText('Page 2 Release')).toBeInTheDocument();
   });
 });
