@@ -849,6 +849,32 @@ describe('ManualImportPage', () => {
     });
   });
 
+  describe('folder click clears scan error', () => {
+    it('clicking a favorite folder entry clears the scan error', async () => {
+      mockScanDirectory.mockRejectedValueOnce(new Error('Permission denied'));
+      mockFavorites = [{ path: '/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
+      renderPage();
+      const input = screen.getByPlaceholderText('/path/to/audiobooks');
+      await userEvent.type(input, '/root/audiobooks');
+      await userEvent.click(screen.getByRole('button', { name: 'Scan' }));
+      await screen.findByText(/Permission denied/);
+      await userEvent.click(screen.getByRole('button', { name: '/audiobooks' }));
+      expect(screen.queryByText(/Permission denied/)).not.toBeInTheDocument();
+    });
+
+    it('clicking a recent folder entry clears the scan error', async () => {
+      mockScanDirectory.mockRejectedValueOnce(new Error('Permission denied'));
+      mockRecents = [{ path: '/podcasts', lastUsedAt: '2026-01-02T00:00:00.000Z' }];
+      renderPage();
+      const input = screen.getByPlaceholderText('/path/to/audiobooks');
+      await userEvent.type(input, '/root/audiobooks');
+      await userEvent.click(screen.getByRole('button', { name: 'Scan' }));
+      await screen.findByText(/Permission denied/);
+      await userEvent.click(screen.getByRole('button', { name: '/podcasts' }));
+      expect(screen.queryByText(/Permission denied/)).not.toBeInTheDocument();
+    });
+  });
+
   describe('path input layout order (#100)', () => {
     it('path input renders before the Favorite Folders heading in the DOM', () => {
       mockFavorites = [{ path: '/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
