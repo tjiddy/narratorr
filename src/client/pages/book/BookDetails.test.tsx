@@ -874,6 +874,36 @@ describe('BookDetails', () => {
       expect(api.retagBook).not.toHaveBeenCalled();
     });
 
+    it('Escape key closes the modal without calling api.retagBook', async () => {
+      const user = userEvent.setup();
+      mockFfmpegEnabled();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
+      await user.click(screen.getByText('Re-tag files'));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      await user.keyboard('{Escape}');
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(api.retagBook).not.toHaveBeenCalled();
+    });
+
+    it('backdrop click closes the modal without calling api.retagBook', async () => {
+      const user = userEvent.setup();
+      mockFfmpegEnabled();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
+      await user.click(screen.getByText('Re-tag files'));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      await user.click(document.querySelector('.fixed.inset-0')!);
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(api.retagBook).not.toHaveBeenCalled();
+    });
+
     it('Re-tag button is disabled when ffmpegConfigured is false and clicking does not open modal', async () => {
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
