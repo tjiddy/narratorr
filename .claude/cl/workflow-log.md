@@ -1,4 +1,33 @@
 # Workflow Log
+## #81 Manual import: recent & favorite folders with smart defaults — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #91
+
+### Metrics
+- Files changed: 7 | Tests added/modified: 2 test files (25 unit + 15 integration = 40 new tests)
+- Quality gate runs: 2 (pass on attempt 2 — lint violation on first run: unused import)
+- Fix iterations: 1 (vi.spyOn leak across tests fixed by adding vi.restoreAllMocks() to afterEach)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: useFolderHistory hook design was clean — nested setState pattern for atomic two-slice updates worked well; spec dedupe rules mapped directly to implementation without ambiguity
+- Friction / issues encountered: (1) vi.spyOn Storage.prototype.setItem leaked across tests — caught immediately when 18 tests failed after the QuotaExceeded test; fixed with afterEach restoreAllMocks. (2) Coverage review caught 4 untested PathStep button callbacks (promote/demote/remove) — added after coverage check, not during initial implementation. (3) GitHub token expired during push — refreshed via scripts/lib.ts gh("auth","token").
+
+### Token efficiency
+- Highest-token actions: Explore subagents for plan + self-review + coverage review
+- Avoidable waste: Writing PathStep tests in two phases (initial implementation + coverage gap fix) — better to write all button interaction tests alongside the initial test suite
+- Suggestions: When implementing a component with N action buttons, ensure every button has a click test before committing rather than relying on the coverage review to catch gaps
+
+### Infrastructure gaps
+- Repeated workarounds: GitHub token refresh — the remote URL token expires mid-session; needs a script or hook to auto-refresh before push
+- Missing tooling / config: frontend-design skill not available in this environment
+- Unresolved debt: PathStep visual polish pass not applied (see debt.md)
+
+### Wish I'd Known
+1. `vi.spyOn` on `Storage.prototype` leaks across tests — always add `vi.restoreAllMocks()` to afterEach when using prototype spies; saves a debugging cycle
+2. TanStack Query `useMutation.onSuccess` receives `(data, variables, context)` — `variables` is the mutate() argument; use it to avoid capturing values in closures
+3. Coverage review will flag every interactive button even if render tests exist — plan for one `userEvent.click` test per button type from the start, not as a follow-up
+
 ## #82 Fill test coverage gaps from debt log — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #90

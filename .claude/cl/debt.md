@@ -20,3 +20,5 @@
 - **src/server/services/import.service.test.ts**: Large describe block complexity — the main describe has 80+ tests with a complex `beforeEach` setup. Could be split by concern (getEligibleDownloads, importDownload, getImportContext). (discovered in #79)
 
 - **src/client/components/manual-import/BookEditModal.tsx + ImportCard.tsx + DirectoryBrowserModal.tsx**: Coverage subagent (issue #80) identified 17 pre-existing behavioral gaps: Windows backslash path handling in parseBreadcrumbs/ImportCard, search results slice(0,6) boundary not tested, applyMetadata() multi-author edge case, confidence label text for non-medium cases, narrator display in alternatives list, singular "1 file" form, selected/unselected row background classes, showPencilAlways high-confidence visibility. None are new regressions — all existed before #80. (discovered in #80)
+
+- **src/client/pages/manual-import/PathStep.tsx**: frontend-design skill was unavailable — visual polish pass not applied; amber accent hover states and glass-card styling may need review for consistency with the rest of the app (discovered in #81)
