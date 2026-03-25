@@ -1,4 +1,33 @@
 # Workflow Log
+## #98 PathStep visual polish pass — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #101
+
+### Metrics
+- Files changed: 1 | Tests added/modified: 0 (CSS-only, no behavior change)
+- Quality gate runs: 2 (pass on both — ran once pre-commit, once in handoff)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Scope was minimal and well-defined — 5 class substitutions across 1 file; plan phase had exact target diffs from the explore subagent; all 51 ManualImportPage tests passed immediately
+- Friction / issues encountered: (1) State directory disappeared between /plan and handoff phases — had to mkdir -p twice; (2) Git remote URL had stale token — same recurring issue from #81; refreshed via git remote set-url with fresh gh auth token
+
+### Token efficiency
+- Highest-token actions: Explore subagents for plan (47k tokens) and self-review (44k tokens) — substantially more than the actual change
+- Avoidable waste: For trivially small CSS-only changes, full Explore subagents in plan/self-review are disproportionate; a direct file read + grep is equally safe
+- Suggestions: CSS-only single-file chores with an existing test suite don't need full Explore subagents — direct read + edit suffices
+
+### Infrastructure gaps
+- Repeated workarounds: Git remote token expiry — second time this session; still no auto-refresh mechanism
+- Missing tooling / config: frontend-design skill unavailable; design language derived from reference components directly
+- Unresolved debt: none introduced
+
+### Wish I'd Known
+1. The three canonical polish substitutions for folder-list rows are documented in .claude/cl/learnings/pathstep-glass-card-pattern.md — future similar components can skip the explore phase
+2. The glass-card utility uses backdrop-blur-xl which creates a stacking context — nested popovers inside glass-card must portal to body
+3. State directories written during /plan can disappear before /handoff; always mkdir -p before writing markers
+
 ## #81 Manual import: recent & favorite folders with smart defaults — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #91
