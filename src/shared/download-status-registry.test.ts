@@ -8,7 +8,7 @@ import {
   getTerminalStatuses,
   getCompletedStatuses,
   getClientPolledStatuses,
-  getReplacableStatuses,
+  getReplaceableStatuses,
 } from './download-status-registry.js';
 
 describe('download-status-registry', () => {
@@ -204,15 +204,15 @@ describe('download-status-registry', () => {
     });
   });
 
-  describe('getReplacableStatuses', () => {
+  describe('getReplaceableStatuses', () => {
     it('returns exactly the five replaceable statuses', () => {
-      expect(getReplacableStatuses().sort()).toEqual(
+      expect(getReplaceableStatuses().sort()).toEqual(
         ['checking', 'downloading', 'paused', 'pending_review', 'queued'],
       );
     });
 
     it('excludes processing_queued and importing (import-pipeline statuses)', () => {
-      const replaceable = getReplacableStatuses();
+      const replaceable = getReplaceableStatuses();
       expect(replaceable).not.toContain('processing_queued');
       expect(replaceable).not.toContain('importing');
     });
