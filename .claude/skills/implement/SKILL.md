@@ -100,6 +100,8 @@ All GitHub commands use: `gh` (referred to as `gh` below).
 
 6b. **Branch guard:** Run `git branch --show-current` and verify the output matches `feature/issue-<id>-*`. If not, STOP: "Branch mismatch before /handoff — expected feature/issue-<id>-*, got <actual>." Save the branch name.
 
+6d. **Drain background tasks (pre-handoff):** Run TaskList to check for any outstanding background tasks. For each task still in `running` state, call TaskStop to terminate it. Wait until TaskList shows no running tasks before proceeding. This prevents orphaned background tasks from keeping the session alive after handoff completes.
+
 7. **Invoke `/handoff <id>`** via the Skill tool. Include in your message: "Current branch: `<branch-name-from-step-6b>`".
    - This pushes, creates the PR, updates labels, posts the handoff comment, updates the context cache, and appends the workflow log.
    - **When `/handoff` returns → IMMEDIATELY continue to step 8.** Do not end your turn.
@@ -111,10 +113,12 @@ All GitHub commands use: `gh` (referred to as `gh` below).
      - Run: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/review-pr"`
    - **Both checks are critical for the orchestrator pipeline** — the PR label drives review dispatch, the issue label tracks workflow state.
 
-9. **Write final phase marker and clean up:** `echo done > .claude/state/implement-<id>/handoff-complete`
+9. **Drain background tasks (post-handoff):** Run TaskList again. `/handoff` may have spawned its own background tasks (coverage subagent, self-review, etc.). For each task still in `running` state, call TaskStop to terminate it. Do not proceed until TaskList shows no running tasks. **This is critical** — any outstanding background task will keep the session alive indefinitely after completion.
+
+10. **Write final phase marker and clean up:** `echo done > .claude/state/implement-<id>/handoff-complete`
    - Then clean up state: `rm -rf .claude/state/implement-<id>/`
 
-10. **Report completion** to the user: "**#<id> complete** — <PR link> — <1-line summary of what was built>"
+11. **Report completion** to the user: "**#<id> complete** — <PR link> — <1-line summary of what was built>"
 
 ## Important
 
