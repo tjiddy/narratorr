@@ -1,5 +1,35 @@
 # Workflow Log
 
+
+## #114 Show duplicate books in scan results instead of hiding them — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #126
+
+### Metrics
+- Files changed: 12 | Tests added/modified: 9
+- Quality gate runs: 2 (pass on attempt 2 — TypeScript errors on first run)
+- Fix iterations: 2 (Map key type narrowing; missing `isDuplicate` on `getBookDetails` path)
+- Context compactions: 1 (session compacted mid-implementation; resumed cleanly with no rework)
+
+### Workflow experience
+- What went smoothly: Red/green TDD cycle per module worked cleanly; blast-radius grep of `skippedDuplicates` found all 8+ affected test files; forceImport bypass design was straightforward
+- Friction / issues encountered: (1) `as const` on template literal tuples caused TypeScript to infer narrow key type, rejecting `string` lookups — caught by typecheck after first verify.ts run. (2) `isDuplicate: boolean` (required, not optional) needed to be added to `getBookDetails()` in the single-book import path — a separate constructor site not in the main scanDirectory flow. (3) GitHub auth token expired mid-handoff on first attempt; PR push succeeded but comment posting failed; resolved on second attempt when token refreshed.
+
+### Token efficiency
+- Highest-token actions: Coverage and self-review subagents (large service test file with 1800+ lines)
+- Avoidable waste: Running verify.ts before typecheck; a quick `pnpm typecheck` first would have caught both TS errors before the full gate run
+- Suggestions: Run `pnpm typecheck` as a fast pre-flight before `node scripts/verify.ts` to catch type errors cheaply
+
+### Infrastructure gaps
+- Repeated workarounds: GitHub auth token expiry mid-skill — had to use `scripts/lib.ts` gh helper to get a fresh token and post via REST curl
+- Missing tooling / config: `frontend-design` skill not available in this environment
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `as const` on `Map` template literal tuples narrows the key type to a union — use explicit `Map<string, V>` typing instead (see `.claude/cl/learnings/map-key-type-narrowing-trap.md`)
+2. When adding a required field to a shared interface, grep for ALL constructors of that type across the full repo — `getBookDetails()` and test factory functions in component files are easy to miss (see `.claude/cl/learnings/required-field-all-constructors.md`)
+3. When removing a field from an API shape, grep ALL test files for the removed field name before marking any module done — fixture objects in unrelated component tests also contain the old shape (see `.claude/cl/learnings/scan-skip-to-flag-pattern.md`)
+
 ## #118 Add Redownload Failed toggle to import settings — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #125
