@@ -194,6 +194,80 @@ describe('useManualImport', () => {
     });
   });
 
+  it('calls onScanSuccess with the trimmed scan path when scan returns discoveries', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+    const onScanSuccess = vi.fn();
+
+    const { result } = renderHook(() => useManualImport({ onScanSuccess }), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      result.current.setScanPath('  /audiobooks  ');
+    });
+
+    await act(async () => {
+      result.current.handleScan();
+    });
+
+    await waitFor(() => {
+      expect(result.current.step).toBe('review');
+    });
+
+    expect(onScanSuccess).toHaveBeenCalledWith('/audiobooks');
+    expect(onScanSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call onScanSuccess when scan returns zero discoveries', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue({
+      discoveries: [],
+      totalFolders: 0,
+      skippedDuplicates: 0,
+    });
+    const onScanSuccess = vi.fn();
+
+    const { result } = renderHook(() => useManualImport({ onScanSuccess }), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      result.current.setScanPath('/empty');
+    });
+
+    await act(async () => {
+      result.current.handleScan();
+    });
+
+    await waitFor(() => {
+      expect(result.current.scanError).toBeTruthy();
+    });
+
+    expect(onScanSuccess).not.toHaveBeenCalled();
+  });
+
+  it('does not call onScanSuccess when scan API rejects', async () => {
+    vi.mocked(api.scanDirectory).mockRejectedValue(new Error('Permission denied'));
+    const onScanSuccess = vi.fn();
+
+    const { result } = renderHook(() => useManualImport({ onScanSuccess }), {
+      wrapper: createWrapper(),
+    });
+
+    act(() => {
+      result.current.setScanPath('/noaccess');
+    });
+
+    await act(async () => {
+      result.current.handleScan();
+    });
+
+    await waitFor(() => {
+      expect(result.current.scanError).toBe('Permission denied');
+    });
+
+    expect(onScanSuccess).not.toHaveBeenCalled();
+  });
+
   it('does not scan when path is empty', async () => {
     const { result } = renderHook(() => useManualImport(), {
       wrapper: createWrapper(),
