@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useCallback, type RefObject, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 type Position = { top: number; left: number };
@@ -22,6 +22,25 @@ export function ToolbarDropdown({
   children: ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<Position>({ top: 0, left: 0 });
+
+  const updatePosition = useCallback(() => {
+    if (triggerRef.current) {
+      setPosition(computePosition(triggerRef.current.getBoundingClientRect()));
+    }
+  }, [triggerRef]);
+
+  // Compute position when opening; recompute on scroll/resize
+  useEffect(() => {
+    if (!open) return;
+    updatePosition();
+    window.addEventListener('scroll', updatePosition, true);
+    window.addEventListener('resize', updatePosition);
+    return () => {
+      window.removeEventListener('scroll', updatePosition, true);
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [open, updatePosition]);
 
   // Close on outside click — dual-ref: close only when click is outside BOTH trigger and panel
   useEffect(() => {
@@ -48,9 +67,6 @@ export function ToolbarDropdown({
   }, [open, onClose]);
 
   if (!open) return null;
-
-  const rect = triggerRef.current?.getBoundingClientRect();
-  const position: Position = rect ? computePosition(rect) : { top: 0, left: 0 };
 
   return createPortal(
     <div
