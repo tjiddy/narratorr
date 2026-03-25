@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ImportCard, ImportSummaryBar, BookEditModal } from '@/components/manual-import';
 import {
-  LoadingSpinner,
   ArrowLeftIcon,
   CheckIcon,
 } from '@/components/icons';
