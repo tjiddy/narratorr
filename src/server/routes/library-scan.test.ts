@@ -31,10 +31,10 @@ describe('library-scan routes', () => {
             parsedSeries: null,
             fileCount: 5,
             totalSize: 500000,
+            isDuplicate: false,
           },
         ],
         totalFolders: 2,
-        skippedDuplicates: 1,
       };
 
       (services.libraryScan.scanDirectory as ReturnType<typeof vi.fn>)
@@ -51,7 +51,6 @@ describe('library-scan routes', () => {
       expect(body.discoveries).toHaveLength(1);
       expect(body.discoveries[0].parsedTitle).toBe('Title');
       expect(body.totalFolders).toBe(2);
-      expect(body.skippedDuplicates).toBe(1);
     });
 
     it('returns 400 when path is missing', async () => {
@@ -621,6 +620,92 @@ describe('library-scan routes', () => {
       expect(res.statusCode).toBe(500);
       const body = JSON.parse(res.payload);
       expect(body.error).toBe('Rescan failed');
+    });
+  });
+
+  // ===========================================================================
+  // #114 — scan response with isDuplicate flag; confirm with forceImport
+  // ===========================================================================
+  describe('POST /api/library/import/scan — isDuplicate flag', () => {
+    it('response includes isDuplicate on each discovery item', async () => {
+      (services.libraryScan.scanDirectory as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({
+          discoveries: [
+            { path: '/a/new', parsedTitle: 'New', parsedAuthor: null, parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: false },
+            { path: '/a/dup', parsedTitle: 'Dup', parsedAuthor: null, parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: true, existingBookId: 5 },
+          ],
+          totalFolders: 2,
+        });
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/import/scan', payload: { path: '/a' } });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.discoveries[0].isDuplicate).toBe(false);
+      expect(body.discoveries[1].isDuplicate).toBe(true);
+    });
+
+    it('response does not include skippedDuplicates field', async () => {
+      (services.libraryScan.scanDirectory as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ discoveries: [], totalFolders: 0 });
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/import/scan', payload: { path: '/a' } });
+      const body = JSON.parse(res.payload);
+      expect(body).not.toHaveProperty('skippedDuplicates');
+    });
+
+    it('duplicate entries have isDuplicate: true; new entries have isDuplicate: false', async () => {
+      (services.libraryScan.scanDirectory as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({
+          discoveries: [
+            { path: '/a/new', parsedTitle: 'New', parsedAuthor: null, parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: false },
+            { path: '/a/dup', parsedTitle: 'Dup', parsedAuthor: null, parsedSeries: null, fileCount: 1, totalSize: 100, isDuplicate: true, existingBookId: 7 },
+          ],
+          totalFolders: 2,
+        });
+
+      const res = await app.inject({ method: 'POST', url: '/api/library/import/scan', payload: { path: '/a' } });
+      const body = JSON.parse(res.payload);
+      const newEntry = body.discoveries.find((d: { path: string }) => d.path === '/a/new');
+      const dupEntry = body.discoveries.find((d: { path: string }) => d.path === '/a/dup');
+      expect(newEntry.isDuplicate).toBe(false);
+      expect(dupEntry.isDuplicate).toBe(true);
+      expect(dupEntry.existingBookId).toBe(7);
+    });
+  });
+
+  describe('POST /api/library/import/confirm — forceImport field', () => {
+    it('accepts items with forceImport: true and passes them to confirmImport', async () => {
+      (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ accepted: 1 });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/import/confirm',
+        payload: {
+          books: [{ path: '/a/dup', title: 'Dup Book', forceImport: true }],
+        },
+      });
+
+      expect(res.statusCode).toBe(202);
+      expect(services.libraryScan.confirmImport).toHaveBeenCalledWith(
+        [{ path: '/a/dup', title: 'Dup Book', forceImport: true }],
+        undefined,
+      );
+    });
+
+    it('accepts items without forceImport field (field is optional)', async () => {
+      (services.libraryScan.confirmImport as ReturnType<typeof vi.fn>)
+        .mockResolvedValue({ accepted: 1 });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/library/import/confirm',
+        payload: {
+          books: [{ path: '/a/new', title: 'New Book' }],
+        },
+      });
+
+      expect(res.statusCode).toBe(202);
     });
   });
 });

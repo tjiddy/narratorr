@@ -138,7 +138,6 @@ describe('Library scan → Discovery flow E2E', () => {
     // plus dedup-test/Way of Kings and dedup-test/Name of the Wind
     expect(result.totalFolders).toBe(6);
     expect(result.discoveries).toHaveLength(6);
-    expect(result.skippedDuplicates).toBe(0);
 
     // Check a 2-part book (Author/Title)
     const wayOfKings = result.discoveries.find(
@@ -230,17 +229,24 @@ describe('Library scan → Discovery flow E2E', () => {
     expect(res.statusCode).toBe(200);
     const result = res.json();
 
-    // totalFolders counts pre-dedup (both folders discovered)
+    // totalFolders counts both folders discovered
     expect(result.totalFolders).toBe(2);
-    // One duplicate skipped (Way of Kings matches by title+author)
-    expect(result.skippedDuplicates).toBe(1);
-    expect(result.discoveries).toHaveLength(1);
+    // Both books appear in discoveries: 1 new + 1 duplicate
+    expect(result.discoveries).toHaveLength(2);
 
-    // The duplicate should NOT appear in discoveries
+    // The duplicate appears with isDuplicate: true
     const wayOfKings = result.discoveries.find(
       (d: { parsedTitle: string }) => d.parsedTitle === 'The Way of Kings',
     );
-    expect(wayOfKings).toBeUndefined();
+    expect(wayOfKings).toBeDefined();
+    expect(wayOfKings.isDuplicate).toBe(true);
+
+    // The non-duplicate has isDuplicate: false
+    const nameOfTheWind = result.discoveries.find(
+      (d: { parsedTitle: string }) => d.parsedTitle === 'The Name of the Wind',
+    );
+    expect(nameOfTheWind).toBeDefined();
+    expect(nameOfTheWind.isDuplicate).toBe(false);
   });
 
   it('returns zero discoveries for empty directory', async () => {
@@ -254,7 +260,6 @@ describe('Library scan → Discovery flow E2E', () => {
     const result = res.json();
     expect(result.totalFolders).toBe(0);
     expect(result.discoveries).toHaveLength(0);
-    expect(result.skippedDuplicates).toBe(0);
   });
 
   it('returns zero discoveries for directory with only non-audio files', async () => {
