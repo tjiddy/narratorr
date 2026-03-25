@@ -48,6 +48,7 @@ const SCAN_RESULT: ScanResult = {
       parsedSeries: null,
       fileCount: 3,
       totalSize: 1000,
+      isDuplicate: false,
     },
     {
       path: '/audiobooks/Book B',
@@ -56,10 +57,45 @@ const SCAN_RESULT: ScanResult = {
       parsedSeries: 'Series B',
       fileCount: 1,
       totalSize: 500,
+      isDuplicate: false,
     },
   ],
   totalFolders: 2,
-  skippedDuplicates: 0,
+};
+
+const SCAN_RESULT_WITH_DUPLICATES: ScanResult = {
+  discoveries: [
+    {
+      path: '/audiobooks/New Book',
+      parsedTitle: 'New Book',
+      parsedAuthor: 'Author A',
+      parsedSeries: null,
+      fileCount: 2,
+      totalSize: 800,
+      isDuplicate: false,
+    },
+    {
+      path: '/audiobooks/Existing Book',
+      parsedTitle: 'Existing Book',
+      parsedAuthor: 'Author B',
+      parsedSeries: null,
+      fileCount: 1,
+      totalSize: 500,
+      isDuplicate: true,
+      existingBookId: 42,
+    },
+    {
+      path: '/audiobooks/Another Existing',
+      parsedTitle: 'Another Existing',
+      parsedAuthor: 'Author C',
+      parsedSeries: null,
+      fileCount: 3,
+      totalSize: 1200,
+      isDuplicate: true,
+      existingBookId: 99,
+    },
+  ],
+  totalFolders: 3,
 };
 
 const MATCH_METADATA: BookMetadata = {
@@ -128,7 +164,6 @@ describe('useManualImport', () => {
     vi.mocked(api.scanDirectory).mockResolvedValue({
       discoveries: [],
       totalFolders: 0,
-      skippedDuplicates: 0,
     });
 
     const { result } = renderHook(() => useManualImport(), {
@@ -150,11 +185,21 @@ describe('useManualImport', () => {
     expect(result.current.step).toBe('path'); // stays on path step
   });
 
-  it('sets scanError with duplicate message when all are duplicates', async () => {
+  it('goes to review step when all discoveries are duplicates (users can force-import)', async () => {
     vi.mocked(api.scanDirectory).mockResolvedValue({
-      discoveries: [],
-      totalFolders: 3,
-      skippedDuplicates: 3,
+      discoveries: [
+        {
+          path: '/audiobooks/Dup',
+          parsedTitle: 'Dup',
+          parsedAuthor: 'Author',
+          parsedSeries: null,
+          fileCount: 1,
+          totalSize: 100,
+          isDuplicate: true,
+          existingBookId: 1,
+        },
+      ],
+      totalFolders: 1,
     });
 
     const { result } = renderHook(() => useManualImport(), {
@@ -170,8 +215,10 @@ describe('useManualImport', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.scanError).toContain('already in your library');
+      expect(result.current.step).toBe('review');
     });
+    expect(result.current.rows).toHaveLength(1);
+    expect(result.current.rows[0].book.isDuplicate).toBe(true);
   });
 
   it('sets scanError when scan API rejects', async () => {
@@ -222,7 +269,6 @@ describe('useManualImport', () => {
     vi.mocked(api.scanDirectory).mockResolvedValue({
       discoveries: [],
       totalFolders: 0,
-      skippedDuplicates: 0,
     });
     const onScanSuccess = vi.fn();
 
@@ -589,5 +635,121 @@ describe('useManualImport', () => {
     expect(result.current.noMatchCount).toBe(0);
     expect(result.current.readyCount).toBe(0);
     expect(result.current.reviewCount).toBe(0);
+  });
+
+  // ===========================================================================
+  // #114 — duplicate row behavior
+  // ===========================================================================
+  describe('duplicate rows (isDuplicate: true)', () => {
+    it('duplicate rows initialize with selected: false', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.handleScan(); });
+      await waitFor(() => { expect(result.current.rows).toHaveLength(3); });
+
+      const dupRows = result.current.rows.filter(r => r.book.isDuplicate);
+      expect(dupRows).toHaveLength(2);
+      expect(dupRows.every(r => !r.selected)).toBe(true);
+    });
+
+    it('duplicate rows are excluded from startMatching candidates', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.handleScan(); });
+      await waitFor(() => { expect(result.current.rows).toHaveLength(3); });
+
+      expect(vi.mocked(api.startMatchJob)).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ path: '/audiobooks/New Book' }),
+        ]),
+      );
+      const callArgs = vi.mocked(api.startMatchJob).mock.calls[0][0];
+      expect(callArgs.every(c => !SCAN_RESULT_WITH_DUPLICATES.discoveries.find(d => d.path === c.path && d.isDuplicate))).toBe(true);
+    });
+
+    it('handleImport sends forceImport: true for selected duplicate rows', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.handleScan(); });
+      await waitFor(() => { expect(result.current.rows).toHaveLength(3); });
+
+      // Manually select the first duplicate row (index 1)
+      act(() => { result.current.handleToggle(1); });
+
+      await act(async () => { result.current.handleImport(); });
+      await waitFor(() => { expect(vi.mocked(api.confirmImport)).toHaveBeenCalled(); });
+
+      const [books] = vi.mocked(api.confirmImport).mock.calls[0];
+      const dupItem = books.find(b => b.path === '/audiobooks/Existing Book');
+      expect(dupItem?.forceImport).toBe(true);
+    });
+
+    it('handleImport omits forceImport for non-duplicate selected rows', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.handleScan(); });
+      await waitFor(() => { expect(result.current.rows).toHaveLength(3); });
+
+      // Only the non-duplicate row (index 0) is selected by default
+      await act(async () => { result.current.handleImport(); });
+      await waitFor(() => { expect(vi.mocked(api.confirmImport)).toHaveBeenCalled(); });
+
+      const [books] = vi.mocked(api.confirmImport).mock.calls[0];
+      const newItem = books.find(b => b.path === '/audiobooks/New Book');
+      expect(newItem?.forceImport).toBeUndefined();
+    });
+
+    it('duplicate rows do not auto-select when match result arrives', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
+        // Match job returns a result for the path of a duplicate row (edge case)
+        vi.mocked(api.getMatchJob).mockResolvedValue({
+          id: 'job-123',
+          status: 'completed',
+          matched: 1,
+          total: 1,
+          results: [{
+            path: '/audiobooks/Existing Book',
+            confidence: 'high',
+            bestMatch: { title: 'Existing Book', authors: [{ name: 'Author B' }], narrators: [] },
+            alternatives: [],
+          }],
+        });
+
+        const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+        act(() => { result.current.setScanPath('/audiobooks'); });
+        await act(async () => { result.current.handleScan(); });
+        await waitFor(() => { expect(result.current.rows).toHaveLength(3); });
+
+        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+        const dupRow = result.current.rows.find(r => r.book.path === '/audiobooks/Existing Book');
+        expect(dupRow?.selected).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('duplicateCount equals the number of discoveries with isDuplicate: true', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.handleScan(); });
+      await waitFor(() => { expect(result.current.rows).toHaveLength(3); });
+
+      expect(result.current.duplicateCount).toBe(2);
+    });
   });
 });
