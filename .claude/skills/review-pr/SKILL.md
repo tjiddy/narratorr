@@ -281,12 +281,16 @@ All GitHub commands use: `gh` (referred to as `gh` below).
 
     Skip this step if all new findings are on code introduced by fix commits (those are genuinely new issues, not round-1 misses).
 
-11c. **Write phase marker:** `echo done > .claude/state/review-pr-<pr-number>/review-complete`
+11c. **Write review file and phase marker:**
+    - Write the full review comment body (from the template below) to `.claude/state/review-pr-<pr-number>/review.md`
+    - Then write the phase marker: `echo done > .claude/state/review-pr-<pr-number>/review-complete`
+    - **Do NOT call `gh pr comment` directly — the posting script is the only authorized posting mechanism.**
 
 12. **Post review comment on PR (MANDATORY — this is a GitHub API call, not stdout):**
-    - Write comment to temp file, then post via GitHub API: `gh pr comment <pr-number> --body-file <temp-file-path>`
-    - **Verify the comment was posted** — the command should return the comment ID. If it fails, retry once.
-    - Template:
+    - Run: `node scripts/post-review.ts <pr-number>`
+    - The script reads `review.md` from the state directory, posts it as a single `gh pr comment`, and writes the `posted` marker. It refuses to run if `review-complete` is missing (analysis incomplete) or `posted` already exists (double-post guard).
+    - If the script outputs `ERROR:`, investigate and fix the issue before proceeding.
+    - Template (written to `review.md` in step 11c):
       ```
       ## AC Review
 
@@ -374,7 +378,6 @@ All GitHub commands use: `gh` (referred to as `gh` below).
       ]
       ```
       ```
-    - Clean up temp file
 
 13. **Commit and push CL files:** Retrospective files from step 10 need to be committed to main so all clones stay in sync. This MUST happen before the merge so the clone is clean for `merge.ts`'s `git pull`.
     ```bash
@@ -397,7 +400,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
       2. If the rebase succeeds (no conflicts): `git push --force-with-lease` then re-run `node scripts/merge.ts <pr-number>`
       3. If the rebase has conflicts: `git rebase --abort && git checkout main` — fall through to the `REBASE_CONFLICT` handling below
     - If merge output starts with `REBASE_CONFLICT:` (or a `REBASE:` rebase attempt failed with conflicts above):
-      1. Post a structured verdict comment on the **PR** so `/respond-to-pr-review` can process it:
+      1. Overwrite `.claude/state/review-pr-<pr-number>/review.md` with a conflict verdict:
          ```
          ## Verdict: needs-work
 
@@ -406,7 +409,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
          [{"id":"F1","severity":"blocking","category":"rebase","description":"Branch has merge conflicts with main. Run `git fetch origin main && git rebase origin/main`, resolve all conflicts, and push.","files":[]}]
          ```
          ```
-         Write the comment body to a temp file, then: `gh pr comment <pr-number> --body-file <temp-file-path>`. Clean up the temp file.
+         Then run: `node scripts/post-review.ts <pr-number> --force` to post the conflict verdict (--force bypasses the posted-marker guard since the approve was already posted).
       2. Set `stage/fixes-pr` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/fixes-pr"`
       3. Set `status/in-progress` on the **issue**: `node scripts/update-labels.ts <id> --replace "status/" "status/in-progress"`
       4. **STOP.** The implementer will pick this up via `/respond-to-pr-review`.
@@ -418,8 +421,8 @@ All GitHub commands use: `gh` (referred to as `gh` below).
     - Verify the PR shows `stage/fixes-pr` and the issue shows `status/in-progress`
     - **STOP.** Do not attempt to fix anything — that's the author's job via `/respond-to-pr-review`
 
-15. **Write final phase marker and clean up:** `echo done > .claude/state/review-pr-<pr-number>/posted`
-    - Then clean up state: `rm -rf .claude/state/review-pr-<pr-number>/`
+15. **Clean up state:** `rm -rf .claude/state/review-pr-<pr-number>/`
+    - The `posted` marker was already written by `post-review.ts` in step 12 or 14.
 
 16. **Report to main agent:** Overall verdict + outcome (merged or awaiting author response).
 
