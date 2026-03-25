@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #118 Add Redownload Failed toggle to import settings — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #125
+
+### Metrics
+- Files changed: 11 | Tests added/modified: 11 (8 new tests + 3 updated payload assertions + registry/settings fixture updates)
+- Quality gate runs: 2 (pass on attempt 2 — first pass revealed TS errors in 5 e2e fixture files)
+- Fix iterations: 1 (TypeScript errors from settings.set() calls missing redownloadFailed field in e2e tests; fixed by running full pnpm typecheck to see all errors at once)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was comprehensive after 2 review rounds. Blast radius was well-documented. createMockSettingsService factories automatically inherited defaults so only explicit settings.set() calls needed updating. TDD cycle was clean — all 3 modules went red→green on first attempt.
+- Friction / issues encountered: verify.ts stops at first TS error, requiring multiple re-runs to surface all blast radius hits. Running pnpm typecheck directly revealed all 7 errors at once. The frontend-design skill was unavailable (not in skills list) — UI design pass skipped.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for /plan and /handoff self-review
+- Avoidable waste: Coverage subagent enumerated all 60+ existing monitor.ts behaviors — useful but over-broad; targeted query for new behaviors only would suffice
+- Suggestions: For additive boolean settings, blast radius pattern is predictable — could skip full Explore and just grep for settings.set and toEqual fixture patterns
+
+### Infrastructure gaps
+- Repeated workarounds: git push required refreshing the GH_TOKEN in the remote URL (same workaround as #79)
+- Missing tooling / config: frontend-design skill not available — no design pass for this issue
+- Unresolved debt: importFormSchema in ImportSettingsSection.tsx duplicates importSettingsSchema from shared schemas; added to debt.md
+
+### Wish I Had Known
+1. z.boolean().default(true) makes the field required in z.infer output type — settings.set() calls with inline objects need updating even though the schema has a default (see zod-default-boolean-ts-blast-radius.md)
+2. createMockSettings factories auto-inherit new defaults via deepMerge(DEFAULT_SETTINGS, overrides) — only explicit inline object fixtures need updating, halving the real blast radius
+3. Run pnpm typecheck directly (not verify.ts) to surface all TS errors at once when fixing blast radius — verify.ts stops at the first file
+
+
 ## #108 Move theme toggle from nav bar to Settings page — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #123

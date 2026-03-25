@@ -18,3 +18,5 @@
 - **src/client/pages/library/LibraryPage.test.tsx**: Page-level integration tests directly interact with toolbar UI controls; any toolbar refactor requires updating many tests in this file. Consider extracting toolbar interaction helpers. (discovered in #106)
 - **LibraryBookCard.test.tsx**: `onMenuToggle` callback is mocked in `defaultProps()` but never asserted against — clicking the options button and verifying the callback fires is untested; a wiring regression would go undetected (discovered in #105)
 - **src/client/components/SSEProvider**: No dedicated test for subscription/unsubscription lifecycle or connection error handling — integration is exercised indirectly via Layout tests only (discovered in #108)
+
+- **src/client/pages/settings/ImportSettingsSection.tsx**: `importFormSchema` (local to component, lines 13-17) duplicates `importSettingsSchema` from shared schemas — must be kept in sync manually when new fields are added. Each new boolean setting requires editing both the shared schema and the component's local form schema. (discovered in #118)
