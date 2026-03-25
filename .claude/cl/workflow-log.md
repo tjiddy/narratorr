@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #100 Move path input above favorites/recents on Manual Import page — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #113
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 9 (5 DOM-order, 2 regression, 2 error-clearing, 1 whitespace-disabled)
+- Quality gate runs: 2 (pass on attempt 2 — coverage review required 2 extra test commits)
+- Fix iterations: 0 (no production code bugs)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: JSX reorder was trivial; red/green cycle clean; `compareDocumentPosition` API worked exactly as expected for DOM order assertions
+- Friction / issues encountered: Coverage review surfaced 3 pre-existing untested behaviors in the changed file (error clearing on folder click, whitespace-only Scan disabled state). Required 2 extra commits after the main implementation commit. Also: `frontend-design` skill unavailable; git push required manual token refresh (recurring issue).
+
+### Token efficiency
+- Highest-token actions: Two Explore subagent coverage reviews (first found 2 gaps, second found 1 more)
+- Avoidable waste: Running coverage review twice; could have done a more thorough first pass
+- Suggestions: For "layout-only" chores that touch a file with rich logic, read existing test coverage first during planning to pre-identify gaps before the handoff coverage gate
+
+### Infrastructure gaps
+- Repeated workarounds: `git push` token refresh — same workaround as prior sessions (scripts/lib.ts debt entry)
+- Missing tooling / config: `frontend-design` skill not available as external plugin
+- Unresolved debt: PathStep.tsx visual polish (glass-card hover, amber accents) — pre-existing from #81
+
+### Wish I'd Known
+1. Testing Library queries are order-agnostic — DOM order assertions need `compareDocumentPosition`, not just presence checks. See `learnings/compare-document-position-dom-order.md`.
+2. "Layout-only" chores on files with rich logic will surface pre-existing test gaps at the handoff coverage gate. Budget 1-2 extra test commits.
+3. The coverage review runs twice if the first pass finds gaps — plan accordingly.
+
 ## #104 Manual import fails when source is in library — same-path copy and missing events — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #109
