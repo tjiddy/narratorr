@@ -648,4 +648,79 @@ describe('LibrarySettingsSection', () => {
       });
     });
   });
+
+  describe('form validation (#82)', () => {
+    it('submitting with empty folderFormat shows "Folder format is required" and does not call updateSettings', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}'));
+
+      // Clear folderFormat to make it empty and dirty
+      const folderInput = screen.getByPlaceholderText('{author}/{title}');
+      await user.tripleClick(folderInput);
+      await user.keyboard('[Backspace]');
+
+      // Save button should now be visible
+      const saveBtn = await screen.findByRole('button', { name: /save/i });
+      await user.click(saveBtn);
+
+      await waitFor(() => expect(screen.getByText('Folder format is required')).toBeInTheDocument());
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+    });
+
+    it('Save button is disabled and shows "Saving..." while mutation is pending', async () => {
+      let resolveUpdate!: () => void;
+      mockApi.updateSettings.mockReturnValue(new Promise<typeof mockSettings>(resolve => { resolveUpdate = () => resolve(mockSettings); }));
+
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}'));
+
+      // Dirty the form by appending valid text (keeps {title} token → form stays valid)
+      const folderInput = screen.getByPlaceholderText('{author}/{title}');
+      await user.click(folderInput);
+      await user.type(folderInput, '/extra');
+
+      // Click Save — mutation starts (pending)
+      await user.click(screen.getByRole('button', { name: /save/i }));
+
+      await waitFor(() => {
+        const btn = screen.getByRole('button', { name: /saving/i });
+        expect(btn).toBeDisabled();
+        expect(btn).toHaveTextContent('Saving...');
+      });
+
+      resolveUpdate();
+    });
+  });
+
+  describe('token insertion (#82)', () => {
+    it('clicking a token button inserts token at cursor position and cursor is positioned after the inserted token', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}'));
+
+      const folderInput = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
+      // Focus input — cursor lands at end of value
+      await user.click(folderInput);
+      const cursorPos = folderInput.value.length; // 15 for '{author}/{title}'
+
+      // Open folder token panel (first "Insert token" toggle)
+      const toggles = screen.getAllByText('Insert token');
+      await user.click(toggles[0]);
+
+      // Click {year} token — insertTokenAtCursor schedules setSelectionRange via rAF
+      await user.click(screen.getAllByText('{year}')[0]);
+
+      // Flush the requestAnimationFrame (jsdom implements rAF as setTimeout)
+      await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 0)); });
+
+      expect(folderInput).toHaveValue('{author}/{title}{year}');
+      // Cursor should be after inserted '{year}': start(15) + 'year'.length(4) + 2 braces = 21
+      expect(folderInput.selectionStart).toBe(cursorPos + 'year'.length + 2);
+    });
+  });
 });

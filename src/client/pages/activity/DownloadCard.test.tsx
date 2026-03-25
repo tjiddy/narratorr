@@ -65,6 +65,13 @@ describe('DownloadCard', () => {
       render(<DownloadCard download={createMockDownload({ protocol: 'usenet' })} />);
       expect(screen.getByText('Usenet')).toBeInTheDocument();
     });
+
+    it('hides seeders count when protocol is usenet (#82)', () => {
+      render(<DownloadCard download={createMockDownload({ protocol: 'usenet', seeders: 5 })} />);
+      expect(screen.queryByText('5 seeders')).not.toBeInTheDocument();
+      // Protocol badge still shows
+      expect(screen.getByText('Usenet')).toBeInTheDocument();
+    });
   });
 
   describe('error message', () => {

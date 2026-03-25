@@ -520,6 +520,48 @@ describe('SecuritySettings', () => {
     });
   });
 
+  describe('LocalBypassSection toggle (#82)', () => {
+    it('toggling localBypass from false to true fires mutation and reflects checked state after refetch', async () => {
+      (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ mode: 'none', apiKey: 'test-api-key-12345', localBypass: true });
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByRole('checkbox', { name: /enable local bypass/i })).not.toBeChecked());
+      // Update mock so the refetch triggered by onSuccess returns localBypass: true
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, localBypass: true });
+      await user.click(screen.getByRole('checkbox', { name: /enable local bypass/i }));
+
+      await waitFor(() => expect(api.updateAuthConfig).toHaveBeenCalledWith({ localBypass: true }));
+      await waitFor(() => expect(screen.getByRole('checkbox', { name: /enable local bypass/i })).toBeChecked());
+    });
+
+    it('toggling localBypass from true to false fires mutation and reflects unchecked state after refetch', async () => {
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, localBypass: true });
+      (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ mode: 'none', apiKey: 'test-api-key-12345', localBypass: false });
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByRole('checkbox', { name: /enable local bypass/i })).toBeChecked());
+      // Update mock so the refetch triggered by onSuccess returns localBypass: false
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, localBypass: false });
+      await user.click(screen.getByRole('checkbox', { name: /enable local bypass/i }));
+
+      await waitFor(() => expect(api.updateAuthConfig).toHaveBeenCalledWith({ localBypass: false }));
+      await waitFor(() => expect(screen.getByRole('checkbox', { name: /enable local bypass/i })).not.toBeChecked());
+    });
+
+    it('successful toggle shows success toast', async () => {
+      (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ mode: 'none', apiKey: 'test-api-key-12345', localBypass: true });
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByRole('checkbox', { name: /enable local bypass/i })).toBeInTheDocument());
+      await user.click(screen.getByRole('checkbox', { name: /enable local bypass/i }));
+
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Local bypass setting updated'));
+    });
+  });
+
   it('password change success shows success toast, clears fields, and invalidates auth queries', async () => {
     (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...mockStatus,
