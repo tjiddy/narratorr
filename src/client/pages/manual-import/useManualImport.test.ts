@@ -619,6 +619,42 @@ describe('useManualImport', () => {
     });
   });
 
+  it('readyCount decrements when a high-confidence row is deselected', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123',
+        status: 'completed',
+        matched: 1,
+        total: 2,
+        results: [{
+          path: '/audiobooks/Book A',
+          confidence: 'high',
+          bestMatch: { title: 'Book A', authors: [{ name: 'Author A' }], narrators: [] },
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.handleScan(); });
+      await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+
+      // Advance past the 2000ms poll interval so match results arrive
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+      // Row 0 is high confidence and selected → ready count = 1
+      expect(result.current.readyCount).toBe(1);
+
+      // Deselect the matched row → ready count drops to 0
+      act(() => { result.current.handleToggle(0); });
+      expect(result.current.readyCount).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('computes pendingCount and noMatchCount correctly', async () => {
     vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
 

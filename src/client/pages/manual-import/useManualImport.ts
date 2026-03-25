@@ -183,7 +183,7 @@ export function useManualImport({ onScanSuccess }: UseManualImportOptions = {}) 
   // Computed counts
   const selectedCount = rows.filter(r => r.selected).length;
   const selectedUnmatchedCount = rows.filter(r => r.selected && r.matchResult?.confidence === 'none').length;
-  const readyCount = rows.filter(r => r.matchResult?.confidence === 'high').length;
+  const readyCount = rows.filter(r => r.selected && !r.book.isDuplicate && r.matchResult?.confidence === 'high').length;
   const reviewCount = rows.filter(r => r.matchResult?.confidence === 'medium').length;
   const noMatchCount = rows.filter(r => r.matchResult?.confidence === 'none').length;
   const pendingCount = rows.filter(r => !r.matchResult && !r.book.isDuplicate).length;
