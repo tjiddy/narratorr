@@ -55,6 +55,38 @@ export function PathStep({
 
   return (
     <div className="max-w-xl space-y-4 animate-fade-in-up stagger-1">
+      {/* Path input */}
+      <PathInput
+        value={scanPath}
+        onChange={(path) => { setScanPath(path); setScanError(null); }}
+        placeholder="/path/to/audiobooks"
+        fallbackBrowsePath={libraryPath || '/'}
+        onKeyDown={(e) => e.key === 'Enter' && handleScan()}
+        autoFocus
+      />
+
+      {scanError && (
+        <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-amber-500/5 border border-amber-500/20">
+          <AlertCircleIcon className="w-4 h-4 mt-0.5 shrink-0 text-amber-400" />
+          <span className="text-sm text-amber-300/90">{scanError}</span>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground/70">
+          Point to a folder containing audiobook subfolders (Author/Title, etc.)
+        </p>
+        <button
+          type="button"
+          onClick={handleScan}
+          disabled={!scanPath.trim() || isPending}
+          className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 active:opacity-80 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
+        >
+          {isPending && <LoadingSpinner className="w-3.5 h-3.5" />}
+          {isPending ? 'Scanning...' : 'Scan'}
+        </button>
+      </div>
+
       {/* Favorite Folders */}
       <div className="space-y-1.5">
         <p className="text-xs font-medium text-muted-foreground/70 uppercase tracking-wide">Favorite Folders</p>
@@ -143,38 +175,6 @@ export function PathStep({
             ))}
           </div>
         )}
-      </div>
-
-      {/* Path input */}
-      <PathInput
-        value={scanPath}
-        onChange={(path) => { setScanPath(path); setScanError(null); }}
-        placeholder="/path/to/audiobooks"
-        fallbackBrowsePath={libraryPath || '/'}
-        onKeyDown={(e) => e.key === 'Enter' && handleScan()}
-        autoFocus
-      />
-
-      {scanError && (
-        <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-amber-500/5 border border-amber-500/20">
-          <AlertCircleIcon className="w-4 h-4 mt-0.5 shrink-0 text-amber-400" />
-          <span className="text-sm text-amber-300/90">{scanError}</span>
-        </div>
-      )}
-
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground/70">
-          Point to a folder containing audiobook subfolders (Author/Title, etc.)
-        </p>
-        <button
-          type="button"
-          onClick={handleScan}
-          disabled={!scanPath.trim() || isPending}
-          className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 active:opacity-80 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
-        >
-          {isPending && <LoadingSpinner className="w-3.5 h-3.5" />}
-          {isPending ? 'Scanning...' : 'Scan'}
-        </button>
       </div>
     </div>
   );

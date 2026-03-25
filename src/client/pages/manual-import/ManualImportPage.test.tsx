@@ -848,4 +848,47 @@ describe('ManualImportPage', () => {
       expect(mockRemoveRecent).toHaveBeenCalledWith('/podcasts');
     });
   });
+
+  describe('path input layout order (#100)', () => {
+    it('path input renders before the Favorite Folders heading in the DOM', () => {
+      mockFavorites = [{ path: '/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
+      renderPage();
+      const input = screen.getByPlaceholderText('/path/to/audiobooks');
+      const favHeading = screen.getByText('Favorite Folders');
+      expect(input.compareDocumentPosition(favHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('path input renders before the Recent Folders heading in the DOM', () => {
+      mockRecents = [{ path: '/podcasts', lastUsedAt: '2026-01-02T00:00:00.000Z' }];
+      renderPage();
+      const input = screen.getByPlaceholderText('/path/to/audiobooks');
+      const recentHeading = screen.getByText('Recent Folders');
+      expect(input.compareDocumentPosition(recentHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('with empty favorites and empty recents, path input appears before both section headings', () => {
+      renderPage();
+      const input = screen.getByPlaceholderText('/path/to/audiobooks');
+      const favHeading = screen.getByText('Favorite Folders');
+      const recentHeading = screen.getByText('Recent Folders');
+      expect(input.compareDocumentPosition(favHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(input.compareDocumentPosition(recentHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('clicking a favorite folder entry still populates the path input after reorder (regression)', async () => {
+      mockFavorites = [{ path: '/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
+      renderPage();
+      await userEvent.click(screen.getByRole('button', { name: '/audiobooks' }));
+      const input = screen.getByPlaceholderText('/path/to/audiobooks') as HTMLInputElement;
+      expect(input.value).toBe('/audiobooks');
+    });
+
+    it('clicking a recent folder entry still populates the path input after reorder (regression)', async () => {
+      mockRecents = [{ path: '/podcasts', lastUsedAt: '2026-01-02T00:00:00.000Z' }];
+      renderPage();
+      await userEvent.click(screen.getByRole('button', { name: '/podcasts' }));
+      const input = screen.getByPlaceholderText('/path/to/audiobooks') as HTMLInputElement;
+      expect(input.value).toBe('/podcasts');
+    });
+  });
 });
