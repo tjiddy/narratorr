@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createHmac } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
+vi.mock('node:crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:crypto')>();
+  return { ...actual, timingSafeEqual: vi.fn(actual.timingSafeEqual) };
+});
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { AuthService, NoCredentialsError } from './auth.service.js';
@@ -107,6 +112,39 @@ describe('AuthService', () => {
     });
   });
 
+  describe('updateLocalBypass', () => {
+    it('updateLocalBypass(true) sets config.localBypass=true and preserves apiKey and sessionSecret', async () => {
+      const authConfig = { mode: 'none' as const, apiKey: 'original-key', sessionSecret: 'original-secret', localBypass: false };
+      db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: authConfig }]));
+      db.insert.mockReturnValue(mockDbChain(undefined));
+
+      await service.updateLocalBypass(true);
+
+      const insertChain = db.insert.mock.results[0].value;
+      const valuesCall = insertChain.values.mock.calls[0][0];
+      expect(valuesCall.key).toBe('auth');
+      const stored = valuesCall.value as { mode: string; apiKey: string; sessionSecret: string; localBypass: boolean };
+      expect(stored.localBypass).toBe(true);
+      expect(isEncrypted(stored.apiKey)).toBe(true);
+      expect(isEncrypted(stored.sessionSecret)).toBe(true);
+    });
+
+    it('updateLocalBypass(false) sets config.localBypass=false and preserves apiKey and sessionSecret', async () => {
+      const authConfig = { mode: 'none' as const, apiKey: 'original-key', sessionSecret: 'original-secret', localBypass: true };
+      db.select.mockReturnValue(mockDbChain([{ key: 'auth', value: authConfig }]));
+      db.insert.mockReturnValue(mockDbChain(undefined));
+
+      await service.updateLocalBypass(false);
+
+      const insertChain = db.insert.mock.results[0].value;
+      const valuesCall = insertChain.values.mock.calls[0][0];
+      const stored = valuesCall.value as { mode: string; apiKey: string; sessionSecret: string; localBypass: boolean };
+      expect(stored.localBypass).toBe(false);
+      expect(isEncrypted(stored.apiKey)).toBe(true);
+      expect(isEncrypted(stored.sessionSecret)).toBe(true);
+    });
+  });
+
   describe('changePassword', () => {
     it('succeeds with correct current password', async () => {
       // Create user
@@ -122,6 +160,21 @@ describe('AuthService', () => {
       expect(db.update).toHaveBeenCalled();
     });
 
+    it('timingSafeEqual is called during verifyCredentials (not short-circuited on wrong password)', async () => {
+      // Create a real user to obtain a valid password hash
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      await service.createUser('admin', 'correctpass');
+      const insertChain = db.insert.mock.results[0].value;
+      const storedHash = insertChain.values.mock.calls[0][0].passwordHash;
+
+      // Verify with wrong password — timingSafeEqual must still be called (not short-circuited)
+      db.select.mockReturnValue(mockDbChain([{ id: 1, username: 'admin', passwordHash: storedHash }]));
+      vi.clearAllMocks();
+      const result = await service.verifyCredentials('admin', 'wrongpass');
+
+      expect(result).toBeNull();
+      expect(timingSafeEqual).toHaveBeenCalled();
+    });
     it('rejects with incorrect current password', async () => {
       // Create user
       db.select.mockReturnValueOnce(mockDbChain([]));
