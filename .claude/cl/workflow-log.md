@@ -1,4 +1,32 @@
 # Workflow Log
+## #82 Fill test coverage gaps from debt log — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #90
+
+### Metrics
+- Files changed: 4 | Tests added: 11
+- Quality gate runs: 3 (pass on attempt 3 — lint fix round + typecheck fix round)
+- Fix iterations: 2 (vi.spyOn ESM failure → vi.mock approach; fake timers hanging → act+setTimeout flush)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: All 4 modules implemented cleanly once correct patterns identified; `deleteCredentials` test was a perfect template for the `updateLocalBypass` field preservation assertion; `LibrarySettingsSection` validation test just needed `user.type(input, '/extra')` not `keyboard('{...}')` syntax
+- Friction / issues encountered: (1) `vi.spyOn` on `node:crypto` ESM namespace failed — required switching to `vi.mock` with `importOriginal`; (2) `vi.useFakeTimers()` before render caused `waitFor` to hang (it uses `setInterval`) — fixed with `act(async () => setTimeout)` pattern instead; (3) `user.keyboard('{author}/{title}')` doesn't type braces — fires unknown key events instead; (4) `consistent-type-imports` lint rule forbids `typeof import(...)` inline — needed cast pattern; (5) GH_TOKEN expired mid-handoff — required inline JWT refresh via `npx tsx`
+
+### Token efficiency
+- Highest-token actions: Two Explore subagents (plan + self-review) consumed most context
+- Avoidable waste: Tried `vi.useFakeTimers()` approach for cursor test before discovering the `act(setTimeout)` pattern — 2 test run iterations
+- Suggestions: When testing `requestAnimationFrame` callbacks in jsdom, always try `act(async () => setTimeout(0))` BEFORE fake timers — it's simpler and doesn't break `waitFor`
+
+### Infrastructure gaps
+- Repeated workarounds: GH_TOKEN expiry requiring inline JWT refresh via `npx tsx` (same pattern as #79, #83) — the `git push` helper noted in debt.md still not implemented
+- Missing tooling / config: `consistent-type-imports` rule should document the `vi.mock importOriginal` cast pattern in CLAUDE.md gotchas
+- Unresolved debt: `LibrarySettingsSection` preview output assertions and dirty-reset after save still missing; `ApiKeySection` clipboard interaction test still absent
+
+### Wish I'd Known
+1. `vi.spyOn` doesn't work on ESM Node built-ins — use `vi.mock` with `importOriginal` instead; check for `"Cannot redefine property"` as the signal
+2. `user.keyboard('{tokenName}')` in userEvent v14 fires key events for an unknown key, NOT literal `{tokenName}` text — dirty a form by appending with `user.type(input, '/extra')` to preserve existing token templates
+3. `vi.useFakeTimers()` called before `renderWithProviders` causes `waitFor` to hang — render first with real timers, THEN flush rAF with `act(async () => new Promise(resolve => setTimeout(resolve, 0)))`
 ## #83 Code hardening: formatBytes guards, ConfirmModal button types, typo rename — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #89

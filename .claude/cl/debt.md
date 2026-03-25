@@ -6,12 +6,12 @@
 
 ## Test Coverage Gaps
 
-- **src/server/services/auth.service.test.ts**: `updateLocalBypass()`, `changePassword()` selective field updates (username-only vs password-only), and timing-safe comparison have no direct unit tests — only covered via route integration tests. (discovered in #8)
-- **src/client/pages/settings/SecuritySettings.test.tsx**: `LocalBypassSection` toggle behavior and `ApiKeySection` clipboard copy button have no interaction tests — only existence tests. (discovered in #8)
+- **src/server/services/auth.service.test.ts**: `updateLocalBypass()` and timing-safe comparison gaps resolved in #82. (was: discovered in #8)
+- **src/client/pages/settings/SecuritySettings.test.tsx**: `LocalBypassSection` toggle interaction tests added in #82. `ApiKeySection` clipboard copy button still has no interaction test. (was: discovered in #8)
 - **src/client/pages/settings/SecuritySettings.tsx**: AuthModeSection and LocalBypassSection mutation flows (mode changes, toast messages, query invalidation) have no interaction tests. (discovered in #11)
-- **src/client/pages/settings/LibrarySettingsSection.tsx**: File format token insertion test missing. Also missing: file format title-missing error, preview output assertions, Save button disabled-during-mutation test, cursor position after token insertion, pending button state text, dirty-reset after save. (discovered in #50, #18)
+- **src/client/pages/settings/LibrarySettingsSection.tsx**: Token insertion, Save button pending state, cursor position, and folderFormat validation tests added in #82. Remaining: fileFormat title-missing, preview output assertions, dirty-reset after save. (was: discovered in #50, #18)
 - **src/client/pages/activity/ActivityPage.tsx**: `usePagination.clampToTotal()` useEffect not covered by tests — pagination clamping behavior when totals shrink is untested. (discovered in #58)
-- **src/client/pages/activity/DownloadCard.tsx**: Seeders visibility for usenet protocol (`download.protocol !== 'usenet'` guard) has no test. (discovered in #58)
+- **src/client/pages/activity/DownloadCard.tsx**: Usenet seeders guard test added in #82. (was: discovered in #58)
 
 ## Code Hardening
 
