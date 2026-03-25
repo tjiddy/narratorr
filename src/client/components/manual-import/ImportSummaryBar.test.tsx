@@ -11,7 +11,7 @@ function renderBar(overrides?: Record<string, unknown>) {
     pendingCount: 0,
     selectedCount: 0,
     selectedUnmatchedCount: 0,
-    skippedDuplicates: 0,
+    duplicateCount: 0,
     isMatching: false,
     mode: 'copy' as const,
     onModeChange: vi.fn(),
@@ -48,19 +48,19 @@ describe('ImportSummaryBar', () => {
       expect(screen.getByText('4 matching')).toBeInTheDocument();
     });
 
-    it('shows skipped duplicates count', () => {
-      renderBar({ skippedDuplicates: 1 });
-      expect(screen.getByText('1 duplicate skipped')).toBeInTheDocument();
+    it('shows already-in-library count when duplicates present', () => {
+      renderBar({ duplicateCount: 1 });
+      expect(screen.getByText(/1 already in library/)).toBeInTheDocument();
     });
 
-    it('pluralizes duplicates correctly', () => {
-      renderBar({ skippedDuplicates: 3 });
-      expect(screen.getByText('3 duplicates skipped')).toBeInTheDocument();
+    it('shows already-in-library count with multiple duplicates', () => {
+      renderBar({ duplicateCount: 3 });
+      expect(screen.getByText(/3 already in library/)).toBeInTheDocument();
     });
 
-    it('hides skipped when 0', () => {
-      renderBar({ skippedDuplicates: 0 });
-      expect(screen.queryByText(/skipped/)).not.toBeInTheDocument();
+    it('hides already-in-library when duplicateCount is 0', () => {
+      renderBar({ duplicateCount: 0 });
+      expect(screen.queryByText(/already in library/)).not.toBeInTheDocument();
     });
   });
 
@@ -155,6 +155,39 @@ describe('ImportSummaryBar', () => {
       await waitFor(() => {
         expect(onImport).toHaveBeenCalledOnce();
       });
+    });
+  });
+
+  // ===========================================================================
+  // #114 — duplicateCount pill replaces skippedDuplicates
+  // ===========================================================================
+  describe('duplicate count pill', () => {
+    it('shows "N already in library" when duplicateCount > 0', () => {
+      renderBar({ duplicateCount: 3 });
+      expect(screen.getByText(/3 already in library/)).toBeInTheDocument();
+    });
+
+    it('pluralizes correctly for duplicateCount === 1', () => {
+      renderBar({ duplicateCount: 1 });
+      expect(screen.getByText(/1 already in library/)).toBeInTheDocument();
+    });
+
+    it('hides the already-in-library pill when duplicateCount is 0', () => {
+      renderBar({ duplicateCount: 0 });
+      expect(screen.queryByText(/already in library/)).not.toBeInTheDocument();
+    });
+
+    it('existing ready / review / no match / matching pills still show alongside duplicateCount', () => {
+      renderBar({ readyCount: 5, reviewCount: 2, noMatchCount: 1, duplicateCount: 3 });
+      expect(screen.getByText('5 ready')).toBeInTheDocument();
+      expect(screen.getByText('2 review')).toBeInTheDocument();
+      expect(screen.getByText('1 no match')).toBeInTheDocument();
+      expect(screen.getByText(/3 already in library/)).toBeInTheDocument();
+    });
+
+    it('does not show old "skipped" text anywhere', () => {
+      renderBar({ duplicateCount: 5 });
+      expect(screen.queryByText(/skipped/)).not.toBeInTheDocument();
     });
   });
 });

@@ -19,7 +19,7 @@ export function ManualImportPage() {
 
   const {
     step, scanPath, setScanPath, scanError, setScanError, rows,
-    mode, setMode, editIndex, setEditIndex, skippedDuplicates,
+    mode, setMode, editIndex, setEditIndex, duplicateCount,
     isMatching, progress,
     handleScan, handleToggle, handleToggleAll, handleEdit, handleImport, handleBack,
     scanMutation, importMutation,
@@ -116,7 +116,7 @@ export function ManualImportPage() {
               pendingCount={pendingCount}
               selectedCount={selectedCount}
               selectedUnmatchedCount={selectedUnmatchedCount}
-              skippedDuplicates={skippedDuplicates}
+              duplicateCount={duplicateCount}
               isMatching={isMatching}
               mode={mode}
               onModeChange={setMode}

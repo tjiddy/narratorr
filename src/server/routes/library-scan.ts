@@ -8,6 +8,7 @@ import { type z } from 'zod';
 import {
   scanSingleBodySchema,
   scanDirectoryBodySchema,
+  scanResultSchema,
   importSingleBodySchema,
   importConfirmBodySchema,
   matchStartBodySchema,
@@ -99,7 +100,7 @@ export async function libraryScanRoutes(
 
       try {
         const result = await libraryScan.scanDirectory(path);
-        return result;
+        return scanResultSchema.parse(result);
       } catch (error) {
         request.log.error(error, 'Directory scan failed');
         return reply.status(500).send({

@@ -89,6 +89,7 @@ function makeDiscoveredBook(overrides?: Partial<DiscoveredBook>): DiscoveredBook
     parsedSeries: null,
     fileCount: 10,
     totalSize: 500000000,
+    isDuplicate: false,
     ...overrides,
   };
 }
@@ -129,7 +130,6 @@ async function scanAndReview(books: DiscoveredBook[] = [makeDiscoveredBook()]) {
   mockScanDirectory.mockResolvedValueOnce({
     discoveries: books,
     totalFolders: books.length,
-    skippedDuplicates: 0,
   } satisfies ScanResult);
 
   const result = renderPage();
@@ -202,7 +202,6 @@ describe('ManualImportPage', () => {
       mockScanDirectory.mockResolvedValueOnce({
         discoveries: [],
         totalFolders: 0,
-        skippedDuplicates: 0,
       });
 
       renderPage();
@@ -212,25 +211,27 @@ describe('ManualImportPage', () => {
       await screen.findByText(/No audiobook folders found/);
     });
 
-    it('shows duplicate message when all books are already in library', async () => {
+    it('shows review step when all books are already in library (duplicates shown, not hidden)', async () => {
       mockScanDirectory.mockResolvedValueOnce({
-        discoveries: [],
-        totalFolders: 5,
-        skippedDuplicates: 5,
+        discoveries: [
+          makeDiscoveredBook({ isDuplicate: true, existingBookId: 1 }),
+          makeDiscoveredBook({ path: '/media/audiobooks/Author/Book2', parsedTitle: 'Book 2', isDuplicate: true, existingBookId: 2 }),
+        ],
+        totalFolders: 2,
       });
 
       renderPage();
       await userEvent.type(screen.getByPlaceholderText('/path/to/audiobooks'), '/dupes');
       await userEvent.click(screen.getByText('Scan'));
 
-      await screen.findByText(/all 5 are already in your library/);
+      await screen.findByText(/selected/);
+      expect(screen.getByText(/2 already in library/)).toBeInTheDocument();
     });
 
     it('handles Enter key to trigger scan', async () => {
       mockScanDirectory.mockResolvedValueOnce({
         discoveries: [makeDiscoveredBook()],
         totalFolders: 1,
-        skippedDuplicates: 0,
       });
 
       renderPage();
@@ -620,7 +621,6 @@ describe('ManualImportPage', () => {
       mockScanDirectory.mockResolvedValueOnce({
         discoveries: [makeDiscoveredBook()],
         totalFolders: 1,
-        skippedDuplicates: 0,
       });
       await userEvent.type(input, '/good/path');
       await userEvent.click(screen.getByText('Scan'));
@@ -648,7 +648,6 @@ describe('ManualImportPage', () => {
           makeDiscoveredBook({ path: '/new/Book2', parsedTitle: 'New Book 2' }),
         ],
         totalFolders: 2,
-        skippedDuplicates: 0,
       });
 
       await userEvent.click(screen.getByText('Scan'));
@@ -767,7 +766,6 @@ describe('ManualImportPage', () => {
       mockScanDirectory.mockResolvedValueOnce({
         discoveries: [makeDiscoveredBook()],
         totalFolders: 1,
-        skippedDuplicates: 0,
       } satisfies ScanResult);
       renderPage();
       await userEvent.type(screen.getByPlaceholderText('/path/to/audiobooks'), '/media/audiobooks');
@@ -781,7 +779,6 @@ describe('ManualImportPage', () => {
       mockScanDirectory.mockResolvedValueOnce({
         discoveries: [makeDiscoveredBook()],
         totalFolders: 1,
-        skippedDuplicates: 0,
       } satisfies ScanResult);
       renderPage();
       await userEvent.click(screen.getByRole('button', { name: '/audiobooks' }));

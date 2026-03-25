@@ -25,7 +25,6 @@ export function useManualImport({ onScanSuccess }: UseManualImportOptions = {}) 
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [mode, setMode] = useState<ImportMode>('copy');
   const [editIndex, setEditIndex] = useState<number | null>(null);
-  const [skippedDuplicates, setSkippedDuplicates] = useState(0);
 
   // Merge match results into rows state (single source of truth)
   const prevMatchCountRef = useRef(0);
@@ -38,6 +37,9 @@ export function useManualImport({ onScanSuccess }: UseManualImportOptions = {}) 
     setRows(prev => prev.map(row => {
       const match = resultMap.get(row.book.path);
       if (!match) return row;
+
+      // Duplicate rows are not in the match job — if a result somehow arrives, don't auto-select
+      if (row.book.isDuplicate) return row;
 
       // Auto-uncheck no-match rows (spec: 0 matches → Unchecked)
       const selected = match.confidence === 'none' ? false : row.selected;
@@ -74,17 +76,14 @@ export function useManualImport({ onScanSuccess }: UseManualImportOptions = {}) 
     mutationFn: (path: string) => api.scanDirectory(path),
     onSuccess: (result, path) => {
       if (result.discoveries.length === 0) {
-        setScanError(
-          result.skippedDuplicates > 0
-            ? `Found ${result.totalFolders} folder${result.totalFolders !== 1 ? 's' : ''}, but all ${result.skippedDuplicates} are already in your library.`
-            : 'No audiobook folders found in this directory.',
-        );
+        setScanError('No audiobook folders found in this directory.');
         return;
       }
 
       const newRows: ImportRow[] = result.discoveries.map((book) => ({
         book,
-        selected: true,
+        // Duplicate rows start unchecked; new books start checked
+        selected: !book.isDuplicate,
         edited: {
           title: book.parsedTitle,
           author: book.parsedAuthor || '',
@@ -93,17 +92,20 @@ export function useManualImport({ onScanSuccess }: UseManualImportOptions = {}) 
       }));
 
       setRows(newRows);
-      setSkippedDuplicates(result.skippedDuplicates);
       setScanError(null);
       setStep('review');
 
-      // Start matching immediately — server handles audio scanning for duration
-      const candidates = result.discoveries.map(d => ({
-        path: d.path,
-        title: d.parsedTitle,
-        author: d.parsedAuthor || undefined,
-      }));
-      startMatching(candidates);
+      // Start matching only for non-duplicate books
+      const candidates = result.discoveries
+        .filter(d => !d.isDuplicate)
+        .map(d => ({
+          path: d.path,
+          title: d.parsedTitle,
+          author: d.parsedAuthor || undefined,
+        }));
+      if (candidates.length > 0) {
+        startMatching(candidates);
+      }
       onScanSuccess?.(path);
     },
     onError: (error: Error) => {
@@ -161,6 +163,8 @@ export function useManualImport({ onScanSuccess }: UseManualImportOptions = {}) 
       coverUrl: r.edited.coverUrl,
       asin: r.edited.asin,
       metadata: r.edited.metadata,
+      // Duplicate rows that user explicitly selected require force-import to bypass safety net
+      ...(r.book.isDuplicate ? { forceImport: true } : {}),
     }));
     importMutation.mutate(items);
   }, [rows, importMutation]);
@@ -171,7 +175,6 @@ export function useManualImport({ onScanSuccess }: UseManualImportOptions = {}) 
       prevMatchCountRef.current = 0;
       setStep('path');
       setRows([]);
-      setSkippedDuplicates(0);
     } else {
       navigate('/library');
     }
@@ -180,10 +183,11 @@ export function useManualImport({ onScanSuccess }: UseManualImportOptions = {}) 
   // Computed counts
   const selectedCount = rows.filter(r => r.selected).length;
   const selectedUnmatchedCount = rows.filter(r => r.selected && r.matchResult?.confidence === 'none').length;
-  const readyCount = rows.filter(r => r.matchResult?.confidence === 'high').length;
+  const readyCount = rows.filter(r => r.selected && !r.book.isDuplicate && r.matchResult?.confidence === 'high').length;
   const reviewCount = rows.filter(r => r.matchResult?.confidence === 'medium').length;
   const noMatchCount = rows.filter(r => r.matchResult?.confidence === 'none').length;
-  const pendingCount = rows.filter(r => !r.matchResult).length;
+  const pendingCount = rows.filter(r => !r.matchResult && !r.book.isDuplicate).length;
+  const duplicateCount = rows.filter(r => r.book.isDuplicate).length;
   const allSelected = rows.length > 0 && rows.every(r => r.selected);
 
   return {
@@ -198,7 +202,6 @@ export function useManualImport({ onScanSuccess }: UseManualImportOptions = {}) 
     setMode,
     editIndex,
     setEditIndex,
-    skippedDuplicates,
     isMatching,
     progress,
 
@@ -221,6 +224,7 @@ export function useManualImport({ onScanSuccess }: UseManualImportOptions = {}) 
     reviewCount,
     noMatchCount,
     pendingCount,
+    duplicateCount,
     allSelected,
   };
 }

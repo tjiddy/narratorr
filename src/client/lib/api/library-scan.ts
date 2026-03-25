@@ -10,6 +10,8 @@ export interface DiscoveredBook {
   parsedSeries: string | null;
   fileCount: number;
   totalSize: number;
+  isDuplicate: boolean;
+  existingBookId?: number;
 }
 
 export interface SingleBookResult {
@@ -25,6 +27,8 @@ export interface ImportConfirmItem {
   coverUrl?: string;
   asin?: string;
   metadata?: BookMetadata;
+  /** When true, bypasses the server-side title+author safety-net duplicate check */
+  forceImport?: boolean;
 }
 
 export interface ImportSingleResult {
@@ -37,7 +41,6 @@ export interface ImportSingleResult {
 export interface ScanResult {
   discoveries: DiscoveredBook[];
   totalFolders: number;
-  skippedDuplicates: number;
 }
 
 export interface ImportResult {

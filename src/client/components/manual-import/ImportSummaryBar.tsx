@@ -8,7 +8,7 @@ interface ImportSummaryBarProps {
   pendingCount: number;
   selectedCount: number;
   selectedUnmatchedCount: number;
-  skippedDuplicates: number;
+  duplicateCount: number;
   isMatching: boolean;
   mode: ImportMode;
   onModeChange: (mode: ImportMode) => void;
@@ -23,7 +23,7 @@ export function ImportSummaryBar({
   pendingCount,
   selectedCount,
   selectedUnmatchedCount,
-  skippedDuplicates,
+  duplicateCount,
   isMatching,
   mode,
   onModeChange,
@@ -58,9 +58,9 @@ export function ImportSummaryBar({
             {pendingCount} matching
           </span>
         )}
-        {skippedDuplicates > 0 && (
+        {duplicateCount > 0 && (
           <span className="text-muted-foreground/40">
-            {skippedDuplicates} duplicate{skippedDuplicates !== 1 ? 's' : ''} skipped
+            {duplicateCount} already in library
           </span>
         )}
       </div>
