@@ -474,6 +474,17 @@ export class LibraryScanService {
           status: 'missing',
           updatedAt: new Date(),
         }).where(eq(books.id, bookId));
+        // Record failure event (fire-and-forget)
+        this.eventHistory.create({
+          bookId,
+          bookTitle: item.title,
+          authorName: item.authorName ?? null,
+          narratorName: item.metadata?.narrators?.[0] ?? null,
+          downloadId: null,
+          eventType: 'import_failed',
+          source: 'manual',
+          reason: { error: getErrorMessage(error, 'Import failed') },
+        }).catch(err => this.log.warn({ err }, 'Failed to record import failed event'));
       }
     }
   }
@@ -523,6 +534,18 @@ export class LibraryScanService {
       status: 'imported',
       updatedAt: new Date(),
     }).where(eq(books.id, bookId));
+
+    // Record success event (fire-and-forget)
+    this.eventHistory.create({
+      bookId,
+      bookTitle: item.title,
+      authorName: item.authorName ?? null,
+      narratorName: narratorName,
+      downloadId: null,
+      eventType: 'imported',
+      source: 'manual',
+      reason: { targetPath: finalPath, mode: mode ?? 'pointer' },
+    }).catch(err => this.log.warn({ err }, 'Failed to record manual import event'));
   }
 
   /**
