@@ -1355,12 +1355,96 @@ describe('LibraryScanService', () => {
   // ============================================================================
 
   describe('event history — importSingleBook', () => {
-    it.todo('records imported event on success with source: manual and downloadId: null');
-    it.todo('records imported event with narrator snapshot from resolved meta');
-    it.todo('records imported event with null narrator when metadata has no narrators (F7 positive path)');
-    it.todo('records import_failed event on failure without suppressing the thrown error');
-    it.todo('imported event reason contains targetPath and mode keys');
-    it.todo('imported event downloadId is null (not a download-based import)');
+    it('records imported event on success with source: manual and downloadId: null', async () => {
+      await service.importSingleBook(
+        { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+        null,
+      );
+
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'imported',
+          source: 'manual',
+          downloadId: null,
+          bookTitle: 'Book',
+          authorName: 'Author',
+        }),
+      );
+    });
+
+    it('records imported event with narrator snapshot from resolved meta', async () => {
+      await service.importSingleBook(
+        { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+        { title: 'Book', authors: [], narrators: ['Jim Dale'] },
+      );
+
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'imported',
+          narratorName: 'Jim Dale',
+        }),
+      );
+    });
+
+    it('records imported event with null narrator when metadata has no narrators', async () => {
+      await service.importSingleBook(
+        { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+        { title: 'Book', authors: [], narrators: [] },
+      );
+
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'imported',
+          narratorName: null,
+        }),
+      );
+    });
+
+    it('records import_failed event on failure without suppressing the thrown error', async () => {
+      // Fail after book creation so bookId is available for the event
+      vi.mocked(enrichBookFromAudio).mockRejectedValueOnce(new Error('Enrichment failed'));
+
+      await expect(service.importSingleBook(
+        { path: '/audiobooks/Book', title: 'Book', authorName: 'Author' },
+        null,
+      )).rejects.toThrow('Enrichment failed');
+
+      // Fire-and-forget event — check after a tick
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'import_failed',
+          source: 'manual',
+          bookTitle: 'Book',
+          downloadId: null,
+        }),
+      );
+    });
+
+    it('imported event reason contains targetPath and mode keys', async () => {
+      await service.importSingleBook(
+        { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+        null,
+        'copy',
+      );
+
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason: expect.objectContaining({ targetPath: expect.any(String), mode: 'copy' }),
+        }),
+      );
+    });
+
+    it('imported event downloadId is null', async () => {
+      await service.importSingleBook(
+        { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+        null,
+      );
+
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: null }),
+      );
+    });
   });
 
   describe('event history — background import processing', () => {
