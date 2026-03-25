@@ -636,7 +636,7 @@ describe('response pass-through', () => {
   });
 
   it('libraryScanApi.scanDirectory returns fetchApi response', async () => {
-    const data = { discoveries: [], totalFolders: 0, skippedDuplicates: 0 };
+    const data = { discoveries: [], totalFolders: 0 };
     mockFetchApi.mockResolvedValue(data);
     const result = await libraryScanApi.scanDirectory('/audio');
     expect(result).toBe(data);
