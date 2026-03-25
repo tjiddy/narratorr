@@ -1,6 +1,35 @@
 # Workflow Log
 
 
+## #111 Add confirmation modals to Rename and Re-tag file actions — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #127
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 24 (19 new, 5 updated existing)
+- Quality gate runs: 2 (pass on attempt 1 each time — one before coverage gap fix, one after)
+- Fix iterations: 1 (coverage subagent caught Escape/backdrop tests missing for retag modal)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Implementation was clean — state management follows the ActivityPage pattern exactly; ConfirmModal reuse required zero API changes; existing test structure was well-organized and easy to extend
+- Friction / issues encountered: (1) git push failed with stale token — needed manual token refresh via `node --input-type=module` + `gh` helper before push would succeed. (2) Coverage subagent caught 2 missing tests (Escape/backdrop for retag) that weren't in the original stubs — required an extra commit and verify run
+
+### Token efficiency
+- Highest-token actions: Explore subagents for /elaborate, /respond-to-spec-review, /plan, self-review, coverage review — 5 subagent launches for a 2-file change
+- Avoidable waste: Spec review cycle (elaborate → review → respond → re-review) consumed significant context before implementation even began; this is correct workflow but expensive for a small issue
+- Suggestions: For small-scope frontend issues with obvious patterns, the spec review round-trip adds overhead disproportionate to the feature complexity
+
+### Infrastructure gaps
+- Repeated workarounds: git push stale token — same workaround as #79 (manual `gh auth token` → set remote URL). Already in debt.md; no fix yet.
+- Missing tooling / config: `frontend-design` skill unavailable in this environment — noted in PR but UI design pass was skipped
+- Unresolved debt: none introduced
+
+### Wish I'd Known
+1. `ConfirmModal` has no built-in pending/disabled state — the duplicate-submit guard must be implemented by closing the modal before calling `mutation.mutate()` (close-before-mutate pattern). The spec needed an explicit AC for this because it's not obvious from the component API alone.
+2. Adding a confirmation modal to an existing button breaks all tests that click that button and expect direct API call — 5 existing tests needed updating. Search `click(<button>) → toHaveBeenCalled` patterns before starting.
+3. For symmetric features (two modals with identical behavior), always write tests for ALL variants, not just the first. The coverage subagent caught Escape/backdrop missing for retag after I'd only written them for rename.
+
 ## #114 Show duplicate books in scan results instead of hiding them — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #126
