@@ -4,6 +4,7 @@ import { ImportSettingsSection } from './ImportSettingsSection';
 import { QualitySettingsSection } from './QualitySettingsSection';
 import { NetworkSettingsSection } from './NetworkSettingsSection';
 import { MetadataSettingsForm } from './MetadataSettingsForm';
+import { AppearanceSettingsSection } from './AppearanceSettingsSection';
 import { DiscoverySettingsSection } from '../discover/DiscoverySettingsSection';
 
 export function GeneralSettings() {
@@ -16,6 +17,7 @@ export function GeneralSettings() {
       <NetworkSettingsSection />
       <DiscoverySettingsSection />
       <MetadataSettingsForm />
+      <AppearanceSettingsSection />
     </div>
   );
 }

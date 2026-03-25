@@ -1,7 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Outlet, NavLink, useLocation, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { useTheme } from '@/hooks/useTheme';
 import { useActivityCounts } from '@/hooks/useActivityCounts';
 import { useAuthContext } from '@/hooks/useAuthContext';
 import { SSEProvider } from '@/components/SSEProvider';
@@ -12,8 +11,6 @@ import {
   PlusIcon,
   ActivityIcon,
   SettingsIcon,
-  SunIcon,
-  MoonIcon,
   LibraryIcon,
   CompassIcon,
   AlertTriangleIcon,
@@ -39,7 +36,6 @@ const postDiscoverNavItems: NavItem[] = [
 const discoverNavItem: NavItem = { to: '/discover', label: 'Discover', icon: CompassIcon };
 
 export function Layout() {
-  const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const { active: activeDownloadCount } = useActivityCounts();
   const { mode } = useAuthContext();
@@ -163,18 +159,6 @@ export function Layout() {
               {/* Health Indicator */}
               <HealthIndicator />
 
-              {/* Theme Toggle */}
-              <button
-                onClick={toggleTheme}
-                className="ml-2 p-2.5 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-all duration-200 focus-ring"
-                title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-              >
-                {theme === 'light' ? (
-                  <MoonIcon className="w-5 h-5" />
-                ) : (
-                  <SunIcon className="w-5 h-5" />
-                )}
-              </button>
             </nav>
           </div>
         </div>

@@ -86,12 +86,13 @@ describe('Layout', () => {
     expect(paths.some(p => p.getAttribute('d') === 'M5 12h14')).toBe(true);
   });
 
-  it('renders theme toggle button', () => {
+  it('does not render theme toggle button in nav bar', () => {
     mockCounts(0);
     mockAuth();
     renderWithProviders(<Layout />);
 
-    expect(screen.getByTitle(/switch to dark mode/i)).toBeInTheDocument();
+    expect(screen.queryByTitle(/switch to dark mode/i)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/switch to light mode/i)).not.toBeInTheDocument();
   });
 
   it('shows badge when active downloads > 0', () => {
@@ -120,16 +121,6 @@ describe('Layout', () => {
     expect(screen.getByLabelText('1 active download')).toBeInTheDocument();
   });
 
-  it('toggles theme on button click', async () => {
-    mockCounts(0);
-    mockAuth();
-    renderWithProviders(<Layout />);
-
-    const toggleButton = screen.getByTitle(/switch to dark mode/i);
-    await userEvent.click(toggleButton);
-
-    expect(screen.getByTitle(/switch to light mode/i)).toBeInTheDocument();
-  });
 
   describe('auth warning banner', () => {
     it('banner visible when mode = "none"', () => {
@@ -228,6 +219,12 @@ describe('Layout', () => {
         expect(screen.getByText('Library')).toBeInTheDocument();
       });
       expect(screen.queryByText('Discover')).not.toBeInTheDocument();
+
+      const navLabels = screen.getAllByRole('link')
+        .map((el) => el.textContent?.trim())
+        .filter((t) => ['Library', 'Add Book', 'Discover', 'Activity', 'Settings'].includes(t ?? ''));
+
+      expect(navLabels).toEqual(['Library', 'Add Book', 'Activity', 'Settings']);
     });
 
     it('hides Discover nav item when settings query is still loading', () => {
@@ -238,6 +235,60 @@ describe('Layout', () => {
       renderWithProviders(<Layout />);
 
       expect(screen.queryByText('Discover')).not.toBeInTheDocument();
+    });
+
+    it('HealthIndicator follows Settings link and is the final nav control (discovery disabled)', async () => {
+      mockCounts(0);
+      mockAuth('forms');
+      mockApi.getHealthSummary.mockResolvedValue({ state: 'error' });
+      vi.mocked(api.getSettings).mockResolvedValue(createMockSettings());
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('health-indicator')).toBeInTheDocument();
+      });
+
+      const nav = screen.getByRole('navigation');
+      const settingsLink = screen.getByRole('link', { name: /^settings$/i });
+      const healthIndicator = screen.getByTestId('health-indicator');
+
+      // HealthIndicator must follow Settings link in DOM order
+      expect(
+        settingsLink.compareDocumentPosition(healthIndicator) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+
+      // HealthIndicator must be the final interactive nav control — no trailing control after it
+      const interactiveControls = Array.from(nav.querySelectorAll('a, button'));
+      expect(interactiveControls[interactiveControls.length - 1]).toBe(healthIndicator);
+    });
+
+    it('HealthIndicator follows Settings link and is the final nav control (discovery enabled)', async () => {
+      mockCounts(0);
+      mockAuth('forms');
+      mockApi.getHealthSummary.mockResolvedValue({ state: 'error' });
+      vi.mocked(api.getSettings).mockResolvedValue(
+        createMockSettings({ discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5 } }),
+      );
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('health-indicator')).toBeInTheDocument();
+      });
+
+      const nav = screen.getByRole('navigation');
+      const settingsLink = screen.getByRole('link', { name: /^settings$/i });
+      const healthIndicator = screen.getByTestId('health-indicator');
+
+      // HealthIndicator must follow Settings link in DOM order
+      expect(
+        settingsLink.compareDocumentPosition(healthIndicator) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+
+      // HealthIndicator must be the final interactive nav control — no trailing control after it
+      const interactiveControls = Array.from(nav.querySelectorAll('a, button'));
+      expect(interactiveControls[interactiveControls.length - 1]).toBe(healthIndicator);
     });
   });
 

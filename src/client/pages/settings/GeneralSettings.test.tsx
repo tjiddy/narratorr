@@ -57,6 +57,15 @@ describe('GeneralSettings', () => {
     expect(screen.getByText('Metadata')).toBeInTheDocument();
   });
 
+  it('renders Appearance section in the settings page', async () => {
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Library')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Appearance')).toBeInTheDocument();
+  });
+
   it('save buttons are hidden when all sections are clean', async () => {
     renderWithProviders(<GeneralSettings />);
 
