@@ -359,6 +359,146 @@ describe('useManualImport', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/library');
   });
 
+  describe('narrator persistence through edit flow', () => {
+    it('handleEdit with metadata.narrators persists narrators in row edited state', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.handleScan(); });
+      await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+
+      act(() => {
+        result.current.handleEdit(0, {
+          title: 'Book A',
+          author: 'Author A',
+          series: '',
+          metadata: { title: 'Book A', authors: [{ name: 'Author A' }], narrators: ['Jim Dale'] },
+        });
+      });
+
+      expect(result.current.rows[0].edited.metadata?.narrators).toEqual(['Jim Dale']);
+    });
+
+    it('handleImport after edit forwards metadata.narrators to ImportConfirmItem', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.handleScan(); });
+      await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+
+      act(() => {
+        result.current.handleEdit(0, {
+          title: 'Book A',
+          author: 'Author A',
+          series: '',
+          metadata: { title: 'Book A', authors: [{ name: 'Author A' }], narrators: ['Jim Dale'] },
+        });
+        // deselect row 1 to simplify assertion
+        result.current.handleToggle(1);
+      });
+
+      await act(async () => { result.current.handleImport(); });
+      await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
+
+      const [items] = vi.mocked(api.confirmImport).mock.calls[0];
+      expect(items[0].metadata?.narrators).toEqual(['Jim Dale']);
+    });
+
+    it('handleImport after edit forwards coverUrl to ImportConfirmItem', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.handleScan(); });
+      await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+
+      act(() => {
+        result.current.handleEdit(0, {
+          title: 'Book A',
+          author: 'Author A',
+          series: '',
+          coverUrl: 'https://example.com/new-cover.jpg',
+          metadata: { title: 'Book A', authors: [{ name: 'Author A' }], narrators: ['Jim Dale'], coverUrl: 'https://example.com/new-cover.jpg' },
+        });
+        result.current.handleToggle(1);
+      });
+
+      await act(async () => { result.current.handleImport(); });
+      await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
+
+      const [items] = vi.mocked(api.confirmImport).mock.calls[0];
+      expect(items[0].coverUrl).toBe('https://example.com/new-cover.jpg');
+      expect(items[0].metadata?.coverUrl).toBe('https://example.com/new-cover.jpg');
+    });
+
+    it('editing title only does not discard narrator from existing edited.metadata', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.handleScan(); });
+      await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+
+      // First edit: set metadata with narrators
+      act(() => {
+        result.current.handleEdit(0, {
+          title: 'Book A',
+          author: 'Author A',
+          series: '',
+          metadata: { title: 'Book A', authors: [{ name: 'Author A' }], narrators: ['Jim Dale'] },
+        });
+      });
+
+      // Second edit: change only the title, keep same metadata
+      act(() => {
+        result.current.handleEdit(0, {
+          title: 'Book A (Updated)',
+          author: 'Author A',
+          series: '',
+          metadata: result.current.rows[0].edited.metadata,
+        });
+      });
+
+      expect(result.current.rows[0].edited.title).toBe('Book A (Updated)');
+      expect(result.current.rows[0].edited.metadata?.narrators).toEqual(['Jim Dale']);
+    });
+
+    it('mergeMatchResults seeds edited.metadata.narrators from bestMatch.narrators on first arrival', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+        vi.mocked(api.getMatchJob).mockResolvedValue({
+          id: 'job-123',
+          status: 'completed',
+          matched: 1,
+          total: 2,
+          results: [{
+            path: '/audiobooks/Book A',
+            confidence: 'high',
+            bestMatch: { title: 'Book A (Official)', authors: [{ name: 'Author A' }], narrators: ['Stephen Fry'] },
+            alternatives: [],
+          }],
+        });
+
+        const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+        act(() => { result.current.setScanPath('/audiobooks'); });
+        await act(async () => { result.current.handleScan(); });
+        await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+
+        // Advance past the 2000ms poll interval so the first poll fires
+        await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+        expect(result.current.rows[0].edited.metadata?.narrators).toEqual(['Stephen Fry']);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   it('computes pendingCount and noMatchCount correctly', async () => {
     vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
 

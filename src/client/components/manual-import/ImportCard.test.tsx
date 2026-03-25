@@ -88,13 +88,42 @@ describe('ImportCard', () => {
   });
 
   describe('narrator display', () => {
-    it('shows narrator with headphones icon when matched', () => {
-      render(<ImportCard {...defaultProps} row={makeRow({ matchResult: makeMatchResult() })} />);
+    it('shows narrator from edited.metadata.narrators when present', () => {
+      render(<ImportCard
+        {...defaultProps}
+        row={makeRow({
+          matchResult: makeMatchResult(),
+          edited: { title: 'Book Title', author: 'Author Name', series: 'Series Name', metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], narrators: ['Jim Dale'] } },
+        })}
+      />);
       expect(screen.getByText(/Jim Dale/)).toBeInTheDocument();
     });
 
-    it('shows file count when not matched', () => {
-      render(<ImportCard {...defaultProps} row={makeRow({ matchResult: undefined })} />);
+    it('shows updated narrator from edited.metadata, not stale matchResult.bestMatch.narrators', () => {
+      render(<ImportCard
+        {...defaultProps}
+        row={makeRow({
+          matchResult: makeMatchResult({ bestMatch: { title: 'Book Title', authors: [{ name: 'Author Name' }], narrators: ['Stephen Fry'] } }),
+          edited: { title: 'Book Title', author: 'Author Name', series: 'Series Name', metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], narrators: ['Jim Dale'] } },
+        })}
+      />);
+      expect(screen.getByText(/Jim Dale/)).toBeInTheDocument();
+      expect(screen.queryByText(/Stephen Fry/)).not.toBeInTheDocument();
+    });
+
+    it('shows file count when edited.metadata is absent (no match yet)', () => {
+      render(<ImportCard {...defaultProps} row={makeRow({ matchResult: undefined, edited: { title: 'Book Title', author: 'Author Name', series: '' } })} />);
+      expect(screen.getByText(/12 files/)).toBeInTheDocument();
+    });
+
+    it('shows file count when edited.metadata.narrators is an empty array', () => {
+      render(<ImportCard
+        {...defaultProps}
+        row={makeRow({
+          matchResult: makeMatchResult(),
+          edited: { title: 'Book Title', author: 'Author Name', series: '', metadata: { title: 'Book Title', authors: [{ name: 'Author Name' }], narrators: [] } },
+        })}
+      />);
       expect(screen.getByText(/12 files/)).toBeInTheDocument();
     });
 

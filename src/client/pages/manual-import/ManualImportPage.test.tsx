@@ -311,6 +311,56 @@ describe('ManualImportPage', () => {
     });
   });
 
+  describe('alternate match selection updates narrator in review card', () => {
+    it('selecting an alternate match with a different narrator rerenders the card with the new narrator', async () => {
+      const book = makeDiscoveredBook({ path: '/a/HarryPotter', parsedTitle: 'Harry Potter' });
+      const { rerender } = await scanAndReview([book]);
+
+      const stephenFryMeta = {
+        title: 'Harry Potter',
+        authors: [{ name: 'J.K. Rowling' }],
+        narrators: ['Stephen Fry'],
+        asin: 'B001',
+        providerId: 'sfry',
+      };
+      const jimDaleMeta = {
+        title: 'Harry Potter',
+        authors: [{ name: 'J.K. Rowling' }],
+        narrators: ['Jim Dale'],
+        asin: 'B002',
+        providerId: 'jdale',
+      };
+
+      // Match arrives: best match is Stephen Fry narration; Jim Dale version is an alternative
+      await simulateMatchResults(rerender, [makeMatchResult({
+        path: '/a/HarryPotter',
+        confidence: 'high',
+        bestMatch: stephenFryMeta,
+        alternatives: [jimDaleMeta],
+      })]);
+
+      // Card shows Stephen Fry (wait for mergeMatchResults effect to propagate narrator to edited state)
+      await screen.findByText(/Stephen Fry/);
+
+      // User opens edit modal
+      await userEvent.click(screen.getByLabelText('Edit metadata'));
+      const dialog = screen.getByRole('dialog');
+
+      // Select the Jim Dale alternative from the alternatives list
+      const jimDaleButton = within(dialog).getAllByText('Jim Dale')[0].closest('button')!;
+      await userEvent.click(jimDaleButton);
+
+      // Save
+      await userEvent.click(within(dialog).getByText('Save'));
+
+      // Card now shows Jim Dale, not Stephen Fry
+      await waitFor(() => {
+        expect(screen.getByText(/Jim Dale/)).toBeInTheDocument();
+        expect(screen.queryByText(/Stephen Fry/)).not.toBeInTheDocument();
+      });
+    });
+  });
+
   describe('user edits no-match row → confidence promotes and checkbox enables', () => {
     it('auto-checks row and promotes to Review when user picks metadata on no-match row', async () => {
       const book = makeDiscoveredBook({ path: '/a/Fixed', parsedTitle: 'Fixed' });
