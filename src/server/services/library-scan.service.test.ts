@@ -1730,6 +1730,7 @@ describe('LibraryScanService', () => {
         inject<MetadataService>(mockMetadataService),
         inject<SettingsService>(emptyPathSettings),
         log,
+        inject<EventHistoryService>(mockEventHistoryService),
       );
 
       await expect(svc.rescanLibrary()).rejects.toThrow('Library path is not configured');
@@ -1791,6 +1792,7 @@ describe('buildBookCreatePayload multi-author (issue #79)', () => {
       { searchBooks: vi.fn().mockResolvedValue([]), getBook: vi.fn().mockResolvedValue(null), enrichBook: vi.fn().mockResolvedValue(null) } as never,
       settings as never,
       { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), trace: vi.fn(), fatal: vi.fn(), child: vi.fn().mockReturnThis(), level: 'info', silent: vi.fn() } as never,
+      { create: vi.fn().mockResolvedValue({}) } as never,
     );
   });
 

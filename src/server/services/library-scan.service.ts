@@ -294,52 +294,8 @@ export class LibraryScanService {
     const book = await this.bookService.create(buildBookCreatePayload(item, meta, 'imported'));
 
     try {
-      // Determine final path: copy/move to library or use source path
-      let finalPath = item.path;
-      if (mode) {
-        finalPath = await this.copyToLibrary(item, book, meta, mode);
-      }
-
-      // Set the path and size
-      const stats = await this.getAudioStats(finalPath);
-      await this.db.update(books).set({
-        path: finalPath,
-        size: stats.totalSize,
-        updatedAt: new Date(),
-      }).where(eq(books.id, book.id));
-
-      // Enrich with audio file metadata
-      const audioResult = await enrichBookFromAudio(
-        book.id,
-        finalPath,
-        { narrators: book.narrators ?? null, duration: book.duration, coverUrl: book.coverUrl },
-        this.db,
-        this.log,
-        this.bookService,
-      );
-
-      // Audnexus enrichment
-      await this.applyAudnexusEnrichment(book.id, {
-        primaryAsin: item.asin || meta?.asin,
-        alternateAsins: meta?.alternateAsins,
-        existingNarrator: book.narrators?.[0]?.name ?? null,
-        existingDuration: book.duration,
-      });
-
-      // Record success event (fire-and-forget)
-      this.eventHistory.create({
-        bookId: book.id,
-        bookTitle: item.title,
-        authorName: item.authorName ?? null,
-        narratorName: meta?.narrators?.[0] ?? null,
-        downloadId: null,
-        eventType: 'imported',
-        source: 'manual',
-        reason: { targetPath: finalPath, mode: mode ?? 'pointer' },
-      }).catch(err => this.log.warn({ err }, 'Failed to record manual import event'));
-
-      this.log.info({ bookId: book.id, title: item.title, enriched: audioResult.enriched, mode: mode ?? 'pointer' }, 'Single book imported');
-      return { imported: true, bookId: book.id, enriched: audioResult.enriched };
+      const enriched = await this.enrichImportedBook(item, book, meta, mode);
+      return { imported: true, bookId: book.id, enriched };
     } catch (error) {
       // Record failure event (fire-and-forget) then re-throw so the route returns 500
       this.eventHistory.create({
@@ -354,6 +310,61 @@ export class LibraryScanService {
       }).catch(err => this.log.warn({ err }, 'Failed to record manual import failed event'));
       throw error;
     }
+  }
+
+  // eslint-disable-next-line complexity -- copy/move + enrich + audnexus + event pipeline, same as processOneImport
+  private async enrichImportedBook(
+    item: ImportConfirmItem,
+    book: { id: number; narrators?: Array<{ name: string }> | null; duration?: number | null; coverUrl?: string | null },
+    meta: BookMetadata | null,
+    mode?: ImportMode,
+  ): Promise<boolean> {
+    // Determine final path: copy/move to library or use source path
+    let finalPath = item.path;
+    if (mode) {
+      finalPath = await this.copyToLibrary(item, book as Parameters<typeof this.copyToLibrary>[1], meta, mode);
+    }
+
+    // Set the path and size
+    const stats = await this.getAudioStats(finalPath);
+    await this.db.update(books).set({
+      path: finalPath,
+      size: stats.totalSize,
+      updatedAt: new Date(),
+    }).where(eq(books.id, book.id));
+
+    // Enrich with audio file metadata
+    const audioResult = await enrichBookFromAudio(
+      book.id,
+      finalPath,
+      { narrators: book.narrators ?? null, duration: book.duration ?? null, coverUrl: book.coverUrl ?? null },
+      this.db,
+      this.log,
+      this.bookService,
+    );
+
+    // Audnexus enrichment
+    await this.applyAudnexusEnrichment(book.id, {
+      primaryAsin: item.asin || meta?.asin,
+      alternateAsins: meta?.alternateAsins,
+      existingNarrator: book.narrators?.[0]?.name ?? null,
+      existingDuration: book.duration,
+    });
+
+    // Record success event (fire-and-forget)
+    this.eventHistory.create({
+      bookId: book.id,
+      bookTitle: item.title,
+      authorName: item.authorName ?? null,
+      narratorName: meta?.narrators?.[0] ?? null,
+      downloadId: null,
+      eventType: 'imported',
+      source: 'manual',
+      reason: { targetPath: finalPath, mode: mode ?? 'pointer' },
+    }).catch(err => this.log.warn({ err }, 'Failed to record manual import event'));
+
+    this.log.info({ bookId: book.id, title: item.title, enriched: audioResult.enriched, mode: mode ?? 'pointer' }, 'Single book imported');
+    return audioResult.enriched;
   }
 
   /**
