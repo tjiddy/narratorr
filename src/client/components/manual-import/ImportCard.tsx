@@ -61,6 +61,7 @@ function ConfidenceBadge({ confidence }: { confidence?: Confidence }) {
 
 // eslint-disable-next-line complexity -- confidence scoring display with conditional styles and layouts
 export function ImportCard({ row, onToggle, onEdit }: ImportCardProps) {
+  const isDuplicate = row.book.isDuplicate;
   const confidence = row.matchResult?.confidence;
   const showPencilAlways = !confidence || confidence === 'medium' || confidence === 'none';
   const displayTitle = row.edited.title;
@@ -77,17 +78,18 @@ export function ImportCard({ row, onToggle, onEdit }: ImportCardProps) {
       ? 'border-l-[3px] border-l-amber-500/40'
       : '';
 
-  // Grey out rows that are still matching
-  const matchingClass = !confidence ? 'opacity-50' : '';
+  // Mute duplicate rows; grey out rows that are still matching
+  const dimClass = isDuplicate ? 'opacity-60' : (!confidence ? 'opacity-50' : '');
 
   return (
     <div
-      className={`group flex items-center gap-3 px-4 py-3 transition-all duration-300 ${borderClass} ${matchingClass} ${
+      className={`group flex items-center gap-3 px-4 py-3 transition-all duration-300 ${borderClass} ${dimClass} ${
         row.selected ? 'bg-primary/5' : 'hover:bg-muted/20'
       }`}
     >
       {/* Checkbox */}
       <button
+        type="button"
         onClick={onToggle}
         className={`w-4 h-4 shrink-0 rounded border transition-all flex items-center justify-center ${
           row.selected
@@ -120,23 +122,32 @@ export function ImportCard({ row, onToggle, onEdit }: ImportCardProps) {
         </p>
       </div>
 
-      {/* Confidence badge */}
+      {/* Badge: "Already in library" for duplicates, confidence badge otherwise */}
       <div className="w-24 shrink-0 flex justify-center">
-        <ConfidenceBadge confidence={confidence} />
+        {isDuplicate ? (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ring-1 bg-muted/30 text-muted-foreground ring-border/20">
+            Already in library
+          </span>
+        ) : (
+          <ConfidenceBadge confidence={confidence} />
+        )}
       </div>
 
-      {/* Edit button */}
-      <button
-        onClick={onEdit}
-        className={`p-1.5 rounded-lg transition-colors focus-ring ${
-          showPencilAlways
-            ? 'text-muted-foreground hover:text-primary'
-            : 'text-transparent group-hover:text-muted-foreground hover:!text-primary'
-        }`}
-        aria-label="Edit metadata"
-      >
-        <PencilIcon className="w-3.5 h-3.5" />
-      </button>
+      {/* Edit button — hidden for duplicate rows */}
+      {!isDuplicate && (
+        <button
+          type="button"
+          onClick={onEdit}
+          className={`p-1.5 rounded-lg transition-colors focus-ring ${
+            showPencilAlways
+              ? 'text-muted-foreground hover:text-primary'
+              : 'text-transparent group-hover:text-muted-foreground hover:!text-primary'
+          }`}
+          aria-label="Edit metadata"
+        >
+          <PencilIcon className="w-3.5 h-3.5" />
+        </button>
+      )}
     </div>
   );
 }

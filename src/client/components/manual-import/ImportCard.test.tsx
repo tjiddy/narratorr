@@ -12,6 +12,7 @@ function makeBook(overrides?: Partial<ImportRow['book']>): ImportRow['book'] {
     parsedSeries: 'Series Name',
     fileCount: 12,
     totalSize: 524288000,
+    isDuplicate: false,
     ...overrides,
   };
 }
@@ -220,6 +221,53 @@ describe('ImportCard', () => {
         />,
       );
       expect(screen.getByText('Unknown')).toBeInTheDocument();
+    });
+  });
+
+  // ===========================================================================
+  // #114 — duplicate row rendering
+  // ===========================================================================
+  describe('duplicate rows (isDuplicate: true)', () => {
+    const dupRow = makeRow({
+      book: makeBook({ isDuplicate: true, existingBookId: 42 }),
+      selected: false,
+    });
+
+    it('shows "Already in library" badge when book.isDuplicate is true', () => {
+      render(<ImportCard {...defaultProps} row={dupRow} />);
+      expect(screen.getByText('Already in library')).toBeInTheDocument();
+    });
+
+    it('does not show confidence badge for duplicate rows', () => {
+      render(<ImportCard {...defaultProps} row={dupRow} />);
+      expect(screen.queryByText('Matching')).not.toBeInTheDocument();
+      expect(screen.queryByText('Matched')).not.toBeInTheDocument();
+    });
+
+    it('duplicate rows render visually muted', () => {
+      const { container } = render(<ImportCard {...defaultProps} row={dupRow} />);
+      // Row should have opacity/muted class
+      const rowEl = container.firstChild as HTMLElement;
+      expect(rowEl.className).toMatch(/opacity|muted/);
+    });
+
+    it('duplicate row checkbox is enabled and calls onToggle when clicked', async () => {
+      const onToggle = vi.fn();
+      render(<ImportCard {...defaultProps} row={dupRow} onToggle={onToggle} />);
+      await userEvent.click(screen.getByRole('button', { name: /Select/i }));
+      expect(onToggle).toHaveBeenCalledOnce();
+    });
+
+    it('edit button is not visible for duplicate rows', () => {
+      render(<ImportCard {...defaultProps} row={dupRow} />);
+      expect(screen.queryByRole('button', { name: /Edit metadata/i })).not.toBeInTheDocument();
+    });
+
+    it('non-duplicate rows are unaffected by isDuplicate: false', () => {
+      const normalRow = makeRow({ book: makeBook({ isDuplicate: false }) });
+      render(<ImportCard {...defaultProps} row={normalRow} />);
+      expect(screen.queryByText('Already in library')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Edit metadata/i })).toBeInTheDocument();
     });
   });
 });
