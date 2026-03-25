@@ -111,6 +111,7 @@ describe('Notifier event triggers E2E', () => {
       deleteAfterImport: false,
       minSeedTime: 0,
       minFreeSpaceGB: 5,
+      redownloadFailed: true,
     });
 
     // Notifier 1: grab-only webhook (WEBHOOK_URL)

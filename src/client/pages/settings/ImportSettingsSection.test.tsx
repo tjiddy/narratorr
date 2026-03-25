@@ -133,7 +133,7 @@ describe('ImportSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        import: { deleteAfterImport: false, minSeedTime: 120, minFreeSpaceGB: 5 },
+        import: { deleteAfterImport: false, minSeedTime: 120, minFreeSpaceGB: 5, redownloadFailed: true },
       });
     });
   });
@@ -156,7 +156,7 @@ describe('ImportSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 10 },
+        import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 10, redownloadFailed: true },
       });
     });
   });
@@ -179,6 +179,45 @@ describe('ImportSettingsSection', () => {
 
     await waitFor(() => {
       expect(mockToast.success).toHaveBeenCalledWith('Import settings saved');
+    });
+  });
+
+  it('shows Redownload Failed toggle with correct description text', async () => {
+    renderWithProviders(<ImportSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Redownload Failed')).toBeInTheDocument();
+      expect(screen.getByText('Automatically search for and attempt to download a different release when a download fails')).toBeInTheDocument();
+    });
+  });
+
+  it('Redownload Failed toggle is checked by default (redownloadFailed: true)', async () => {
+    renderWithProviders(<ImportSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Redownload Failed')).toBeInTheDocument();
+    });
+
+    const checkbox = screen.getByLabelText('Redownload Failed') as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+  });
+
+  it('toggling Redownload Failed off and saving calls updateSettings with redownloadFailed: false', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<ImportSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Redownload Failed')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByLabelText('Redownload Failed'));
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith({
+        import: { deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: false },
+      });
     });
   });
 

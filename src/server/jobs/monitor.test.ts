@@ -943,6 +943,165 @@ describe('monitor job', () => {
     });
   });
 
+  describe('redownloadFailed setting', () => {
+    let retryDeps: {
+      blacklistService: { create: ReturnType<typeof vi.fn> };
+      retrySearchDeps: {
+        indexerService: { searchAll: ReturnType<typeof vi.fn> };
+        downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
+        blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn> };
+        bookService: { getById: ReturnType<typeof vi.fn> };
+        settingsService: ReturnType<typeof createMockSettingsService>;
+        retryBudget: RetryBudget;
+        log: ReturnType<typeof createMockLogger>;
+      };
+    };
+
+    beforeEach(async () => {
+      const { RetryBudget } = await import('../services/retry-budget.js');
+      retryDeps = {
+        blacklistService: { create: vi.fn().mockResolvedValue(undefined) },
+        retrySearchDeps: {
+          indexerService: { searchAll: vi.fn().mockResolvedValue([]) },
+          downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
+          blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
+          bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, author: { name: 'Author' } }) },
+          settingsService: createMockSettingsService(),
+          retryBudget: new RetryBudget(),
+          log: createMockLogger(),
+        },
+      };
+    });
+
+    it('skips both blacklisting and retrySearch when redownloadFailed is false', async () => {
+      retryDeps.retrySearchDeps.settingsService = createMockSettingsService({ import: { redownloadFailed: false } });
+
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+      // recoverBookStatus selects: no other active downloads, then the book
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.blacklistService.create).not.toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.indexerService.searchAll).not.toHaveBeenCalled();
+    });
+
+    it('still marks download as failed and calls recoverBookStatus when redownloadFailed is false', async () => {
+      retryDeps.retrySearchDeps.settingsService = createMockSettingsService({ import: { redownloadFailed: false } });
+
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ status: 'failed' }));
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, status: 'wanted' }),
+        'Book status recovered after download failure',
+      );
+    });
+
+    it('sets errorMessage to "Redownload disabled" when redownloadFailed is false', async () => {
+      retryDeps.retrySearchDeps.settingsService = createMockSettingsService({ import: { redownloadFailed: false } });
+
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ errorMessage: 'Redownload disabled' }));
+    });
+
+    it('falls back to retry path (blacklist + retrySearch) when settings read throws', async () => {
+      retryDeps.retrySearchDeps.settingsService = inject<ReturnType<typeof createMockSettingsService>>({
+        get: vi.fn().mockRejectedValue(new Error('DB unavailable')),
+        getAll: vi.fn(),
+        set: vi.fn(),
+        patch: vi.fn(),
+        update: vi.fn(),
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+      db.delete.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ infoHash: 'abc123' }),
+      );
+      expect(retryDeps.retrySearchDeps.indexerService.searchAll).toHaveBeenCalled();
+    });
+
+    it('skips blacklist and retry via error-status transition path when redownloadFailed is false', async () => {
+      retryDeps.retrySearchDeps.settingsService = createMockSettingsService({ import: { redownloadFailed: false } });
+
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 30, status: 'error', errorMessage: 'CRC mismatch', savePath: '', size: 0 });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+      // recoverBookStatus selects: no other active downloads, then the book
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.blacklistService.create).not.toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.indexerService.searchAll).not.toHaveBeenCalled();
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ errorMessage: 'Redownload disabled' }));
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, status: 'wanted' }),
+        'Book status recovered after download failure',
+      );
+    });
+
+    it('proceeds with retry as normal when redownloadFailed is true', async () => {
+      // redownloadFailed defaults to true — no override needed
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce(null);
+      db.update.mockReturnValue(mockDbChain());
+      db.delete.mockReturnValue(mockDbChain());
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.blacklistService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ infoHash: 'abc123' }),
+      );
+      expect(retryDeps.retrySearchDeps.indexerService.searchAll).toHaveBeenCalled();
+    });
+  });
+
   describe('auto-classification — infrastructure_error and download_failed', () => {
     let retryDeps: {
       blacklistService: { create: ReturnType<typeof vi.fn> };

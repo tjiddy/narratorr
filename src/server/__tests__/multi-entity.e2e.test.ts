@@ -104,6 +104,7 @@ describe('Multi-entity E2E', () => {
       deleteAfterImport: false,
       minSeedTime: 0,
       minFreeSpaceGB: 5,
+      redownloadFailed: true,
     });
   });
 
@@ -292,6 +293,7 @@ describe('Job lifecycle E2E', () => {
       deleteAfterImport: false,
       minSeedTime: 0,
       minFreeSpaceGB: 5,
+      redownloadFailed: true,
     });
     await e2e.services.settings.set('search', {
       enabled: true,

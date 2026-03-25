@@ -100,6 +100,7 @@ describe('Error recovery E2E', () => {
       deleteAfterImport: false,
       minSeedTime: 0,
       minFreeSpaceGB: 5,
+      redownloadFailed: true,
     });
   });
 

@@ -260,6 +260,21 @@ async function handleDownloadFailure(
   reason: 'bad_quality' | 'download_failed' | 'infrastructure_error' = 'bad_quality',
   blacklistType: 'temporary' | 'permanent' = 'permanent',
 ): Promise<string> {
+  // Check redownloadFailed setting — if disabled, skip blacklist and retry
+  let redownloadFailed = true;
+  try {
+    const importSettings = await retryDeps.retrySearchDeps.settingsService.get('import');
+    redownloadFailed = importSettings.redownloadFailed;
+  } catch (err) {
+    log.warn({ downloadId, err }, 'Failed to read import settings — proceeding with retry');
+  }
+
+  if (!redownloadFailed) {
+    await db.update(downloads).set({ errorMessage: 'Redownload disabled' }).where(eq(downloads.id, downloadId));
+    await recoverBookStatus(db, bookId, downloadId, log);
+    return 'redownload_disabled';
+  }
+
   // Blacklist the release if infoHash present
   if (infoHash) {
     try {
