@@ -14,6 +14,8 @@ import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getPathSize } from '../utils/import-helpers.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
+import type { EventHistoryService } from './event-history.service.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 /** Minimum ratio of target/source file size for copy verification to pass. */
 const COPY_VERIFICATION_THRESHOLD = 0.99;
@@ -72,6 +74,7 @@ export class LibraryScanService {
     private metadataService: MetadataService,
     private settingsService: SettingsService,
     private log: FastifyBaseLogger,
+    private eventHistory: EventHistoryService,
   ) {}
 
   /**
@@ -288,12 +291,54 @@ export class LibraryScanService {
     // If no metadata passed, look it up
     const meta = metadata !== undefined ? metadata : await this.lookupMetadata(item.title, item.authorName);
 
-    const book = await this.bookService.create(buildBookCreatePayload(item, meta, 'imported'));
+    // Create book record — record failure event if this throws (no bookId yet)
+    let book: Awaited<ReturnType<typeof this.bookService.create>>;
+    try {
+      book = await this.bookService.create(buildBookCreatePayload(item, meta, 'imported'));
+    } catch (error) {
+      this.eventHistory.create({
+        bookId: null,
+        bookTitle: item.title,
+        authorName: item.authorName ?? null,
+        narratorName: meta?.narrators?.[0] ?? null,
+        downloadId: null,
+        eventType: 'import_failed',
+        source: 'manual',
+        reason: { error: getErrorMessage(error, 'Import failed') },
+      }).catch(err => this.log.warn({ err }, 'Failed to record manual import failed event'));
+      throw error;
+    }
 
+    try {
+      const enriched = await this.enrichImportedBook(item, book, meta, mode);
+      return { imported: true, bookId: book.id, enriched };
+    } catch (error) {
+      // Record failure event (fire-and-forget) then re-throw so the route returns 500
+      this.eventHistory.create({
+        bookId: book.id,
+        bookTitle: item.title,
+        authorName: item.authorName ?? null,
+        narratorName: meta?.narrators?.[0] ?? null,
+        downloadId: null,
+        eventType: 'import_failed',
+        source: 'manual',
+        reason: { error: getErrorMessage(error, 'Import failed') },
+      }).catch(err => this.log.warn({ err }, 'Failed to record manual import failed event'));
+      throw error;
+    }
+  }
+
+  // eslint-disable-next-line complexity -- copy/move + enrich + audnexus + event pipeline, same as processOneImport
+  private async enrichImportedBook(
+    item: ImportConfirmItem,
+    book: { id: number; narrators?: Array<{ name: string }> | null; duration?: number | null; coverUrl?: string | null },
+    meta: BookMetadata | null,
+    mode?: ImportMode,
+  ): Promise<boolean> {
     // Determine final path: copy/move to library or use source path
     let finalPath = item.path;
     if (mode) {
-      finalPath = await this.copyToLibrary(item, book, meta, mode);
+      finalPath = await this.copyToLibrary(item, book as Parameters<typeof this.copyToLibrary>[1], meta, mode);
     }
 
     // Set the path and size
@@ -308,7 +353,7 @@ export class LibraryScanService {
     const audioResult = await enrichBookFromAudio(
       book.id,
       finalPath,
-      { narrators: book.narrators ?? null, duration: book.duration, coverUrl: book.coverUrl },
+      { narrators: book.narrators ?? null, duration: book.duration ?? null, coverUrl: book.coverUrl ?? null },
       this.db,
       this.log,
       this.bookService,
@@ -322,8 +367,20 @@ export class LibraryScanService {
       existingDuration: book.duration,
     });
 
+    // Record success event (fire-and-forget)
+    this.eventHistory.create({
+      bookId: book.id,
+      bookTitle: item.title,
+      authorName: item.authorName ?? null,
+      narratorName: meta?.narrators?.[0] ?? null,
+      downloadId: null,
+      eventType: 'imported',
+      source: 'manual',
+      reason: { targetPath: resolve(finalPath), mode: mode ?? 'pointer' },
+    }).catch(err => this.log.warn({ err }, 'Failed to record manual import event'));
+
     this.log.info({ bookId: book.id, title: item.title, enriched: audioResult.enriched, mode: mode ?? 'pointer' }, 'Single book imported');
-    return { imported: true, bookId: book.id, enriched: audioResult.enriched };
+    return audioResult.enriched;
   }
 
   /**
@@ -350,6 +407,12 @@ export class LibraryScanService {
       },
       item.authorName ?? null,
     );
+
+    // Skip file operations when source already is the target (book already in library at correct path)
+    if (resolve(item.path) === resolve(targetPath)) {
+      this.log.info({ path: targetPath, mode }, 'Source and target are the same path — skipping file operation');
+      return targetPath;
+    }
 
     await mkdir(targetPath, { recursive: true });
     this.log.info({ source: item.path, target: targetPath, mode }, 'Copying files to library');
@@ -438,6 +501,17 @@ export class LibraryScanService {
           status: 'missing',
           updatedAt: new Date(),
         }).where(eq(books.id, bookId));
+        // Record failure event (fire-and-forget)
+        this.eventHistory.create({
+          bookId,
+          bookTitle: item.title,
+          authorName: item.authorName ?? null,
+          narratorName: item.metadata?.narrators?.[0] ?? null,
+          downloadId: null,
+          eventType: 'import_failed',
+          source: 'manual',
+          reason: { error: getErrorMessage(error, 'Import failed') },
+        }).catch(err => this.log.warn({ err }, 'Failed to record import failed event'));
       }
     }
   }
@@ -487,6 +561,18 @@ export class LibraryScanService {
       status: 'imported',
       updatedAt: new Date(),
     }).where(eq(books.id, bookId));
+
+    // Record success event (fire-and-forget)
+    this.eventHistory.create({
+      bookId,
+      bookTitle: item.title,
+      authorName: item.authorName ?? null,
+      narratorName: narratorName,
+      downloadId: null,
+      eventType: 'imported',
+      source: 'manual',
+      reason: { targetPath: resolve(finalPath), mode: mode ?? 'pointer' },
+    }).catch(err => this.log.warn({ err }, 'Failed to record manual import event'));
   }
 
   /**

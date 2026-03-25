@@ -20,7 +20,7 @@ export class EventHistoryServiceError extends Error {
 }
 
 export interface CreateEventInput {
-  bookId: number;
+  bookId?: number | null;
   bookTitle: string;
   authorName?: string | null;
   narratorName?: string | null;
@@ -47,7 +47,7 @@ export class EventHistoryService {
 
   async create(input: CreateEventInput): Promise<BookEventRow> {
     const result = await this.db.insert(bookEvents).values({
-      bookId: input.bookId,
+      bookId: input.bookId ?? null,
       bookTitle: input.bookTitle,
       authorName: input.authorName ?? null,
       narratorName: input.narratorName ?? null,

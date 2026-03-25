@@ -5,6 +5,7 @@ import type { Db } from '../../db/index.js';
 import type { BookService } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { EventHistoryService } from './event-history.service.js';
 import { parseFolderStructure, LibraryScanService } from './library-scan.service.js';
 
 vi.mock('./enrichment-utils.js', () => ({
@@ -192,6 +193,7 @@ describe('LibraryScanService', () => {
     enrichBook: ReturnType<typeof vi.fn>;
   };
   let log: ReturnType<typeof createMockLogger>;
+  let mockEventHistoryService: { create: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -222,6 +224,9 @@ describe('LibraryScanService', () => {
       getBook: vi.fn().mockResolvedValue(null),
       enrichBook: vi.fn().mockResolvedValue(null),
     };
+    mockEventHistoryService = {
+      create: vi.fn().mockResolvedValue({}),
+    };
     log = createMockLogger();
     const mockSettingsService = createMockSettingsService({
       library: { path: '/library' },
@@ -232,6 +237,7 @@ describe('LibraryScanService', () => {
       inject<MetadataService>(mockMetadataService),
       inject<SettingsService>(mockSettingsService),
       log,
+      inject<EventHistoryService>(mockEventHistoryService),
     );
   });
 
@@ -1079,6 +1085,44 @@ describe('LibraryScanService', () => {
       expect(mkdir).not.toHaveBeenCalled();
       expect(cp).not.toHaveBeenCalled();
     });
+
+    it('skips cp when source and target resolve to the same path (copy mode)', async () => {
+      // buildTargetPath is mocked to return '/library/Author/Title'
+      const result = await service.importSingleBook(
+        { path: '/library/Author/Title', title: 'Title', authorName: 'Author' },
+        null,
+        'copy',
+      );
+
+      expect(result.imported).toBe(true);
+      expect(cp).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
+    });
+
+    it('skips cp and rm when source and target resolve to the same path (move mode)', async () => {
+      const result = await service.importSingleBook(
+        { path: '/library/Author/Title', title: 'Title', authorName: 'Author' },
+        null,
+        'move',
+      );
+
+      expect(result.imported).toBe(true);
+      expect(cp).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
+    });
+
+    it('proceeds with copy when source is inside library root but target path differs', async () => {
+      // Source is inside library but folder format would rename it
+      const result = await service.importSingleBook(
+        { path: '/library/old-folder-name', title: 'Title', authorName: 'Author' },
+        null,
+        'copy',
+      );
+
+      // buildTargetPath returns '/library/Author/Title' which differs from source
+      expect(result.imported).toBe(true);
+      expect(cp).toHaveBeenCalledWith('/library/old-folder-name', '/library/Author/Title', expect.anything());
+    });
   });
 
   // ============================================================================
@@ -1307,6 +1351,312 @@ describe('LibraryScanService', () => {
   });
 
   // ============================================================================
+  // event history — importSingleBook and background processing (issue #104)
+  // ============================================================================
+
+  describe('event history — importSingleBook', () => {
+    it('records imported event on success with source: manual and downloadId: null', async () => {
+      await service.importSingleBook(
+        { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+        null,
+      );
+
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'imported',
+          source: 'manual',
+          downloadId: null,
+          bookTitle: 'Book',
+          authorName: 'Author',
+        }),
+      );
+    });
+
+    it('records imported event with narrator snapshot from resolved meta', async () => {
+      await service.importSingleBook(
+        { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+        { title: 'Book', authors: [], narrators: ['Jim Dale'] },
+      );
+
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'imported',
+          narratorName: 'Jim Dale',
+        }),
+      );
+    });
+
+    it('records imported event with null narrator when metadata has no narrators', async () => {
+      await service.importSingleBook(
+        { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+        { title: 'Book', authors: [], narrators: [] },
+      );
+
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'imported',
+          narratorName: null,
+        }),
+      );
+    });
+
+    it('records import_failed event on failure without suppressing the thrown error', async () => {
+      // Fail after book creation so bookId is available for the event
+      vi.mocked(enrichBookFromAudio).mockRejectedValueOnce(new Error('Enrichment failed'));
+
+      await expect(service.importSingleBook(
+        { path: '/audiobooks/Book', title: 'Book', authorName: 'Author' },
+        null,
+      )).rejects.toThrow('Enrichment failed');
+
+      // Fire-and-forget event — check after a tick
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'import_failed',
+          source: 'manual',
+          bookTitle: 'Book',
+          downloadId: null,
+        }),
+      );
+    });
+
+    it('imported event reason contains resolved targetPath and mode keys', async () => {
+      await service.importSingleBook(
+        { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+        null,
+        'copy',
+      );
+
+      // buildTargetPath mock returns '/library/Author/Title' (absolute — resolve is a no-op)
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason: expect.objectContaining({ targetPath: '/library/Author/Title', mode: 'copy' }),
+        }),
+      );
+    });
+
+    it('records import_failed event when bookService.create() throws (bookId is null)', async () => {
+      mockBookService.create.mockRejectedValueOnce(new Error('DB constraint'));
+
+      await expect(service.importSingleBook(
+        { path: '/audiobooks/Book', title: 'Book', authorName: 'Author' },
+        null,
+      )).rejects.toThrow('DB constraint');
+
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookId: null,
+          eventType: 'import_failed',
+          source: 'manual',
+          bookTitle: 'Book',
+          downloadId: null,
+        }),
+      );
+    });
+
+    it('eventHistory.create rejection on importSingleBook success does not throw', async () => {
+      mockEventHistoryService.create.mockRejectedValueOnce(new Error('Event DB down'));
+
+      const result = await service.importSingleBook(
+        { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+        null,
+      );
+
+      expect(result).toEqual({ imported: true, bookId: 1, enriched: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ err: expect.any(Error) }),
+        expect.stringContaining('Failed to record'),
+      );
+    });
+
+    it('both import failure and event creation failure — throws the original import error', async () => {
+      vi.mocked(enrichBookFromAudio).mockRejectedValueOnce(new Error('Enrichment failed'));
+      mockEventHistoryService.create.mockRejectedValueOnce(new Error('Event DB down'));
+
+      await expect(service.importSingleBook(
+        { path: '/audiobooks/Book', title: 'Book', authorName: 'Author' },
+        null,
+      )).rejects.toThrow('Enrichment failed');
+    });
+
+    it('imported event downloadId is null', async () => {
+      await service.importSingleBook(
+        { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+        null,
+      );
+
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: null }),
+      );
+    });
+  });
+
+  describe('event history — background import processing', () => {
+    beforeEach(() => {
+      vi.mocked(readdir).mockResolvedValue([
+        { name: 'ch1.mp3', isFile: () => true, isDirectory: () => false },
+      ] as never);
+      vi.mocked(stat).mockResolvedValue({ size: 5000 } as never);
+      vi.mocked(getPathSize).mockResolvedValue(5000);
+    });
+
+    it('records imported event in processOneImport on success with source: manual', async () => {
+      await service.confirmImport([
+        { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventType: 'imported',
+            source: 'manual',
+            downloadId: null,
+            bookTitle: 'Book',
+            authorName: 'Author',
+          }),
+        );
+      });
+    });
+
+    it('records imported event with narrator from item.metadata.narrators[0]', async () => {
+      await service.confirmImport([
+        {
+          path: '/audiobooks/Book',
+          title: 'Book',
+          authorName: 'Author',
+          metadata: { title: 'Book', authors: [], narrators: ['Jim Dale'] },
+        },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventType: 'imported',
+            narratorName: 'Jim Dale',
+          }),
+        );
+      });
+    });
+
+    it('records import_failed event in processImportsInBackground catch block', async () => {
+      vi.mocked(enrichBookFromAudio).mockRejectedValueOnce(new Error('Enrichment failed'));
+
+      await service.confirmImport([
+        { path: '/audiobooks/Book', title: 'Book', authorName: 'Author' },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            eventType: 'import_failed',
+            source: 'manual',
+            bookTitle: 'Book',
+          }),
+        );
+      });
+    });
+
+    it('both status: missing and import_failed event are set when background processing fails', async () => {
+      vi.mocked(enrichBookFromAudio).mockRejectedValueOnce(new Error('Enrichment failed'));
+
+      await service.confirmImport([
+        { path: '/audiobooks/Book', title: 'Book' },
+      ]);
+
+      await vi.waitFor(() => {
+        const setCalls = (mockDb as Record<string, ReturnType<typeof vi.fn>>).set.mock.calls;
+        const missingCall = setCalls.find(
+          (call: unknown[]) => (call[0] as Record<string, string>).status === 'missing',
+        );
+        expect(missingCall).toBeDefined();
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({ eventType: 'import_failed' }),
+        );
+      });
+    });
+
+    it('imported event reason contains resolved targetPath and mode for background imports', async () => {
+      await service.confirmImport([
+        { path: '/audiobooks/Book', title: 'Book', authorName: 'Author' },
+      ], 'copy');
+
+      // The mock DB returns no book record for the select, so copyToLibrary is skipped
+      // and finalPath stays as item.path. resolve('/audiobooks/Book') is a no-op (already absolute).
+      await vi.waitFor(() => {
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            reason: expect.objectContaining({ targetPath: '/audiobooks/Book', mode: 'copy' }),
+          }),
+        );
+      });
+    });
+
+    it('import_failed event reason contains error key with human-readable message', async () => {
+      vi.mocked(enrichBookFromAudio).mockRejectedValueOnce(new Error('Disk full'));
+
+      await service.confirmImport([
+        { path: '/audiobooks/Book', title: 'Book' },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            reason: expect.objectContaining({ error: expect.stringContaining('Disk full') }),
+          }),
+        );
+      });
+    });
+
+    it('event recording failure does not break the background import flow (fire-and-forget)', async () => {
+      mockEventHistoryService.create.mockRejectedValue(new Error('Event DB down'));
+
+      await service.confirmImport([
+        { path: '/audiobooks/Book', title: 'Book' },
+      ]);
+
+      await vi.waitFor(() => {
+        expect((mockDb as Record<string, ReturnType<typeof vi.fn>>).set).toHaveBeenCalledWith(
+          expect.objectContaining({ status: 'imported' }),
+        );
+      });
+    });
+
+    it('event recording failure on background failure still sets status: missing (fire-and-forget)', async () => {
+      vi.mocked(enrichBookFromAudio).mockRejectedValueOnce(new Error('Enrichment failed'));
+      mockEventHistoryService.create.mockRejectedValueOnce(new Error('Event DB down'));
+
+      await service.confirmImport([
+        { path: '/audiobooks/Book', title: 'Book' },
+      ]);
+
+      await vi.waitFor(() => {
+        const setCalls = (mockDb as Record<string, ReturnType<typeof vi.fn>>).set.mock.calls;
+        const missingCall = setCalls.find(
+          (call: unknown[]) => (call[0] as Record<string, string>).status === 'missing',
+        );
+        expect(missingCall).toBeDefined();
+      });
+    });
+
+    it('pointer mode (no mode) records imported event with mode: pointer in reason', async () => {
+      await service.confirmImport([
+        { path: '/audiobooks/Book', title: 'Book', authorName: 'Author' },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            reason: expect.objectContaining({ mode: 'pointer' }),
+          }),
+        );
+      });
+    });
+  });
+
+  // ============================================================================
   // rescanLibrary
   // ============================================================================
 
@@ -1446,6 +1796,7 @@ describe('LibraryScanService', () => {
         inject<MetadataService>(mockMetadataService),
         inject<SettingsService>(emptyPathSettings),
         log,
+        inject<EventHistoryService>(mockEventHistoryService),
       );
 
       await expect(svc.rescanLibrary()).rejects.toThrow('Library path is not configured');
@@ -1507,6 +1858,7 @@ describe('buildBookCreatePayload multi-author (issue #79)', () => {
       { searchBooks: vi.fn().mockResolvedValue([]), getBook: vi.fn().mockResolvedValue(null), enrichBook: vi.fn().mockResolvedValue(null) } as never,
       settings as never,
       { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), trace: vi.fn(), fatal: vi.fn(), child: vi.fn().mockReturnThis(), level: 'info', silent: vi.fn() } as never,
+      { create: vi.fn().mockResolvedValue({}) } as never,
     );
   });
 
