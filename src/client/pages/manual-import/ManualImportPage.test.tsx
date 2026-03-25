@@ -723,7 +723,15 @@ describe('ManualImportPage', () => {
   });
 
   describe('folder history sections', () => {
-    it('shows Favorite Folders and Recent Folders sections on the path step', () => {
+    it('shows Favorite Folders and Recent Folders section headers even when lists are empty', () => {
+      renderPage();
+      expect(screen.getByText('Favorite Folders')).toBeInTheDocument();
+      expect(screen.getByText('Recent Folders')).toBeInTheDocument();
+      expect(screen.getByText('No favorite folders yet')).toBeInTheDocument();
+      expect(screen.getByText('No recent folders yet')).toBeInTheDocument();
+    });
+
+    it('shows Favorite Folders and Recent Folders sections with entries', () => {
       mockFavorites = [{ path: '/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
       mockRecents = [{ path: '/podcasts', lastUsedAt: '2026-01-02T00:00:00.000Z' }];
       renderPage();
@@ -776,16 +784,40 @@ describe('ManualImportPage', () => {
       expect(mockAddRecent).toHaveBeenCalledWith('/audiobooks');
     });
 
-    it('settings loading state renders sections without crashing', () => {
+    it('settings loading state renders sections without crashing, does not seed library root', () => {
       mockGetSettings.mockReturnValue(new Promise(() => {})); // never resolves
-      expect(() => renderPage()).not.toThrow();
+      renderPage();
       expect(screen.getByPlaceholderText('/path/to/audiobooks')).toBeInTheDocument();
+      expect(mockSeedLibraryRoot).not.toHaveBeenCalled();
     });
 
-    it('settings error state renders sections without crashing', async () => {
+    it('settings error state renders sections without crashing, does not seed library root', async () => {
       mockGetSettings.mockRejectedValue(new Error('network error'));
-      expect(() => renderPage()).not.toThrow();
+      renderPage();
       expect(screen.getByPlaceholderText('/path/to/audiobooks')).toBeInTheDocument();
+      expect(mockSeedLibraryRoot).not.toHaveBeenCalled();
+    });
+
+    it('seeds library root when settings resolve with a library path', async () => {
+      mockGetSettings.mockResolvedValue({ library: { path: '/audiobooks', folderFormat: '{author}/{title}' } });
+      renderPage();
+      await waitFor(() => {
+        expect(mockSeedLibraryRoot).toHaveBeenCalledWith('/audiobooks');
+      });
+    });
+
+    it('renders formatted lastUsedAt date for recent folder entries', () => {
+      // 2026-03-05T12:00:00.000Z → "Mar 5, 2026" (toLocaleDateString pattern)
+      mockRecents = [{ path: '/podcasts', lastUsedAt: '2026-03-05T12:00:00.000Z' }];
+      renderPage();
+      // The formatted date is rendered in a span (shown on hover via group-hover CSS)
+      // but it's still in the DOM — assert the text node exists
+      const formatted = new Date('2026-03-05T12:00:00.000Z').toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      });
+      expect(screen.getByText(formatted)).toBeInTheDocument();
     });
 
     it('clicking unfavorite button on a favorite demotes it to recent', async () => {

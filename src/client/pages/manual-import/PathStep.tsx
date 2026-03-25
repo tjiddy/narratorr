@@ -56,9 +56,11 @@ export function PathStep({
   return (
     <div className="max-w-xl space-y-4 animate-fade-in-up stagger-1">
       {/* Favorite Folders */}
-      {favorites.length > 0 && (
-        <div className="space-y-1.5">
-          <p className="text-xs font-medium text-muted-foreground/70 uppercase tracking-wide">Favorite Folders</p>
+      <div className="space-y-1.5">
+        <p className="text-xs font-medium text-muted-foreground/70 uppercase tracking-wide">Favorite Folders</p>
+        {favorites.length === 0 ? (
+          <p className="text-xs text-muted-foreground/40 px-1">No favorite folders yet</p>
+        ) : (
           <div className="space-y-1">
             {favorites.map((entry) => (
               <div
@@ -95,13 +97,15 @@ export function PathStep({
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Recent Folders */}
-      {recents.length > 0 && (
-        <div className="space-y-1.5">
-          <p className="text-xs font-medium text-muted-foreground/70 uppercase tracking-wide">Recent Folders</p>
+      <div className="space-y-1.5">
+        <p className="text-xs font-medium text-muted-foreground/70 uppercase tracking-wide">Recent Folders</p>
+        {recents.length === 0 ? (
+          <p className="text-xs text-muted-foreground/40 px-1">No recent folders yet</p>
+        ) : (
           <div className="space-y-1">
             {recents.map((entry) => (
               <div
@@ -138,8 +142,8 @@ export function PathStep({
               </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Path input */}
       <PathInput
