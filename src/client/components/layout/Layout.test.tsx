@@ -84,14 +84,6 @@ describe('Layout', () => {
     expect(paths.some(p => p.getAttribute('d') === 'M5 12h14')).toBe(true);
   });
 
-  it('renders footer', () => {
-    mockCounts(0);
-    mockAuth();
-    renderWithProviders(<Layout />);
-
-    expect(screen.getByText(/your personal audiobook library/i)).toBeInTheDocument();
-  });
-
   it('renders theme toggle button', () => {
     mockCounts(0);
     mockAuth();
@@ -268,6 +260,65 @@ describe('Layout', () => {
         expect(screen.getByText(/update available/i)).toBeInTheDocument();
       });
       expect(screen.getByText(/0\.2\.0/)).toBeInTheDocument();
+    });
+  });
+
+  describe('#99 footer removal and flex layout contract', () => {
+    it('renders no footer text anywhere in the DOM', () => {
+      mockCounts(0);
+      mockAuth();
+      const { container } = renderWithProviders(<Layout />);
+
+      expect(container.querySelector('footer')).toBeNull();
+      expect(screen.queryByText(/your personal audiobook library/i)).not.toBeInTheDocument();
+    });
+
+    it('root layout div has flex and flex-col classes', () => {
+      mockCounts(0);
+      mockAuth();
+      const { container } = renderWithProviders(<Layout />);
+
+      const root = container.firstChild as HTMLElement;
+      expect(root.classList.contains('flex')).toBe(true);
+      expect(root.classList.contains('flex-col')).toBe(true);
+      expect(root.classList.contains('min-h-screen')).toBe(true);
+    });
+
+    it('main content element has flex-1 class', () => {
+      mockCounts(0);
+      mockAuth();
+      const { container } = renderWithProviders(<Layout />);
+
+      const main = container.querySelector('main') as HTMLElement;
+      expect(main).not.toBeNull();
+      expect(main.classList.contains('flex-1')).toBe(true);
+    });
+
+    it('renders header/nav on /library route with no footer text', () => {
+      mockCounts(0);
+      mockAuth();
+      renderWithProviders(<Layout />, { route: '/library' });
+
+      expect(screen.getByRole('navigation')).toBeInTheDocument();
+      expect(screen.queryByText(/your personal audiobook library/i)).not.toBeInTheDocument();
+    });
+
+    it('renders header/nav on /activity route with no footer text', () => {
+      mockCounts(0);
+      mockAuth();
+      renderWithProviders(<Layout />, { route: '/activity' });
+
+      expect(screen.getByRole('navigation')).toBeInTheDocument();
+      expect(screen.queryByText(/your personal audiobook library/i)).not.toBeInTheDocument();
+    });
+
+    it('renders header/nav on /settings route with no footer text', () => {
+      mockCounts(0);
+      mockAuth();
+      renderWithProviders(<Layout />, { route: '/settings' });
+
+      expect(screen.getByRole('navigation')).toBeInTheDocument();
+      expect(screen.queryByText(/your personal audiobook library/i)).not.toBeInTheDocument();
     });
   });
 });
