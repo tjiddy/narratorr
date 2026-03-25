@@ -43,6 +43,16 @@ describe('useFolderHistory — localStorage validation', () => {
     expect(result.current.recents[0].path).toBe('/valid');
   });
 
+  it('skips entries with missing lastUsedAt field on parse (prevents sort crash)', () => {
+    localStorage.setItem(RECENT_KEY, JSON.stringify([
+      { path: '/bad' }, // missing lastUsedAt
+      { path: '/valid', lastUsedAt: '2026-01-02T00:00:00.000Z' },
+    ]));
+    const { result } = renderHook(() => useFolderHistory());
+    expect(result.current.recents).toHaveLength(1);
+    expect(result.current.recents[0].path).toBe('/valid');
+  });
+
   it('does not crash when localStorage.setItem throws QuotaExceededError', () => {
     const { result } = renderHook(() => useFolderHistory());
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
@@ -212,6 +222,21 @@ describe('useFolderHistory — demoteToRecent', () => {
     expect(result.current.recents[2].path).toBe('/c'); // Jan 5
   });
 });
+
+  it('enforces the 15-entry cap when demoting a favorite into a full recents list', () => {
+    const fullRecents: FolderEntry[] = Array.from({ length: 15 }, (_, i) => ({
+      path: `/folder${i}`,
+      lastUsedAt: new Date(2026, 0, i + 1).toISOString(),
+    }));
+    const favEntry = makeEntry('/new-from-fav', '2026-03-01T00:00:00.000Z');
+    localStorage.setItem(RECENT_KEY, JSON.stringify(fullRecents));
+    localStorage.setItem(FAV_KEY, JSON.stringify([favEntry]));
+    const { result } = renderHook(() => useFolderHistory());
+    act(() => { result.current.demoteToRecent('/new-from-fav'); });
+    expect(result.current.recents).toHaveLength(15);
+    expect(result.current.recents[0].path).toBe('/new-from-fav'); // newest at top
+    expect(result.current.recents.some(e => e.path === '/folder0')).toBe(false); // oldest evicted
+  });
 
 describe('useFolderHistory — removeRecent / removeFavorite', () => {
   it('removes a recent entry, does not affect favorites', () => {

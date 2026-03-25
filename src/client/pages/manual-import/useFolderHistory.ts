@@ -12,7 +12,11 @@ function readStorage(key: string): FolderEntry[] {
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((e): e is FolderEntry => typeof (e as FolderEntry)?.path === 'string');
+    return parsed.filter(
+      (e): e is FolderEntry =>
+        typeof (e as FolderEntry)?.path === 'string' &&
+        typeof (e as FolderEntry)?.lastUsedAt === 'string',
+    );
   } catch {
     return [];
   }
@@ -86,7 +90,7 @@ export function useFolderHistory() {
           newRecents = sortByRecency([{ path, lastUsedAt: maxTime }, ...others]);
         } else {
           const toAdd = entry ?? { path, lastUsedAt: new Date().toISOString() };
-          newRecents = sortByRecency([toAdd, ...prevRecents]);
+          newRecents = sortByRecency([toAdd, ...prevRecents]).slice(0, MAX_RECENTS);
         }
         writeStorage(RECENT_KEY, newRecents);
         return newRecents;
