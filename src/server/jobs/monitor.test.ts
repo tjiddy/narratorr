@@ -1009,6 +1009,10 @@ describe('monitor job', () => {
 
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
       expect(setCalls).toContainEqual(expect.objectContaining({ status: 'failed' }));
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, status: 'wanted' }),
+        'Book status recovered after download failure',
+      );
     });
 
     it('sets errorMessage to "Redownload disabled" when redownloadFailed is false', async () => {
@@ -1052,6 +1056,32 @@ describe('monitor job', () => {
         expect.objectContaining({ infoHash: 'abc123' }),
       );
       expect(retryDeps.retrySearchDeps.indexerService.searchAll).toHaveBeenCalled();
+    });
+
+    it('skips blacklist and retry via error-status transition path when redownloadFailed is false', async () => {
+      retryDeps.retrySearchDeps.settingsService = createMockSettingsService({ import: { redownloadFailed: false } });
+
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', bookId: 42, title: 'Test Book', infoHash: 'abc123' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 30, status: 'error', errorMessage: 'CRC mismatch', savePath: '', size: 0 });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+      // recoverBookStatus selects: no other active downloads, then the book
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBook({ id: 42, path: null, status: 'downloading' })]));
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), retryDeps as never);
+
+      expect(retryDeps.blacklistService.create).not.toHaveBeenCalled();
+      expect(retryDeps.retrySearchDeps.indexerService.searchAll).not.toHaveBeenCalled();
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ errorMessage: 'Redownload disabled' }));
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 42, status: 'wanted' }),
+        'Book status recovered after download failure',
+      );
     });
 
     it('proceeds with retry as normal when redownloadFailed is true', async () => {
