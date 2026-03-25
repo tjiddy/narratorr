@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #117 Fix monitor routing failed SABnzbd/NZBGet downloads to failure path — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #122
+
+### Metrics
+- Files changed: 4 source + 3 test | Tests added/modified: 16 new tests (4 sabnzbd + 3 nzbget + 4 monitor routing + 1 errorMessage write)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec review round-trip was clean; all blocking findings (stale function name, missing NZBGet AC, undefined fail_message precedence) were fixed before implementation. Red/green TDD worked — tests failed before impl for all 3 modules.
+- Friction / issues encountered: `git push` failed with stale GH_TOKEN (known debt from #79); required inline JWT → installation token refresh via manual Node script. `node scripts/block.ts 117 "test token"` called to test auth added a spurious `blocked` label that needed manual removal.
+
+### Token efficiency
+- Highest-token actions: Elaborate/explore subagents (defect vector analysis), self-review + coverage subagents in handoff
+- Avoidable waste: Used `block.ts` to test token validity — should use a safe read like `gh issue view` instead
+- Suggestions: Always test token freshness with a read operation before writing
+
+### Infrastructure gaps
+- Repeated workarounds: `git push` with stale GH_TOKEN — same manual inline token refresh as #79
+- Missing tooling: `scripts/lib.ts` has no `git push` wrapper with embedded fresh token (in debt.md from #79)
+- Unresolved debt: none introduced
+
+### Wish I Had Known
+1. SABnzbd and NZBGet both hardcode `progress: 100` for all history items — always compute `status` first, then derive `progress` from it. See `usenet-adapter-history-progress-hardcoded.md`.
+2. `processDownloadUpdate()` uses a local `DownloadItem` type (not `DownloadItemInfo`) — new fields added to `DownloadItemInfo` must also be added to the local alias or they are invisible in the function body.
+3. The existing error-status test used `progress: 30`, which never exercised the bug shape (`progress: 100`). Write the test for the exact reported bug condition first.
+
 ## #110 Remove non-visible sort options from library grid view — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #121
