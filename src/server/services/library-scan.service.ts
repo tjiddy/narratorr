@@ -27,6 +27,8 @@ export interface DiscoveredBook {
   parsedSeries: string | null;
   fileCount: number;
   totalSize: number;
+  isDuplicate: boolean;
+  existingBookId?: number;
 }
 
 export type ImportMode = 'copy' | 'move';
@@ -39,6 +41,8 @@ export interface ImportConfirmItem {
   coverUrl?: string;
   asin?: string;
   metadata?: BookMetadata;
+  /** When true, bypasses the title+author safety-net duplicate check */
+  forceImport?: boolean;
 }
 
 export interface SingleBookResult {
@@ -56,7 +60,6 @@ export interface ImportSingleResult {
 export interface ScanResult {
   discoveries: DiscoveredBook[];
   totalFolders: number;
-  skippedDuplicates: number;
 }
 
 export interface RescanResult {
@@ -157,44 +160,63 @@ export class LibraryScanService {
     const folders = await discoverBooks(rootPath, { log: this.log });
     this.log.info({ count: folders.length }, 'Found audio folders');
 
-    // Pre-fetch all existing book paths into a Set for O(1) duplicate check
+    // Pre-fetch all existing book paths with IDs for O(1) duplicate check
     const existingPathRows = await this.db
-      .select({ path: books.path })
+      .select({ id: books.id, path: books.path })
       .from(books);
-    const existingPaths = new Set(existingPathRows.map((r) => r.path).filter(Boolean));
+    const existingPathMap = new Map(
+      existingPathRows.filter((r) => r.path != null).map((r) => [r.path!, r.id] as const),
+    );
 
-    // Pre-fetch all title + author slug pairs into a Set for O(1) duplicate check
+    // Pre-fetch all title + author slug pairs with IDs for O(1) duplicate check
     const titleAuthorRows = await this.db
-      .select({ title: books.title, slug: authors.slug })
+      .select({ id: books.id, title: books.title, slug: authors.slug })
       .from(books)
       .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))
       .leftJoin(authors, eq(bookAuthors.authorId, authors.id));
-    const existingTitleAuthorKeys = new Set(
+    const existingTitleAuthorMap = new Map(
       titleAuthorRows
         .filter((r) => r.title && r.slug)
-        .map((r) => `${r.title}|${r.slug}`),
+        .map((r) => [`${r.title}|${r.slug}`, r.id] as const),
     );
 
     const discoveries: DiscoveredBook[] = [];
-    let skippedDuplicates = 0;
 
     for (const folder of folders) {
       const parsed = parseFolderStructure(folder.folderParts);
 
-      // Check for duplicates by path (in-memory Set lookup)
-      if (existingPaths.has(folder.path)) {
-        this.log.debug({ path: folder.path }, 'Skipping duplicate (path match)');
-        skippedDuplicates++;
+      // Check for duplicates by path (in-memory Map lookup)
+      if (existingPathMap.has(folder.path)) {
+        this.log.debug({ path: folder.path }, 'Duplicate detected (path match)');
+        discoveries.push({
+          path: folder.path,
+          parsedTitle: parsed.title,
+          parsedAuthor: parsed.author,
+          parsedSeries: parsed.series,
+          fileCount: folder.audioFileCount,
+          totalSize: folder.totalSize,
+          isDuplicate: true,
+          existingBookId: existingPathMap.get(folder.path),
+        });
         continue;
       }
 
-      // Check for duplicates by title + author slug (in-memory Set lookup)
+      // Check for duplicates by title + author slug (in-memory Map lookup)
       if (parsed.title && parsed.author) {
         const authorSlug = slugify(parsed.author);
         const key = `${parsed.title}|${authorSlug}`;
-        if (existingTitleAuthorKeys.has(key)) {
-          this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Skipping duplicate (title+author match)');
-          skippedDuplicates++;
+        if (existingTitleAuthorMap.has(key)) {
+          this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Duplicate detected (title+author match)');
+          discoveries.push({
+            path: folder.path,
+            parsedTitle: parsed.title,
+            parsedAuthor: parsed.author,
+            parsedSeries: parsed.series,
+            fileCount: folder.audioFileCount,
+            totalSize: folder.totalSize,
+            isDuplicate: true,
+            existingBookId: existingTitleAuthorMap.get(key),
+          });
           continue;
         }
       }
@@ -215,18 +237,19 @@ export class LibraryScanService {
         parsedSeries: parsed.series,
         fileCount: folder.audioFileCount,
         totalSize: folder.totalSize,
+        isDuplicate: false,
       });
     }
 
+    const duplicateCount = discoveries.filter((d) => d.isDuplicate).length;
     this.log.info(
-      { discoveries: discoveries.length, skippedDuplicates, totalFolders: folders.length },
+      { discoveries: discoveries.length, duplicateCount, totalFolders: folders.length },
       'Directory scan complete',
     );
 
     return {
       discoveries,
       totalFolders: folders.length,
-      skippedDuplicates,
     };
   }
 
@@ -449,11 +472,13 @@ export class LibraryScanService {
 
     for (const item of items) {
       try {
-        // Duplicate check
-        const existing = await this.bookService.findDuplicate(item.title, item.authorName ? [{ name: item.authorName }] : undefined);
-        if (existing) {
-          this.log.debug({ title: item.title }, 'Skipping duplicate during import');
-          continue;
+        // Duplicate safety-net check (bypassed when forceImport is explicitly set)
+        if (!item.forceImport) {
+          const existing = await this.bookService.findDuplicate(item.title, item.authorName ? [{ name: item.authorName }] : undefined);
+          if (existing) {
+            this.log.debug({ title: item.title }, 'Skipping duplicate during import');
+            continue;
+          }
         }
 
         this.log.debug(

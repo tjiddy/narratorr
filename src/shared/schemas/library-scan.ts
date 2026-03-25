@@ -24,6 +24,8 @@ export const importConfirmItemSchema = z.object({
   asin: z.string().optional(),
   // BookMetadata pass-through — validated upstream by the metadata provider, not here
   metadata: z.unknown().optional(),
+  // When true, bypasses the title+author safety-net duplicate check in confirmImport()
+  forceImport: z.boolean().optional(),
 });
 
 export const importSingleBodySchema = importConfirmItemSchema.extend({
