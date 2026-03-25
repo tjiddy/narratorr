@@ -1041,6 +1041,91 @@ describe('LibraryPage', () => {
       });
     });
 
+    it('coerces sort to Date Added (desc) when switching from table to grid with quality sort active', async () => {
+      mockLibraryData(mockBooks);
+      const user = userEvent.setup();
+      renderWithProviders(<LibraryPage />);
+      await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+      await user.click(screen.getByLabelText('Table view'));
+      await waitFor(() => { expect(screen.getByRole('button', { name: 'Sort by Quality' })).toBeInTheDocument(); });
+      await user.click(screen.getByRole('button', { name: 'Sort by Quality' }));
+
+      await user.click(screen.getByLabelText('Grid view'));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /date added.*newest/i })).toBeInTheDocument();
+      });
+    });
+
+    it('coerces sort to Date Added (desc) when switching from table to grid with size sort active', async () => {
+      mockLibraryData(mockBooks);
+      const user = userEvent.setup();
+      renderWithProviders(<LibraryPage />);
+      await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+      await user.click(screen.getByLabelText('Table view'));
+      await waitFor(() => { expect(screen.getByRole('button', { name: 'Sort by Size' })).toBeInTheDocument(); });
+      await user.click(screen.getByRole('button', { name: 'Sort by Size' }));
+
+      await user.click(screen.getByLabelText('Grid view'));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /date added.*newest/i })).toBeInTheDocument();
+      });
+    });
+
+    it('coerces sort to Date Added (desc) when switching from table to grid with format sort active', async () => {
+      mockLibraryData(mockBooks);
+      const user = userEvent.setup();
+      renderWithProviders(<LibraryPage />);
+      await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+      await user.click(screen.getByLabelText('Table view'));
+      await waitFor(() => { expect(screen.getByRole('button', { name: 'Sort by Format' })).toBeInTheDocument(); });
+      await user.click(screen.getByRole('button', { name: 'Sort by Format' }));
+
+      await user.click(screen.getByLabelText('Grid view'));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /date added.*newest/i })).toBeInTheDocument();
+      });
+    });
+
+    it('does not change sort when switching from table to grid with title sort active', async () => {
+      mockLibraryData(mockBooks);
+      const user = userEvent.setup();
+      renderWithProviders(<LibraryPage />);
+      await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+      await user.click(screen.getByLabelText('Table view'));
+      await waitFor(() => { expect(screen.getByRole('button', { name: 'Sort by Title' })).toBeInTheDocument(); });
+      await user.click(screen.getByRole('button', { name: 'Sort by Title' }));
+
+      await user.click(screen.getByLabelText('Grid view'));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /title.*z.*a/i })).toBeInTheDocument();
+      });
+    });
+
+    it('toolbar dropdown in table view shows only the five allowed sort fields (no Quality/Size/Format)', async () => {
+      mockLibraryData(mockBooks);
+      const user = userEvent.setup();
+      renderWithProviders(<LibraryPage />);
+      await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+      await user.click(screen.getByLabelText('Table view'));
+      await waitFor(() => { expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'true'); });
+
+      await user.click(screen.getByRole('button', { name: /^Date Added \(Newest\)$/i }));
+
+      expect(screen.queryByRole('option', { name: /quality/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('option', { name: /size/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('option', { name: /format/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('option', { name: /date added.*newest/i })).toBeInTheDocument();
+    });
+
     it('selection state clears when switching to grid view', async () => {
       mockLibraryData(mockBooks);
       const user = userEvent.setup();
