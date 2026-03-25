@@ -22,9 +22,9 @@ describe('EmptyLibraryState', () => {
     expect(link).toHaveAttribute('href', '/import');
   });
 
-  it('renders Discover Books link pointing to /search', () => {
+  it('renders Add a Book link pointing to /search', () => {
     renderWithProviders(<EmptyLibraryState />);
-    const link = screen.getByText('Discover Books').closest('a');
+    const link = screen.getByText('Add a Book').closest('a');
     expect(link).toHaveAttribute('href', '/search');
   });
 });

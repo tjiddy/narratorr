@@ -136,8 +136,8 @@ describe('LibraryPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Manual Import')).toBeInTheDocument();
       expect(screen.getByText('Manual Import').closest('a')).toHaveAttribute('href', '/import');
-      expect(screen.getByText('Discover Books')).toBeInTheDocument();
-      expect(screen.getByText('Discover Books').closest('a')).toHaveAttribute('href', '/search');
+      expect(screen.getByText('Add a Book')).toBeInTheDocument();
+      expect(screen.getByText('Add a Book').closest('a')).toHaveAttribute('href', '/search');
     });
   });
 

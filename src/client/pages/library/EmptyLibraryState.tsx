@@ -35,7 +35,7 @@ export function EmptyLibraryState() {
           className="inline-flex items-center gap-2 px-6 py-3 glass-card font-medium rounded-xl hover:border-primary/30 hover:text-primary transition-all duration-200 focus-ring"
         >
           <SearchIcon className="w-4 h-4" />
-          Discover Books
+          Add a Book
         </Link>
       </div>
     </div>
