@@ -599,6 +599,24 @@ describe('RecyclingBinService JSON array storage (issue #79)', () => {
     ]);
   });
 
+  it('restore() passes comma-containing author name intact to syncAuthors (round-trip)', async () => {
+    const entry = createMockDbRecyclingBinEntry({
+      id: 1,
+      authorName: ['Jordan, Robert'],
+      narrator: null,
+      originalPath: '/audiobooks/test',
+      recyclePath: './config/recycle/1',
+    });
+    db.onSelect([entry], []);
+    db.onInsert([createMockDbBook({ id: 99 })]);
+
+    await service.restore(1);
+
+    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [
+      { name: 'Jordan, Robert', asin: undefined },
+    ]);
+  });
+
   it('restore() on record with authorName = null → skips author junction rebuild gracefully', async () => {
     const entry = createMockDbRecyclingBinEntry({
       id: 1,
