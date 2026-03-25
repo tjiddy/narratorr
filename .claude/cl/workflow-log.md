@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #104 Manual import fails when source is in library — same-path copy and missing events — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #109
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 28 new tests
+- Quality gate runs: 3 (pass on attempt 3 — complexity lint then typecheck caught in attempts 1-2)
+- Fix iterations: 3 (complexity violation from try/catch → extracted enrichImportedBook helper; TypeScript error from `duration?: undefined` → `?? null`; blast-radius TS errors at 2 other constructor sites)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: spec was very precise with payload contract and narrator snapshot rules; plan phase identified all 5 touch points correctly; same-path detection and event injection were straightforward once the constructor was updated
+- Friction / issues encountered: (1) `vi.fn().mockReturnThis()` chain broke when captured and called standalone — tests for the DB failure path had to be rewritten to use `enrichBookFromAudio.mockRejectedValueOnce()` instead; (2) extracting `enrichImportedBook` to fix complexity created a TS error because `book.duration` was `number | null | undefined` but the parameter accepted `number | null`; (3) two existing `LibraryScanService` constructor calls elsewhere in the test file needed the new 6th parameter (Fixture Blast Radius note in the spec caught one)
+
+### Token efficiency
+- Highest-token actions: two Explore subagents (plan + coverage review), self-review subagent
+- Avoidable waste: the `mockReturnThis()` trap required reading the test helpers + debugging 3 test failures before recognizing the pattern — a learning file would have saved this
+- Suggestions: when writing failure-path tests that require breaking DB chain mocks, prefer `enrichBookFromAudio.mockRejectedValueOnce()` over intercepting `.set()` directly
+
+### Infrastructure gaps
+- Repeated workarounds: the two-step git push (using `$GH_TOKEN` env var manually) was needed because the configured remote token was stale — this is the same workaround used in prior issues
+- Missing tooling / config: auto-refresh of git remote URL when `gh auth` token is valid but the baked-in token in the remote URL is not
+- Unresolved debt: `importSingleBook()` failure test uses null metadata so the narrator-in-catch-block behavior is not actually tested with real metadata (added to debt.md)
+
+### Wish I'd Known
+1. `vi.fn().mockReturnThis()` breaks silently when called standalone — always trigger DB failures via higher-level mocks (`enrichBookFromAudio.mockRejectedValueOnce()`) rather than intercepting chain methods (see `mock-returnthis-breaks-when-called-standalone.md`)
+2. When extracting code to a new helper method to reduce complexity, watch for `optional?: T` parameters that become `T | undefined` — they may not be assignable to `T | null` expected by callee signatures; add `?? null` coercions explicitly
+3. The self-review subagent is worth running — it caught the `narratorName: null` hardcode in the catch block that all tests missed because the failure test used `null` metadata (see `fire-and-forget-event-import_failed-narrator-from-meta.md`)
+
 ## #93 Fill remaining frontend test coverage gaps — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #107
