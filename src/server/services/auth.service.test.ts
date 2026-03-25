@@ -2,8 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 vi.mock('node:crypto', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:crypto')>();
-  return { ...actual, timingSafeEqual: vi.fn(actual.timingSafeEqual) };
+  const actual = await importOriginal();
+  const mod = actual as Record<string, unknown> & { timingSafeEqual: typeof timingSafeEqual };
+  return { ...mod, timingSafeEqual: vi.fn(mod.timingSafeEqual) };
 });
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';

@@ -703,7 +703,7 @@ describe('LibrarySettingsSection', () => {
 
       await waitFor(() => expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}'));
 
-      const folderInput = screen.getByPlaceholderText('{author}/{title}');
+      const folderInput = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
       // Focus input — cursor lands at end of value
       await user.click(folderInput);
       const cursorPos = folderInput.value.length; // 15 for '{author}/{title}'
