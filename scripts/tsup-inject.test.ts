@@ -13,7 +13,7 @@ describe('tsup GIT_COMMIT build-time injection', () => {
   const bundlePath = resolve('dist/server/index.js');
 
   it('inlines provided GIT_COMMIT value into emitted server bundle', () => {
-    const result = spawnSync('pnpm', ['build:server'], {
+    const result = spawnSync('pnpm', ['build:server'], { shell: true,
       env: { ...process.env, GIT_COMMIT: 'testsha1' },
       encoding: 'utf-8',
       timeout: 60_000,
@@ -28,7 +28,7 @@ describe('tsup GIT_COMMIT build-time injection', () => {
 
   it('inlines full 40-char GIT_COMMIT value into emitted server bundle', () => {
     const fullSha = 'abc1234def456789abc1234def456789abc12345';
-    const result = spawnSync('pnpm', ['build:server'], {
+    const result = spawnSync('pnpm', ['build:server'], { shell: true,
       env: { ...process.env, GIT_COMMIT: fullSha },
       encoding: 'utf-8',
       timeout: 60_000,
@@ -44,7 +44,7 @@ describe('tsup GIT_COMMIT build-time injection', () => {
     const env = { ...process.env };
     delete env.GIT_COMMIT;
 
-    const result = spawnSync('pnpm', ['build:server'], {
+    const result = spawnSync('pnpm', ['build:server'], { shell: true,
       env,
       encoding: 'utf-8',
       timeout: 60_000,
