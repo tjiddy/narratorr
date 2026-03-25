@@ -236,6 +236,60 @@ describe('Layout', () => {
 
       expect(screen.queryByText('Discover')).not.toBeInTheDocument();
     });
+
+    it('HealthIndicator follows Settings link and is the final nav control (discovery disabled)', async () => {
+      mockCounts(0);
+      mockAuth('forms');
+      mockApi.getHealthSummary.mockResolvedValue({ state: 'error' });
+      vi.mocked(api.getSettings).mockResolvedValue(createMockSettings());
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('health-indicator')).toBeInTheDocument();
+      });
+
+      const nav = screen.getByRole('navigation');
+      const settingsLink = screen.getByRole('link', { name: /^settings$/i });
+      const healthIndicator = screen.getByTestId('health-indicator');
+
+      // HealthIndicator must follow Settings link in DOM order
+      expect(
+        settingsLink.compareDocumentPosition(healthIndicator) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+
+      // HealthIndicator must be the final interactive nav control — no trailing control after it
+      const interactiveControls = Array.from(nav.querySelectorAll('a, button'));
+      expect(interactiveControls[interactiveControls.length - 1]).toBe(healthIndicator);
+    });
+
+    it('HealthIndicator follows Settings link and is the final nav control (discovery enabled)', async () => {
+      mockCounts(0);
+      mockAuth('forms');
+      mockApi.getHealthSummary.mockResolvedValue({ state: 'error' });
+      vi.mocked(api.getSettings).mockResolvedValue(
+        createMockSettings({ discovery: { enabled: true, intervalHours: 24, maxSuggestionsPerAuthor: 5 } }),
+      );
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('health-indicator')).toBeInTheDocument();
+      });
+
+      const nav = screen.getByRole('navigation');
+      const settingsLink = screen.getByRole('link', { name: /^settings$/i });
+      const healthIndicator = screen.getByTestId('health-indicator');
+
+      // HealthIndicator must follow Settings link in DOM order
+      expect(
+        settingsLink.compareDocumentPosition(healthIndicator) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+
+      // HealthIndicator must be the final interactive nav control — no trailing control after it
+      const interactiveControls = Array.from(nav.querySelectorAll('a, button'));
+      expect(interactiveControls[interactiveControls.length - 1]).toBe(healthIndicator);
+    });
   });
 
   describe('update banner integration', () => {
