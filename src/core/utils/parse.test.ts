@@ -339,6 +339,26 @@ describe('formatBytes', () => {
   it('rounds to 2 decimal places', () => {
     expect(formatBytes(1234567)).toBe('1.18 MB');
   });
+
+  it('returns 0 B for negative input', () => {
+    expect(formatBytes(-1)).toBe('0 B');
+  });
+
+  it('returns 0 B for large negative input', () => {
+    expect(formatBytes(-1000)).toBe('0 B');
+  });
+
+  it('returns 0 B for NaN input', () => {
+    expect(formatBytes(NaN)).toBe('0 B');
+  });
+
+  it('returns 0 B for Infinity input', () => {
+    expect(formatBytes(Infinity)).toBe('0 B');
+  });
+
+  it('preserves 0 B output for zero after guard is added', () => {
+    expect(formatBytes(0)).toBe('0 B');
+  });
 });
 
 describe('isMultiPartUsenetPost', () => {
