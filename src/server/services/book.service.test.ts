@@ -640,28 +640,6 @@ describe('BookService', () => {
     });
   });
 
-  describe('search', () => {
-    it('returns matching books with authors and narrators', async () => {
-      // Batch-load pattern: 1 book query + 1 author batch + 1 narrator batch
-      db.select
-        .mockReturnValueOnce(mockDbChain([mockBook]))  // full books
-        .mockReturnValueOnce(mockDbChain([{ bookId: mockBook.id, author: mockAuthor, position: 0 }]))  // batch authors
-        .mockReturnValueOnce(mockDbChain([]));  // batch narrators
-
-      const result = await service.search('Way of Kings');
-      expect(result).toHaveLength(1);
-      expect(result[0].title).toBe('The Way of Kings');
-      expect(result[0].authors).toHaveLength(1);
-    });
-
-    it('returns empty array for no matches', async () => {
-      db.select.mockReturnValueOnce(mockDbChain([]));
-
-      const result = await service.search('nonexistent');
-      expect(result).toEqual([]);
-    });
-  });
-
   describe('create edge cases', () => {
     it('throws when book insert fails', async () => {
       // Book insert is first; author find-or-create happens in syncAuthors after
@@ -786,32 +764,6 @@ describe('BookService batch-load (N+1 fix)', () => {
     expect(results[0].narrators).toEqual([mockNarrator]);
   });
 
-  it('search() with multiple results issues exactly 3 DB queries total', async () => {
-    const book1 = createMockDbBook({ id: 1 });
-    const book2 = createMockDbBook({ id: 2, title: 'Words of Radiance' });
-    db.select
-      .mockReturnValueOnce(mockDbChain([book1, book2]))
-      .mockReturnValueOnce(mockDbChain([]))
-      .mockReturnValueOnce(mockDbChain([]));
-
-    await service.search('Stormlight');
-
-    expect(db.select).toHaveBeenCalledTimes(3);
-  });
-
-  it('search() returns BookWithAuthor[] with authors/narrators arrays populated', async () => {
-    const book1 = createMockDbBook({ id: 5 });
-    db.select
-      .mockReturnValueOnce(mockDbChain([book1]))
-      .mockReturnValueOnce(mockDbChain([{ bookId: 5, author: mockAuthor, position: 0 }]))
-      .mockReturnValueOnce(mockDbChain([]));
-
-    const results = await service.search('Kings');
-
-    expect(results).toHaveLength(1);
-    expect(results[0].authors).toEqual([mockAuthor]);
-    expect(results[0].narrators).toEqual([]);
-  });
 });
 
 describe('BookService.syncAuthors / syncNarrators', () => {

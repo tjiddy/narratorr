@@ -1,6 +1,6 @@
 import { rm } from 'node:fs/promises';
 import { cleanEmptyParents } from '../utils/paths.js';
-import { eq, and, like, desc, sql, inArray } from 'drizzle-orm';
+import { eq, and, sql, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
@@ -274,17 +274,6 @@ export class BookService {
       .select()
       .from(books)
       .where(and(eq(books.monitorForUpgrades, true), eq(books.status, 'imported')));
-
-    return this.batchLoadAuthorsNarrators(rows);
-  }
-
-  async search(query: string): Promise<BookWithAuthor[]> {
-    const rows = await this.db
-      .select()
-      .from(books)
-      .where(like(books.title, `%${query}%`))
-      .orderBy(desc(books.createdAt))
-      .limit(50);
 
     return this.batchLoadAuthorsNarrators(rows);
   }
