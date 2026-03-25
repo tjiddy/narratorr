@@ -1,4 +1,33 @@
 # Workflow Log
+## #85 Finalize many-to-many authors/narrators — recycling bin, N+1, dead code — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #88
+
+### Metrics
+- Files changed: 4 | Tests added: 2, deleted: 4 (search test blocks), modified: 0
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Codebase audit during /elaborate surfaced that 7 of 9 AC items were already implemented from #79, making this a fast cleanup issue. The /respond-to-spec-review flow correctly identified the dead code test blast radius as a gap before implementation started.
+- Friction / issues encountered: State directory for /handoff did not exist when stop hook blocked restart — had to mkdir -p manually. Happens when /implement is interrupted between phases.
+
+### Token efficiency
+- Highest-token actions: Two spec review rounds consumed significant context before implementation — appropriate given pre-existing state complexity
+- Avoidable waste: none
+- Suggestions: For cleanup issues where most work is already done, /elaborate should flag reduced scope upfront
+
+### Infrastructure gaps
+- Repeated workarounds: State directory creation on handoff restart (mkdir -p .claude/state/handoff-<id>) — stop hook blocks but state dir may not exist after restart
+- Missing tooling / config: none
+- Unresolved debt: none introduced
+
+### Wish I'd Known
+1. "Zero production callers" does not mean "zero test callers" — blast radius for dead code removal must always grep test files too, not just source files
+2. SQLite JSON-mode columns (text(col, { mode: json })) produce no SQL diff on pnpm db:generate — the mode is ORM-only serialization; confirmed "No schema changes, nothing to migrate"
+3. When most AC items are already done from a prior issue, the real work is adding missing test cases — avoid over-planning
+
 ## #80 Fix file browser modal opacity and scan edit narrator persistence — 2026-03-24
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #86
