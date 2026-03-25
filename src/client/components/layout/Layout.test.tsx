@@ -86,12 +86,13 @@ describe('Layout', () => {
     expect(paths.some(p => p.getAttribute('d') === 'M5 12h14')).toBe(true);
   });
 
-  it('renders theme toggle button', () => {
+  it('does not render theme toggle button in nav bar', () => {
     mockCounts(0);
     mockAuth();
     renderWithProviders(<Layout />);
 
-    expect(screen.getByTitle(/switch to dark mode/i)).toBeInTheDocument();
+    expect(screen.queryByTitle(/switch to dark mode/i)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/switch to light mode/i)).not.toBeInTheDocument();
   });
 
   it('shows badge when active downloads > 0', () => {
@@ -120,16 +121,6 @@ describe('Layout', () => {
     expect(screen.getByLabelText('1 active download')).toBeInTheDocument();
   });
 
-  it('toggles theme on button click', async () => {
-    mockCounts(0);
-    mockAuth();
-    renderWithProviders(<Layout />);
-
-    const toggleButton = screen.getByTitle(/switch to dark mode/i);
-    await userEvent.click(toggleButton);
-
-    expect(screen.getByTitle(/switch to light mode/i)).toBeInTheDocument();
-  });
 
   describe('auth warning banner', () => {
     it('banner visible when mode = "none"', () => {
