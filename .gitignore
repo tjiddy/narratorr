@@ -25,6 +25,9 @@ build/
 .DS_Store
 Thumbs.db
 
+# Claude auto-memory (belongs in ~/.claude/projects/, not repo)
+memory/
+
 # Logs
 *.log
 npm-debug.log*
