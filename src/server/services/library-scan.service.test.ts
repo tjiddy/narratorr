@@ -1421,18 +1421,65 @@ describe('LibraryScanService', () => {
       );
     });
 
-    it('imported event reason contains targetPath and mode keys', async () => {
+    it('imported event reason contains resolved targetPath and mode keys', async () => {
       await service.importSingleBook(
         { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
         null,
         'copy',
       );
 
+      // buildTargetPath mock returns '/library/Author/Title' (absolute — resolve is a no-op)
       expect(mockEventHistoryService.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          reason: expect.objectContaining({ targetPath: expect.any(String), mode: 'copy' }),
+          reason: expect.objectContaining({ targetPath: '/library/Author/Title', mode: 'copy' }),
         }),
       );
+    });
+
+    it('records import_failed event when bookService.create() throws (bookId is null)', async () => {
+      mockBookService.create.mockRejectedValueOnce(new Error('DB constraint'));
+
+      await expect(service.importSingleBook(
+        { path: '/audiobooks/Book', title: 'Book', authorName: 'Author' },
+        null,
+      )).rejects.toThrow('DB constraint');
+
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookId: null,
+          eventType: 'import_failed',
+          source: 'manual',
+          bookTitle: 'Book',
+          downloadId: null,
+        }),
+      );
+    });
+
+    it('eventHistory.create rejection on importSingleBook success does not throw', async () => {
+      mockEventHistoryService.create.mockRejectedValueOnce(new Error('Event DB down'));
+
+      const result = await service.importSingleBook(
+        { path: '/audiobooks/Author/Book', title: 'Book', authorName: 'Author' },
+        null,
+      );
+
+      expect(result).toEqual({ imported: true, bookId: 1, enriched: true });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ err: expect.any(Error) }),
+        expect.stringContaining('Failed to record'),
+      );
+    });
+
+    it('both import failure and event creation failure — throws the original import error', async () => {
+      vi.mocked(enrichBookFromAudio).mockRejectedValueOnce(new Error('Enrichment failed'));
+      mockEventHistoryService.create.mockRejectedValueOnce(new Error('Event DB down'));
+
+      await expect(service.importSingleBook(
+        { path: '/audiobooks/Book', title: 'Book', authorName: 'Author' },
+        null,
+      )).rejects.toThrow('Enrichment failed');
     });
 
     it('imported event downloadId is null', async () => {
@@ -1531,15 +1578,17 @@ describe('LibraryScanService', () => {
       });
     });
 
-    it('imported event reason contains targetPath and mode for background imports', async () => {
+    it('imported event reason contains resolved targetPath and mode for background imports', async () => {
       await service.confirmImport([
         { path: '/audiobooks/Book', title: 'Book', authorName: 'Author' },
       ], 'copy');
 
+      // The mock DB returns no book record for the select, so copyToLibrary is skipped
+      // and finalPath stays as item.path. resolve('/audiobooks/Book') is a no-op (already absolute).
       await vi.waitFor(() => {
         expect(mockEventHistoryService.create).toHaveBeenCalledWith(
           expect.objectContaining({
-            reason: expect.objectContaining({ targetPath: expect.any(String), mode: 'copy' }),
+            reason: expect.objectContaining({ targetPath: '/audiobooks/Book', mode: 'copy' }),
           }),
         );
       });
@@ -1572,6 +1621,23 @@ describe('LibraryScanService', () => {
         expect((mockDb as Record<string, ReturnType<typeof vi.fn>>).set).toHaveBeenCalledWith(
           expect.objectContaining({ status: 'imported' }),
         );
+      });
+    });
+
+    it('event recording failure on background failure still sets status: missing (fire-and-forget)', async () => {
+      vi.mocked(enrichBookFromAudio).mockRejectedValueOnce(new Error('Enrichment failed'));
+      mockEventHistoryService.create.mockRejectedValueOnce(new Error('Event DB down'));
+
+      await service.confirmImport([
+        { path: '/audiobooks/Book', title: 'Book' },
+      ]);
+
+      await vi.waitFor(() => {
+        const setCalls = (mockDb as Record<string, ReturnType<typeof vi.fn>>).set.mock.calls;
+        const missingCall = setCalls.find(
+          (call: unknown[]) => (call[0] as Record<string, string>).status === 'missing',
+        );
+        expect(missingCall).toBeDefined();
       });
     });
 

@@ -291,7 +291,23 @@ export class LibraryScanService {
     // If no metadata passed, look it up
     const meta = metadata !== undefined ? metadata : await this.lookupMetadata(item.title, item.authorName);
 
-    const book = await this.bookService.create(buildBookCreatePayload(item, meta, 'imported'));
+    // Create book record — record failure event if this throws (no bookId yet)
+    let book: Awaited<ReturnType<typeof this.bookService.create>>;
+    try {
+      book = await this.bookService.create(buildBookCreatePayload(item, meta, 'imported'));
+    } catch (error) {
+      this.eventHistory.create({
+        bookId: null,
+        bookTitle: item.title,
+        authorName: item.authorName ?? null,
+        narratorName: meta?.narrators?.[0] ?? null,
+        downloadId: null,
+        eventType: 'import_failed',
+        source: 'manual',
+        reason: { error: getErrorMessage(error, 'Import failed') },
+      }).catch(err => this.log.warn({ err }, 'Failed to record manual import failed event'));
+      throw error;
+    }
 
     try {
       const enriched = await this.enrichImportedBook(item, book, meta, mode);
@@ -360,7 +376,7 @@ export class LibraryScanService {
       downloadId: null,
       eventType: 'imported',
       source: 'manual',
-      reason: { targetPath: finalPath, mode: mode ?? 'pointer' },
+      reason: { targetPath: resolve(finalPath), mode: mode ?? 'pointer' },
     }).catch(err => this.log.warn({ err }, 'Failed to record manual import event'));
 
     this.log.info({ bookId: book.id, title: item.title, enriched: audioResult.enriched, mode: mode ?? 'pointer' }, 'Single book imported');
@@ -555,7 +571,7 @@ export class LibraryScanService {
       downloadId: null,
       eventType: 'imported',
       source: 'manual',
-      reason: { targetPath: finalPath, mode: mode ?? 'pointer' },
+      reason: { targetPath: resolve(finalPath), mode: mode ?? 'pointer' },
     }).catch(err => this.log.warn({ err }, 'Failed to record manual import event'));
   }
 
