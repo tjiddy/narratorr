@@ -302,7 +302,7 @@ export class LibraryScanService {
         bookId: book.id,
         bookTitle: item.title,
         authorName: item.authorName ?? null,
-        narratorName: null,
+        narratorName: meta?.narrators?.[0] ?? null,
         downloadId: null,
         eventType: 'import_failed',
         source: 'manual',
