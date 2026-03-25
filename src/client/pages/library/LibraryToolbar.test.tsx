@@ -327,6 +327,37 @@ describe('LibraryToolbar', () => {
     });
   });
 
+  describe('toolbar layout contract (search-first, overflow-last)', () => {
+    it('search input container is the first direct child of the toolbar row', () => {
+      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
+
+      const searchInput = screen.getByPlaceholderText('Search library...');
+      const searchContainer = searchInput.parentElement!;
+      const toolbarRow = searchContainer.parentElement!;
+
+      expect(toolbarRow.firstElementChild).toBe(searchContainer);
+    });
+
+    it('overflow trigger is the last direct child of the toolbar row', () => {
+      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
+
+      const searchInput = screen.getByPlaceholderText('Search library...');
+      const toolbarRow = searchInput.parentElement!.parentElement!;
+      const overflowTrigger = screen.getByRole('button', { name: /more actions/i });
+
+      expect(toolbarRow.lastElementChild).toContainElement(overflowTrigger);
+    });
+
+    it('search input container carries the min-w-[200px] width contract', () => {
+      renderWithProviders(<LibraryToolbar {...defaultProps()} />);
+
+      const searchInput = screen.getByPlaceholderText('Search library...');
+      const searchContainer = searchInput.parentElement!;
+
+      expect(searchContainer.className).toContain('min-w-[200px]');
+    });
+  });
+
   describe('view toggle (must remain top-level)', () => {
     it('view toggle is still rendered as a top-level element', () => {
       renderWithProviders(<LibraryToolbar {...defaultProps()} />);

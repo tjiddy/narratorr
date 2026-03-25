@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useRef } from 'react';
 import { ToolbarDropdown } from './ToolbarDropdown';
@@ -82,5 +82,80 @@ describe('ToolbarDropdown', () => {
 
     await user.keyboard('{Escape}');
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  describe('positioning', () => {
+    it('positions the portal panel at top/left derived from trigger getBoundingClientRect on open', () => {
+      const onClose = vi.fn();
+      const { rerender, getByTestId } = render(<Wrapper open={false} onClose={onClose} />);
+
+      const trigger = getByTestId('trigger');
+      vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+        bottom: 100, left: 50, top: 80, right: 150, width: 100, height: 20,
+        x: 50, y: 80, toJSON: () => ({}),
+      } as DOMRect);
+
+      rerender(<Wrapper open={true} onClose={onClose} />);
+
+      // panel is portaled to body; its wrapper div carries the computed position
+      const portalWrapper = getByTestId('panel').parentElement!;
+      // top = rect.bottom + window.scrollY + 4 = 100 + 0 + 4 = 104
+      // left = rect.left + window.scrollX     = 50  + 0     = 50
+      expect(portalWrapper).toHaveStyle({ top: '104px', left: '50px' });
+    });
+
+    it('recomputes panel position on window scroll', async () => {
+      const onClose = vi.fn();
+      const { rerender, getByTestId } = render(<Wrapper open={false} onClose={onClose} />);
+
+      const trigger = getByTestId('trigger');
+      vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+        bottom: 100, left: 50, top: 80, right: 150, width: 100, height: 20,
+        x: 50, y: 80, toJSON: () => ({}),
+      } as DOMRect);
+
+      rerender(<Wrapper open={true} onClose={onClose} />);
+
+      // Simulate the trigger moving after a scroll (different bottom position)
+      vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+        bottom: 140, left: 50, top: 120, right: 150, width: 100, height: 20,
+        x: 50, y: 120, toJSON: () => ({}),
+      } as DOMRect);
+
+      await act(async () => {
+        window.dispatchEvent(new Event('scroll', { bubbles: true }));
+      });
+
+      const portalWrapper = getByTestId('panel').parentElement!;
+      // top = 140 + 0 + 4 = 144
+      expect(portalWrapper).toHaveStyle({ top: '144px', left: '50px' });
+    });
+
+    it('recomputes panel position on window resize', async () => {
+      const onClose = vi.fn();
+      const { rerender, getByTestId } = render(<Wrapper open={false} onClose={onClose} />);
+
+      const trigger = getByTestId('trigger');
+      vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+        bottom: 100, left: 50, top: 80, right: 150, width: 100, height: 20,
+        x: 50, y: 80, toJSON: () => ({}),
+      } as DOMRect);
+
+      rerender(<Wrapper open={true} onClose={onClose} />);
+
+      // Simulate the trigger moving after a resize (different left position)
+      vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+        bottom: 100, left: 80, top: 80, right: 180, width: 100, height: 20,
+        x: 80, y: 80, toJSON: () => ({}),
+      } as DOMRect);
+
+      await act(async () => {
+        window.dispatchEvent(new Event('resize'));
+      });
+
+      const portalWrapper = getByTestId('panel').parentElement!;
+      // left = 80 + 0 = 80
+      expect(portalWrapper).toHaveStyle({ top: '104px', left: '80px' });
+    });
   });
 });
