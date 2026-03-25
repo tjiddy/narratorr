@@ -1,19 +1,21 @@
+import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ImportCard, ImportSummaryBar, BookEditModal } from '@/components/manual-import';
-import { PathInput } from '@/components/PathInput';
 import {
-  AlertCircleIcon,
-  LoadingSpinner,
   ArrowLeftIcon,
   CheckIcon,
 } from '@/components/icons';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useManualImport } from './useManualImport.js';
+import { useFolderHistory } from './useFolderHistory.js';
+import { PathStep } from './PathStep.js';
 
 // eslint-disable-next-line complexity -- 3-step page with 21 hook props, path input, and conditional step rendering
 export function ManualImportPage() {
   const { data: settings } = useQuery({ queryKey: queryKeys.settings(), queryFn: api.getSettings });
+
+  const folderHistory = useFolderHistory();
 
   const {
     step, scanPath, setScanPath, scanError, setScanError, rows,
@@ -23,7 +25,15 @@ export function ManualImportPage() {
     scanMutation, importMutation,
     selectedCount, selectedUnmatchedCount, readyCount, reviewCount,
     noMatchCount, pendingCount, allSelected,
-  } = useManualImport();
+  } = useManualImport({ onScanSuccess: folderHistory.addRecent });
+
+  // Seed library root as default favorite on first use
+  useEffect(() => {
+    if (settings?.library?.path) {
+      folderHistory.seedLibraryRoot(settings.library.path);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- seedLibraryRoot is stable; only re-run when library path changes
+  }, [settings?.library?.path]);
 
   return (
     <div className="space-y-6">
@@ -31,6 +41,7 @@ export function ManualImportPage() {
       <div className="animate-fade-in-up">
         <div className="flex items-center gap-3 mb-1">
           <button
+            type="button"
             onClick={handleBack}
             className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors focus-ring"
             aria-label="Back"
@@ -50,37 +61,16 @@ export function ManualImportPage() {
 
       {/* Step 1: Path Input */}
       {step === 'path' && (
-        <div className="max-w-xl space-y-4 animate-fade-in-up stagger-1">
-          <PathInput
-            value={scanPath}
-            onChange={(path) => { setScanPath(path); setScanError(null); }}
-            placeholder="/path/to/audiobooks"
-            fallbackBrowsePath={settings?.library?.path || '/'}
-            onKeyDown={(e) => e.key === 'Enter' && handleScan()}
-            autoFocus
-          />
-
-          {scanError && (
-            <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-amber-500/5 border border-amber-500/20">
-              <AlertCircleIcon className="w-4 h-4 mt-0.5 shrink-0 text-amber-400" />
-              <span className="text-sm text-amber-300/90">{scanError}</span>
-            </div>
-          )}
-
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-muted-foreground/70">
-              Point to a folder containing audiobook subfolders (Author/Title, etc.)
-            </p>
-            <button
-              onClick={handleScan}
-              disabled={!scanPath.trim() || scanMutation.isPending}
-              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
-            >
-              {scanMutation.isPending && <LoadingSpinner className="w-3.5 h-3.5" />}
-              {scanMutation.isPending ? 'Scanning...' : 'Scan'}
-            </button>
-          </div>
-        </div>
+        <PathStep
+          scanPath={scanPath}
+          setScanPath={setScanPath}
+          setScanError={setScanError}
+          scanError={scanError}
+          handleScan={handleScan}
+          isPending={scanMutation.isPending}
+          libraryPath={settings?.library?.path ?? ''}
+          folderHistory={folderHistory}
+        />
       )}
 
       {/* Step 2: Review Cards */}
@@ -90,6 +80,7 @@ export function ManualImportPage() {
             {/* Select all header */}
             <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/5">
               <button
+                type="button"
                 onClick={handleToggleAll}
                 className={`w-4 h-4 rounded border transition-all flex items-center justify-center ${
                   allSelected

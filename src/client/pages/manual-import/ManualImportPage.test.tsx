@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ManualImportPage } from './ManualImportPage';
 import type { MatchResult, DiscoveredBook, ScanResult } from '@/lib/api';
+import type { FolderEntry } from './useFolderHistory.js';
 
 // Track match job state for controlled polling
 let mockMatchResults: MatchResult[] = [];
@@ -51,6 +52,29 @@ vi.mock('@/lib/api', async () => {
 
 vi.mock('@/hooks/useEscapeKey', () => ({
   useEscapeKey: vi.fn(),
+}));
+
+// Track folder history state for controlled rendering
+let mockFavorites: FolderEntry[] = [];
+let mockRecents: FolderEntry[] = [];
+const mockAddRecent = vi.fn();
+const mockPromoteToFavorite = vi.fn();
+const mockDemoteToRecent = vi.fn();
+const mockRemoveFavorite = vi.fn();
+const mockRemoveRecent = vi.fn();
+const mockSeedLibraryRoot = vi.fn();
+
+vi.mock('./useFolderHistory.js', () => ({
+  useFolderHistory: () => ({
+    favorites: mockFavorites,
+    recents: mockRecents,
+    addRecent: mockAddRecent,
+    promoteToFavorite: mockPromoteToFavorite,
+    demoteToRecent: mockDemoteToRecent,
+    removeFavorite: mockRemoveFavorite,
+    removeRecent: mockRemoveRecent,
+    seedLibraryRoot: mockSeedLibraryRoot,
+  }),
 }));
 
 vi.mock('@/hooks/useLibrary', () => ({
@@ -144,6 +168,8 @@ describe('ManualImportPage', () => {
     mockIsMatching = false;
     mockStartMatching = vi.fn();
     mockCancelMatching = vi.fn();
+    mockFavorites = [];
+    mockRecents = [];
     mockGetSettings.mockResolvedValue({ library: { path: '/audiobooks', folderFormat: '{author}/{title}' } });
     mockBrowseDirectory.mockResolvedValue({ dirs: ['audiobooks', 'media'], parent: '/' });
   });
@@ -693,6 +719,133 @@ describe('ManualImportPage', () => {
       await waitFor(() => {
         expect(mockScanDirectory).toHaveBeenCalledWith('/audio');
       });
+    });
+  });
+
+  describe('folder history sections', () => {
+    it('shows Favorite Folders and Recent Folders section headers even when lists are empty', () => {
+      renderPage();
+      expect(screen.getByText('Favorite Folders')).toBeInTheDocument();
+      expect(screen.getByText('Recent Folders')).toBeInTheDocument();
+      expect(screen.getByText('No favorite folders yet')).toBeInTheDocument();
+      expect(screen.getByText('No recent folders yet')).toBeInTheDocument();
+    });
+
+    it('shows Favorite Folders and Recent Folders sections with entries', () => {
+      mockFavorites = [{ path: '/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
+      mockRecents = [{ path: '/podcasts', lastUsedAt: '2026-01-02T00:00:00.000Z' }];
+      renderPage();
+      expect(screen.getByText('Favorite Folders')).toBeInTheDocument();
+      expect(screen.getByText('Recent Folders')).toBeInTheDocument();
+      expect(screen.getByText('/audiobooks')).toBeInTheDocument();
+      expect(screen.getByText('/podcasts')).toBeInTheDocument();
+    });
+
+    it('clicking a favorite folder entry populates the path input', async () => {
+      mockFavorites = [{ path: '/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
+      renderPage();
+      await userEvent.click(screen.getByRole('button', { name: '/audiobooks' }));
+      const input = screen.getByPlaceholderText('/path/to/audiobooks') as HTMLInputElement;
+      expect(input.value).toBe('/audiobooks');
+    });
+
+    it('clicking a recent folder entry populates the path input', async () => {
+      mockRecents = [{ path: '/podcasts', lastUsedAt: '2026-01-02T00:00:00.000Z' }];
+      renderPage();
+      await userEvent.click(screen.getByRole('button', { name: '/podcasts' }));
+      const input = screen.getByPlaceholderText('/path/to/audiobooks') as HTMLInputElement;
+      expect(input.value).toBe('/podcasts');
+    });
+
+    it('completing a scan adds the scanned path to recent folders', async () => {
+      mockScanDirectory.mockResolvedValueOnce({
+        discoveries: [makeDiscoveredBook()],
+        totalFolders: 1,
+        skippedDuplicates: 0,
+      } satisfies ScanResult);
+      renderPage();
+      await userEvent.type(screen.getByPlaceholderText('/path/to/audiobooks'), '/media/audiobooks');
+      await userEvent.click(screen.getByRole('button', { name: 'Scan' }));
+      await screen.findByText(/selected/);
+      expect(mockAddRecent).toHaveBeenCalledWith('/media/audiobooks');
+    });
+
+    it('completing a scan on a favorited path also updates recents', async () => {
+      mockFavorites = [{ path: '/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
+      mockScanDirectory.mockResolvedValueOnce({
+        discoveries: [makeDiscoveredBook()],
+        totalFolders: 1,
+        skippedDuplicates: 0,
+      } satisfies ScanResult);
+      renderPage();
+      await userEvent.click(screen.getByRole('button', { name: '/audiobooks' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Scan' }));
+      await screen.findByText(/selected/);
+      expect(mockAddRecent).toHaveBeenCalledWith('/audiobooks');
+    });
+
+    it('settings loading state renders sections without crashing, does not seed library root', () => {
+      mockGetSettings.mockReturnValue(new Promise(() => {})); // never resolves
+      renderPage();
+      expect(screen.getByPlaceholderText('/path/to/audiobooks')).toBeInTheDocument();
+      expect(mockSeedLibraryRoot).not.toHaveBeenCalled();
+    });
+
+    it('settings error state renders sections without crashing, does not seed library root', async () => {
+      mockGetSettings.mockRejectedValue(new Error('network error'));
+      renderPage();
+      expect(screen.getByPlaceholderText('/path/to/audiobooks')).toBeInTheDocument();
+      expect(mockSeedLibraryRoot).not.toHaveBeenCalled();
+    });
+
+    it('seeds library root when settings resolve with a library path', async () => {
+      mockGetSettings.mockResolvedValue({ library: { path: '/audiobooks', folderFormat: '{author}/{title}' } });
+      renderPage();
+      await waitFor(() => {
+        expect(mockSeedLibraryRoot).toHaveBeenCalledWith('/audiobooks');
+      });
+    });
+
+    it('renders formatted lastUsedAt date for recent folder entries', () => {
+      // 2026-03-05T12:00:00.000Z → "Mar 5, 2026" (toLocaleDateString pattern)
+      mockRecents = [{ path: '/podcasts', lastUsedAt: '2026-03-05T12:00:00.000Z' }];
+      renderPage();
+      // The formatted date is rendered in a span (shown on hover via group-hover CSS)
+      // but it's still in the DOM — assert the text node exists
+      const formatted = new Date('2026-03-05T12:00:00.000Z').toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      });
+      expect(screen.getByText(formatted)).toBeInTheDocument();
+    });
+
+    it('clicking unfavorite button on a favorite demotes it to recent', async () => {
+      mockFavorites = [{ path: '/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
+      renderPage();
+      await userEvent.click(screen.getByRole('button', { name: 'Unfavorite /audiobooks' }));
+      expect(mockDemoteToRecent).toHaveBeenCalledWith('/audiobooks');
+    });
+
+    it('clicking remove button on a favorite removes it', async () => {
+      mockFavorites = [{ path: '/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
+      renderPage();
+      await userEvent.click(screen.getByRole('button', { name: 'Remove favorite /audiobooks' }));
+      expect(mockRemoveFavorite).toHaveBeenCalledWith('/audiobooks');
+    });
+
+    it('clicking favorite button on a recent promotes it', async () => {
+      mockRecents = [{ path: '/podcasts', lastUsedAt: '2026-01-02T00:00:00.000Z' }];
+      renderPage();
+      await userEvent.click(screen.getByRole('button', { name: 'Favorite /podcasts' }));
+      expect(mockPromoteToFavorite).toHaveBeenCalledWith('/podcasts');
+    });
+
+    it('clicking remove button on a recent removes it', async () => {
+      mockRecents = [{ path: '/podcasts', lastUsedAt: '2026-01-02T00:00:00.000Z' }];
+      renderPage();
+      await userEvent.click(screen.getByRole('button', { name: 'Remove recent /podcasts' }));
+      expect(mockRemoveRecent).toHaveBeenCalledWith('/podcasts');
     });
   });
 });

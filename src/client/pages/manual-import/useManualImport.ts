@@ -9,8 +9,12 @@ import type { ImportRow, BookEditState } from '@/components/manual-import';
 
 export type Step = 'path' | 'review';
 
+interface UseManualImportOptions {
+  onScanSuccess?: (path: string) => void;
+}
+
 // eslint-disable-next-line max-lines-per-function -- orchestrates 5 mutations, 3 effects, 8 callbacks for import flow
-export function useManualImport() {
+export function useManualImport({ onScanSuccess }: UseManualImportOptions = {}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { results: matchResults, progress, isMatching, startMatching, cancel: cancelMatching } = useMatchJob();
@@ -68,7 +72,7 @@ export function useManualImport() {
 
   const scanMutation = useMutation({
     mutationFn: (path: string) => api.scanDirectory(path),
-    onSuccess: (result) => {
+    onSuccess: (result, path) => {
       if (result.discoveries.length === 0) {
         setScanError(
           result.skippedDuplicates > 0
@@ -100,6 +104,7 @@ export function useManualImport() {
         author: d.parsedAuthor || undefined,
       }));
       startMatching(candidates);
+      onScanSuccess?.(path);
     },
     onError: (error: Error) => {
       setScanError(error.message);
