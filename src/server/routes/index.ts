@@ -154,7 +154,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const taggingService = new TaggingService(db, settings, log, book);
   const importService = new ImportService(db, downloadClient, settings, log, remotePathMapping, book);
   const importOrchestrator = new ImportOrchestrator(importService, settings, log, notifier, taggingService, eventHistory, eventBroadcaster);
-  const libraryScan = new LibraryScanService(db, book, metadata, settings, log);
+  const libraryScan = new LibraryScanService(db, book, metadata, settings, log, eventHistory);
   const matchJob = new MatchJobService(metadata, log);
 
   const qualityGateService = new QualityGateService(db, log);

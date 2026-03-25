@@ -14,6 +14,8 @@ import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getPathSize } from '../utils/import-helpers.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
+import type { EventHistoryService } from './event-history.service.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 /** Minimum ratio of target/source file size for copy verification to pass. */
 const COPY_VERIFICATION_THRESHOLD = 0.99;
@@ -72,6 +74,7 @@ export class LibraryScanService {
     private metadataService: MetadataService,
     private settingsService: SettingsService,
     private log: FastifyBaseLogger,
+    private eventHistory: EventHistoryService,
   ) {}
 
   /**
@@ -350,6 +353,12 @@ export class LibraryScanService {
       },
       item.authorName ?? null,
     );
+
+    // Skip file operations when source already is the target (book already in library at correct path)
+    if (resolve(item.path) === resolve(targetPath)) {
+      this.log.info({ path: targetPath, mode }, 'Source and target are the same path — skipping file operation');
+      return targetPath;
+    }
 
     await mkdir(targetPath, { recursive: true });
     this.log.info({ source: item.path, target: targetPath, mode }, 'Copying files to library');

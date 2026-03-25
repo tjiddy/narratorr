@@ -5,6 +5,7 @@ import type { Db } from '../../db/index.js';
 import type { BookService } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
+import type { EventHistoryService } from './event-history.service.js';
 import { parseFolderStructure, LibraryScanService } from './library-scan.service.js';
 
 vi.mock('./enrichment-utils.js', () => ({
@@ -192,6 +193,7 @@ describe('LibraryScanService', () => {
     enrichBook: ReturnType<typeof vi.fn>;
   };
   let log: ReturnType<typeof createMockLogger>;
+  let mockEventHistoryService: { create: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -222,6 +224,9 @@ describe('LibraryScanService', () => {
       getBook: vi.fn().mockResolvedValue(null),
       enrichBook: vi.fn().mockResolvedValue(null),
     };
+    mockEventHistoryService = {
+      create: vi.fn().mockResolvedValue({}),
+    };
     log = createMockLogger();
     const mockSettingsService = createMockSettingsService({
       library: { path: '/library' },
@@ -232,6 +237,7 @@ describe('LibraryScanService', () => {
       inject<MetadataService>(mockMetadataService),
       inject<SettingsService>(mockSettingsService),
       log,
+      inject<EventHistoryService>(mockEventHistoryService),
     );
   });
 
@@ -1079,6 +1085,44 @@ describe('LibraryScanService', () => {
       expect(mkdir).not.toHaveBeenCalled();
       expect(cp).not.toHaveBeenCalled();
     });
+
+    it('skips cp when source and target resolve to the same path (copy mode)', async () => {
+      // buildTargetPath is mocked to return '/library/Author/Title'
+      const result = await service.importSingleBook(
+        { path: '/library/Author/Title', title: 'Title', authorName: 'Author' },
+        null,
+        'copy',
+      );
+
+      expect(result.imported).toBe(true);
+      expect(cp).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
+    });
+
+    it('skips cp and rm when source and target resolve to the same path (move mode)', async () => {
+      const result = await service.importSingleBook(
+        { path: '/library/Author/Title', title: 'Title', authorName: 'Author' },
+        null,
+        'move',
+      );
+
+      expect(result.imported).toBe(true);
+      expect(cp).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
+    });
+
+    it('proceeds with copy when source is inside library root but target path differs', async () => {
+      // Source is inside library but folder format would rename it
+      const result = await service.importSingleBook(
+        { path: '/library/old-folder-name', title: 'Title', authorName: 'Author' },
+        null,
+        'copy',
+      );
+
+      // buildTargetPath returns '/library/Author/Title' which differs from source
+      expect(result.imported).toBe(true);
+      expect(cp).toHaveBeenCalledWith('/library/old-folder-name', '/library/Author/Title', expect.anything());
+    });
   });
 
   // ============================================================================
@@ -1304,6 +1348,30 @@ describe('LibraryScanService', () => {
         expect(importedCalls).toHaveLength(2);
       });
     });
+  });
+
+  // ============================================================================
+  // event history — importSingleBook and background processing (issue #104)
+  // ============================================================================
+
+  describe('event history — importSingleBook', () => {
+    it.todo('records imported event on success with source: manual and downloadId: null');
+    it.todo('records imported event with narrator snapshot from resolved meta');
+    it.todo('records imported event with null narrator when metadata has no narrators (F7 positive path)');
+    it.todo('records import_failed event on failure without suppressing the thrown error');
+    it.todo('imported event reason contains targetPath and mode keys');
+    it.todo('imported event downloadId is null (not a download-based import)');
+  });
+
+  describe('event history — background import processing', () => {
+    it.todo('records imported event in processOneImport on success with source: manual');
+    it.todo('records imported event with narrator from item.metadata.narrators[0]');
+    it.todo('records import_failed event in processImportsInBackground catch block');
+    it.todo('both status: missing and import_failed event are set when background processing fails');
+    it.todo('imported event reason contains targetPath and mode for background imports');
+    it.todo('import_failed event reason contains error key with human-readable message');
+    it.todo('event recording failure does not break the background import flow (fire-and-forget)');
+    it.todo('pointer mode (no mode) records imported event with mode: pointer in reason');
   });
 
   // ============================================================================
