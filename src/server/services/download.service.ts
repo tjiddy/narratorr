@@ -3,7 +3,7 @@ import { type Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { downloads, books, indexers } from '../../db/schema.js';
 import { parseInfoHash, type DownloadProtocol } from '../../core/index.js';
-import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses, isTerminalStatus, getReplacableStatuses } from '../../shared/download-status-registry.js';
+import { getInProgressStatuses, getTerminalStatuses, getCompletedStatuses, isTerminalStatus, getReplaceableStatuses } from '../../shared/download-status-registry.js';
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import { type DownloadClientService } from './download-client.service.js';
 import { type CreateEventInput } from './event-history.service.js';
@@ -220,7 +220,7 @@ export class DownloadService {
     // Check for active downloads for this book
     if (params.bookId && !params.skipDuplicateCheck) {
       const allActive = await this.getActiveByBookId(params.bookId);
-      const replaceableSet = new Set<string>(getReplacableStatuses());
+      const replaceableSet = new Set<string>(getReplaceableStatuses());
       const replaceableActive = allActive.filter((dl) => replaceableSet.has(dl.status));
 
       if (replaceableActive.length > 0) {

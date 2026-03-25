@@ -132,7 +132,7 @@ export function getCompletedStatuses(): DownloadStatus[] {
  */
 const REPLACEABLE_STATUSES: DownloadStatus[] = ['queued', 'downloading', 'paused', 'checking', 'pending_review'];
 
-export function getReplacableStatuses(): DownloadStatus[] {
+export function getReplaceableStatuses(): DownloadStatus[] {
   return REPLACEABLE_STATUSES;
 }
 

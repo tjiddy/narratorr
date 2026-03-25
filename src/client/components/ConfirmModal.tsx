@@ -85,12 +85,14 @@ export function ConfirmModal({
         {/* Actions */}
         <div className="flex flex-col-reverse sm:flex-row gap-3">
           <button
+            type="button"
             onClick={onCancel}
             className="flex-1 px-4 py-3 text-sm font-medium border border-border rounded-xl hover:bg-muted transition-all focus-ring"
           >
             {cancelLabel}
           </button>
           <button
+            type="button"
             onClick={onConfirm}
             className="flex-1 px-4 py-3 text-sm font-medium bg-destructive text-destructive-foreground rounded-xl hover:opacity-90 transition-all focus-ring"
           >
