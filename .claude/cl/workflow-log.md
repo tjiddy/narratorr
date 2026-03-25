@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #99 Remove footer and Add Book empty state illustration — 2026-03-25
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #119
+
+### Metrics
+- Files changed: 5 (Layout.tsx, Layout.test.tsx, SearchResults.tsx, SearchResults.test.tsx, SearchPage.test.tsx)
+- Tests added/modified: 8 added, 6 deleted (net +2)
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 1 — removed BookOpenIcon import too aggressively; SearchTabBar in same file still used it; restored immediately
+
+### Workflow experience
+- What went smoothly: spec was well-formed after two review rounds; all code locations pinpointed before starting; red/green cycle clean for Layout and SearchResults
+- Friction: GitHub App installation token expired mid-handoff; had to manually re-derive it via _makeJwt + GitHub API since the lib auto-refresh only fires via gh() wrapper
+
+### Token efficiency
+- Highest-token actions: Explore subagents for elaboration and coverage review
+- Avoidable waste: Coverage review flagged 7 pre-existing gaps as untested behaviors — none were introduced by this PR; required judgment call to proceed
+- Suggestions: Coverage review prompt should distinguish new code added in diff from pre-existing code in changed files
+
+### Infrastructure gaps
+- Repeated workarounds: GitHub token refresh via manual JWT derivation (same pattern as #106)
+- Missing tooling: frontend-design skill not installed in this environment
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. EmptyState is only imported by SearchResults.tsx — spec wasted a review round on stale shared-component assumptions; always grep import count first
+2. BookOpenIcon was used by SearchTabBar inside SearchResults.tsx, not just the empty-state blocks — scan whole file for each removed symbol before deleting imports
+3. Layout viewport-fill requires asserting CSS classes directly (flex, flex-col, flex-1) — jsdom has no layout engine, structural class assertions are the only reliable safety net for flex contracts
+
+
 ## #106 Simplify library toolbar — status dropdown, actions menu, search-first layout — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #116
