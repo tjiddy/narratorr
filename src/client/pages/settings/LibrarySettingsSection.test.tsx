@@ -659,6 +659,9 @@ describe('LibrarySettingsSection', () => {
 
       await waitFor(() => expect(screen.getByPlaceholderText('{author} - {title}')).toHaveValue('{author}-{narrator}'));
 
+      // The watch-based warning is already visible (1 instance) before any submit attempt
+      expect(screen.getAllByText(/Template must include/).length).toBe(1);
+
       // Dirty the form so Save button appears
       const fileInput = screen.getByPlaceholderText('{author} - {title}');
       await user.tripleClick(fileInput);
@@ -667,8 +670,10 @@ describe('LibrarySettingsSection', () => {
       const saveBtn = await screen.findByRole('button', { name: /save/i });
       await user.click(saveBtn);
 
-      // Both watch-based real-time warning and Zod form error use the same message text
-      await waitFor(() => expect(screen.getAllByText(/Template must include/).length).toBeGreaterThanOrEqual(1));
+      // After submit: watch-based warning + resolver errors.fileFormat = 2 instances.
+      // The count increasing to 2 proves the submit-time errors.fileFormat render path fired,
+      // not just the pre-existing watch warning.
+      await waitFor(() => expect(screen.getAllByText(/Template must include/).length).toBe(2));
       expect(mockApi.updateSettings).not.toHaveBeenCalled();
     });
 
