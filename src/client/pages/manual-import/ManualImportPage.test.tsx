@@ -787,5 +787,33 @@ describe('ManualImportPage', () => {
       expect(() => renderPage()).not.toThrow();
       expect(screen.getByPlaceholderText('/path/to/audiobooks')).toBeInTheDocument();
     });
+
+    it('clicking unfavorite button on a favorite demotes it to recent', async () => {
+      mockFavorites = [{ path: '/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
+      renderPage();
+      await userEvent.click(screen.getByRole('button', { name: 'Unfavorite /audiobooks' }));
+      expect(mockDemoteToRecent).toHaveBeenCalledWith('/audiobooks');
+    });
+
+    it('clicking remove button on a favorite removes it', async () => {
+      mockFavorites = [{ path: '/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
+      renderPage();
+      await userEvent.click(screen.getByRole('button', { name: 'Remove favorite /audiobooks' }));
+      expect(mockRemoveFavorite).toHaveBeenCalledWith('/audiobooks');
+    });
+
+    it('clicking favorite button on a recent promotes it', async () => {
+      mockRecents = [{ path: '/podcasts', lastUsedAt: '2026-01-02T00:00:00.000Z' }];
+      renderPage();
+      await userEvent.click(screen.getByRole('button', { name: 'Favorite /podcasts' }));
+      expect(mockPromoteToFavorite).toHaveBeenCalledWith('/podcasts');
+    });
+
+    it('clicking remove button on a recent removes it', async () => {
+      mockRecents = [{ path: '/podcasts', lastUsedAt: '2026-01-02T00:00:00.000Z' }];
+      renderPage();
+      await userEvent.click(screen.getByRole('button', { name: 'Remove recent /podcasts' }));
+      expect(mockRemoveRecent).toHaveBeenCalledWith('/podcasts');
+    });
   });
 });
