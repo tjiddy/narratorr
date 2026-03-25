@@ -610,7 +610,26 @@ describe('SecuritySettings', () => {
   });
 
   describe('LocalBypassSection toggle (#82)', () => {
-    it.todo('toggle fires mutation, shows toast, and invalidates both auth.config and auth.status queries');
+    it('toggle fires mutation and invalidates both auth.config and auth.status queries', async () => {
+      (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, localBypass: true });
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByRole('checkbox', { name: /enable local bypass/i })).toBeInTheDocument());
+
+      // Clear call counts after initial load
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockClear();
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockClear();
+      (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, localBypass: true });
+      (api.getAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockStatus, localBypass: true });
+
+      await user.click(screen.getByRole('checkbox', { name: /enable local bypass/i }));
+
+      await waitFor(() => expect(api.updateAuthConfig).toHaveBeenCalledWith({ localBypass: true }));
+      // Both auth queries should be invalidated (refetched) on success
+      await waitFor(() => expect(api.getAuthConfig).toHaveBeenCalled());
+      await waitFor(() => expect(api.getAuthStatus).toHaveBeenCalled());
+    });
 
     it('toggling localBypass from false to true fires mutation and reflects checked state after refetch', async () => {
       (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ mode: 'none', apiKey: 'test-api-key-12345', localBypass: true });
