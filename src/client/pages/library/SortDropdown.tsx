@@ -34,7 +34,7 @@ const sortDirectionLabels: Record<SortField, DirectionLabel> = {
   format: { asc: 'A→Z', desc: 'Z→A' },
 };
 
-const sortFields: SortField[] = ['createdAt', 'title', 'author', 'narrator', 'series', 'quality', 'size', 'format'];
+const sortFields: SortField[] = ['createdAt', 'title', 'author', 'narrator', 'series'];
 const directions: SortDirection[] = ['desc', 'asc'];
 
 type SortOption = { field: SortField; direction: SortDirection; label: string };

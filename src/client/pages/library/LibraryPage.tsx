@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useLibrary, useBookStats } from '@/hooks/useLibrary';
 import { api, type BookWithAuthor } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
-import type { DisplayBook } from './helpers.js';
+import type { DisplayBook, SortField } from './helpers.js';
 import { useDeleteConfirmation } from '@/hooks/useDeleteConfirmation';
 import { LibraryModals } from './LibraryModals.js';
 import { LoadingSpinner } from '@/components/icons';
@@ -22,6 +22,7 @@ import { LibraryHeader } from './LibraryHeader.js';
 import { Pagination } from '@/components/Pagination';
 
 const VIEW_STORAGE_KEY = 'narratorr:library-view';
+const TABLE_ONLY_SORTS: SortField[] = ['quality', 'size', 'format'];
 
 function getInitialViewMode(): ViewMode {
   try {
@@ -72,10 +73,14 @@ export function LibraryPage() {
   const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
 
   const handleViewModeChange = useCallback((mode: ViewMode) => {
+    if (mode === 'grid' && TABLE_ONLY_SORTS.includes(filters.sortField)) {
+      filters.setSortField('createdAt');
+      filters.setSortDirection('desc');
+    }
     setViewMode(mode);
     try { localStorage.setItem(VIEW_STORAGE_KEY, mode); } catch { /* noop */ }
     if (mode === 'grid') bulk.clearSelection();
-  }, [bulk]);
+  }, [bulk, filters]);
 
   // Status counts and global action counts from stats endpoint
   const statusCounts = useMemo(() => {
