@@ -59,7 +59,7 @@ describe('SettingsService', () => {
       expect(result.library).toEqual({ path: '/custom', folderFormat: '{title}', fileFormat: '{author} - {title}' });
       // Other sections fall back to defaults
       expect(result.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 });
-      expect(result.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5 });
+      expect(result.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true });
       expect(result.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30 });
     });
 
@@ -264,7 +264,7 @@ describe('SettingsService', () => {
     });
 
     it('preserves existing deleteAfterImport and minSeedTime when patching minFreeSpaceGB', async () => {
-      const existingImport = { deleteAfterImport: true, minSeedTime: 120, minFreeSpaceGB: 5 };
+      const existingImport = { deleteAfterImport: true, minSeedTime: 120, minFreeSpaceGB: 5, redownloadFailed: true };
       db.select
         .mockReturnValueOnce(mockDbChain([{ key: 'import', value: existingImport }]))
         .mockReturnValueOnce(mockDbChain([]));
@@ -274,8 +274,8 @@ describe('SettingsService', () => {
 
       const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
       const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
-      expect(storedValue).toEqual({ deleteAfterImport: true, minSeedTime: 120, minFreeSpaceGB: 10 });
-      expect(result).toEqual({ deleteAfterImport: true, minSeedTime: 120, minFreeSpaceGB: 10 });
+      expect(storedValue).toEqual({ deleteAfterImport: true, minSeedTime: 120, minFreeSpaceGB: 10, redownloadFailed: true });
+      expect(result).toEqual({ deleteAfterImport: true, minSeedTime: 120, minFreeSpaceGB: 10, redownloadFailed: true });
     });
 
     it('stores falsy value 0, not the default', async () => {
