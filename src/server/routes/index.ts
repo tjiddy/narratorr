@@ -28,6 +28,7 @@ import { ImportListService } from '../services/import-list.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
 import { MergeService } from '../services/merge.service.js';
 import { MatchJobService } from '../services/match-job.service.js';
+import { BulkOperationService } from '../services/bulk-operation.service.js';
 import { BackupService } from '../services/backup.service.js';
 import { HealthCheckService } from '../services/health-check.service.js';
 import { TaskRegistry } from '../services/task-registry.js';
@@ -55,6 +56,7 @@ import { recyclingBinRoutes } from './recycling-bin.js';
 import { importListsRoutes } from './import-lists.js';
 import { updateRoutes } from './update.js';
 import { discoverRoutes } from './discover.js';
+import { bulkOperationsRoutes } from './bulk-operations.js';
 import { EventBroadcasterService } from '../services/event-broadcaster.service.js';
 import { RecyclingBinService } from '../services/recycling-bin.service.js';
 import { createRetrySearchDeps } from '../services/retry-search.js';
@@ -90,6 +92,7 @@ export interface Services {
   recyclingBin: RecyclingBinService;
   importList: ImportListService;
   discovery: DiscoveryService;
+  bulkOperation: BulkOperationService;
 }
 
 /**
@@ -128,6 +131,7 @@ export const SERVICE_KEYS = Object.keys({
   recyclingBin: true,
   importList: true,
   discovery: true,
+  bulkOperation: true,
 } satisfies Record<keyof Services, true>) as (keyof Services)[];
 
 export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Services> {
@@ -170,6 +174,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const importList = new ImportListService(db, log, metadata);
   const taskRegistry = new TaskRegistry();
   const discovery = new DiscoveryService(db, log, metadata, book, settings);
+  const bulkOperation = new BulkOperationService(db, renameService, taggingService, settings, book, log);
 
   // Bootstrap processing defaults on first run (no-op if row exists)
   const { probeFfmpeg, detectFfmpegPath } = await import('../../core/utils/audio-processor.js');
@@ -190,7 +195,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   download.setRetrySearchDeps(retrySearchDeps);
   eventHistory.setRetrySearchDeps(retrySearchDeps);
 
-  return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin, importList, discovery };
+  return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin, importList, discovery, bulkOperation };
 }
 
 type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;
@@ -235,6 +240,7 @@ const routeRegistry: RouteFactory[] = [
     settingsService: s.settings,
     taskRegistry: s.taskRegistry,
   }),
+  (app, s) => bulkOperationsRoutes(app, s.bulkOperation),
 ];
 
 export { routeRegistry };
