@@ -240,6 +240,14 @@ describe('TaskRegistry', () => {
     });
 
     // #149 — TaskRegistryError typed throws (ERR-1)
+    it('TaskRegistryError constructor sets name and code correctly', () => {
+      const err = new TaskRegistryError('test message', 'NOT_FOUND');
+      expect(err.name).toBe('TaskRegistryError');
+      expect(err.code).toBe('NOT_FOUND');
+      expect(err.message).toBe('test message');
+      expect(err).toBeInstanceOf(Error);
+    });
+
     it('throws TaskRegistryError with code NOT_FOUND for unknown task name in runTask()', async () => {
       await expect(registry.runTask('nonexistent')).rejects.toSatisfy(
         (e: unknown) => e instanceof TaskRegistryError && e.code === 'NOT_FOUND',

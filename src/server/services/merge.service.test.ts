@@ -252,17 +252,17 @@ describe('MergeService', () => {
       expect(unlink).not.toHaveBeenCalled();
     });
 
-    it('db.update receives both size and updatedAt from stat() after rename', async () => {
+    it('db.update receives both size and updatedAt from stat() on the post-rename destination path', async () => {
       setupHappyPath();
       (stat as Mock).mockResolvedValue({ size: 123_456_789 });
       const { service, db } = createService();
 
       await service.mergeBook(42);
 
-      const setCalls = (db.update as Mock).mock.results.map(() =>
-        (db.update as Mock).mock.calls,
-      );
-      void setCalls;
+      // stat() must be called on the destination path (book.path/stagedM4b), not the staging path
+      const expectedOutputPath = join(BOOK_PATH, 'The Way of Kings.m4b');
+      expect(stat).toHaveBeenCalledWith(expectedOutputPath);
+
       const setMock = (db.update as Mock).mock.results[0]?.value?.set as Mock;
       expect(setMock).toHaveBeenCalledWith(expect.objectContaining({
         size: 123_456_789,

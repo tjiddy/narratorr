@@ -834,6 +834,14 @@ describe('DownloadService', () => {
   });
 
   describe('retry (search-based)', () => {
+    it('DownloadError constructor sets name and code correctly', () => {
+      const err = new DownloadError('test message', 'NOT_FOUND');
+      expect(err.name).toBe('DownloadError');
+      expect(err.code).toBe('NOT_FOUND');
+      expect(err.message).toBe('test message');
+      expect(err).toBeInstanceOf(Error);
+    });
+
     it('throws DownloadError NOT_FOUND when download not found', async () => {
       db.select.mockReturnValue(mockDbChain([]));
       await expect(service.retry(999)).rejects.toSatisfy(
