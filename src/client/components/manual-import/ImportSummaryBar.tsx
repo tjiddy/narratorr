@@ -1,7 +1,7 @@
 import { type ImportMode } from '@/lib/api';
 import { ChevronDownIcon, LoadingSpinner } from '@/components/icons';
 
-interface ImportSummaryBarProps {
+interface ImportSummaryBarBaseProps {
   readyCount: number;
   reviewCount: number;
   noMatchCount: number;
@@ -11,16 +11,22 @@ interface ImportSummaryBarProps {
   duplicateCount: number;
   isMatching: boolean;
   mode: ImportMode;
-  onModeChange?: (mode: ImportMode) => void;
   onImport: () => void;
   importing: boolean;
-  /** When true, hide the Copy/Move mode dropdown (used by Library Import which registers in-place) */
-  hideMode?: boolean;
   /** Override the default "Import N books" CTA label (also used in pending state instead of "Importing...") */
   registerLabel?: string;
   /** When true, disable the action button regardless of other state */
   disabled?: boolean;
 }
+
+/**
+ * When hideMode is true, the mode dropdown is hidden — onModeChange is not needed.
+ * When hideMode is false or absent, the mode dropdown is visible — onModeChange is required.
+ */
+type ImportSummaryBarProps = ImportSummaryBarBaseProps & (
+  | { hideMode: true; onModeChange?: never }
+  | { hideMode?: false; onModeChange: (mode: ImportMode) => void }
+);
 
 // eslint-disable-next-line complexity -- compound condition is the least-indirection way to express disabled state and pending label
 export function ImportSummaryBar({
