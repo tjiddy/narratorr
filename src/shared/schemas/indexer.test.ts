@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createIndexerFormSchema } from './indexer.js';
+import { createIndexerFormSchema, createIndexerSchema, updateIndexerSchema } from './indexer.js';
 
 describe('createIndexerFormSchema — flareSolverrUrl validation', () => {
   const baseData = {
@@ -152,5 +152,58 @@ describe('createIndexerFormSchema — MAM required-field validation', () => {
       settings: { mamId: 'my-mam-id-cookie', baseUrl: 'https://mam.example.com' },
     });
     expect(result.success).toBe(true);
+  });
+});
+
+const validCreateIndexer = {
+  name: 'My Indexer',
+  type: 'newznab' as const,
+  settings: {},
+};
+
+describe('createIndexerSchema — trim behavior', () => {
+  it('rejects whitespace-only name', () => {
+    const result = createIndexerSchema.safeParse({ ...validCreateIndexer, name: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims leading/trailing spaces from name', () => {
+    const result = createIndexerSchema.safeParse({ ...validCreateIndexer, name: '  My Indexer  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.name).toBe('My Indexer');
+  });
+});
+
+describe('updateIndexerSchema — trim behavior', () => {
+  it('rejects whitespace-only name when provided', () => {
+    const result = updateIndexerSchema.safeParse({ name: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims leading/trailing spaces from name when provided', () => {
+    const result = updateIndexerSchema.safeParse({ name: '  My Indexer  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.name).toBe('My Indexer');
+  });
+});
+
+const validCreateIndexerForm = {
+  name: 'My Indexer',
+  type: 'abb' as const,
+  enabled: true,
+  priority: 50,
+  settings: { hostname: 'audiobookbay.lu' },
+};
+
+describe('createIndexerFormSchema — trim behavior', () => {
+  it('rejects whitespace-only name', () => {
+    const result = createIndexerFormSchema.safeParse({ ...validCreateIndexerForm, name: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims leading/trailing spaces from name', () => {
+    const result = createIndexerFormSchema.safeParse({ ...validCreateIndexerForm, name: '  My Indexer  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.name).toBe('My Indexer');
   });
 });

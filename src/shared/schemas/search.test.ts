@@ -132,3 +132,34 @@ describe('grabSchema', () => {
     expect(result.success).toBe(false);
   });
 });
+
+const validGrab = { downloadUrl: 'https://example.com/file.torrent', title: 'My Book' };
+
+describe('grabSchema — trim behavior', () => {
+  it('rejects whitespace-only downloadUrl', () => {
+    const result = grabSchema.safeParse({ ...validGrab, downloadUrl: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects whitespace-only title', () => {
+    const result = grabSchema.safeParse({ ...validGrab, title: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims leading/trailing spaces from downloadUrl', () => {
+    const result = grabSchema.safeParse({ ...validGrab, downloadUrl: '  https://example.com/file.torrent  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.downloadUrl).toBe('https://example.com/file.torrent');
+  });
+
+  it('trims leading/trailing spaces from title', () => {
+    const result = grabSchema.safeParse({ ...validGrab, title: '  My Book  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.title).toBe('My Book');
+  });
+
+  it('accepts valid downloadUrl and title', () => {
+    const result = grabSchema.safeParse(validGrab);
+    expect(result.success).toBe(true);
+  });
+});

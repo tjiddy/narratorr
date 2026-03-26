@@ -39,11 +39,11 @@ function maskSettingsResponse(all: AppSettings): AppSettings {
 }
 
 const ffmpegProbeSchema = z.object({
-  path: z.string().min(1, 'Path is required'),
+  path: z.string().trim().min(1, 'Path is required'),
 });
 
 const testProxySchema = z.object({
-  proxyUrl: z.string().min(1, 'Proxy URL is required').refine((val) => {
+  proxyUrl: z.string().trim().min(1, 'Proxy URL is required').refine((val) => {
     try {
       const url = new URL(val);
       return ['http:', 'https:', 'socks5:'].includes(url.protocol);

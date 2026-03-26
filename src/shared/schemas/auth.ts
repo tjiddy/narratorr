@@ -8,14 +8,14 @@ export const authModeSchema = z.enum(['none', 'basic', 'forms']);
 export type AuthMode = z.infer<typeof authModeSchema>;
 
 export const loginSchema = z.object({
-  username: z.string().min(1, 'Username is required'),
+  username: z.string().trim().min(1, 'Username is required'),
   password: z.string().min(1, 'Password is required'),
 });
 
 export type LoginInput = z.infer<typeof loginSchema>;
 
 export const setupCredentialsSchema = z.object({
-  username: z.string().min(1, 'Username is required').max(50),
+  username: z.string().trim().min(1, 'Username is required').max(50),
   password: z.string().min(1, 'Password is required').max(128),
 });
 
@@ -24,7 +24,7 @@ export type SetupCredentialsInput = z.infer<typeof setupCredentialsSchema>;
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, 'Current password is required'),
   newPassword: z.string().min(1, 'New password is required').max(128),
-  newUsername: z.string().min(1).max(50).optional(),
+  newUsername: z.string().trim().min(1).max(50).optional(),
 });
 
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { folderFormatSchema, fileFormatSchema, updateSettingsSchema, taggingSettingsSchema } from './settings/index.js';
+import { libraryFormSchema, librarySettingsSchema } from './settings/library.js';
 
 describe('folderFormatSchema', () => {
   it('accepts format with {title}', () => {
@@ -150,5 +151,80 @@ describe('updateSettingsSchema', () => {
       const result = updateSettingsSchema.safeParse({});
       expect(result.success).toBe(true);
     });
+  });
+});
+
+describe('librarySettingsSchema — trim behavior', () => {
+  it('rejects whitespace-only path', () => {
+    const result = librarySettingsSchema.safeParse({ path: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims leading/trailing spaces from path', () => {
+    const result = librarySettingsSchema.safeParse({ path: '  /data/books  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.path).toBe('/data/books');
+  });
+});
+
+const validLibraryForm = {
+  path: '/data/books',
+  folderFormat: '{author}/{title}',
+  fileFormat: '{author} - {title}',
+};
+
+describe('libraryFormSchema — trim behavior', () => {
+  it('rejects whitespace-only path', () => {
+    const result = libraryFormSchema.safeParse({ ...validLibraryForm, path: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects whitespace-only folderFormat', () => {
+    const result = libraryFormSchema.safeParse({ ...validLibraryForm, folderFormat: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects whitespace-only fileFormat', () => {
+    const result = libraryFormSchema.safeParse({ ...validLibraryForm, fileFormat: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims leading/trailing spaces from path', () => {
+    const result = libraryFormSchema.safeParse({ ...validLibraryForm, path: '  /data/books  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.path).toBe('/data/books');
+  });
+
+  it('whitespace-only folderFormat fails min(1) after trim (not refine)', () => {
+    // After .trim(), '   ' becomes '' which fails .min(1) before reaching .refine()
+    const result = libraryFormSchema.safeParse({ ...validLibraryForm, folderFormat: '   ' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues.find((i) => i.path.includes('folderFormat'));
+      expect(issue?.message).toBe('Folder format is required');
+    }
+  });
+
+  it('whitespace-only fileFormat fails min(1) after trim (not refine)', () => {
+    // After .trim(), '   ' becomes '' which fails .min(1) before reaching .refine()
+    const result = libraryFormSchema.safeParse({ ...validLibraryForm, fileFormat: '   ' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues.find((i) => i.path.includes('fileFormat'));
+      expect(issue?.message).toBe('File format is required');
+    }
+  });
+
+  it('trims leading/trailing spaces from folderFormat and fileFormat template strings', () => {
+    const result = libraryFormSchema.safeParse({
+      ...validLibraryForm,
+      folderFormat: '  {author}/{title}  ',
+      fileFormat: '  {author} - {title}  ',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.folderFormat).toBe('{author}/{title}');
+      expect(result.data.fileFormat).toBe('{author} - {title}');
+    }
   });
 });

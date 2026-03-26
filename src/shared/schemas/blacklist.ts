@@ -9,8 +9,8 @@ export const blacklistReasonSchema = z.enum(['wrong_content', 'bad_quality', 'wr
 export const blacklistTypeSchema = z.enum(['temporary', 'permanent']);
 
 export const createBlacklistSchema = z.object({
-  infoHash: z.string().min(1, 'Info hash is required'),
-  title: z.string().min(1, 'Title is required'),
+  infoHash: z.string().trim().min(1, 'Info hash is required'),
+  title: z.string().trim().min(1, 'Title is required'),
   bookId: z.number().int().optional(),
   reason: blacklistReasonSchema,
   note: z.string().max(500).optional(),

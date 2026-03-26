@@ -43,21 +43,21 @@ export const fileFormatSchema = z.string().default('{author} - {title}').refine(
 );
 
 export const librarySettingsSchema = z.object({
-  path: z.string().min(1, 'Library path is required'),
+  path: z.string().trim().min(1, 'Library path is required'),
   folderFormat: folderFormatSchema,
   fileFormat: fileFormatSchema,
 });
 
 export const libraryFormSchema = z.object({
-  path: z.string().min(1, 'Library path is required'),
-  folderFormat: z.string().min(1, 'Folder format is required').refine(
+  path: z.string().trim().min(1, 'Library path is required'),
+  folderFormat: z.string().trim().min(1, 'Folder format is required').refine(
     hasTitle,
     { message: 'Template must include {title} or {titleSort}' },
   ).refine(
     (val) => validateTokens(val, FOLDER_FORMAT_ALLOWED_TOKENS),
     { message: 'Unknown token in template' },
   ),
-  fileFormat: z.string().min(1, 'File format is required').refine(
+  fileFormat: z.string().trim().min(1, 'File format is required').refine(
     hasTitle,
     { message: 'Template must include {title} or {titleSort}' },
   ).refine(

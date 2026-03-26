@@ -18,7 +18,7 @@ function validateRequiredSettings(data: { type: string; settings: Record<string,
 }
 
 export const createImportListSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(100),
+  name: z.string().trim().min(1, 'Name is required').max(100),
   type: importListTypeSchema,
   enabled: z.boolean().default(true),
   syncIntervalMinutes: z.number().int().min(5, 'Sync interval must be at least 5 minutes').default(1440),
@@ -26,7 +26,7 @@ export const createImportListSchema = z.object({
 }).superRefine(validateRequiredSettings);
 
 export const updateImportListSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
+  name: z.string().trim().min(1).max(100).optional(),
   type: importListTypeSchema.optional(),
   enabled: z.boolean().optional(),
   syncIntervalMinutes: z.number().int().min(5, 'Sync interval must be at least 5 minutes').optional(),
@@ -49,7 +49,7 @@ export type PreviewImportListInput = z.infer<typeof previewImportListSchema>;
 
 // Form schema: all possible settings fields optional, superRefine validates per-type
 export const createImportListFormSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(100),
+  name: z.string().trim().min(1, 'Name is required').max(100),
   type: importListTypeSchema,
   enabled: z.boolean(),
   syncIntervalMinutes: z.number().int().min(5, 'Sync interval must be at least 5 minutes'),

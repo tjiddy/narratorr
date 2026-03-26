@@ -295,6 +295,52 @@ describe('settings routes', () => {
     });
   });
 
+  describe('inline schema trim behavior', () => {
+    describe('POST /api/settings/ffmpeg-probe — trim', () => {
+      it('returns 400 when path is whitespace-only', async () => {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/settings/ffmpeg-probe',
+          payload: { path: '   ' },
+        });
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('calls handler with trimmed path when surrounding spaces provided', async () => {
+        (services.healthCheck.probeFfmpeg as Mock).mockResolvedValue('6.1.1');
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/settings/ffmpeg-probe',
+          payload: { path: '  /usr/bin/ffmpeg  ' },
+        });
+        expect(res.statusCode).toBe(200);
+        expect((services.healthCheck.probeFfmpeg as Mock)).toHaveBeenCalledWith('/usr/bin/ffmpeg');
+      });
+    });
+
+    describe('POST /api/settings/test-proxy — trim', () => {
+      it('returns 400 when proxyUrl is whitespace-only', async () => {
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/settings/test-proxy',
+          payload: { proxyUrl: '   ' },
+        });
+        expect(res.statusCode).toBe(400);
+      });
+
+      it('calls handler with trimmed proxyUrl when surrounding spaces provided', async () => {
+        (services.healthCheck.probeProxy as Mock).mockResolvedValue('1.2.3.4');
+        const res = await app.inject({
+          method: 'POST',
+          url: '/api/settings/test-proxy',
+          payload: { proxyUrl: '  http://proxy:8080  ' },
+        });
+        expect(res.statusCode).toBe(200);
+        expect((services.healthCheck.probeProxy as Mock)).toHaveBeenCalledWith('http://proxy:8080');
+      });
+    });
+  });
+
   describe('network settings', () => {
     it('saves network settings with valid proxy URL', async () => {
       const updated = {
@@ -431,3 +477,4 @@ describe('settings routes', () => {
     });
   });
 });
+
