@@ -82,7 +82,7 @@ export function ImportSummaryBar({
           <div className="relative">
             <select
               value={mode}
-              onChange={(e) => onModeChange(e.target.value as ImportMode)}
+              onChange={(e) => onModeChange?.(e.target.value as ImportMode)}
               className="appearance-none glass-card rounded-lg pl-3 pr-7 py-2 text-sm font-medium text-foreground focus-ring cursor-pointer"
             >
               <option value="copy">Copy</option>

@@ -1,4 +1,4 @@
-import { type DiscoveredBook, type Confidence, type MatchResult, formatBytes } from '@/lib/api';
+import { type Confidence, formatBytes } from '@/lib/api';
 import type { ImportRow } from './types.js';
 import {
   CheckIcon,
