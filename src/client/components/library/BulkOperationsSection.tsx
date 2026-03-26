@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { api, type RenameCount } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useBulkOperation } from '../../hooks/useBulkOperation.js';
@@ -82,7 +83,11 @@ function BulkButton({
   onClick,
 }: BulkButtonProps) {
   const disabled = isDisabled || isAnyRunning;
-  const title = isDisabled && disabledReason ? disabledReason : undefined;
+  const title = isDisabled && disabledReason
+    ? disabledReason
+    : isAnyRunning && !isThisRunning
+      ? 'A bulk operation is already running.'
+      : undefined;
 
   return (
     <button
@@ -121,6 +126,8 @@ export function BulkOperationsSection() {
       const count = await fetchCountForOp(op);
       setModalCount(count);
       setPendingOp(op);
+    } catch (err) {
+      toast.error((err as Error).message ?? 'Failed to fetch operation count');
     } finally {
       setIsLoadingCount(false);
     }
@@ -167,7 +174,7 @@ export function BulkOperationsSection() {
           isThisRunning={isRunning && jobType === 'convert'}
           isAnyRunning={anyBusy}
           isDisabled={!ffmpegConfigured}
-          disabledReason="ffmpeg is not configured in Processing settings"
+          disabledReason="Requires ffmpeg — configure in Settings > Post Processing"
           progress={progress}
           onClick={() => handleOperationClick('convert')}
         />
