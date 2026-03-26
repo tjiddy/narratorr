@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
-import { DownloadService } from './download.service.js';
+import { DownloadService, DownloadError } from './download.service.js';
 import { type DownloadClientService } from './download-client.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
@@ -834,24 +834,38 @@ describe('DownloadService', () => {
   });
 
   describe('retry (search-based)', () => {
-    it('throws when download not found', async () => {
-      db.select.mockReturnValue(mockDbChain([]));
-      await expect(service.retry(999)).rejects.toThrow('not found');
+    it('DownloadError constructor sets name and code correctly', () => {
+      const err = new DownloadError('test message', 'NOT_FOUND');
+      expect(err.name).toBe('DownloadError');
+      expect(err.code).toBe('NOT_FOUND');
+      expect(err.message).toBe('test message');
+      expect(err).toBeInstanceOf(Error);
     });
 
-    it('throws when download is not in failed state', async () => {
+    it('throws DownloadError NOT_FOUND when download not found', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      await expect(service.retry(999)).rejects.toSatisfy(
+        (e: unknown) => e instanceof DownloadError && e.code === 'NOT_FOUND',
+      );
+    });
+
+    it('throws DownloadError INVALID_STATUS when download is not in failed state', async () => {
       db.select.mockReturnValue(
         mockDbChain([{ download: mockDownload, book: mockBook }]),
       );
-      await expect(service.retry(1)).rejects.toThrow('not in failed state');
+      await expect(service.retry(1)).rejects.toSatisfy(
+        (e: unknown) => e instanceof DownloadError && e.code === 'INVALID_STATUS',
+      );
     });
 
-    it('throws when download has no bookId', async () => {
+    it('throws DownloadError NO_BOOK_LINKED when download has no bookId', async () => {
       const failedNoBook = { ...mockDownload, status: 'failed' as const, bookId: null };
       db.select.mockReturnValue(
         mockDbChain([{ download: failedNoBook, book: null }]),
       );
-      await expect(service.retry(1)).rejects.toThrow('no book linked');
+      await expect(service.retry(1)).rejects.toSatisfy(
+        (e: unknown) => e instanceof DownloadError && e.code === 'NO_BOOK_LINKED',
+      );
     });
 
     it('throws when retrySearchDeps not configured', async () => {

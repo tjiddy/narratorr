@@ -8,6 +8,7 @@ import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fas
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 import type { AuthService } from '../services/auth.service.js';
+import { TaskRegistryError } from '../services/task-registry.js';
 
 const NOW = new Date('2026-01-15T12:00:00Z');
 
@@ -158,6 +159,27 @@ describe('Discover Routes', () => {
 
       const res = await app.inject({ method: 'POST', url: '/api/discover/refresh' });
       expect(res.statusCode).toBe(409);
+    });
+
+    // #149 — typed error routing via plugin (ERR-1)
+    it('returns 409 when task registry throws TaskRegistryError ALREADY_RUNNING (plugin-routed)', async () => {
+      (services.settings.get as Mock).mockResolvedValueOnce({ enabled: true });
+      (services.taskRegistry.runExclusive as Mock).mockRejectedValue(new TaskRegistryError('Task "discovery" is already running', 'ALREADY_RUNNING'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/discover/refresh' });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Task "discovery" is already running' });
+    });
+
+    it('returns 500 with plugin fallback body when unrelated error message contains "already running" substring (regression: no string routing)', async () => {
+      (services.settings.get as Mock).mockResolvedValueOnce({ enabled: true });
+      (services.taskRegistry.runExclusive as Mock).mockRejectedValue(new Error('Config already running out of space'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/discover/refresh' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
     });
   });
 
@@ -358,7 +380,7 @@ describe('Discover Routes', () => {
   describe('POST /api/discover/refresh concurrency (AC7)', () => {
     it('returns 409 when task registry reports discovery is already running', async () => {
       (services.settings.get as Mock).mockResolvedValueOnce({ enabled: true });
-      (services.taskRegistry.runExclusive as Mock).mockRejectedValueOnce(new Error('Task "discovery" is already running'));
+      (services.taskRegistry.runExclusive as Mock).mockRejectedValueOnce(new TaskRegistryError('Task "discovery" is already running', 'ALREADY_RUNNING'));
 
       const res = await app.inject({ method: 'POST', url: '/api/discover/refresh' });
       expect(res.statusCode).toBe(409);

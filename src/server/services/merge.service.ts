@@ -180,7 +180,7 @@ export class MergeService {
     return stagedM4b;
   }
 
-  /** Step 7: move M4B to book.path, delete originals, clean staging, update size in DB. */
+  /** Step 7: move M4B to book.path, update DB size, delete originals, clean staging. */
   private async commitMerge(
     stagingDir: string,
     stagedM4b: string,
@@ -190,6 +190,11 @@ export class MergeService {
   ): Promise<string> {
     const outputPath = join(bookPath, stagedM4b);
     await rename(join(stagingDir, stagedM4b), outputPath);
+
+    // Update DB immediately after the first irreversible step (rename).
+    // If this fails, the merged M4B is still valid at outputPath; originals remain untouched.
+    const fileStats = await stat(outputPath);
+    await this.db.update(books).set({ size: fileStats.size, updatedAt: new Date() }).where(eq(books.id, bookId));
 
     for (const file of originalsToDelete) {
       if (file === stagedM4b) continue; // skip: this is the output file we just moved in
@@ -201,9 +206,6 @@ export class MergeService {
     }
 
     await rm(stagingDir, { recursive: true, force: true });
-
-    const fileStats = await stat(outputPath);
-    await this.db.update(books).set({ size: fileStats.size, updatedAt: new Date() }).where(eq(books.id, bookId));
 
     return outputPath;
   }

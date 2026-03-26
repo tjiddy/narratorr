@@ -218,6 +218,58 @@ describe('MergeService', () => {
       expect(db.update).toHaveBeenCalled();
     });
 
+    // #149 — DB timing fix (DB-1): db.update must come before unlink loop
+    it('calls db.update before any unlink() call (DB update is first action after rename)', async () => {
+      const callOrder: string[] = [];
+      setupHappyPath();
+      (rename as Mock).mockImplementation(async () => { callOrder.push('rename'); });
+      (unlink as Mock).mockImplementation(async () => { callOrder.push('unlink'); });
+      const { service, db } = createService();
+      const chain = db.update.mockReturnValue({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockImplementation(async () => { callOrder.push('db.update'); }) }),
+      });
+      void chain; // suppress unused var warning
+
+      await service.mergeBook(42);
+
+      const renameIdx = callOrder.indexOf('rename');
+      const dbUpdateIdx = callOrder.indexOf('db.update');
+      const firstUnlinkIdx = callOrder.indexOf('unlink');
+      expect(renameIdx).toBeGreaterThanOrEqual(0);
+      expect(dbUpdateIdx).toBeGreaterThan(renameIdx);
+      expect(firstUnlinkIdx).toBeGreaterThan(dbUpdateIdx);
+    });
+
+    it('does not call unlink() when db.update throws after rename (DB failure stops cleanup)', async () => {
+      setupHappyPath();
+      const { service, db } = createService();
+      db.update.mockReturnValue({
+        set: vi.fn().mockReturnValue({ where: vi.fn().mockRejectedValue(new Error('DB write failed')) }),
+      });
+
+      await expect(service.mergeBook(42)).rejects.toThrow('DB write failed');
+
+      expect(unlink).not.toHaveBeenCalled();
+    });
+
+    it('db.update receives both size and updatedAt from stat() on the post-rename destination path', async () => {
+      setupHappyPath();
+      (stat as Mock).mockResolvedValue({ size: 123_456_789 });
+      const { service, db } = createService();
+
+      await service.mergeBook(42);
+
+      // stat() must be called on the destination path (book.path/stagedM4b), not the staging path
+      const expectedOutputPath = join(BOOK_PATH, 'The Way of Kings.m4b');
+      expect(stat).toHaveBeenCalledWith(expectedOutputPath);
+
+      const setMock = (db.update as Mock).mock.results[0]?.value?.set as Mock;
+      expect(setMock).toHaveBeenCalledWith(expect.objectContaining({
+        size: 123_456_789,
+        updatedAt: expect.any(Date),
+      }));
+    });
+
     it('emits merge_complete SSE event on success', async () => {
       setupHappyPath();
       const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;

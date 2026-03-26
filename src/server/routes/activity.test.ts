@@ -3,6 +3,7 @@ import { createTestApp, createMockServices, resetMockServices } from '../__tests
 import type { Services } from './index.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { QualityGateServiceError } from '../services/quality-gate.service.js';
+import { DownloadError } from '../services/download.service.js';
 
 const mockDownload = {
   id: 1,
@@ -250,7 +251,7 @@ describe('activity routes', () => {
     });
 
     it('returns 404 when download not found', async () => {
-      (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new Error('Download 999 not found'));
+      (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new DownloadError('Download 999 not found', 'NOT_FOUND'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/999/retry' });
 
@@ -258,7 +259,7 @@ describe('activity routes', () => {
     });
 
     it('returns 404 when no book linked', async () => {
-      (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new Error('Download 1 has no book linked'));
+      (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new DownloadError('Download 1 has no book linked', 'NO_BOOK_LINKED'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
@@ -266,7 +267,7 @@ describe('activity routes', () => {
     });
 
     it('returns 400 when download not in failed state', async () => {
-      (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new Error('Download 1 is not in failed state'));
+      (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new DownloadError('Download 1 is not in failed state', 'INVALID_STATUS'));
 
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
@@ -279,6 +280,43 @@ describe('activity routes', () => {
       const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
 
       expect(res.statusCode).toBe(500);
+    });
+
+    // #149 — typed error routing via plugin (ERR-1)
+    it('returns 404 when orchestrator throws DownloadError NOT_FOUND (plugin-routed)', async () => {
+      (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new DownloadError('Download 999 not found', 'NOT_FOUND'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/999/retry' });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Download 999 not found' });
+    });
+
+    it('returns 404 when orchestrator throws DownloadError NO_BOOK_LINKED (plugin-routed)', async () => {
+      (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new DownloadError('Download 1 has no book linked', 'NO_BOOK_LINKED'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Download 1 has no book linked' });
+    });
+
+    it('returns 400 when orchestrator throws DownloadError INVALID_STATUS (plugin-routed)', async () => {
+      (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new DownloadError('Download 1 is not in failed state', 'INVALID_STATUS'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Download 1 is not in failed state' });
+    });
+
+    it('returns 500 with plugin fallback body when unrelated error message contains "not found" substring (regression: no string routing)', async () => {
+      (services.downloadOrchestrator.retry as Mock).mockRejectedValue(new Error('Config key not found in registry'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/activity/1/retry' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
     });
   });
 

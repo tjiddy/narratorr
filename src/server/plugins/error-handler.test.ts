@@ -14,6 +14,8 @@ import { RestoreUploadError } from '../services/backup.service.js';
 import { QualityGateServiceError } from '../services/quality-gate.service.js';
 import { EventHistoryServiceError } from '../services/event-history.service.js';
 import { MergeError } from '../services/merge.service.js';
+import { DownloadError } from '../services/download.service.js';
+import { TaskRegistryError } from '../services/task-registry.js';
 
 function createTestApp() {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
@@ -42,6 +44,11 @@ function createTestApp() {
   app.get('/throw-merge-no-files', async () => { throw new MergeError('No audio files', 'NO_TOP_LEVEL_FILES'); });
   app.get('/throw-merge-no-ffmpeg', async () => { throw new MergeError('ffmpeg not configured', 'FFMPEG_NOT_CONFIGURED'); });
   app.get('/throw-merge-in-progress', async () => { throw new MergeError('Already in progress', 'ALREADY_IN_PROGRESS'); });
+  app.get('/throw-download-not-found', async () => { throw new DownloadError('Download 1 not found', 'NOT_FOUND'); });
+  app.get('/throw-download-no-book', async () => { throw new DownloadError('Download 1 has no book linked', 'NO_BOOK_LINKED'); });
+  app.get('/throw-download-invalid-status', async () => { throw new DownloadError('Download 1 is not in failed state', 'INVALID_STATUS'); });
+  app.get('/throw-task-not-found', async () => { throw new TaskRegistryError('Task "foo" not found', 'NOT_FOUND'); });
+  app.get('/throw-task-already-running', async () => { throw new TaskRegistryError('Task "foo" is already running', 'ALREADY_RUNNING'); });
   app.get('/throw-generic', async () => { throw new Error('disk full'); });
   app.get('/throw-non-error', async () => { throw 'string error'; });
   app.get('/success', async () => ({ ok: true }));
@@ -175,6 +182,37 @@ describe('error-handler plugin', () => {
     it('maps MergeError ALREADY_IN_PROGRESS to 409', async () => {
       const res = await app.inject({ method: 'GET', url: '/throw-merge-in-progress' });
       expect(res.statusCode).toBe(409);
+    });
+
+    // #149 — DownloadError and TaskRegistryError typed error mapping (ERR-1)
+    it('maps DownloadError NOT_FOUND to 404', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-download-not-found' });
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Download 1 not found' });
+    });
+
+    it('maps DownloadError NO_BOOK_LINKED to 404', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-download-no-book' });
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Download 1 has no book linked' });
+    });
+
+    it('maps DownloadError INVALID_STATUS to 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-download-invalid-status' });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Download 1 is not in failed state' });
+    });
+
+    it('maps TaskRegistryError NOT_FOUND to 404', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-task-not-found' });
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Task "foo" not found' });
+    });
+
+    it('maps TaskRegistryError ALREADY_RUNNING to 409', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-task-already-running' });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Task "foo" is already running' });
     });
   });
 

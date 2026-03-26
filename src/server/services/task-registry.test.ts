@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TaskRegistry } from './task-registry.js';
+import { TaskRegistry, TaskRegistryError } from './task-registry.js';
 
 describe('TaskRegistry', () => {
   let registry: TaskRegistry;
@@ -236,6 +236,52 @@ describe('TaskRegistry', () => {
       await expect(registry.runTask('test-job')).rejects.toThrow(/already running/i);
 
       resolveExecution!();
+      await first;
+    });
+
+    // #149 — TaskRegistryError typed throws (ERR-1)
+    it('TaskRegistryError constructor sets name and code correctly', () => {
+      const err = new TaskRegistryError('test message', 'NOT_FOUND');
+      expect(err.name).toBe('TaskRegistryError');
+      expect(err.code).toBe('NOT_FOUND');
+      expect(err.message).toBe('test message');
+      expect(err).toBeInstanceOf(Error);
+    });
+
+    it('throws TaskRegistryError with code NOT_FOUND for unknown task name in runTask()', async () => {
+      await expect(registry.runTask('nonexistent')).rejects.toSatisfy(
+        (e: unknown) => e instanceof TaskRegistryError && e.code === 'NOT_FOUND',
+      );
+    });
+
+    it('throws TaskRegistryError with code ALREADY_RUNNING when task is already running in runTask()', async () => {
+      let resolve: () => void;
+      const fn = vi.fn().mockReturnValue(new Promise<void>((r) => { resolve = r; }));
+      registry.register('job', 'cron', fn, '*/5 * * * *');
+
+      const first = registry.runTask('job');
+      await expect(registry.runTask('job')).rejects.toSatisfy(
+        (e: unknown) => e instanceof TaskRegistryError && e.code === 'ALREADY_RUNNING',
+      );
+      resolve!();
+      await first;
+    });
+
+    it('throws TaskRegistryError with code NOT_FOUND for unknown task name in runExclusive()', async () => {
+      await expect(registry.runExclusive('nonexistent', async () => 'x')).rejects.toSatisfy(
+        (e: unknown) => e instanceof TaskRegistryError && e.code === 'NOT_FOUND',
+      );
+    });
+
+    it('throws TaskRegistryError with code ALREADY_RUNNING when task is already running in runExclusive()', async () => {
+      let resolve: () => void;
+      registry.register('job', 'cron', vi.fn().mockReturnValue(new Promise<void>((r) => { resolve = r; })), '*/5 * * * *');
+
+      const first = registry.runTask('job');
+      await expect(registry.runExclusive('job', async () => 'x')).rejects.toSatisfy(
+        (e: unknown) => e instanceof TaskRegistryError && e.code === 'ALREADY_RUNNING',
+      );
+      resolve!();
       await first;
     });
   });

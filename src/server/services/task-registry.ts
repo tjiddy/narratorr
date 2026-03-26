@@ -1,3 +1,13 @@
+export class TaskRegistryError extends Error {
+  constructor(
+    message: string,
+    public code: 'NOT_FOUND' | 'ALREADY_RUNNING',
+  ) {
+    super(message);
+    this.name = 'TaskRegistryError';
+  }
+}
+
 export interface TaskMetadata {
   name: string;
   type: 'cron' | 'timeout';
@@ -35,8 +45,8 @@ export class TaskRegistry {
 
   async runTask(name: string): Promise<void> {
     const task = this.tasks.get(name);
-    if (!task) throw new Error(`Task "${name}" not found`);
-    if (task.running) throw new Error(`Task "${name}" is already running`);
+    if (!task) throw new TaskRegistryError(`Task "${name}" not found`, 'NOT_FOUND');
+    if (task.running) throw new TaskRegistryError(`Task "${name}" is already running`, 'ALREADY_RUNNING');
 
     task.running = true;
     try {
@@ -54,8 +64,8 @@ export class TaskRegistry {
    */
   async runExclusive<T>(name: string, fn: () => Promise<T>): Promise<T> {
     const task = this.tasks.get(name);
-    if (!task) throw new Error(`Task "${name}" not found`);
-    if (task.running) throw new Error(`Task "${name}" is already running`);
+    if (!task) throw new TaskRegistryError(`Task "${name}" not found`, 'NOT_FOUND');
+    if (task.running) throw new TaskRegistryError(`Task "${name}" is already running`, 'ALREADY_RUNNING');
 
     task.running = true;
     try {

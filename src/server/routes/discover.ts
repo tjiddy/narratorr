@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { suggestionReasonSchema, type SuggestionRowResponse } from '../../shared/schemas/discovery.js';
 import type { DiscoveryService, SettingsService } from '../services/index.js';
 import type { TaskRegistry } from '../services/task-registry.js';
-import { getErrorMessage } from '../utils/error-message.js';
 import type { suggestions } from '../../db/schema.js';
 
 type SuggestionRow = typeof suggestions.$inferSelect;
@@ -123,16 +122,7 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
     if (!settings.enabled) {
       return reply.status(409).send({ error: 'Discovery is disabled' });
     }
-    try {
-      const result = await taskRegistry.runExclusive('discovery', () => discoveryService.refreshSuggestions());
-      return result;
-    } catch (error) {
-      const message = getErrorMessage(error);
-      if (message.includes('already running')) {
-        return reply.status(409).send({ error: message });
-      }
-      return reply.status(500).send({ error: message });
-    }
+    return taskRegistry.runExclusive('discovery', () => discoveryService.refreshSuggestions());
   });
 
   // GET /api/discover/stats
