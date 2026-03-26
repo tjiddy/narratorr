@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useLibrary, useBookStats } from '@/hooks/useLibrary';
@@ -110,6 +110,25 @@ export function LibraryPage() {
     }
   }, [openMenuId, closeMenu]);
 
+  const handleCardMenuToggle = useCallback((bookId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setOpenMenuId(prev => prev === bookId ? null : bookId);
+  }, []);
+
+  const handleCardClick = useCallback((bookId: number) => {
+    navigate(`/books/${bookId}`);
+  }, [navigate]);
+
+  const handleCardSearchReleases = useCallback((book: BookWithAuthor) => {
+    setSearchBook(book);
+    setOpenMenuId(null);
+  }, []);
+
+  const handleCardRemove = useCallback((book: BookWithAuthor) => {
+    deleteConfirm.requestDelete(book);
+    setOpenMenuId(null);
+  }, [deleteConfirm]);
+
   const anySelectedHasPath = bulk.selectedBooks.some((b) => b.path);
 
   // Filter dropdowns from stats endpoint
@@ -204,11 +223,11 @@ export function LibraryPage() {
               index={index}
               collapsedCount={book.collapsedCount}
               isMenuOpen={openMenuId === book.id}
-              onMenuToggle={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === book.id ? null : book.id); }}
-              onMenuClose={() => setOpenMenuId(null)}
-              onClick={() => navigate(`/books/${book.id}`)}
-              onSearchReleases={() => { setSearchBook(book); setOpenMenuId(null); }}
-              onRemove={() => { deleteConfirm.requestDelete(book); setOpenMenuId(null); }}
+              onMenuToggle={(e) => handleCardMenuToggle(book.id, e)}
+              onMenuClose={closeMenu}
+              onClick={() => handleCardClick(book.id)}
+              onSearchReleases={() => handleCardSearchReleases(book)}
+              onRemove={() => handleCardRemove(book)}
             />
           ))}
         </div>
