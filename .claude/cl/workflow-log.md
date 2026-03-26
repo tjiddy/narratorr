@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #124 Library toolbar dropdowns — keyboard navigation and focus management — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #132
+
+### Metrics
+- Files changed: 6 | Tests added/modified: 3 files, ~41 new tests
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 1 (removed setState-in-effect anti-pattern across all three files after lint failure)
+- Context compactions: 1 (mid-handoff; resumed cleanly)
+
+### Workflow experience
+- What went smoothly: Red/green TDD cycle worked well — it.todo() stubs from /plan mapped cleanly to spec behaviors; all three components follow the same focusIndex pattern
+- Friction / issues encountered: The react-hooks/set-state-in-effect lint rule blocked the first approach. Required restructuring to combine open-guard and focus-sync into a single effect with [focusIndex, open] deps, and move all setFocusIndex(0) resets into event handlers. This affected all three files simultaneously.
+
+### Token efficiency
+- Highest-token actions: Context compaction mid-handoff (forced a summary recovery); OverflowMenu tests were the heaviest due to mixed button/Link semantics
+- Avoidable waste: The two-pass fix (write with anti-pattern, then fix lint) could have been avoided by knowing the rule upfront
+- Suggestions: Read CLAUDE.md gotchas before implementing focus patterns
+
+### Infrastructure gaps
+- Repeated workarounds: GH_TOKEN env var was invalid; needed to unset it and rely on the app credential path via scripts/lib.ts
+- Missing tooling / config: None new
+- Unresolved debt: None introduced
+
+### Wish I Had Known
+1. The react-hooks/set-state-in-effect ESLint rule is enforced — the natural two-effect approach is blocked. Start with the combined [focusIndex, open] single-effect pattern.
+2. querySelectorAll("button") misses router Link elements in OverflowMenu — use querySelectorAll("[role=menuitem]:not([disabled])") to include Link items.
+3. Initialize focusIndex to 0 (not -1) so the combined effect works on first open without a separate reset effect.
+
 ## #112 Add post-import audio file merging (MP3s → single M4B) — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #131
