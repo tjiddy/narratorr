@@ -1,5 +1,40 @@
 # Workflow Log
 
+## #135 Bulk library management — Rename All, Re-tag All, Convert All to M4B — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #138
+
+### Metrics
+- Files changed: 12 | Tests added/modified: 5 (new: bulk-operation.service.test.ts, bulk-operations.test.ts, useBulkOperation.test.ts, BulkOperationsSection.test.tsx; modified: LibrarySettingsSection.test.tsx, GeneralSettings.test.tsx, SettingsPage.test.tsx, routes/index.test.ts)
+- Quality gate runs: 2 (pass on attempt 2 — first pass before pre-flight bug fix, second after)
+- Fix iterations: 1 (async pre-flight validation bug found by coverage subagent)
+- Context compactions: 1 (happened mid-implementation; required summary-based continuation)
+
+### Workflow experience
+- What went smoothly: Red/green TDD cycle worked well for all 5 modules; ESLint complexity errors caught BulkOperationsSection over-complexity early; convert staging pattern was straightforward
+- Friction / issues encountered:
+  - `vi.useFakeTimers()` + `waitFor()` interaction — fake timers intercept waitFor's internal setTimeout; had to switch to `act(async () => {})` pattern
+  - `vi.mock` TDZ: referenced top-level `ApiError` import inside sync factory — solved by duck-typing `(err as {status?:number})?.status === 404` instead
+  - `node:fs/promises` mock — spread `...actual` didn't override `rename`; real rename threw ENOENT in tests; fixed by adding `rename: vi.fn()` explicitly
+  - `BulkOperationsSection` blast radius: parent tests (LibrarySettingsSection, GeneralSettings, SettingsPage) failed with "api.getActiveBulkJob is not a function" — fixed by mocking the component in those files
+  - Critical bug found by coverage subagent: LIBRARY_NOT_CONFIGURED and FFMPEG_NOT_CONFIGURED checks were inside async work fn, making route error handlers dead code — required making startRenameJob/startConvertJob async
+
+### Token efficiency
+- Highest-token actions: Coverage review subagent (thorough analysis across all changed files + their tests), self-review subagent
+- Avoidable waste: Re-reading service test file multiple times as each fix was applied
+- Suggestions: When writing fire-and-forget job services, always plan for pre-flight checks to be synchronous/pre-job from the start
+
+### Infrastructure gaps
+- Repeated workarounds: Adding component null-mocks to parent tests when a new component introduces API calls on mount
+- Missing tooling / config: No linter rule or standard for checking that service methods with route error codes have their throws reachable by the route layer
+- Unresolved debt: `useBulkOperation` non-404 error handling, TTL cleanup test (see debt.md)
+
+### Wish I'd Known
+1. When a service method creates a background job and returns synchronously, error codes thrown INSIDE the async work function are unreachable by the route layer — always put pre-flight checks before job creation (making the method async if needed)
+2. `vi.useFakeTimers()` breaks `waitFor()` from Testing Library — use `await act(async () => { vi.advanceTimersByTime(N); })` for advancing poll intervals in hook tests
+3. When mocking `node:fs/promises` with `importOriginal` spread, every fs function the code calls must be explicitly overridden — the spread gives real implementations that throw ENOENT in tests
+
+
 ## #134 Manual Import guardrail — block imports from inside library root — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #137

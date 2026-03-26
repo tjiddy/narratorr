@@ -24,3 +24,6 @@
 
 - **src/client/pages/library-import/LibraryImportPage.tsx**: `getRelativePath()` uses `startsWith()` for path ancestor check — the same anti-pattern CLAUDE.md prohibits. The correct POSIX-safe utility was added in `pathUtils.ts` for Manual Import (#134) but not applied to this file; a follow-up should converge both on the shared util. (discovered in #134)
 - **src/server/services/library-scan.service.ts**: No server-side enforcement of the library-root guardrail — `copyToLibrary()` only skips when source === target (exact match), not when source is nested under the library root. A Manual Import with a library-internal path would attempt to copy already-managed files. Frontend guardrail (#134) is the only protection. (discovered in #134)
+
+- **src/server/services/bulk-operation.service.ts**: `scheduleCleanup()` uses `setTimeout` for TTL (10 min) but there is no test verifying expired jobs are removed from the `jobs` Map. Could be tested with fake timers. (discovered in #135)
+- **src/client/hooks/useBulkOperation.ts**: Poll error handling only tests 404 (server restart); other error codes are silently swallowed without resetting state. A non-404 error (e.g., 500) during polling will keep the hook in "running" state indefinitely. (discovered in #135)
