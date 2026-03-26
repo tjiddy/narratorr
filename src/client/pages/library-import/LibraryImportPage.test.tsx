@@ -75,14 +75,16 @@ describe('LibraryImportPage (#133)', () => {
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
   });
 
-  it('empty scan: no books found message', async () => {
+  it('empty scan: friendly all-caught-up message shown (not scan error)', async () => {
     mockApi.scanDirectory.mockResolvedValue({ discoveries: [], totalFolders: 0 });
 
     renderWithProviders(<LibraryImportPage />);
 
     await waitFor(() => {
-      expect(screen.getByText(/no audiobook folders found/i)).toBeInTheDocument();
+      expect(screen.getByText(/all caught up/i)).toBeInTheDocument();
     });
+    expect(screen.getByText(/already registered/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
   });
 
   it('scan finds books: review list renders with book count', async () => {
@@ -179,6 +181,87 @@ describe('LibraryImportPage (#133)', () => {
       expect(screen.getByText('Existing Book')).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: /existing.*shown/i })).toBeInTheDocument();
+  });
+
+  // AC3: friendly empty state (#141)
+  it('zero discoveries: renders friendly all-caught-up message, no Retry button', async () => {
+    mockApi.scanDirectory.mockResolvedValue({ discoveries: [], totalFolders: 0 });
+
+    renderWithProviders(<LibraryImportPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/all caught up/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+    // Red error icon should not appear
+    expect(screen.queryByText(/no audiobook folders found/i)).not.toBeInTheDocument();
+  });
+
+  it('all-duplicate discoveries: renders friendly all-caught-up message (not scan error card)', async () => {
+    mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
+    mockApi.scanDirectory.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/AuthorB/Book2', parsedTitle: 'Dup Book', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 1, totalSize: 40000, isDuplicate: true, duplicateReason: 'path' },
+      ],
+      totalFolders: 1,
+    });
+
+    renderWithProviders(<LibraryImportPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/all caught up/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/no audiobook folders found/i)).not.toBeInTheDocument();
+  });
+
+  it('mix of new and duplicate discoveries: renders review list, no empty state', async () => {
+    mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
+    mockApi.scanDirectory.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'New Book', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
+        { path: '/audiobooks/AuthorB/Book2', parsedTitle: 'Dup Book', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 1, totalSize: 40000, isDuplicate: true, duplicateReason: 'path' },
+      ],
+      totalFolders: 2,
+    });
+
+    renderWithProviders(<LibraryImportPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('New Book')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/all caught up|up to date|already registered/i)).not.toBeInTheDocument();
+  });
+
+  // AC4: card index map wiring (#141)
+  it('toggle card when duplicates hidden: correct source-array row index passed to handleToggle', async () => {
+    // 2 rows: index 0 is dup (hidden by default), index 1 is new book
+    // When user toggles the new book (which appears first in displayedRows),
+    // the underlying rows[1] must be toggled — not rows[0]
+    mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
+    mockApi.scanDirectory.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/AuthorB/Book2', parsedTitle: 'Dup Book', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 1, totalSize: 40000, isDuplicate: true, duplicateReason: 'path' },
+        { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'New Book', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
+      ],
+      totalFolders: 2,
+    });
+
+    renderWithProviders(<LibraryImportPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('New Book')).toBeInTheDocument();
+    });
+
+    // New Book is selected by default (non-dup); its toggle button shows aria-label="Deselect" (not "Deselect all")
+    const toggleBtn = screen.getByRole('button', { name: /^deselect$/i });
+    await userEvent.click(toggleBtn);
+
+    // After toggle, the "New Book" row should be deselected
+    // The count shows "0 of 1 new selected"
+    await waitFor(() => {
+      expect(screen.getByText(/0 of 1 new selected/i)).toBeInTheDocument();
+    });
   });
 
   it('Register button calls confirmImport when match job succeeds', async () => {
