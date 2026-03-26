@@ -14,6 +14,10 @@ interface ImportSummaryBarProps {
   onModeChange: (mode: ImportMode) => void;
   onImport: () => void;
   importing: boolean;
+  /** When true, hide the Copy/Move mode dropdown (used by Library Import which registers in-place) */
+  hideMode?: boolean;
+  /** Override the default "Import N books" CTA label */
+  registerLabel?: string;
 }
 
 export function ImportSummaryBar({
@@ -29,6 +33,8 @@ export function ImportSummaryBar({
   onModeChange,
   onImport,
   importing,
+  hideMode,
+  registerLabel,
 }: ImportSummaryBarProps) {
   return (
     <div className="sticky bottom-0 z-10 glass-card border-t border-white/10 rounded-b-xl px-4 py-3 flex items-center justify-between gap-4">
@@ -67,18 +73,20 @@ export function ImportSummaryBar({
 
       {/* Controls */}
       <div className="flex items-center gap-3">
-        {/* Mode dropdown */}
-        <div className="relative">
-          <select
-            value={mode}
-            onChange={(e) => onModeChange(e.target.value as ImportMode)}
-            className="appearance-none glass-card rounded-lg pl-3 pr-7 py-2 text-sm font-medium text-foreground focus-ring cursor-pointer"
-          >
-            <option value="copy">Copy</option>
-            <option value="move">Move</option>
-          </select>
-          <ChevronDownIcon className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" />
-        </div>
+        {/* Mode dropdown — hidden for in-place registration flows */}
+        {!hideMode && (
+          <div className="relative">
+            <select
+              value={mode}
+              onChange={(e) => onModeChange(e.target.value as ImportMode)}
+              className="appearance-none glass-card rounded-lg pl-3 pr-7 py-2 text-sm font-medium text-foreground focus-ring cursor-pointer"
+            >
+              <option value="copy">Copy</option>
+              <option value="move">Move</option>
+            </select>
+            <ChevronDownIcon className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" />
+          </div>
+        )}
 
         <button
           onClick={onImport}
@@ -92,7 +100,7 @@ export function ImportSummaryBar({
               Importing...
             </span>
           ) : (
-            `Import ${selectedCount} book${selectedCount !== 1 ? 's' : ''}`
+            registerLabel ?? `Import ${selectedCount} book${selectedCount !== 1 ? 's' : ''}`
           )}
         </button>
       </div>
