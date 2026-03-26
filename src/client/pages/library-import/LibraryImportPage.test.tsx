@@ -100,6 +100,36 @@ describe('LibraryImportPage (#133)', () => {
     });
   });
 
+  it('retry-matching button: clicking it starts a new match job and clears the error card', async () => {
+    // First startMatchJob call fails; retry call succeeds
+    mockApi.startMatchJob
+      .mockRejectedValueOnce(new Error('transient error'))
+      .mockResolvedValue({ jobId: 'job-2' });
+    mockApi.getMatchJob.mockResolvedValue({ id: 'job-2', status: 'completed', total: 1, matched: 1, results: [] });
+    mockApi.scanDirectory.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
+      ],
+      totalFolders: 1,
+    });
+
+    renderWithProviders(<LibraryImportPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/matching failed/i)).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: /retry matching/i }));
+
+    // Error card goes away once startMatching clears the error
+    await waitFor(() => {
+      expect(screen.queryByText(/matching failed/i)).not.toBeInTheDocument();
+    });
+
+    // startMatchJob called twice: initial + retry
+    expect(mockApi.startMatchJob).toHaveBeenCalledTimes(2);
+  });
+
   it('match-job failure: inline error shown and Register button disabled', async () => {
     mockApi.startMatchJob.mockRejectedValue(new Error('match server unavailable'));
     mockApi.scanDirectory.mockResolvedValue({

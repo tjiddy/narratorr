@@ -106,23 +106,36 @@ describe('useLibraryImport hook (#133)', () => {
     });
   });
 
-  it('match results merge: no-match rows auto-deselected, duplicate rows stay unselected', async () => {
+  it('match results merge: confidence=none result deselects non-duplicate row; duplicate row stays unselected', async () => {
+    // Poll resolves immediately with a 'completed' job that has a 'none' confidence result
+    // for the non-duplicate row. The interval fires at POLL_INTERVAL (2s) so we extend timeout.
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1',
+      status: 'completed',
+      total: 1,
+      matched: 1,
+      results: [
+        { path: '/audiobooks/AuthorA/Book1', confidence: 'none', bestMatch: null, alternatives: [] },
+      ],
+    });
+
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
 
     await waitFor(() => expect(result.current.step).toBe('review'));
 
-    // Simulate match job completing with a no-match result
-    await act(async () => {
-      // Directly call mergeMatchResults by simulating the matchResults changing
-      // This is done via the startMatching → poll flow; we verify the auto-deselect behavior
-      // by checking initial state (non-dup starts selected)
-    });
+    // Before poll fires: non-dup starts selected
+    const nonDupRowBefore = result.current.rows.find(r => !r.book.isDuplicate);
+    expect(nonDupRowBefore?.selected).toBe(true);
 
-    const nonDupRow = result.current.rows.find(r => !r.book.isDuplicate);
-    expect(nonDupRow?.selected).toBe(true); // starts selected
+    // After poll fires (2s interval): non-dup row should be deselected due to confidence='none'
+    await waitFor(() => {
+      const nonDupRow = result.current.rows.find(r => !r.book.isDuplicate);
+      expect(nonDupRow?.selected).toBe(false);
+    }, { timeout: 5000 });
 
+    // Duplicate rows remain unselected regardless
     const pathDupRow = result.current.rows.find(r => r.book.duplicateReason === 'path');
-    expect(pathDupRow?.selected).toBe(false); // duplicate starts unselected
+    expect(pathDupRow?.selected).toBe(false);
   });
 
   it('Select All: only selects rows where isDuplicate=false', async () => {
@@ -198,6 +211,32 @@ describe('useLibraryImport hook (#133)', () => {
     await waitFor(() => {
       expect(result.current.matchJobError).toBe('match server unavailable');
     });
+  });
+
+  it('handleRetryMatch: starts a new match job with non-duplicate candidates and clears error', async () => {
+    // Initial attempt fails
+    mockStartMatchJob
+      .mockRejectedValueOnce(new Error('first failure'))
+      .mockResolvedValue({ jobId: 'job-2' });
+    mockGetMatchJob.mockResolvedValue({ id: 'job-2', status: 'completed', total: 1, matched: 1, results: [] });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.matchJobError).toBe('first failure'));
+
+    // Retry
+    act(() => result.current.handleRetryMatch());
+
+    // Error clears immediately because startMatching sets error=null before the async call
+    await waitFor(() => expect(result.current.matchJobError).toBeNull());
+
+    // startMatchJob called twice: initial scan + retry
+    expect(mockStartMatchJob).toHaveBeenCalledTimes(2);
+    // Retry call contains the non-duplicate candidate
+    const retryCandidates = mockStartMatchJob.mock.calls[1][0] as Array<{ path: string; title: string }>;
+    expect(retryCandidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: '/audiobooks/AuthorA/Book1', title: 'Book One' }),
+    ]));
   });
 
   it('path-duplicate row: no edit-triggered recheck, row stays locked', async () => {
