@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #112 Add post-import audio file merging (MP3s → single M4B) — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #131
+
+### Metrics
+- Files changed: 14 source + 8 test | Tests added/modified: ~75
+- Quality gate runs: 3 (pass on attempt 3)
+- Fix iterations: 4 (vi.clearAllMocks → resetAllMocks; MergeError unused import lint; mergeBook() complexity 22→extracted helpers; BookHero.test.tsx missing new props; Drizzle enum out of sync with Zod enum; TypeScript property null narrowing)
+- Context compactions: 1 (mid-implementation — required resuming from summary)
+
+### Workflow experience
+- What went smoothly: Staging contract design was clear from the spec; ERROR_REGISTRY pattern made route error mapping trivial; coverage gap analysis by Explore subagent caught real missing tests (BookHero merge button, error-handler MergeError, useEventSource merge_complete)
+- Friction / issues encountered: (1) ESLint complexity 22 on mergeBook() required late refactor to extract helpers — predictable upfront if step count budgeted. (2) TypeScript property narrowing trap on `book.path` — null check doesn't narrow property access on subsequent uses. (3) Drizzle enum vs Zod enum sync — adding 'merged' to Zod schema without adding to DB schema.ts caused TS compile error (no migration needed since SQLite doesn't enforce it). (4) `vi.clearAllMocks()` not resetting mock implementations caused stale guard tests.
+
+### Token efficiency
+- Highest-token actions: Explore subagent coverage review (comprehensive but found real gaps), context compaction mid-session
+- Avoidable waste: vi.clearAllMocks vs resetAllMocks issue caused a re-run cycle that could have been avoided by checking beforeEach patterns against similar service tests
+- Suggestions: When designing long orchestrator service methods (>8 sequential async steps), pre-plan private helper extraction to stay under complexity limit
+
+### Infrastructure gaps
+- Repeated workarounds: Property null narrowing via local variable extraction (recurs whenever `book.path` or similar nullable DB fields used post-guard)
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. ESLint complexity 15 limit fires on async orchestrator methods with >8 steps — extract helpers proactively during design, not as a late fix
+2. Drizzle DB schema enum and Zod schema enum are independent — adding to one doesn't propagate to the other; always update both when adding event types
+3. `vi.clearAllMocks()` in beforeEach doesn't reset mock implementations — always use `vi.resetAllMocks()` in service tests where different tests set different return values
+
 ## #94 Add fetch timeout to metadata providers — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #130
