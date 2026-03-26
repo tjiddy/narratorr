@@ -11,7 +11,7 @@ interface ImportSummaryBarProps {
   duplicateCount: number;
   isMatching: boolean;
   mode: ImportMode;
-  onModeChange: (mode: ImportMode) => void;
+  onModeChange?: (mode: ImportMode) => void;
   onImport: () => void;
   importing: boolean;
   /** When true, hide the Copy/Move mode dropdown (used by Library Import which registers in-place) */
