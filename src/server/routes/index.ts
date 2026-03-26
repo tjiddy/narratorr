@@ -26,6 +26,7 @@ import { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import { QualityGateOrchestrator } from '../services/quality-gate-orchestrator.js';
 import { ImportListService } from '../services/import-list.service.js';
 import { LibraryScanService } from '../services/library-scan.service.js';
+import { MergeService } from '../services/merge.service.js';
 import { MatchJobService } from '../services/match-job.service.js';
 import { BackupService } from '../services/backup.service.js';
 import { HealthCheckService } from '../services/health-check.service.js';
@@ -76,6 +77,7 @@ export interface Services {
   blacklist: BlacklistService;
   remotePathMapping: RemotePathMappingService;
   rename: RenameService;
+  merge: MergeService;
   eventHistory: EventHistoryService;
   tagging: TaggingService;
   qualityGate: QualityGateService;
@@ -113,6 +115,7 @@ export const SERVICE_KEYS = Object.keys({
   blacklist: true,
   remotePathMapping: true,
   rename: true,
+  merge: true,
   eventHistory: true,
   tagging: true,
   qualityGate: true,
@@ -160,6 +163,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const qualityGateService = new QualityGateService(db, log);
   const qualityGateOrchestrator = new QualityGateOrchestrator(qualityGateService, db, log, downloadClient, eventHistory, eventBroadcaster, blacklistService, remotePathMapping);
   const renameService = new RenameService(db, book, settings, log, eventHistory);
+  const mergeService = new MergeService(db, book, settings, log, eventHistory, eventBroadcaster);
   const retryBudget = new RetryBudget();
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
   const recyclingBin = new RecyclingBinService(db, log, config.configPath, settings, book);
@@ -186,7 +190,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   download.setRetrySearchDeps(retrySearchDeps);
   eventHistory.setRetrySearchDeps(retrySearchDeps);
 
-  return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin, importList, discovery };
+  return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin, importList, discovery };
 }
 
 type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;
@@ -200,6 +204,7 @@ const routeRegistry: RouteFactory[] = [
     downloadOrchestrator: s.downloadOrchestrator,
     settingsService: s.settings,
     renameService: s.rename,
+    mergeService: s.merge,
     taggingService: s.tagging,
     eventHistory: s.eventHistory,
     indexerService: s.indexer,

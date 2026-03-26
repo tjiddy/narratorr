@@ -5,6 +5,7 @@ import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js'
 import type { Services } from './index.js';
 import { RenameError } from '../services/rename.service.js';
 import { RetagError } from '../services/tagging.service.js';
+import { MergeError } from '../services/merge.service.js';
 import { readdir, readFile, stat } from 'node:fs/promises';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -1421,5 +1422,64 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
       authors: [{ name: 'Brandon Sanderson', asin: 'B001IGFHW6' }],
       narrators: ['Michael Kramer'],
     }));
+  });
+
+  describe('POST /api/books/:id/merge-to-m4b', () => {
+    const mergeResult = {
+      bookId: 1,
+      outputFile: '/library/Author/Title/Title.m4b',
+      filesReplaced: 12,
+      message: 'Merged 12 files into Title.m4b',
+    };
+
+    it('returns 200 with merge result on success', async () => {
+      (services.merge.mergeBook as Mock).mockResolvedValue(mergeResult);
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual(mergeResult);
+      expect(services.merge.mergeBook).toHaveBeenCalledWith(1);
+    });
+
+    it('returns 404 when book not found', async () => {
+      (services.merge.mergeBook as Mock).mockRejectedValue(new MergeError('Book not found', 'NOT_FOUND'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
+
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('returns 400 when book is not in imported status', async () => {
+      (services.merge.mergeBook as Mock).mockRejectedValue(new MergeError('Book is not imported', 'NO_STATUS'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 400 when no top-level audio files found at book path', async () => {
+      (services.merge.mergeBook as Mock).mockRejectedValue(new MergeError('No top-level audio files', 'NO_TOP_LEVEL_FILES'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('returns 409 when merge already in progress for this book', async () => {
+      (services.merge.mergeBook as Mock).mockRejectedValue(new MergeError('Merge already in progress', 'ALREADY_IN_PROGRESS'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
+
+      expect(res.statusCode).toBe(409);
+    });
+
+    it('returns 503 when ffmpeg is not configured', async () => {
+      (services.merge.mergeBook as Mock).mockRejectedValue(new MergeError('ffmpeg is not configured', 'FFMPEG_NOT_CONFIGURED'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
+
+      expect(res.statusCode).toBe(503);
+    });
   });
 });
