@@ -32,7 +32,7 @@ export async function bulkOperationsRoutes(
   app.post('/api/books/bulk/rename', async (request, reply) => {
     try {
       const jobId = bulkOperationService.startRenameJob();
-      return reply.status(202).send({ jobId });
+      return await reply.status(202).send({ jobId });
     } catch (err) {
       if (err instanceof BulkOpError) {
         if (err.code === 'LIBRARY_NOT_CONFIGURED') return reply.status(400).send({ error: err.message });
@@ -46,7 +46,7 @@ export async function bulkOperationsRoutes(
   app.post('/api/books/bulk/retag', async (request, reply) => {
     try {
       const jobId = bulkOperationService.startRetagJob();
-      return reply.status(202).send({ jobId });
+      return await reply.status(202).send({ jobId });
     } catch (err) {
       if (err instanceof BulkOpError) {
         if (err.code === 'BULK_OP_IN_PROGRESS') return reply.status(409).send({ error: err.message });
@@ -59,7 +59,7 @@ export async function bulkOperationsRoutes(
   app.post('/api/books/bulk/convert', async (request, reply) => {
     try {
       const jobId = bulkOperationService.startConvertJob();
-      return reply.status(202).send({ jobId });
+      return await reply.status(202).send({ jobId });
     } catch (err) {
       if (err instanceof BulkOpError) {
         if (err.code === 'FFMPEG_NOT_CONFIGURED') return reply.status(503).send({ error: err.message });

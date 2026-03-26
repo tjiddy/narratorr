@@ -9,6 +9,10 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock('@/components/library/BulkOperationsSection', () => ({
+  BulkOperationsSection: () => null,
+}));
+
 vi.mock('@/lib/api', () => ({
   api: {
     getSettings: vi.fn(),

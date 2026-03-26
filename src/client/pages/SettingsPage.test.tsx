@@ -11,6 +11,10 @@ import {
   DownloadClientsSettings,
 } from '@/pages/settings';
 
+vi.mock('@/components/library/BulkOperationsSection', () => ({
+  BulkOperationsSection: () => null,
+}));
+
 // Mock api
 vi.mock('@/lib/api', () => ({
   api: {

@@ -7,6 +7,37 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 
 type PendingOp = 'rename' | 'retag' | 'convert' | null;
 
+async function fetchCountForOp(op: 'rename' | 'retag' | 'convert'): Promise<number> {
+  if (op === 'rename') {
+    const r = await api.getBulkRenameCount();
+    return r.mismatched;
+  }
+  if (op === 'retag') {
+    const r = await api.getBulkRetagCount();
+    return r.total;
+  }
+  const r = await api.getBulkConvertCount();
+  return r.total;
+}
+
+const MODAL_LABELS: Record<NonNullable<PendingOp>, { title: string; message: (n: number) => string; confirmLabel: string }> = {
+  rename: {
+    title: 'Rename All Books?',
+    message: (n) => `This will rename ${n} book${n !== 1 ? 's' : ''} to match the current folder format.`,
+    confirmLabel: 'Rename All',
+  },
+  retag: {
+    title: 'Re-tag All Books?',
+    message: (n) => `This will re-write audio tags for ${n} book${n !== 1 ? 's' : ''}.`,
+    confirmLabel: 'Re-tag All',
+  },
+  convert: {
+    title: 'Convert All to M4B?',
+    message: (n) => `This will convert ${n} book${n !== 1 ? 's' : ''} to M4B format. Original files will be replaced.`,
+    confirmLabel: 'Convert All',
+  },
+};
+
 function Spinner() {
   return (
     <svg
@@ -79,21 +110,12 @@ export function BulkOperationsSection() {
   });
 
   const ffmpegConfigured = Boolean(settings?.processing?.ffmpegPath?.trim());
+  const anyBusy = isRunning || isLoadingCount;
 
   async function handleOperationClick(op: 'rename' | 'retag' | 'convert') {
     setIsLoadingCount(true);
     try {
-      let count = 0;
-      if (op === 'rename') {
-        const r = await api.getBulkRenameCount();
-        count = r.mismatched;
-      } else if (op === 'retag') {
-        const r = await api.getBulkRetagCount();
-        count = r.total;
-      } else {
-        const r = await api.getBulkConvertCount();
-        count = r.total;
-      }
+      const count = await fetchCountForOp(op);
       setModalCount(count);
       setPendingOp(op);
     } finally {
@@ -114,25 +136,7 @@ export function BulkOperationsSection() {
     setModalCount(null);
   }
 
-  const modalLabels: Record<NonNullable<PendingOp>, { title: string; message: (n: number) => string; confirmLabel: string }> = {
-    rename: {
-      title: 'Rename All Books?',
-      message: (n) => `This will rename ${n} book${n !== 1 ? 's' : ''} to match the current folder format.`,
-      confirmLabel: 'Rename All',
-    },
-    retag: {
-      title: 'Re-tag All Books?',
-      message: (n) => `This will re-write audio tags for ${n} book${n !== 1 ? 's' : ''}.`,
-      confirmLabel: 'Re-tag All',
-    },
-    convert: {
-      title: 'Convert All to M4B?',
-      message: (n) => `This will convert ${n} book${n !== 1 ? 's' : ''} to M4B format. Original files will be replaced.`,
-      confirmLabel: 'Convert All',
-    },
-  };
-
-  const modal = pendingOp ? modalLabels[pendingOp] : null;
+  const modal = pendingOp ? MODAL_LABELS[pendingOp] : null;
 
   return (
     <div className="mt-4 pt-4 border-t border-border/30 space-y-3">
@@ -142,7 +146,7 @@ export function BulkOperationsSection() {
           label="Rename All Books"
           runningLabel="Renaming..."
           isThisRunning={isRunning && jobType === 'rename'}
-          isAnyRunning={isRunning || isLoadingCount}
+          isAnyRunning={anyBusy}
           progress={progress}
           onClick={() => handleOperationClick('rename')}
         />
@@ -150,7 +154,7 @@ export function BulkOperationsSection() {
           label="Re-tag All Books"
           runningLabel="Re-tagging..."
           isThisRunning={isRunning && jobType === 'retag'}
-          isAnyRunning={isRunning || isLoadingCount}
+          isAnyRunning={anyBusy}
           progress={progress}
           onClick={() => handleOperationClick('retag')}
         />
@@ -158,7 +162,7 @@ export function BulkOperationsSection() {
           label="Convert All to M4B"
           runningLabel="Converting..."
           isThisRunning={isRunning && jobType === 'convert'}
-          isAnyRunning={isRunning || isLoadingCount}
+          isAnyRunning={anyBusy}
           isDisabled={!ffmpegConfigured}
           disabledReason="ffmpeg is not configured in Processing settings"
           progress={progress}
