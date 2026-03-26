@@ -1,5 +1,33 @@
 # Workflow Log
 
+## #145 ZOD-1: Add .trim() to all .min(1) string validations — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #153
+
+### Metrics
+- Files changed: 21 | Tests added/modified: 12 test files (4 new, 8 extended), 1 client test fixed
+- Quality gate runs: 2 (first run exposed LibrarySettingsSection test failure; pass on attempt 2)
+- Fix iterations: 2 — (1) LibrarySettingsSection test using ' ' to dirty form broke when trim made space → empty → different error; fixed by using 'x'. (2) import-list and indexer form schema tests used wrong type in fixtures causing superRefine failures; fixed by using a type with fulfilled required settings.
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: the mechanical nature made the red/green cycle fast; grep-for-violations gave an accurate inventory upfront; existing test patterns were clear and consistent
+- Friction / issues encountered: Two test data issues mid-implementation: (1) superRefine schemas reject fixtures that don't satisfy per-type required fields — type: 'newznab' with empty settings fails because newznab requires apiUrl+apiKey; needed to check the registry. (2) LibrarySettingsSection test used ' ' (space) to dirty a form — after trim fix, space → empty → "required" error instead of "template must include" — needed to switch to 'x'.
+
+### Token efficiency
+- Highest-token actions: explore subagents (plan + self-review + coverage) and the spec review/respond cycle before implementation
+- Avoidable waste: coverage subagent flagged pre-existing untested behaviors in bookAuthorInputSchema (already had .trim()) as gaps in this PR; manual triage required
+- Suggestions: for mechanical find-and-replace PRs, a coverage subagent focused only on NEWLY changed lines would save filtering time
+
+### Infrastructure gaps
+- Repeated workarounds: none
+- Missing tooling / config: coverage subagent should scope to new/changed behavior only (it can't tell pre-existing .trim() fields from newly added ones)
+- Unresolved debt: none introduced
+
+### Wish I'd Known
+1. Password fields need explicit exclusion from blanket .trim() fixes — this isn't documented in the ZOD-1 gotcha, only derivable from security first-principles
+2. superRefine schemas (indexer, import-list, download-client) reject any test fixture that doesn't satisfy the per-type required fields in the registry; always look up requiredFields before writing test data
+3. Tests that dirty a form with ' ' (whitespace) to trigger a refine error will break after adding .trim() — the whitespace now gets trimmed to empty and hits a different error path
 ## #149 ERR-1 + DB-1: Fix string-based error routing and merge service DB timing — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #152
