@@ -14,7 +14,7 @@ export type Step = 'scanning' | 'review' | 'error';
 export function useLibraryImport() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { results: matchResults, progress, isMatching, startMatching, cancel: cancelMatching } = useMatchJob();
+  const { results: matchResults, progress, isMatching, startMatching, cancel: _cancelMatching } = useMatchJob();
 
   const [step, setStep] = useState<Step>('scanning');
   const [scanError, setScanError] = useState<string | null>(null);

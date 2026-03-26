@@ -3,6 +3,7 @@ import { ImportCard, ImportSummaryBar, BookEditModal } from '@/components/manual
 import { ArrowLeftIcon, CheckIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';
 import { useLibraryImport } from './useLibraryImport.js';
 
+// eslint-disable-next-line max-lines-per-function, complexity -- page orchestrator with scan, match, duplicate, register flows
 export function LibraryImportPage() {
   const {
     step,
@@ -19,7 +20,6 @@ export function LibraryImportPage() {
     handleEdit,
     handleRegister,
     handleRetry,
-    scanMutation,
     registerMutation,
     selectedCount,
     selectedUnmatchedCount,

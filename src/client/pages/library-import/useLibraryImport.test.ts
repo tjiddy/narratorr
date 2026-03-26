@@ -156,7 +156,7 @@ describe('useLibraryImport hook (#133)', () => {
     expect(slugDupIdx).toBeGreaterThanOrEqual(0);
 
     act(() => {
-      result.current.handleEdit(slugDupIdx, { title: 'Different Title', author: 'Different Author' });
+      result.current.handleEdit(slugDupIdx, { title: 'Different Title', author: 'Different Author', series: '' });
     });
 
     await waitFor(() => {
@@ -177,7 +177,7 @@ describe('useLibraryImport hook (#133)', () => {
     const pathDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'path');
 
     act(() => {
-      result.current.handleEdit(pathDupIdx, { title: 'Totally Different', author: 'New Author' });
+      result.current.handleEdit(pathDupIdx, { title: 'Totally Different', author: 'New Author', series: '' });
     });
 
     await waitFor(() => {
