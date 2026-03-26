@@ -277,3 +277,49 @@ describe('ImportCard', () => {
     });
   });
 });
+
+describe('ImportCard — lockDuplicates prop (#133)', () => {
+  it('lockDuplicates=false (default): duplicate row renders checkbox (existing Manual Import behavior)', () => {
+    const row = makeRow({ book: makeBook({ isDuplicate: true, duplicateReason: 'path' }) });
+    render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /deselect/i })).toBeInTheDocument();
+  });
+
+  it('lockDuplicates=true + path-duplicate (duplicateReason=path): no checkbox, no edit button, Already in library badge', () => {
+    const row = makeRow({ book: makeBook({ isDuplicate: true, duplicateReason: 'path' }) });
+    render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
+    expect(screen.queryByRole('button', { name: /select|deselect/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /edit/i })).not.toBeInTheDocument();
+    expect(screen.getByText('Already in library')).toBeInTheDocument();
+  });
+
+  it('lockDuplicates=true + slug-duplicate (duplicateReason=slug): no checkbox, edit button shown, Already in library badge', () => {
+    const row = makeRow({ book: makeBook({ isDuplicate: true, duplicateReason: 'slug' }) });
+    render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
+    expect(screen.queryByRole('button', { name: /select|deselect/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /edit/i })).toBeInTheDocument();
+    expect(screen.getByText('Already in library')).toBeInTheDocument();
+  });
+
+  it('lockDuplicates=true + non-duplicate: normal card with checkbox and edit button', () => {
+    const row = makeRow({ book: makeBook({ isDuplicate: false }), matchResult: makeMatchResult() });
+    render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} lockDuplicates />);
+    expect(screen.getByRole('button', { name: /deselect/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /edit/i })).toBeInTheDocument();
+  });
+});
+
+describe('ImportCard — relativePath prop (#133)', () => {
+  it('renders relative path when relativePath prop provided', () => {
+    const row = makeRow({ book: makeBook({ path: '/media/audiobooks/Author/Book' }) });
+    render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} relativePath="Author/Book" />);
+    expect(screen.getByText('Author/Book')).toBeInTheDocument();
+  });
+
+  it('falls back to existing short-path display when relativePath absent', () => {
+    const row = makeRow({ book: makeBook({ path: '/media/audiobooks/Author/Book' }) });
+    render(<ImportCard row={row} onToggle={vi.fn()} onEdit={vi.fn()} />);
+    // Should show last 3 path segments (short path fallback)
+    expect(screen.getByText('audiobooks/Author/Book')).toBeInTheDocument();
+  });
+});
