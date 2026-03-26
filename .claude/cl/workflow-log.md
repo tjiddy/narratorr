@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #148 CSS-1: Standardize z-index scale and fix a11y gaps — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #154
+
+### Metrics
+- Files changed: 13 (7 source + 6 test) | Tests added/modified: 13 new assertions across 9 test files
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: CSS class changes are mechanical and fast; TDD red/green cycle was clean; all behavioral assertions (focus-ring, aria-label, backdrop click) were real failing tests before implementation
+- Friction / issues encountered: Spec went through 3 review rounds due to blast radius analysis (ToolbarDropdown callers, BulkActionToolbar test file reference, BookMetadataModal coverage claim). State directory was deleted between plan and implement phases, requiring recreation.
+
+### Token efficiency
+- Highest-token actions: Three spec review response cycles; two Explore subagents during /plan
+- Avoidable waste: Round 3 spec review was a single-line correction that could have been caught in round 2
+- Suggestions: When fixing spec review findings, explicitly re-read every test plan line for accuracy before responding
+
+### Infrastructure gaps
+- Repeated workarounds: State dir needed re-creation before handoff (deleted between phases)
+- Missing tooling / config: frontend-design skill not available at handoff time
+- Unresolved debt: OverflowMenu and BookContextMenu still have focus:outline-none anti-pattern (deferred, logged in debt.md)
+
+### Wish I Had Known
+1. ToolbarDropdown has three callers — changing the shared primitive affects all of them; triggered a blocking spec review finding requiring scope expansion
+2. BulkActionToolbar coverage lives in BulkActions.test.tsx (no co-located file) — do not assume co-location without verifying
+3. The focus-ring utility already exists and is widely used — look for it before proposing inline ring classes
+
 ## #145 ZOD-1: Add .trim() to all .min(1) string validations — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #153
@@ -117,6 +146,35 @@
 2. The confirm button in BulkOperationsSection uses the same verb as the trigger button (e.g., "Re-tag All" both on the page and in the dialog confirm) — always scope modal assertions to `within(dialog)` to avoid ambiguous matches
 3. `findByDisplayValue` is the correct positive signal for vacuous negative assertions in input-interaction tests — it proves React has processed the typed value, not just that the DOM has updated
 # Workflow Log
+
+## #148 CSS-1: Standardize z-index scale and fix a11y gaps — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #154
+
+### Metrics
+- Files changed: 13 (7 source + 6 test) | Tests added/modified: 13 new assertions across 9 test files
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: CSS class changes are mechanical and fast; TDD red/green cycle was clean; all behavioral assertions (focus-ring, aria-label, backdrop click) were real failing tests before implementation
+- Friction / issues encountered: Spec went through 3 review rounds due to blast radius analysis (ToolbarDropdown callers, BulkActionToolbar test file reference, BookMetadataModal coverage claim). State directory was deleted between plan and implement phases, requiring recreation.
+
+### Token efficiency
+- Highest-token actions: Three spec review response cycles; two Explore subagents during /plan
+- Avoidable waste: Round 3 spec review was a single-line correction that could have been caught in round 2
+- Suggestions: When fixing spec review findings, explicitly re-read every test plan line for accuracy before responding
+
+### Infrastructure gaps
+- Repeated workarounds: State dir needed re-creation before handoff (deleted between phases)
+- Missing tooling / config: frontend-design skill not available at handoff time
+- Unresolved debt: OverflowMenu and BookContextMenu still have focus:outline-none anti-pattern (deferred, logged in debt.md)
+
+### Wish I Had Known
+1. ToolbarDropdown has three callers — changing the shared primitive affects all of them; triggered a blocking spec review finding requiring scope expansion
+2. BulkActionToolbar coverage lives in BulkActions.test.tsx (no co-located file) — do not assume co-location without verifying
+3. The focus-ring utility already exists and is widely used — look for it before proposing inline ring classes
 
 ## #141 Import polish — bugs, error handling, UX — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
