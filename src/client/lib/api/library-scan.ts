@@ -12,6 +12,8 @@ export interface DiscoveredBook {
   totalSize: number;
   isDuplicate: boolean;
   existingBookId?: number;
+  /** 'path' = exact folder path matched; 'slug' = title+author slug matched. Only set when isDuplicate=true. */
+  duplicateReason?: 'path' | 'slug';
 }
 
 export interface SingleBookResult {
