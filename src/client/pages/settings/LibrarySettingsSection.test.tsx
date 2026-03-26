@@ -666,10 +666,10 @@ describe('LibrarySettingsSection', () => {
       // The watch-based warning is already visible (1 instance) before any submit attempt
       expect(screen.getAllByText(/Template must include/).length).toBe(1);
 
-      // Dirty the form so Save button appears
+      // Dirty the form so Save button appears (use a non-empty value that still fails refine)
       const fileInput = screen.getByPlaceholderText('{author} - {title}');
       await user.tripleClick(fileInput);
-      await user.keyboard(' ');
+      await user.keyboard('x');
 
       const saveBtn = await screen.findByRole('button', { name: /save/i });
       await user.click(saveBtn);
