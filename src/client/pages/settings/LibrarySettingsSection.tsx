@@ -1,4 +1,5 @@
 import { useRef, useMemo, useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -394,6 +395,18 @@ export function LibrarySettingsSection() {
           </button>
         )}
       </form>
+      <div className="mt-4 pt-4 border-t border-border/30">
+        <Link
+          to="/library-import"
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium glass-card rounded-xl hover:border-primary/30 hover:text-primary transition-all focus-ring"
+        >
+          <FolderIcon className="w-4 h-4" />
+          Scan Library
+        </Link>
+        <p className="text-xs text-muted-foreground mt-2">
+          Scan the library folder to register existing audiobooks
+        </p>
+      </div>
       <ConfirmModal
         isOpen={showRescanPrompt}
         title="Scan Library?"
