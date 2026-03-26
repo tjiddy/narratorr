@@ -599,4 +599,14 @@ describe('BookMetadataModal', () => {
       });
     });
   });
+
+  it('calls onClose when the backdrop overlay is clicked', async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    const { container } = renderModal({ onClose });
+    // The backdrop is the absolute inset-0 div inside the outer wrapper
+    const backdrop = container.querySelector('.absolute.inset-0') as HTMLElement;
+    await user.click(backdrop);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
 });
