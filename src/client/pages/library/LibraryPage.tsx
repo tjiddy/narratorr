@@ -38,6 +38,7 @@ export function LibraryPage() {
   const filters = useLibraryFilters();
   const { data: libraryResponse, isLoading } = useLibrary(filters.apiParams);
   const { data: stats } = useBookStats();
+  const { data: settings } = useQuery({ queryKey: queryKeys.settings(), queryFn: api.getSettings });
 
   const books = useMemo(() => libraryResponse?.data ?? [], [libraryResponse]);
   const totalBooks = libraryResponse?.total ?? 0;
@@ -127,7 +128,7 @@ export function LibraryPage() {
   if (totalAll === 0 && !filters.isSearching && filters.statusFilter === 'all') return (
     <div className="space-y-6">
       <LibraryHeader />
-      <EmptyLibraryState />
+      <EmptyLibraryState hasLibraryPath={Boolean(settings?.library.path)} />
     </div>
   );
 

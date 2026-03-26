@@ -10,6 +10,7 @@ import { DiscoverPage } from './pages/discover';
 import { BookPage } from './pages/book';
 import { AuthorPage } from './pages/author';
 import { ManualImportPage } from './pages/manual-import';
+import { LibraryImportPage } from './pages/library-import/LibraryImportPage.js';
 import { SettingsLayout } from './pages/settings';
 import { settingsPageRegistry } from './pages/settings/registry';
 
@@ -27,6 +28,7 @@ export function App() {
             <Route index element={<Navigate to="/library" replace />} />
             <Route path="library" element={<LibraryPage />} />
             <Route path="import" element={<ManualImportPage />} />
+            <Route path="library-import" element={<LibraryImportPage />} />
             <Route path="search" element={<SearchPage />} />
             <Route path="discover" element={<DiscoverPage />} />
             <Route path="activity" element={<ActivityPage />} />

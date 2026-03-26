@@ -175,6 +175,56 @@ describe('useMatchJob', () => {
     expect(result.current.isMatching).toBe(false);
   });
 
+  it('sets error when startMatchJob fails', async () => {
+    mockStartMatchJob.mockRejectedValueOnce(new Error('Network error'));
+
+    const { result } = renderHook(() => useMatchJob());
+
+    await act(async () => {
+      result.current.startMatching([{ path: '/a', title: 'A' }]);
+    });
+
+    expect(result.current.error).toBe('Network error');
+    expect(result.current.isMatching).toBe(false);
+  });
+
+  it('sets error when poll fails', async () => {
+    mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
+    mockGetMatchJob.mockRejectedValueOnce(new Error('Job expired'));
+
+    const { result } = renderHook(() => useMatchJob());
+
+    await act(async () => {
+      result.current.startMatching([{ path: '/a', title: 'A' }]);
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    expect(result.current.error).toBe('Job expired');
+  });
+
+  it('clears error when starting a new job', async () => {
+    mockStartMatchJob.mockRejectedValueOnce(new Error('Network error'));
+
+    const { result } = renderHook(() => useMatchJob());
+
+    await act(async () => {
+      result.current.startMatching([{ path: '/a', title: 'A' }]);
+    });
+
+    expect(result.current.error).toBe('Network error');
+
+    mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-2' });
+
+    await act(async () => {
+      result.current.startMatching([{ path: '/b', title: 'B' }]);
+    });
+
+    expect(result.current.error).toBeNull();
+  });
+
   it('resets results when starting a new job', async () => {
     mockStartMatchJob.mockResolvedValueOnce({ jobId: 'job-1' });
     mockGetMatchJob.mockResolvedValueOnce({

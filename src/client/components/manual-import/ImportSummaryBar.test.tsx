@@ -191,3 +191,45 @@ describe('ImportSummaryBar', () => {
     });
   });
 });
+
+describe('ImportSummaryBar — hideMode prop (#133)', () => {
+  it('hideMode=true: Copy/Move dropdown not rendered', () => {
+    renderBar({ hideMode: true });
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  });
+
+  it('hideMode absent: Copy/Move dropdown still renders (Manual Import backward compat)', () => {
+    renderBar();
+    expect(screen.getByRole('combobox')).toBeInTheDocument();
+  });
+
+  it('count badges display correctly when hideMode=true', () => {
+    renderBar({ hideMode: true, readyCount: 3, reviewCount: 2 });
+    expect(screen.getByText('3 ready')).toBeInTheDocument();
+    expect(screen.getByText('2 review')).toBeInTheDocument();
+  });
+});
+
+describe('ImportSummaryBar — registerLabel prop (#133)', () => {
+  it('registerLabel overrides default Import X books CTA text', () => {
+    renderBar({ selectedCount: 5, registerLabel: 'Register 5 books' });
+    expect(screen.getByRole('button', { name: 'Register 5 books' })).toBeInTheDocument();
+    expect(screen.queryByText(/import 5 books/i)).not.toBeInTheDocument();
+  });
+
+  it('button text shows custom label when provided', () => {
+    renderBar({ selectedCount: 1, registerLabel: 'Add to Library' });
+    expect(screen.getByRole('button', { name: 'Add to Library' })).toBeInTheDocument();
+  });
+
+  it('registerLabel shown in pending state instead of hardcoded Importing...', () => {
+    renderBar({ selectedCount: 2, importing: true, registerLabel: 'Registering...' });
+    expect(screen.getByText('Registering...')).toBeInTheDocument();
+    expect(screen.queryByText('Importing...')).not.toBeInTheDocument();
+  });
+
+  it('disabled=true: button is disabled regardless of selectedCount', () => {
+    renderBar({ selectedCount: 3, disabled: true });
+    expect(screen.getByRole('button', { name: /import/i })).toBeDisabled();
+  });
+});

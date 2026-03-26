@@ -4,9 +4,15 @@ import {
   SearchIcon,
   ArrowRightIcon,
   FolderIcon,
+  SettingsIcon,
 } from '@/components/icons';
 
-export function EmptyLibraryState() {
+interface EmptyLibraryStateProps {
+  /** When true, shows Scan Library CTA; when false/absent, shows Go to Settings CTA */
+  hasLibraryPath?: boolean;
+}
+
+export function EmptyLibraryState({ hasLibraryPath }: EmptyLibraryStateProps) {
   return (
     <div className="flex flex-col items-center justify-center py-16 sm:py-24 animate-fade-in-up stagger-2">
       <div className="relative mb-8">
@@ -22,13 +28,31 @@ export function EmptyLibraryState() {
         Start building your audiobook collection by discovering and adding books
       </p>
       <div className="flex flex-wrap items-center gap-3">
+        {hasLibraryPath ? (
+          <Link
+            to="/library-import"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 hover:shadow-glow transition-all duration-200 focus-ring"
+          >
+            <FolderIcon className="w-4 h-4" />
+            Scan Library
+            <ArrowRightIcon className="w-4 h-4" />
+          </Link>
+        ) : (
+          <Link
+            to="/settings"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 hover:shadow-glow transition-all duration-200 focus-ring"
+          >
+            <SettingsIcon className="w-4 h-4" />
+            Go to Settings
+            <ArrowRightIcon className="w-4 h-4" />
+          </Link>
+        )}
         <Link
           to="/import"
-          className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 hover:shadow-glow transition-all duration-200 focus-ring"
+          className="inline-flex items-center gap-2 px-6 py-3 glass-card font-medium rounded-xl hover:border-primary/30 hover:text-primary transition-all duration-200 focus-ring"
         >
           <FolderIcon className="w-4 h-4" />
           Manual Import
-          <ArrowRightIcon className="w-4 h-4" />
         </Link>
         <Link
           to="/search"

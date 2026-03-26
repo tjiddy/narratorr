@@ -10,6 +10,7 @@ vi.mock('@/lib/api', () => ({
   api: {
     getBooks: vi.fn(),
     getBookStats: vi.fn(),
+    getSettings: vi.fn(),
     deleteBook: vi.fn(),
     deleteMissingBooks: vi.fn(),
     rescanLibrary: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock('sonner', () => ({
 
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
+import { createMockSettings } from '@/__tests__/factories';
 
 const mockBooks = [
   createMockBook({
@@ -122,6 +124,9 @@ function mockLibraryData(books: BookWithAuthor[]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(api.getSettings).mockResolvedValue(
+    createMockSettings({ library: { path: '', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' } }),
+  );
 });
 
 describe('LibraryPage', () => {
@@ -1428,6 +1433,42 @@ describe('LibraryPage', () => {
         expect(screen.getByRole('option', { name: /failed.*1/i })).toBeInTheDocument();
         expect(screen.getByRole('option', { name: /missing.*1/i })).toBeInTheDocument();
       });
+    });
+  });
+});
+
+describe('LibraryPage — settings-driven empty-state wiring (#133)', () => {
+  it('empty library with library path configured: shows Scan Library CTA linking to /library-import', async () => {
+    mockLibraryData([]);
+    vi.mocked(api.getSettings).mockResolvedValue(
+      createMockSettings({ library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' } }),
+    );
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Your library is empty')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      const scanLink = screen.getByRole('link', { name: /scan library/i });
+      expect(scanLink).toHaveAttribute('href', '/library-import');
+    });
+  });
+
+  it('empty library with no library path: shows Go to Settings CTA, no Scan Library link', async () => {
+    mockLibraryData([]);
+    vi.mocked(api.getSettings).mockResolvedValue(
+      createMockSettings({ library: { path: '', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' } }),
+    );
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Your library is empty')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: /settings/i })).toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /scan library/i })).not.toBeInTheDocument();
     });
   });
 });

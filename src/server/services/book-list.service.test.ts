@@ -474,3 +474,48 @@ describe('BookListService — many-to-many authors/narrators stats and sorting (
     });
   });
 });
+
+describe('getIdentifiers() — authorSlug field (#133)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let service: BookListService;
+
+  beforeEach(() => {
+    db = createMockDb();
+    service = new BookListService(inject<Db>(db));
+  });
+
+  it('returns authorSlug alongside asin, title, authorName for each book', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { asin: 'B001', title: 'Dune', authorName: 'Frank Herbert', authorSlug: 'frank-herbert' },
+    ]));
+
+    const result = await service.getIdentifiers();
+
+    expect(result[0]).toMatchObject({
+      asin: 'B001',
+      title: 'Dune',
+      authorName: 'Frank Herbert',
+      authorSlug: 'frank-herbert',
+    });
+  });
+
+  it('book with no author → authorSlug is null', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { asin: null, title: 'Unknown Book', authorName: null, authorSlug: null },
+    ]));
+
+    const result = await service.getIdentifiers();
+
+    expect(result[0].authorSlug).toBeNull();
+  });
+
+  it('author slug matches slugify contract: J.K. Rowling → jk-rowling', async () => {
+    db.select.mockReturnValueOnce(mockDbChain([
+      { asin: null, title: 'Harry Potter', authorName: 'J.K. Rowling', authorSlug: 'jk-rowling' },
+    ]));
+
+    const result = await service.getIdentifiers();
+
+    expect(result[0].authorSlug).toBe('jk-rowling');
+  });
+});

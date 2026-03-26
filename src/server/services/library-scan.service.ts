@@ -29,6 +29,8 @@ export interface DiscoveredBook {
   totalSize: number;
   isDuplicate: boolean;
   existingBookId?: number;
+  /** 'path' = exact folder path matched; 'slug' = title+author slug matched. Only set when isDuplicate=true. */
+  duplicateReason?: 'path' | 'slug';
 }
 
 export type ImportMode = 'copy' | 'move';
@@ -197,6 +199,7 @@ export class LibraryScanService {
           totalSize: folder.totalSize,
           isDuplicate: true,
           existingBookId: existingPathMap.get(folder.path),
+          duplicateReason: 'path',
         });
         continue;
       }
@@ -216,6 +219,7 @@ export class LibraryScanService {
             totalSize: folder.totalSize,
             isDuplicate: true,
             existingBookId: existingTitleAuthorMap.get(key),
+            duplicateReason: 'slug',
           });
           continue;
         }

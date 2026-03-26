@@ -28,3 +28,29 @@ describe('EmptyLibraryState', () => {
     expect(link).toHaveAttribute('href', '/search');
   });
 });
+
+describe('EmptyLibraryState — library path branching (#133)', () => {
+  it('shows Go to Settings CTA when no library path configured', () => {
+    renderWithProviders(<EmptyLibraryState hasLibraryPath={false} />);
+    expect(screen.getByText('Go to Settings')).toBeInTheDocument();
+    expect(screen.queryByText('Scan Library')).not.toBeInTheDocument();
+  });
+
+  it('shows Scan Library CTA when library path is configured', () => {
+    renderWithProviders(<EmptyLibraryState hasLibraryPath />);
+    expect(screen.getByText('Scan Library')).toBeInTheDocument();
+    expect(screen.queryByText('Go to Settings')).not.toBeInTheDocument();
+  });
+
+  it('shows Add a Book CTA when library path is configured', () => {
+    renderWithProviders(<EmptyLibraryState hasLibraryPath />);
+    const link = screen.getByText('Add a Book').closest('a');
+    expect(link).toHaveAttribute('href', '/search');
+  });
+
+  it('Scan Library link points to /library-import', () => {
+    renderWithProviders(<EmptyLibraryState hasLibraryPath />);
+    const link = screen.getByText('Scan Library').closest('a');
+    expect(link).toHaveAttribute('href', '/library-import');
+  });
+});

@@ -223,12 +223,13 @@ export class BookListService {
   }
 
   /** Lightweight list of all book identifiers for duplicate detection (no pagination). */
-  async getIdentifiers(): Promise<{ asin: string | null; title: string; authorName: string | null }[]> {
+  async getIdentifiers(): Promise<{ asin: string | null; title: string; authorName: string | null; authorSlug: string | null }[]> {
     const results = await this.db
       .select({
         asin: books.asin,
         title: books.title,
         authorName: authors.name,
+        authorSlug: authors.slug,
       })
       .from(books)
       .leftJoin(bookAuthors, and(eq(bookAuthors.bookId, books.id), eq(bookAuthors.position, 0)))

@@ -21,6 +21,10 @@ interface ImportCardProps {
   row: ImportRow;
   onToggle: () => void;
   onEdit: () => void;
+  /** When true, path-duplicates suppress checkbox+edit; slug-duplicates suppress checkbox but show edit */
+  lockDuplicates?: boolean;
+  /** Pre-computed relative path to display instead of the auto-shortened absolute path */
+  relativePath?: string;
 }
 
 function ConfidenceBadge({ confidence }: { confidence?: Confidence }) {
@@ -60,16 +64,22 @@ function ConfidenceBadge({ confidence }: { confidence?: Confidence }) {
 }
 
 // eslint-disable-next-line complexity -- confidence scoring display with conditional styles and layouts
-export function ImportCard({ row, onToggle, onEdit }: ImportCardProps) {
+export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath }: ImportCardProps) {
   const isDuplicate = row.book.isDuplicate;
   const confidence = row.matchResult?.confidence;
   const showPencilAlways = !confidence || confidence === 'medium' || confidence === 'none';
   const displayTitle = row.edited.title;
   const displayAuthor = row.edited.author || row.book.parsedAuthor || '';
   const displayNarrator = row.edited.metadata?.narrators?.join(', ');
-  // Show last 3 path segments for context (e.g. "Author/Series/Book Folder")
+  // Show pre-computed relative path if provided, otherwise last 3 path segments
   const pathParts = row.book.path.split(/[\\/]/).filter(Boolean);
-  const shortPath = pathParts.slice(-3).join('/') || row.book.path;
+  const shortPath = relativePath ?? pathParts.slice(-3).join('/') ?? row.book.path;
+
+  // When lockDuplicates=true: path-duplicates are fully locked; slug-duplicates show edit but no checkbox
+  const isPathDuplicate = lockDuplicates && isDuplicate && row.book.duplicateReason === 'path';
+  const isSlugDuplicate = lockDuplicates && isDuplicate && row.book.duplicateReason === 'slug';
+  const showCheckbox = !isPathDuplicate && !isSlugDuplicate;
+  const showEditButton = !isDuplicate || isSlugDuplicate;
 
   // Left border: amber for no-match, matches LibraryPage's status border pattern
   const borderClass = confidence === 'none'
@@ -88,18 +98,20 @@ export function ImportCard({ row, onToggle, onEdit }: ImportCardProps) {
       }`}
     >
       {/* Checkbox */}
-      <button
-        type="button"
-        onClick={onToggle}
-        className={`w-4 h-4 shrink-0 rounded border transition-all flex items-center justify-center ${
-          row.selected
-            ? 'bg-primary border-primary text-primary-foreground'
-            : 'border-border/60 hover:border-primary/50'
-        }`}
-        aria-label={row.selected ? 'Deselect' : 'Select'}
-      >
-        {row.selected && <CheckIcon className="w-3 h-3" />}
-      </button>
+      {showCheckbox && (
+        <button
+          type="button"
+          onClick={onToggle}
+          className={`w-4 h-4 shrink-0 rounded border transition-all flex items-center justify-center ${
+            row.selected
+              ? 'bg-primary border-primary text-primary-foreground'
+              : 'border-border/60 hover:border-primary/50'
+          }`}
+          aria-label={row.selected ? 'Deselect' : 'Select'}
+        >
+          {row.selected && <CheckIcon className="w-3 h-3" />}
+        </button>
+      )}
 
       {/* Title + filepath */}
       <div className="flex-1 min-w-0">
@@ -133,8 +145,8 @@ export function ImportCard({ row, onToggle, onEdit }: ImportCardProps) {
         )}
       </div>
 
-      {/* Edit button — hidden for duplicate rows */}
-      {!isDuplicate && (
+      {/* Edit button — hidden for path-locked duplicate rows */}
+      {showEditButton && (
         <button
           type="button"
           onClick={onEdit}

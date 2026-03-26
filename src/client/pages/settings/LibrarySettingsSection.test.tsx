@@ -789,3 +789,25 @@ describe('LibrarySettingsSection', () => {
     });
   });
 });
+
+describe('LibrarySettingsSection — Scan Library button (#133)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockApi.getSettings.mockResolvedValue(mockSettings);
+  });
+
+  it('renders Scan Library button', async () => {
+    renderWithProviders(<LibrarySettingsSection />);
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: /scan library/i })).toBeInTheDocument();
+    });
+  });
+
+  it('Scan Library button navigates to /library-import on click', async () => {
+    renderWithProviders(<LibrarySettingsSection />);
+    await waitFor(() => {
+      const link = screen.getByRole('link', { name: /scan library/i });
+      expect(link).toHaveAttribute('href', '/library-import');
+    });
+  });
+});

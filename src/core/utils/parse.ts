@@ -303,14 +303,7 @@ export function isMultiPartUsenetPost(title: string): MultiPartResult {
   return { match: false };
 }
 
-export function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
+export { slugify } from '../../shared/utils.js';
 
 export function formatBytes(bytes: number): string {
   if (!isFinite(bytes) || bytes < 0) return '0 B';

@@ -7,6 +7,7 @@ interface UseMatchJobReturn {
   results: MatchResult[];
   progress: { matched: number; total: number };
   isMatching: boolean;
+  error: string | null;
   startMatching: (candidates: MatchCandidate[]) => void;
   cancel: () => void;
 }
@@ -15,6 +16,7 @@ export function useMatchJob(): UseMatchJobReturn {
   const [results, setResults] = useState<MatchResult[]>([]);
   const [progress, setProgress] = useState({ matched: 0, total: 0 });
   const [isMatching, setIsMatching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const jobIdRef = useRef<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -52,6 +54,7 @@ export function useMatchJob(): UseMatchJobReturn {
     setResults([]);
     setProgress({ matched: 0, total: candidates.length });
     setIsMatching(true);
+    setError(null);
 
     try {
       const { jobId } = await api.startMatchJob(candidates);
@@ -62,14 +65,16 @@ export function useMatchJob(): UseMatchJobReturn {
         try {
           const status = await api.getMatchJob(jobIdRef.current);
           handlePollResult(status);
-        } catch {
+        } catch (err) {
           // Job may have expired — stop polling
           stopPolling();
           setIsMatching(false);
+          setError(err instanceof Error ? err.message : 'Unknown error');
         }
       }, POLL_INTERVAL);
-    } catch {
+    } catch (err) {
       setIsMatching(false);
+      setError(err instanceof Error ? err.message : 'Unknown error');
     }
   }, [cancel, handlePollResult, stopPolling]);
 
@@ -83,5 +88,5 @@ export function useMatchJob(): UseMatchJobReturn {
     };
   }, [stopPolling]);
 
-  return { results, progress, isMatching, startMatching, cancel };
+  return { results, progress, isMatching, error, startMatching, cancel };
 }

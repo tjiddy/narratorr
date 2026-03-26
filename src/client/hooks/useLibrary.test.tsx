@@ -224,8 +224,8 @@ describe('useBookIdentifiers', () => {
 
   it('calls api.getBookIdentifiers and returns identifiers array', async () => {
     const mockIds: BookIdentifier[] = [
-      { asin: 'B001', title: 'Book One', authorName: 'Author A' },
-      { asin: null, title: 'Book Two', authorName: null },
+      { asin: 'B001', title: 'Book One', authorName: 'Author A', authorSlug: null },
+      { asin: null, title: 'Book Two', authorName: null, authorSlug: null },
     ];
     vi.mocked(api.getBookIdentifiers).mockResolvedValue(mockIds);
 
