@@ -232,7 +232,7 @@ export const bookEvents = sqliteTable('book_events', {
     enum: [
       'grabbed', 'download_completed', 'download_failed',
       'imported', 'import_failed', 'upgraded',
-      'deleted', 'renamed',
+      'deleted', 'renamed', 'merged',
       'file_tagged', 'held_for_review',
     ],
   }).notNull(),

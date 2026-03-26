@@ -71,6 +71,7 @@ export class MergeService {
     if (!book.path) {
       throw new MergeError('Book has no path — not imported yet', 'NO_PATH');
     }
+    const bookPath = book.path;
     if (book.status !== 'imported') {
       throw new MergeError(`Book is not imported (status: ${book.status})`, 'NO_STATUS');
     }
@@ -81,7 +82,7 @@ export class MergeService {
     }
 
     // Identify top-level audio files (non-recursive)
-    const allEntries = await readdir(book.path);
+    const allEntries = await readdir(bookPath);
     const topLevelAudioFiles = allEntries.filter(
       (f) => AUDIO_EXTENSIONS.has(extname(f).toLowerCase()),
     );
@@ -95,68 +96,14 @@ export class MergeService {
 
     this.inProgress.add(bookId);
 
-    const stagingDir = book.path + '.merge-tmp';
+    const stagingDir = bookPath + '.merge-tmp';
 
     try {
-      // Step 1: Create staging dir
-      await mkdir(stagingDir, { recursive: true });
-
-      // Step 2: Copy top-level audio files to staging (originals remain in book.path)
-      for (const file of topLevelAudioFiles) {
-        await cp(join(book.path, file), join(stagingDir, file));
-      }
-
-      // Step 3: Run processAudioFiles on staging dir
-      const authorName = book.authors?.[0]?.name ?? '';
-      const processingResult = await processAudioFiles(stagingDir, {
-        ffmpegPath: processingSettings.ffmpegPath,
-        outputFormat: 'm4b',
-        bitrate: processingSettings.keepOriginalBitrate ? undefined : processingSettings.bitrate,
-        mergeBehavior: 'always',
-      }, {
-        author: authorName,
-        title: book.title,
-      });
-
-      if (!processingResult.success) {
-        throw new Error(`Audio processing failed: ${processingResult.error}`);
-      }
-
-      // Step 5: Pre-commit verification (read-only)
-      const scanResult = await scanAudioDirectory(stagingDir);
-      if (!scanResult) {
-        throw new Error('Staged M4B failed verification — audio scan returned null');
-      }
-
-      // Find the staged M4B
-      const stagingEntries = await readdir(stagingDir);
-      const stagedM4b = stagingEntries.find((f) => extname(f).toLowerCase() === '.m4b');
-      if (!stagedM4b) {
-        throw new Error('Staged M4B not found after processing');
-      }
-
-      // Step 7: Commit — move M4B to book.path, delete originals, clean staging
-      const outputPath = join(book.path, stagedM4b);
-      await rename(join(stagingDir, stagedM4b), outputPath);
-
-      // Delete original source files from book.path
-      for (const file of topLevelAudioFiles) {
-        try {
-          await unlink(join(book.path, file));
-        } catch {
-          // Best-effort: file may have already been removed
-        }
-      }
-
-      // Remove now-empty staging dir
-      await rm(stagingDir, { recursive: true, force: true });
-
-      // Update size on disk after commit
-      const fileStats = await stat(outputPath);
-      await this.db.update(books).set({ size: fileStats.size, updatedAt: new Date() }).where(eq(books.id, bookId));
+      const stagedM4b = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings);
+      const outputPath = await this.commitMerge(stagingDir, stagedM4b, bookPath, topLevelAudioFiles, bookId);
 
       // Step 8: Post-commit enrichment
-      const enrichResult = await enrichBookFromAudio(bookId, book.path, book, this.db, this.log, this.bookService);
+      const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService);
       if (!enrichResult.enriched) {
         this.log.warn(
           { bookId },
@@ -185,5 +132,74 @@ export class MergeService {
     } finally {
       this.inProgress.delete(bookId);
     }
+  }
+
+  /** Steps 1-5: copy to staging, process, verify. Returns the staged M4B filename. */
+  private async runStaging(
+    stagingDir: string,
+    book: { path: string; title: string; authors?: Array<{ name: string }> | null },
+    audioFiles: string[],
+    processingSettings: { ffmpegPath: string; keepOriginalBitrate?: boolean; bitrate?: number },
+  ): Promise<string> {
+    await mkdir(stagingDir, { recursive: true });
+
+    for (const file of audioFiles) {
+      await cp(join(book.path, file), join(stagingDir, file));
+    }
+
+    const authorName = book.authors?.[0]?.name ?? '';
+    const processingResult = await processAudioFiles(stagingDir, {
+      ffmpegPath: processingSettings.ffmpegPath,
+      outputFormat: 'm4b',
+      bitrate: processingSettings.keepOriginalBitrate ? undefined : processingSettings.bitrate,
+      mergeBehavior: 'always',
+    }, {
+      author: authorName,
+      title: book.title,
+    });
+
+    if (!processingResult.success) {
+      throw new Error(`Audio processing failed: ${processingResult.error}`);
+    }
+
+    const scanResult = await scanAudioDirectory(stagingDir);
+    if (!scanResult) {
+      throw new Error('Staged M4B failed verification — audio scan returned null');
+    }
+
+    const stagingEntries = await readdir(stagingDir);
+    const stagedM4b = stagingEntries.find((f) => extname(f).toLowerCase() === '.m4b');
+    if (!stagedM4b) {
+      throw new Error('Staged M4B not found after processing');
+    }
+
+    return stagedM4b;
+  }
+
+  /** Step 7: move M4B to book.path, delete originals, clean staging, update size in DB. */
+  private async commitMerge(
+    stagingDir: string,
+    stagedM4b: string,
+    bookPath: string,
+    originalsToDelete: string[],
+    bookId: number,
+  ): Promise<string> {
+    const outputPath = join(bookPath, stagedM4b);
+    await rename(join(stagingDir, stagedM4b), outputPath);
+
+    for (const file of originalsToDelete) {
+      try {
+        await unlink(join(bookPath, file));
+      } catch {
+        // Best-effort: file may have already been removed
+      }
+    }
+
+    await rm(stagingDir, { recursive: true, force: true });
+
+    const fileStats = await stat(outputPath);
+    await this.db.update(books).set({ size: fileStats.size, updatedAt: new Date() }).where(eq(books.id, bookId));
+
+    return outputPath;
   }
 }

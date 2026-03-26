@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockLogger, createMockDb, inject, createMockSettingsService } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
-import { MergeService, MergeError } from './merge.service.js';
+import { MergeService } from './merge.service.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
@@ -169,7 +169,7 @@ describe('MergeService', () => {
 
     it('calls enrichBookFromAudio with bookService after successful move', async () => {
       setupHappyPath();
-      const { service, bookService } = createService();
+      const { service } = createService();
 
       await service.mergeBook(42);
 
@@ -425,7 +425,6 @@ describe('MergeService', () => {
     });
 
     it('throws MergeError FFMPEG_NOT_CONFIGURED when ffmpegPath is not set', async () => {
-      const { service } = createService();
       // Override settings to have empty ffmpegPath
       const noFfmpegService = new MergeService(
         inject<Db>(createMockDb()),

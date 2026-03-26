@@ -13,6 +13,7 @@ import { RecyclingBinError } from '../services/recycling-bin.service.js';
 import { RestoreUploadError } from '../services/backup.service.js';
 import { QualityGateServiceError } from '../services/quality-gate.service.js';
 import { EventHistoryServiceError } from '../services/event-history.service.js';
+import { MergeError } from '../services/merge.service.js';
 
 function createTestApp() {
   const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
@@ -35,6 +36,12 @@ function createTestApp() {
   app.get('/throw-eh-unsupported', async () => { throw new EventHistoryServiceError('Event type does not support mark-as-failed', 'UNSUPPORTED_EVENT_TYPE'); });
   app.get('/throw-eh-no-download', async () => { throw new EventHistoryServiceError('Event has no associated download', 'NO_DOWNLOAD'); });
   app.get('/throw-eh-download-not-found', async () => { throw new EventHistoryServiceError('Associated download not found', 'DOWNLOAD_NOT_FOUND'); });
+  app.get('/throw-merge-not-found', async () => { throw new MergeError('Book not found', 'NOT_FOUND'); });
+  app.get('/throw-merge-no-path', async () => { throw new MergeError('Book has no path', 'NO_PATH'); });
+  app.get('/throw-merge-no-status', async () => { throw new MergeError('Not imported', 'NO_STATUS'); });
+  app.get('/throw-merge-no-files', async () => { throw new MergeError('No audio files', 'NO_TOP_LEVEL_FILES'); });
+  app.get('/throw-merge-no-ffmpeg', async () => { throw new MergeError('ffmpeg not configured', 'FFMPEG_NOT_CONFIGURED'); });
+  app.get('/throw-merge-in-progress', async () => { throw new MergeError('Already in progress', 'ALREADY_IN_PROGRESS'); });
   app.get('/throw-generic', async () => { throw new Error('disk full'); });
   app.get('/throw-non-error', async () => { throw 'string error'; });
   app.get('/success', async () => ({ ok: true }));
@@ -137,6 +144,37 @@ describe('error-handler plugin', () => {
       const res = await app.inject({ method: 'GET', url: '/throw-eh-download-not-found' });
       expect(res.statusCode).toBe(404);
       expect(JSON.parse(res.payload)).toEqual({ error: 'Associated download not found' });
+    });
+
+    it('maps MergeError NOT_FOUND to 404', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-merge-not-found' });
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Book not found' });
+    });
+
+    it('maps MergeError NO_PATH to 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-merge-no-path' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('maps MergeError NO_STATUS to 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-merge-no-status' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('maps MergeError NO_TOP_LEVEL_FILES to 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-merge-no-files' });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it('maps MergeError FFMPEG_NOT_CONFIGURED to 503', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-merge-no-ffmpeg' });
+      expect(res.statusCode).toBe(503);
+    });
+
+    it('maps MergeError ALREADY_IN_PROGRESS to 409', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-merge-in-progress' });
+      expect(res.statusCode).toBe(409);
     });
   });
 
