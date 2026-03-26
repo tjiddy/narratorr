@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #143 Import polish — misc cleanup — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #151
+
+### Metrics
+- Files changed: 10 | Tests added/modified: 1
+- Quality gate runs: 2 (pass on attempt 2)
+- Fix iterations: 2 (lint: stale DiscoveredBook/MatchResult imports; typecheck: optional prop missing `?.` guard)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: All 6 AC items were straightforward; type migration pattern is clean; red/green cycle for Layout test worked first time
+- Friction / issues encountered: Two fix iterations after first verify run — (1) forgot to remove `DiscoveredBook` and `MatchResult` imports from `ImportCard.tsx` that were only needed for the old inline `ImportRow` definition; (2) forgot that making `onModeChange` optional requires `?.` at the call site inside `ImportSummaryBar`
+
+### Token efficiency
+- Highest-token actions: Elaborate + respond-to-spec-review cycle (3 review rounds), explore subagents for plan/handoff
+- Avoidable waste: Could have previewed `ImportCard.tsx` component body before committing to understand which api imports were still needed after type extraction
+- Suggestions: When extracting types, always grep the original file for all referenced identifiers in the old type definition before removing them from imports
+
+### Infrastructure gaps
+- Repeated workarounds: none
+- Missing tooling / config: `frontend-design` skill unavailable (external plugin)
+- Unresolved debt: none new
+
+### Wish I'd Known
+1. **Re-export is required, not optional** — test files importing types directly from component files (not via barrel) silently break without a re-export. The blast radius section in the spec called this out but I still needed to think through the exact pattern.
+2. **Optional prop = optional chain at call site** — TypeScript TS2722 catches it at typecheck time but not at test time, so verify needs to run for this class of error to surface.
+3. **Transitive import cleanup after type moves** — after moving a type definition to types.ts, imports that were only needed to define that type (DiscoveredBook, MatchResult for ImportRow) become dead imports in the source file; ESLint catches them but only on the first verify run.
+
+
 ## #142 Import polish — test quality hardening — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #150
