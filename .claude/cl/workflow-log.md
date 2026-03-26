@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #142 Import polish — test quality hardening — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #150
+
+### Metrics
+- Files changed: 5 (test files only) | Tests added/modified: +9 new tests, 5 files hardened
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 1 — confirm button tests initially used bare `/re-tag all/i` which matched both the page button AND the dialog button; fixed by scoping to `within(dialog).getByRole('button', { name: /re-tag all/i })`
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: All five test files had clear, localized changes. The fake-timers approach using `{ toFake: ['setInterval', 'clearInterval'] }` worked cleanly without TanStack Query conflicts. Module-level mock refactor required updating 7 references across the file but no logic changes.
+- Friction / issues encountered: The confirm button selector ambiguity (`/re-tag all/i` matching both the trigger button and the dialog confirm button) was caught quickly in the first test run. The vacuous-waitFor fix required understanding why `findByDisplayValue` is the right positive signal — it's not obvious that the issue is about React state settling, not DOM presence.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for codebase mapping (read 7 test files + source files); self-review subagent
+- Avoidable waste: None significant — all file reads were needed
+- Suggestions: For test-only issues, the codebase exploration could be scoped to just reading the target test files rather than full source analysis
+
+### Infrastructure gaps
+- Repeated workarounds: None new
+- Missing tooling / config: No way to detect vacuous `waitFor(not.toBeInTheDocument())` statically — relies on code review
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })` is the right scope for page tests that mix polling hooks with TanStack Query — full `vi.useFakeTimers()` deadlocks Query's setTimeout-based machinery
+2. The confirm button in BulkOperationsSection uses the same verb as the trigger button (e.g., "Re-tag All" both on the page and in the dialog confirm) — always scope modal assertions to `within(dialog)` to avoid ambiguous matches
+3. `findByDisplayValue` is the correct positive signal for vacuous negative assertions in input-interaction tests — it proves React has processed the typed value, not just that the DOM has updated
+# Workflow Log
+
 ## #141 Import polish — bugs, error handling, UX — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #144
