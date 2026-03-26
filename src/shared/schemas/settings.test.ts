@@ -204,4 +204,27 @@ describe('libraryFormSchema — trim behavior', () => {
       expect(issue?.message).toBe('Folder format is required');
     }
   });
+
+  it('whitespace-only fileFormat fails min(1) after trim (not refine)', () => {
+    // After .trim(), '   ' becomes '' which fails .min(1) before reaching .refine()
+    const result = libraryFormSchema.safeParse({ ...validLibraryForm, fileFormat: '   ' });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues.find((i) => i.path.includes('fileFormat'));
+      expect(issue?.message).toBe('File format is required');
+    }
+  });
+
+  it('trims leading/trailing spaces from folderFormat and fileFormat template strings', () => {
+    const result = libraryFormSchema.safeParse({
+      ...validLibraryForm,
+      folderFormat: '  {author}/{title}  ',
+      fileFormat: '  {author} - {title}  ',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.folderFormat).toBe('{author}/{title}');
+      expect(result.data.fileFormat).toBe('{author} - {title}');
+    }
+  });
 });
