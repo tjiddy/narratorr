@@ -17,7 +17,7 @@ interface UseBulkOperationReturn {
   startJob: (type: BulkOpType) => Promise<void>;
 }
 
-const IDLE_PROGRESS: BulkProgress = { completed: 0, total: 0, failures: 0 };
+const IDLE_PROGRESS: BulkProgress = Object.freeze({ completed: 0, total: 0, failures: 0 });
 
 export function useBulkOperation(): UseBulkOperationReturn {
   const [isRunning, setIsRunning] = useState(false);
