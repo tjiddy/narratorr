@@ -165,6 +165,41 @@ describe('useLibraryImport hook (#133)', () => {
     });
   });
 
+  it('slug-duplicate row: case-only title change unlocks row (exact title equality contract)', async () => {
+    // Existing book has title 'Book Three' (mixed case). Editing to 'book three' (all lowercase)
+    // must NOT collide because exact equality 'book three' !== 'Book Three'.
+    mockGetBookIdentifiers.mockResolvedValue([
+      { asin: null, title: 'Book Three', authorName: 'Author C', authorSlug: 'author-c' },
+    ]);
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const slugDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'slug');
+
+    act(() => {
+      result.current.handleEdit(slugDupIdx, { title: 'book three', author: 'Author C', series: '' });
+    });
+
+    await waitFor(() => {
+      const row = result.current.rows[slugDupIdx];
+      expect(row.book.isDuplicate).toBe(false);
+    });
+  });
+
+  it('match-job failure: matchJobError is set after startMatchJob rejects', async () => {
+    mockStartMatchJob.mockRejectedValue(new Error('match server unavailable'));
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    await waitFor(() => {
+      expect(result.current.matchJobError).toBe('match server unavailable');
+    });
+  });
+
   it('path-duplicate row: no edit-triggered recheck, row stays locked', async () => {
     mockGetBookIdentifiers.mockResolvedValue([
       { asin: null, title: 'Book Two', authorName: 'Author B', authorSlug: 'author-b' },

@@ -14,7 +14,7 @@ export type Step = 'scanning' | 'review' | 'error';
 export function useLibraryImport() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { results: matchResults, progress, isMatching, startMatching, cancel: _cancelMatching } = useMatchJob();
+  const { results: matchResults, progress, isMatching, error: matchJobError, startMatching, cancel: _cancelMatching } = useMatchJob();
 
   const [step, setStep] = useState<Step>('scanning');
   const [scanError, setScanError] = useState<string | null>(null);
@@ -168,12 +168,12 @@ export function useLibraryImport() {
 
       let updatedBook = r.book;
 
-      // Slug-duplicate recheck: if this was a slug-duplicate, see if edited title+author no longer collides
+      // Slug-duplicate recheck: if this was a slug-duplicate, see if edited title+author no longer collides.
+      // Exact title equality matches the backend's findDuplicate() contract.
       if (r.book.isDuplicate && r.book.duplicateReason === 'slug' && bookIdentifiers) {
-        const editedTitleLower = state.title.toLowerCase();
         const editedAuthorSlug = slugify(state.author ?? '');
         const stillCollides = bookIdentifiers.some(
-          lb => lb.title.toLowerCase() === editedTitleLower && lb.authorSlug === editedAuthorSlug,
+          lb => lb.title === state.title && lb.authorSlug === editedAuthorSlug,
         );
         if (!stillCollides) {
           updatedBook = { ...r.book, isDuplicate: false };
@@ -206,6 +206,20 @@ export function useLibraryImport() {
     scanMutation.mutate(libraryPath);
   }, [settings, scanMutation]);
 
+  const handleRetryMatch = useCallback(() => {
+    const candidates = rows
+      .filter(r => !r.book.isDuplicate)
+      .map(r => ({
+        path: r.book.path,
+        title: r.edited.title,
+        author: r.edited.author || undefined,
+      }));
+    if (candidates.length > 0) {
+      prevMatchCountRef.current = 0;
+      startMatching(candidates);
+    }
+  }, [rows, startMatching]);
+
   // Computed counts
   const selectedCount = rows.filter(r => r.selected).length;
   const selectedUnmatchedCount = rows.filter(r => r.selected && r.matchResult?.confidence === 'none').length;
@@ -223,6 +237,7 @@ export function useLibraryImport() {
     step,
     hasLibraryPath,
     scanError,
+    matchJobError,
     rows,
     editIndex,
     setEditIndex,
@@ -235,6 +250,7 @@ export function useLibraryImport() {
     handleEdit,
     handleRegister,
     handleRetry,
+    handleRetryMatch,
 
     scanMutation,
     registerMutation,

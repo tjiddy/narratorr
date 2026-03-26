@@ -16,10 +16,13 @@ interface ImportSummaryBarProps {
   importing: boolean;
   /** When true, hide the Copy/Move mode dropdown (used by Library Import which registers in-place) */
   hideMode?: boolean;
-  /** Override the default "Import N books" CTA label */
+  /** Override the default "Import N books" CTA label (also used in pending state instead of "Importing...") */
   registerLabel?: string;
+  /** When true, disable the action button regardless of other state */
+  disabled?: boolean;
 }
 
+// eslint-disable-next-line complexity -- compound condition is the least-indirection way to express disabled state and pending label
 export function ImportSummaryBar({
   readyCount,
   reviewCount,
@@ -35,6 +38,7 @@ export function ImportSummaryBar({
   importing,
   hideMode,
   registerLabel,
+  disabled,
 }: ImportSummaryBarProps) {
   return (
     <div className="sticky bottom-0 z-10 glass-card border-t border-white/10 rounded-b-xl px-4 py-3 flex items-center justify-between gap-4">
@@ -90,14 +94,14 @@ export function ImportSummaryBar({
 
         <button
           onClick={onImport}
-          disabled={selectedCount === 0 || selectedUnmatchedCount > 0 || isMatching || importing}
+          disabled={disabled || selectedCount === 0 || selectedUnmatchedCount > 0 || isMatching || importing}
           className="px-5 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 hover:shadow-glow transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
           title={selectedUnmatchedCount > 0 ? `${selectedUnmatchedCount} selected book${selectedUnmatchedCount !== 1 ? 's need' : ' needs'} a match` : undefined}
         >
           {importing ? (
             <span className="flex items-center gap-2">
               <LoadingSpinner className="w-3.5 h-3.5" />
-              Importing...
+              {registerLabel ?? 'Importing...'}
             </span>
           ) : (
             registerLabel ?? `Import ${selectedCount} book${selectedCount !== 1 ? 's' : ''}`

@@ -100,10 +100,61 @@ describe('LibraryImportPage (#133)', () => {
     });
   });
 
-  it('Register button calls confirmImport', async () => {
+  it('match-job failure: inline error shown and Register button disabled', async () => {
+    mockApi.startMatchJob.mockRejectedValue(new Error('match server unavailable'));
+    mockApi.scanDirectory.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+      ],
+      totalFolders: 1,
+    });
+
+    renderWithProviders(<LibraryImportPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/matching failed/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/match server unavailable/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /retry matching/i })).toBeInTheDocument();
+
+    // Register button must be disabled when matchJobError is set
+    const registerBtn = screen.getByRole('button', { name: /register/i });
+    expect(registerBtn).toBeDisabled();
+  });
+
+  it('existing rows hidden by default, toggle shows them', async () => {
+    mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
+    mockApi.scanDirectory.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'New Book', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
+        { path: '/audiobooks/AuthorB/Book2', parsedTitle: 'Existing Book', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 1, totalSize: 40000, isDuplicate: true, duplicateReason: 'path' },
+      ],
+      totalFolders: 2,
+    });
+
+    renderWithProviders(<LibraryImportPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('New Book')).toBeInTheDocument();
+    });
+
+    // Duplicate row hidden by default
+    expect(screen.queryByText('Existing Book')).not.toBeInTheDocument();
+
+    // Toggle shows them
+    const toggleBtn = screen.getByRole('button', { name: /existing.*hidden/i });
+    await userEvent.click(toggleBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText('Existing Book')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /existing.*shown/i })).toBeInTheDocument();
+  });
+
+  it('Register button calls confirmImport when match job succeeds', async () => {
     mockApi.confirmImport.mockResolvedValue({ accepted: 1 });
-    // Match job fails immediately so isMatching=false and button is enabled
-    mockApi.startMatchJob.mockRejectedValue(new Error('match unavailable'));
+    // Completed match job — polling returns 'completed' immediately so isMatching=false
+    mockApi.getMatchJob.mockResolvedValue({ id: 'job-1', status: 'completed', total: 1, matched: 1, results: [] });
     mockApi.scanDirectory.mockResolvedValue({
       discoveries: [
         { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
@@ -117,11 +168,11 @@ describe('LibraryImportPage (#133)', () => {
       expect(screen.getByText('Book One')).toBeInTheDocument();
     });
 
-    // Wait for isMatching to settle (startMatchJob rejected)
+    // Wait for poll to fire (POLL_INTERVAL=2s) and isMatching to settle
     await waitFor(() => {
       const registerBtn = screen.getByRole('button', { name: /register/i });
       expect(registerBtn).not.toBeDisabled();
-    });
+    }, { timeout: 5000 });
 
     await userEvent.click(screen.getByRole('button', { name: /register/i }));
 

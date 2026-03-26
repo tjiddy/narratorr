@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ImportCard, ImportSummaryBar, BookEditModal } from '@/components/manual-import';
 import { ArrowLeftIcon, CheckIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';
@@ -9,6 +10,7 @@ export function LibraryImportPage() {
     step,
     hasLibraryPath,
     scanError,
+    matchJobError,
     rows,
     editIndex,
     setEditIndex,
@@ -20,6 +22,7 @@ export function LibraryImportPage() {
     handleEdit,
     handleRegister,
     handleRetry,
+    handleRetryMatch,
     registerMutation,
     selectedCount,
     selectedUnmatchedCount,
@@ -30,6 +33,9 @@ export function LibraryImportPage() {
     duplicateCount,
     allSelected,
   } = useLibraryImport();
+
+  const [showExisting, setShowExisting] = useState(false);
+  const displayedRows = rows.filter(r => showExisting || !r.book.isDuplicate);
 
   // Compute relative path from library root
   function getRelativePath(absolutePath: string): string | undefined {
@@ -105,6 +111,21 @@ export function LibraryImportPage() {
         </div>
       )}
 
+      {/* Match job error */}
+      {matchJobError && step === 'review' && !scanError && (
+        <div className="glass-card rounded-xl p-6 flex flex-col items-center gap-3 text-center">
+          <AlertCircleIcon className="w-8 h-8 text-amber-400" />
+          <p className="text-sm text-muted-foreground">Matching failed: {matchJobError}</p>
+          <button
+            type="button"
+            onClick={handleRetryMatch}
+            className="px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all focus-ring"
+          >
+            Retry matching
+          </button>
+        </div>
+      )}
+
       {/* Review list */}
       {step === 'review' && !scanError && (
         <div className="animate-fade-in-up stagger-1">
@@ -127,20 +148,24 @@ export function LibraryImportPage() {
                 {selectedCount} of {rows.filter(r => !r.book.isDuplicate).length} new selected
               </span>
               {duplicateCount > 0 && (
-                <span className="text-xs text-muted-foreground/50 ml-auto">
-                  {duplicateCount} already in library
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowExisting(v => !v)}
+                  className="text-xs text-muted-foreground/50 ml-auto hover:text-muted-foreground transition-colors"
+                >
+                  {duplicateCount} existing ({showExisting ? 'shown' : 'hidden'})
+                </button>
               )}
             </div>
 
             {/* Card list */}
             <div className="max-h-[55vh] overflow-y-auto divide-y divide-white/5">
-              {rows.map((row, index) => (
+              {displayedRows.map((row) => (
                 <ImportCard
                   key={row.book.path}
                   row={row}
-                  onToggle={() => handleToggle(index)}
-                  onEdit={() => setEditIndex(index)}
+                  onToggle={() => handleToggle(rows.indexOf(row))}
+                  onEdit={() => setEditIndex(rows.indexOf(row))}
                   lockDuplicates
                   relativePath={getRelativePath(row.book.path)}
                 />
@@ -162,6 +187,7 @@ export function LibraryImportPage() {
               onImport={handleRegister}
               importing={registerMutation.isPending}
               hideMode
+              disabled={!!matchJobError}
               registerLabel={
                 registerMutation.isPending
                   ? 'Registering...'

@@ -1178,10 +1178,10 @@ describe('books routes', () => {
 
   // #372 — Identifiers endpoint (duplicate detection)
   describe('GET /api/books/identifiers', () => {
-    it('returns identifiers from service', async () => {
+    it('returns identifiers including authorSlug from service through HTTP boundary', async () => {
       const mockIds = [
-        { asin: 'B001', title: 'Book One', authorName: 'Author A' },
-        { asin: null, title: 'Book Two', authorName: null },
+        { asin: 'B001', title: 'Book One', authorName: 'Author A', authorSlug: 'author-a' },
+        { asin: null, title: 'Book Two', authorName: null, authorSlug: null },
       ];
       (services.bookList.getIdentifiers as Mock).mockResolvedValue(mockIds);
 
@@ -1190,8 +1190,8 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.payload);
       expect(body).toHaveLength(2);
-      expect(body[0]).toEqual({ asin: 'B001', title: 'Book One', authorName: 'Author A' });
-      expect(body[1]).toEqual({ asin: null, title: 'Book Two', authorName: null });
+      expect(body[0]).toEqual({ asin: 'B001', title: 'Book One', authorName: 'Author A', authorSlug: 'author-a' });
+      expect(body[1]).toEqual({ asin: null, title: 'Book Two', authorName: null, authorSlug: null });
     });
 
     it('returns 500 when service throws', async () => {

@@ -51,6 +51,10 @@ vi.mock('@/pages/settings', () => ({
   SettingsLayout: () => <div data-testid="settings-page">Settings Page<Outlet /></div>,
 }));
 
+vi.mock('./pages/library-import/LibraryImportPage.js', () => ({
+  LibraryImportPage: () => <div data-testid="library-import-page">Library Import Page</div>,
+}));
+
 // Mock the settings page registry used by App.tsx for route generation
 vi.mock('@/pages/settings/registry', () => {
   const icon = () => null;
@@ -129,5 +133,11 @@ describe('App', () => {
     renderApp('/settings/system');
 
     expect(screen.getByText('System')).toBeInTheDocument();
+  });
+
+  it('renders library import page at /library-import', () => {
+    renderApp('/library-import');
+
+    expect(screen.getByTestId('library-import-page')).toBeInTheDocument();
   });
 });

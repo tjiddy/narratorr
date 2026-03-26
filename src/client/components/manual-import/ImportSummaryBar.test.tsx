@@ -221,4 +221,15 @@ describe('ImportSummaryBar — registerLabel prop (#133)', () => {
     renderBar({ selectedCount: 1, registerLabel: 'Add to Library' });
     expect(screen.getByRole('button', { name: 'Add to Library' })).toBeInTheDocument();
   });
+
+  it('registerLabel shown in pending state instead of hardcoded Importing...', () => {
+    renderBar({ selectedCount: 2, importing: true, registerLabel: 'Registering...' });
+    expect(screen.getByText('Registering...')).toBeInTheDocument();
+    expect(screen.queryByText('Importing...')).not.toBeInTheDocument();
+  });
+
+  it('disabled=true: button is disabled regardless of selectedCount', () => {
+    renderBar({ selectedCount: 3, disabled: true });
+    expect(screen.getByRole('button', { name: /import/i })).toBeDisabled();
+  });
 });
