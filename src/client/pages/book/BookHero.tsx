@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { resolveUrl } from '@/lib/url-utils';
-import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon } from '@/components/icons';
+import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon, PackageIcon } from '@/components/icons';
 
 interface BookHeroProps {
   title: string;
@@ -22,6 +22,11 @@ interface BookHeroProps {
   isRetagging: boolean;
   retagDisabled: boolean;
   retagTooltip?: string;
+  onMergeClick: () => void;
+  isMerging: boolean;
+  canMerge: boolean;
+  mergeDisabled: boolean;
+  mergeTooltip?: string;
   importListName?: string | null;
   monitorForUpgrades: boolean;
   onMonitorToggle: () => void;
@@ -34,6 +39,7 @@ export function BookHero({
   coverUrl, metaDots, statusLabel, statusDotClass,
   hasPath, onBackClick, onSearchClick, onEditClick, onRenameClick, isRenaming,
   onRetagClick, isRetagging, retagDisabled, retagTooltip,
+  onMergeClick, isMerging, canMerge, mergeDisabled, mergeTooltip,
   importListName, monitorForUpgrades, onMonitorToggle, isMonitorToggling,
 }: BookHeroProps) {
   return (
@@ -151,6 +157,18 @@ export function BookHero({
               >
                 <TagIcon className={`w-3.5 h-3.5 ${isRetagging ? 'animate-spin' : ''}`} />
                 {isRetagging ? 'Re-tagging...' : 'Re-tag files'}
+              </button>
+            )}
+            {hasPath && canMerge && (
+              <button
+                type="button"
+                onClick={onMergeClick}
+                disabled={isMerging || mergeDisabled}
+                title={mergeDisabled ? mergeTooltip : undefined}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground glass-card hover:border-primary/30 transition-all duration-200 focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <PackageIcon className={`w-3.5 h-3.5 ${isMerging ? 'animate-spin' : ''}`} />
+                {isMerging ? 'Merging...' : 'Merge to M4B'}
               </button>
             )}
           </div>

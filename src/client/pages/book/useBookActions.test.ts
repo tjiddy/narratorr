@@ -21,6 +21,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       updateBook: vi.fn(),
       renameBook: vi.fn(),
       retagBook: vi.fn(),
+      mergeBookToM4b: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({
         processing: { ffmpegPath: '/usr/bin/ffmpeg', enabled: false, outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
         library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
@@ -267,6 +268,62 @@ describe('useBookActions', () => {
         expect(toast.error).toHaveBeenCalled();
       });
 
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('mergeMutation', () => {
+    it('calls api.mergeBookToM4b with the bookId', async () => {
+      (api.mergeBookToM4b as Mock).mockResolvedValue({ bookId: 3, filesReplaced: 12, outputFile: '/lib/book.m4b', message: 'Merged 12 files into book.m4b' });
+      const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
+
+      act(() => { result.current.mergeMutation.mutate(); });
+
+      await waitFor(() => expect(api.mergeBookToM4b).toHaveBeenCalledWith(3));
+    });
+
+    it('shows success toast with result message on success', async () => {
+      (api.mergeBookToM4b as Mock).mockResolvedValue({ bookId: 3, filesReplaced: 12, outputFile: '/lib/book.m4b', message: 'Merged 12 files into book.m4b' });
+      const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
+
+      act(() => { result.current.mergeMutation.mutate(); });
+
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Merged 12 files into book.m4b'));
+    });
+
+    it('invalidates book, bookFiles, and books queries on success', async () => {
+      (api.mergeBookToM4b as Mock).mockResolvedValue({ bookId: 3, filesReplaced: 12, outputFile: '/lib/book.m4b', message: 'Merged 12 files into book.m4b' });
+      const { queryClient, wrapper } = createTestHarness();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      const { result } = renderHook(() => useBookActions(3, false), { wrapper });
+
+      act(() => { result.current.mergeMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 3] });
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 3, 'files'] });
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
+      });
+    });
+
+    it('shows error toast with message on failure', async () => {
+      (api.mergeBookToM4b as Mock).mockRejectedValue(new Error('ffmpeg error'));
+      const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
+
+      act(() => { result.current.mergeMutation.mutate(); });
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Merge failed: ffmpeg error'));
+    });
+
+    it('does not invalidate queries when merge fails', async () => {
+      (api.mergeBookToM4b as Mock).mockRejectedValue(new Error('fail'));
+      const { queryClient, wrapper } = createTestHarness();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      const { result } = renderHook(() => useBookActions(3, false), { wrapper });
+
+      act(() => { result.current.mergeMutation.mutate(); });
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalled());
       expect(invalidateSpy).not.toHaveBeenCalled();
     });
   });
