@@ -281,6 +281,17 @@ describe('AudnexusProvider', () => {
       expect(result).toBeNull();
     });
 
+    it('getBook() on timeout throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', async () => {
+          await delay('infinite');
+          return new HttpResponse(null, { status: 200 });
+        }),
+      );
+
+      await expect(provider.getBook('B000TEST')).rejects.toThrow(TransientError);
+    }, 20000);
+
     it('getAuthor() on timeout throws TransientError', async () => {
       server.use(
         http.get('https://api.audnex.us/authors/:asin', async () => {

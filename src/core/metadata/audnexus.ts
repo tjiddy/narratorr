@@ -50,11 +50,8 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
   }
 
   private async fetchJson<T>(path: string): Promise<T | null> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
     try {
-      const response = await fetch(`${BASE_URL}${path}`, { signal: controller.signal });
+      const response = await fetch(`${BASE_URL}${path}`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       if (response.status === 429) {
         const retryAfter = response.headers.get('Retry-After');
         const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 60_000;
@@ -70,8 +67,6 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
       if (error instanceof TransientError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       throw new TransientError('Audnexus', message);
-    } finally {
-      clearTimeout(timeoutId);
     }
   }
 }
