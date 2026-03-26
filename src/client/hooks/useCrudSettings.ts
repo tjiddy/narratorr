@@ -90,18 +90,24 @@ export function useCrudSettings<TItem extends { id: number; name: string }, TFor
   }, [connectionTest]);
 
   return {
-    items,
-    isLoading,
-    showForm,
-    editingId,
-    deleteTarget,
-    setDeleteTarget,
-    createMutation,
-    updateMutation,
-    deleteMutation,
-    handleToggleForm,
-    handleEdit,
-    handleCancelEdit,
-    ...connectionTest,
+    state: {
+      items,
+      isLoading,
+      showForm,
+      editingId,
+      deleteTarget,
+    },
+    actions: {
+      setDeleteTarget,
+      handleToggleForm,
+      handleEdit,
+      handleCancelEdit,
+    },
+    mutations: {
+      createMutation,
+      updateMutation,
+      deleteMutation,
+    },
+    tests: connectionTest,
   };
 }

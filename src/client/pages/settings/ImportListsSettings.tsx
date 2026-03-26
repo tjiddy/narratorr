@@ -241,20 +241,7 @@ function ImportListRow({
 export function ImportListsSettings() {
   const queryClient = useQueryClient();
 
-  const {
-    items: lists,
-    isLoading,
-    showForm,
-    editingId,
-    deleteTarget,
-    setDeleteTarget,
-    createMutation,
-    updateMutation,
-    deleteMutation,
-    handleToggleForm,
-    handleEdit,
-    handleCancelEdit,
-  } = useCrudSettings<ImportList, ImportListFormData>({
+  const { state, actions, mutations } = useCrudSettings<ImportList, ImportListFormData>({
     queryKey: queryKeys.importLists(),
     queryFn: api.getImportLists,
     createFn: api.createImportList,
@@ -264,6 +251,9 @@ export function ImportListsSettings() {
     testByConfig: api.testImportListConfig,
     entityName: 'Import list',
   });
+  const { items: lists, isLoading, showForm, editingId, deleteTarget } = state;
+  const { setDeleteTarget, handleToggleForm, handleEdit, handleCancelEdit } = actions;
+  const { createMutation, updateMutation, deleteMutation } = mutations;
 
   // Toggle mutation — bespoke, not part of generic CRUD hook
   const toggleMutation = useMutation({
