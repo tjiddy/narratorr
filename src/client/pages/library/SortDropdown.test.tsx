@@ -296,4 +296,14 @@ describe('SortDropdown', () => {
       expect(screen.getAllByRole('option')[0]).toHaveFocus();
     });
   });
+
+  describe('accessibility', () => {
+    it('menu option buttons have the focus-ring utility class applied', () => {
+      render(<SortDropdown {...defaultProps()} />);
+      fireEvent.click(screen.getByRole('button', { name: /date added.*newest/i }));
+      const options = screen.getAllByRole('option');
+      expect(options.length).toBeGreaterThan(0);
+      options.forEach((option) => expect(option).toHaveClass('focus-ring'));
+    });
+  });
 });

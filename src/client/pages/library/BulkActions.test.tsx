@@ -498,6 +498,14 @@ describe('bulk set status', () => {
     expect(screen.getByText('Owned')).toBeInTheDocument();
   });
 
+  it('status menu container has z-30 class (dropdown scale)', async () => {
+    const user = userEvent.setup();
+    renderToolbar({ selectedCount: 2 });
+    await user.click(screen.getByText('Set Status'));
+    const menuContainer = screen.getByText('Wanted').parentElement!;
+    expect(menuContainer).toHaveClass('z-30');
+  });
+
   it('Owned sends status: imported to API', async () => {
     const user = userEvent.setup();
     const { props } = renderToolbar({ selectedCount: 2 });

@@ -406,4 +406,15 @@ describe('Layout', () => {
       expect(main!.querySelector('[data-testid="settings-content"]')).not.toBeNull();
     });
   });
+
+  describe('z-index scale', () => {
+    it('header has z-10 class (sticky header scale)', () => {
+      mockCounts(0);
+      mockAuth();
+      const { container } = renderWithProviders(<Layout />);
+      const header = container.querySelector('header');
+      expect(header).not.toBeNull();
+      expect(header).toHaveClass('z-10');
+    });
+  });
 });

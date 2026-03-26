@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ConfirmModal } from '@/components/ConfirmModal';
 
@@ -95,5 +95,13 @@ describe('ConfirmModal', () => {
     await userEvent.click(screen.getByText('Delete'));
 
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('calls onCancel when the backdrop overlay is clicked', () => {
+    const onCancel = vi.fn();
+    const { container } = render(<ConfirmModal {...defaultProps} onCancel={onCancel} />);
+    const overlay = container.firstChild as HTMLElement;
+    fireEvent.click(overlay);
+    expect(onCancel).toHaveBeenCalledOnce();
   });
 });

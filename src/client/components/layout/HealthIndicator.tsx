@@ -25,6 +25,7 @@ export function HealthIndicator() {
       onClick={() => navigate('/settings/system')}
       className="relative p-2 rounded-xl hover:bg-muted/50 transition-colors focus-ring"
       title={`Health: ${summary.state} — click to view details`}
+      aria-label={`Health: ${summary.state} — click to view details`}
     >
       <span className={`block w-2.5 h-2.5 rounded-full ${dotColor} ${glowColor} shadow-lg animate-pulse`} />
     </button>

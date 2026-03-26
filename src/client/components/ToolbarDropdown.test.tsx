@@ -158,4 +158,13 @@ describe('ToolbarDropdown', () => {
       expect(portalWrapper).toHaveStyle({ top: '104px', left: '80px' });
     });
   });
+
+  describe('z-index scale', () => {
+    it('portal container has z-30 class (dropdown scale)', () => {
+      render(<Wrapper open={true} onClose={vi.fn()} />);
+      const panel = document.body.querySelector('[data-testid="panel"]') as HTMLElement;
+      const portalContainer = panel.parentElement!;
+      expect(portalContainer).toHaveClass('z-30');
+    });
+  });
 });

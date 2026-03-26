@@ -77,4 +77,13 @@ describe('HealthIndicator', () => {
     await user.click(screen.getByTestId('health-indicator'));
     expect(mockNavigate).toHaveBeenCalledWith('/settings/system');
   });
+
+  it('has aria-label on the health status button that includes the health state', async () => {
+    (api.getHealthSummary as Mock).mockResolvedValue({ state: 'error' });
+    renderWithProviders(<HealthIndicator />);
+    await waitFor(() => {
+      const button = screen.getByTestId('health-indicator');
+      expect(button).toHaveAttribute('aria-label', expect.stringContaining('error'));
+    });
+  });
 });
