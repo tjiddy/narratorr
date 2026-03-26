@@ -256,14 +256,16 @@ describe('ImportCard', () => {
       expect(rowEl.className).toContain('opacity-60');
     });
 
-    it('selected duplicate row is not dimmed', () => {
+    it('selected duplicate row is not dimmed (neither opacity-60 nor opacity-50)', () => {
       const selectedDupRow = makeRow({
         book: makeBook({ isDuplicate: true, existingBookId: 42 }),
         selected: true,
+        // no matchResult → confidence is undefined, as in Manual Import force-import path
       });
       const { container } = render(<ImportCard {...defaultProps} row={selectedDupRow} />);
       const rowEl = container.firstChild as HTMLElement;
       expect(rowEl.className).not.toContain('opacity-60');
+      expect(rowEl.className).not.toContain('opacity-50');
     });
 
     it('duplicate row checkbox is enabled and calls onToggle when clicked', async () => {
