@@ -271,4 +271,27 @@ describe('useBulkOperation', () => {
     expect(result.current.isRunning).toBe(false);
     expect(toast.error).not.toHaveBeenCalled();
   });
+
+  it('exposes a frozen progress object on initial render (IDLE_PROGRESS regression)', async () => {
+    mockGetActiveBulkJob.mockResolvedValue(null);
+
+    const { result } = renderHook(() => useBulkOperation());
+    await act(async () => {}); // flush mount
+
+    expect(Object.isFrozen(result.current.progress)).toBe(true);
+  });
+
+  it('exposes a frozen progress object after 404 idle reset (IDLE_PROGRESS regression)', async () => {
+    mockGetActiveBulkJob.mockResolvedValue(null);
+    mockGetBulkJob.mockRejectedValue(make404Error());
+
+    const { result } = renderHook(() => useBulkOperation());
+    await act(async () => {}); // flush mount
+
+    await act(async () => { await result.current.startJob('rename'); });
+    await act(async () => { vi.advanceTimersByTime(2000); });
+
+    expect(result.current.isRunning).toBe(false);
+    expect(Object.isFrozen(result.current.progress)).toBe(true);
+  });
 });
