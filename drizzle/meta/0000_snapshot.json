@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "637c9ff5-ee42-4a1c-9805-7a968a909867",
+  "id": "8a7671e1-7aed-4e6b-a6c6-c1ec3ee60651",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "authors": {
@@ -200,6 +200,88 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "book_authors": {
+      "name": "book_authors",
+      "columns": {
+        "book_id": {
+          "name": "book_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "author_id": {
+          "name": "author_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        }
+      },
+      "indexes": {
+        "idx_book_authors_book_id": {
+          "name": "idx_book_authors_book_id",
+          "columns": [
+            "book_id"
+          ],
+          "isUnique": false
+        },
+        "idx_book_authors_author_id": {
+          "name": "idx_book_authors_author_id",
+          "columns": [
+            "author_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "book_authors_book_id_books_id_fk": {
+          "name": "book_authors_book_id_books_id_fk",
+          "tableFrom": "book_authors",
+          "tableTo": "books",
+          "columnsFrom": [
+            "book_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "book_authors_author_id_authors_id_fk": {
+          "name": "book_authors_author_id_authors_id_fk",
+          "tableFrom": "book_authors",
+          "tableTo": "authors",
+          "columnsFrom": [
+            "author_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "book_authors_book_id_author_id_pk": {
+          "columns": [
+            "book_id",
+            "author_id"
+          ],
+          "name": "book_authors_book_id_author_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "book_events": {
       "name": "book_events",
       "columns": {
@@ -233,6 +315,13 @@
         },
         "author_name": {
           "name": "author_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "narrator_name": {
+          "name": "narrator_name",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -332,6 +421,88 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "book_narrators": {
+      "name": "book_narrators",
+      "columns": {
+        "book_id": {
+          "name": "book_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "narrator_id": {
+          "name": "narrator_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "position": {
+          "name": "position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        }
+      },
+      "indexes": {
+        "idx_book_narrators_book_id": {
+          "name": "idx_book_narrators_book_id",
+          "columns": [
+            "book_id"
+          ],
+          "isUnique": false
+        },
+        "idx_book_narrators_narrator_id": {
+          "name": "idx_book_narrators_narrator_id",
+          "columns": [
+            "narrator_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "book_narrators_book_id_books_id_fk": {
+          "name": "book_narrators_book_id_books_id_fk",
+          "tableFrom": "book_narrators",
+          "tableTo": "books",
+          "columnsFrom": [
+            "book_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "book_narrators_narrator_id_narrators_id_fk": {
+          "name": "book_narrators_narrator_id_narrators_id_fk",
+          "tableFrom": "book_narrators",
+          "tableTo": "narrators",
+          "columnsFrom": [
+            "narrator_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "book_narrators_book_id_narrator_id_pk": {
+          "columns": [
+            "book_id",
+            "narrator_id"
+          ],
+          "name": "book_narrators_book_id_narrator_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "books": {
       "name": "books",
       "columns": {
@@ -347,20 +518,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
-        },
-        "author_id": {
-          "name": "author_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "narrator": {
-          "name": "narrator",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
           "autoincrement": false
         },
         "description": {
@@ -519,6 +676,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "top_level_audio_file_count": {
+          "name": "top_level_audio_file_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "audio_total_size": {
           "name": "audio_total_size",
           "type": "integer",
@@ -566,13 +730,6 @@
         }
       },
       "indexes": {
-        "idx_books_author_id": {
-          "name": "idx_books_author_id",
-          "columns": [
-            "author_id"
-          ],
-          "isUnique": false
-        },
         "idx_books_status": {
           "name": "idx_books_status",
           "columns": [
@@ -601,30 +758,9 @@
           ],
           "isUnique": true,
           "where": "asin IS NOT NULL"
-        },
-        "idx_books_title_author_unique": {
-          "name": "idx_books_title_author_unique",
-          "columns": [
-            "title",
-            "author_id"
-          ],
-          "isUnique": true
         }
       },
       "foreignKeys": {
-        "books_author_id_authors_id_fk": {
-          "name": "books_author_id_authors_id_fk",
-          "tableFrom": "books",
-          "tableTo": "authors",
-          "columnsFrom": [
-            "author_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        },
         "books_import_list_id_import_lists_id_fk": {
           "name": "books_import_list_id_import_lists_id_fk",
           "tableFrom": "books",
@@ -1069,6 +1205,53 @@
             "enabled"
           ],
           "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "narrators": {
+      "name": "narrators",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "slug": {
+          "name": "slug",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(unixepoch())"
+        }
+      },
+      "indexes": {
+        "narrators_slug_unique": {
+          "name": "narrators_slug_unique",
+          "columns": [
+            "slug"
+          ],
+          "isUnique": true
         }
       },
       "foreignKeys": {},

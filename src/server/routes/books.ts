@@ -3,6 +3,7 @@ import { join, extname } from 'node:path';
 import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
 import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService, RecyclingBinService } from '../services/index.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
+import type { MergeService } from '../services/merge.service.js';
 export interface BookRouteDeps {
   bookService: BookService;
   bookListService: BookListService;
@@ -10,6 +11,7 @@ export interface BookRouteDeps {
   downloadOrchestrator: DownloadOrchestrator;
   settingsService: SettingsService;
   renameService: RenameService;
+  mergeService: MergeService;
   taggingService: TaggingService;
   eventHistory?: EventHistoryService;
   indexerService?: IndexerService;
@@ -160,7 +162,7 @@ function registerBookSearchRoute(app: FastifyInstance, deps: Pick<BookRouteDeps,
 }
 
 export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
-  const { bookService, bookListService, renameService, taggingService, indexerService } = deps;
+  const { bookService, bookListService, renameService, mergeService, taggingService, indexerService } = deps;
   // GET /api/books
   app.get<{ Querystring: BooksListQuery }>(
     '/api/books',
@@ -271,6 +273,18 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
       const { id } = request.params;
       const result = await taggingService.retagBook(id);
       request.log.info({ id, tagged: result.tagged, skipped: result.skipped, failed: result.failed }, 'Book re-tagged');
+      return result;
+    },
+  );
+
+  // POST /api/books/:id/merge-to-m4b
+  app.post<{ Params: IdParam }>(
+    '/api/books/:id/merge-to-m4b',
+    { schema: { params: idParamSchema } },
+    async (request) => {
+      const { id } = request.params;
+      const result = await mergeService.mergeBook(id);
+      request.log.info({ id, filesReplaced: result.filesReplaced, outputFile: result.outputFile }, 'Book merged to M4B');
       return result;
     },
   );

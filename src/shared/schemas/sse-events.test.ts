@@ -8,6 +8,7 @@ import {
   grabStartedPayload,
   importCompletePayload,
   reviewNeededPayload,
+  mergeCompletePayload,
   CACHE_INVALIDATION_MATRIX,
   TOAST_EVENT_CONFIG,
 } from './sse-events.js';
@@ -30,11 +31,11 @@ describe('bookStatusSchema widening', () => {
 });
 
 describe('SSE event schemas', () => {
-  it('defines all 6 event types', () => {
+  it('defines all 7 event types', () => {
     const types = sseEventTypeSchema.options;
     expect(types).toEqual([
       'download_progress', 'download_status_change', 'book_status_change',
-      'import_complete', 'grab_started', 'review_needed',
+      'import_complete', 'grab_started', 'review_needed', 'merge_complete',
     ]);
   });
 
@@ -73,6 +74,14 @@ describe('SSE event schemas', () => {
     const valid = { download_id: 1, book_id: 2, book_title: 'My Book' };
     expect(reviewNeededPayload.parse(valid)).toEqual(valid);
   });
+
+  it('validates merge_complete payload', () => {
+    const valid = { book_id: 42, book_title: 'My Book', success: true };
+    expect(mergeCompletePayload.parse(valid)).toEqual(valid);
+
+    const failed = { book_id: 42, book_title: 'My Book', success: false };
+    expect(mergeCompletePayload.parse(failed)).toEqual(failed);
+  });
 });
 
 describe('CACHE_INVALIDATION_MATRIX', () => {
@@ -94,11 +103,20 @@ describe('CACHE_INVALIDATION_MATRIX', () => {
     expect(rule.books).toBe('invalidate');
     expect(rule.eventHistory).toBe('invalidate');
   });
+
+  it('merge_complete invalidates books, activity, activityCounts, and eventHistory', () => {
+    const rule = CACHE_INVALIDATION_MATRIX.merge_complete;
+    expect(rule.books).toBe('invalidate');
+    expect(rule.activity).toBe('invalidate');
+    expect(rule.activityCounts).toBe('invalidate');
+    expect(rule.eventHistory).toBe('invalidate');
+  });
 });
 
 describe('TOAST_EVENT_CONFIG', () => {
-  it('only includes grab_started, import_complete, review_needed', () => {
+  it('only includes grab_started, import_complete, review_needed (not merge_complete)', () => {
     expect(Object.keys(TOAST_EVENT_CONFIG)).toEqual(['import_complete', 'grab_started', 'review_needed']);
+    expect(TOAST_EVENT_CONFIG.merge_complete).toBeUndefined();
   });
 
   it('does not include high-frequency events', () => {

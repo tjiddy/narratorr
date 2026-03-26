@@ -25,6 +25,20 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
     },
   });
 
+  const mergeMutation = useMutation({
+    mutationFn: () => api.mergeBookToM4b(bookId),
+    onSuccess: (result) => {
+      invalidateBookQueries();
+      toast.success(result.message);
+      if (result.enrichmentWarning) {
+        toast.warning(result.enrichmentWarning);
+      }
+    },
+    onError: (error: Error) => {
+      toast.error(`Merge failed: ${error.message}`);
+    },
+  });
+
   const retagMutation = useMutation({
     mutationFn: () => api.retagBook(bookId),
     onSuccess: (result) => {
@@ -84,6 +98,7 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
 
   return {
     renameMutation,
+    mergeMutation,
     retagMutation,
     monitorMutation,
     ffmpegConfigured,

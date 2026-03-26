@@ -124,7 +124,7 @@ export function useEventSource(apiKey: string | null) {
     // Listen for each event type
     const eventTypes: SSEEventType[] = [
       'download_progress', 'download_status_change', 'book_status_change',
-      'import_complete', 'grab_started', 'review_needed',
+      'import_complete', 'grab_started', 'review_needed', 'merge_complete',
     ];
 
     for (const type of eventTypes) {

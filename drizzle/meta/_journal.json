@@ -5,15 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1773864541332,
-      "tag": "0000_tearful_nightcrawler",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1774345185463,
-      "tag": "0001_vengeful_blizzard",
+      "when": 1774507513420,
+      "tag": "0000_square_hobgoblin",
       "breakpoints": true
     }
   ]

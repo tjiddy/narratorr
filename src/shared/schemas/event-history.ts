@@ -7,7 +7,7 @@ import { z } from 'zod';
 export const eventTypeSchema = z.enum([
   'grabbed', 'download_completed', 'download_failed',
   'imported', 'import_failed', 'upgraded',
-  'deleted', 'renamed',
+  'deleted', 'renamed', 'merged',
   'file_tagged', 'held_for_review',
 ]);
 

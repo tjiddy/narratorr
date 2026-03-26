@@ -26,14 +26,18 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [confirmRenameOpen, setConfirmRenameOpen] = useState(false);
   const [confirmRetagOpen, setConfirmRetagOpen] = useState(false);
+  const [confirmMergeOpen, setConfirmMergeOpen] = useState(false);
   const [tab, setTab] = useState<'details' | 'history'>('details');
 
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const tabs = ['details', 'history'] as const;
 
   const merged = mergeBookData(libraryBook, metadataBook);
-  const { renameMutation, retagMutation, monitorMutation, ffmpegConfigured, isSaving, handleSave } =
+  const { renameMutation, mergeMutation, retagMutation, monitorMutation, ffmpegConfigured, isSaving, handleSave } =
     useBookActions(libraryBook.id, libraryBook.monitorForUpgrades);
+
+  const canMerge = libraryBook.status === 'imported' &&
+    (libraryBook.topLevelAudioFileCount ?? 0) >= 2;
 
   function handleTabKeyDown(e: React.KeyboardEvent<HTMLButtonElement>) {
     const nextIndex = getArrowTabIndex(e.key, tabs.indexOf(tab), tabs.length);
@@ -66,6 +70,11 @@ export function BookDetails({ libraryBook, metadataBook }: {
         isRetagging={retagMutation.isPending}
         retagDisabled={!ffmpegConfigured}
         retagTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
+        onMergeClick={() => setConfirmMergeOpen(true)}
+        isMerging={mergeMutation.isPending}
+        canMerge={canMerge}
+        mergeDisabled={!ffmpegConfigured}
+        mergeTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
         importListName={libraryBook.importListName}
         monitorForUpgrades={libraryBook.monitorForUpgrades}
         onMonitorToggle={() => monitorMutation.mutate()}
@@ -158,6 +167,15 @@ export function BookDetails({ libraryBook, metadataBook }: {
         confirmLabel="Re-tag"
         onConfirm={() => { setConfirmRetagOpen(false); retagMutation.mutate(); }}
         onCancel={() => setConfirmRetagOpen(false)}
+      />
+
+      <ConfirmModal
+        isOpen={confirmMergeOpen}
+        title="Merge to M4B?"
+        message={`Merge all audio files for "${libraryBook.title}" into a single M4B? Original files will be replaced. This may take several minutes.`}
+        confirmLabel="Merge"
+        onConfirm={() => { setConfirmMergeOpen(false); mergeMutation.mutate(); }}
+        onCancel={() => setConfirmMergeOpen(false)}
       />
     </div>
   );

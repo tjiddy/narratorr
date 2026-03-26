@@ -42,6 +42,7 @@ export interface BookWithAuthor {
   audioBitrateMode?: string | null;
   audioFileFormat?: string | null;
   audioFileCount?: number | null;
+  topLevelAudioFileCount?: number | null;
   audioTotalSize?: number | null;
   audioDuration?: number | null;
   monitorForUpgrades: boolean;
@@ -138,6 +139,14 @@ export interface RetagResult {
   warnings: string[];
 }
 
+export interface MergeResult {
+  bookId: number;
+  outputFile: string;
+  filesReplaced: number;
+  message: string;
+  enrichmentWarning?: string;
+}
+
 export type SingleBookSearchResult =
   | { result: 'grabbed'; title: string }
   | { result: 'no_results' }
@@ -214,4 +223,6 @@ export const booksApi = {
     fetchApi<RetagResult>(`/books/${id}/retag`, { method: 'POST' }),
   searchBook: (id: number) =>
     fetchApi<SingleBookSearchResult>(`/books/${id}/search`, { method: 'POST' }),
+  mergeBookToM4b: (id: number) =>
+    fetchApi<MergeResult>(`/books/${id}/merge-to-m4b`, { method: 'POST' }),
 };

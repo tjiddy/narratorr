@@ -251,6 +251,25 @@ describe('useEventSource', () => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity'] });
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['activity', 'counts'] });
     });
+
+    it('invalidates activity, activityCounts, books, book(id), eventHistory on merge_complete', () => {
+      const { wrapper, queryClient } = createWrapper();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+
+      act(() => {
+        es.simulateOpen();
+        es.simulateEvent('merge_complete', { book_id: 42, book_title: 'My Book', success: true });
+      });
+
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activity() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activityCounts() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.book(42) });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
+    });
   });
 
   describe('toast notifications', () => {

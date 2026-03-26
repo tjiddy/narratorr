@@ -13,6 +13,7 @@ export const sseEventTypeSchema = z.enum([
   'import_complete',
   'grab_started',
   'review_needed',
+  'merge_complete',
 ]);
 
 export type SSEEventType = z.infer<typeof sseEventTypeSchema>;
@@ -61,6 +62,12 @@ export const reviewNeededPayload = z.object({
   book_title: z.string(),
 });
 
+export const mergeCompletePayload = z.object({
+  book_id: z.number(),
+  book_title: z.string(),
+  success: z.boolean(),
+});
+
 // ============================================================================
 // Typed event map — used by EventBroadcaster and frontend handler
 // ============================================================================
@@ -72,6 +79,7 @@ export type SSEEventPayloads = {
   import_complete: z.infer<typeof importCompletePayload>;
   grab_started: z.infer<typeof grabStartedPayload>;
   review_needed: z.infer<typeof reviewNeededPayload>;
+  merge_complete: z.infer<typeof mergeCompletePayload>;
 };
 
 // ============================================================================
@@ -94,6 +102,7 @@ export const CACHE_INVALIDATION_MATRIX: Record<SSEEventType, CacheInvalidationRu
   grab_started: { activity: 'invalidate', activityCounts: 'invalidate', eventHistory: 'invalidate' },
   import_complete: { activity: 'invalidate', activityCounts: 'invalidate', books: 'invalidate', eventHistory: 'invalidate' },
   review_needed: { activity: 'invalidate', activityCounts: 'invalidate' },
+  merge_complete: { activity: 'invalidate', activityCounts: 'invalidate', books: 'invalidate', eventHistory: 'invalidate' },
 };
 
 // Event types that should trigger toast notifications

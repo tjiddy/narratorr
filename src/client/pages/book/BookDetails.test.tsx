@@ -30,6 +30,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       updateBook: vi.fn(),
       renameBook: vi.fn(),
       retagBook: vi.fn(),
+      mergeBookToM4b: vi.fn(),
       getSettings: vi.fn(),
     },
   };
@@ -931,6 +932,109 @@ describe('BookDetails', () => {
       await user.click(screen.getByText('Re-tag files'));
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(api.renameBook).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Merge to M4B button', () => {
+    function mockFfmpegEnabledForMerge() {
+      (api.getSettings as Mock).mockResolvedValue(createMockSettings({
+        processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+      }));
+    }
+
+    it('shows Merge to M4B button for imported book with topLevelAudioFileCount >= 2 and path set', async () => {
+      mockFfmpegEnabledForMerge();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: 12 });
+
+      await waitFor(() => expect(screen.getByRole('button', { name: /Merge to M4B/i })).toBeInTheDocument());
+    });
+
+    it('hides Merge to M4B button when topLevelAudioFileCount is 1 (single top-level file)', () => {
+      mockFfmpegEnabledForMerge();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: 1 });
+
+      expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
+    });
+
+    it('hides Merge to M4B button when topLevelAudioFileCount is null (not yet enriched)', () => {
+      mockFfmpegEnabledForMerge();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: null, audioFileCount: 12 });
+
+      expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
+    });
+
+    it('hides Merge to M4B button when topLevelAudioFileCount is 0 (nested-only layout)', () => {
+      mockFfmpegEnabledForMerge();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported', audioFileCount: 12, topLevelAudioFileCount: 0 });
+
+      expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
+    });
+
+    it('hides Merge to M4B button when book has no path', () => {
+      mockFfmpegEnabledForMerge();
+      renderBookDetails({ id: 1, path: null, status: 'imported', topLevelAudioFileCount: 12 });
+
+      expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
+    });
+
+    it('hides Merge to M4B button when book status is not imported', () => {
+      mockFfmpegEnabledForMerge();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'wanted', topLevelAudioFileCount: 12 });
+
+      expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
+    });
+
+    it('disables Merge to M4B button when ffmpegConfigured is false', async () => {
+      // getSettings not mocked → ffmpegConfigured = false → button disabled
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: 12 });
+
+      await waitFor(() => expect(screen.getByRole('button', { name: /Merge to M4B/i })).toBeDisabled());
+    });
+  });
+
+  describe('Merge to M4B confirmation modal', () => {
+    function mockFfmpegEnabledForMerge() {
+      (api.getSettings as Mock).mockResolvedValue(createMockSettings({
+        processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+      }));
+    }
+
+    it('clicking Merge to M4B opens confirmation modal without calling API', async () => {
+      const user = userEvent.setup();
+      mockFfmpegEnabledForMerge();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: 12 });
+
+      await waitFor(() => expect(screen.getByRole('button', { name: /Merge to M4B/i })).not.toBeDisabled());
+      await user.click(screen.getByRole('button', { name: /Merge to M4B/i }));
+
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(api.mergeBookToM4b).not.toHaveBeenCalled();
+    });
+
+    it('cancelling confirmation modal does not trigger merge mutation', async () => {
+      const user = userEvent.setup();
+      mockFfmpegEnabledForMerge();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: 12 });
+
+      await waitFor(() => expect(screen.getByRole('button', { name: /Merge to M4B/i })).not.toBeDisabled());
+      await user.click(screen.getByRole('button', { name: /Merge to M4B/i }));
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(api.mergeBookToM4b).not.toHaveBeenCalled();
+    });
+
+    it('confirming calls api.mergeBookToM4b (close-before-mutate pattern)', async () => {
+      const user = userEvent.setup();
+      mockFfmpegEnabledForMerge();
+      (api.mergeBookToM4b as Mock).mockResolvedValue({ bookId: 1, filesReplaced: 12, outputFile: '/lib/book.m4b', message: 'Merged' });
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported', topLevelAudioFileCount: 12 });
+
+      await waitFor(() => expect(screen.getByRole('button', { name: /Merge to M4B/i })).not.toBeDisabled());
+      await user.click(screen.getByRole('button', { name: /Merge to M4B/i }));
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Merge' }));
+
+      await waitFor(() => expect(api.mergeBookToM4b).toHaveBeenCalledWith(1));
     });
   });
 });

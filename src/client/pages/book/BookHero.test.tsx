@@ -23,6 +23,10 @@ const defaultProps = {
   monitorForUpgrades: false,
   onMonitorToggle: vi.fn(),
   isMonitorToggling: false,
+  onMergeClick: vi.fn(),
+  isMerging: false,
+  canMerge: false,
+  mergeDisabled: false,
 };
 
 function renderHero(overrides = {}) {
@@ -198,6 +202,45 @@ describe('BookHero', () => {
       );
       expect(blurImg).toBeTruthy();
       expect(blurImg!.getAttribute('src')).toBe('/narratorr/api/books/1/cover');
+    });
+  });
+
+  describe('merge button', () => {
+    it('calls onMergeClick when Merge to M4B button is clicked', async () => {
+      const onMergeClick = vi.fn();
+      const user = userEvent.setup();
+      renderHero({ canMerge: true, onMergeClick });
+
+      await user.click(screen.getByRole('button', { name: /Merge to M4B/i }));
+      expect(onMergeClick).toHaveBeenCalledTimes(1);
+    });
+
+    it('hides Merge to M4B button when canMerge is false', () => {
+      renderHero({ canMerge: false });
+      expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
+    });
+
+    it('hides Merge to M4B button when hasPath is false', () => {
+      renderHero({ hasPath: false, canMerge: true });
+      expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
+    });
+
+    it('shows "Merging..." text and disables button during isMerging', () => {
+      renderHero({ canMerge: true, isMerging: true });
+      const button = screen.getByRole('button', { name: /Merging\.\.\./i });
+      expect(button).toBeDisabled();
+    });
+
+    it('disables button when mergeDisabled is true', () => {
+      renderHero({ canMerge: true, mergeDisabled: true });
+      const button = screen.getByRole('button', { name: /Merge to M4B/i });
+      expect(button).toBeDisabled();
+    });
+
+    it('shows tooltip on button when mergeDisabled is true', () => {
+      renderHero({ canMerge: true, mergeDisabled: true, mergeTooltip: 'ffmpeg not configured' });
+      const button = screen.getByRole('button', { name: /Merge to M4B/i });
+      expect(button).toHaveAttribute('title', 'ffmpeg not configured');
     });
   });
 
