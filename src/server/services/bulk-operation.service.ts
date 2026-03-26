@@ -127,15 +127,14 @@ export class BulkOperationService {
     return { total: Number(result[0]?.count ?? 0) };
   }
 
-  startRenameJob(): string {
+  async startRenameJob(): Promise<string> {
     this.assertNoActiveJob();
+    const librarySettings = await this.settingsService.get('library');
+    if (!librarySettings.path?.trim()) {
+      throw new BulkOpError('Library path not configured', 'LIBRARY_NOT_CONFIGURED');
+    }
     const id = randomUUID();
     const job = new BulkJob(id, 'rename', this.log, async (setTotal, tick) => {
-      const librarySettings = await this.settingsService.get('library');
-      if (!librarySettings.path?.trim()) {
-        throw new BulkOpError('Library path not configured', 'LIBRARY_NOT_CONFIGURED');
-      }
-
       // Fetch all imported books with paths + first author for path comparison
       const rows = await this.db
         .select({
@@ -225,15 +224,14 @@ export class BulkOperationService {
     return id;
   }
 
-  startConvertJob(): string {
+  async startConvertJob(): Promise<string> {
     this.assertNoActiveJob();
+    const processingSettings = await this.settingsService.get('processing');
+    if (!processingSettings.ffmpegPath?.trim()) {
+      throw new BulkOpError('ffmpeg not configured', 'FFMPEG_NOT_CONFIGURED');
+    }
     const id = randomUUID();
     const job = new BulkJob(id, 'convert', this.log, async (setTotal, tick) => {
-      const processingSettings = await this.settingsService.get('processing');
-      if (!processingSettings.ffmpegPath?.trim()) {
-        throw new BulkOpError('ffmpeg not configured', 'FFMPEG_NOT_CONFIGURED');
-      }
-
       const rows = await this.db
         .select({ id: books.id, path: books.path, title: books.title })
         .from(books)

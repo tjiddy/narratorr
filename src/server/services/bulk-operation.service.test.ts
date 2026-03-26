@@ -185,7 +185,7 @@ describe('BulkOperationService — job lifecycle', () => {
   it('startRenameJob returns UUID immediately (non-blocking)', async () => {
     const { service, db } = createService();
     db.select.mockReturnValue(mockDbChain([])); // empty batch
-    const id = service.startRenameJob();
+    const id = await service.startRenameJob();
     expect(typeof id).toBe('string');
     expect(id).toHaveLength(36); // UUID format
   });
@@ -200,7 +200,7 @@ describe('BulkOperationService — job lifecycle', () => {
   it('startConvertJob returns UUID immediately', async () => {
     const { service, db } = createService();
     db.select.mockReturnValue(mockDbChain([]));
-    const id = service.startConvertJob();
+    const id = await service.startConvertJob();
     expect(typeof id).toBe('string');
   });
 
@@ -212,7 +212,7 @@ describe('BulkOperationService — job lifecycle', () => {
   it('getJob returns status immediately after start', async () => {
     const { service, db } = createService();
     db.select.mockReturnValue(mockDbChain([]));
-    const id = service.startRenameJob();
+    const id = await service.startRenameJob();
     const status = service.getJob(id);
     expect(status).not.toBeNull();
     expect(status?.id).toBe(id);
@@ -222,7 +222,7 @@ describe('BulkOperationService — job lifecycle', () => {
   it('getJob returns completed status after job finishes', async () => {
     const { service, db } = createService();
     db.select.mockReturnValue(mockDbChain([])); // no books — completes immediately
-    const id = service.startRenameJob();
+    const id = await service.startRenameJob();
     await waitForJob(service, id);
     const status = service.getJob(id);
     expect(status?.status).toBe('completed');
@@ -237,7 +237,7 @@ describe('BulkOperationService — job lifecycle', () => {
       { id: 1, path: '/library/Author Name/OldName', title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
     ]));
     (renameService.renameBook as Mock).mockReturnValueOnce(renamePromise.then(() => ({ oldPath: '', newPath: '', message: 'ok', filesRenamed: 0 })));
-    const id = service.startRenameJob();
+    const id = await service.startRenameJob();
     await new Promise(r => setTimeout(r, 20)); // let job start
     const active = service.getActiveJob();
     expect(active?.id).toBe(id);
@@ -249,7 +249,7 @@ describe('BulkOperationService — job lifecycle', () => {
   it('getActiveJob returns null after job completes', async () => {
     const { service, db } = createService();
     db.select.mockReturnValue(mockDbChain([]));
-    const id = service.startRenameJob();
+    const id = await service.startRenameJob();
     await waitForJob(service, id);
     expect(service.getActiveJob()).toBeNull();
   });
@@ -280,7 +280,7 @@ describe('BulkOperationService — cross-operation exclusivity', () => {
 
   it('startRetagJob while rename is running throws BULK_OP_IN_PROGRESS', async () => {
     const { service, resolveQuery } = makeStallService();
-    service.startRenameJob();
+    void service.startRenameJob();
     await new Promise(r => setTimeout(r, 10));
     expect(() => service.startRetagJob()).toThrow(BulkOpError);
     expect(() => service.startRetagJob()).toThrow(expect.objectContaining({ code: 'BULK_OP_IN_PROGRESS' }));
@@ -296,19 +296,43 @@ describe('BulkOperationService — cross-operation exclusivity', () => {
     });
     service.startRetagJob();
     await new Promise(r => setTimeout(r, 10));
-    expect(() => service.startConvertJob()).toThrow(BulkOpError);
+    await expect(service.startConvertJob()).rejects.toThrow(expect.objectContaining({ code: 'BULK_OP_IN_PROGRESS' }));
     resolveFn([]);
   });
 
   it('a new job can start after the previous job completes', async () => {
     const { service, db } = createService();
     db.select.mockReturnValue(mockDbChain([]));
-    const id1 = service.startRenameJob();
+    const id1 = await service.startRenameJob();
     await waitForJob(service, id1);
     // Should not throw
     const id2 = service.startRetagJob();
     expect(id2).toBeTruthy();
     await waitForJob(service, id2);
+  });
+});
+
+// ===== Pre-flight validation =====
+
+describe('BulkOperationService — pre-flight validation', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  it('startRenameJob throws LIBRARY_NOT_CONFIGURED when library path is empty', async () => {
+    const { service } = createService({
+      settingsOverrides: {
+        library: { path: '', folderFormat: '{author}/{title}', fileFormat: '' },
+      },
+    });
+    await expect(service.startRenameJob()).rejects.toThrow(expect.objectContaining({ code: 'LIBRARY_NOT_CONFIGURED' }));
+  });
+
+  it('startConvertJob throws FFMPEG_NOT_CONFIGURED when ffmpegPath is empty', async () => {
+    const { service } = createService({
+      settingsOverrides: {
+        processing: { ffmpegPath: '', outputFormat: 'm4b' as const, bitrate: 128, mergeBehavior: 'always' as const, enabled: true, keepOriginalBitrate: false, maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+      },
+    });
+    await expect(service.startConvertJob()).rejects.toThrow(expect.objectContaining({ code: 'FFMPEG_NOT_CONFIGURED' }));
   });
 });
 
@@ -325,7 +349,7 @@ describe('BulkOperationService — rename batch', () => {
       { id: 2, path: '/library/Author Name/OldName', title: 'Book2', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' }, // mismatched
     ]));
     (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Moved', filesRenamed: 0 });
-    const id = service.startRenameJob();
+    const id = await service.startRenameJob();
     await waitForJob(service, id);
     // Only the mismatched book should have been renamed
     expect(renameService.renameBook).toHaveBeenCalledTimes(1);
@@ -342,7 +366,7 @@ describe('BulkOperationService — rename batch', () => {
     (renameService.renameBook as Mock)
       .mockRejectedValueOnce(new RenameError('conflict', 'CONFLICT'))
       .mockResolvedValueOnce({ oldPath: '', newPath: '', message: 'ok', filesRenamed: 0 });
-    const id = service.startRenameJob();
+    const id = await service.startRenameJob();
     await waitForJob(service, id);
     const status = service.getJob(id);
     expect(status?.failures).toBe(1);
@@ -357,7 +381,7 @@ describe('BulkOperationService — rename batch', () => {
       { id: 3, path: '/old/path', title: 'Book3', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'C' },
     ]));
     (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Moved', filesRenamed: 0 });
-    const id = service.startRenameJob();
+    const id = await service.startRenameJob();
     await waitForJob(service, id);
     const status = service.getJob(id);
     expect(status?.status).toBe('completed');
@@ -439,7 +463,7 @@ describe('BulkOperationService — convert batch', () => {
     db.select.mockReturnValueOnce(mockDbChain([
       { id: 1, path: BOOK_PATH, title: 'Title' },
     ]));
-    const id = service.startConvertJob();
+    const id = await service.startConvertJob();
     await waitForJob(service, id);
     expect(processAudioFiles).toHaveBeenCalledWith(
       BOOK_PATH + '.convert-tmp',
@@ -463,7 +487,7 @@ describe('BulkOperationService — convert batch', () => {
     (readdir as Mock)
       .mockResolvedValueOnce(['a.mp3'])
       .mockResolvedValueOnce(['b.mp3']);
-    const id = service.startConvertJob();
+    const id = await service.startConvertJob();
     await waitForJob(service, id);
     const status = service.getJob(id);
     expect(status?.failures).toBe(1);
@@ -474,7 +498,7 @@ describe('BulkOperationService — convert batch', () => {
     setupConvertMocks();
     const { service, db } = createService();
     db.select.mockReturnValueOnce(mockDbChain([{ id: 1, path: BOOK_PATH, title: 'T' }]));
-    const id = service.startConvertJob();
+    const id = await service.startConvertJob();
     await waitForJob(service, id);
     const status = service.getJob(id);
     expect(status?.status).toBe('completed');

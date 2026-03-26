@@ -31,7 +31,7 @@ export async function bulkOperationsRoutes(
   // Start jobs
   app.post('/api/books/bulk/rename', async (request, reply) => {
     try {
-      const jobId = bulkOperationService.startRenameJob();
+      const jobId = await bulkOperationService.startRenameJob();
       return await reply.status(202).send({ jobId });
     } catch (err) {
       if (err instanceof BulkOpError) {
@@ -45,7 +45,7 @@ export async function bulkOperationsRoutes(
 
   app.post('/api/books/bulk/retag', async (request, reply) => {
     try {
-      const jobId = bulkOperationService.startRetagJob();
+      const jobId = await bulkOperationService.startRetagJob();
       return await reply.status(202).send({ jobId });
     } catch (err) {
       if (err instanceof BulkOpError) {
@@ -58,7 +58,7 @@ export async function bulkOperationsRoutes(
 
   app.post('/api/books/bulk/convert', async (request, reply) => {
     try {
-      const jobId = bulkOperationService.startConvertJob();
+      const jobId = await bulkOperationService.startConvertJob();
       return await reply.status(202).send({ jobId });
     } catch (err) {
       if (err instanceof BulkOpError) {

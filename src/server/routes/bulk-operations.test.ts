@@ -8,9 +8,9 @@ function makeBulkService(overrides?: Record<string, unknown>) {
     countRetagEligible: vi.fn().mockResolvedValue({ total: 5 }),
     countConvertEligible: vi.fn().mockResolvedValue({ total: 4 }),
     getActiveJob: vi.fn().mockReturnValue(null),
-    startRenameJob: vi.fn().mockReturnValue('job-uuid-1'),
-    startRetagJob: vi.fn().mockReturnValue('job-uuid-2'),
-    startConvertJob: vi.fn().mockReturnValue('job-uuid-3'),
+    startRenameJob: vi.fn().mockResolvedValue('job-uuid-1'),
+    startRetagJob: vi.fn().mockResolvedValue('job-uuid-2'),
+    startConvertJob: vi.fn().mockResolvedValue('job-uuid-3'),
     getJob: vi.fn().mockReturnValue(null),
     ...overrides,
   };
@@ -129,9 +129,7 @@ describe('POST /api/books/bulk/rename', () => {
 
   it('returns 400 when library path is not configured', async () => {
     const bulkOperation = makeBulkService({
-      startRenameJob: vi.fn().mockImplementation(() => {
-        throw new BulkOpError('Library path not configured', 'LIBRARY_NOT_CONFIGURED');
-      }),
+      startRenameJob: vi.fn().mockRejectedValue(new BulkOpError('Library path not configured', 'LIBRARY_NOT_CONFIGURED')),
     });
     const services = createMockServices({ bulkOperation });
     const app = await createTestApp(services);
@@ -142,9 +140,7 @@ describe('POST /api/books/bulk/rename', () => {
 
   it('returns 409 BULK_OP_IN_PROGRESS when a job is already running', async () => {
     const bulkOperation = makeBulkService({
-      startRenameJob: vi.fn().mockImplementation(() => {
-        throw new BulkOpError('A bulk operation is already running', 'BULK_OP_IN_PROGRESS');
-      }),
+      startRenameJob: vi.fn().mockRejectedValue(new BulkOpError('A bulk operation is already running', 'BULK_OP_IN_PROGRESS')),
     });
     const services = createMockServices({ bulkOperation });
     const app = await createTestApp(services);
@@ -168,9 +164,7 @@ describe('POST /api/books/bulk/retag', () => {
 
   it('returns 409 BULK_OP_IN_PROGRESS when a different bulk job is running', async () => {
     const bulkOperation = makeBulkService({
-      startRetagJob: vi.fn().mockImplementation(() => {
-        throw new BulkOpError('A bulk operation is already running', 'BULK_OP_IN_PROGRESS');
-      }),
+      startRetagJob: vi.fn().mockRejectedValue(new BulkOpError('A bulk operation is already running', 'BULK_OP_IN_PROGRESS')),
     });
     const services = createMockServices({ bulkOperation });
     const app = await createTestApp(services);
@@ -194,9 +188,7 @@ describe('POST /api/books/bulk/convert', () => {
 
   it('returns 503 when ffmpeg is not configured', async () => {
     const bulkOperation = makeBulkService({
-      startConvertJob: vi.fn().mockImplementation(() => {
-        throw new BulkOpError('ffmpeg not configured', 'FFMPEG_NOT_CONFIGURED');
-      }),
+      startConvertJob: vi.fn().mockRejectedValue(new BulkOpError('ffmpeg not configured', 'FFMPEG_NOT_CONFIGURED')),
     });
     const services = createMockServices({ bulkOperation });
     const app = await createTestApp(services);
@@ -206,9 +198,7 @@ describe('POST /api/books/bulk/convert', () => {
 
   it('returns 409 BULK_OP_IN_PROGRESS when a job is already running', async () => {
     const bulkOperation = makeBulkService({
-      startConvertJob: vi.fn().mockImplementation(() => {
-        throw new BulkOpError('A bulk operation is already running', 'BULK_OP_IN_PROGRESS');
-      }),
+      startConvertJob: vi.fn().mockRejectedValue(new BulkOpError('A bulk operation is already running', 'BULK_OP_IN_PROGRESS')),
     });
     const services = createMockServices({ bulkOperation });
     const app = await createTestApp(services);
