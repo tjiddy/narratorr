@@ -128,6 +128,12 @@ describe('ImportCard', () => {
       expect(screen.getByText(/12 files/)).toBeInTheDocument();
     });
 
+    it('shows singular "1 file" form when fileCount is 1', () => {
+      render(<ImportCard {...defaultProps} row={makeRow({ book: makeBook({ fileCount: 1 }) })} />);
+      expect(screen.getByText(/1 file[^s]/)).toBeInTheDocument();
+      expect(screen.queryByText(/1 files/)).not.toBeInTheDocument();
+    });
+
     it('shows file size', () => {
       render(<ImportCard {...defaultProps} row={makeRow()} />);
       expect(screen.getByText(/500/)).toBeInTheDocument(); // 524288000 bytes ~ 500 MB

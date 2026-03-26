@@ -377,6 +377,54 @@ describe('BookEditModal', () => {
       });
     });
 
+    it('shows only first 6 results when search returns 7 (slice boundary)', () => {
+      const alts = Array.from({ length: 7 }, (_, i) =>
+        makeMetadata({ title: `Result ${i + 1}`, providerId: `r${i + 1}` }),
+      );
+      renderModal({ alternatives: alts });
+
+      expect(screen.getByText('Result 1')).toBeInTheDocument();
+      expect(screen.getByText('Result 6')).toBeInTheDocument();
+      expect(screen.queryByText('Result 7')).not.toBeInTheDocument();
+    });
+
+    it('shows all 6 results when search returns exactly 6 (no off-by-one drop)', () => {
+      const alts = Array.from({ length: 6 }, (_, i) =>
+        makeMetadata({ title: `Result ${i + 1}`, providerId: `r${i + 1}` }),
+      );
+      renderModal({ alternatives: alts });
+
+      expect(screen.getByText('Result 1')).toBeInTheDocument();
+      expect(screen.getByText('Result 6')).toBeInTheDocument();
+    });
+
+    it('applyMetadata with multiple authors sets first author only', async () => {
+      const alt = makeMetadata({
+        title: 'Multi Author Book',
+        authors: [{ name: 'Author A' }, { name: 'Author B' }],
+        providerId: 'multi',
+      });
+      renderModal({ alternatives: [alt] });
+
+      await userEvent.click(screen.getByText('Multi Author Book'));
+
+      await waitFor(() => {
+        expect(screen.getByDisplayValue('Author A')).toBeInTheDocument();
+      });
+      expect(screen.queryByDisplayValue('Author B')).not.toBeInTheDocument();
+    });
+
+    it('shows narrator display for alternatives with multiple narrators joined by comma', () => {
+      const alt = makeMetadata({
+        title: 'Narrated Book',
+        narrators: ['Jim Dale', 'Stephen Fry'],
+        providerId: 'narr',
+      });
+      renderModal({ alternatives: [alt] });
+
+      expect(screen.getByText('Jim Dale, Stephen Fry')).toBeInTheDocument();
+    });
+
     it('shows section label based on confidence', () => {
       renderModal({
         confidence: 'medium',
