@@ -105,6 +105,7 @@ export interface BookIdentifier {
   asin: string | null;
   title: string;
   authorName: string | null;
+  authorSlug: string | null;
 }
 
 export interface BookFile {
