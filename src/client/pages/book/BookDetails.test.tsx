@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockBook, createMockSettings } from '@/__tests__/factories';
@@ -260,7 +260,7 @@ describe('BookDetails', () => {
       expect(screen.queryByText('Rename')).not.toBeInTheDocument();
     });
 
-    it('calls renameBook API when Rename button is clicked', async () => {
+    it('calls renameBook API when Rename button is clicked and confirmed', async () => {
       const user = userEvent.setup();
       (api.renameBook as Mock).mockResolvedValue({
         oldPath: '/library/old',
@@ -271,9 +271,13 @@ describe('BookDetails', () => {
 
       renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
 
-      await user.click(screen.getByText('Rename'));
+      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      const dialog = screen.getByRole('dialog');
+      await user.click(within(dialog).getAllByRole('button')[1]);
 
-      expect(api.renameBook).toHaveBeenCalledWith(1);
+      await waitFor(() => {
+        expect(api.renameBook).toHaveBeenCalledWith(1);
+      });
     });
 
     it('saves metadata and renames when rename checkbox is checked', async () => {
@@ -367,6 +371,8 @@ describe('BookDetails', () => {
       });
 
       await user.click(screen.getByText('Re-tag files'));
+      const dialog1 = screen.getByRole('dialog');
+      await user.click(within(dialog1).getAllByRole('button')[1]);
 
       await waitFor(() => {
         expect(api.retagBook).toHaveBeenCalledWith(1);
@@ -390,6 +396,8 @@ describe('BookDetails', () => {
       });
 
       await user.click(screen.getByText('Re-tag files'));
+      const dialog2 = screen.getByRole('dialog');
+      await user.click(within(dialog2).getAllByRole('button')[1]);
 
       await waitFor(() => {
         expect(toast.success).toHaveBeenCalledWith('Tagged 1 file');
@@ -412,6 +420,8 @@ describe('BookDetails', () => {
       });
 
       await user.click(screen.getByText('Re-tag files'));
+      const dialog3 = screen.getByRole('dialog');
+      await user.click(within(dialog3).getAllByRole('button')[1]);
 
       await waitFor(() => {
         expect(toast.warning).toHaveBeenCalledWith('Tagged 2 files, 1 failed');
@@ -432,6 +442,8 @@ describe('BookDetails', () => {
       });
 
       await user.click(screen.getByText('Re-tag files'));
+      const dialog4 = screen.getByRole('dialog');
+      await user.click(within(dialog4).getAllByRole('button')[1]);
 
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalledWith('Re-tag failed: ffmpeg is not configured');
@@ -640,6 +652,285 @@ describe('BookDetails', () => {
       const tabs = screen.getAllByRole('tab');
       expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
       expect(tabs[1]).toHaveAttribute('aria-selected', 'false');
+    });
+  });
+
+  describe('rename confirmation modal', () => {
+    it('shows confirmation modal when Rename button is clicked (api.renameBook not yet called)', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await user.click(screen.getByRole('button', { name: 'Rename' }));
+
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(api.renameBook).not.toHaveBeenCalled();
+    });
+
+    it('modal message includes the book title', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await user.click(screen.getByRole('button', { name: 'Rename' }));
+
+      expect(within(screen.getByRole('dialog')).getByText(/The Way of Kings/)).toBeInTheDocument();
+    });
+
+    it('modal message states the action cannot be undone', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await user.click(screen.getByRole('button', { name: 'Rename' }));
+
+      expect(within(screen.getByRole('dialog')).getByText(/cannot be undone/i)).toBeInTheDocument();
+    });
+
+    it('confirm calls api.renameBook with the correct book ID', async () => {
+      const user = userEvent.setup();
+      (api.renameBook as Mock).mockResolvedValue({ oldPath: '/old', newPath: '/new', message: 'Moved', filesRenamed: 1 });
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      const dialog = screen.getByRole('dialog');
+      await user.click(within(dialog).getAllByRole('button')[1]);
+
+      await waitFor(() => {
+        expect(api.renameBook).toHaveBeenCalledWith(1);
+      });
+    });
+
+    it('modal closes immediately when Confirm is clicked (before mutation settles)', async () => {
+      const user = userEvent.setup();
+      (api.renameBook as Mock).mockReturnValue(new Promise(() => {}));
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      const dialog = screen.getByRole('dialog');
+      await user.click(within(dialog).getAllByRole('button')[1]);
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('rapid repeated confirm clicks call api.renameBook at most once', async () => {
+      const user = userEvent.setup();
+      (api.renameBook as Mock).mockResolvedValue({ oldPath: '/old', newPath: '/new', message: 'Moved', filesRenamed: 1 });
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      const dialog = screen.getByRole('dialog');
+      await user.click(within(dialog).getAllByRole('button')[1]);
+      // Modal is now closed — no dialog to click again
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      await waitFor(() => {
+        expect(api.renameBook).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it('cancel closes the modal without calling api.renameBook', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(api.renameBook).not.toHaveBeenCalled();
+    });
+
+    it('Escape key closes the modal without calling api.renameBook', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      await user.keyboard('{Escape}');
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(api.renameBook).not.toHaveBeenCalled();
+    });
+
+    it('backdrop click closes the modal without calling api.renameBook', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      // Click the backdrop (fixed overlay behind the modal panel)
+      await user.click(document.querySelector('.fixed.inset-0')!);
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(api.renameBook).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('retag confirmation modal', () => {
+    function mockFfmpegEnabled() {
+      (api.getSettings as Mock).mockResolvedValue(createMockSettings({
+        processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+      }));
+    }
+
+    it('shows confirmation modal when Re-tag files button is clicked (api.retagBook not yet called)', async () => {
+      const user = userEvent.setup();
+      mockFfmpegEnabled();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
+      await user.click(screen.getByText('Re-tag files'));
+
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(api.retagBook).not.toHaveBeenCalled();
+    });
+
+    it('modal message includes the book title', async () => {
+      const user = userEvent.setup();
+      mockFfmpegEnabled();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
+      await user.click(screen.getByText('Re-tag files'));
+
+      expect(within(screen.getByRole('dialog')).getByText(/The Way of Kings/)).toBeInTheDocument();
+    });
+
+    it('modal message states the action cannot be undone', async () => {
+      const user = userEvent.setup();
+      mockFfmpegEnabled();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
+      await user.click(screen.getByText('Re-tag files'));
+
+      expect(within(screen.getByRole('dialog')).getByText(/cannot be undone/i)).toBeInTheDocument();
+    });
+
+    it('confirm calls api.retagBook with the correct book ID', async () => {
+      const user = userEvent.setup();
+      mockFfmpegEnabled();
+      (api.retagBook as Mock).mockResolvedValue({ bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [] });
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
+      await user.click(screen.getByText('Re-tag files'));
+      const dialog = screen.getByRole('dialog');
+      await user.click(within(dialog).getAllByRole('button')[1]);
+
+      await waitFor(() => {
+        expect(api.retagBook).toHaveBeenCalledWith(1);
+      });
+    });
+
+    it('modal closes immediately when Confirm is clicked (before mutation settles)', async () => {
+      const user = userEvent.setup();
+      mockFfmpegEnabled();
+      (api.retagBook as Mock).mockReturnValue(new Promise(() => {}));
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
+      await user.click(screen.getByText('Re-tag files'));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      const dialog = screen.getByRole('dialog');
+      await user.click(within(dialog).getAllByRole('button')[1]);
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('rapid repeated confirm clicks call api.retagBook at most once', async () => {
+      const user = userEvent.setup();
+      mockFfmpegEnabled();
+      (api.retagBook as Mock).mockResolvedValue({ bookId: 1, tagged: 1, skipped: 0, failed: 0, warnings: [] });
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
+      await user.click(screen.getByText('Re-tag files'));
+      const dialog = screen.getByRole('dialog');
+      await user.click(within(dialog).getAllByRole('button')[1]);
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      await waitFor(() => {
+        expect(api.retagBook).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it('cancel closes the modal without calling api.retagBook', async () => {
+      const user = userEvent.setup();
+      mockFfmpegEnabled();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
+      await user.click(screen.getByText('Re-tag files'));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(api.retagBook).not.toHaveBeenCalled();
+    });
+
+    it('Escape key closes the modal without calling api.retagBook', async () => {
+      const user = userEvent.setup();
+      mockFfmpegEnabled();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
+      await user.click(screen.getByText('Re-tag files'));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      await user.keyboard('{Escape}');
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(api.retagBook).not.toHaveBeenCalled();
+    });
+
+    it('backdrop click closes the modal without calling api.retagBook', async () => {
+      const user = userEvent.setup();
+      mockFfmpegEnabled();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
+      await user.click(screen.getByText('Re-tag files'));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      await user.click(document.querySelector('.fixed.inset-0')!);
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(api.retagBook).not.toHaveBeenCalled();
+    });
+
+    it('Re-tag button is disabled when ffmpegConfigured is false and clicking does not open modal', async () => {
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      // getSettings not mocked → ffmpegConfigured = false → button disabled
+      await waitFor(() => expect(screen.getByText('Re-tag files')).toBeDisabled());
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('rename and retag modals are independent — opening one does not affect the other', async () => {
+      const user = userEvent.setup();
+      mockFfmpegEnabled();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported' });
+
+      // Open rename modal
+      await user.click(screen.getByRole('button', { name: 'Rename' }));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+      // Cancel rename — retag modal should not be open
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      // Open retag modal independently
+      await waitFor(() => expect(screen.getByText('Re-tag files')).not.toBeDisabled());
+      await user.click(screen.getByText('Re-tag files'));
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(api.renameBook).not.toHaveBeenCalled();
     });
   });
 });
