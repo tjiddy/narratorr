@@ -122,7 +122,7 @@ export async function discoverRoutes(app: FastifyInstance, deps: DiscoverRouteDe
     if (!settings.enabled) {
       return reply.status(409).send({ error: 'Discovery is disabled' });
     }
-    return await taskRegistry.runExclusive('discovery', () => discoveryService.refreshSuggestions());
+    return taskRegistry.runExclusive('discovery', () => discoveryService.refreshSuggestions());
   });
 
   // GET /api/discover/stats

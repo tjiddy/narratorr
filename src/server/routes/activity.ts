@@ -133,11 +133,11 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
 
       switch (result.status) {
         case 'retried':
-          return await reply.status(201).send(result.download);
+          return reply.status(201).send(result.download);
         case 'no_candidates':
-          return await reply.status(200).send({ status: 'no_candidates' });
+          return reply.status(200).send({ status: 'no_candidates' });
         case 'retry_error':
-          return await reply.status(200).send({ status: 'retry_error' });
+          return reply.status(200).send({ status: 'retry_error' });
       }
     },
   );
