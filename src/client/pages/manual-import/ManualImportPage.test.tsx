@@ -1104,9 +1104,8 @@ describe('ManualImportPage', () => {
         renderPage();
         const input = screen.getByPlaceholderText('/path/to/audiobooks');
         await userEvent.type(input, '/media/podcasts');
-        await waitFor(() =>
-          expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument(),
-        );
+        expect(await screen.findByDisplayValue('/media/podcasts')).toBeInTheDocument();
+        expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument();
         await userEvent.clear(input);
         await userEvent.type(input, '/audiobooks/sub');
         expect(await screen.findByText(/This folder is inside your library/)).toBeInTheDocument();
