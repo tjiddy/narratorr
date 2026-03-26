@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #149 ERR-1 + DB-1: Fix string-based error routing and merge service DB timing — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #152
+
+### Metrics
+- Files changed: 9 | Tests added/modified: 7
+- Quality gate runs: 2 (pass on attempt 2)
+- Fix iterations: 2 (instanceof undefined crash from unordered import, return-await lint violations after removing try/catch)
+- Context compactions: 1 (caused minor rework on handoff steps)
+
+### Workflow experience
+- What went smoothly: ERR-1 pattern was clear from existing MergeError/RenameError examples; DB-1 was a pure reorder with no logic change
+- Friction / issues encountered: (1) Registering TaskRegistryError in error-handler.ts before the class was defined caused instanceof undefined TypeError — broke ALL error handling, not just the new paths. (2) Removing try/catch from routes left return-await outside try/catch, triggering ESLint violations — stripped await from 4 return statements.
+
+### Token efficiency
+- Highest-token actions: test file blast radius (7 files updated), error-handler.test.ts adding 5 new routes + 5 new test cases
+- Avoidable waste: context compaction interrupted the handoff mid-flow; GitHub App token expired during the gap
+- Suggestions: define + register error classes in the same commit to avoid undefined import crashes
+
+### Infrastructure gaps
+- Repeated workarounds: GitHub App token refresh after context compaction — had to manually re-mint token
+- Missing tooling / config: no automated token refresh between skill phases
+- Unresolved debt: DELETE /api/activity/:id/history still uses message.includes — only remaining ERR-1 violation
+
+### Wish I had Known
+1. instanceof undefined crashes silently break the ENTIRE error-handler plugin — not just the newly registered class. Any import resolving to undefined causes TypeError for all errors.
+2. return-await is context-dependent: required inside try/catch, forbidden outside. Removing a try/catch wrapper requires also removing await from all return-await statements in that block.
+3. GitHub App tokens expire during context compaction — handoff needs token re-mint when resuming after a compaction break.
+
+
 ## #143 Import polish — misc cleanup — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #151

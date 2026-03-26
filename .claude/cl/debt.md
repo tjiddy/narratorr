@@ -29,3 +29,4 @@
 - **src/client/hooks/useBulkOperation.ts**: Poll error handling only tests 404 (server restart); other error codes are silently swallowed without resetting state. A non-404 error (e.g., 500) during polling will keep the hook in "running" state indefinitely. (discovered in #135)
 
 - **src/client/pages/library-import/useLibraryImport.ts**: `handleEdit` confidence upgrade logic, `autoCheck` selection logic, `handleRetry`, and `prevMatchCountRef` mechanics have no direct unit tests — only integration tests via hook state. These behaviors exist in shipped code and are exercised indirectly but not with focused unit assertions. (discovered in #141)
+- **src/server/routes/activity.ts**: `DELETE /api/activity/:id/history` still uses `message.includes('use cancel instead')` string matching for error routing — the only remaining ERR-1 violation in the codebase. Should be converted to a typed error (discovered in #149)
