@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #139 Polish pass: #114 duplicate UX, #95 token regex, test cleanup — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #140
+
+### Metrics
+- Files changed: 5 | Tests added/modified: 3 files (ImportCard.test.tsx, ImportSummaryBar.test.tsx, lib.test.ts)
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 1 (dynamic `await import()` inside describe → static import at module scope)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: all 4 modules completed cleanly; red/green cycle was tight; `_tokenCache` export in lib.ts was the right testing seam for gitPush
+- Friction / issues encountered: (1) `vi.mocked(execFileSync)` used `await import()` inside `describe()` — esbuild transform error, fixed by moving to static import; (2) GH_TOKEN env var expired during handoff, required inline JWT mint
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (full file reads of service + test files)
+- Avoidable waste: two passes on lib.test.ts setup (dynamic→static import fix)
+- Suggestions: check vi.mock patterns in existing test files before writing new ones to match project conventions
+
+### Infrastructure gaps
+- Repeated workarounds: GH_TOKEN expiry during handoff — `git-push.ts` auto-refreshes but direct `gh` CLI calls get 401; must mint manually
+- Missing tooling / config: handoff skill should use `scripts/git-push.ts` token-mint logic before any `gh` CLI call, not rely on potentially-expired `GH_TOKEN` env var
+- Unresolved debt: none introduced
+
+### Wish I'd Known
+1. `vi.mock()` with `await import()` inside `describe()` is a build-time error — always use static module-scope imports with `vi.mocked()` for vitest node mock consumers
+2. `_tokenCache` is the clean seam for testing gitPush — set env vars + pre-populate cache, no HTTP needed
+3. GH_TOKEN in env is ~1h lifetime; handoff flows need a token-refresh gate before gh CLI calls
+
+
 ## #135 Bulk library management — Rename All, Re-tag All, Convert All to M4B — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #138
