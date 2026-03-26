@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #146 REACT-1/2: Split god hooks and fix render-loop closures — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #155
+
+### Metrics
+- Files changed: 10 | Tests added/modified: 10 suites
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0
+- Context compactions: 1 (session resumed mid-implementation; no rework needed)
+
+### Workflow experience
+- What went smoothly: bulk `sed` substitutions replaced 150+ flat references across 4 test files in seconds; functional updater pattern for toggle state eliminated deps from useCallback; context compaction resume was seamless
+- Friction / issues encountered: coverage subagent flagged 25 pre-existing gaps across files touched by the refactor — required careful judgment to distinguish new-behavior gaps from pre-existing ones; state directory lost between sessions and needed recreation
+
+### Token efficiency
+- Highest-token actions: coverage review subagent (107k tokens) scanning all changed files; self-review subagent
+- Avoidable waste: coverage subagent read entire test history for files with pre-existing gaps — not avoidable for pure refactors
+- Suggestions: For pure refactoring issues, scope coverage review to only newly-introduced behaviors, not entire file behavior inventory
+
+### Infrastructure gaps
+- Repeated workarounds: `.claude/state/handoff-*` directory lost on session resume — had to recreate before writing markers
+- Missing tooling / config: none
+- Unresolved debt: 25 pre-existing test gaps documented in debt.md across LibraryPage, ActivityPage, ManualImportPage, CrudSettingsPage
+
+### Wish I'd Known
+1. Use functional updater (`setId(prev => prev === x ? null : x)`) in useCallback to avoid adding current state to deps — otherwise the callback recreates on every toggle
+2. When regrouping a spread (`...connectionTest` → `tests: connectionTest`), pass the whole object as the group value rather than destructuring and re-adding keys
+3. Coverage subagent on pure refactor issues will flag many pre-existing gaps — save time by noting upfront that the issue is a pure refactor with no new behavior, so only AC-mapped behaviors need coverage
+
+
 ## #148 CSS-1: Standardize z-index scale and fix a11y gaps — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #154
