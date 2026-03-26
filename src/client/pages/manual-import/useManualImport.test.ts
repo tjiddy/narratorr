@@ -816,4 +816,59 @@ describe('useManualImport', () => {
       expect(result.current.duplicateCount).toBe(2);
     });
   });
+
+  describe('library root guardrail via libraryPath option (#134)', () => {
+    it('does not call scanDirectory when scanPath is inside libraryPath', async () => {
+      const { result } = renderHook(
+        () => useManualImport({ libraryPath: '/audiobooks' }),
+        { wrapper: createWrapper() },
+      );
+      act(() => { result.current.setScanPath('/audiobooks/sub'); });
+      await act(async () => { result.current.handleScan(); });
+      expect(vi.mocked(api.scanDirectory)).not.toHaveBeenCalled();
+    });
+
+    it('does not call scanDirectory when scanPath equals libraryPath exactly', async () => {
+      const { result } = renderHook(
+        () => useManualImport({ libraryPath: '/audiobooks' }),
+        { wrapper: createWrapper() },
+      );
+      act(() => { result.current.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.handleScan(); });
+      expect(vi.mocked(api.scanDirectory)).not.toHaveBeenCalled();
+    });
+
+    it('calls scanDirectory with trimmed path when scanPath is outside libraryPath', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      const { result } = renderHook(
+        () => useManualImport({ libraryPath: '/audiobooks' }),
+        { wrapper: createWrapper() },
+      );
+      act(() => { result.current.setScanPath('/media/podcasts'); });
+      await act(async () => { result.current.handleScan(); });
+      expect(vi.mocked(api.scanDirectory)).toHaveBeenCalledWith('/media/podcasts');
+    });
+
+    it('calls scanDirectory normally when libraryPath is not provided', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      const { result } = renderHook(
+        () => useManualImport(),
+        { wrapper: createWrapper() },
+      );
+      act(() => { result.current.setScanPath('/audiobooks/sub'); });
+      await act(async () => { result.current.handleScan(); });
+      expect(vi.mocked(api.scanDirectory)).toHaveBeenCalledWith('/audiobooks/sub');
+    });
+
+    it('calls scanDirectory normally when libraryPath is empty string', async () => {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      const { result } = renderHook(
+        () => useManualImport({ libraryPath: '' }),
+        { wrapper: createWrapper() },
+      );
+      act(() => { result.current.setScanPath('/audiobooks/sub'); });
+      await act(async () => { result.current.handleScan(); });
+      expect(vi.mocked(api.scanDirectory)).toHaveBeenCalledWith('/audiobooks/sub');
+    });
+  });
 });

@@ -6,15 +6,17 @@ import { api, type ImportMode, type ImportConfirmItem, type MatchResult } from '
 import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
 import type { ImportRow, BookEditState } from '@/components/manual-import';
+import { isPathInsideLibrary } from './pathUtils.js';
 
 export type Step = 'path' | 'review';
 
 interface UseManualImportOptions {
   onScanSuccess?: (path: string) => void;
+  libraryPath?: string;
 }
 
 // eslint-disable-next-line max-lines-per-function -- orchestrates 5 mutations, 3 effects, 8 callbacks for import flow
-export function useManualImport({ onScanSuccess }: UseManualImportOptions = {}) {
+export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportOptions = {}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { results: matchResults, progress, isMatching, startMatching, cancel: cancelMatching } = useMatchJob();
@@ -127,9 +129,10 @@ export function useManualImport({ onScanSuccess }: UseManualImportOptions = {}) 
 
   const handleScan = useCallback(() => {
     if (!scanPath.trim()) return;
+    if (libraryPath && isPathInsideLibrary(scanPath, libraryPath)) return;
     setScanError(null);
     scanMutation.mutate(scanPath.trim());
-  }, [scanPath, scanMutation]);
+  }, [scanPath, libraryPath, scanMutation]);
 
   const handleToggle = useCallback((index: number) => {
     setRows(prev => prev.map((r, i) => i === index ? { ...r, selected: !r.selected } : r));

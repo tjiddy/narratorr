@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { PathInput } from '@/components/PathInput';
 import {
   AlertCircleIcon,
@@ -25,6 +26,7 @@ interface PathStepProps {
   handleScan: () => void;
   isPending: boolean;
   libraryPath: string;
+  isInsideLibraryRoot: boolean;
   folderHistory: FolderHistoryApi;
 }
 
@@ -44,6 +46,7 @@ export function PathStep({
   handleScan,
   isPending,
   libraryPath,
+  isInsideLibraryRoot,
   folderHistory,
 }: PathStepProps) {
   const { favorites, recents, promoteToFavorite, demoteToRecent, removeRecent, removeFavorite } = folderHistory;
@@ -72,6 +75,18 @@ export function PathStep({
         </div>
       )}
 
+      {isInsideLibraryRoot && (
+        <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-amber-500/5 border border-amber-500/20">
+          <AlertCircleIcon className="w-4 h-4 mt-0.5 shrink-0 text-amber-400" />
+          <span className="text-sm text-amber-300/90">
+            This folder is inside your library.{' '}
+            <Link to="/library-import" className="underline hover:text-amber-200 transition-colors">
+              Use Library Import to register existing books.
+            </Link>
+          </span>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground/70">
           Point to a folder containing audiobook subfolders (Author/Title, etc.)
@@ -79,7 +94,7 @@ export function PathStep({
         <button
           type="button"
           onClick={handleScan}
-          disabled={!scanPath.trim() || isPending}
+          disabled={!scanPath.trim() || isPending || isInsideLibraryRoot}
           className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 active:opacity-80 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
         >
           {isPending && <LoadingSpinner className="w-3.5 h-3.5" />}

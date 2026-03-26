@@ -10,12 +10,15 @@ import { queryKeys } from '@/lib/queryKeys';
 import { useManualImport } from './useManualImport.js';
 import { useFolderHistory } from './useFolderHistory.js';
 import { PathStep } from './PathStep.js';
+import { isPathInsideLibrary } from './pathUtils.js';
 
 // eslint-disable-next-line complexity -- 3-step page with 21 hook props, path input, and conditional step rendering
 export function ManualImportPage() {
   const { data: settings } = useQuery({ queryKey: queryKeys.settings(), queryFn: api.getSettings });
 
   const folderHistory = useFolderHistory();
+
+  const libraryPath = settings?.library?.path ?? '';
 
   const {
     step, scanPath, setScanPath, scanError, setScanError, rows,
@@ -25,7 +28,9 @@ export function ManualImportPage() {
     scanMutation, importMutation,
     selectedCount, selectedUnmatchedCount, readyCount, reviewCount,
     noMatchCount, pendingCount, allSelected,
-  } = useManualImport({ onScanSuccess: folderHistory.addRecent });
+  } = useManualImport({ onScanSuccess: folderHistory.addRecent, libraryPath });
+
+  const isInsideLibraryRoot = libraryPath ? isPathInsideLibrary(scanPath, libraryPath) : false;
 
   // Seed library root as default favorite on first use
   useEffect(() => {
@@ -68,7 +73,8 @@ export function ManualImportPage() {
           scanError={scanError}
           handleScan={handleScan}
           isPending={scanMutation.isPending}
-          libraryPath={settings?.library?.path ?? ''}
+          libraryPath={libraryPath}
+          isInsideLibraryRoot={isInsideLibraryRoot}
           folderHistory={folderHistory}
         />
       )}
