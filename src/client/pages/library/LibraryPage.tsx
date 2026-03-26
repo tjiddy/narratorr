@@ -36,7 +36,7 @@ function getInitialViewMode(): ViewMode {
 export function LibraryPage() {
   const navigate = useNavigate();
   const filters = useLibraryFilters();
-  const { data: libraryResponse, isLoading } = useLibrary(filters.apiParams);
+  const { data: libraryResponse, isLoading } = useLibrary(filters.params.apiParams);
   const { data: stats } = useBookStats();
   const { data: settings } = useQuery({ queryKey: queryKeys.settings(), queryFn: api.getSettings });
 
@@ -45,22 +45,22 @@ export function LibraryPage() {
 
   // Clamp page when total shrinks (e.g., after deleting last item on a page)
   useEffect(() => {
-    filters.pagination.clampToTotal(totalBooks);
-  }, [totalBooks, filters.pagination]);
+    filters.params.pagination.clampToTotal(totalBooks);
+  }, [totalBooks, filters.params.pagination]);
 
   useImportPolling(books);
 
   // Apply client-side filters (author/series/narrator/collapse) to page data
   const displayBooks = useMemo((): DisplayBook[] =>
     applyClientFilters(books, {
-      authorFilter: filters.authorFilter,
-      seriesFilter: filters.seriesFilter,
-      narratorFilter: filters.narratorFilter,
-      collapseSeriesEnabled: filters.collapseSeriesEnabled,
-      sortField: filters.sortField,
-      sortDirection: filters.sortDirection,
+      authorFilter: filters.state.authorFilter,
+      seriesFilter: filters.state.seriesFilter,
+      narratorFilter: filters.state.narratorFilter,
+      collapseSeriesEnabled: filters.state.collapseSeriesEnabled,
+      sortField: filters.state.sortField,
+      sortDirection: filters.state.sortDirection,
     }),
-  [books, filters.authorFilter, filters.seriesFilter, filters.narratorFilter, filters.collapseSeriesEnabled, filters.sortField, filters.sortDirection]);
+  [books, filters.state.authorFilter, filters.state.seriesFilter, filters.state.narratorFilter, filters.state.collapseSeriesEnabled, filters.state.sortField, filters.state.sortDirection]);
 
   const bulk = useLibraryBulkActions(displayBooks);
   const { rescanMutation, deleteMutation, deleteMissingMutation, searchAllWantedMutation } = useLibraryMutations();
@@ -74,9 +74,9 @@ export function LibraryPage() {
   const [viewMode, setViewMode] = useState<ViewMode>(getInitialViewMode);
 
   const handleViewModeChange = useCallback((mode: ViewMode) => {
-    if (mode === 'grid' && TABLE_ONLY_SORTS.includes(filters.sortField)) {
-      filters.setSortField('createdAt');
-      filters.setSortDirection('desc');
+    if (mode === 'grid' && TABLE_ONLY_SORTS.includes(filters.state.sortField)) {
+      filters.actions.setSortField('createdAt');
+      filters.actions.setSortDirection('desc');
     }
     setViewMode(mode);
     try { localStorage.setItem(VIEW_STORAGE_KEY, mode); } catch { /* noop */ }
@@ -98,7 +98,7 @@ export function LibraryPage() {
   const enabledIndexerCount = useMemo(() => indexers.filter((i) => i.enabled).length, [indexers]);
   const totalAll = statusCounts.all;
   const bp = totalAll !== 1 ? 's' : '';
-  const subtitle = filters.isSearching
+  const subtitle = filters.state.isSearching
     ? `${totalBooks} result${totalBooks !== 1 ? 's' : ''}`
     : `${totalAll} book${bp} in your collection`;
   const searchAllWantedMessage = `Search ${wantedCount} wanted book${wantedCount !== 1 ? 's' : ''} across ${enabledIndexerCount} enabled indexer${enabledIndexerCount !== 1 ? 's' : ''} (~${wantedCount * enabledIndexerCount} API calls)?`;
@@ -125,7 +125,7 @@ export function LibraryPage() {
       </div>
     </div>
   );
-  if (totalAll === 0 && !filters.isSearching && filters.statusFilter === 'all') return (
+  if (totalAll === 0 && !filters.state.isSearching && filters.state.statusFilter === 'all') return (
     <div className="space-y-6">
       <LibraryHeader />
       <EmptyLibraryState hasLibraryPath={Boolean(settings?.library.path)} />
@@ -133,13 +133,13 @@ export function LibraryPage() {
   );
 
   const filterProps = {
-    authorFilter: filters.authorFilter, onAuthorFilterChange: filters.setAuthorFilter, uniqueAuthors,
-    seriesFilter: filters.seriesFilter, onSeriesFilterChange: filters.setSeriesFilter, uniqueSeries,
-    narratorFilter: filters.narratorFilter, onNarratorFilterChange: filters.setNarratorFilter, uniqueNarrators,
+    authorFilter: filters.state.authorFilter, onAuthorFilterChange: filters.actions.setAuthorFilter, uniqueAuthors,
+    seriesFilter: filters.state.seriesFilter, onSeriesFilterChange: filters.actions.setSeriesFilter, uniqueSeries,
+    narratorFilter: filters.state.narratorFilter, onNarratorFilterChange: filters.actions.setNarratorFilter, uniqueNarrators,
   };
   const sortProps = {
-    sortField: filters.sortField, onSortFieldChange: filters.setSortField,
-    sortDirection: filters.sortDirection, onSortDirectionChange: filters.setSortDirection,
+    sortField: filters.state.sortField, onSortFieldChange: filters.actions.setSortField,
+    sortDirection: filters.state.sortDirection, onSortDirectionChange: filters.actions.setSortDirection,
   };
 
   return (
@@ -147,19 +147,19 @@ export function LibraryPage() {
       <LibraryHeader subtitle={subtitle} />
 
       <LibraryToolbar
-        searchQuery={filters.searchQuery}
-        onSearchChange={filters.setSearchQuery}
-        onSearchClear={filters.clearSearch}
-        statusFilter={filters.statusFilter}
-        onStatusFilterChange={filters.setStatusFilter}
+        searchQuery={filters.state.searchQuery}
+        onSearchChange={filters.actions.setSearchQuery}
+        onSearchClear={filters.actions.clearSearch}
+        statusFilter={filters.state.statusFilter}
+        onStatusFilterChange={filters.actions.setStatusFilter}
         statusCounts={statusCounts}
-        filtersOpen={filters.filtersOpen}
-        onFiltersToggle={() => filters.setFiltersOpen(!filters.filtersOpen)}
-        activeFilterCount={filters.activeFilterCount}
+        filtersOpen={filters.state.filtersOpen}
+        onFiltersToggle={() => filters.actions.setFiltersOpen(!filters.state.filtersOpen)}
+        activeFilterCount={filters.counts.activeFilterCount}
         filterProps={filterProps}
         sortProps={sortProps}
-        collapseSeriesEnabled={filters.collapseSeriesEnabled}
-        onCollapseSeriesToggle={() => filters.setCollapseSeriesEnabled(!filters.collapseSeriesEnabled)}
+        collapseSeriesEnabled={filters.state.collapseSeriesEnabled}
+        onCollapseSeriesToggle={() => filters.actions.setCollapseSeriesEnabled(!filters.state.collapseSeriesEnabled)}
         viewMode={viewMode}
         onViewModeChange={handleViewModeChange}
         onRescan={() => rescanMutation.mutate()}
@@ -184,16 +184,16 @@ export function LibraryPage() {
       )}
 
       {displayBooks.length === 0 ? (
-        <NoMatchState onClearFilters={filters.clearAllFilters} />
+        <NoMatchState onClearFilters={filters.actions.clearAllFilters} />
       ) : viewMode === 'table' ? (
         <LibraryTableView
           books={displayBooks}
           selectedIds={bulk.selectedIds}
           onSelectionChange={bulk.setSelectedIds}
-          sortField={filters.sortField}
-          sortDirection={filters.sortDirection}
-          onSortFieldChange={filters.setSortField}
-          onSortDirectionChange={filters.setSortDirection}
+          sortField={filters.state.sortField}
+          sortDirection={filters.state.sortDirection}
+          onSortFieldChange={filters.actions.setSortField}
+          onSortDirectionChange={filters.actions.setSortDirection}
         />
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
@@ -215,11 +215,11 @@ export function LibraryPage() {
       )}
 
       <Pagination
-        page={filters.pagination.page}
-        totalPages={filters.pagination.totalPages(totalBooks)}
+        page={filters.params.pagination.page}
+        totalPages={filters.params.pagination.totalPages(totalBooks)}
         total={totalBooks}
-        limit={filters.pagination.limit}
-        onPageChange={filters.pagination.setPage}
+        limit={filters.params.pagination.limit}
+        onPageChange={filters.params.pagination.setPage}
       />
 
       <LibraryModals
