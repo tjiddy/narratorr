@@ -200,7 +200,6 @@ export function LibraryImportPage() {
               duplicateCount={duplicateCount}
               isMatching={isMatching}
               mode="copy"
-              onModeChange={() => {}}
               onImport={handleRegister}
               importing={registerMutation.isPending}
               hideMode

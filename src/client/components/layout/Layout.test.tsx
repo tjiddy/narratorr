@@ -347,6 +347,16 @@ describe('Layout', () => {
       expect(main.classList.contains('flex-1')).toBe(true);
     });
 
+    it('main content element has w-full class to prevent shrink-wrap in flex-col container', () => {
+      mockCounts(0);
+      mockAuth();
+      const { container } = renderWithProviders(<Layout />);
+
+      const main = container.querySelector('main') as HTMLElement;
+      expect(main).not.toBeNull();
+      expect(main.classList.contains('w-full')).toBe(true);
+    });
+
     function renderWithNestedRoute(path: string, testId: string) {
       mockCounts(0);
       mockAuth();

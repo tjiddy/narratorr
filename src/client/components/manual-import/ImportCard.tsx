@@ -1,5 +1,5 @@
-import { type DiscoveredBook, type Confidence, type MatchResult, formatBytes } from '@/lib/api';
-import type { BookEditState } from './BookEditModal.js';
+import { type Confidence, formatBytes } from '@/lib/api';
+import type { ImportRow } from './types.js';
 import {
   CheckIcon,
   CheckCircleIcon,
@@ -9,13 +9,7 @@ import {
   HeadphonesIcon,
   LoadingSpinner,
 } from '@/components/icons';
-
-export interface ImportRow {
-  book: DiscoveredBook;
-  selected: boolean;
-  edited: BookEditState;
-  matchResult?: MatchResult;
-}
+export type { ImportRow } from './types.js';
 
 interface ImportCardProps {
   row: ImportRow;

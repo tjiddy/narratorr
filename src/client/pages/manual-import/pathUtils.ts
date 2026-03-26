@@ -1,6 +1,8 @@
 /**
  * POSIX-safe path ancestor check for browser environments.
  * Does not use node:path — splits on '/' and resolves '..' and '.' segments.
+ * Backslash paths (e.g. Windows paste) are not normalized here and will not match;
+ * the API layer validates and rejects non-POSIX paths separately.
  */
 function normalizeSegments(p: string): string[] {
   const result: string[] = [];

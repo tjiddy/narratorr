@@ -15,15 +15,8 @@ import {
   CheckCircleIcon,
   AlertCircleIcon,
 } from '@/components/icons';
-
-export interface BookEditState {
-  title: string;
-  author: string;
-  series: string;
-  coverUrl?: string;
-  asin?: string;
-  metadata?: BookMetadata;
-}
+import type { BookEditState } from './types.js';
+export type { BookEditState } from './types.js';
 
 interface BookEditModalProps {
   book: DiscoveredBook;

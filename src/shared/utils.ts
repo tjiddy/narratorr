@@ -5,7 +5,7 @@
 
 /**
  * Normalize a string to a URL-friendly slug for duplicate detection.
- * Must match the server-side implementation in src/core/utils/parse.ts.
+ * This is the canonical implementation — server-side code imports from here via src/core/utils/parse.ts.
  */
 export function slugify(text: string): string {
   return text
