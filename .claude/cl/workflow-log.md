@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #141 Import polish — bugs, error handling, UX — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #144
+
+### Metrics
+- Files changed: 6 | Tests added/modified: 18 new tests across 4 test files
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 2 (mock override order in BulkOperationsSection tests; ambiguous button selector in LibraryImportPage tests)
+- Context compactions: 1 (mid-handoff; resumed cleanly from summary)
+
+### Workflow experience
+- What went smoothly: Red/green TDD cycle was clean for all 4 modules; spec had already been fully approved before implementation began
+- Friction / issues encountered: (1) Mock override order bug — setting `mockRejectedValue` before `setup()` was silently overwritten because `setup()` called `mockResolvedValue`; (2) `CheckCircleIcon` doesn't exist in icons.tsx — had to use `CheckIcon` with colored wrapper; (3) Regex `/deselect/i` matched both card toggle and header "Deselect all" — needed `^deselect$` exact match; (4) Coverage subagent flagged 12 pre-existing gaps — all in unchanged code paths, verify.ts gate already passed
+
+### Token efficiency
+- Highest-token actions: Coverage review subagent; self-review subagent
+- Avoidable waste: Very-thorough coverage check for a small polish PR is overkill
+- Suggestions: For polish/bug-fix PRs, a targeted coverage check on just the changed source files would be faster
+
+### Infrastructure gaps
+- Repeated workarounds: None new
+- Missing tooling / config: None
+- Unresolved debt: `useLibraryImport` internal behaviors (autoCheck, confidence upgrade, prevMatchCountRef) untested by focused unit assertions
+
+### Wish I'd Known
+1. `setup()` in BulkOperationsSection tests calls `mockResolvedValue` internally — must call `setup()` before `mockRejectedValue`, not after
+2. `CheckCircleIcon` doesn't exist; use `CheckIcon` with `bg-primary/10` circle wrapper for success states
+3. Coverage subagent flags pre-existing gaps — verify.ts coverage gate is the authoritative signal; subagent is a secondary heuristic
+
 ## #139 Polish pass: #114 duplicate UX, #95 token regex, test cleanup — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #140
