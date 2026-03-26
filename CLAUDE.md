@@ -99,7 +99,9 @@ Mechanical workflow steps live in `scripts/` as deterministic Node scripts (not 
 | `scripts/block.ts <id> "<reason>"` | Post blocker comment, update labels | `BLOCKED:` |
 | `scripts/resume.ts <id>` | Restore branch, collect context | Branch + context |
 | `scripts/changelog.ts [since]` | Categorized changelog from git + GitHub | Markdown |
-| `scripts/lib.ts` | Shared helpers (gh, git, label parsing) | — |
+| `scripts/git-push.ts <args>` | Token-aware git push (mints fresh GitHub App token) | stdout or error |
+| `scripts/post-review.ts <pr>` | Post review comment from state dir with guards | `POSTED:` or `ERROR:` |
+| `scripts/lib.ts` | Shared helpers (gh, git, gitPush, label parsing) | — |
 
 ## Project Management (GitHub)
 
