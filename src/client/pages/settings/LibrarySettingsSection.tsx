@@ -12,6 +12,7 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { renderTemplate, renderFilename, toLastFirst, toSortTitle, ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from '@core/utils/index.js';
 import { DEFAULT_SETTINGS, type AppSettings, libraryFormSchema } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
+import { BulkOperationsSection } from '@/components/library/BulkOperationsSection';
 
 type LibraryFormData = AppSettings['library'];
 
@@ -407,6 +408,7 @@ export function LibrarySettingsSection() {
           Scan the library folder to register existing audiobooks
         </p>
       </div>
+      <BulkOperationsSection />
       <ConfirmModal
         isOpen={showRescanPrompt}
         title="Scan Library?"
