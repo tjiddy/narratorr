@@ -9,7 +9,7 @@ export const downloadClientTypeSchema = z.enum(DOWNLOAD_CLIENT_TYPES);
 
 // Server-side: accepts any settings shape (type-specific validation is client-side only)
 export const createDownloadClientSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(100),
+  name: z.string().trim().min(1, 'Name is required').max(100),
   type: downloadClientTypeSchema,
   enabled: z.boolean().default(true),
   priority: z.number().int().min(0).max(100).default(50),
@@ -17,7 +17,7 @@ export const createDownloadClientSchema = z.object({
 });
 
 export const updateDownloadClientSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
+  name: z.string().trim().min(1).max(100).optional(),
   enabled: z.boolean().optional(),
   priority: z.number().int().min(0).max(100).optional(),
   settings: z.record(z.string(), z.unknown()).optional(),
@@ -29,7 +29,7 @@ export type UpdateDownloadClientInput = z.infer<typeof updateDownloadClientSchem
 
 // Form schema: all possible settings fields optional, superRefine validates per-type
 export const createDownloadClientFormSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(100),
+  name: z.string().trim().min(1, 'Name is required').max(100),
   type: downloadClientTypeSchema,
   enabled: z.boolean(),
   priority: z.number().int().min(0).max(100),
@@ -64,14 +64,14 @@ export type CreateDownloadClientFormData = z.infer<typeof createDownloadClientFo
 
 export const createRemotePathMappingSchema = z.object({
   downloadClientId: z.number().int().positive('Download client is required'),
-  remotePath: z.string().min(1, 'Remote path is required').max(500),
-  localPath: z.string().min(1, 'Local path is required').max(500),
+  remotePath: z.string().trim().min(1, 'Remote path is required').max(500),
+  localPath: z.string().trim().min(1, 'Local path is required').max(500),
 });
 
 export const updateRemotePathMappingSchema = z.object({
   downloadClientId: z.number().int().positive().optional(),
-  remotePath: z.string().min(1).max(500).optional(),
-  localPath: z.string().min(1).max(500).optional(),
+  remotePath: z.string().trim().min(1).max(500).optional(),
+  localPath: z.string().trim().min(1).max(500).optional(),
 });
 
 export type CreateRemotePathMappingInput = z.infer<typeof createRemotePathMappingSchema>;

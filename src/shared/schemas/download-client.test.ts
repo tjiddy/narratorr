@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { createDownloadClientFormSchema } from './download-client.js';
+import {
+  createDownloadClientFormSchema,
+  createDownloadClientSchema,
+  createRemotePathMappingSchema,
+  updateDownloadClientSchema,
+  updateRemotePathMappingSchema,
+} from './download-client.js';
 
 const validBase = {
   name: 'Test Client',
@@ -227,5 +233,87 @@ describe('createDownloadClientFormSchema', () => {
       });
       expect(result.success).toBe(false);
     });
+  });
+});
+
+const validCreateClient = {
+  name: 'My Client',
+  type: 'qbittorrent' as const,
+  settings: {},
+};
+
+describe('createDownloadClientSchema — trim behavior', () => {
+  it('rejects whitespace-only name', () => {
+    const result = createDownloadClientSchema.safeParse({ ...validCreateClient, name: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims leading/trailing spaces from name', () => {
+    const result = createDownloadClientSchema.safeParse({ ...validCreateClient, name: '  My Client  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.name).toBe('My Client');
+  });
+});
+
+describe('updateDownloadClientSchema — trim behavior', () => {
+  it('rejects whitespace-only name when provided', () => {
+    const result = updateDownloadClientSchema.safeParse({ name: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims leading/trailing spaces from name when provided', () => {
+    const result = updateDownloadClientSchema.safeParse({ name: '  My Client  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.name).toBe('My Client');
+  });
+});
+
+const validMapping = { downloadClientId: 1, remotePath: '/remote/books', localPath: '/local/books' };
+
+describe('createRemotePathMappingSchema — trim behavior', () => {
+  it('rejects whitespace-only remotePath', () => {
+    const result = createRemotePathMappingSchema.safeParse({ ...validMapping, remotePath: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects whitespace-only localPath', () => {
+    const result = createRemotePathMappingSchema.safeParse({ ...validMapping, localPath: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims leading/trailing spaces from remotePath', () => {
+    const result = createRemotePathMappingSchema.safeParse({ ...validMapping, remotePath: '  /remote/books  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.remotePath).toBe('/remote/books');
+  });
+
+  it('trims leading/trailing spaces from localPath', () => {
+    const result = createRemotePathMappingSchema.safeParse({ ...validMapping, localPath: '  /local/books  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.localPath).toBe('/local/books');
+  });
+});
+
+describe('updateRemotePathMappingSchema — trim behavior', () => {
+  it('rejects whitespace-only remotePath when provided', () => {
+    const result = updateRemotePathMappingSchema.safeParse({ remotePath: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects whitespace-only localPath when provided', () => {
+    const result = updateRemotePathMappingSchema.safeParse({ localPath: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims leading/trailing spaces from remotePath when provided', () => {
+    const result = updateRemotePathMappingSchema.safeParse({ remotePath: '  /remote/books  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.remotePath).toBe('/remote/books');
+  });
+
+  it('trims leading/trailing spaces from localPath when provided', () => {
+    const result = updateRemotePathMappingSchema.safeParse({ localPath: '  /local/books  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.localPath).toBe('/local/books');
   });
 });
