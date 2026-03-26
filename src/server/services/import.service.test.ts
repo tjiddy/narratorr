@@ -235,7 +235,8 @@ describe('ImportService', () => {
     };
   }
 
-  beforeEach(() => {
+  /** Shared baseline — called in each concern's own beforeEach instead of a shared parent beforeEach. */
+  function setupDefaults() {
     vi.clearAllMocks();
     db = createMockDb();
     log = createMockLogger();
@@ -245,17 +246,16 @@ describe('ImportService', () => {
     service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
 
     // Default: stat returns a directory for source, then directory for target (size verification)
-    const statMock = vi.mocked(stat);
-    statMock.mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
+    vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
 
     // readdir returns one audio file
-    const readdirMock = vi.mocked(readdir);
-    readdirMock.mockResolvedValue([
+    vi.mocked(readdir).mockResolvedValue([
       { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
     ] as never);
-  });
+  }
 
   describe('importDownload', () => {
+    beforeEach(setupDefaults);
     it('imports a completed download successfully', async () => {
       // First select: get download
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
@@ -601,6 +601,7 @@ describe('ImportService', () => {
     });
 
     beforeEach(() => {
+      setupDefaults();
       // Default book for upgrade tests has an existing path
       mockBookService.getById.mockResolvedValue(withAuthor(importedBook));
     });
@@ -706,6 +707,8 @@ describe('ImportService', () => {
   });
 
   describe('book status recovery on import failure', () => {
+    beforeEach(setupDefaults);
+
     it('reverts book to imported when import fails and book has a path', async () => {
       const importedBook = createMockDbBook({
         status: 'downloading' as const,
@@ -806,6 +809,8 @@ describe('ImportService', () => {
   });
 
   describe('target path cleanup on import failure', () => {
+    beforeEach(setupDefaults);
+
     it('removes targetPath when DB update throws after copy', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
 
@@ -887,6 +892,8 @@ describe('ImportService', () => {
   });
 
   describe('file renaming with template (non-processing path)', () => {
+    beforeEach(setupDefaults);
+
     it('renames audio files using fileFormat template after import', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
@@ -905,6 +912,8 @@ describe('ImportService', () => {
   });
 
   describe('audio processing integration', () => {
+    beforeEach(setupDefaults);
+
     function setupImportWithProcessing(processingEnabled: boolean) {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
@@ -1013,6 +1022,7 @@ describe('ImportService', () => {
     let serviceWithMappings: ImportService;
 
     beforeEach(() => {
+      setupDefaults();
       mockMappingService = inject<RemotePathMappingService>({
         getByClientId: vi.fn().mockResolvedValue([]),
       });
@@ -1098,6 +1108,8 @@ describe('ImportService', () => {
   });
 
   describe('import atomicity failures (#235 Tier 1)', () => {
+    beforeEach(setupDefaults);
+
     it('cleans up copied files when DB update throws after copy (#237)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
 
@@ -1197,6 +1209,8 @@ describe('ImportService', () => {
   });
 
   describe('audio-only copy filtering', () => {
+    beforeEach(setupDefaults);
+
     it('directory import only copies audio files, skips .nzb/.sfv/.nfo', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
       db.update.mockReturnValue(mockDbChain());
@@ -1258,6 +1272,8 @@ describe('ImportService', () => {
 
 
   describe('concurrency limiting (semaphore)', () => {
+    beforeEach(setupDefaults);
+
     it('with limit=2, two downloads admitted and third queued', async () => {
       // Configure limit=2
       const settingsWithLimit = createMockSettingsService({ import: { minSeedTime: 0, minFreeSpaceGB: 0 } });
@@ -1363,6 +1379,8 @@ describe('ImportService', () => {
   });
 
   describe('disk space check', () => {
+    beforeEach(setupDefaults);
+
     function setupDiskCheckMocks(overrides?: { minFreeSpaceGB?: number; processingEnabled?: boolean }) {
       return createMockSettingsService({
         import: { minSeedTime: 0, minFreeSpaceGB: overrides?.minFreeSpaceGB ?? 5 },
@@ -1515,6 +1533,8 @@ describe('ImportService', () => {
 
 
   describe('getImportContext', () => {
+    beforeEach(setupDefaults);
+
     it('returns download and book context for side effect dispatch', async () => {
       db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
 
@@ -1539,6 +1559,8 @@ describe('ImportService', () => {
   });
 
   describe('getEligibleDownloads', () => {
+    beforeEach(setupDefaults);
+
     it('returns empty array when no completed downloads', async () => {
       db.select.mockReturnValueOnce(mockDbChain([]));
 
