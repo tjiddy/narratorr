@@ -29,7 +29,7 @@ export const bookAuthorInputSchema = z.object({
 });
 
 export const createBookBodySchema = z.object({
-  title: z.string().min(1, 'Title is required'),
+  title: z.string().trim().min(1, 'Title is required'),
   authors: z.array(bookAuthorInputSchema).min(1, 'At least one author is required'),
   narrators: z.array(z.string().trim().min(1, 'Narrator name cannot be empty')).optional(),
   description: z.string().optional(),
