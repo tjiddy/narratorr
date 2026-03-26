@@ -8,11 +8,11 @@ export const importModeSchema = z.enum(['copy', 'move']);
 export type ImportMode = z.infer<typeof importModeSchema>;
 
 export const scanSingleBodySchema = z.object({
-  path: z.string().min(1, 'path is required'),
+  path: z.string().trim().min(1, 'path is required'),
 });
 
 export const scanDirectoryBodySchema = z.object({
-  path: z.string().min(1, 'path is required'),
+  path: z.string().trim().min(1, 'path is required'),
 });
 
 export const duplicateReasonSchema = z.enum(['path', 'slug']);
@@ -36,8 +36,8 @@ export const scanResultSchema = z.object({
 });
 
 export const importConfirmItemSchema = z.object({
-  path: z.string().min(1),
-  title: z.string().min(1),
+  path: z.string().trim().min(1),
+  title: z.string().trim().min(1),
   authorName: z.string().optional(),
   seriesName: z.string().optional(),
   coverUrl: z.string().optional(),
@@ -58,8 +58,8 @@ export const importConfirmBodySchema = z.object({
 });
 
 export const matchCandidateSchema = z.object({
-  path: z.string().min(1),
-  title: z.string().min(1),
+  path: z.string().trim().min(1),
+  title: z.string().trim().min(1),
   author: z.string().optional(),
 });
 
@@ -68,5 +68,5 @@ export const matchStartBodySchema = z.object({
 });
 
 export const jobIdParamSchema = z.object({
-  jobId: z.string().min(1),
+  jobId: z.string().trim().min(1),
 });
