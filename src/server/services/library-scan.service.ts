@@ -190,17 +190,10 @@ export class LibraryScanService {
       // Check for duplicates by path (in-memory Map lookup)
       if (existingPathMap.has(folder.path)) {
         this.log.debug({ path: folder.path }, 'Duplicate detected (path match)');
-        discoveries.push({
-          path: folder.path,
-          parsedTitle: parsed.title,
-          parsedAuthor: parsed.author,
-          parsedSeries: parsed.series,
-          fileCount: folder.audioFileCount,
-          totalSize: folder.totalSize,
-          isDuplicate: true,
-          existingBookId: existingPathMap.get(folder.path),
-          duplicateReason: 'path',
-        });
+        discoveries.push(this.buildDiscoveredBook(
+          folder.path, parsed, folder.audioFileCount, folder.totalSize,
+          true, existingPathMap.get(folder.path), 'path',
+        ));
         continue;
       }
 
@@ -210,17 +203,10 @@ export class LibraryScanService {
         const key = `${parsed.title}|${authorSlug}`;
         if (existingTitleAuthorMap.has(key)) {
           this.log.debug({ path: folder.path, title: parsed.title, author: parsed.author }, 'Duplicate detected (title+author match)');
-          discoveries.push({
-            path: folder.path,
-            parsedTitle: parsed.title,
-            parsedAuthor: parsed.author,
-            parsedSeries: parsed.series,
-            fileCount: folder.audioFileCount,
-            totalSize: folder.totalSize,
-            isDuplicate: true,
-            existingBookId: existingTitleAuthorMap.get(key),
-            duplicateReason: 'slug',
-          });
+          discoveries.push(this.buildDiscoveredBook(
+            folder.path, parsed, folder.audioFileCount, folder.totalSize,
+            true, existingTitleAuthorMap.get(key), 'slug',
+          ));
           continue;
         }
       }
@@ -234,15 +220,9 @@ export class LibraryScanService {
         'Discovered book folder',
       );
 
-      discoveries.push({
-        path: folder.path,
-        parsedTitle: parsed.title,
-        parsedAuthor: parsed.author,
-        parsedSeries: parsed.series,
-        fileCount: folder.audioFileCount,
-        totalSize: folder.totalSize,
-        isDuplicate: false,
-      });
+      discoveries.push(this.buildDiscoveredBook(
+        folder.path, parsed, folder.audioFileCount, folder.totalSize, false,
+      ));
     }
 
     const duplicateCount = discoveries.filter((d) => d.isDuplicate).length;
@@ -288,15 +268,7 @@ export class LibraryScanService {
 
     const { fileCount, totalSize } = await this.getAudioStats(bookPath);
 
-    const book: DiscoveredBook = {
-      path: bookPath,
-      parsedTitle: parsed.title,
-      parsedAuthor: parsed.author,
-      parsedSeries: parsed.series,
-      fileCount,
-      totalSize,
-      isDuplicate: false,
-    };
+    const book = this.buildDiscoveredBook(bookPath, parsed, fileCount, totalSize, false);
 
     // Look up metadata providers
     const metadata = await this.lookupMetadata(parsed.title, parsed.author || undefined);
@@ -704,6 +676,29 @@ export class LibraryScanService {
     }
 
     return { fileCount, totalSize };
+  }
+
+  /** Build a DiscoveredBook from parsed folder data and optional duplicate info. */
+  private buildDiscoveredBook(
+    path: string,
+    parsed: { title: string; author: string | null; series: string | null },
+    fileCount: number,
+    totalSize: number,
+    isDuplicate: boolean,
+    existingBookId?: number,
+    duplicateReason?: 'path' | 'slug',
+  ): DiscoveredBook {
+    return {
+      path,
+      parsedTitle: parsed.title,
+      parsedAuthor: parsed.author,
+      parsedSeries: parsed.series,
+      fileCount,
+      totalSize,
+      isDuplicate,
+      ...(existingBookId !== undefined && { existingBookId }),
+      ...(duplicateReason !== undefined && { duplicateReason }),
+    };
   }
 
   /**
