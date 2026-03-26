@@ -1,14 +1,22 @@
 /**
  * POSIX-safe path ancestor check for browser environments.
- * Does not use node:path — splits on '/' and compares segments.
+ * Does not use node:path — splits on '/' and resolves '..' and '.' segments.
  */
 function normalizeSegments(p: string): string[] {
-  return p.trim().split('/').filter(Boolean);
+  const result: string[] = [];
+  for (const seg of p.trim().split('/').filter(Boolean)) {
+    if (seg === '..') {
+      result.pop();
+    } else if (seg !== '.') {
+      result.push(seg);
+    }
+  }
+  return result;
 }
 
 /**
- * Returns true if scanPath is strictly inside libraryPath (i.e., libraryPath
- * is an ancestor of scanPath, not equal to it).
+ * Returns true if scanPath is inside libraryPath OR exactly equal to it,
+ * after resolving '..' and '.' segments.
  *
  * Uses segment-prefix comparison to avoid the startsWith() false-positive
  * (e.g., /lib vs /lib-old) — per CLAUDE.md security guidelines.
