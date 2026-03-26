@@ -250,11 +250,20 @@ describe('ImportCard', () => {
       expect(screen.queryByText('Matched')).not.toBeInTheDocument();
     });
 
-    it('duplicate rows render visually muted', () => {
+    it('unselected duplicate row renders visually muted (opacity-60)', () => {
       const { container } = render(<ImportCard {...defaultProps} row={dupRow} />);
-      // Row should have opacity/muted class
       const rowEl = container.firstChild as HTMLElement;
-      expect(rowEl.className).toMatch(/opacity|muted/);
+      expect(rowEl.className).toContain('opacity-60');
+    });
+
+    it('selected duplicate row is not dimmed', () => {
+      const selectedDupRow = makeRow({
+        book: makeBook({ isDuplicate: true, existingBookId: 42 }),
+        selected: true,
+      });
+      const { container } = render(<ImportCard {...defaultProps} row={selectedDupRow} />);
+      const rowEl = container.firstChild as HTMLElement;
+      expect(rowEl.className).not.toContain('opacity-60');
     });
 
     it('duplicate row checkbox is enabled and calls onToggle when clicked', async () => {
