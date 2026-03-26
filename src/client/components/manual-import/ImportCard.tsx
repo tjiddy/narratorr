@@ -88,8 +88,11 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
       ? 'border-l-[3px] border-l-amber-500/40'
       : '';
 
-  // Mute duplicate rows; grey out rows that are still matching
-  const dimClass = isDuplicate ? 'opacity-60' : (!confidence ? 'opacity-50' : '');
+  // Mute unselected duplicate rows; grey out rows that are still matching.
+  // Selected duplicates (force-import opt-in) are undimmed entirely.
+  const dimClass = isDuplicate
+    ? (row.selected ? '' : 'opacity-60')
+    : (!confidence ? 'opacity-50' : '');
 
   return (
     <div

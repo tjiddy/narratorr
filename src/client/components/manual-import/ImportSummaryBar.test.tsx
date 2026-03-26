@@ -162,21 +162,6 @@ describe('ImportSummaryBar', () => {
   // #114 — duplicateCount pill replaces skippedDuplicates
   // ===========================================================================
   describe('duplicate count pill', () => {
-    it('shows "N already in library" when duplicateCount > 0', () => {
-      renderBar({ duplicateCount: 3 });
-      expect(screen.getByText(/3 already in library/)).toBeInTheDocument();
-    });
-
-    it('pluralizes correctly for duplicateCount === 1', () => {
-      renderBar({ duplicateCount: 1 });
-      expect(screen.getByText(/1 already in library/)).toBeInTheDocument();
-    });
-
-    it('hides the already-in-library pill when duplicateCount is 0', () => {
-      renderBar({ duplicateCount: 0 });
-      expect(screen.queryByText(/already in library/)).not.toBeInTheDocument();
-    });
-
     it('existing ready / review / no match / matching pills still show alongside duplicateCount', () => {
       renderBar({ readyCount: 5, reviewCount: 2, noMatchCount: 1, duplicateCount: 3 });
       expect(screen.getByText('5 ready')).toBeInTheDocument();

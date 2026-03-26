@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   parseLabels,
   replaceLabel,
@@ -12,7 +12,17 @@ import {
   slugify,
   firstLines,
   parseComments,
+  gitPush,
+  _tokenCache,
 } from './lib.ts';
+
+vi.mock('node:child_process', () => ({
+  execFileSync: vi.fn(),
+  execSync: vi.fn(),
+}));
+
+import { execFileSync as _execFileSync } from 'node:child_process';
+const mockExec = vi.mocked(_execFileSync);
 
 describe('parseLabels', () => {
   it('parses comma-separated labels from gh output', () => {
@@ -294,5 +304,106 @@ describe('firstLines', () => {
 
   it('handles single line', () => {
     expect(firstLines('hello', 1)).toBe('hello');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// gitPush
+// ---------------------------------------------------------------------------
+
+describe('gitPush', () => {
+  const APP_ID = 'test-app-id';
+  const FRESH_TOKEN = 'fresh-token-abc';
+  const CLEAN_URL = 'https://github.com/owner/repo';
+  const STALE_URL = `https://x-access-token:OLD_STALE@github.com/owner/repo`;
+  const TOKEN_URL = `https://x-access-token:${FRESH_TOKEN}@github.com/owner/repo`;
+
+  /** Pre-populate token cache so getGhToken() returns FRESH_TOKEN without network I/O. */
+  function seedToken() {
+    process.env.GH_APP_ID = APP_ID;
+    process.env.GH_INSTALLATION_ID = '999';
+    process.env.GH_APP_PRIVATE_KEY = 'fake-key';
+    _tokenCache.set(APP_ID, { token: FRESH_TOKEN, expiresAt: Date.now() + 10 * 60 * 1000 });
+  }
+
+  function clearToken() {
+    delete process.env.GH_APP_ID;
+    delete process.env.GH_INSTALLATION_ID;
+    delete process.env.GH_APP_PRIVATE_KEY;
+    _tokenCache.delete(APP_ID);
+  }
+
+  beforeEach(() => {
+    mockExec.mockReset();
+  });
+
+  afterEach(() => {
+    clearToken();
+  });
+
+  it('embeds fresh token into clean HTTPS URL before pushing', () => {
+    seedToken();
+    mockExec
+      .mockReturnValueOnce(CLEAN_URL)   // git remote get-url origin
+      .mockReturnValueOnce('')           // git remote set-url origin <token-url>
+      .mockReturnValueOnce('')           // git push
+      .mockReturnValueOnce('');          // git remote set-url origin <original> (finally)
+
+    gitPush('origin', 'HEAD');
+
+    expect(mockExec).toHaveBeenCalledWith('git', ['remote', 'set-url', 'origin', TOKEN_URL], expect.any(Object));
+    expect(mockExec).toHaveBeenCalledWith('git', ['push', 'origin', 'HEAD'], expect.any(Object));
+    // finally: restores original URL
+    expect(mockExec).toHaveBeenLastCalledWith('git', ['remote', 'set-url', 'origin', CLEAN_URL], expect.any(Object));
+  });
+
+  it('replaces stale token in already-tokenized HTTPS URL with fresh token', () => {
+    seedToken();
+    mockExec
+      .mockReturnValueOnce(STALE_URL)  // git remote get-url origin → already has old token
+      .mockReturnValueOnce('')          // git remote set-url origin <fresh-token-url>
+      .mockReturnValueOnce('')          // git push
+      .mockReturnValueOnce('');         // git remote set-url origin <original> (finally)
+
+    gitPush('origin', 'HEAD');
+
+    // The set-url call must use TOKEN_URL (fresh token replacing stale), not a double-prefixed URL
+    expect(mockExec).toHaveBeenCalledWith('git', ['remote', 'set-url', 'origin', TOKEN_URL], expect.any(Object));
+  });
+
+  it('restores original URL even when git push throws', () => {
+    seedToken();
+    mockExec
+      .mockReturnValueOnce(CLEAN_URL)    // git remote get-url origin
+      .mockReturnValueOnce('')            // git remote set-url origin <token-url>
+      .mockImplementationOnce(() => { throw new Error('push rejected'); }) // git push
+      .mockReturnValueOnce('');           // git remote set-url origin <original> (finally)
+
+    expect(() => gitPush('origin', 'HEAD')).toThrow('push rejected');
+    // finally block must have run and restored the original URL
+    expect(mockExec).toHaveBeenLastCalledWith('git', ['remote', 'set-url', 'origin', CLEAN_URL], expect.any(Object));
+  });
+
+  it('restores original URL when push throws with already-tokenized input', () => {
+    seedToken();
+    mockExec
+      .mockReturnValueOnce(STALE_URL)    // git remote get-url origin → stale token
+      .mockReturnValueOnce('')            // git remote set-url origin <fresh-token-url>
+      .mockImplementationOnce(() => { throw new Error('auth error'); }) // git push
+      .mockReturnValueOnce('');           // git remote set-url origin <original> (finally)
+
+    expect(() => gitPush('origin', 'HEAD')).toThrow('auth error');
+    // finally must restore the stale URL (as it was before gitPush ran)
+    expect(mockExec).toHaveBeenLastCalledWith('git', ['remote', 'set-url', 'origin', STALE_URL], expect.any(Object));
+  });
+
+  it('falls back to plain git push when no token is configured', () => {
+    // no seedToken() call → getGhToken() returns undefined
+    mockExec.mockReturnValueOnce('');  // git push
+
+    gitPush('origin', 'HEAD');
+
+    expect(mockExec).toHaveBeenCalledTimes(1);
+    expect(mockExec).toHaveBeenCalledWith('git', ['push', 'origin', 'HEAD'], expect.any(Object));
   });
 });
