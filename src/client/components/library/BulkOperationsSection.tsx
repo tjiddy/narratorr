@@ -1,16 +1,16 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, type RenameCount } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useBulkOperation } from '../../hooks/useBulkOperation.js';
 import { ConfirmModal } from '@/components/ConfirmModal';
 
 type PendingOp = 'rename' | 'retag' | 'convert' | null;
+type ModalCount = RenameCount | number;
 
-async function fetchCountForOp(op: 'rename' | 'retag' | 'convert'): Promise<number> {
+async function fetchCountForOp(op: 'rename' | 'retag' | 'convert'): Promise<ModalCount> {
   if (op === 'rename') {
-    const r = await api.getBulkRenameCount();
-    return r.mismatched;
+    return api.getBulkRenameCount();
   }
   if (op === 'retag') {
     const r = await api.getBulkRetagCount();
@@ -20,20 +20,23 @@ async function fetchCountForOp(op: 'rename' | 'retag' | 'convert'): Promise<numb
   return r.total;
 }
 
-const MODAL_LABELS: Record<NonNullable<PendingOp>, { title: string; message: (n: number) => string; confirmLabel: string }> = {
+const MODAL_LABELS: Record<NonNullable<PendingOp>, { title: string; message: (data: ModalCount) => string; confirmLabel: string }> = {
   rename: {
     title: 'Rename All Books?',
-    message: (n) => `This will rename ${n} book${n !== 1 ? 's' : ''} to match the current folder format.`,
+    message: (data) => {
+      const { mismatched: n, alreadyMatching: m } = data as RenameCount;
+      return `Rename ${n} ${n !== 1 ? 'books' : 'book'} to match the current folder format? ${m} ${m !== 1 ? 'books' : 'book'} already match and will be skipped.`;
+    },
     confirmLabel: 'Rename All',
   },
   retag: {
     title: 'Re-tag All Books?',
-    message: (n) => `This will re-write audio tags for ${n} book${n !== 1 ? 's' : ''}.`,
+    message: (n) => `This will re-write audio tags for ${n as number} ${(n as number) !== 1 ? 'books' : 'book'}.`,
     confirmLabel: 'Re-tag All',
   },
   convert: {
     title: 'Convert All to M4B?',
-    message: (n) => `This will convert ${n} book${n !== 1 ? 's' : ''} to M4B format. Original files will be replaced.`,
+    message: (n) => `This will convert ${n as number} ${(n as number) !== 1 ? 'books' : 'book'} to M4B format. Original files will be replaced.`,
     confirmLabel: 'Convert All',
   },
 };
@@ -100,7 +103,7 @@ function BulkButton({
 export function BulkOperationsSection() {
   const { isRunning, jobType, progress, startJob } = useBulkOperation();
   const [pendingOp, setPendingOp] = useState<PendingOp>(null);
-  const [modalCount, setModalCount] = useState<number | null>(null);
+  const [modalCount, setModalCount] = useState<ModalCount | null>(null);
   const [isLoadingCount, setIsLoadingCount] = useState(false);
 
   const { data: settings } = useQuery({
@@ -169,7 +172,7 @@ export function BulkOperationsSection() {
           onClick={() => handleOperationClick('convert')}
         />
       </div>
-      {isRunning && progress.failures > 0 && (
+      {progress.failures > 0 && (
         <p className="text-xs text-destructive">{progress.failures} failure{progress.failures !== 1 ? 's' : ''}</p>
       )}
       {modal && (

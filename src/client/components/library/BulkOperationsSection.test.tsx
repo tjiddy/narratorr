@@ -75,7 +75,7 @@ describe('BulkOperationsSection', () => {
   });
 
   // Confirmation modal — counts
-  it('clicking Rename All Books fetches count then opens confirmation modal with count text', async () => {
+  it('clicking Rename All Books fetches count then opens confirmation modal with both mismatched and alreadyMatching counts', async () => {
     const user = userEvent.setup({});
     setup();
     const btn = screen.getByRole('button', { name: /rename all books/i });
@@ -83,7 +83,7 @@ describe('BulkOperationsSection', () => {
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
-    expect(screen.getByText(/5/)).toBeInTheDocument();
+    expect(screen.getByText(/Rename 5 books to match the current folder format\? 10 books already match and will be skipped\./i)).toBeInTheDocument();
     expect(api.getBulkRenameCount).toHaveBeenCalled();
   });
 
@@ -189,13 +189,16 @@ describe('BulkOperationsSection', () => {
     expect(screen.getByRole('button', { name: /rename all books/i })).not.toBeDisabled();
   });
 
-  it('when job completes with failures, failure count is displayed', () => {
-    // After completion with failures, we still show normal state (hook manages this)
-    // The spec says failures are shown — mock a just-completed state with failures
+  it('when job completes with failures, failure count is displayed after completion', () => {
+    // After completion with failures, the failure banner should remain visible
     setup({ isRunning: false, jobType: null, failures: 3, completed: 10, total: 10 });
-    // Failures are only shown during/after run — when not running, just show idle buttons
-    // The component shows a "3 failures" note when there were failures on last run
-    // This depends on implementation — at minimum, buttons should not crash
-    expect(screen.getByRole('button', { name: /rename all books/i })).toBeInTheDocument();
+    expect(screen.getByText(/3 failure/i)).toBeInTheDocument();
+    // Buttons should also be back in idle state
+    expect(screen.getByRole('button', { name: /rename all books/i })).not.toBeDisabled();
+  });
+
+  it('while rename is running with failures, failure count is shown during run', () => {
+    setup({ isRunning: true, jobType: 'rename', failures: 2, completed: 5, total: 10 });
+    expect(screen.getByText(/2 failure/i)).toBeInTheDocument();
   });
 });
