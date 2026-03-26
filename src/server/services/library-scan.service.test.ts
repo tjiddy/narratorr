@@ -1609,12 +1609,10 @@ describe('LibraryScanService', () => {
         'copy',
       );
 
-      // buildTargetPath mock returns '/library/Author/Title' (absolute — resolve is a no-op)
-      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          reason: expect.objectContaining({ targetPath: '/library/Author/Title', mode: 'copy' }),
-        }),
-      );
+      // buildTargetPath mock returns '/library/Author/Title'; path.resolve() may prepend drive letter on Windows
+      const call = mockEventHistoryService.create.mock.calls[0][0] as { reason: { targetPath: string; mode: string } };
+      expect(call.reason.targetPath).toMatch(/[/\\]library[/\\]Author[/\\]Title$/);
+      expect(call.reason.mode).toBe('copy');
     });
 
     it('records import_failed event when bookService.create() throws (bookId is null)', async () => {
@@ -1765,13 +1763,11 @@ describe('LibraryScanService', () => {
       ], 'copy');
 
       // The mock DB returns no book record for the select, so copyToLibrary is skipped
-      // and finalPath stays as item.path. resolve('/audiobooks/Book') is a no-op (already absolute).
+      // and finalPath stays as item.path. path.resolve() may prepend drive letter on Windows.
       await vi.waitFor(() => {
-        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
-          expect.objectContaining({
-            reason: expect.objectContaining({ targetPath: '/audiobooks/Book', mode: 'copy' }),
-          }),
-        );
+        const call = mockEventHistoryService.create.mock.calls[0][0] as { reason: { targetPath: string; mode: string } };
+        expect(call.reason.targetPath).toMatch(/[/\\]audiobooks[/\\]Book$/);
+        expect(call.reason.mode).toBe('copy');
       });
     });
 

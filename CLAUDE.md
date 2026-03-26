@@ -72,6 +72,7 @@ Graduated learnings from the CL system — non-obvious patterns that have caused
 - **Module-level mutable state:** Use `useSyncExternalStore` with subscribe/notify, not bare `let` variables.
 - **Derived state over copied state:** `override ?? queryDefault ?? fallback` eliminates race conditions vs copying async query data into useState.
 - **SPA fallback scope:** Reject requests whose path doesn't start with URL_BASE before serving index.html.
+- **Windows path separators in tests:** `path.join()` produces backslashes on Windows but forward slashes on Linux (CI). Tests asserting on paths must normalize: use `.split('\\').join('/')` on actual values, or use `expect.stringContaining()` instead of exact path matches. Production code that stores paths (DB, API responses) should normalize to POSIX separators since the app runs in Docker.
 - **Git executable bit on Windows:** Use `git update-index --chmod=+x` for shell scripts.
 - **Variable-length parsing:** Check most specific format first (6-part cron before 5-part).
 - **Stable keys:** Use field-based keys only; append index suffixes only at collision points via a dedup helper.

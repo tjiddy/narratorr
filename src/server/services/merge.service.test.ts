@@ -11,6 +11,7 @@ import type { EventBroadcasterService } from './event-broadcaster.service.js';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { readdir, mkdir, cp, unlink, stat, rm, rename } from 'node:fs/promises';
+import { join } from 'node:path';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
@@ -132,8 +133,8 @@ describe('MergeService', () => {
       expect(mkdir).toHaveBeenCalledWith(STAGING_DIR, { recursive: true });
 
       // Top-level audio files copied (not cover.jpg)
-      expect(cp).toHaveBeenCalledWith(BOOK_PATH + '/01.mp3', STAGING_DIR + '/01.mp3');
-      expect(cp).toHaveBeenCalledWith(BOOK_PATH + '/02.mp3', STAGING_DIR + '/02.mp3');
+      expect(cp).toHaveBeenCalledWith(join(BOOK_PATH, '01.mp3'), join(STAGING_DIR, '01.mp3'));
+      expect(cp).toHaveBeenCalledWith(join(BOOK_PATH, '02.mp3'), join(STAGING_DIR, '02.mp3'));
       expect(cp).not.toHaveBeenCalledWith(expect.stringContaining('cover.jpg'), expect.anything());
 
       // processAudioFiles called on staging dir with mergeBehavior: always
@@ -148,13 +149,13 @@ describe('MergeService', () => {
 
       // M4B moved from staging to book.path
       expect(rename).toHaveBeenCalledWith(
-        STAGING_DIR + '/The Way of Kings.m4b',
-        BOOK_PATH + '/The Way of Kings.m4b',
+        join(STAGING_DIR, 'The Way of Kings.m4b'),
+        join(BOOK_PATH, 'The Way of Kings.m4b'),
       );
 
       // Originals deleted from book.path
-      expect(unlink).toHaveBeenCalledWith(BOOK_PATH + '/01.mp3');
-      expect(unlink).toHaveBeenCalledWith(BOOK_PATH + '/02.mp3');
+      expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '01.mp3'));
+      expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '02.mp3'));
 
       // Staging dir cleaned
       expect(rm).toHaveBeenCalledWith(STAGING_DIR, { recursive: true, force: true });
@@ -162,7 +163,7 @@ describe('MergeService', () => {
       // Result shape
       expect(result).toMatchObject({
         bookId: 42,
-        outputFile: BOOK_PATH + '/The Way of Kings.m4b',
+        outputFile: join(BOOK_PATH, 'The Way of Kings.m4b'),
         filesReplaced: 2,
       });
     });
@@ -186,10 +187,10 @@ describe('MergeService', () => {
       await service.mergeBook(42);
 
       // The original mp3s are deleted
-      expect(unlink).toHaveBeenCalledWith(BOOK_PATH + '/01.mp3');
-      expect(unlink).toHaveBeenCalledWith(BOOK_PATH + '/02.mp3');
+      expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '01.mp3'));
+      expect(unlink).toHaveBeenCalledWith(join(BOOK_PATH, '02.mp3'));
       // The output file (same basename as staged M4B) is NOT deleted
-      expect(unlink).not.toHaveBeenCalledWith(BOOK_PATH + '/The Way of Kings.m4b');
+      expect(unlink).not.toHaveBeenCalledWith(join(BOOK_PATH, 'The Way of Kings.m4b'));
     });
 
     it('calls enrichBookFromAudio with bookService after successful move', async () => {
@@ -408,8 +409,8 @@ describe('MergeService', () => {
 
       // rename (move) was called before enrichment
       expect(rename).toHaveBeenCalledWith(
-        STAGING_DIR + '/The Way of Kings.m4b',
-        BOOK_PATH + '/The Way of Kings.m4b',
+        join(STAGING_DIR, 'The Way of Kings.m4b'),
+        join(BOOK_PATH, 'The Way of Kings.m4b'),
       );
     });
   });
