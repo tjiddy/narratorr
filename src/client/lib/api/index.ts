@@ -18,6 +18,7 @@ export type { HealthState, HealthCheckResult, HealthSummary, TaskMetadata, Syste
 export type { RecyclingBinEntry } from './recycling-bin.js';
 export type { ImportList, ImportListItem, ImportListPreview } from './import-lists.js';
 export type { SuggestionRow, DiscoverStats, AddSuggestionResult, RefreshResult } from './discover.js';
+export type { BulkOpType, BulkJobStatus, RenameCount } from './bulk-operations.js';
 
 export { formatBytes, formatProgress } from './utils.js';
 
@@ -39,6 +40,7 @@ import { backupsApi } from './backups.js';
 import { recyclingBinApi } from './recycling-bin.js';
 import { importListsApi } from './import-lists.js';
 import { discoverApi } from './discover.js';
+import { bulkOperationsApi } from './bulk-operations.js';
 
 export const api = {
   ...booksApi,
@@ -59,4 +61,5 @@ export const api = {
   ...recyclingBinApi,
   ...importListsApi,
   ...discoverApi,
+  ...bulkOperationsApi,
 };
