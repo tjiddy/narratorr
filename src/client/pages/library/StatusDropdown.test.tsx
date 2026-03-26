@@ -435,4 +435,20 @@ describe('StatusDropdown', () => {
       expect(screen.getByRole('option', { name: /imported.*5/i })).toBeInTheDocument();
     });
   });
+
+  describe('accessibility', () => {
+    it('menu option buttons have the focus-ring utility class applied', () => {
+      render(
+        <StatusDropdown
+          statusFilter="all"
+          onStatusFilterChange={vi.fn()}
+          statusCounts={defaultCounts}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: /all.*25/i }));
+      const options = screen.getAllByRole('option');
+      expect(options.length).toBeGreaterThan(0);
+      options.forEach((option) => expect(option).toHaveClass('focus-ring'));
+    });
+  });
 });
