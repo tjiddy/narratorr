@@ -10,10 +10,11 @@ vi.mock('../../core/utils/audio-scanner.js', () => ({
 
 vi.mock('node:fs/promises', () => ({
   writeFile: vi.fn().mockResolvedValue(undefined),
+  readdir: vi.fn().mockResolvedValue([]),
 }));
 
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, readdir } from 'node:fs/promises';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 
 function createMockLogger() {
@@ -59,6 +60,7 @@ describe('enrichBookFromAudio', () => {
       totalDuration: 36000,
       hasCoverArt: false,
     });
+    vi.mocked(readdir).mockResolvedValue(['01.mp3', '02.mp3', 'cover.jpg'] as never);
 
     const result = await enrichBookFromAudio(
       1,
@@ -76,6 +78,7 @@ describe('enrichBookFromAudio', () => {
         audioBitrate: 128000,
         audioSampleRate: 44100,
         audioChannels: 2,
+        topLevelAudioFileCount: 2,
         enrichmentStatus: 'file-enriched',
         duration: 600, // 36000 / 60
       }),

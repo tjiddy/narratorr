@@ -18,6 +18,7 @@ export interface MergeResult {
   outputFile: string;
   filesReplaced: number;
   message: string;
+  enrichmentWarning?: string;
 }
 
 export class MergeError extends Error {
@@ -104,7 +105,9 @@ export class MergeService {
 
       // Step 8: Post-commit enrichment
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService);
+      let enrichmentWarning: string | undefined;
       if (!enrichResult.enriched) {
+        enrichmentWarning = 'Merge succeeded but metadata update failed — audio fields may be stale';
         this.log.warn(
           { bookId },
           'Post-merge enrichment did not enrich — merge succeeded on disk, but DB audio fields may be stale',
@@ -120,6 +123,7 @@ export class MergeService {
         outputFile: outputPath,
         filesReplaced: topLevelAudioFiles.length,
         message: `Merged ${topLevelAudioFiles.length} files into ${basename(stagedM4b)}`,
+        enrichmentWarning,
       };
     } catch (error) {
       // Clean up staging dir on any failure (before commit the originals are untouched)
@@ -188,6 +192,7 @@ export class MergeService {
     await rename(join(stagingDir, stagedM4b), outputPath);
 
     for (const file of originalsToDelete) {
+      if (file === stagedM4b) continue; // skip: this is the output file we just moved in
       try {
         await unlink(join(bookPath, file));
       } catch {

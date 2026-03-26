@@ -30,6 +30,9 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
     onSuccess: (result) => {
       invalidateBookQueries();
       toast.success(result.message);
+      if (result.enrichmentWarning) {
+        toast.warning(result.enrichmentWarning);
+      }
     },
     onError: (error: Error) => {
       toast.error(`Merge failed: ${error.message}`);

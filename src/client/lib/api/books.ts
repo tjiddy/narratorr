@@ -42,6 +42,7 @@ export interface BookWithAuthor {
   audioBitrateMode?: string | null;
   audioFileFormat?: string | null;
   audioFileCount?: number | null;
+  topLevelAudioFileCount?: number | null;
   audioTotalSize?: number | null;
   audioDuration?: number | null;
   monitorForUpgrades: boolean;
@@ -143,6 +144,7 @@ export interface MergeResult {
   outputFile: string;
   filesReplaced: number;
   message: string;
+  enrichmentWarning?: string;
 }
 
 export type SingleBookSearchResult =

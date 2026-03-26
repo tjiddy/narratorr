@@ -315,6 +315,21 @@ describe('useBookActions', () => {
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Merge failed: ffmpeg error'));
     });
 
+    it('shows warning toast when result includes enrichmentWarning', async () => {
+      (api.mergeBookToM4b as Mock).mockResolvedValue({
+        bookId: 3, filesReplaced: 12, outputFile: '/lib/book.m4b', message: 'Merged 12 files into book.m4b',
+        enrichmentWarning: 'Merge succeeded but metadata update failed — audio fields may be stale',
+      });
+      const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
+
+      act(() => { result.current.mergeMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Merged 12 files into book.m4b');
+        expect(toast.warning).toHaveBeenCalledWith('Merge succeeded but metadata update failed — audio fields may be stale');
+      });
+    });
+
     it('does not invalidate queries when merge fails', async () => {
       (api.mergeBookToM4b as Mock).mockRejectedValue(new Error('fail'));
       const { queryClient, wrapper } = createTestHarness();

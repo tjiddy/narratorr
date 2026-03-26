@@ -1450,6 +1450,15 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
       expect(res.statusCode).toBe(404);
     });
 
+    it('returns 400 when book has no library path', async () => {
+      (services.merge.mergeBook as Mock).mockRejectedValue(new MergeError('Book has no path', 'NO_PATH'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/merge-to-m4b' });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toMatchObject({ error: expect.any(String) });
+    });
+
     it('returns 400 when book is not in imported status', async () => {
       (services.merge.mergeBook as Mock).mockRejectedValue(new MergeError('Book is not imported', 'NO_STATUS'));
 

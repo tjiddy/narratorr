@@ -956,6 +956,13 @@ describe('BookDetails', () => {
       expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
     });
 
+    it('hides Merge to M4B button when topLevelAudioFileCount is 0 (nested-only layout)', () => {
+      mockFfmpegEnabledForMerge();
+      renderBookDetails({ id: 1, path: '/library/test', status: 'imported', audioFileCount: 12, topLevelAudioFileCount: 0 });
+
+      expect(screen.queryByRole('button', { name: /Merge to M4B/i })).not.toBeInTheDocument();
+    });
+
     it('hides Merge to M4B button when book has no path', () => {
       mockFfmpegEnabledForMerge();
       renderBookDetails({ id: 1, path: null, status: 'imported', audioFileCount: 12 });

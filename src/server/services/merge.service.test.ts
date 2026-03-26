@@ -167,6 +167,31 @@ describe('MergeService', () => {
       });
     });
 
+    it('does not delete the output file when an original shares the same basename as the staged M4B', async () => {
+      // Book already has a top-level .m4b alongside other files
+      (readdir as Mock)
+        .mockResolvedValueOnce(['01.mp3', '02.mp3', 'The Way of Kings.m4b']) // book.path — includes pre-existing m4b
+        .mockResolvedValueOnce(['The Way of Kings.m4b']); // staging scan
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (processAudioFiles as Mock).mockResolvedValue({ success: true, outputFiles: [STAGING_DIR + '/The Way of Kings.m4b'] });
+      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
+      (rename as Mock).mockResolvedValue(undefined);
+      (unlink as Mock).mockResolvedValue(undefined);
+      (rm as Mock).mockResolvedValue(undefined);
+      (stat as Mock).mockResolvedValue({ size: 500_000_000 });
+      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+      const { service } = createService();
+
+      await service.mergeBook(42);
+
+      // The original mp3s are deleted
+      expect(unlink).toHaveBeenCalledWith(BOOK_PATH + '/01.mp3');
+      expect(unlink).toHaveBeenCalledWith(BOOK_PATH + '/02.mp3');
+      // The output file (same basename as staged M4B) is NOT deleted
+      expect(unlink).not.toHaveBeenCalledWith(BOOK_PATH + '/The Way of Kings.m4b');
+    });
+
     it('calls enrichBookFromAudio with bookService after successful move', async () => {
       setupHappyPath();
       const { service } = createService();
@@ -360,7 +385,7 @@ describe('MergeService', () => {
   });
 
   describe('mergeBook — post-commit enrichment failure', () => {
-    it('surfaces error when enrichBookFromAudio returns { enriched: false }', async () => {
+    it('surfaces enrichmentWarning in result when enrichBookFromAudio returns { enriched: false }', async () => {
       setupHappyPath();
       (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: false });
       const { service, log } = createService();
@@ -368,6 +393,7 @@ describe('MergeService', () => {
       // Should still resolve (not throw) — merge succeeded on disk
       const result = await service.mergeBook(42);
       expect(result.bookId).toBe(42);
+      expect(result.enrichmentWarning).toBe('Merge succeeded but metadata update failed — audio fields may be stale');
 
       // Warning logged
       expect(log.warn).toHaveBeenCalled();

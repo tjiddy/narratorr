@@ -71,6 +71,7 @@ export const books = sqliteTable('books', {
   audioBitrateMode: text('audio_bitrate_mode'),
   audioFileFormat: text('audio_file_format'),
   audioFileCount: integer('audio_file_count'),
+  topLevelAudioFileCount: integer('top_level_audio_file_count'),
   audioTotalSize: integer('audio_total_size'),
   audioDuration: integer('audio_duration'),
   monitorForUpgrades: integer('monitor_for_upgrades', { mode: 'boolean' }).notNull().default(false),
