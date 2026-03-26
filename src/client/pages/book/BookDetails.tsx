@@ -37,7 +37,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
     useBookActions(libraryBook.id, libraryBook.monitorForUpgrades);
 
   const canMerge = libraryBook.status === 'imported' &&
-    (libraryBook.topLevelAudioFileCount ?? libraryBook.audioFileCount ?? 0) >= 2;
+    (libraryBook.topLevelAudioFileCount ?? 0) >= 2;
 
   function handleTabKeyDown(e: React.KeyboardEvent<HTMLButtonElement>) {
     const nextIndex = getArrowTabIndex(e.key, tabs.indexOf(tab), tabs.length);
