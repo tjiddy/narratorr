@@ -1,1 +1,0 @@
-ALTER TABLE `books` ADD `top_level_audio_file_count` integer;

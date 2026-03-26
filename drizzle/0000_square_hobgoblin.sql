@@ -27,12 +27,24 @@ CREATE TABLE `blacklist` (
 --> statement-breakpoint
 CREATE INDEX `idx_blacklist_info_hash` ON `blacklist` (`info_hash`);--> statement-breakpoint
 CREATE INDEX `idx_blacklist_book_id` ON `blacklist` (`book_id`);--> statement-breakpoint
+CREATE TABLE `book_authors` (
+	`book_id` integer NOT NULL,
+	`author_id` integer NOT NULL,
+	`position` integer DEFAULT 0 NOT NULL,
+	PRIMARY KEY(`book_id`, `author_id`),
+	FOREIGN KEY (`book_id`) REFERENCES `books`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`author_id`) REFERENCES `authors`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE INDEX `idx_book_authors_book_id` ON `book_authors` (`book_id`);--> statement-breakpoint
+CREATE INDEX `idx_book_authors_author_id` ON `book_authors` (`author_id`);--> statement-breakpoint
 CREATE TABLE `book_events` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`book_id` integer,
 	`download_id` integer,
 	`book_title` text NOT NULL,
 	`author_name` text,
+	`narrator_name` text,
 	`event_type` text NOT NULL,
 	`source` text DEFAULT 'auto' NOT NULL,
 	`reason` text,
@@ -45,11 +57,20 @@ CREATE INDEX `idx_book_events_book_id` ON `book_events` (`book_id`);--> statemen
 CREATE INDEX `idx_book_events_event_type` ON `book_events` (`event_type`);--> statement-breakpoint
 CREATE INDEX `idx_book_events_created_at` ON `book_events` (`created_at`);--> statement-breakpoint
 CREATE INDEX `idx_book_events_download_id_event_type` ON `book_events` (`download_id`,`event_type`);--> statement-breakpoint
+CREATE TABLE `book_narrators` (
+	`book_id` integer NOT NULL,
+	`narrator_id` integer NOT NULL,
+	`position` integer DEFAULT 0 NOT NULL,
+	PRIMARY KEY(`book_id`, `narrator_id`),
+	FOREIGN KEY (`book_id`) REFERENCES `books`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`narrator_id`) REFERENCES `narrators`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE INDEX `idx_book_narrators_book_id` ON `book_narrators` (`book_id`);--> statement-breakpoint
+CREATE INDEX `idx_book_narrators_narrator_id` ON `book_narrators` (`narrator_id`);--> statement-breakpoint
 CREATE TABLE `books` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`title` text NOT NULL,
-	`author_id` integer,
-	`narrator` text,
 	`description` text,
 	`cover_url` text,
 	`goodreads_id` text,
@@ -72,22 +93,20 @@ CREATE TABLE `books` (
 	`audio_bitrate_mode` text,
 	`audio_file_format` text,
 	`audio_file_count` integer,
+	`top_level_audio_file_count` integer,
 	`audio_total_size` integer,
 	`audio_duration` integer,
 	`monitor_for_upgrades` integer DEFAULT false NOT NULL,
 	`import_list_id` integer,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`updated_at` integer DEFAULT (unixepoch()) NOT NULL,
-	FOREIGN KEY (`author_id`) REFERENCES `authors`(`id`) ON UPDATE no action ON DELETE set null,
 	FOREIGN KEY (`import_list_id`) REFERENCES `import_lists`(`id`) ON UPDATE no action ON DELETE set null
 );
 --> statement-breakpoint
-CREATE INDEX `idx_books_author_id` ON `books` (`author_id`);--> statement-breakpoint
 CREATE INDEX `idx_books_status` ON `books` (`status`);--> statement-breakpoint
 CREATE INDEX `idx_books_path` ON `books` (`path`);--> statement-breakpoint
 CREATE INDEX `idx_books_enrichment_status` ON `books` (`enrichment_status`);--> statement-breakpoint
 CREATE UNIQUE INDEX `idx_books_asin_unique` ON `books` (`asin`) WHERE asin IS NOT NULL;--> statement-breakpoint
-CREATE UNIQUE INDEX `idx_books_title_author_unique` ON `books` (`title`,`author_id`);--> statement-breakpoint
 CREATE TABLE `download_clients` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`name` text NOT NULL,
@@ -151,6 +170,14 @@ CREATE TABLE `indexers` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_indexers_enabled` ON `indexers` (`enabled`);--> statement-breakpoint
+CREATE TABLE `narrators` (
+	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+	`name` text NOT NULL,
+	`slug` text NOT NULL,
+	`created_at` integer DEFAULT (unixepoch()) NOT NULL
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `narrators_slug_unique` ON `narrators` (`slug`);--> statement-breakpoint
 CREATE TABLE `notifiers` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`name` text NOT NULL,
