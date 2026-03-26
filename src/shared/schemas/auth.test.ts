@@ -71,6 +71,11 @@ describe('setupCredentialsSchema — password spaces preserved', () => {
     if (result.success) expect(result.data.password).toBe(' p ');
   });
 
+  it('rejects whitespace-only username', () => {
+    const result = setupCredentialsSchema.safeParse({ username: '   ', password: 'pass' });
+    expect(result.success).toBe(false);
+  });
+
   it('trims leading/trailing spaces from username', () => {
     const result = setupCredentialsSchema.safeParse({ username: '  admin  ', password: 'pass' });
     expect(result.success).toBe(true);
