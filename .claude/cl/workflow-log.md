@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #94 Add fetch timeout to metadata providers — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #130
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 4 files (127 lines of new tests)
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The refactor itself was trivial — 5 lines → 1 line in each provider. MSW timeout test pattern with `delay('infinite')` worked identically before and after the mechanism change, confirming behavioral equivalence.
+- Friction / issues encountered: (1) Coverage review found pre-existing test gaps in `searchAuthors()`, `searchSeries()`, language sorting, and description fallback — added 127 lines of tests before handoff. (2) `scripts/git-push.ts` failed silently because `GH_TOKEN` in env was expired and the `gh auth git-credential` helper overrides token-in-URL; manual token refresh + `GH_TOKEN="" git -c credential.helper= push` worked.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 rounds across /elaborate, /respond-to-spec-review × 2); coverage review subagent
+- Avoidable waste: Two spec review rounds were needed due to (a) wrong enrichment provider in system behaviors and (b) `test()` method contract mismatch — both were codebase alignment issues that a quick read of the source before /elaborate would have caught
+- Suggestions: For refactor issues, read the actual source before writing the spec to avoid provider-role mistakes
+
+### Infrastructure gaps
+- Repeated workarounds: `scripts/git-push.ts` token refresh fails silently when `GH_TOKEN` is an expired installation token — need `GH_TOKEN=""` override and disabled credential helper
+- Missing tooling / config: `scripts/lib.ts` has no exported token-fetch helper for inline use (only `gitPush` uses it internally)
+- Unresolved debt: Redirect protection still absent from metadata providers (kept out of scope in #94)
+
+### Wish I'd Known
+1. `searchAuthors()` and `searchSeries()` in `AudibleProvider` had zero tests — the coverage gate caught this, but it added a full round of test writing to the handoff. Check test file coverage for all public methods in the target file before starting.
+2. The `scripts/git-push.ts` wrapper silently uses a stale `GH_TOKEN` when the credential helper is configured — the fix is `GH_TOKEN="" git -c credential.helper= push` with a manually refreshed token.
+3. Three spec review rounds were needed because the spec had wrong assumptions about which provider feeds the enrichment pipeline (`audnexus`, not `audible`) and `test()` method error contract — both are in the source code and would have been caught by reading it before writing the spec.
+
 ## #96 Refactor import.service.test.ts — split by concern — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #129

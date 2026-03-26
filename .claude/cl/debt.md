@@ -8,7 +8,7 @@
 
 ## Code Hardening
 
-- **src/core/metadata/ (audible.ts, audnexus.ts)**: Direct `fetch()` calls without timeout or redirect protection — consider migrating to `fetchWithTimeout`. (discovered in #23)
+- **src/core/metadata/ (audible.ts, audnexus.ts)**: Redirect protection still absent — `AbortSignal.timeout()` was added in #94 but `redirect: 'manual'` (via `fetchWithTimeout`) was explicitly kept out of scope. (discovered in #23, partially resolved in #94)
 - **scripts/lib.ts**: No `git push` helper that embeds a fresh installation token — `git push` fails with stale GH_TOKEN; workaround is manual inline token refresh each session. (discovered in #79)
 - **src/client/components/manual-import/BookEditModal.tsx + ImportCard.tsx + DirectoryBrowserModal.tsx**: 17 pre-existing behavioral gaps identified by coverage subagent (issue #80). #97 addressed 7 (Windows paths, slice boundary ×2, applyMetadata multi-author, narrator display, singular file form). Remaining untested: row background classes, showPencilAlways visibility (CSS-only, no behavioral contract). (discovered in #80, partially resolved in #97)
 - **src/client/pages/manual-import/PathStep.tsx**: frontend-design skill was unavailable — visual polish pass not applied; amber accent hover states and glass-card styling may need review for consistency. (discovered in #81)
