@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #134 Manual Import guardrail — block imports from inside library root — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #137
+
+### Metrics
+- Files changed: 6 | Tests added/modified: 31 (18 integration + 13 unit)
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 1 (2 pre-existing tests used library root as favorite path — updated to use outside paths)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: spec was thorough after 2 rounds of review; TDD red→green cycle was clean; all 18 new integration tests defined before implementation; coverage subagent confirmed no gaps
+- Friction / issues encountered: (1) accidentally wrote source file to main branch twice using the Write tool while thinking about CL capture — had to rm each time; (2) pre-existing tests using /audiobooks as a favorite broke when guardrail activated
+
+### Token efficiency
+- Highest-token actions: two Explore subagents (plan + coverage review), spec review round-trips
+- Avoidable waste: spec went through 2 review rounds — all 3 blocking findings were addressable if spec author had read the codebase more carefully upfront
+- Suggestions: before writing spec, read actual source of all files the feature will touch — would have caught browser path.relative() issue and favorites/Enter key surfaces before spec review
+
+### Infrastructure gaps
+- Repeated workarounds: direct gh CLI calls always fail (HTTP 401) — must go through scripts/lib.ts gh helper with token
+- Missing tooling / config: frontend-design skill not available in this environment — design pass skipped
+- Unresolved debt: LibraryImportPage.getRelativePath() still uses unsafe startsWith(); backend has no server-side enforcement of library-root guardrail
+
+### Wish I Had Known
+1. Browser environments have no node:path — "use path.relative()" in specs means the algorithm, not the API. Plan for a POSIX segment utility from the start.
+2. The equal-path case (scanPath === libraryPath) needs explicit handling — "inside" intuitively means strict subset, but user intent also wants to block scanning the library root itself.
+3. Pre-existing tests that set favorites to the library root path will break immediately when a guardrail is added — audit all test fixtures using the default library path before implementing.
+
+
 ## #133 Library Import — scan and register existing books — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #136
