@@ -53,23 +53,19 @@ function getTriggerLabel(field: SortField, direction: SortDirection): string {
 
 export function SortDropdown({ sortField, onSortFieldChange, sortDirection, onSortDirectionChange }: SortProps) {
   const [open, setOpen] = useState(false);
-  const [focusIndex, setFocusIndex] = useState(-1);
+  const [focusIndex, setFocusIndex] = useState(0);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Focus the option at focusIndex whenever it changes
+  // Focus the option at focusIndex when open, or when focusIndex changes while open
   useEffect(() => {
-    if (focusIndex < 0) return;
+    if (!open) return;
     const buttons = menuRef.current?.querySelectorAll<HTMLButtonElement>('button');
     buttons?.[focusIndex]?.focus();
-  }, [focusIndex]);
-
-  // Focus first option when dropdown opens
-  useEffect(() => {
-    if (open) setFocusIndex(0);
-  }, [open]);
+  }, [focusIndex, open]);
 
   function handleClose() {
+    setFocusIndex(0);
     setOpen(false);
     triggerRef.current?.focus();
   }
@@ -77,6 +73,7 @@ export function SortDropdown({ sortField, onSortFieldChange, sortDirection, onSo
   function handleSelect(option: SortOption) {
     onSortFieldChange(option.field);
     onSortDirectionChange(option.direction);
+    setFocusIndex(0);
     setOpen(false);
     triggerRef.current?.focus();
   }
@@ -94,9 +91,10 @@ export function SortDropdown({ sortField, onSortFieldChange, sortDirection, onSo
       case 'Enter':
       case ' ':
         e.preventDefault();
-        if (focusIndex >= 0 && focusIndex < sortOptions.length) {
+        if (focusIndex < sortOptions.length) {
           onSortFieldChange(sortOptions[focusIndex].field);
           onSortDirectionChange(sortOptions[focusIndex].direction);
+          setFocusIndex(0);
           setOpen(false);
           triggerRef.current?.focus();
         }

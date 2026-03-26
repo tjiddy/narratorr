@@ -19,7 +19,7 @@ export function OverflowMenu({
   isRescanning: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [focusIndex, setFocusIndex] = useState(-1);
+  const [focusIndex, setFocusIndex] = useState(0);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -29,24 +29,21 @@ export function OverflowMenu({
     );
   }
 
-  // Focus the item at focusIndex whenever it changes
+  // Focus the item at focusIndex when open, or when focusIndex changes while open
   useEffect(() => {
-    if (focusIndex < 0) return;
+    if (!open) return;
     getFocusableItems()[focusIndex]?.focus();
-  }, [focusIndex]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Focus first enabled item when dropdown opens
-  useEffect(() => {
-    if (open) setFocusIndex(0);
-  }, [open]);
+  }, [focusIndex, open]);
 
   function handleClose() {
+    setFocusIndex(0);
     setOpen(false);
     triggerRef.current?.focus();
   }
 
   function handleAction(fn: () => void) {
     fn();
+    setFocusIndex(0);
     setOpen(false);
     triggerRef.current?.focus();
   }
