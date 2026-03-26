@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #96 Refactor import.service.test.ts — split by concern — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #129
+
+### Metrics
+- Files changed: 1 (test file only) | Tests added/modified: 0 new, 2 moved (from removed first getEligibleDownloads block to consolidated block)
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Baseline capture before refactor, structural edit approach, test count verification after each edit
+- Friction / issues encountered: GH_TOKEN in remote URL was stale — git push and gh pr create both failed with 401. Required inline token refresh via GitHub App JWT + installation token fetch. This is a known recurring workaround (see debt.md: scripts/lib.ts git push helper). The `node scripts/git-push.ts` script calls `getGhToken()` from lib.ts which should handle this, but the token in the remote URL itself was already expired and the script-refreshed token doesn't update the stored URL correctly for the current session.
+
+### Token efficiency
+- Highest-token actions: Reading import.service.test.ts in 6 chunks (file too large for single read); Explore subagent for plan; self-review subagent
+- Avoidable waste: None significant — file chunking was necessary given the 1636-line file
+- Suggestions: For pure test refactors, the explore subagent can be lightweight (skip learnings scan, just read the target file structure)
+
+### Infrastructure gaps
+- Repeated workarounds: GH_TOKEN refresh for git push + gh CLI — this is the second session requiring manual inline token generation (also hit in #79). The `gitPush` function in scripts/lib.ts generates a fresh token but the `gh` CLI wrapper does the same — however the stale URL in the remote config causes push failures before the wrapper can help.
+- Missing tooling / config: No automatic token rotation before push attempts
+- Unresolved debt: Debt entry for import.service.test.ts complexity has been resolved and removed from debt.md
+
+### Wish I'd Known
+1. The two `getEligibleDownloads` describe blocks aren't true duplicates — the second one has a unique semaphore overflow test. Always read both blocks fully before calling them duplicates.
+2. Re-indenting nested describe blocks is unnecessary — Vitest doesn't care about indentation. Skip it to minimize diff noise.
+3. GH_TOKEN in the remote URL expires between sessions and must be refreshed manually. The `scripts/git-push.ts` wrapper should handle this, but if it fails with 401, inline token generation via the GitHub App JWT → installation token flow is the fix.
+
 ## #97 Fill manual import component test gaps — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #128
