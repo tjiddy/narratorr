@@ -215,7 +215,7 @@ describe('BulkOperationService — job lifecycle', () => {
     const id = await service.startRenameJob();
     const status = service.getJob(id);
     expect(status).not.toBeNull();
-    expect(status?.id).toBe(id);
+    expect(status?.jobId).toBe(id);
     expect(status?.type).toBe('rename');
   });
 
@@ -240,7 +240,7 @@ describe('BulkOperationService — job lifecycle', () => {
     const id = await service.startRenameJob();
     await new Promise(r => setTimeout(r, 20)); // let job start
     const active = service.getActiveJob();
-    expect(active?.id).toBe(id);
+    expect(active?.jobId).toBe(id);
     expect(active?.status).toBe('running');
     resolveRename();
     await waitForJob(service, id);

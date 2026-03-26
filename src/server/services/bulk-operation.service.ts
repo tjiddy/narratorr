@@ -22,7 +22,7 @@ import { extname } from 'node:path';
 export type BulkOpType = 'rename' | 'retag' | 'convert';
 
 export interface BulkJobStatus {
-  id: string;
+  jobId: string;
   type: BulkOpType;
   status: 'running' | 'completed';
   completed: number;
@@ -392,7 +392,7 @@ class BulkJob {
 
   getStatus(): BulkJobStatus {
     return {
-      id: this.id,
+      jobId: this.id,
       type: this.type,
       status: this._status,
       completed: this._completed,

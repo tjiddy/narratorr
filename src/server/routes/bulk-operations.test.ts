@@ -95,7 +95,7 @@ describe('GET /api/books/bulk/active', () => {
   });
 
   it('returns running job info while job is in progress', async () => {
-    const activeJob = { id: 'abc', type: 'rename', status: 'running', completed: 3, total: 10, failures: 0 };
+    const activeJob = { jobId: 'abc', type: 'rename', status: 'running', completed: 3, total: 10, failures: 0 };
     const bulkOperation = makeBulkService({ getActiveJob: vi.fn().mockReturnValue(activeJob) });
     const services = createMockServices({ bulkOperation });
     const app = await createTestApp(services);
@@ -213,7 +213,7 @@ describe('GET /api/books/bulk/:jobId', () => {
   });
 
   it('returns 200 with { status: running, completed, total, failures } while job is running', async () => {
-    const runningJob = { id: 'job-1', type: 'retag', status: 'running', completed: 5, total: 20, failures: 1 };
+    const runningJob = { jobId: 'job-1', type: 'retag', status: 'running', completed: 5, total: 20, failures: 1 };
     const bulkOperation = makeBulkService({ getJob: vi.fn().mockReturnValue(runningJob) });
     const services = createMockServices({ bulkOperation });
     const app = await createTestApp(services);
@@ -223,7 +223,7 @@ describe('GET /api/books/bulk/:jobId', () => {
   });
 
   it('returns 200 with { status: completed, completed, total, failures } after completion', async () => {
-    const completedJob = { id: 'job-2', type: 'convert', status: 'completed', completed: 10, total: 10, failures: 0 };
+    const completedJob = { jobId: 'job-2', type: 'convert', status: 'completed', completed: 10, total: 10, failures: 0 };
     const bulkOperation = makeBulkService({ getJob: vi.fn().mockReturnValue(completedJob) });
     const services = createMockServices({ bulkOperation });
     const app = await createTestApp(services);

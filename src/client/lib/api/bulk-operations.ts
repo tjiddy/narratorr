@@ -3,7 +3,7 @@ import { fetchApi } from './client.js';
 export type BulkOpType = 'rename' | 'retag' | 'convert';
 
 export interface BulkJobStatus {
-  id: string;
+  jobId: string;
   type: BulkOpType;
   status: 'running' | 'completed';
   completed: number;

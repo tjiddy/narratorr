@@ -27,7 +27,7 @@ function make404Error() {
 
 function makeRunningJob(overrides?: Partial<BulkJobStatus>): BulkJobStatus {
   return {
-    id: 'job-1',
+    jobId: 'job-1',
     type: 'rename',
     status: 'running',
     completed: 3,
@@ -39,7 +39,7 @@ function makeRunningJob(overrides?: Partial<BulkJobStatus>): BulkJobStatus {
 
 function makeCompletedJob(overrides?: Partial<BulkJobStatus>): BulkJobStatus {
   return {
-    id: 'job-1',
+    jobId: 'job-1',
     type: 'rename',
     status: 'completed',
     completed: 10,

@@ -65,11 +65,11 @@ export function useBulkOperation(): UseBulkOperationReturn {
     let cancelled = false;
     api.getActiveBulkJob().then((activeJob) => {
       if (cancelled || !activeJob) return;
-      jobIdRef.current = activeJob.id;
+      jobIdRef.current = activeJob.jobId;
       setIsRunning(true);
       setJobType(activeJob.type);
       setProgress({ completed: activeJob.completed, total: activeJob.total, failures: activeJob.failures });
-      startPolling(activeJob.id);
+      startPolling(activeJob.jobId);
     }).catch(() => {});
 
     return () => { cancelled = true; };
