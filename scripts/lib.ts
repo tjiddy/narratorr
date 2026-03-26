@@ -176,7 +176,7 @@ export function gitPush(...args: string[]): string {
   if (token) {
     const originalUrl = git("remote", "get-url", "origin");
     const tokenUrl = originalUrl.replace(
-      "https://github.com/",
+      /https:\/\/(x-access-token:[^@]+@)?github\.com\//,
       `https://x-access-token:${token}@github.com/`,
     );
     git("remote", "set-url", "origin", tokenUrl);
