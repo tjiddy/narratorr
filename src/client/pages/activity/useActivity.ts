@@ -113,15 +113,23 @@ export function useActivity(queueParams: ActivityListParams = {}, historyParams:
   });
 
   return {
-    queue, queueTotal,
-    history, historyTotal,
-    isLoading: queueQuery.isLoading || historyQuery.isLoading,
-    isError: queueQuery.isError || historyQuery.isError,
-    cancelMutation,
-    retryMutation,
-    approveMutation,
-    rejectMutation,
-    deleteMutation,
-    deleteHistoryMutation,
+    state: {
+      queue,
+      queueTotal,
+      history,
+      historyTotal,
+    },
+    status: {
+      isLoading: queueQuery.isLoading || historyQuery.isLoading,
+      isError: queueQuery.isError || historyQuery.isError,
+    },
+    mutations: {
+      cancelMutation,
+      retryMutation,
+      approveMutation,
+      rejectMutation,
+      deleteMutation,
+      deleteHistoryMutation,
+    },
   };
 }
