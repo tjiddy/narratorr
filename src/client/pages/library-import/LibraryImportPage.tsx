@@ -10,6 +10,7 @@ export function LibraryImportPage() {
     step,
     hasLibraryPath,
     scanError,
+    emptyResult,
     matchJobError,
     rows,
     editIndex,
@@ -36,6 +37,7 @@ export function LibraryImportPage() {
 
   const [showExisting, setShowExisting] = useState(false);
   const displayedRows = rows.filter(r => showExisting || !r.book.isDuplicate);
+  const rowIndexMap = new Map(rows.map((r, i) => [r, i]));
 
   // Compute relative path from library root
   function getRelativePath(absolutePath: string): string | undefined {
@@ -111,6 +113,21 @@ export function LibraryImportPage() {
         </div>
       )}
 
+      {/* All caught up — no new books to register */}
+      {emptyResult && (
+        <div className="glass-card rounded-xl p-8 flex flex-col items-center gap-4 text-center animate-fade-in-up">
+          <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+            <CheckIcon className="w-6 h-6 text-primary" />
+          </div>
+          <div>
+            <p className="font-medium mb-1">All caught up</p>
+            <p className="text-sm text-muted-foreground">
+              Your library is up to date — all detected folders are already registered.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Match job error */}
       {matchJobError && step === 'review' && !scanError && (
         <div className="glass-card rounded-xl p-6 flex flex-col items-center gap-3 text-center">
@@ -127,7 +144,7 @@ export function LibraryImportPage() {
       )}
 
       {/* Review list */}
-      {step === 'review' && !scanError && (
+      {step === 'review' && !scanError && !emptyResult && (
         <div className="animate-fade-in-up stagger-1">
           <div className="glass-card rounded-xl overflow-hidden">
             {/* Select all header */}
@@ -164,8 +181,8 @@ export function LibraryImportPage() {
                 <ImportCard
                   key={row.book.path}
                   row={row}
-                  onToggle={() => handleToggle(rows.indexOf(row))}
-                  onEdit={() => setEditIndex(rows.indexOf(row))}
+                  onToggle={() => handleToggle(rowIndexMap.get(row) ?? -1)}
+                  onEdit={() => setEditIndex(rowIndexMap.get(row) ?? -1)}
                   lockDuplicates
                   relativePath={getRelativePath(row.book.path)}
                 />

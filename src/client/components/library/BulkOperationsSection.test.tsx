@@ -4,6 +4,11 @@ import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../__tests__/helpers.js';
 import { BulkOperationsSection } from './BulkOperationsSection.js';
 import { api } from '@/lib/api';
+import { toast } from 'sonner';
+
+vi.mock('sonner', () => ({
+  toast: { error: vi.fn(), success: vi.fn() },
+}));
 
 const mockStartJob = vi.fn();
 const mockIsRunning = { current: false };
@@ -200,5 +205,71 @@ describe('BulkOperationsSection', () => {
   it('while rename is running with failures, failure count is shown during run', () => {
     setup({ isRunning: true, jobType: 'rename', failures: 2, completed: 5, total: 10 });
     expect(screen.getByText(/2 failure/i)).toBeInTheDocument();
+  });
+
+  // AC1: count fetch error handling (#141)
+  it('shows toast.error and re-enables button when rename count API rejects', async () => {
+    const user = userEvent.setup({});
+    setup();
+    (api.getBulkRenameCount as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network error'));
+    await user.click(screen.getByRole('button', { name: /rename all books/i }));
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Network error');
+    });
+    // Modal should NOT open
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // Button should be re-enabled (loading cleared)
+    expect(screen.getByRole('button', { name: /rename all books/i })).not.toBeDisabled();
+  });
+
+  it('shows toast.error when retag count API rejects', async () => {
+    const user = userEvent.setup({});
+    setup();
+    (api.getBulkRetagCount as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Server error'));
+    await user.click(screen.getByRole('button', { name: /re-tag all books/i }));
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Server error');
+    });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('shows toast.error when convert count API rejects', async () => {
+    const user = userEvent.setup({});
+    setup({ ffmpegPath: '/usr/bin/ffmpeg' });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /convert all to m4b/i })).not.toBeDisabled();
+    });
+    (api.getBulkConvertCount as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Convert error'));
+    await user.click(screen.getByRole('button', { name: /convert all to m4b/i }));
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Convert error');
+    });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  // AC5: busy-state tooltips (#141)
+  it('Rename All Books button has tooltip "A bulk operation is already running." when another job is running', () => {
+    setup({ isRunning: true, jobType: 'retag' });
+    const renameBtn = screen.getByRole('button', { name: /rename all books/i });
+    expect(renameBtn).toHaveAttribute('title', 'A bulk operation is already running.');
+  });
+
+  it('Re-tag All Books button has tooltip "A bulk operation is already running." when another job is running', () => {
+    setup({ isRunning: true, jobType: 'rename' });
+    const retagBtn = screen.getByRole('button', { name: /re-tag all books/i });
+    expect(retagBtn).toHaveAttribute('title', 'A bulk operation is already running.');
+  });
+
+  it('Convert All to M4B button has tooltip "A bulk operation is already running." when another job is running (even when ffmpeg is disabled)', () => {
+    setup({ isRunning: true, jobType: 'rename', ffmpegPath: '' });
+    const convertBtn = screen.getByRole('button', { name: /convert all to m4b/i });
+    expect(convertBtn).toHaveAttribute('title', 'A bulk operation is already running.');
+  });
+
+  // AC6: Convert tooltip copy (#141)
+  it('Convert All to M4B button tooltip reads "Requires ffmpeg — configure in Settings > Post Processing" when ffmpeg not configured', () => {
+    setup({ ffmpegPath: '' });
+    const convertBtn = screen.getByRole('button', { name: /convert all to m4b/i });
+    expect(convertBtn).toHaveAttribute('title', 'Requires ffmpeg — configure in Settings > Post Processing');
   });
 });

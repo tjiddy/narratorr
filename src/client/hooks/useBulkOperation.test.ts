@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useBulkOperation } from './useBulkOperation.js';
 import type { BulkJobStatus } from '@/lib/api';
+import { toast } from 'sonner';
+
+vi.mock('sonner', () => ({
+  toast: { error: vi.fn(), success: vi.fn() },
+}));
 
 const mockGetActiveBulkJob = vi.fn();
 const mockGetBulkJob = vi.fn();
@@ -213,5 +218,57 @@ describe('useBulkOperation', () => {
     await act(async () => { vi.advanceTimersByTime(2000); });
 
     expect(result.current.progress.failures).toBe(3);
+  });
+
+  // AC2: non-404 poll error handling (#141)
+  it('resets to idle and shows toast.error when poll returns non-404 error (500)', async () => {
+    const err = new Error('Internal server error');
+    (err as { status?: number }).status = 500;
+    mockGetActiveBulkJob.mockResolvedValue(null);
+    mockGetBulkJob.mockRejectedValue(err);
+
+    const { result } = renderHook(() => useBulkOperation());
+    await act(async () => {}); // flush mount
+
+    await act(async () => { await result.current.startJob('rename'); });
+    await act(async () => { vi.advanceTimersByTime(2000); });
+
+    expect(result.current.isRunning).toBe(false);
+    expect(result.current.jobType).toBeNull();
+    expect(toast.error).toHaveBeenCalledWith('Internal server error');
+  });
+
+  it('resets to idle and shows toast.error when poll returns non-404 after first successful poll', async () => {
+    const err = new Error('Service unavailable');
+    (err as { status?: number }).status = 503;
+    mockGetActiveBulkJob.mockResolvedValue(null);
+    mockGetBulkJob
+      .mockResolvedValueOnce(makeRunningJob({ completed: 2, total: 10 }))
+      .mockRejectedValue(err);
+
+    const { result } = renderHook(() => useBulkOperation());
+    await act(async () => {}); // flush mount
+
+    await act(async () => { await result.current.startJob('rename'); });
+    await act(async () => { vi.advanceTimersByTime(2000); }); // first poll — success
+    expect(result.current.isRunning).toBe(true);
+
+    await act(async () => { vi.advanceTimersByTime(2000); }); // second poll — error
+    expect(result.current.isRunning).toBe(false);
+    expect(toast.error).toHaveBeenCalledWith('Service unavailable');
+  });
+
+  it('does NOT show toast.error when poll returns 404 (server restart — silent reset, existing behavior preserved)', async () => {
+    mockGetActiveBulkJob.mockResolvedValue(null);
+    mockGetBulkJob.mockRejectedValue(make404Error());
+
+    const { result } = renderHook(() => useBulkOperation());
+    await act(async () => {}); // flush mount
+
+    await act(async () => { await result.current.startJob('rename'); });
+    await act(async () => { vi.advanceTimersByTime(2000); });
+
+    expect(result.current.isRunning).toBe(false);
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });

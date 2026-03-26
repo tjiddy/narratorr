@@ -274,4 +274,59 @@ describe('useLibraryImport hook (#133)', () => {
     const [, mode] = mockConfirmImport.mock.calls[0];
     expect(mode).toBeUndefined();
   });
+
+  // AC3: empty state (#141)
+  it('returns emptyResult=true when scan returns zero discoveries', async () => {
+    mockScanDirectory.mockResolvedValue({ discoveries: [], totalFolders: 0 });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.emptyResult).toBe(true);
+    });
+    expect(result.current.scanError).toBeNull();
+    expect(mockStartMatchJob).not.toHaveBeenCalled();
+  });
+
+  it('returns emptyResult=true when scan returns only duplicate discoveries (all caught up)', async () => {
+    mockScanDirectory.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/AuthorB/Book2', parsedTitle: 'Book Two', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 2, totalSize: 80000, isDuplicate: true, duplicateReason: 'path' },
+        { path: '/audiobooks/AuthorC/Book3', parsedTitle: 'Book Three', parsedAuthor: 'Author C', parsedSeries: null, fileCount: 1, totalSize: 60000, isDuplicate: true, duplicateReason: 'slug' },
+      ],
+      totalFolders: 2,
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.emptyResult).toBe(true);
+    });
+    expect(result.current.scanError).toBeNull();
+    expect(mockStartMatchJob).not.toHaveBeenCalled();
+  });
+
+  it('returns emptyResult=false and starts matching when scan returns mix of new and duplicate books', async () => {
+    // mockScanResult has 1 new + 2 duplicate
+    mockScanDirectory.mockResolvedValue(mockScanResult);
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.step).toBe('review');
+    });
+    expect(result.current.emptyResult).toBe(false);
+    expect(mockStartMatchJob).toHaveBeenCalled();
+  });
+
+  it('scanError is null (not set) when emptyResult is triggered', async () => {
+    mockScanDirectory.mockResolvedValue({ discoveries: [], totalFolders: 0 });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.emptyResult).toBe(true);
+    });
+    expect(result.current.scanError).toBeNull();
+  });
 });

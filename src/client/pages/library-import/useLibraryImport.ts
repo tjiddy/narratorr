@@ -18,6 +18,7 @@ export function useLibraryImport() {
 
   const [step, setStep] = useState<Step>('scanning');
   const [scanError, setScanError] = useState<string | null>(null);
+  const [emptyResult, setEmptyResult] = useState(false);
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [editIndex, setEditIndex] = useState<number | null>(null);
   const [hasLibraryPath, setHasLibraryPath] = useState<boolean>(true);
@@ -78,8 +79,9 @@ export function useLibraryImport() {
   const scanMutation = useMutation({
     mutationFn: (path: string) => api.scanDirectory(path),
     onSuccess: (result) => {
-      if (result.discoveries.length === 0) {
-        setScanError('No audiobook folders found in this directory.');
+      if (result.discoveries.length === 0 || result.discoveries.every(d => d.isDuplicate)) {
+        setEmptyResult(true);
+        setStep('review');
         return;
       }
 
@@ -202,6 +204,7 @@ export function useLibraryImport() {
     const libraryPath = settings?.library.path ?? '';
     if (!libraryPath) return;
     setScanError(null);
+    setEmptyResult(false);
     prevMatchCountRef.current = 0;
     scanMutation.mutate(libraryPath);
   }, [settings, scanMutation]);
@@ -237,6 +240,7 @@ export function useLibraryImport() {
     step,
     hasLibraryPath,
     scanError,
+    emptyResult,
     matchJobError,
     rows,
     editIndex,
