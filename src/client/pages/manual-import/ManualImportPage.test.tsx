@@ -7,19 +7,32 @@ import { ManualImportPage } from './ManualImportPage';
 import type { MatchResult, DiscoveredBook, ScanResult } from '@/lib/api';
 import type { FolderEntry } from './useFolderHistory.js';
 
-// Track match job state for controlled polling
-let mockMatchResults: MatchResult[] = [];
-let mockIsMatching = false;
-let mockStartMatching: ReturnType<typeof vi.fn>;
-let mockCancelMatching: ReturnType<typeof vi.fn>;
+// Track match job state for controlled polling — fresh per test via makeMatchState()
+type MatchState = {
+  results: MatchResult[];
+  isMatching: boolean;
+  startMatching: ReturnType<typeof vi.fn>;
+  cancelMatching: ReturnType<typeof vi.fn>;
+};
+
+function makeMatchState(): MatchState {
+  return {
+    results: [],
+    isMatching: false,
+    startMatching: vi.fn(),
+    cancelMatching: vi.fn(),
+  };
+}
+
+let matchState = makeMatchState();
 
 vi.mock('@/hooks/useMatchJob', () => ({
   useMatchJob: () => ({
-    results: mockMatchResults,
-    progress: { matched: mockMatchResults.length, total: 0 },
-    isMatching: mockIsMatching,
-    startMatching: mockStartMatching,
-    cancel: mockCancelMatching,
+    results: matchState.results,
+    progress: { matched: matchState.results.length, total: 0 },
+    isMatching: matchState.isMatching,
+    startMatching: matchState.startMatching,
+    cancel: matchState.cancelMatching,
   }),
 }));
 
@@ -146,15 +159,15 @@ async function scanAndReview(books: DiscoveredBook[] = [makeDiscoveredBook()]) {
 
 /**
  * Simulate match results arriving by updating the mock and re-rendering.
- * The useMatchJob mock reads from the module-level `mockMatchResults` on each render.
+ * The useMatchJob mock reads from the module-level `matchState.results` on each render.
  */
 async function simulateMatchResults(
   rerender: (ui: React.ReactElement) => void,
   results: MatchResult[],
   matching = false,
 ) {
-  mockMatchResults = results;
-  mockIsMatching = matching;
+  matchState.results = results;
+  matchState.isMatching = matching;
   createWrapper();
   rerender(<ManualImportPage />);
   // Allow useEffect to process
@@ -164,10 +177,7 @@ async function simulateMatchResults(
 describe('ManualImportPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockMatchResults = [];
-    mockIsMatching = false;
-    mockStartMatching = vi.fn();
-    mockCancelMatching = vi.fn();
+    matchState = makeMatchState();
     mockFavorites = [];
     mockRecents = [];
     mockGetSettings.mockResolvedValue({ library: { path: '/audiobooks', folderFormat: '{author}/{title}' } });
@@ -261,7 +271,7 @@ describe('ManualImportPage', () => {
 
     it('starts matching immediately after scan', async () => {
       await scanAndReview();
-      expect(mockStartMatching).toHaveBeenCalledOnce();
+      expect(matchState.startMatching).toHaveBeenCalledOnce();
     });
 
     it('shows select-all header with correct count', async () => {
@@ -454,7 +464,7 @@ describe('ManualImportPage', () => {
 
   describe('import button blocking', () => {
     it('import button disabled when matching in progress', async () => {
-      mockIsMatching = true;
+      matchState.isMatching = true;
       await scanAndReview();
 
       const btn = screen.getByRole('button', { name: /Import/ });
@@ -498,11 +508,11 @@ describe('ManualImportPage', () => {
     });
 
     it('cancels matching when going back', async () => {
-      mockIsMatching = true;
+      matchState.isMatching = true;
       await scanAndReview();
 
       await userEvent.click(screen.getByLabelText('Back'));
-      expect(mockCancelMatching).toHaveBeenCalledOnce();
+      expect(matchState.cancelMatching).toHaveBeenCalledOnce();
     });
 
     it('navigates to library from path step', async () => {
@@ -950,9 +960,8 @@ describe('ManualImportPage', () => {
         renderPage();
         const input = screen.getByPlaceholderText('/path/to/audiobooks');
         await userEvent.type(input, '/audiobooks-old/sub');
-        await waitFor(() =>
-          expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument(),
-        );
+        expect(await screen.findByDisplayValue('/audiobooks-old/sub')).toBeInTheDocument();
+        expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Scan' })).not.toBeDisabled();
       });
 
@@ -960,9 +969,8 @@ describe('ManualImportPage', () => {
         renderPage();
         const input = screen.getByPlaceholderText('/path/to/audiobooks');
         await userEvent.type(input, '/media/podcasts');
-        await waitFor(() =>
-          expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument(),
-        );
+        expect(await screen.findByDisplayValue('/media/podcasts')).toBeInTheDocument();
+        expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Scan' })).not.toBeDisabled();
       });
     });
@@ -1006,9 +1014,8 @@ describe('ManualImportPage', () => {
         mockFavorites = [{ path: '/media/podcasts', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
         renderPage();
         await userEvent.click(screen.getByRole('button', { name: '/media/podcasts' }));
-        await waitFor(() =>
-          expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument(),
-        );
+        expect(await screen.findByDisplayValue('/media/podcasts')).toBeInTheDocument();
+        expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Scan' })).not.toBeDisabled();
       });
     });
@@ -1030,9 +1037,8 @@ describe('ManualImportPage', () => {
         renderPage();
         const input = screen.getByPlaceholderText('/path/to/audiobooks');
         await userEvent.type(input, '/audiobooks/sub');
-        await waitFor(() =>
-          expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument(),
-        );
+        expect(await screen.findByDisplayValue('/audiobooks/sub')).toBeInTheDocument();
+        expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Scan' })).not.toBeDisabled();
       });
 
@@ -1089,9 +1095,8 @@ describe('ManualImportPage', () => {
         await screen.findByText(/This folder is inside your library/);
         await userEvent.clear(input);
         await userEvent.type(input, '/media/podcasts');
-        await waitFor(() =>
-          expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument(),
-        );
+        expect(await screen.findByDisplayValue('/media/podcasts')).toBeInTheDocument();
+        expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Scan' })).not.toBeDisabled();
       });
 
