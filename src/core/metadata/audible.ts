@@ -166,11 +166,8 @@ export class AudibleProvider implements MetadataSearchProvider {
   }
 
   private async request<T>(url: string): Promise<T | null> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
     try {
-      const res = await fetch(url, { signal: controller.signal });
+      const res = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       if (res.status === 429) {
         const retryAfter = res.headers.get('Retry-After');
         const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : DEFAULT_RATE_LIMIT_WAIT_MS;
@@ -186,8 +183,6 @@ export class AudibleProvider implements MetadataSearchProvider {
       if (error instanceof TransientError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       throw new TransientError(this.name, message);
-    } finally {
-      clearTimeout(timeoutId);
     }
   }
 }

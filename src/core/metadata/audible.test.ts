@@ -565,5 +565,18 @@ describe('AudibleProvider', () => {
       expect(result.success).toBe(false);
       expect(result.message).toBeDefined();
     });
+
+    it('test() on timeout returns { success: false, message }', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', async () => {
+          await delay('infinite');
+          return new HttpResponse(null, { status: 200 });
+        }),
+      );
+
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toBeDefined();
+    }, 15000);
   });
 });
