@@ -155,6 +155,41 @@ describe('AudnexusProvider', () => {
     });
   });
 
+  describe('getBook — description fallback', () => {
+    it('uses description field when summary is absent', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.json({
+            asin: 'B000TEST',
+            title: 'Test Book',
+            authors: [{ name: 'Author', asin: 'A001' }],
+            description: 'Description text only',
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B000TEST');
+      expect(book!.description).toBe('Description text only');
+    });
+
+    it('prefers summary over description when both are present', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return HttpResponse.json({
+            asin: 'B000TEST',
+            title: 'Test Book',
+            authors: [{ name: 'Author', asin: 'A001' }],
+            summary: 'Summary text',
+            description: 'Description text',
+          });
+        }),
+      );
+
+      const book = await provider.getBook('B000TEST');
+      expect(book!.description).toBe('Summary text');
+    });
+  });
+
   describe('getAuthor', () => {
     it('returns mapped author metadata', async () => {
       const author = await provider.getAuthor('B001H6UJO8');
@@ -280,6 +315,17 @@ describe('AudnexusProvider', () => {
       const result = await provider.getBook('B000TEST');
       expect(result).toBeNull();
     });
+
+    it('getBook() on timeout throws TransientError', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', async () => {
+          await delay('infinite');
+          return new HttpResponse(null, { status: 200 });
+        }),
+      );
+
+      await expect(provider.getBook('B000TEST')).rejects.toThrow(TransientError);
+    }, 20000);
 
     it('getAuthor() on timeout throws TransientError', async () => {
       server.use(

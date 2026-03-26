@@ -242,6 +242,98 @@ describe('AudibleProvider', () => {
     });
   });
 
+  describe('searchAuthors', () => {
+    it('returns unique authors extracted from book results', async () => {
+      const authors = await provider.searchAuthors('Harry Potter');
+
+      expect(authors).toHaveLength(1);
+      expect(authors[0].name).toBe('J.K. Rowling');
+      expect(authors[0].asin).toBe('B000AP9A6K');
+    });
+
+    it('deduplicates authors appearing across multiple books', async () => {
+      // Default fixture has J.K. Rowling in both products — should only appear once
+      const authors = await provider.searchAuthors('Harry Potter');
+
+      const rowlingEntries = authors.filter((a) => a.name === 'J.K. Rowling');
+      expect(rowlingEntries).toHaveLength(1);
+    });
+
+    it('returns empty array when no books are returned', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({ products: [] });
+        }),
+      );
+
+      const authors = await provider.searchAuthors('unknown');
+      expect(authors).toEqual([]);
+    });
+  });
+
+  describe('searchSeries', () => {
+    it('returns unique series extracted from book results', async () => {
+      const series = await provider.searchSeries('Harry Potter');
+
+      expect(series).toHaveLength(3);
+      const names = series.map((s) => s.name);
+      expect(names).toContain('Harry Potter');
+      expect(names).toContain('Wizarding World Collection');
+      expect(names).toContain('Harry Potter (Full-Cast Editions)');
+    });
+
+    it('returns empty array when books have no series', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [
+              {
+                asin: 'B000TEST',
+                title: 'A Standalone Book',
+                authors: [{ name: 'Some Author', asin: 'A001' }],
+                series: [],
+                language: 'english',
+              },
+            ],
+          });
+        }),
+      );
+
+      const series = await provider.searchSeries('standalone');
+      expect(series).toEqual([]);
+    });
+  });
+
+  describe('language sorting', () => {
+    it('sorts preferred-language books first', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return HttpResponse.json({
+            products: [
+              {
+                asin: 'B001',
+                title: 'French Book',
+                authors: [{ name: 'Author', asin: 'A001' }],
+                language: 'french',
+              },
+              {
+                asin: 'B002',
+                title: 'English Book',
+                authors: [{ name: 'Author', asin: 'A001' }],
+                language: 'english',
+              },
+            ],
+          });
+        }),
+      );
+
+      // Default provider uses 'us' region → preferred language is 'english'
+      const books = await provider.searchBooks('test');
+      expect(books[0].language).toBe('English');
+      expect(books[1].language).toBe('French');
+    });
+  });
+
   describe('test', () => {
     it('returns success when API responds', async () => {
       const result = await provider.test();
@@ -565,5 +657,18 @@ describe('AudibleProvider', () => {
       expect(result.success).toBe(false);
       expect(result.message).toBeDefined();
     });
+
+    it('test() on timeout returns { success: false, message }', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', async () => {
+          await delay('infinite');
+          return new HttpResponse(null, { status: 200 });
+        }),
+      );
+
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toBeDefined();
+    }, 15000);
   });
 });
