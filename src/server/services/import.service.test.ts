@@ -348,23 +348,6 @@ describe('ImportService', () => {
 
       expect(mockAdapter.removeDownload).not.toHaveBeenCalled();
     });
-  });
-
-  describe('getEligibleDownloads', () => {
-    it('returns empty array when no completed downloads', async () => {
-      db.select.mockReturnValueOnce(mockDbChain([]));
-
-      const results = await service.getEligibleDownloads();
-      expect(results).toEqual([]);
-    });
-
-    it('skips downloads with no linked book', async () => {
-      db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookId: null }]));
-
-      const results = await service.getEligibleDownloads();
-      expect(results).toEqual([]);
-    });
-  });
 
   describe('enrichFromAudioFiles (via importDownload)', () => {
     const mockScanResult = {
@@ -607,6 +590,7 @@ describe('ImportService', () => {
 
       await expect(service.importDownload(1)).rejects.toThrow('not found');
     });
+  });
   });
 
   describe('upgrade flow — book already imported', () => {
@@ -1555,6 +1539,20 @@ describe('ImportService', () => {
   });
 
   describe('getEligibleDownloads', () => {
+    it('returns empty array when no completed downloads', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      const results = await service.getEligibleDownloads();
+      expect(results).toEqual([]);
+    });
+
+    it('skips downloads with no linked book', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([{ ...mockDownload, bookId: null }]));
+
+      const results = await service.getEligibleDownloads();
+      expect(results).toEqual([]);
+    });
+
     it('returns empty array when no eligible downloads', async () => {
       db.select.mockReturnValueOnce(mockDbChain([]));
       const result = await service.getEligibleDownloads();
