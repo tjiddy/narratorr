@@ -100,6 +100,7 @@ async function waitForJob(service: BulkOperationService, jobId: string, maxMs = 
     if (!status || status.status === 'completed') return;
     await new Promise(resolve => setTimeout(resolve, 10));
   }
+  throw new Error('waitForJob timed out');
 }
 
 // ===== Count tests =====
