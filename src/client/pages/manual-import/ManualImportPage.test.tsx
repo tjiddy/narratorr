@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within, waitFor } from '@testing-library/react';
+import { render, screen, within, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -775,16 +775,16 @@ describe('ManualImportPage', () => {
     });
 
     it('completing a scan on a favorited path also updates recents', async () => {
-      mockFavorites = [{ path: '/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
+      mockFavorites = [{ path: '/media/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
       mockScanDirectory.mockResolvedValueOnce({
         discoveries: [makeDiscoveredBook()],
         totalFolders: 1,
       } satisfies ScanResult);
       renderPage();
-      await userEvent.click(screen.getByRole('button', { name: '/audiobooks' }));
+      await userEvent.click(screen.getByRole('button', { name: '/media/audiobooks' }));
       await userEvent.click(screen.getByRole('button', { name: 'Scan' }));
       await screen.findByText(/selected/);
-      expect(mockAddRecent).toHaveBeenCalledWith('/audiobooks');
+      expect(mockAddRecent).toHaveBeenCalledWith('/media/audiobooks');
     });
 
     it('settings loading state renders sections without crashing, does not seed library root', () => {
@@ -855,13 +855,13 @@ describe('ManualImportPage', () => {
   describe('folder click clears scan error', () => {
     it('clicking a favorite folder entry clears the scan error', async () => {
       mockScanDirectory.mockRejectedValueOnce(new Error('Permission denied'));
-      mockFavorites = [{ path: '/audiobooks', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
+      mockFavorites = [{ path: '/media', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
       renderPage();
       const input = screen.getByPlaceholderText('/path/to/audiobooks');
       await userEvent.type(input, '/root/audiobooks');
       await userEvent.click(screen.getByRole('button', { name: 'Scan' }));
       await screen.findByText(/Permission denied/);
-      await userEvent.click(screen.getByRole('button', { name: '/audiobooks' }));
+      await userEvent.click(screen.getByRole('button', { name: '/media' }));
       expect(screen.queryByText(/Permission denied/)).not.toBeInTheDocument();
     });
 
@@ -925,6 +925,188 @@ describe('ManualImportPage', () => {
       await userEvent.click(screen.getByRole('button', { name: '/podcasts' }));
       const input = screen.getByPlaceholderText('/path/to/audiobooks') as HTMLInputElement;
       expect(input.value).toBe('/podcasts');
+    });
+  });
+
+  describe('library root guardrail (#134)', () => {
+    describe('path containment detection', () => {
+      it('shows warning and disables scan when scan path equals library root exactly', async () => {
+        renderPage();
+        const input = screen.getByPlaceholderText('/path/to/audiobooks');
+        await userEvent.type(input, '/audiobooks');
+        expect(await screen.findByText(/This folder is inside your library/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Scan' })).toBeDisabled();
+      });
+
+      it('shows warning and disables scan when scan path is a subdirectory of library root', async () => {
+        renderPage();
+        const input = screen.getByPlaceholderText('/path/to/audiobooks');
+        await userEvent.type(input, '/audiobooks/sub');
+        expect(await screen.findByText(/This folder is inside your library/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Scan' })).toBeDisabled();
+      });
+
+      it('does not show warning when scan path shares a prefix but is not inside library root', async () => {
+        renderPage();
+        const input = screen.getByPlaceholderText('/path/to/audiobooks');
+        await userEvent.type(input, '/audiobooks-old/sub');
+        await waitFor(() =>
+          expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument(),
+        );
+        expect(screen.getByRole('button', { name: 'Scan' })).not.toBeDisabled();
+      });
+
+      it('does not show warning when scan path is completely outside library root', async () => {
+        renderPage();
+        const input = screen.getByPlaceholderText('/path/to/audiobooks');
+        await userEvent.type(input, '/media/podcasts');
+        await waitFor(() =>
+          expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument(),
+        );
+        expect(screen.getByRole('button', { name: 'Scan' })).not.toBeDisabled();
+      });
+    });
+
+    describe('trailing slash and normalization', () => {
+      it('detects library containment when library path has no trailing slash and scan path is a subdirectory', async () => {
+        mockGetSettings.mockResolvedValue({ library: { path: '/lib', folderFormat: '{author}/{title}' } });
+        renderPage();
+        const input = screen.getByPlaceholderText('/path/to/audiobooks');
+        await userEvent.type(input, '/lib/sub');
+        expect(await screen.findByText(/This folder is inside your library/)).toBeInTheDocument();
+      });
+
+      it('detects library containment when library path has a trailing slash and scan path is a subdirectory', async () => {
+        mockGetSettings.mockResolvedValue({ library: { path: '/lib/', folderFormat: '{author}/{title}' } });
+        renderPage();
+        const input = screen.getByPlaceholderText('/path/to/audiobooks');
+        await userEvent.type(input, '/lib/sub');
+        expect(await screen.findByText(/This folder is inside your library/)).toBeInTheDocument();
+      });
+    });
+
+    describe('all scan path sources (favorites/history)', () => {
+      it('shows warning and disables scan when user clicks a favorite folder inside the library root', async () => {
+        mockFavorites = [{ path: '/audiobooks/favorites', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
+        renderPage();
+        await userEvent.click(screen.getByRole('button', { name: '/audiobooks/favorites' }));
+        expect(await screen.findByText(/This folder is inside your library/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Scan' })).toBeDisabled();
+      });
+
+      it('shows warning and disables scan when user clicks a recent folder inside the library root', async () => {
+        mockRecents = [{ path: '/audiobooks/recents', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
+        renderPage();
+        await userEvent.click(screen.getByRole('button', { name: '/audiobooks/recents' }));
+        expect(await screen.findByText(/This folder is inside your library/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Scan' })).toBeDisabled();
+      });
+
+      it('does not show warning when user clicks a favorite folder outside the library root', async () => {
+        mockFavorites = [{ path: '/media/podcasts', lastUsedAt: '2026-01-01T00:00:00.000Z' }];
+        renderPage();
+        await userEvent.click(screen.getByRole('button', { name: '/media/podcasts' }));
+        await waitFor(() =>
+          expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument(),
+        );
+        expect(screen.getByRole('button', { name: 'Scan' })).not.toBeDisabled();
+      });
+    });
+
+    describe('Enter-key blocking', () => {
+      it('pressing Enter while path is inside library root does not trigger scan', async () => {
+        renderPage();
+        const input = screen.getByPlaceholderText('/path/to/audiobooks');
+        await userEvent.type(input, '/audiobooks/sub');
+        await screen.findByText(/This folder is inside your library/);
+        fireEvent.keyDown(input, { key: 'Enter' });
+        expect(mockScanDirectory).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('library path not configured or unavailable', () => {
+      it('skips guardrail and enables scan when library path is empty string', async () => {
+        mockGetSettings.mockResolvedValue({ library: { path: '', folderFormat: '{author}/{title}' } });
+        renderPage();
+        const input = screen.getByPlaceholderText('/path/to/audiobooks');
+        await userEvent.type(input, '/audiobooks/sub');
+        await waitFor(() =>
+          expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument(),
+        );
+        expect(screen.getByRole('button', { name: 'Scan' })).not.toBeDisabled();
+      });
+
+      it('skips guardrail and enables scan when settings query has not resolved yet', async () => {
+        mockGetSettings.mockImplementation(() => new Promise(() => {}));
+        renderPage();
+        const input = screen.getByPlaceholderText('/path/to/audiobooks');
+        await userEvent.type(input, '/audiobooks/sub');
+        expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Scan' })).not.toBeDisabled();
+      });
+
+      it('skips guardrail and enables scan when getSettings() rejects with an error', async () => {
+        mockGetSettings.mockRejectedValue(new Error('settings unavailable'));
+        renderPage();
+        const input = screen.getByPlaceholderText('/path/to/audiobooks');
+        await userEvent.type(input, '/audiobooks/sub');
+        expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Scan' })).not.toBeDisabled();
+      });
+    });
+
+    describe('warning UI', () => {
+      it('warning message contains text directing user to Library Import', async () => {
+        renderPage();
+        const input = screen.getByPlaceholderText('/path/to/audiobooks');
+        await userEvent.type(input, '/audiobooks/sub');
+        expect(await screen.findByText(/This folder is inside your library/)).toBeInTheDocument();
+      });
+
+      it('warning message contains a link to /library-import', async () => {
+        renderPage();
+        const input = screen.getByPlaceholderText('/path/to/audiobooks');
+        await userEvent.type(input, '/audiobooks/sub');
+        await screen.findByText(/This folder is inside your library/);
+        const link = screen.getByRole('link', { name: /library import/i });
+        expect(link).toHaveAttribute('href', '/library-import');
+      });
+
+      it('scan button is disabled while warning is shown', async () => {
+        renderPage();
+        const input = screen.getByPlaceholderText('/path/to/audiobooks');
+        await userEvent.type(input, '/audiobooks/sub');
+        await screen.findByText(/This folder is inside your library/);
+        expect(screen.getByRole('button', { name: 'Scan' })).toBeDisabled();
+      });
+    });
+
+    describe('state transitions', () => {
+      it('warning disappears and scan re-enables when path changes from inside library to outside', async () => {
+        renderPage();
+        const input = screen.getByPlaceholderText('/path/to/audiobooks');
+        await userEvent.type(input, '/audiobooks/sub');
+        await screen.findByText(/This folder is inside your library/);
+        await userEvent.clear(input);
+        await userEvent.type(input, '/media/podcasts');
+        await waitFor(() =>
+          expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument(),
+        );
+        expect(screen.getByRole('button', { name: 'Scan' })).not.toBeDisabled();
+      });
+
+      it('warning appears and scan disables when path changes from outside library to inside', async () => {
+        renderPage();
+        const input = screen.getByPlaceholderText('/path/to/audiobooks');
+        await userEvent.type(input, '/media/podcasts');
+        await waitFor(() =>
+          expect(screen.queryByText(/This folder is inside your library/)).not.toBeInTheDocument(),
+        );
+        await userEvent.clear(input);
+        await userEvent.type(input, '/audiobooks/sub');
+        expect(await screen.findByText(/This folder is inside your library/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Scan' })).toBeDisabled();
+      });
     });
   });
 });

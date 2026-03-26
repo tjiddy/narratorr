@@ -11,8 +11,8 @@ describe('isPathInsideLibrary', () => {
       expect(isPathInsideLibrary('/audiobooks/author/title', '/audiobooks')).toBe(true);
     });
 
-    it('returns false when scan path exactly equals library root', () => {
-      expect(isPathInsideLibrary('/audiobooks', '/audiobooks')).toBe(false);
+    it('returns true when scan path exactly equals library root (scanning root re-discovers managed books)', () => {
+      expect(isPathInsideLibrary('/audiobooks', '/audiobooks')).toBe(true);
     });
 
     it('returns false when scan path is completely outside library root', () => {

@@ -19,13 +19,15 @@ export function isPathInsideLibrary(scanPath: string, libraryPath: string): bool
   const rootSegments = normalizeSegments(libraryPath);
   const scanSegments = normalizeSegments(scanPath);
 
-  // Must have more segments to be strictly inside
-  if (scanSegments.length <= rootSegments.length) return false;
+  // Must have same or more segments to be equal or inside
+  if (scanSegments.length < rootSegments.length) return false;
 
   // All root segments must match the leading scan segments
   for (let i = 0; i < rootSegments.length; i++) {
     if (rootSegments[i] !== scanSegments[i]) return false;
   }
 
+  // equal (scanSegments.length === rootSegments.length) counts as blocked —
+  // scanning the library root itself would rediscover already-managed books
   return true;
 }
