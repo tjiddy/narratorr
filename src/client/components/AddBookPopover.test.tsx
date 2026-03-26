@@ -405,4 +405,17 @@ describe('AddBookPopover', () => {
       expect(document.body.querySelector('[data-popover-portal]')).toBeNull();
     });
   });
+
+  describe('z-index scale', () => {
+    it('portal container has z-40 class (popover scale)', async () => {
+      const user = userEvent.setup();
+      renderPopover();
+      await user.click(screen.getByRole('button', { name: /add/i }));
+      await waitFor(() => {
+        const portal = document.body.querySelector('[data-popover-portal]') as HTMLElement;
+        expect(portal).not.toBeNull();
+        expect(portal).toHaveClass('z-40');
+      });
+    });
+  });
 });

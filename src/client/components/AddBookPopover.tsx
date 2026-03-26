@@ -123,7 +123,7 @@ export function AddBookPopover({ onAdd, isPending }: AddBookPopoverProps) {
         <div
           ref={panelRef}
           data-popover-portal
-          className="fixed z-50 w-64 glass-card rounded-xl p-4 shadow-lg border border-border animate-fade-in-up"
+          className="fixed z-40 w-64 glass-card rounded-xl p-4 shadow-lg border border-border animate-fade-in-up"
           style={{ top: `${position.top}px`, left: `${position.left}px` }}
         >
           <div className="space-y-3">

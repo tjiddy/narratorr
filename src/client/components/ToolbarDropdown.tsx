@@ -71,7 +71,7 @@ export function ToolbarDropdown({
   return createPortal(
     <div
       ref={panelRef}
-      className="fixed z-50"
+      className="fixed z-30"
       style={{ top: `${position.top}px`, left: `${position.left}px` }}
     >
       {children}

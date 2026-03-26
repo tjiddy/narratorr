@@ -75,7 +75,7 @@ export function BulkActionToolbar({
             <ChevronDownIcon className="w-3 h-3" />
           </button>
           {showStatusMenu && (
-            <div className="absolute top-full left-0 mt-1 w-32 glass-card rounded-lg shadow-lg border border-border/50 overflow-hidden z-50">
+            <div className="absolute top-full left-0 mt-1 w-32 glass-card rounded-lg shadow-lg border border-border/50 overflow-hidden z-30">
               <button
                 type="button"
                 onClick={() => { onSetStatus('wanted', 'Wanted'); setShowStatusMenu(false); }}
