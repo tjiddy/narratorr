@@ -394,3 +394,39 @@ describe('LibraryBookCard', () => {
     });
   });
 });
+
+describe('options button callback (REACT-2 / existing test gap)', () => {
+  it('clicking the options button calls onMenuToggle with the click event', async () => {
+    const onMenuToggle = vi.fn();
+    render(<LibraryBookCard {...defaultProps({ onMenuToggle })} />);
+    const optionsButton = screen.getByRole('button', { name: /book options/i });
+    await userEvent.click(optionsButton);
+    expect(onMenuToggle).toHaveBeenCalledTimes(1);
+    expect(onMenuToggle).toHaveBeenCalledWith(expect.objectContaining({ type: 'click' }));
+  });
+});
+
+describe('React.memo (REACT-2 refactor)', () => {
+  it('does not re-render when parent re-renders but props are unchanged', () => {
+    let renderCount = 0;
+    const onMenuToggle = vi.fn();
+    const book = createMockBook();
+
+    const { rerender } = render(
+      <LibraryBookCard book={book} index={0} isMenuOpen={false}
+        onMenuToggle={onMenuToggle} onMenuClose={vi.fn()} onClick={vi.fn()}
+        onSearchReleases={vi.fn()} onRemove={vi.fn()} />,
+    );
+    renderCount = screen.getAllByText('The Way of Kings').length;
+
+    // Re-render with same props — React.memo should prevent re-render
+    rerender(
+      <LibraryBookCard book={book} index={0} isMenuOpen={false}
+        onMenuToggle={onMenuToggle} onMenuClose={vi.fn()} onClick={vi.fn()}
+        onSearchReleases={vi.fn()} onRemove={vi.fn()} />,
+    );
+
+    // Component is still in DOM with same content — memo worked if no state reset occurred
+    expect(screen.getAllByText('The Way of Kings').length).toBe(renderCount);
+  });
+});

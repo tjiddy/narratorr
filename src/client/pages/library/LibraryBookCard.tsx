@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { useImageError } from '@/hooks/useImageError';
 import type { BookWithAuthor } from '@/lib/api';
 import { bookStatusConfig } from '@/lib/status';
@@ -6,7 +7,7 @@ import { BookOpenIcon, MoreVerticalIcon, BrokenLinkIcon } from '@/components/ico
 import { BookContextMenu } from './BookContextMenu.js';
 
 // eslint-disable-next-line complexity -- card has inherent conditional rendering: cover, missing chip, collapsed badge, status bar, menu, hover expand
-export function LibraryBookCard({
+export const LibraryBookCard = memo(function LibraryBookCard({
   book,
   index,
   collapsedCount,
@@ -132,4 +133,4 @@ export function LibraryBookCard({
       </div>
     </div>
   );
-}
+});
