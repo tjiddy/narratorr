@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #133 Library Import — scan and register existing books — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #136
+
+### Metrics
+- Files changed: 13 | Tests added/modified: 6
+- Quality gate runs: 2 (pass on attempt 2)
+- Fix iterations: 3 (fake timers conflict, lint violations, Select All test logic)
+- Context compactions: 1 (mid-implementation, resumed cleanly)
+
+### Workflow experience
+- What went smoothly: Red/green TDD per module, blast-radius sibling updates, component extension with optional props
+- Friction / issues encountered: TanStack Query + fake timers blocked all tests globally until removed; startMatchJob.mockRejectedValue needed to unblock Register button in test (isMatching stays false); lint violations around consistent-type-imports, max-lines-per-function, unused vars required extra fix commit
+
+### Token efficiency
+- Highest-token actions: Explore subagent for self-review + coverage, reading 11 source files for implementation planning
+- Avoidable waste: Could have known upfront that fake timers conflict with TanStack Query — this caused a full retry cycle
+- Suggestions: Check for vi.useFakeTimers() in any test file touching TanStack Query hooks before running tests
+
+### Infrastructure gaps
+- Repeated workarounds: gh pr create fails with 401 when GH_TOKEN is stale — must use withTempFile + gh() from scripts/lib.ts instead of bare gh CLI
+- Missing tooling / config: None new
+- Unresolved debt: handleRetry reset of prevMatchCountRef is subtle (see debt.md)
+
+### Wish I Had Known
+1. vi.useFakeTimers() globally blocks TanStack Query — all useQuery/useMutation calls hang. Never use global fake timers in files with TanStack Query.
+2. The Register button is disabled while isMatching=true — mock startMatchJob to reject immediately in tests so the button is enabled and clickable.
+3. gh pr create needs withTempFile + gh() from scripts/lib.ts (not bare gh CLI) to get a valid token — bare gh loses the GH_TOKEN env var set by the script.
+
 ## #124 Library toolbar dropdowns — keyboard navigation and focus management — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #132

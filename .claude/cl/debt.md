@@ -19,3 +19,5 @@
 - **src/client/components/SSEProvider**: No dedicated test for subscription/unsubscription lifecycle or connection error handling — integration is exercised indirectly via Layout tests only (discovered in #108)
 
 - **src/client/pages/settings/ImportSettingsSection.tsx**: `importFormSchema` (local to component, lines 13-17) duplicates `importSettingsSchema` from shared schemas — must be kept in sync manually when new fields are added. Each new boolean setting requires editing both the shared schema and the component's local form schema. (discovered in #118)
+
+- **src/client/pages/library-import/useLibraryImport.ts**: `handleRetry()` resets `prevMatchCountRef.current = 0` but does not call `startMatching()` after new scan results arrive — retry flow relies on `scanMutation.onSuccess` to call `startMatching()`, which works, but the explicit reset is subtle and undocumented. (discovered in #133)
