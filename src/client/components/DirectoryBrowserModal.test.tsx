@@ -172,6 +172,23 @@ describe('DirectoryBrowserModal', () => {
     });
   });
 
+  describe('Windows path parsing', () => {
+    it('parses Windows absolute path C:\\Users\\Author\\Book into correct breadcrumbs', async () => {
+      renderModal({ initialPath: 'C:\\Users\\Author\\Book' });
+      await screen.findByText('Users');
+      expect(screen.getByText('Author')).toBeInTheDocument();
+      expect(screen.getByText('Book')).toBeInTheDocument();
+      expect(screen.getByText('C:/')).toBeInTheDocument();
+    });
+
+    it('normalizes mixed separators (C:\\Users/Author) correctly', async () => {
+      renderModal({ initialPath: 'C:\\Users/Author' });
+      await screen.findByText('Users');
+      expect(screen.getByText('Author')).toBeInTheDocument();
+      expect(screen.getByText('C:/')).toBeInTheDocument();
+    });
+  });
+
   describe('modal opacity', () => {
     it('backdrop uses a sufficiently opaque background class (bg-black/80 or darker, not bg-black/60)', async () => {
       renderModal();
