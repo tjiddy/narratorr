@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #97 Fill manual import component test gaps — 2026-03-26
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #128
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 7 new tests (2 + 4 + 1)
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The spec elaboration identified all the right gaps; codebase exploration gave exact line numbers for each AC target; all 7 tests passed on first write with no production changes
+- Friction / issues encountered: `node scripts/git-push.ts` failed with "Invalid username or token" — had to use inline GH_TOKEN in URL directly; spec review took 3 rounds (5 total AC removals/corrections) before approval, which was more overhead than the ~15-line implementation
+
+### Token efficiency
+- Highest-token actions: 3 Explore subagent calls (elaborate, plan, self-review) — necessary but heavyweight for a trivial test-only issue
+- Avoidable waste: The spec review ping-pong (3 rounds) cost more tokens than the implementation; more thorough initial elaboration would have caught the already-covered ACs in one pass
+- Suggestions: For "fill test gaps" issues, always grep existing test files for exact coverage before writing AC items — saves review cycles
+
+### Infrastructure gaps
+- Repeated workarounds: `node scripts/git-push.ts` fails with token errors — workaround is inline GH_TOKEN in URL (same issue as #79)
+- Missing tooling / config: None new
+- Unresolved debt: Row background classes and showPencilAlways visibility gaps remain (CSS-only, no testable behavioral contract)
+
+### Wish I'd Known
+1. `alternatives` prop directly seeds `useAudnexusSearch`'s initial state — no need to mock `searchMetadata` for slice-boundary tests; the test is 3 lines instead of 15
+2. Already-covered ACs (`ImportCard` confidence labels at :57-69, select/deselect at :146-153) — a quick grep before writing the spec would have saved 2 review rounds
+3. Breadcrumb tests need `await screen.findByText()` even for synchronously-computed values — React's test renderer still needs a tick after mount within providers
+
 
 ## #111 Add confirmation modals to Rename and Re-tag file actions — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
