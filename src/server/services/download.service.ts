@@ -23,6 +23,16 @@ export type RetryResult =
   | { status: 'no_candidates' }
   | { status: 'retry_error'; error: string };
 
+export class DownloadError extends Error {
+  constructor(
+    message: string,
+    public code: 'NOT_FOUND' | 'INVALID_STATUS' | 'NO_BOOK_LINKED',
+  ) {
+    super(message);
+    this.name = 'DownloadError';
+  }
+}
+
 export class DownloadService {
   private retrySearchDeps?: RetrySearchDeps;
 
@@ -350,9 +360,9 @@ export class DownloadService {
 
   async retry(id: number): Promise<RetryResult> {
     const download = await this.getById(id);
-    if (!download) throw new Error(`Download ${id} not found`);
-    if (download.status !== 'failed') throw new Error(`Download ${id} is not in failed state`);
-    if (!download.bookId) throw new Error(`Download ${id} has no book linked`);
+    if (!download) throw new DownloadError(`Download ${id} not found`, 'NOT_FOUND');
+    if (download.status !== 'failed') throw new DownloadError(`Download ${id} is not in failed state`, 'INVALID_STATUS');
+    if (!download.bookId) throw new DownloadError(`Download ${id} has no book linked`, 'NO_BOOK_LINKED');
 
     if (!this.retrySearchDeps) {
       throw new Error('Retry search dependencies not configured');

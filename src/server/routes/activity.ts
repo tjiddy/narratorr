@@ -128,24 +128,16 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     async (request, reply) => {
       const { id } = request.params;
 
-      try {
-        request.log.info({ id }, 'Download retry');
-        const result = await downloadOrchestrator.retry(id);
+      request.log.info({ id }, 'Download retry');
+      const result = await downloadOrchestrator.retry(id);
 
-        switch (result.status) {
-          case 'retried':
-            return await reply.status(201).send(result.download);
-          case 'no_candidates':
-            return await reply.status(200).send({ status: 'no_candidates' });
-          case 'retry_error':
-            return await reply.status(200).send({ status: 'retry_error' });
-        }
-      } catch (error) {
-        request.log.error({ id, error }, 'Retry failed');
-        const message = getErrorMessage(error);
-        if (message.includes('not found') || message.includes('no book linked')) return reply.status(404).send({ error: message });
-        if (message.includes('not in failed state')) return reply.status(400).send({ error: message });
-        return reply.status(500).send({ error: message });
+      switch (result.status) {
+        case 'retried':
+          return await reply.status(201).send(result.download);
+        case 'no_candidates':
+          return await reply.status(200).send({ status: 'no_candidates' });
+        case 'retry_error':
+          return await reply.status(200).send({ status: 'retry_error' });
       }
     },
   );

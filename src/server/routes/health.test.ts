@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, type Mock } 
 import { createTestApp, createMockServices, resetMockServices } from '../__tests__/helpers.js';
 import type { Services } from './index.js';
 import type { Db } from '../../db/index.js';
+import { TaskRegistryError } from '../services/task-registry.js';
 
 vi.mock('fs/promises', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports
@@ -131,14 +132,14 @@ describe('Task routes', () => {
     });
 
     it('returns 404 for invalid task name', async () => {
-      (services.taskRegistry.runTask as Mock).mockRejectedValue(new Error('Task "nonexistent" not found'));
+      (services.taskRegistry.runTask as Mock).mockRejectedValue(new TaskRegistryError('Task "nonexistent" not found', 'NOT_FOUND'));
 
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/nonexistent/run' });
       expect(res.statusCode).toBe(404);
     });
 
     it('returns 409 when task is already running', async () => {
-      (services.taskRegistry.runTask as Mock).mockRejectedValue(new Error('Task "monitor" is already running'));
+      (services.taskRegistry.runTask as Mock).mockRejectedValue(new TaskRegistryError('Task "monitor" is already running', 'ALREADY_RUNNING'));
 
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/monitor/run' });
       expect(res.statusCode).toBe(409);
@@ -149,7 +150,35 @@ describe('Task routes', () => {
 
       const res = await app.inject({ method: 'POST', url: '/api/system/tasks/monitor/run' });
       expect(res.statusCode).toBe(500);
-      expect(JSON.parse(res.payload)).toEqual({ error: 'Database connection lost' });
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
+    });
+
+    // #149 — typed error routing via plugin (ERR-1)
+    it('returns 404 when task registry throws TaskRegistryError NOT_FOUND (plugin-routed)', async () => {
+      (services.taskRegistry.runTask as Mock).mockRejectedValue(new TaskRegistryError('Task "nonexistent" not found', 'NOT_FOUND'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/system/tasks/nonexistent/run' });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Task "nonexistent" not found' });
+    });
+
+    it('returns 409 when task registry throws TaskRegistryError ALREADY_RUNNING (plugin-routed)', async () => {
+      (services.taskRegistry.runTask as Mock).mockRejectedValue(new TaskRegistryError('Task "monitor" is already running', 'ALREADY_RUNNING'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/system/tasks/monitor/run' });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Task "monitor" is already running' });
+    });
+
+    it('returns 500 with body { error: "Internal server error" } when unrelated error message contains "not found" substring (regression: proves plugin bubbling not local catch)', async () => {
+      (services.taskRegistry.runTask as Mock).mockRejectedValue(new Error('Config key not found in env'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/system/tasks/monitor/run' });
+
+      expect(res.statusCode).toBe(500);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
     });
   });
 });
