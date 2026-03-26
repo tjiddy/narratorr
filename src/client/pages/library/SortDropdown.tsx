@@ -136,7 +136,7 @@ export function SortDropdown({ sortField, onSortFieldChange, sortDirection, onSo
                 type="button"
                 onClick={() => handleSelect(option)}
                 className={`
-                  flex items-center w-full px-3 py-2 text-xs text-left transition-colors focus:outline-none
+                  flex items-center w-full px-3 py-2 text-xs text-left transition-colors focus-ring
                   ${isActive
                     ? 'bg-muted/80 text-foreground font-medium'
                     : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
