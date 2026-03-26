@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SortDropdown } from './SortDropdown';
 
@@ -114,6 +114,23 @@ describe('SortDropdown', () => {
 
       await user.click(screen.getByTestId('outside'));
       expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    });
+
+    it('clicking outside (non-interactive) returns focus to the trigger button', async () => {
+      const user = userEvent.setup();
+      render(
+        <div>
+          <SortDropdown {...defaultProps()} />
+          <div data-testid="outside" />
+        </div>,
+      );
+
+      const trigger = screen.getByRole('button', { name: /date added/i });
+      await user.click(trigger);
+      expect(screen.getByRole('listbox')).toBeInTheDocument();
+
+      fireEvent.mouseDown(screen.getByTestId('outside'));
+      expect(trigger).toHaveFocus();
     });
   });
 

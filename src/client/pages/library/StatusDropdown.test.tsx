@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StatusDropdown } from './StatusDropdown';
 import type { StatusFilter } from './helpers';
@@ -127,6 +127,27 @@ describe('StatusDropdown', () => {
 
       await user.keyboard('{Escape}');
       expect(screen.queryByRole('option', { name: /wanted/i })).not.toBeInTheDocument();
+    });
+
+    it('clicking outside (non-interactive) returns focus to the trigger button', async () => {
+      const user = userEvent.setup();
+      render(
+        <div>
+          <StatusDropdown
+            statusFilter="all"
+            onStatusFilterChange={vi.fn()}
+            statusCounts={defaultCounts}
+          />
+          <div data-testid="outside" />
+        </div>,
+      );
+
+      const trigger = screen.getByRole('button', { name: /all/i });
+      await user.click(trigger);
+      expect(screen.getByRole('option', { name: /wanted/i })).toBeInTheDocument();
+
+      fireEvent.mouseDown(screen.getByTestId('outside'));
+      expect(trigger).toHaveFocus();
     });
 
     it('renders panel into document.body portal', async () => {

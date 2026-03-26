@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter, useLocation } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { OverflowMenu } from './OverflowMenu';
 
@@ -86,6 +88,23 @@ describe('OverflowMenu', () => {
 
       await user.click(screen.getByTestId('outside'));
       expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    });
+
+    it('clicking outside (non-interactive) returns focus to the trigger button', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <div>
+          <OverflowMenu {...defaultProps()} />
+          <div data-testid="outside" />
+        </div>,
+      );
+
+      const trigger = screen.getByRole('button', { name: /more actions/i });
+      await user.click(trigger);
+      expect(screen.getByRole('menu')).toBeInTheDocument();
+
+      fireEvent.mouseDown(screen.getByTestId('outside'));
+      expect(trigger).toHaveFocus();
     });
 
     it('renders menu into document.body portal', async () => {
@@ -224,6 +243,24 @@ describe('OverflowMenu', () => {
       expect(screen.getByRole('menuitem', { name: /import/i })).toHaveFocus();
     });
 
+    it('when both leading items are disabled, ArrowDown/Up wraps among Import and Remove Missing', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <OverflowMenu
+          {...defaultProps({ isSearchingAllWanted: true, isRescanning: true, missingCount: 3 })}
+        />,
+      );
+      await user.click(screen.getByRole('button', { name: /more actions/i }));
+      // First enabled item is Import (Search Wanted and Rescan are disabled)
+      expect(screen.getByRole('menuitem', { name: /import/i })).toHaveFocus();
+      await user.keyboard('{ArrowDown}'); // Import → Remove Missing
+      expect(screen.getByRole('menuitem', { name: /remove missing/i })).toHaveFocus();
+      await user.keyboard('{ArrowDown}'); // Remove Missing → wraps → Import
+      expect(screen.getByRole('menuitem', { name: /import/i })).toHaveFocus();
+      await user.keyboard('{ArrowUp}'); // Import → wraps → Remove Missing
+      expect(screen.getByRole('menuitem', { name: /remove missing/i })).toHaveFocus();
+    });
+
     it('ArrowDown moves focus to the next enabled menu item', async () => {
       const user = userEvent.setup();
       renderWithProviders(<OverflowMenu {...defaultProps()} />);
@@ -315,15 +352,29 @@ describe('OverflowMenu', () => {
       expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     });
 
-    it('Enter on the focused Import link activates the link (calls click on it)', async () => {
+    it('Enter on the focused Import link navigates to /import', async () => {
       const user = userEvent.setup();
-      renderWithProviders(<OverflowMenu {...defaultProps()} />);
+
+      function LocationTracker() {
+        const { pathname } = useLocation();
+        return <span data-testid="pathname">{pathname}</span>;
+      }
+
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={['/library']}>
+            <LocationTracker />
+            <OverflowMenu {...defaultProps()} />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+
       await user.click(screen.getByRole('button', { name: /more actions/i }));
       await user.keyboard('{ArrowDown}'); // Rescan
       await user.keyboard('{ArrowDown}'); // Import
       await user.keyboard('{Enter}');
-      // Import link's onClick calls setOpen(false) — menu closes
-      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+      expect(screen.getByTestId('pathname')).toHaveTextContent('/import');
     });
 
     it('Space on the focused Import link does NOT activate navigation', async () => {
