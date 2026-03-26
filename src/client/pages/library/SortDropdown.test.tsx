@@ -284,5 +284,16 @@ describe('SortDropdown', () => {
       expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
       expect(trigger).toHaveFocus();
     });
+
+    it('closing via trigger after ArrowDown resets focus so reopen starts at the first option', async () => {
+      const user = userEvent.setup();
+      render(<SortDropdown {...defaultProps()} />);
+      const trigger = screen.getByRole('button', { name: /date added/i });
+      await user.click(trigger);
+      await user.keyboard('{ArrowDown}'); // move off first item
+      await user.click(trigger); // close via trigger
+      await user.click(trigger); // reopen
+      expect(screen.getAllByRole('option')[0]).toHaveFocus();
+    });
   });
 });

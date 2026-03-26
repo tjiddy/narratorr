@@ -388,6 +388,19 @@ describe('StatusDropdown', () => {
       await user.click(screen.getByRole('option', { name: /wanted/i }));
       expect(trigger).toHaveFocus();
     });
+
+    it('closing via trigger after ArrowDown resets focus so reopen starts at the first option', async () => {
+      const user = userEvent.setup();
+      render(
+        <StatusDropdown statusFilter="all" onStatusFilterChange={vi.fn()} statusCounts={defaultCounts} />,
+      );
+      const trigger = screen.getByRole('button', { name: /all.*25/i });
+      await user.click(trigger);
+      await user.keyboard('{ArrowDown}'); // move off first item
+      await user.click(trigger); // close via trigger
+      await user.click(trigger); // reopen
+      expect(screen.getAllByRole('option')[0]).toHaveFocus();
+    });
   });
 
   describe('status aggregation', () => {

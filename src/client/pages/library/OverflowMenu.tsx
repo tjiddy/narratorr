@@ -83,7 +83,7 @@ export function OverflowMenu({
         ref={triggerRef}
         type="button"
         aria-label="More actions"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => open ? handleClose() : setOpen(true)}
         className="flex items-center justify-center w-8 h-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all duration-200 focus-ring"
       >
         <MoreVerticalIcon className="w-4 h-4" />

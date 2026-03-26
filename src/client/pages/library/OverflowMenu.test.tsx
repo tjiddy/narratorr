@@ -426,5 +426,16 @@ describe('OverflowMenu', () => {
       await user.click(screen.getByRole('menuitem', { name: /rescan/i }));
       expect(trigger).toHaveFocus();
     });
+
+    it('closing via trigger after ArrowDown resets focus so reopen starts at the first enabled item', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<OverflowMenu {...defaultProps()} />);
+      const trigger = screen.getByRole('button', { name: /more actions/i });
+      await user.click(trigger);
+      await user.keyboard('{ArrowDown}'); // move to Rescan (index 1)
+      await user.click(trigger); // close via trigger
+      await user.click(trigger); // reopen
+      expect(screen.getByRole('menuitem', { name: /search wanted/i })).toHaveFocus();
+    });
   });
 });

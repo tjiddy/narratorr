@@ -68,7 +68,7 @@ export function StatusDropdown({
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => open ? handleClose() : setOpen(true)}
         aria-label={`${currentTab.label} (${currentCount})`}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all duration-200 focus-ring"
       >
