@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { MoreVerticalIcon, SearchIcon, FolderIcon, RefreshIcon, LoadingSpinner, TrashIcon } from '@/components/icons';
 import { ToolbarDropdown } from '@/components/ToolbarDropdown';
@@ -19,12 +19,63 @@ export function OverflowMenu({
   isRescanning: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [focusIndex, setFocusIndex] = useState(0);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  function getFocusableItems(): HTMLElement[] {
+    return Array.from(
+      menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])') ?? [],
+    );
+  }
+
+  // Focus the item at focusIndex when open, or when focusIndex changes while open
+  useEffect(() => {
+    if (!open) return;
+    getFocusableItems()[focusIndex]?.focus();
+  }, [focusIndex, open]);
+
+  function handleClose() {
+    setFocusIndex(0);
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
 
   function handleAction(fn: () => void) {
     fn();
+    setFocusIndex(0);
     setOpen(false);
+    triggerRef.current?.focus();
   }
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const items = Array.from(
+      menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])') ?? [],
+    );
+    const count = items.length;
+    if (count === 0) return;
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        setFocusIndex((i) => (i + 1) % count);
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setFocusIndex((i) => (i - 1 + count) % count);
+        break;
+      case 'Enter':
+        e.preventDefault();
+        items[focusIndex]?.click();
+        break;
+      case ' ':
+        e.preventDefault();
+        if (items[focusIndex]?.tagName !== 'A') {
+          items[focusIndex]?.click();
+        }
+        break;
+    }
+  }, [focusIndex]); // menuRef is a stable ref, not needed in deps
 
   return (
     <div className="relative">
@@ -32,15 +83,17 @@ export function OverflowMenu({
         ref={triggerRef}
         type="button"
         aria-label="More actions"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => open ? handleClose() : setOpen(true)}
         className="flex items-center justify-center w-8 h-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all duration-200 focus-ring"
       >
         <MoreVerticalIcon className="w-4 h-4" />
       </button>
 
-      <ToolbarDropdown triggerRef={triggerRef} open={open} onClose={() => setOpen(false)}>
+      <ToolbarDropdown triggerRef={triggerRef} open={open} onClose={handleClose}>
         <div
+          ref={menuRef}
           role="menu"
+          onKeyDown={handleKeyDown}
           className="min-w-[160px] glass-card rounded-xl overflow-hidden shadow-lg border border-border animate-fade-in"
         >
           <button

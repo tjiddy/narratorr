@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StatusDropdown } from './StatusDropdown';
 import type { StatusFilter } from './helpers';
@@ -129,6 +129,27 @@ describe('StatusDropdown', () => {
       expect(screen.queryByRole('option', { name: /wanted/i })).not.toBeInTheDocument();
     });
 
+    it('clicking outside (non-interactive) returns focus to the trigger button', async () => {
+      const user = userEvent.setup();
+      render(
+        <div>
+          <StatusDropdown
+            statusFilter="all"
+            onStatusFilterChange={vi.fn()}
+            statusCounts={defaultCounts}
+          />
+          <div data-testid="outside" />
+        </div>,
+      );
+
+      const trigger = screen.getByRole('button', { name: /all/i });
+      await user.click(trigger);
+      expect(screen.getByRole('option', { name: /wanted/i })).toBeInTheDocument();
+
+      fireEvent.mouseDown(screen.getByTestId('outside'));
+      expect(trigger).toHaveFocus();
+    });
+
     it('renders panel into document.body portal', async () => {
       const user = userEvent.setup();
       render(
@@ -228,6 +249,157 @@ describe('StatusDropdown', () => {
       await user.click(screen.getByRole('button', { name: /wanted/i }));
 
       expect(screen.getByRole('option', { name: /wanted/i })).toHaveAttribute('aria-selected', 'true');
+    });
+  });
+
+  describe('keyboard navigation', () => {
+    it('focuses the first option when dropdown opens', async () => {
+      const user = userEvent.setup();
+      render(
+        <StatusDropdown statusFilter="all" onStatusFilterChange={vi.fn()} statusCounts={defaultCounts} />,
+      );
+      await user.click(screen.getByRole('button', { name: /all.*25/i }));
+      const options = screen.getAllByRole('option');
+      expect(options[0]).toHaveFocus();
+    });
+
+    it('ArrowDown moves focus to the next option', async () => {
+      const user = userEvent.setup();
+      render(
+        <StatusDropdown statusFilter="all" onStatusFilterChange={vi.fn()} statusCounts={defaultCounts} />,
+      );
+      await user.click(screen.getByRole('button', { name: /all.*25/i }));
+      await user.keyboard('{ArrowDown}');
+      const options = screen.getAllByRole('option');
+      expect(options[1]).toHaveFocus();
+    });
+
+    it('ArrowDown wraps from the last option back to the first', async () => {
+      const user = userEvent.setup();
+      render(
+        <StatusDropdown statusFilter="all" onStatusFilterChange={vi.fn()} statusCounts={defaultCounts} />,
+      );
+      await user.click(screen.getByRole('button', { name: /all.*25/i }));
+      // 6 options (index 0-5); 5 presses from 0 reaches 5 (last)
+      for (let i = 0; i < 5; i++) await user.keyboard('{ArrowDown}');
+      await user.keyboard('{ArrowDown}'); // wraps to 0
+      const options = screen.getAllByRole('option');
+      expect(options[0]).toHaveFocus();
+    });
+
+    it('ArrowUp moves focus to the previous option', async () => {
+      const user = userEvent.setup();
+      render(
+        <StatusDropdown statusFilter="all" onStatusFilterChange={vi.fn()} statusCounts={defaultCounts} />,
+      );
+      await user.click(screen.getByRole('button', { name: /all.*25/i }));
+      await user.keyboard('{ArrowDown}'); // index 1
+      await user.keyboard('{ArrowUp}');   // back to index 0
+      const options = screen.getAllByRole('option');
+      expect(options[0]).toHaveFocus();
+    });
+
+    it('ArrowUp wraps from the first option back to the last', async () => {
+      const user = userEvent.setup();
+      render(
+        <StatusDropdown statusFilter="all" onStatusFilterChange={vi.fn()} statusCounts={defaultCounts} />,
+      );
+      await user.click(screen.getByRole('button', { name: /all.*25/i }));
+      await user.keyboard('{ArrowUp}'); // wraps to index 5 (last)
+      const options = screen.getAllByRole('option');
+      expect(options[5]).toHaveFocus();
+    });
+
+    it('Enter on a focused option calls onStatusFilterChange with the correct value', async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(
+        <StatusDropdown statusFilter="all" onStatusFilterChange={onChange} statusCounts={defaultCounts} />,
+      );
+      await user.click(screen.getByRole('button', { name: /all.*25/i }));
+      await user.keyboard('{ArrowDown}'); // focus 'wanted' (index 1)
+      await user.keyboard('{Enter}');
+      expect(onChange).toHaveBeenCalledWith('wanted');
+    });
+
+    it('Enter on a focused option closes the dropdown', async () => {
+      const user = userEvent.setup();
+      render(
+        <StatusDropdown statusFilter="all" onStatusFilterChange={vi.fn()} statusCounts={defaultCounts} />,
+      );
+      await user.click(screen.getByRole('button', { name: /all.*25/i }));
+      await user.keyboard('{Enter}');
+      expect(screen.queryByRole('option')).not.toBeInTheDocument();
+    });
+
+    it('Space on a focused option calls onStatusFilterChange with the correct value', async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(
+        <StatusDropdown statusFilter="all" onStatusFilterChange={onChange} statusCounts={defaultCounts} />,
+      );
+      await user.click(screen.getByRole('button', { name: /all.*25/i }));
+      await user.keyboard('{ArrowDown}'); // focus 'wanted'
+      await user.keyboard(' ');
+      expect(onChange).toHaveBeenCalledWith('wanted');
+    });
+
+    it('Space on a focused option closes the dropdown', async () => {
+      const user = userEvent.setup();
+      render(
+        <StatusDropdown statusFilter="all" onStatusFilterChange={vi.fn()} statusCounts={defaultCounts} />,
+      );
+      await user.click(screen.getByRole('button', { name: /all.*25/i }));
+      await user.keyboard(' ');
+      expect(screen.queryByRole('option')).not.toBeInTheDocument();
+    });
+
+    it('after keyboard selection, focus returns to the trigger button', async () => {
+      const user = userEvent.setup();
+      render(
+        <StatusDropdown statusFilter="all" onStatusFilterChange={vi.fn()} statusCounts={defaultCounts} />,
+      );
+      const trigger = screen.getByRole('button', { name: /all.*25/i });
+      await user.click(trigger);
+      await user.keyboard('{Enter}');
+      expect(trigger).toHaveFocus();
+    });
+
+    it('Escape closes the dropdown and returns focus to the trigger button', async () => {
+      const user = userEvent.setup();
+      render(
+        <StatusDropdown statusFilter="all" onStatusFilterChange={vi.fn()} statusCounts={defaultCounts} />,
+      );
+      const trigger = screen.getByRole('button', { name: /all.*25/i });
+      await user.click(trigger);
+      expect(screen.getByRole('listbox')).toBeInTheDocument();
+      await user.keyboard('{Escape}');
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+    });
+
+    it('click selection of an option returns focus to the trigger button', async () => {
+      const user = userEvent.setup();
+      render(
+        <StatusDropdown statusFilter="all" onStatusFilterChange={vi.fn()} statusCounts={defaultCounts} />,
+      );
+      const trigger = screen.getByRole('button', { name: /all.*25/i });
+      await user.click(trigger);
+      await user.click(screen.getByRole('option', { name: /wanted/i }));
+      expect(trigger).toHaveFocus();
+    });
+
+    it('closing via trigger after ArrowDown resets focus so reopen starts at the first option', async () => {
+      const user = userEvent.setup();
+      render(
+        <StatusDropdown statusFilter="all" onStatusFilterChange={vi.fn()} statusCounts={defaultCounts} />,
+      );
+      const trigger = screen.getByRole('button', { name: /all.*25/i });
+      await user.click(trigger);
+      await user.keyboard('{ArrowDown}'); // move off first item
+      await user.click(trigger); // close via trigger
+      await user.click(trigger); // reopen
+      expect(screen.getAllByRole('option')[0]).toHaveFocus();
     });
   });
 
