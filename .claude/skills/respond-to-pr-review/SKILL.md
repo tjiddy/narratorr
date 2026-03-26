@@ -89,6 +89,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    - Run quality gates: `node scripts/verify.ts`
      - If output starts with `VERIFY: fail` → fix issues and re-run until clean
      - If output starts with `VERIFY: pass` → write phase marker: `echo done > .claude/state/respond-to-pr-review-<pr-number>/verify-complete` and continue to push RIGHT NOW. You still need to push, post the response comment, and update labels.
+   - **Pre-push audit:** Run `git status` and inspect the output for untracked or modified files that should have been committed — especially in `drizzle/`, `src/`, and `scripts/`. If you find uncommitted artifacts from your changes (e.g., migration meta files, generated code), stage and commit them before pushing. This catches files that `verify.ts` can't detect because they only matter in a clean checkout (like CI).
    - Push: `node scripts/git-push.ts origin <head-branch>`
    - Post response comment (see template below)
    - **Update labels:** Set `stage/review-pr` on the **PR**: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/review-pr"`

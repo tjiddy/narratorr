@@ -61,6 +61,7 @@ Graduated learnings from the CL system — non-obvious patterns that have caused
 - **SQLite NULL uniqueness:** NULL ≠ NULL in unique indexes — nullable columns don't prevent duplicates. Ensure populated before insert.
 - **SQLite 999 bind limit:** Account for ALL bound params in WHERE when chunking `IN(...)` queries, not just the list.
 - **Drizzle migrations:** Verify every CREATE INDEX at the top has a matching one at the bottom after the drop-all phase.
+- **Drizzle migration commits:** `pnpm db:generate` produces 3 co-required files: the SQL file, `drizzle/meta/_journal.json`, and `drizzle/meta/<N>_snapshot.json`. Always `git add drizzle/` — committing only the SQL file causes CI to skip the migration (journal doesn't reference it), while local tests pass because the DB already has the column.
 - **Drizzle `$inferSelect` widens enums:** Use actual Zod enum schemas, not `z.string()`, at Drizzle-to-Zod boundaries.
 - **`rename()` is atomic:** Don't `unlink()` before `rename()` — creates a data-loss window. Just rename over the target.
 - **`mkdir` for moves:** Use `mkdir(dirname(toPath))` not `mkdir(toPath)` for directory moves.

@@ -149,7 +149,9 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    - If output starts with `VERIFY: fail` → STOP and report failures (do NOT fix — that's the caller's job).
    - If output starts with `VERIFY: pass` → write phase marker: `echo done > .claude/state/handoff-<id>/verify-complete` and continue to step 6 immediately.
 
-6. **Push the branch:**
+6. **Pre-push audit:** Run `git status` and inspect the output for untracked or modified files that should have been committed — especially in `drizzle/`, `src/`, and `scripts/`. If you find uncommitted artifacts from your changes (e.g., migration meta files, generated code), stage and commit them before pushing. This catches files that `verify.ts` can't detect because they only matter in a clean checkout (like CI).
+
+7. **Push the branch:**
    ```bash
    node scripts/git-push.ts -u origin $(git branch --show-current)
    ```
