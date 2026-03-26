@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
@@ -296,33 +296,44 @@ describe('LibraryImportPage (#133)', () => {
     expect(screen.getByLabelText('Title')).toHaveValue('New Book');
   });
 
-  it('Register button calls confirmImport when match job succeeds', async () => {
-    mockApi.confirmImport.mockResolvedValue({ accepted: 1 });
-    // Completed match job — polling returns 'completed' immediately so isMatching=false
-    mockApi.getMatchJob.mockResolvedValue({ id: 'job-1', status: 'completed', total: 1, matched: 1, results: [] });
-    mockApi.scanDirectory.mockResolvedValue({
-      discoveries: [
-        { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
-      ],
-      totalFolders: 1,
+  // Polling tests — fake only setInterval/clearInterval to avoid TanStack Query deadlock
+  describe('match-job polling (fake timers)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
     });
 
-    renderWithProviders(<LibraryImportPage />);
+    it('Register button enabled after poll resolves with completed job', async () => {
+      mockApi.confirmImport.mockResolvedValue({ accepted: 1 });
+      // Completed match job — polling returns 'completed' immediately so isMatching=false
+      mockApi.getMatchJob.mockResolvedValue({ id: 'job-1', status: 'completed', total: 1, matched: 1, results: [] });
+      mockApi.scanDirectory.mockResolvedValue({
+        discoveries: [
+          { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 3, totalSize: 100000, isDuplicate: false },
+        ],
+        totalFolders: 1,
+      });
 
-    await waitFor(() => {
-      expect(screen.getByText('Book One')).toBeInTheDocument();
-    });
+      renderWithProviders(<LibraryImportPage />);
 
-    // Wait for poll to fire (POLL_INTERVAL=2s) and isMatching to settle
-    await waitFor(() => {
-      const registerBtn = screen.getByRole('button', { name: /register/i });
-      expect(registerBtn).not.toBeDisabled();
-    }, { timeout: 5000 });
+      await waitFor(() => {
+        expect(screen.getByText('Book One')).toBeInTheDocument();
+      });
 
-    await userEvent.click(screen.getByRole('button', { name: /register/i }));
+      // Advance the setInterval (POLL_INTERVAL=2s) to trigger the first poll
+      await act(async () => { vi.advanceTimersByTime(2000); });
 
-    await waitFor(() => {
-      expect(mockApi.confirmImport).toHaveBeenCalled();
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /register/i })).not.toBeDisabled();
+      });
+
+      await userEvent.click(screen.getByRole('button', { name: /register/i }));
+
+      await waitFor(() => {
+        expect(mockApi.confirmImport).toHaveBeenCalled();
+      });
     });
   });
 });

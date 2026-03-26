@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { useLibraryImport } from './useLibraryImport';
 import type { ScanResult } from '@/lib/api';
 import { createMockSettings } from '@/__tests__/factories';
+import { toast } from 'sonner';
 
 const mockScanDirectory = vi.fn();
 const mockConfirmImport = vi.fn();
@@ -261,7 +262,7 @@ describe('useLibraryImport hook (#133)', () => {
     });
   });
 
-  it('Register call: confirmImport called without mode for selected rows', async () => {
+  it('Register call: confirmImport called with correct items payload and no mode', async () => {
     mockConfirmImport.mockResolvedValue({ accepted: 1 });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
@@ -270,9 +271,30 @@ describe('useLibraryImport hook (#133)', () => {
 
     await act(async () => { result.current.handleRegister(); });
 
-    expect(mockConfirmImport).toHaveBeenCalled();
-    const [, mode] = mockConfirmImport.mock.calls[0];
-    expect(mode).toBeUndefined();
+    expect(mockConfirmImport).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: '/audiobooks/AuthorA/Book1',
+          title: 'Book One',
+          authorName: 'Author A',
+        }),
+      ]),
+      undefined,
+    );
+  });
+
+  it('Register error path: toast.error shown when confirmImport rejects', async () => {
+    mockConfirmImport.mockRejectedValue(new Error('network failure'));
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    await act(async () => { result.current.handleRegister(); });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Registration failed: network failure');
+    });
   });
 
   // AC3: empty state (#141)

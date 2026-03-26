@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '../../__tests__/helpers.js';
 import { BulkOperationsSection } from './BulkOperationsSection.js';
@@ -100,7 +100,7 @@ describe('BulkOperationsSection', () => {
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
-    expect(screen.getByText(/15/)).toBeInTheDocument();
+    expect(within(screen.getByRole('dialog')).getByText(/15 books/i)).toBeInTheDocument();
     expect(api.getBulkRetagCount).toHaveBeenCalled();
   });
 
@@ -112,7 +112,7 @@ describe('BulkOperationsSection', () => {
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
-    expect(screen.getByText(/3/)).toBeInTheDocument();
+    expect(within(screen.getByRole('dialog')).getByText(/3 books/i)).toBeInTheDocument();
     expect(api.getBulkConvertCount).toHaveBeenCalled();
   });
 
@@ -126,6 +126,24 @@ describe('BulkOperationsSection', () => {
     expect(mockStartJob).not.toHaveBeenCalled();
   });
 
+  it('clicking Confirm on rename modal calls startJob with "rename"', async () => {
+    const user = userEvent.setup({});
+    setup();
+    await user.click(screen.getByRole('button', { name: /rename all books/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /rename all/i }));
+    expect(mockStartJob).toHaveBeenCalledWith('rename');
+  });
+
+  it('clicking Confirm on retag modal calls startJob with "retag"', async () => {
+    const user = userEvent.setup({});
+    setup();
+    await user.click(screen.getByRole('button', { name: /re-tag all books/i }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: /re-tag all/i }));
+    expect(mockStartJob).toHaveBeenCalledWith('retag');
+  });
+
   // Progress
   it('after confirming rename, button shows Renaming... N/total with spinner and is disabled', async () => {
     mockIsRunning.current = true;
@@ -134,22 +152,21 @@ describe('BulkOperationsSection', () => {
     setup({ isRunning: true, jobType: 'rename', completed: 3, total: 10 });
     const btn = screen.getByRole('button', { name: /renaming/i });
     expect(btn).toBeDisabled();
-    expect(btn.textContent).toMatch(/3/);
-    expect(btn.textContent).toMatch(/10/);
+    expect(btn.textContent).toMatch(/3\/10/);
   });
 
   it('after confirming retag, button shows Re-tagging... N/total with spinner and is disabled', async () => {
     setup({ isRunning: true, jobType: 'retag', completed: 2, total: 8 });
     const btn = screen.getByRole('button', { name: /re-tagging/i });
     expect(btn).toBeDisabled();
-    expect(btn.textContent).toMatch(/2/);
+    expect(btn.textContent).toMatch(/2\/8/);
   });
 
   it('after confirming convert, button shows Converting... N/total with spinner and is disabled', async () => {
     setup({ isRunning: true, jobType: 'convert', completed: 1, total: 5 });
     const btn = screen.getByRole('button', { name: /converting/i });
     expect(btn).toBeDisabled();
-    expect(btn.textContent).toMatch(/1/);
+    expect(btn.textContent).toMatch(/1\/5/);
   });
 
   // Cross-op disabling

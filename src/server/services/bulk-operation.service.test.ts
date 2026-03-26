@@ -100,7 +100,19 @@ async function waitForJob(service: BulkOperationService, jobId: string, maxMs = 
     if (!status || status.status === 'completed') return;
     await new Promise(resolve => setTimeout(resolve, 10));
   }
+  throw new Error('waitForJob timed out');
 }
+
+// ===== waitForJob helper tests =====
+
+describe('waitForJob helper', () => {
+  it('rejects with timeout error when job never reaches completed', async () => {
+    const stalledService = {
+      getJob: vi.fn().mockReturnValue({ status: 'running' }),
+    } as unknown as BulkOperationService;
+    await expect(waitForJob(stalledService, 'any-job-id', 50)).rejects.toThrow('waitForJob timed out');
+  });
+});
 
 // ===== Count tests =====
 
