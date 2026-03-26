@@ -260,6 +260,12 @@ describe('BulkOperationsSection', () => {
     expect(retagBtn).toHaveAttribute('title', 'A bulk operation is already running.');
   });
 
+  it('Convert All to M4B button has tooltip "A bulk operation is already running." when another job is running (even when ffmpeg is disabled)', () => {
+    setup({ isRunning: true, jobType: 'rename', ffmpegPath: '' });
+    const convertBtn = screen.getByRole('button', { name: /convert all to m4b/i });
+    expect(convertBtn).toHaveAttribute('title', 'A bulk operation is already running.');
+  });
+
   // AC6: Convert tooltip copy (#141)
   it('Convert All to M4B button tooltip reads "Requires ffmpeg — configure in Settings > Post Processing" when ffmpeg not configured', () => {
     setup({ ffmpegPath: '' });

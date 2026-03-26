@@ -83,10 +83,10 @@ function BulkButton({
   onClick,
 }: BulkButtonProps) {
   const disabled = isDisabled || isAnyRunning;
-  const title = isDisabled && disabledReason
-    ? disabledReason
-    : isAnyRunning && !isThisRunning
-      ? 'A bulk operation is already running.'
+  const title = isAnyRunning && !isThisRunning
+    ? 'A bulk operation is already running.'
+    : isDisabled && disabledReason
+      ? disabledReason
       : undefined;
 
   return (
