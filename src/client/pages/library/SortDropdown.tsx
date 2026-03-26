@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import { ChevronDownIcon } from '@/components/icons';
 import { ToolbarDropdown } from '@/components/ToolbarDropdown';
 import type { SortField, SortDirection } from './helpers.js';
@@ -53,13 +53,56 @@ function getTriggerLabel(field: SortField, direction: SortDirection): string {
 
 export function SortDropdown({ sortField, onSortFieldChange, sortDirection, onSortDirectionChange }: SortProps) {
   const [open, setOpen] = useState(false);
+  const [focusIndex, setFocusIndex] = useState(-1);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Focus the option at focusIndex whenever it changes
+  useEffect(() => {
+    if (focusIndex < 0) return;
+    const buttons = menuRef.current?.querySelectorAll<HTMLButtonElement>('button');
+    buttons?.[focusIndex]?.focus();
+  }, [focusIndex]);
+
+  // Focus first option when dropdown opens
+  useEffect(() => {
+    if (open) setFocusIndex(0);
+  }, [open]);
+
+  function handleClose() {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
 
   function handleSelect(option: SortOption) {
     onSortFieldChange(option.field);
     onSortDirectionChange(option.direction);
     setOpen(false);
+    triggerRef.current?.focus();
   }
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        setFocusIndex((i) => (i + 1) % sortOptions.length);
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setFocusIndex((i) => (i - 1 + sortOptions.length) % sortOptions.length);
+        break;
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        if (focusIndex >= 0 && focusIndex < sortOptions.length) {
+          onSortFieldChange(sortOptions[focusIndex].field);
+          onSortDirectionChange(sortOptions[focusIndex].direction);
+          setOpen(false);
+          triggerRef.current?.focus();
+        }
+        break;
+    }
+  }, [focusIndex, onSortFieldChange, onSortDirectionChange]);
 
   const triggerLabel = getTriggerLabel(sortField, sortDirection);
 
@@ -76,10 +119,12 @@ export function SortDropdown({ sortField, onSortFieldChange, sortDirection, onSo
         <ChevronDownIcon className={`w-3 h-3 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      <ToolbarDropdown triggerRef={triggerRef} open={open} onClose={() => setOpen(false)}>
+      <ToolbarDropdown triggerRef={triggerRef} open={open} onClose={handleClose}>
         <div
+          ref={menuRef}
           role="listbox"
           aria-label="Sort options"
+          onKeyDown={handleKeyDown}
           className="min-w-[200px] glass-card rounded-xl overflow-hidden shadow-lg border border-border animate-fade-in"
         >
           {sortOptions.map((option) => {
@@ -93,7 +138,7 @@ export function SortDropdown({ sortField, onSortFieldChange, sortDirection, onSo
                 type="button"
                 onClick={() => handleSelect(option)}
                 className={`
-                  flex items-center w-full px-3 py-2 text-xs text-left transition-colors
+                  flex items-center w-full px-3 py-2 text-xs text-left transition-colors focus:outline-none
                   ${isActive
                     ? 'bg-muted/80 text-foreground font-medium'
                     : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
