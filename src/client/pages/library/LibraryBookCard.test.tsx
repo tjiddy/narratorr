@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { LibraryBookCard } from './LibraryBookCard';
 import { createMockBook } from '@/__tests__/factories';
+import * as ImageErrorModule from '@/hooks/useImageError';
 
 function defaultProps(overrides = {}) {
   return {
@@ -396,37 +397,42 @@ describe('LibraryBookCard', () => {
 });
 
 describe('options button callback (REACT-2 / existing test gap)', () => {
-  it('clicking the options button calls onMenuToggle with the click event', async () => {
+  it('clicking the options button calls onMenuToggle with bookId and the click event', async () => {
+    const book = createMockBook();
     const onMenuToggle = vi.fn();
-    render(<LibraryBookCard {...defaultProps({ onMenuToggle })} />);
+    render(<LibraryBookCard {...defaultProps({ onMenuToggle, book })} />);
     const optionsButton = screen.getByRole('button', { name: /book options/i });
     await userEvent.click(optionsButton);
     expect(onMenuToggle).toHaveBeenCalledTimes(1);
-    expect(onMenuToggle).toHaveBeenCalledWith(expect.objectContaining({ type: 'click' }));
+    expect(onMenuToggle).toHaveBeenCalledWith(book.id, expect.objectContaining({ type: 'click' }));
   });
 });
 
 describe('React.memo (REACT-2 refactor)', () => {
   it('does not re-render when parent re-renders but props are unchanged', () => {
-    let renderCount = 0;
-    const onMenuToggle = vi.fn();
     const book = createMockBook();
+    // Same function references for both renders — unchanged-props scenario for memo
+    const stableProps = {
+      book,
+      index: 0,
+      isMenuOpen: false,
+      onMenuToggle: vi.fn(),
+      onMenuClose: vi.fn(),
+      onClick: vi.fn(),
+      onSearchReleases: vi.fn(),
+      onRemove: vi.fn(),
+    };
 
-    const { rerender } = render(
-      <LibraryBookCard book={book} index={0} isMenuOpen={false}
-        onMenuToggle={onMenuToggle} onMenuClose={vi.fn()} onClick={vi.fn()}
-        onSearchReleases={vi.fn()} onRemove={vi.fn()} />,
-    );
-    renderCount = screen.getAllByText('The Way of Kings').length;
+    // useImageError is called on every execution of the LibraryBookCard component body.
+    // React.memo bails out when props are unchanged, so the body does NOT execute again.
+    // Removing memo would cause a second call on re-render — making this assertion fail.
+    const hookSpy = vi.spyOn(ImageErrorModule, 'useImageError');
 
-    // Re-render with same props — React.memo should prevent re-render
-    rerender(
-      <LibraryBookCard book={book} index={0} isMenuOpen={false}
-        onMenuToggle={onMenuToggle} onMenuClose={vi.fn()} onClick={vi.fn()}
-        onSearchReleases={vi.fn()} onRemove={vi.fn()} />,
-    );
+    const { rerender } = render(<LibraryBookCard {...stableProps} />);
+    const mountCallCount = hookSpy.mock.calls.length;
 
-    // Component is still in DOM with same content — memo worked if no state reset occurred
-    expect(screen.getAllByText('The Way of Kings').length).toBe(renderCount);
+    rerender(<LibraryBookCard {...stableProps} />);
+
+    expect(hookSpy.mock.calls.length).toBe(mountCallCount);
   });
 });

@@ -223,11 +223,11 @@ export function LibraryPage() {
               index={index}
               collapsedCount={book.collapsedCount}
               isMenuOpen={openMenuId === book.id}
-              onMenuToggle={(e) => handleCardMenuToggle(book.id, e)}
+              onMenuToggle={handleCardMenuToggle}
               onMenuClose={closeMenu}
-              onClick={() => handleCardClick(book.id)}
-              onSearchReleases={() => handleCardSearchReleases(book)}
-              onRemove={() => handleCardRemove(book)}
+              onClick={handleCardClick}
+              onSearchReleases={handleCardSearchReleases}
+              onRemove={handleCardRemove}
             />
           ))}
         </div>
