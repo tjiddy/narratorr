@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createNotifierFormSchema } from './notifier.js';
+import { createNotifierFormSchema, createNotifierSchema, updateNotifierSchema } from './notifier.js';
 
 const validBase = {
   name: 'Test Notifier',
@@ -204,5 +204,52 @@ describe('createNotifierFormSchema', () => {
       });
       expect(result.success).toBe(false);
     });
+  });
+});
+
+const validCreate = {
+  name: 'Test Notifier',
+  type: 'webhook' as const,
+  enabled: true,
+  events: ['on_grab' as const],
+  settings: { url: 'https://hooks.example.com/test', method: 'POST' as const },
+};
+
+describe('createNotifierSchema — trim behavior', () => {
+  it('rejects whitespace-only name', () => {
+    const result = createNotifierSchema.safeParse({ ...validCreate, name: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims leading/trailing spaces from name', () => {
+    const result = createNotifierSchema.safeParse({ ...validCreate, name: '  My Notifier  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.name).toBe('My Notifier');
+  });
+});
+
+describe('updateNotifierSchema — trim behavior', () => {
+  it('rejects whitespace-only name when provided', () => {
+    const result = updateNotifierSchema.safeParse({ name: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims leading/trailing spaces from name when provided', () => {
+    const result = updateNotifierSchema.safeParse({ name: '  My Notifier  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.name).toBe('My Notifier');
+  });
+});
+
+describe('createNotifierFormSchema — trim behavior', () => {
+  it('rejects whitespace-only name', () => {
+    const result = createNotifierFormSchema.safeParse({ ...validBase, name: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('trims leading/trailing spaces from name', () => {
+    const result = createNotifierFormSchema.safeParse({ ...validBase, name: '  My Notifier  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.name).toBe('My Notifier');
   });
 });

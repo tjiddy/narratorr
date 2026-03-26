@@ -10,7 +10,7 @@ export const notifierTypeSchema = z.enum(NOTIFIER_TYPES);
 export const notificationEventSchema = z.enum(NOTIFICATION_EVENTS);
 
 export const createNotifierSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(100),
+  name: z.string().trim().min(1, 'Name is required').max(100),
   type: notifierTypeSchema,
   enabled: z.boolean().default(true),
   events: z.array(notificationEventSchema).min(1, 'Select at least one event'),
@@ -18,7 +18,7 @@ export const createNotifierSchema = z.object({
 });
 
 export const updateNotifierSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
+  name: z.string().trim().min(1).max(100).optional(),
   enabled: z.boolean().optional(),
   events: z.array(notificationEventSchema).min(1).optional(),
   settings: z.record(z.string(), z.unknown()).optional(),
@@ -28,7 +28,7 @@ export type CreateNotifierInput = z.infer<typeof createNotifierSchema>;
 export type UpdateNotifierInput = z.infer<typeof updateNotifierSchema>;
 
 export const createNotifierFormSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(100),
+  name: z.string().trim().min(1, 'Name is required').max(100),
   type: notifierTypeSchema,
   enabled: z.boolean(),
   events: z.array(notificationEventSchema).min(1, 'Select at least one event'),
