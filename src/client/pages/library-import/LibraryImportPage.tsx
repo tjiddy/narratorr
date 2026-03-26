@@ -144,7 +144,7 @@ export function LibraryImportPage() {
       )}
 
       {/* Review list */}
-      {step === 'review' && !scanError && (
+      {step === 'review' && !scanError && !emptyResult && (
         <div className="animate-fade-in-up stagger-1">
           <div className="glass-card rounded-xl overflow-hidden">
             {/* Select all header */}

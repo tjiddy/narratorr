@@ -184,7 +184,7 @@ describe('LibraryImportPage (#133)', () => {
   });
 
   // AC3: friendly empty state (#141)
-  it('zero discoveries: renders friendly all-caught-up message, no Retry button', async () => {
+  it('zero discoveries: renders friendly all-caught-up message, no Retry button, no scanning spinner', async () => {
     mockApi.scanDirectory.mockResolvedValue({ discoveries: [], totalFolders: 0 });
 
     renderWithProviders(<LibraryImportPage />);
@@ -193,11 +193,13 @@ describe('LibraryImportPage (#133)', () => {
       expect(screen.getByText(/all caught up/i)).toBeInTheDocument();
     });
     expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+    // Scanning spinner must not appear alongside the empty-state panel
+    expect(screen.queryByText(/scanning library folder/i)).not.toBeInTheDocument();
     // Red error icon should not appear
     expect(screen.queryByText(/no audiobook folders found/i)).not.toBeInTheDocument();
   });
 
-  it('all-duplicate discoveries: renders friendly all-caught-up message (not scan error card)', async () => {
+  it('all-duplicate discoveries: renders friendly all-caught-up message, no scanning spinner', async () => {
     mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
     mockApi.scanDirectory.mockResolvedValue({
       discoveries: [
@@ -212,6 +214,8 @@ describe('LibraryImportPage (#133)', () => {
       expect(screen.getByText(/all caught up/i)).toBeInTheDocument();
     });
     expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+    // Scanning spinner must not appear alongside the empty-state panel
+    expect(screen.queryByText(/scanning library folder/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/no audiobook folders found/i)).not.toBeInTheDocument();
   });
 
@@ -262,6 +266,34 @@ describe('LibraryImportPage (#133)', () => {
     await waitFor(() => {
       expect(screen.getByText(/0 of 1 new selected/i)).toBeInTheDocument();
     });
+  });
+
+  // AC4: edit callback uses source-row index (#141)
+  it('edit metadata when duplicates hidden: correct source-array row index — modal seeded with visible row data', async () => {
+    // rows[0] = dup (hidden by default), rows[1] = new book
+    // Clicking the only visible Edit metadata button must open modal for rows[1] (New Book)
+    mockApi.startMatchJob.mockRejectedValue(new Error('skip'));
+    mockApi.scanDirectory.mockResolvedValue({
+      discoveries: [
+        { path: '/audiobooks/AuthorB/Book2', parsedTitle: 'Dup Book', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 1, totalSize: 40000, isDuplicate: true, duplicateReason: 'path' },
+        { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'New Book', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
+      ],
+      totalFolders: 2,
+    });
+
+    renderWithProviders(<LibraryImportPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('New Book')).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: /edit metadata/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: /edit book metadata/i })).toBeInTheDocument();
+    });
+    // Modal must be seeded with "New Book" (rows[1]), not "Dup Book" (rows[0])
+    expect(screen.getByLabelText('Title')).toHaveValue('New Book');
   });
 
   it('Register button calls confirmImport when match job succeeds', async () => {

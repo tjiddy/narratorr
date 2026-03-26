@@ -81,6 +81,7 @@ export function useLibraryImport() {
     onSuccess: (result) => {
       if (result.discoveries.length === 0 || result.discoveries.every(d => d.isDuplicate)) {
         setEmptyResult(true);
+        setStep('review');
         return;
       }
 
