@@ -104,6 +104,19 @@ Mechanical workflow steps live in `scripts/` as deterministic Node scripts (not 
 | `scripts/post-review.ts <pr>` | Post review comment from state dir with guards | `POSTED:` or `ERROR:` |
 | `scripts/lib.ts` | Shared helpers (gh, git, gitPush, label parsing) | — |
 
+## GitHub CLI Auth in Automated Sessions
+
+`GH_TOKEN` is set at dispatch time from a GitHub App installation token (1-hour TTL). In long or resumed sessions, this token may expire — bare `gh` calls will 401.
+
+**Do not improvise around `gh` 401 errors.** The scripts in `scripts/` route through `lib.ts`, which re-mints tokens automatically using the raw app credentials (`GH_APP_ID`, `GH_APP_PRIVATE_KEY_PATH`, `GH_INSTALLATION_ID`) passed in env.
+
+- **Label changes:** Use `scripts/update-labels.ts`, never bare `gh issue edit --remove-label/--add-label`
+- **Git push:** Use `scripts/git-push.ts`, never bare `git push`
+- **Review posting:** Use `scripts/post-review.ts`
+- **All other GitHub mutations:** Use `gh()` from `scripts/lib.ts` (which handles token refresh), not bare `gh` CLI
+
+If bare `gh` returns 401, the correct response is to switch to the equivalent script — not to debug auth, not to retry, not to find an alternative approach.
+
 ## Project Management (GitHub)
 
 All work tracked as GitHub issues at `https://github.com/tjiddy/narratorr`. Scripts and skills use `gh` CLI for all GitHub API interactions. Token management for GitHub Apps is handled by `scripts/lib.ts` (JWT → installation token, auto-refresh).

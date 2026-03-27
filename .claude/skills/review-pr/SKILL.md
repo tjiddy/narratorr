@@ -207,6 +207,17 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    - **SRP-3 (Route Logic):** Does a route handler contain business logic beyond parse/call/respond? Flag as `suggestion`.
    - **ARCH-3 (Entity Leakage):** Does the route return raw DB rows without transformation? Flag as `suggestion`, or `blocking` if sensitive fields could leak.
 
+   **Framework checks — always check (every PR):**
+   - **ZOD-1 (Untrimmed String Validation):** Does a new or modified Zod string field use `.min(1)` without `.trim()` first? Bare `.min(1)` accepts whitespace-only input. Flag as `blocking`.
+   - **TS-1 (Untyped Catch):** Does a `catch` block leave the error untyped (`catch (e)` or `catch (err)` without `: unknown`)? Flag as `suggestion`. If the untyped error is rethrown or passed to external code, flag as `blocking`.
+   - **CSS-1 (Z-index Scale):** Does a new `z-` class break the established hierarchy? Scale: `z-10` sticky headers, `z-30` dropdowns, `z-40` popovers, `z-50` modals/overlays. Flag as `blocking` if a modal uses less than `z-50` or a dropdown uses `z-50`.
+
+   **Framework checks — check when applicable:**
+   - **REACT-1 (God Hook):** Does a new or modified hook return >10 values or own 4+ mutations? Flag as `suggestion`. Recommend splitting into focused hooks or grouping returns into named objects (`state`, `actions`, `counts`).
+   - **REACT-2 (Inline Closures in Render Loops):** Are arrow functions created inside `.map()` that render components? Flag as `suggestion` if the child is expensive or the list is unbounded. Recommend `useCallback` + `React.memo` or stable callbacks with item ID.
+   - **ERR-1 (String-based Error Routing):** Does error handling branch on `message.includes('...')` or similar string matching? Flag as `suggestion`. If the string match is the sole guard for a critical code path, flag as `blocking`. Recommend typed error classes with a `code` field.
+   - **DB-1 (Late DB Update After Filesystem):** Does a new code path perform irreversible filesystem operations (rename, unlink, move) and only update the DB afterward? Flag as `blocking` — a crash between the FS op and DB write leaves inconsistent state. DB should update immediately after the first irreversible step.
+
    **Additional design checks (not from the checks doc):**
    - **Co-location**: Are types next to their API methods? Components next to their hooks?
    - **Consistency**: Does the new code follow existing patterns in the codebase?
