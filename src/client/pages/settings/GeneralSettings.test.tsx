@@ -140,16 +140,18 @@ describe('GeneralSettings', () => {
   });
 });
 
-describe('Show Welcome Message escape hatch (#157)', () => {
-  it('renders "Show Welcome Message" button in Settings → General', async () => {
+describe('Show Welcome Message — local-only toggle (#165)', () => {
+  it('welcome modal is not visible on initial Settings page load', async () => {
     renderWithProviders(<GeneralSettings />);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
     });
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('clicking "Show Welcome Message" calls updateSettings({ general: { welcomeSeen: false } })', async () => {
+  it('clicking "Show Welcome Message" makes the welcome modal dialog visible', async () => {
     const user = userEvent.setup();
     renderWithProviders(<GeneralSettings />);
 
@@ -159,14 +161,10 @@ describe('Show Welcome Message escape hatch (#157)', () => {
 
     await user.click(screen.getByRole('button', { name: /show welcome message/i }));
 
-    await waitFor(() => {
-      expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        general: { welcomeSeen: false },
-      });
-    });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
-  it('shows success toast after successful reset', async () => {
+  it('clicking "Show Welcome Message" does not call api.updateSettings', async () => {
     const user = userEvent.setup();
     renderWithProviders(<GeneralSettings />);
 
@@ -176,30 +174,10 @@ describe('Show Welcome Message escape hatch (#157)', () => {
 
     await user.click(screen.getByRole('button', { name: /show welcome message/i }));
 
-    await waitFor(() => {
-      expect(mockToast.success).toHaveBeenCalledWith('Welcome message will appear on next view');
-    });
+    expect(mockApi.updateSettings).not.toHaveBeenCalled();
   });
 
-  it('shows error toast on reset failure', async () => {
-    const user = userEvent.setup();
-    mockApi.updateSettings.mockRejectedValue(new Error('Reset failed'));
-    renderWithProviders(<GeneralSettings />);
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByRole('button', { name: /show welcome message/i }));
-
-    await waitFor(() => {
-      expect(mockToast.error).toHaveBeenCalledWith('Reset failed');
-    });
-  });
-
-  it('"Show Welcome Message" button is disabled while mutation is in flight', async () => {
-    let resolveUpdate!: (v: unknown) => void;
-    mockApi.updateSettings.mockReturnValue(new Promise((res) => { resolveUpdate = res; }));
+  it('no toast appears when the button is clicked', async () => {
     const user = userEvent.setup();
     renderWithProviders(<GeneralSettings />);
 
@@ -209,12 +187,11 @@ describe('Show Welcome Message escape hatch (#157)', () => {
 
     await user.click(screen.getByRole('button', { name: /show welcome message/i }));
 
-    expect(screen.getByRole('button', { name: /saving/i })).toBeDisabled();
-
-    resolveUpdate(createMockSettings());
+    expect(mockToast.success).not.toHaveBeenCalled();
+    expect(mockToast.error).not.toHaveBeenCalled();
   });
 
-  it('invalidates settings cache after reset so Layout re-reads welcomeSeen (F3)', async () => {
+  it('"Show Welcome Message" button remains enabled after clicking (no pending/disabled state)', async () => {
     const user = userEvent.setup();
     renderWithProviders(<GeneralSettings />);
 
@@ -224,13 +201,52 @@ describe('Show Welcome Message escape hatch (#157)', () => {
 
     await user.click(screen.getByRole('button', { name: /show welcome message/i }));
 
+    expect(screen.getByRole('button', { name: /show welcome message/i })).not.toBeDisabled();
+  });
+
+  it('clicking "Get Started" in the manually reopened modal closes the dialog', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<GeneralSettings />);
+
     await waitFor(() => {
-      expect(mockApi.updateSettings).toHaveBeenCalledWith({ general: { welcomeSeen: false } });
+      expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
     });
 
-    // Cache invalidation causes a refetch of settings — getSettings called again
+    await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /get started/i }));
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('clicking "Get Started" in the manually reopened modal does not call api.updateSettings', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<GeneralSettings />);
+
     await waitFor(() => {
-      expect(mockApi.getSettings.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
     });
+
+    await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+    await user.click(screen.getByRole('button', { name: /get started/i }));
+
+    expect(mockApi.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it('pressing Escape while the manually reopened modal is open does not close it', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });

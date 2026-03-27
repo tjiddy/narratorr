@@ -1,7 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
-import { api } from '@/lib/api';
-import { queryKeys } from '@/lib/queryKeys';
+import { useState } from 'react';
 import { LibrarySettingsSection } from './LibrarySettingsSection';
 import { SearchSettingsSection } from './SearchSettingsSection';
 import { ImportSettingsSection } from './ImportSettingsSection';
@@ -11,6 +8,7 @@ import { MetadataSettingsForm } from './MetadataSettingsForm';
 import { AppearanceSettingsSection } from './AppearanceSettingsSection';
 import { DiscoverySettingsSection } from '../discover/DiscoverySettingsSection';
 import { SettingsSection } from './SettingsSection';
+import { WelcomeModal } from '@/components/WelcomeModal';
 
 function EyeIcon({ className = '' }: { className?: string }) {
   return (
@@ -31,18 +29,7 @@ function EyeIcon({ className = '' }: { className?: string }) {
 }
 
 export function GeneralSettings() {
-  const queryClient = useQueryClient();
-
-  const resetWelcomeMutation = useMutation({
-    mutationFn: () => api.updateSettings({ general: { welcomeSeen: false } }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
-      toast.success('Welcome message will appear on next view');
-    },
-    onError: (err: unknown) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to reset welcome message');
-    },
-  });
+  const [showWelcome, setShowWelcome] = useState(false);
 
   return (
     <div className="space-y-8">
@@ -64,13 +51,13 @@ export function GeneralSettings() {
         </p>
         <button
           type="button"
-          onClick={() => resetWelcomeMutation.mutate()}
-          disabled={resetWelcomeMutation.isPending}
+          onClick={() => setShowWelcome(true)}
           className="px-4 py-2.5 border border-border font-medium rounded-xl hover:bg-muted disabled:opacity-50 transition-all text-sm focus-ring"
         >
-          {resetWelcomeMutation.isPending ? 'Saving...' : 'Show Welcome Message'}
+          Show Welcome Message
         </button>
       </SettingsSection>
+      <WelcomeModal isOpen={showWelcome} onDismiss={() => setShowWelcome(false)} />
     </div>
   );
 }
