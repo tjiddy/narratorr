@@ -14,6 +14,12 @@ import {
 } from '@/components/icons.js';
 import { useFocusTrap } from '@/hooks/useFocusTrap.js';
 
+interface WelcomeModalProps {
+  isOpen: boolean;
+  isPending?: boolean;
+  onDismiss: () => void;
+}
+
 interface InfoCardProps {
   icon: React.ReactNode;
   title: string;
@@ -72,7 +78,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-6 overflow-y-auto animate-fade-in"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 animate-fade-in"
       role="presentation"
     >
       {/* Backdrop */}
@@ -84,9 +90,11 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
         role="dialog"
         aria-modal="true"
         aria-labelledby="welcome-modal-title"
-        className="relative w-full max-w-4xl my-auto glass-card rounded-2xl p-6 sm:p-8 shadow-2xl animate-fade-in-up"
+        className="relative w-full max-w-4xl max-h-[85vh] flex flex-col glass-card rounded-2xl shadow-2xl animate-fade-in-up"
         tabIndex={-1}
       >
+        {/* Scrollable content */}
+        <div className="flex-1 overflow-y-auto p-6 sm:p-8">
         {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-primary to-amber-500 mb-4 shadow-glow">
@@ -194,6 +202,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
             You can view this again anytime in Settings
           </p>
         </div>
+        </div>{/* end scrollable content */}
       </div>
     </div>
   );
