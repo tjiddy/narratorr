@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { Layout } from '@/components/layout/Layout';
+import { GeneralSettings } from '@/pages/settings/GeneralSettings';
 
 vi.mock('@/hooks/useActivityCounts', () => ({
   useActivityCounts: vi.fn(),
@@ -21,18 +22,47 @@ vi.mock('@/lib/api', () => ({
     getSystemStatus: vi.fn(),
     dismissUpdate: vi.fn(),
     getSettings: vi.fn(),
+    updateSettings: vi.fn(),
+    testProxy: vi.fn(),
+    probeFfmpeg: vi.fn(),
   },
+}));
+
+// Required by GeneralSettings sub-sections (LibrarySettingsSection token templates)
+vi.mock('@core/utils/index.js', () => ({
+  renderTemplate: (t: string) => t,
+  renderFilename: (t: string) => t,
+  toLastFirst: (n: string) => n,
+  toSortTitle: (t: string) => t,
+  ALLOWED_TOKENS: ['author', 'title'],
+  FILE_ALLOWED_TOKENS: ['author', 'title'],
+}));
+
+vi.mock('@/components/library/BulkOperationsSection', () => ({
+  BulkOperationsSection: () => null,
+}));
+
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 import { useActivityCounts } from '@/hooks/useActivityCounts';
 import { useAuthContext } from '@/hooks/useAuthContext';
 const { api } = await import('@/lib/api');
+const { toast } = await import('sonner');
 const mockApi = api as unknown as { getHealthSummary: ReturnType<typeof vi.fn> };
+const mockToast = toast as unknown as { success: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> };
 
 describe('Layout', () => {
   beforeEach(() => {
     localStorage.clear();
-    vi.mocked(api.getSettings).mockResolvedValue(createMockSettings());
+    // Default: welcomeSeen: true so the welcome modal does not appear in unrelated tests
+    vi.mocked(api.getSettings).mockResolvedValue(
+      createMockSettings({ general: { welcomeSeen: true } }),
+    );
+    vi.mocked(api.updateSettings).mockResolvedValue(
+      createMockSettings({ general: { welcomeSeen: true } }),
+    );
   });
 
   function mockCounts(active: number) {
@@ -415,6 +445,195 @@ describe('Layout', () => {
       const header = container.querySelector('header');
       expect(header).not.toBeNull();
       expect(header).toHaveClass('z-10');
+    });
+  });
+
+  describe('welcome modal (#157)', () => {
+    it('shows WelcomeModal when settings.general.welcomeSeen is false', async () => {
+      mockCounts(0);
+      mockAuth();
+      vi.mocked(api.getSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: false } }),
+      );
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Welcome to narratorr')).toBeInTheDocument();
+    });
+
+    it('does not show WelcomeModal when settings.general.welcomeSeen is true', async () => {
+      mockCounts(0);
+      mockAuth();
+      vi.mocked(api.getSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: true } }),
+      );
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByText('narratorr')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('does not show WelcomeModal while settings query is still loading', () => {
+      mockCounts(0);
+      mockAuth();
+      vi.mocked(api.getSettings).mockReturnValue(new Promise(() => {})); // never resolves
+
+      renderWithProviders(<Layout />);
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('onDismiss calls updateSettings({ general: { welcomeSeen: true } })', async () => {
+      const user = userEvent.setup();
+      mockCounts(0);
+      mockAuth();
+      vi.mocked(api.getSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: false } }),
+      );
+      vi.mocked(api.updateSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: true } }),
+      );
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /get started/i }));
+
+      await waitFor(() => {
+        expect(vi.mocked(api.updateSettings)).toHaveBeenCalledWith({
+          general: { welcomeSeen: true },
+        });
+      });
+    });
+
+    it('modal disappears after successful dismiss', async () => {
+      const user = userEvent.setup();
+      mockCounts(0);
+      mockAuth();
+      vi.mocked(api.getSettings)
+        .mockResolvedValueOnce(createMockSettings({ general: { welcomeSeen: false } }))
+        .mockResolvedValue(createMockSettings({ general: { welcomeSeen: true } }));
+      vi.mocked(api.updateSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: true } }),
+      );
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /get started/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
+    });
+
+    it('shows error toast and keeps modal open when dismiss save fails', async () => {
+      const user = userEvent.setup();
+      mockCounts(0);
+      mockAuth();
+      vi.mocked(api.getSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: false } }),
+      );
+      vi.mocked(api.updateSettings).mockRejectedValue(new Error('Network error'));
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /get started/i }));
+
+      await waitFor(() => {
+        expect(mockToast.error).toHaveBeenCalledWith('Network error');
+      });
+      // Modal stays open on failure
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    it('successful reset via Settings → General reopens the welcome modal in Layout', async () => {
+      const user = userEvent.setup();
+      mockCounts(0);
+      mockAuth();
+      // Initial: welcomeSeen true → modal hidden (uses beforeEach default)
+
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={['/settings/general']}>
+            <Routes>
+              <Route path="/" element={<Layout />}>
+                <Route path="settings/general" element={<GeneralSettings />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      // Prime mock to return welcomeSeen: false on the next refetch (post-invalidation)
+      vi.mocked(api.getSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: false } }),
+      );
+      vi.mocked(api.updateSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: false } }),
+      );
+
+      await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Welcome to narratorr')).toBeInTheDocument();
+    });
+
+    it('failed reset in Settings → General keeps modal hidden and shows error toast', async () => {
+      const user = userEvent.setup();
+      mockCounts(0);
+      mockAuth();
+      // Initial: welcomeSeen true → modal hidden (uses beforeEach default)
+      vi.mocked(api.updateSettings).mockRejectedValue(new Error('Reset failed'));
+
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={['/settings/general']}>
+            <Routes>
+              <Route path="/" element={<Layout />}>
+                <Route path="settings/general" element={<GeneralSettings />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+
+      await waitFor(() => {
+        expect(mockToast.error).toHaveBeenCalledWith('Reset failed');
+      });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
   });
 });

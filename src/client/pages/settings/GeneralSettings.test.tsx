@@ -9,6 +9,9 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+const { toast } = await import('sonner');
+const mockToast = toast as unknown as { success: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> };
+
 vi.mock('@/components/library/BulkOperationsSection', () => ({
   BulkOperationsSection: () => null,
 }));
@@ -40,6 +43,7 @@ const mockApi = api as unknown as {
 beforeEach(() => {
   vi.clearAllMocks();
   mockApi.getSettings.mockResolvedValue(createMockSettings());
+  mockApi.updateSettings.mockResolvedValue(createMockSettings());
 });
 
 // Tests verify section composition after #66 refactoring
@@ -133,5 +137,100 @@ describe('GeneralSettings', () => {
     // General section save button should still be visible (still dirty)
     const remainingSaveButtons = screen.getAllByRole('button', { name: /^save$/i });
     expect(remainingSaveButtons.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('Show Welcome Message escape hatch (#157)', () => {
+  it('renders "Show Welcome Message" button in Settings → General', async () => {
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+    });
+  });
+
+  it('clicking "Show Welcome Message" calls updateSettings({ general: { welcomeSeen: false } })', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith({
+        general: { welcomeSeen: false },
+      });
+    });
+  });
+
+  it('shows success toast after successful reset', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+
+    await waitFor(() => {
+      expect(mockToast.success).toHaveBeenCalledWith('Welcome message will appear on next view');
+    });
+  });
+
+  it('shows error toast on reset failure', async () => {
+    const user = userEvent.setup();
+    mockApi.updateSettings.mockRejectedValue(new Error('Reset failed'));
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+
+    await waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalledWith('Reset failed');
+    });
+  });
+
+  it('"Show Welcome Message" button is disabled while mutation is in flight', async () => {
+    let resolveUpdate!: (v: unknown) => void;
+    mockApi.updateSettings.mockReturnValue(new Promise((res) => { resolveUpdate = res; }));
+    const user = userEvent.setup();
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+
+    expect(screen.getByRole('button', { name: /saving/i })).toBeDisabled();
+
+    resolveUpdate(createMockSettings());
+  });
+
+  it('invalidates settings cache after reset so Layout re-reads welcomeSeen (F3)', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<GeneralSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledWith({ general: { welcomeSeen: false } });
+    });
+
+    // Cache invalidation causes a refetch of settings — getSettings called again
+    await waitFor(() => {
+      expect(mockApi.getSettings.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
   });
 });

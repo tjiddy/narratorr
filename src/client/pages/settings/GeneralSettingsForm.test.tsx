@@ -179,4 +179,5 @@ describe('GeneralSettingsForm', () => {
       expect(mockToast.error).toHaveBeenCalledWith('Save failed');
     });
   });
+
 });

@@ -60,7 +60,7 @@ describe('SettingsService', () => {
       // Other sections fall back to defaults
       expect(result.search).toEqual({ intervalMinutes: 360, enabled: true, blacklistTtlDays: 7 });
       expect(result.import).toEqual({ deleteAfterImport: false, minSeedTime: 60, minFreeSpaceGB: 5, redownloadFailed: true });
-      expect(result.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30 });
+      expect(result.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30, welcomeSeen: false });
     });
 
     it('returns all defaults when nothing stored', async () => {
@@ -372,6 +372,41 @@ describe('SettingsService', () => {
 
       expect(db.insert).not.toHaveBeenCalled();
       expect(result).toBeDefined();
+    });
+
+    it('preserves welcomeSeen when patching logLevel in general category', async () => {
+      const existingGeneral = { logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30, welcomeSeen: true };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'general', value: existingGeneral }]))  // get('general') in patch
+        .mockReturnValueOnce(mockDbChain([]))  // sentinel lookup in set()
+        .mockReturnValueOnce(mockDbChain([])); // getAll()
+      db.insert.mockReturnValue(mockDbChain());
+
+      const input: UpdateSettingsInput = { general: { logLevel: 'debug' } };
+      await service.update(input);
+
+      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      expect(storedValue).toEqual({ logLevel: 'debug', housekeepingRetentionDays: 90, recycleRetentionDays: 30, welcomeSeen: true });
+    });
+
+    it('stores welcomeSeen: false when only welcomeSeen is patched', async () => {
+      const existingGeneral = { logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30, welcomeSeen: true };
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ key: 'general', value: existingGeneral }]))  // get('general') in patch
+        .mockReturnValueOnce(mockDbChain([]))  // sentinel lookup in set()
+        .mockReturnValueOnce(mockDbChain([])); // getAll()
+      db.insert.mockReturnValue(mockDbChain());
+
+      const input: UpdateSettingsInput = { general: { welcomeSeen: false } };
+      await service.update(input);
+
+      const chain = db.insert.mock.results[0].value as { values: { mock: { calls: Array<Array<{ value: unknown }>> } } };
+      const storedValue = chain.values.mock.calls[0][0].value as Record<string, unknown>;
+      expect(storedValue.welcomeSeen).toBe(false);
+      // Other fields preserved
+      expect(storedValue.logLevel).toBe('info');
+      expect(storedValue.housekeepingRetentionDays).toBe(90);
     });
   });
 });

@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ClockIcon, TerminalIcon } from '@/components/icons';
-import { logLevelSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { logLevelSchema, DEFAULT_SETTINGS } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 const generalFormSchema = z.object({
@@ -47,13 +47,13 @@ export function GeneralSettingsForm() {
 
   const mutation = useMutation({
     mutationFn: (data: GeneralFormData) =>
-      api.updateSettings({ general: data as AppSettings['general'] }),
+      api.updateSettings({ general: data }),
     onSuccess: (_result, submittedData) => {
       reset(submittedData);
       queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
       toast.success('General settings saved');
     },
-    onError: (err) => {
+    onError: (err: unknown) => {
       toast.error(err instanceof Error ? err.message : 'Failed to save settings');
     },
   });
