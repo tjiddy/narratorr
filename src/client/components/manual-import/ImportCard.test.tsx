@@ -54,9 +54,23 @@ describe('ImportCard', () => {
       expect(screen.getByText('Matching')).toBeInTheDocument();
     });
 
+    it('renders pending badge with muted variant (ring-border/20) and spinner icon', () => {
+      render(<ImportCard {...defaultProps} row={makeRow({ matchResult: undefined })} />);
+      const badge = screen.getByTestId('badge');
+      expect(badge).toHaveClass('bg-muted/50', 'ring-1', 'ring-border/20');
+      expect(badge.firstChild?.nodeName.toLowerCase()).toBe('svg');
+    });
+
     it('shows green "Matched" badge for high confidence', () => {
       render(<ImportCard {...defaultProps} row={makeRow({ matchResult: makeMatchResult({ confidence: 'high' }) })} />);
       expect(screen.getByText('Matched')).toBeInTheDocument();
+    });
+
+    it('renders high confidence badge with success (emerald) variant and leading icon', () => {
+      render(<ImportCard {...defaultProps} row={makeRow({ matchResult: makeMatchResult({ confidence: 'high' }) })} />);
+      const badge = screen.getByTestId('badge');
+      expect(badge).toHaveClass('bg-emerald-500/15', 'text-emerald-400', 'ring-1', 'ring-emerald-500/20');
+      expect(badge.firstChild?.nodeName.toLowerCase()).toBe('svg');
     });
 
     it('shows yellow "Review" badge for medium confidence', () => {
@@ -64,9 +78,23 @@ describe('ImportCard', () => {
       expect(screen.getByText('Review')).toBeInTheDocument();
     });
 
+    it('renders medium confidence badge with warning (amber) variant and leading icon', () => {
+      render(<ImportCard {...defaultProps} row={makeRow({ matchResult: makeMatchResult({ confidence: 'medium' }) })} />);
+      const badge = screen.getByTestId('badge');
+      expect(badge).toHaveClass('bg-amber-500/15', 'text-amber-400', 'ring-1', 'ring-amber-500/20');
+      expect(badge.firstChild?.nodeName.toLowerCase()).toBe('svg');
+    });
+
     it('shows red "No Match" badge for none confidence', () => {
       render(<ImportCard {...defaultProps} row={makeRow({ matchResult: makeMatchResult({ confidence: 'none', bestMatch: null }) })} />);
       expect(screen.getByText('No Match')).toBeInTheDocument();
+    });
+
+    it('renders none confidence badge with danger (red) variant and leading icon', () => {
+      render(<ImportCard {...defaultProps} row={makeRow({ matchResult: makeMatchResult({ confidence: 'none', bestMatch: null }) })} />);
+      const badge = screen.getByTestId('badge');
+      expect(badge).toHaveClass('bg-red-500/15', 'text-red-400', 'ring-1', 'ring-red-500/20');
+      expect(badge.firstChild?.nodeName.toLowerCase()).toBe('svg');
     });
   });
 
@@ -242,6 +270,13 @@ describe('ImportCard', () => {
     it('shows "Already in library" badge when book.isDuplicate is true', () => {
       render(<ImportCard {...defaultProps} row={dupRow} />);
       expect(screen.getByText('Already in library')).toBeInTheDocument();
+    });
+
+    it('renders "Already in library" badge with muted variant and no icon', () => {
+      render(<ImportCard {...defaultProps} row={dupRow} />);
+      const badge = screen.getByTestId('badge');
+      expect(badge).toHaveClass('bg-muted/50', 'ring-1', 'ring-border/20');
+      expect(badge.querySelector('svg')).not.toBeInTheDocument();
     });
 
     it('does not show confidence badge for duplicate rows', () => {

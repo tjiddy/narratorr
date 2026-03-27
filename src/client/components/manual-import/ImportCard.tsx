@@ -9,6 +9,7 @@ import {
   HeadphonesIcon,
   LoadingSpinner,
 } from '@/components/icons';
+import { Badge } from '@/components/Badge';
 export type { ImportRow } from './types.js';
 
 interface ImportCardProps {
@@ -21,39 +22,37 @@ interface ImportCardProps {
   relativePath?: string;
 }
 
+const confidenceVariant = {
+  high: 'success',
+  medium: 'warning',
+  none: 'danger',
+} as const;
+
+const confidenceIcon = {
+  high: CheckCircleIcon,
+  medium: AlertCircleIcon,
+  none: XCircleIcon,
+} as const;
+
+const confidenceLabel = {
+  high: 'Matched',
+  medium: 'Review',
+  none: 'No Match',
+} as const;
+
 function ConfidenceBadge({ confidence }: { confidence?: Confidence }) {
   if (!confidence) {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted/30 text-muted-foreground/50">
-        <LoadingSpinner className="w-3 h-3" />
+      <Badge variant="muted" icon={LoadingSpinner}>
         Matching
-      </span>
+      </Badge>
     );
   }
 
-  const styles = {
-    high: 'bg-emerald-500/15 text-emerald-400 ring-emerald-500/20',
-    medium: 'bg-amber-500/15 text-amber-400 ring-amber-500/20',
-    none: 'bg-red-500/15 text-red-400 ring-red-500/20',
-  };
-
-  const icons = {
-    high: <CheckCircleIcon className="w-3 h-3" />,
-    medium: <AlertCircleIcon className="w-3 h-3" />,
-    none: <XCircleIcon className="w-3 h-3" />,
-  };
-
-  const labels = {
-    high: 'Matched',
-    medium: 'Review',
-    none: 'No Match',
-  };
-
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ring-1 ${styles[confidence]}`}>
-      {icons[confidence]}
-      {labels[confidence]}
-    </span>
+    <Badge variant={confidenceVariant[confidence]} icon={confidenceIcon[confidence]}>
+      {confidenceLabel[confidence]}
+    </Badge>
   );
 }
 
@@ -134,9 +133,7 @@ export function ImportCard({ row, onToggle, onEdit, lockDuplicates, relativePath
       {/* Badge: "Already in library" for duplicates, confidence badge otherwise */}
       <div className="w-24 shrink-0 flex justify-center">
         {isDuplicate ? (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ring-1 bg-muted/30 text-muted-foreground ring-border/20">
-            Already in library
-          </span>
+          <Badge variant="muted">Already in library</Badge>
         ) : (
           <ConfidenceBadge confidence={confidence} />
         )}

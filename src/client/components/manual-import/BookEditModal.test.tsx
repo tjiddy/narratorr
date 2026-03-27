@@ -464,6 +464,16 @@ describe('BookEditModal', () => {
       expect(screen.getByText('In library')).toBeInTheDocument();
     });
 
+    it('renders "In library" badge with success (emerald) variant, leading icon, and shrink-0', () => {
+      mockIdentifiers = [{ asin: 'B001', title: 'Matched Title', authorName: 'Matched Author' }];
+      const meta = makeMetadata({ asin: 'B001' });
+      renderModal({ initial: makeEditState({ metadata: meta }) });
+
+      const badge = screen.getByTestId('badge');
+      expect(badge).toHaveClass('bg-emerald-500/15', 'text-emerald-400', 'ring-1', 'ring-emerald-500/20', 'shrink-0');
+      expect(badge.firstChild?.nodeName.toLowerCase()).toBe('svg');
+    });
+
     it('does not show "In library" badge when no identifier matches', () => {
       mockIdentifiers = [{ asin: 'B999', title: 'Other Book', authorName: 'Other Author' }];
       const meta = makeMetadata({ asin: 'B001' });
