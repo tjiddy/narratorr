@@ -110,7 +110,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
 
         {/* Row 1 — Read This */}
         <section className="mb-6">
-          <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+          <h3 className="font-display text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
             Read This First
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -137,7 +137,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
 
         {/* Row 2 — First Steps */}
         <section className="mb-6">
-          <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+          <h3 className="font-display text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
             First Steps
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -161,7 +161,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
 
         {/* Row 3–4 — Feature Highlights */}
         <section className="mb-8">
-          <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+          <h3 className="font-display text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
             Features Worth Knowing
           </h3>
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
