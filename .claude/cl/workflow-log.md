@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #147 TS-1: Type all catch blocks as catch (error: unknown) — 2026-03-27
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #156
+
+### Metrics
+- Files changed: 25 | Tests added/modified: 4 new tests across 4 files
+- Quality gate runs: 2 (fail on attempt 1 — useBulkOperation tests, pass on attempt 2)
+- Fix iterations: 1 (ApiError instanceof check broke mocked-module tests)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Mechanical rename batch was fast; grep-based verification was reliable; provider non-Error tests had clean red→green cycle
+- Friction / issues encountered: (1) it.todo() stubs appended outside main describe block with wrong method name — had to rewrite manually before converting to real tests. (2) Importing ApiError in useBulkOperation.ts caused 5 test failures because the vi.mock factory didn't export ApiError — reverted to instanceof Error + structural property check. Both issues required reading source before acting.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for initial violation enumeration; coverage review subagent
+- Avoidable waste: The test stub placement issue (stubs outside describe block) required re-reading 3 test files and rewriting — caused by not verifying stub placement at plan time
+- Suggestions: When appending stubs to existing test files, always read the file first to identify the correct describe block and method names
+
+### Infrastructure gaps
+- Repeated workarounds: Structural property guard (`instanceof Error && (error as { status?: number }).status`) needed instead of class identity check when module is fully mocked — this pattern will recur whenever client hooks import named classes from mocked modules
+- Missing tooling / config: `useUnknownInCatchVariables: true` not set in tsconfig — 149 `catch (error)` sites remain untyped; this tsconfig flag would enforce the pattern uniformly and make the grep gate unnecessary
+- Unresolved debt: 149 `catch (error)` sites without `: unknown` (logged in debt.md)
+
+### Wish I'd Known
+1. Test stubs appended with `cat >>` land AFTER the closing `});` — must read the file first to know where to inject. The method name mismatch (`testConnection` vs `test()`) would also have been caught by reading the source first.
+2. `src/core/` cannot import from `src/server/` — `getErrorMessage()` is server-layer only; core adapters need the inline pattern instead.
+3. `vi.mock` factory must export every named class you `instanceof` check in production code — missing `ApiError` in the mock made `instanceof ApiError` silently always-false at test time.
+
 ## #146 REACT-1/2: Split god hooks and fix render-loop closures — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #155
