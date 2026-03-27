@@ -125,4 +125,15 @@ describe('WelcomeModal', () => {
     const dialog = screen.getByRole('dialog');
     expect(dialog.contains(document.activeElement)).toBe(true);
   });
+
+  // Backdrop non-dismiss (AC — clicking outside does not close the modal)
+  it('clicking the backdrop does not dismiss the modal', async () => {
+    const user = userEvent.setup();
+    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+    // Click the outermost container (backdrop area) outside the dialog panel
+    const container = screen.getByRole('presentation');
+    await user.click(container, { skipPointerEventsCheck: true });
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
 });
