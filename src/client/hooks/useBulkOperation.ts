@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
-import { api, type BulkOpType, type BulkJobStatus } from '@/lib/api';
+import { api, ApiError, type BulkOpType, type BulkJobStatus } from '@/lib/api';
 
 const POLL_INTERVAL = 2000;
 
@@ -48,8 +48,8 @@ export function useBulkOperation(): UseBulkOperationReturn {
       try {
         const status = await api.getBulkJob(jobId);
         applyJobStatus(status);
-      } catch (err) {
-        if ((err as { status?: number })?.status === 404) {
+      } catch (error: unknown) {
+        if (error instanceof ApiError && error.status === 404) {
           // Server restarted or job expired — reset to idle silently
           stopPolling();
           setIsRunning(false);
@@ -63,7 +63,7 @@ export function useBulkOperation(): UseBulkOperationReturn {
           setJobType(null);
           setProgress(IDLE_PROGRESS);
           jobIdRef.current = null;
-          toast.error((err as Error).message ?? 'Bulk operation polling failed');
+          toast.error(error instanceof Error ? error.message : 'Bulk operation polling failed');
         }
       }
     }, POLL_INTERVAL);

@@ -7,6 +7,7 @@ import type { DownloadClientService } from './download-client.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { NotifierService } from './notifier.service.js';
 import { getInProgressStatuses } from '../../shared/download-status-registry.js';
+import { getErrorMessage } from '../utils/error-message.js';
 
 export type HealthState = 'healthy' | 'warning' | 'error';
 
@@ -61,8 +62,8 @@ export class HealthCheckService {
         try {
           const checkResults = await check();
           results.push(...checkResults);
-        } catch (err) {
-          this.log.error(err, 'Health check failed');
+        } catch (error: unknown) {
+          this.log.error(error, 'Health check failed');
         }
       }
 
@@ -134,11 +135,11 @@ export class HealthCheckService {
           state: result.success ? 'healthy' : 'error',
           message: result.success ? undefined : result.message,
         });
-      } catch (err) {
+      } catch (error: unknown) {
         results.push({
           checkName: `indexer:${indexer.name}`,
           state: 'error',
-          message: err instanceof Error ? err.message : 'Unknown error',
+          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     }
@@ -159,11 +160,11 @@ export class HealthCheckService {
           state: result.success ? 'healthy' : 'error',
           message: result.success ? undefined : result.message,
         });
-      } catch (err) {
+      } catch (error: unknown) {
         results.push({
           checkName: `download-client:${client.name}`,
           state: 'error',
-          message: err instanceof Error ? err.message : 'Unknown error',
+          message: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     }
@@ -182,8 +183,8 @@ export class HealthCheckService {
       // Check both read and write access (R_OK=4, W_OK=2)
       await this.deps.fsAccess(libraryPath, 4 | 2);
       return [{ checkName: 'library-root', state: 'healthy' }];
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
+    } catch (error: unknown) {
+      const code = error instanceof Error && 'code' in error ? (error as NodeJS.ErrnoException).code : undefined;
       const message = code === 'ENOENT'
         ? `Library path does not exist: ${libraryPath}`
         : `Library path not writable: ${libraryPath}`;
@@ -217,8 +218,8 @@ export class HealthCheckService {
         }];
       }
       return [{ checkName: 'disk-space', state: 'healthy' }];
-    } catch (err) {
-      return [{ checkName: 'disk-space', state: 'error', message: `Failed to check disk space: ${(err as Error).message}` }];
+    } catch (error: unknown) {
+      return [{ checkName: 'disk-space', state: 'error', message: `Failed to check disk space: ${getErrorMessage(error)}` }];
     }
   }
 
@@ -266,8 +267,8 @@ export class HealthCheckService {
       }
 
       return [{ checkName: 'stuck-downloads', state: 'healthy' }];
-    } catch (err) {
-      return [{ checkName: 'stuck-downloads', state: 'error', message: `Failed to check downloads: ${(err as Error).message}` }];
+    } catch (error: unknown) {
+      return [{ checkName: 'stuck-downloads', state: 'error', message: `Failed to check downloads: ${getErrorMessage(error)}` }];
     }
   }
 }

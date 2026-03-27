@@ -126,8 +126,8 @@ export function BulkOperationsSection() {
       const count = await fetchCountForOp(op);
       setModalCount(count);
       setPendingOp(op);
-    } catch (err) {
-      toast.error((err as Error).message ?? 'Failed to fetch operation count');
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : 'Failed to fetch operation count');
     } finally {
       setIsLoadingCount(false);
     }

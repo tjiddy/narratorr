@@ -296,8 +296,8 @@ describe('fetchWithProxy', () => {
 
       try {
         await fetchWithProxy({ url: TARGET_URL, proxyUrl: PROXY_URL });
-      } catch (e) {
-        expect((e as Error).message).toMatch(/^FlareSolverr/);
+      } catch (error: unknown) {
+        expect(error instanceof Error ? error.message : '').toMatch(/^FlareSolverr/);
       }
     });
   });
