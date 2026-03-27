@@ -72,4 +72,68 @@ describe('WelcomeModal', () => {
     expect(onDismiss).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
+
+  // Scroll lock (AC1)
+  it('sets document.body overflow to hidden while modal is open', () => {
+    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+    expect(document.body.style.overflow).toBe('hidden');
+  });
+
+  it('restores document.body overflow to its original value on close/unmount', () => {
+    document.body.style.overflow = 'auto';
+    const { unmount } = render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+    expect(document.body.style.overflow).toBe('hidden');
+    unmount();
+    expect(document.body.style.overflow).toBe('auto');
+    document.body.style.overflow = ''; // cleanup
+  });
+
+  // Focus trap (AC2)
+  it('places focus on the first tabbable element when modal opens', () => {
+    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /get started/i }));
+  });
+
+  it('places focus on modal container when isPending=true disables the only tabbable element', () => {
+    render(<WelcomeModal isOpen isPending onDismiss={onDismiss} />);
+    expect(document.activeElement).toBe(screen.getByRole('dialog'));
+  });
+
+  it('Tab key cycles forward through tabbable elements and wraps around', async () => {
+    const user = userEvent.setup();
+    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+    // Only one tabbable element: Tab wraps back to it
+    const button = screen.getByRole('button', { name: /get started/i });
+    expect(document.activeElement).toBe(button);
+    await user.keyboard('{Tab}');
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('Shift+Tab key cycles backward through tabbable elements and wraps around', async () => {
+    const user = userEvent.setup();
+    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+    const button = screen.getByRole('button', { name: /get started/i });
+    expect(document.activeElement).toBe(button);
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('Tab key does not move focus outside the modal', async () => {
+    const user = userEvent.setup();
+    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+    await user.keyboard('{Tab}');
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  // Backdrop non-dismiss (AC — clicking outside does not close the modal)
+  it('clicking the backdrop does not dismiss the modal', async () => {
+    const user = userEvent.setup();
+    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+    // Click the outermost container (backdrop area) outside the dialog panel
+    const container = screen.getByRole('presentation');
+    await user.click(container);
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
 });
