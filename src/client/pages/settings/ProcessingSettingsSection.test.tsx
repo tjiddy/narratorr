@@ -162,6 +162,26 @@ describe('ProcessingSettingsSection', () => {
     });
   });
 
+  it('shows fallback feedback and toast when ffmpeg probe rejects a non-Error value', async () => {
+    const user = userEvent.setup();
+    mockApi.getSettings.mockResolvedValue(createMockSettings({
+      processing: { enabled: true, ffmpegPath: '/bad/path', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+    }));
+    mockApi.probeFfmpeg.mockRejectedValue('string-rejection');
+    renderWithProviders(<ProcessingSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('ffmpeg Path')).toHaveValue('/bad/path');
+    });
+
+    await user.click(screen.getByText('Test'));
+
+    await waitFor(() => {
+      expect(screen.getByText('ffmpeg probe failed')).toBeInTheDocument();
+    });
+    expect(mockToast.error).toHaveBeenCalledWith('ffmpeg probe failed');
+  });
+
   it('renders tag embedding toggle but not tag controls when tagging is disabled', async () => {
     renderWithProviders(<ProcessingSettingsSection />);
 

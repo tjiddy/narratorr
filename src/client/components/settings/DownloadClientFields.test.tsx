@@ -361,5 +361,19 @@ describe('DownloadClientFields', () => {
         expect(screen.getByText('Network error')).toBeInTheDocument();
       });
     });
+
+    it('shows fallback message and hides dropdown when API rejects a non-Error value', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockRejectedValue('string-rejection');
+
+      render(<FieldWrapper type="qbittorrent" />);
+
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to fetch categories')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    });
   });
 });
