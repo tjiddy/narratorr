@@ -189,8 +189,8 @@ export function ProcessingSettingsSection() {
       const result = await api.probeFfmpeg(ffmpegPath);
       setProbeResult(result);
       toast.success(`ffmpeg ${result.version} detected`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'ffmpeg probe failed';
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'ffmpeg probe failed';
       setProbeError(message);
       toast.error(message);
     } finally {

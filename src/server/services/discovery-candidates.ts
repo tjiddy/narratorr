@@ -74,7 +74,7 @@ export async function queryAuthorCandidates(deps: QueryDeps, signals: LibrarySig
       ctx.queriedAuthor = name;
       filterAndScore(results, 'author', () => `New from ${name} — you have ${signals.authorAffinity.get(name)?.count ?? 0} of their books`, strength, ctx, map, cap);
       ctx.queriedAuthor = undefined;
-    } catch (e) { deps.log.warn(e, `Discovery: author query failed for ${name}`); }
+    } catch (error: unknown) { deps.log.warn(error, `Discovery: author query failed for ${name}`); }
   }
 }
 
@@ -92,7 +92,7 @@ export async function querySeriesCandidates(deps: QueryDeps, signals: LibrarySig
         const pos = book.series?.find(s => s.name?.toLowerCase() === gap.seriesName.toLowerCase())?.position;
         return `Next in ${gap.seriesName} — you have books 1-${gap.maxOwned}${pos === next ? '' : ` (position ${pos})`}`;
       }, 1.0, ctx, map);
-    } catch (e) { deps.log.warn(e, `Discovery: series query failed for ${gap.seriesName}`); }
+    } catch (error: unknown) { deps.log.warn(error, `Discovery: series query failed for ${gap.seriesName}`); }
   }
 }
 
@@ -105,7 +105,7 @@ export async function queryGenreCandidates(deps: QueryDeps, signals: LibrarySign
       ctx.warnings.push(...warnings);
       const filtered = results.filter(b => !b.authors?.[0]?.name || !libraryAuthors.has(b.authors[0].name));
       filterAndScore(filtered, 'genre', () => `Popular in ${genre} — your most-read genre`, 0.5, ctx, map);
-    } catch (e) { deps.log.warn(e, `Discovery: genre query failed for ${genre}`); }
+    } catch (error: unknown) { deps.log.warn(error, `Discovery: genre query failed for ${genre}`); }
   }
 }
 
@@ -115,7 +115,7 @@ export async function queryNarratorCandidates(deps: QueryDeps, signals: LibraryS
       const { books: results, warnings } = await deps.metadataService.searchBooksForDiscovery(name);
       ctx.warnings.push(...warnings);
       filterAndScore(results, 'narrator', () => `Narrated by ${name} — you've enjoyed ${count} of their performances`, Math.min(count / MAX_STRENGTH_BOOKS, 1.0), ctx, map);
-    } catch (e) { deps.log.warn(e, `Discovery: narrator query failed for ${name}`); }
+    } catch (error: unknown) { deps.log.warn(error, `Discovery: narrator query failed for ${name}`); }
   }
 }
 
@@ -142,7 +142,7 @@ export async function queryDiversityCandidates(deps: QueryDeps, signals: Library
         seenAsins.add(book.asin!);
         break;
       }
-    } catch (e) { deps.log.warn(e, `Discovery: diversity query failed for ${genre}`); }
+    } catch (error: unknown) { deps.log.warn(error, `Discovery: diversity query failed for ${genre}`); }
   }
 
   return candidates;

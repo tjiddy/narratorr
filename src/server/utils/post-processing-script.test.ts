@@ -196,6 +196,18 @@ describe('runPostProcessingScript', () => {
       expect(result.warning).toContain('EACCES');
     });
 
+    it('returns inaccessible warning with "Unknown error" fallback when access rejects a non-Error value', async () => {
+      mockAccess.mockRejectedValue('string-rejection');
+      const result = await runPostProcessingScript(defaultArgs);
+
+      expect(result.success).toBe(false);
+      expect(result.warning).toBe('Post-processing script inaccessible: /scripts/post-import.sh (Unknown error)');
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ scriptPath: '/scripts/post-import.sh', error: 'string-rejection' }),
+        expect.stringContaining('inaccessible'),
+      );
+    });
+
     it('returns success on zero exit code', async () => {
       setupExecFileSuccess();
       const result = await runPostProcessingScript(defaultArgs);

@@ -65,16 +65,16 @@ export function useMatchJob(): UseMatchJobReturn {
         try {
           const status = await api.getMatchJob(jobIdRef.current);
           handlePollResult(status);
-        } catch (err) {
+        } catch (error: unknown) {
           // Job may have expired — stop polling
           stopPolling();
           setIsMatching(false);
-          setError(err instanceof Error ? err.message : 'Unknown error');
+          setError(error instanceof Error ? error.message : 'Unknown error');
         }
       }, POLL_INTERVAL);
-    } catch (err) {
+    } catch (error: unknown) {
       setIsMatching(false);
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setError(error instanceof Error ? error.message : 'Unknown error');
     }
   }, [cancel, handlePollResult, stopPolling]);
 

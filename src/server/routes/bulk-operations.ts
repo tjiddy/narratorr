@@ -33,12 +33,12 @@ export async function bulkOperationsRoutes(
     try {
       const jobId = await bulkOperationService.startRenameJob();
       return await reply.status(202).send({ jobId });
-    } catch (err) {
-      if (err instanceof BulkOpError) {
-        if (err.code === 'LIBRARY_NOT_CONFIGURED') return reply.status(400).send({ error: err.message });
-        if (err.code === 'BULK_OP_IN_PROGRESS') return reply.status(409).send({ error: err.message });
+    } catch (error: unknown) {
+      if (error instanceof BulkOpError) {
+        if (error.code === 'LIBRARY_NOT_CONFIGURED') return reply.status(400).send({ error: error.message });
+        if (error.code === 'BULK_OP_IN_PROGRESS') return reply.status(409).send({ error: error.message });
       }
-      request.log.error(err, 'Failed to start bulk rename job');
+      request.log.error(error, 'Failed to start bulk rename job');
       return reply.status(500).send({ error: 'Internal server error' });
     }
   });
@@ -47,11 +47,11 @@ export async function bulkOperationsRoutes(
     try {
       const jobId = await bulkOperationService.startRetagJob();
       return await reply.status(202).send({ jobId });
-    } catch (err) {
-      if (err instanceof BulkOpError) {
-        if (err.code === 'BULK_OP_IN_PROGRESS') return reply.status(409).send({ error: err.message });
+    } catch (error: unknown) {
+      if (error instanceof BulkOpError) {
+        if (error.code === 'BULK_OP_IN_PROGRESS') return reply.status(409).send({ error: error.message });
       }
-      request.log.error(err, 'Failed to start bulk retag job');
+      request.log.error(error, 'Failed to start bulk retag job');
       return reply.status(500).send({ error: 'Internal server error' });
     }
   });
@@ -60,12 +60,12 @@ export async function bulkOperationsRoutes(
     try {
       const jobId = await bulkOperationService.startConvertJob();
       return await reply.status(202).send({ jobId });
-    } catch (err) {
-      if (err instanceof BulkOpError) {
-        if (err.code === 'FFMPEG_NOT_CONFIGURED') return reply.status(503).send({ error: err.message });
-        if (err.code === 'BULK_OP_IN_PROGRESS') return reply.status(409).send({ error: err.message });
+    } catch (error: unknown) {
+      if (error instanceof BulkOpError) {
+        if (error.code === 'FFMPEG_NOT_CONFIGURED') return reply.status(503).send({ error: error.message });
+        if (error.code === 'BULK_OP_IN_PROGRESS') return reply.status(409).send({ error: error.message });
       }
-      request.log.error(err, 'Failed to start bulk convert job');
+      request.log.error(error, 'Failed to start bulk convert job');
       return reply.status(500).send({ error: 'Internal server error' });
     }
   });

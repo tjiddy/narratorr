@@ -170,12 +170,12 @@ export class BulkOperationService {
       for (const bookId of mismatchedIds) {
         try {
           await this.renameService.renameBook(bookId);
-        } catch (err) {
-          if (err instanceof RenameError && err.code === 'NO_PATH') {
+        } catch (error: unknown) {
+          if (error instanceof RenameError && error.code === 'NO_PATH') {
             tick(false); // skip silently
             continue;
           }
-          this.log.warn({ bookId, err }, 'Bulk rename: book failed');
+          this.log.warn({ bookId, error }, 'Bulk rename: book failed');
           tick(true); // failure
           continue;
         }
@@ -204,12 +204,12 @@ export class BulkOperationService {
       for (const { id: bookId } of rows) {
         try {
           await this.taggingService.retagBook(bookId);
-        } catch (err) {
-          if (err instanceof RetagError && err.code === 'NO_PATH') {
+        } catch (error: unknown) {
+          if (error instanceof RetagError && error.code === 'NO_PATH') {
             tick(false); // skip silently
             continue;
           }
-          this.log.warn({ bookId, err }, 'Bulk re-tag: book failed');
+          this.log.warn({ bookId, error }, 'Bulk re-tag: book failed');
           tick(true); // failure
           continue;
         }
@@ -251,8 +251,8 @@ export class BulkOperationService {
         }
         try {
           await this.convertBook(row.id, row.path, row.title, processingSettings);
-        } catch (err) {
-          this.log.warn({ bookId: row.id, err }, 'Bulk convert: book failed');
+        } catch (error: unknown) {
+          this.log.warn({ bookId: row.id, error }, 'Bulk convert: book failed');
           tick(true); // failure
           continue;
         }

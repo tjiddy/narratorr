@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { NytProvider } from './nyt-provider.js';
@@ -92,6 +92,18 @@ describe('NytProvider', () => {
       const result = await provider.test();
       expect(result.success).toBe(false);
       expect(result.message).toContain('Invalid API key');
+    });
+
+    it('returns failure with "Unknown error" when fetch throws a non-Error value', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue('network-string-error'));
+
+      const provider = new NytProvider({ apiKey: 'test-key', list: 'audio-fiction' });
+      const result = await provider.test();
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('Connection failed: Unknown error');
+
+      vi.unstubAllGlobals();
     });
   });
 });

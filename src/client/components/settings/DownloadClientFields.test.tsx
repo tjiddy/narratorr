@@ -361,5 +361,29 @@ describe('DownloadClientFields', () => {
         expect(screen.getByText('Network error')).toBeInTheDocument();
       });
     });
+
+    it('shows fallback message and hides dropdown when API rejects a non-Error value', async () => {
+      const user = userEvent.setup();
+      const mockFn = downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>;
+      // First fetch succeeds and opens the dropdown
+      mockFn.mockResolvedValueOnce({ categories: [] });
+      // Second fetch rejects with a non-Error value
+      mockFn.mockRejectedValueOnce('string-rejection');
+
+      render(<FieldWrapper type="qbittorrent" />);
+
+      // Open the dropdown with a successful fetch
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+      await waitFor(() => {
+        expect(screen.getByText('No categories found')).toBeInTheDocument();
+      });
+
+      // Trigger the non-Error rejection
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+      await waitFor(() => {
+        expect(screen.getByText('Failed to fetch categories')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('No categories found')).not.toBeInTheDocument();
+    });
   });
 });

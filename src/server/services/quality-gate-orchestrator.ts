@@ -190,8 +190,8 @@ export class QualityGateOrchestrator {
           reason: 'bad_quality',
         });
         this.log.info({ downloadId: download.id, infoHash: download.infoHash }, 'Quality gate: blacklisted rejected release');
-      } catch (err) {
-        this.log.warn({ downloadId: download.id, err }, 'Quality gate: failed to blacklist release');
+      } catch (error: unknown) {
+        this.log.warn({ downloadId: download.id, error }, 'Quality gate: failed to blacklist release');
       }
     } else if (!download.infoHash) {
       this.log.info({ downloadId: download.id }, 'Quality gate: blacklist skipped — no infoHash');
@@ -206,8 +206,8 @@ export class QualityGateOrchestrator {
           this.log.info({ downloadId: download.id }, 'Quality gate: deleted rejected download files');
         }
       }
-    } catch (err) {
-      this.log.warn({ downloadId: download.id, err }, 'Quality gate: failed to delete download files');
+    } catch (error: unknown) {
+      this.log.warn({ downloadId: download.id, error }, 'Quality gate: failed to delete download files');
     }
 
     // Recover book status — errors propagate to caller (manual reject → 500, auto-reject → outer catch → pending_review)
@@ -236,6 +236,6 @@ export class QualityGateOrchestrator {
 
   /** Fire-and-forget SSE emit — swallows errors to avoid breaking the caller. */
   private emitSSE<T extends SSEEventType>(eventType: T, payload: SSEEventPayloads[T]): void {
-    try { this.broadcaster?.emit(eventType, payload); } catch (e) { this.log.debug(e, 'SSE emit failed'); }
+    try { this.broadcaster?.emit(eventType, payload); } catch (error: unknown) { this.log.debug(error, 'SSE emit failed'); }
   }
 }
