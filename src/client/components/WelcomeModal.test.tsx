@@ -62,4 +62,14 @@ describe('WelcomeModal', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     expect(screen.getByRole('button', { name: /get started/i })).toHaveAttribute('type', 'button');
   });
+
+  it('pressing Escape does NOT close the modal (onboarding requires explicit Get Started)', async () => {
+    const user = userEvent.setup();
+    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+
+    await user.keyboard('{Escape}');
+
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
 });

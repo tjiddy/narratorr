@@ -25,10 +25,16 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
 import { useActivityCounts } from '@/hooks/useActivityCounts';
 import { useAuthContext } from '@/hooks/useAuthContext';
 const { api } = await import('@/lib/api');
+const { toast } = await import('sonner');
 const mockApi = api as unknown as { getHealthSummary: ReturnType<typeof vi.fn> };
+const mockToast = toast as unknown as { success: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> };
 
 describe('Layout', () => {
   beforeEach(() => {
@@ -514,6 +520,30 @@ describe('Layout', () => {
       await waitFor(() => {
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
       });
+    });
+
+    it('shows error toast and keeps modal open when dismiss save fails', async () => {
+      const user = userEvent.setup();
+      mockCounts(0);
+      mockAuth();
+      vi.mocked(api.getSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: false } }),
+      );
+      vi.mocked(api.updateSettings).mockRejectedValue(new Error('Network error'));
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /get started/i }));
+
+      await waitFor(() => {
+        expect(mockToast.error).toHaveBeenCalledWith('Network error');
+      });
+      // Modal stays open on failure
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
     });
   });
 });

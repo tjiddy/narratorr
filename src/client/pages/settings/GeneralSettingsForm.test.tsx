@@ -239,6 +239,24 @@ describe('GeneralSettingsForm', () => {
       });
     });
 
+    it('"Show Welcome Message" button is disabled while mutation is in flight', async () => {
+      let resolveUpdate!: (v: unknown) => void;
+      mockApi.updateSettings.mockReturnValue(new Promise((res) => { resolveUpdate = res; }));
+      const user = userEvent.setup();
+      renderWithProviders(<GeneralSettingsForm />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+
+      // While in-flight, the button is disabled and shows "Saving..."
+      expect(screen.getByRole('button', { name: /saving/i })).toBeDisabled();
+
+      resolveUpdate(mockSettings);
+    });
+
     it('form main save does not include welcomeSeen in the general payload', async () => {
       const user = userEvent.setup();
       mockApi.updateSettings.mockResolvedValue(mockSettings);
