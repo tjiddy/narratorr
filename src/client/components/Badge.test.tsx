@@ -51,4 +51,13 @@ describe('Badge', () => {
     expect(badge.firstChild?.nodeName.toLowerCase()).toBe('svg');
     expect(badge).toHaveTextContent('In library');
   });
+
+  it('forwards className to the badge element', () => {
+    render(
+      <Badge variant="muted" className="shrink-0">
+        Already in library
+      </Badge>,
+    );
+    expect(screen.getByTestId('badge')).toHaveClass('shrink-0');
+  });
 });
