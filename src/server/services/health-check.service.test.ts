@@ -189,6 +189,13 @@ describe('HealthCheckService', () => {
       expect(check).toMatchObject({ state: 'error' });
       expect(check!.message).toMatch(/permission|writable|access/i);
     });
+
+    it('returns not-writable message when fsAccess rejects a non-Error value', async () => {
+      const { service } = createService({ fsAccess: vi.fn().mockRejectedValue('string-rejection') });
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'library-root');
+      expect(check).toMatchObject({ state: 'error', message: 'Library path not writable: /audiobooks' });
+    });
   });
 
   describe('checkDiskSpace', () => {
@@ -256,6 +263,15 @@ describe('HealthCheckService', () => {
       const check = results.find((r) => r.checkName === 'disk-space');
       expect(check).toMatchObject({ state: 'error' });
       expect(check!.message).toContain('Permission denied');
+    });
+
+    it('returns "Unknown error" fallback message when statfs rejects a non-Error value', async () => {
+      const { service } = createService({
+        fsStatfs: vi.fn().mockRejectedValue('string-rejection'),
+      });
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'disk-space');
+      expect(check).toMatchObject({ state: 'error', message: 'Failed to check disk space: Unknown error' });
     });
   });
 
@@ -366,6 +382,21 @@ describe('HealthCheckService', () => {
       const check = results.find((r) => r.checkName === 'stuck-downloads');
       expect(check).toMatchObject({ state: 'error' });
       expect(check!.message).toContain('DB connection lost');
+    });
+
+    it('returns "Unknown error" fallback message when download query rejects a non-Error value', async () => {
+      const { service } = createService({
+        db: {
+          select: vi.fn().mockReturnValue({
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockRejectedValue('string-rejection'),
+            }),
+          }),
+        },
+      });
+      const results = await service.runAllChecks();
+      const check = results.find((r) => r.checkName === 'stuck-downloads');
+      expect(check).toMatchObject({ state: 'error', message: 'Failed to check downloads: Unknown error' });
     });
   });
 
