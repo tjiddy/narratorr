@@ -1,33 +1,63 @@
 # Workflow Log
 
-## #159 Polish: Welcome modal — scroll lock, focus trap, icon dedup, design pass — 2026-03-27
+## #165 Welcome modal: make "Show Welcome Message" a local-only action — 2026-03-27
 **Skill path:** /implement → /claim → /plan → /handoff
-**Outcome:** success — PR #160
+**Outcome:** success — PR #167
 
 ### Metrics
-- Files changed: 4 | Tests added/modified: 15
-- Quality gate runs: 2 (pass on attempt 2 — first failed due to missing node_modules)
-- Fix iterations: 3 (missing node_modules → pnpm install; WelcomeModalProps interface silently deleted by large Edit block → restored; font-display missing on h3 headings caught by self-review → added)
-- Context compactions: 1 (required resuming from summary)
+- Files changed: 3 | Tests added/modified: 2 files (GeneralSettings.test.tsx rewrote 6→8 tests, Layout.test.tsx removed 2 integration tests)
+- Quality gate runs: 1 (pass on first attempt)
+- Fix iterations: 0
+- Context compactions: 0
 
 ### Workflow experience
-- What went smoothly: TDD cycle was clean for useFocusTrap — real failing tests on first run, implementation was straightforward. Icon dedup was mechanical once the strokeWidth mismatch was caught.
-- Friction / issues encountered: (1) Large Edit old_string spanning imports+interfaces+functions silently deleted WelcomeModalProps — only caught at typecheck. (2) node_modules missing caused lint failure that looked like an eslint configuration error. (3) Two rounds of spec review were required before approve — spec was underspecified on focus trap contract and AC5 heading styling.
+- What went smoothly: Implementation was a clean deletion — replacing ~12 lines of mutation code with 2 lines of useState. All 8 new tests passed on first green run.
+- Friction / issues encountered: `Layout.test.tsx` imported `GeneralSettings` and mocked `@core/utils/index.js` exclusively for the two cross-component integration tests being removed. Both needed cleanup to avoid lint errors. The mock comment made the dependency explicit and easy to trace.
 
 ### Token efficiency
-- Highest-token actions: Spec review iteration (two full rounds), context compaction requiring summary read
-- Avoidable waste: If WelcomeModalProps deletion had been caught earlier (e.g., during the red/green test run), a typecheck step at that point would have saved a fix iteration
-- Suggestions: Run `pnpm typecheck` after each module's Edit block, not just at the end via verify.ts
+- Highest-token actions: Explore subagents for self-review and coverage analysis; spec review loop (3 rounds before implementation)
+- Avoidable waste: None — spec review caught the Escape-dismissal error before implementation
+- Suggestions: When spec says "component X needs no changes," verify its behavioral contract (dismiss, keyboard, backdrop) before finalizing User Interactions wording
 
 ### Infrastructure gaps
-- Repeated workarounds: Write tool has a sensitive-file permission gate on `.claude/cl/learnings/` — had to fall back to Bash cat heredoc
-- Missing tooling / config: No automated check for "interface still present after Edit" — typecheck runs once at the end, not per module
-- Unresolved debt: Large Edit blocks spanning multiple declaration types remain a footgun — no guard exists
+- Repeated workarounds: `frontend-design` skill not available — no visual changes in this issue so impact is zero
+- Missing tooling / config: None
+- Unresolved debt: None introduced
 
 ### Wish I'd Known
-1. When replacing a large `old_string` that spans imports + type declarations + function definitions, any interface definition in the middle is silently removed. Always split Edit calls to target the smallest unique string. (see `large-edit-old-string-swallows-interfaces.md`)
-2. `useEscapeKey(false, ...)` is a complete no-op — it short-circuits on the `!isOpen` check and never attaches a listener. Passing `false` as the first arg should just be removed entirely.
-3. When extracting SVG icons to a shared module, byte-level diff the attributes (especially `strokeWidth`) — path data may match while rendering differs.
+1. When removing a mutation from a component, grep all test files for integration tests that rendered that component as a child route — they relied on the cache-invalidation chain and become void
+2. Associated `vi.mock()` calls in test files often exist solely to support one import/test block; when that block is removed, the mock and import should be removed together
+3. The spec review round that caught "Escape dismisses modal" saved real implementation time — WelcomeModal explicitly blocks Escape; had that gone unreviewed the implementer would have hit it mid-implementation
+
+## #157 Welcome modal — first-run onboarding with defaults, first steps, and feature highlights — 2026-03-27
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #158
+
+### Metrics
+- Files changed: 10 | Tests added/modified: 3 files (WelcomeModal.test.tsx new, Layout.test.tsx +11 tests, GeneralSettingsForm.test.tsx +6 tests)
+- Quality gate runs: 2 (pass on attempt 2 — 2nd run after coverage gap fixes)
+- Fix iterations: 0 production bugs; 3 test coverage gaps filled (escape key, dismiss error, isPending button)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Schema/registry/blast-radius pattern is well-understood; modal pattern from ConfirmModal was easy to follow; UpdateSettingsInput being a Partial type meant no cast needed; self-review and coverage subagents caught 3 real gaps
+- Friction: Layout test beforeEach needed updating to set welcomeSeen: true because createMockSettings() now deep-merges the new falsy default. GeneralSettingsForm needed restructuring from a single form return to a div wrapper to place the escape hatch button outside the form.
+
+### Token efficiency
+- Highest-token actions: Two Explore subagents (self-review + coverage analysis) — both high-value, coverage found 3 gaps
+- Avoidable waste: None
+- Suggestions: The Layout test opt-out pattern for falsy settings defaults should be documented before it bites future implementers — debt entry added
+
+### Infrastructure gaps
+- Repeated workarounds: frontend-design skill not available — noted in PR, reviewer to assess WelcomeModal visual polish
+- Missing tooling / config: None
+- Unresolved debt: Layout.test.tsx beforeEach opt-out pattern for future display-condition settings fields (logged to debt.md)
+
+### Wish I'd Known
+1. createMockSettings() deep-merges from DEFAULT_SETTINGS — any new falsy-default field that triggers UI will appear in ALL Layout tests unless beforeEach explicitly opts out
+2. UpdateSettingsInput.general is Partial<AppSettings[general]> — the old data as AppSettings[general] cast masks missing fields; removing the cast is always safe for partial updates
+3. useEscapeKey(false, handler, ref) disables escape — passing false as first arg blocks escape-to-dismiss, but it is invisible in tests without an explicit assertion
+
 
 ## #147 TS-1: Type all catch blocks as catch (error: unknown) — 2026-03-27
 **Skill path:** /implement → /claim → /plan → /handoff
@@ -234,6 +264,36 @@
 2. The confirm button in BulkOperationsSection uses the same verb as the trigger button (e.g., "Re-tag All" both on the page and in the dialog confirm) — always scope modal assertions to `within(dialog)` to avoid ambiguous matches
 3. `findByDisplayValue` is the correct positive signal for vacuous negative assertions in input-interaction tests — it proves React has processed the typed value, not just that the DOM has updated
 # Workflow Log
+
+## #157 Welcome modal — first-run onboarding with defaults, first steps, and feature highlights — 2026-03-27
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #158
+
+### Metrics
+- Files changed: 10 | Tests added/modified: 3 files (WelcomeModal.test.tsx new, Layout.test.tsx +11 tests, GeneralSettingsForm.test.tsx +6 tests)
+- Quality gate runs: 2 (pass on attempt 2 — 2nd run after coverage gap fixes)
+- Fix iterations: 0 production bugs; 3 test coverage gaps filled (escape key, dismiss error, isPending button)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Schema/registry/blast-radius pattern is well-understood; modal pattern from ConfirmModal was easy to follow; UpdateSettingsInput being a Partial type meant no cast needed; self-review and coverage subagents caught 3 real gaps
+- Friction: Layout test beforeEach needed updating to set welcomeSeen: true because createMockSettings() now deep-merges the new falsy default. GeneralSettingsForm needed restructuring from a single form return to a div wrapper to place the escape hatch button outside the form.
+
+### Token efficiency
+- Highest-token actions: Two Explore subagents (self-review + coverage analysis) — both high-value, coverage found 3 gaps
+- Avoidable waste: None
+- Suggestions: The Layout test opt-out pattern for falsy settings defaults should be documented before it bites future implementers — debt entry added
+
+### Infrastructure gaps
+- Repeated workarounds: frontend-design skill not available — noted in PR, reviewer to assess WelcomeModal visual polish
+- Missing tooling / config: None
+- Unresolved debt: Layout.test.tsx beforeEach opt-out pattern for future display-condition settings fields (logged to debt.md)
+
+### Wish I'd Known
+1. createMockSettings() deep-merges from DEFAULT_SETTINGS — any new falsy-default field that triggers UI will appear in ALL Layout tests unless beforeEach explicitly opts out
+2. UpdateSettingsInput.general is Partial<AppSettings[general]> — the old data as AppSettings[general] cast masks missing fields; removing the cast is always safe for partial updates
+3. useEscapeKey(false, handler, ref) disables escape — passing false as first arg blocks escape-to-dismiss, but it is invisible in tests without an explicit assertion
+
 
 ## #148 CSS-1: Standardize z-index scale and fix a11y gaps — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
