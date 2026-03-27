@@ -1,5 +1,5 @@
-import { useRef } from 'react';
-import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { useEffect, useRef } from 'react';
+import { useFocusTrap } from '@/hooks/useFocusTrap.js';
 
 interface WelcomeModalProps {
   isOpen: boolean;
@@ -258,8 +258,20 @@ function WarningBadge() {
 
 export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
-  // No escape-to-dismiss: onboarding requires explicit "Get Started" action
-  useEscapeKey(false, onDismiss, modalRef);
+
+  // Scroll lock: prevent background page from scrolling behind the modal
+  useEffect(() => {
+    if (!isOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [isOpen]);
+
+  // Focus trap: keep keyboard focus inside the modal; no escape-to-dismiss
+  // (onboarding requires explicit "Get Started" action)
+  useFocusTrap(isOpen, modalRef);
 
   if (!isOpen) return null;
 
