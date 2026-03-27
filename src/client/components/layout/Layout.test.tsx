@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { Layout } from '@/components/layout/Layout';
+import { GeneralSettings } from '@/pages/settings/GeneralSettings';
 
 vi.mock('@/hooks/useActivityCounts', () => ({
   useActivityCounts: vi.fn(),
@@ -22,7 +23,23 @@ vi.mock('@/lib/api', () => ({
     dismissUpdate: vi.fn(),
     getSettings: vi.fn(),
     updateSettings: vi.fn(),
+    testProxy: vi.fn(),
+    probeFfmpeg: vi.fn(),
   },
+}));
+
+// Required by GeneralSettings sub-sections (LibrarySettingsSection token templates)
+vi.mock('@core/utils/index.js', () => ({
+  renderTemplate: (t: string) => t,
+  renderFilename: (t: string) => t,
+  toLastFirst: (n: string) => n,
+  toSortTitle: (t: string) => t,
+  ALLOWED_TOKENS: ['author', 'title'],
+  FILE_ALLOWED_TOKENS: ['author', 'title'],
+}));
+
+vi.mock('@/components/library/BulkOperationsSection', () => ({
+  BulkOperationsSection: () => null,
 }));
 
 vi.mock('sonner', () => ({
@@ -544,6 +561,79 @@ describe('Layout', () => {
       });
       // Modal stays open on failure
       expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    it('successful reset via Settings → General reopens the welcome modal in Layout', async () => {
+      const user = userEvent.setup();
+      mockCounts(0);
+      mockAuth();
+      // Initial: welcomeSeen true → modal hidden (uses beforeEach default)
+
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={['/settings/general']}>
+            <Routes>
+              <Route path="/" element={<Layout />}>
+                <Route path="settings/general" element={<GeneralSettings />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      // Prime mock to return welcomeSeen: false on the next refetch (post-invalidation)
+      vi.mocked(api.getSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: false } }),
+      );
+      vi.mocked(api.updateSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: false } }),
+      );
+
+      await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Welcome to narratorr')).toBeInTheDocument();
+    });
+
+    it('failed reset in Settings → General keeps modal hidden and shows error toast', async () => {
+      const user = userEvent.setup();
+      mockCounts(0);
+      mockAuth();
+      // Initial: welcomeSeen true → modal hidden (uses beforeEach default)
+      vi.mocked(api.updateSettings).mockRejectedValue(new Error('Reset failed'));
+
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={['/settings/general']}>
+            <Routes>
+              <Route path="/" element={<Layout />}>
+                <Route path="settings/general" element={<GeneralSettings />} />
+              </Route>
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+
+      await waitFor(() => {
+        expect(mockToast.error).toHaveBeenCalledWith('Reset failed');
+      });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
   });
 });
