@@ -21,6 +21,7 @@ vi.mock('@/lib/api', () => ({
     getSystemStatus: vi.fn(),
     dismissUpdate: vi.fn(),
     getSettings: vi.fn(),
+    updateSettings: vi.fn(),
   },
 }));
 
@@ -32,7 +33,13 @@ const mockApi = api as unknown as { getHealthSummary: ReturnType<typeof vi.fn> }
 describe('Layout', () => {
   beforeEach(() => {
     localStorage.clear();
-    vi.mocked(api.getSettings).mockResolvedValue(createMockSettings());
+    // Default: welcomeSeen: true so the welcome modal does not appear in unrelated tests
+    vi.mocked(api.getSettings).mockResolvedValue(
+      createMockSettings({ general: { welcomeSeen: true } }),
+    );
+    vi.mocked(api.updateSettings).mockResolvedValue(
+      createMockSettings({ general: { welcomeSeen: true } }),
+    );
   });
 
   function mockCounts(active: number) {
@@ -415,6 +422,98 @@ describe('Layout', () => {
       const header = container.querySelector('header');
       expect(header).not.toBeNull();
       expect(header).toHaveClass('z-10');
+    });
+  });
+
+  describe('welcome modal (#157)', () => {
+    it('shows WelcomeModal when settings.general.welcomeSeen is false', async () => {
+      mockCounts(0);
+      mockAuth();
+      vi.mocked(api.getSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: false } }),
+      );
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+      });
+      expect(screen.getByText('Welcome to narratorr')).toBeInTheDocument();
+    });
+
+    it('does not show WelcomeModal when settings.general.welcomeSeen is true', async () => {
+      mockCounts(0);
+      mockAuth();
+      vi.mocked(api.getSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: true } }),
+      );
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByText('narratorr')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('does not show WelcomeModal while settings query is still loading', () => {
+      mockCounts(0);
+      mockAuth();
+      vi.mocked(api.getSettings).mockReturnValue(new Promise(() => {})); // never resolves
+
+      renderWithProviders(<Layout />);
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('onDismiss calls updateSettings({ general: { welcomeSeen: true } })', async () => {
+      const user = userEvent.setup();
+      mockCounts(0);
+      mockAuth();
+      vi.mocked(api.getSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: false } }),
+      );
+      vi.mocked(api.updateSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: true } }),
+      );
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /get started/i }));
+
+      await waitFor(() => {
+        expect(vi.mocked(api.updateSettings)).toHaveBeenCalledWith({
+          general: { welcomeSeen: true },
+        });
+      });
+    });
+
+    it('modal disappears after successful dismiss', async () => {
+      const user = userEvent.setup();
+      mockCounts(0);
+      mockAuth();
+      vi.mocked(api.getSettings)
+        .mockResolvedValueOnce(createMockSettings({ general: { welcomeSeen: false } }))
+        .mockResolvedValue(createMockSettings({ general: { welcomeSeen: true } }));
+      vi.mocked(api.updateSettings).mockResolvedValue(
+        createMockSettings({ general: { welcomeSeen: true } }),
+      );
+
+      renderWithProviders(<Layout />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /get started/i }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
     });
   });
 });

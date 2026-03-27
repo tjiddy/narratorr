@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Outlet, NavLink, useLocation, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { useActivityCounts } from '@/hooks/useActivityCounts';
 import { useAuthContext } from '@/hooks/useAuthContext';
 import { SSEProvider } from '@/components/SSEProvider';
@@ -18,6 +19,7 @@ import {
 } from '@/components/icons';
 import { HealthIndicator } from './HealthIndicator';
 import { UpdateBanner } from '@/components/layout/UpdateBanner';
+import { WelcomeModal } from '@/components/WelcomeModal';
 
 const BANNER_DISMISSED_KEY = 'narratorr:auth-banner-dismissed';
 
@@ -39,11 +41,22 @@ export function Layout() {
   const location = useLocation();
   const { active: activeDownloadCount } = useActivityCounts();
   const { mode } = useAuthContext();
+  const queryClient = useQueryClient();
 
   const { data: settings } = useQuery({
     queryKey: queryKeys.settings(),
     queryFn: api.getSettings,
     staleTime: 60_000,
+  });
+
+  const dismissWelcomeMutation = useMutation({
+    mutationFn: () => api.updateSettings({ general: { welcomeSeen: true } }),
+    onSuccess: () => {
+      return queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
+    },
+    onError: (err: unknown) => {
+      toast.error(err instanceof Error ? err.message : 'Failed to save settings');
+    },
   });
 
   const navItems = useMemo(() => {
@@ -65,6 +78,12 @@ export function Layout() {
   return (
     <div className="min-h-screen flex flex-col gradient-bg noise-overlay">
       <SSEProvider />
+      {/* Welcome Modal — first-run onboarding */}
+      <WelcomeModal
+        isOpen={settings?.general?.welcomeSeen === false}
+        isPending={dismissWelcomeMutation.isPending}
+        onDismiss={() => dismissWelcomeMutation.mutate()}
+      />
       {/* Update Banner */}
       <UpdateBanner />
 
