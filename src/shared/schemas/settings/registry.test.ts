@@ -84,8 +84,8 @@ describe('settingsRegistry', () => {
       expect(parsed.redownloadFailed).toBe(true);
     });
 
-    it('general defaults have logLevel info, housekeepingRetentionDays 90, and recycleRetentionDays 30', () => {
-      expect(DEFAULT_SETTINGS.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30 });
+    it('general defaults have logLevel info, housekeepingRetentionDays 90, recycleRetentionDays 30, and welcomeSeen false', () => {
+      expect(DEFAULT_SETTINGS.general).toEqual({ logLevel: 'info', housekeepingRetentionDays: 90, recycleRetentionDays: 30, welcomeSeen: false });
     });
 
     it('metadata defaults have audibleRegion us', () => {
