@@ -83,6 +83,7 @@ Graduated learnings from the CL system — non-obvious patterns that have caused
 - **CSP nonce kills unsafe-inline:** Never combine `'nonce-'` and `'unsafe-inline'` in the same CSP directive — per CSP Level 2, a nonce's presence silently disables `unsafe-inline`. Use a Fastify `onSend` hook to strip the nonce from `style-src` after helmet injects it, preserving the nonce only in `script-src`.
 - **`backdrop-filter` creates stacking context:** Elements with `backdrop-filter` (e.g., glass-card containers) trap z-index of descendants. Portals for dropdowns/modals must attach to `<body>`, not the nearest parent.
 - **Zod `.min(1)` allows whitespace:** Use `.trim().min(1)` for user-facing text fields — bare `.min(1)` accepts `'   '` (spaces-only).
+- **Aborted tool calls are errors:** Tool calls that return `aborted` are errors. Never continue a workflow step that depends on an aborted call. Retry the call once if it is safe to retry. If the retry fails or is aborted, stop and report the workflow as blocked. After any parallel tool call, verify that every required sub-call succeeded before proceeding.
 
 ## Frontend Design Quality
 
@@ -102,20 +103,19 @@ Mechanical workflow steps live in `scripts/` as deterministic Node scripts (not 
 | `scripts/changelog.ts [since]` | Categorized changelog from git + GitHub | Markdown |
 | `scripts/git-push.ts <args>` | Token-aware git push (mints fresh GitHub App token) | stdout or error |
 | `scripts/post-review.ts <pr>` | Post review comment from state dir with guards | `POSTED:` or `ERROR:` |
+| `scripts/gh.ts` | Token-aware `gh` CLI wrapper (drop-in replacement) | stdout or error |
 | `scripts/lib.ts` | Shared helpers (gh, git, gitPush, label parsing) | — |
 
-## GitHub CLI Auth in Automated Sessions
+## GitHub CLI Auth
 
-`GH_TOKEN` is set at dispatch time from a GitHub App installation token (1-hour TTL). In long or resumed sessions, this token may expire — bare `gh` calls will 401.
+**Never call bare `gh` — always use `node scripts/gh.ts`** (reads AND writes). This wrapper routes through `scripts/lib.ts`, which auto-mints GitHub App installation tokens from app credentials (`GH_APP_ID`, `GH_APP_PRIVATE_KEY_PATH`, `GH_INSTALLATION_ID`). Falls back to the user's `gh auth` session when no app credentials are configured.
 
-**Do not improvise around `gh` 401 errors.** The scripts in `scripts/` route through `lib.ts`, which re-mints tokens automatically using the raw app credentials (`GH_APP_ID`, `GH_APP_PRIVATE_KEY_PATH`, `GH_INSTALLATION_ID`) passed in env.
+- **All `gh` calls:** `node scripts/gh.ts <args>` (e.g., `node scripts/gh.ts issue view 123 --json title`)
+- **Label changes:** `node scripts/update-labels.ts` (atomic label replacement)
+- **Git push:** `node scripts/git-push.ts` (token-aware push)
+- **Review posting:** `node scripts/post-review.ts` (guarded single-post)
 
-- **Label changes:** Use `scripts/update-labels.ts`, never bare `gh issue edit --remove-label/--add-label`
-- **Git push:** Use `scripts/git-push.ts`, never bare `git push`
-- **Review posting:** Use `scripts/post-review.ts`
-- **All other GitHub mutations:** Use `gh()` from `scripts/lib.ts` (which handles token refresh), not bare `gh` CLI
-
-If bare `gh` returns 401, the correct response is to switch to the equivalent script — not to debug auth, not to retry, not to find an alternative approach.
+If `node scripts/gh.ts` returns 401, the app credentials may be misconfigured — do not fall back to bare `gh`.
 
 ## Project Management (GitHub)
 

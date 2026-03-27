@@ -16,13 +16,13 @@ Standalone grooming/triage skill. Reads the issue, explores the codebase for gap
 
 ## GitHub CLI
 
-All GitHub commands use: `gh` (referred to as `gh` below).
+All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 ## Steps
 
-1. **Read the issue:** Run `gh issue view $ARGUMENTS --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` and capture the full output (title, body, labels).
+1. **Read the issue:** Run `node scripts/gh.tsissue view $ARGUMENTS --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` and capture the full output (title, body, labels).
 
-1b. **Check for spec review findings:** Run `gh api repos/{owner}/{repo}/issues/<id>/comments --paginate --jq '.[] | "--- comment \(.id) | \(.user.login) | \(.created_at) ---\n\(.body)\n"'`. Look for the most recent comment containing `## Spec Review` and `## Verdict:`. If found and the verdict is `needs-work`, **STOP**: "Issue #<id> has unresolved spec review findings. Run `/respond-to-spec-review <id>` to address them." If the verdict is `approve` or no review comment exists, continue with step 2.
+1b. **Check for spec review findings:** Run `node scripts/gh.tsapi repos/{owner}/{repo}/issues/<id>/comments --paginate --jq '.[] | "--- comment \(.id) | \(.user.login) | \(.created_at) ---\n\(.body)\n"'`. Look for the most recent comment containing `## Spec Review` and `## Verdict:`. If found and the verdict is `needs-work`, **STOP**: "Issue #<id> has unresolved spec review findings. Run `/respond-to-spec-review <id>` to address them." If the verdict is `approve` or no review comment exists, continue with step 2.
 
 2. **Parse spec completeness.** Check the issue body for:
    - **Acceptance Criteria** — clear, testable statements (REQUIRED)
@@ -71,9 +71,9 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    > ```
    >
    > **Overlap and dependencies:**
-   > 12. Run `gh pr list --state open --limit 50 --json number,state,title,headRefName,baseRefName,url --jq '.[] | "#\(.number) [\(.state | ascii_downcase)] \(.title)\n   \(.headRefName) → \(.baseRefName) | \(.url)"'` — any open PR touching the same area?
+   > 12. Run `node scripts/gh.tspr list --state open --limit 50 --json number,state,title,headRefName,baseRefName,url --jq '.[] | "#\(.number) [\(.state | ascii_downcase)] \(.title)\n   \(.headRefName) → \(.baseRefName) | \(.url)"'` — any open PR touching the same area?
    > 13. Check for `status/in-progress` issues that overlap in scope
-   > 14. For any issues referenced as dependencies (e.g., "depends on #X"), run `gh issue view <dep-id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` to verify status
+   > 14. For any issues referenced as dependencies (e.g., "depends on #X"), run `node scripts/gh.tsissue view <dep-id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` to verify status
    >
    > Return this structure:
    > ```
@@ -99,7 +99,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    - If durable content was found, update the issue body:
      - Preserve ALL existing content
      - Append new sections (e.g., `## Implementation Notes (auto-generated)`)
-     - Write updated body to a temp file, then: `gh issue edit <id> --body-file <temp-file-path>`
+     - Write updated body to a temp file, then: `node scripts/gh.tsissue edit <id> --body-file <temp-file-path>`
      - Clean up the temp file
    - **Fixture blast radius (trigger: spec touches settings schema, DB schema, or shared types):** If the spec adds/removes fields on settings categories, DB tables, or shared type interfaces, add a `## Fixture Blast Radius` section listing all test files that hardcode the affected shape. Grep `**/*.test.ts` and `**/*.test.tsx` for inline fixtures of the changed type. This prevents the #1 cascade problem — implementers discovering 10+ broken test files mid-implementation.
    - Only update the body if you're adding genuinely useful durable detail — don't pad it
@@ -124,7 +124,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    - If the issue has the `automate` label AND verdict is `ready` or `filled`:
      - Run: `node scripts/update-labels.ts <id> --replace "status/" "status/review-spec"`
    - If the issue has the `automate` label AND verdict is `not-ready`:
-     - Post a comment explaining why: `gh issue comment <id> --body "**BLOCKED — elaboration verdict: not-ready**\n\nContext: <1-2 sentences about what's missing or unresolvable>\n\nNeeded: <what must be fixed before this can proceed>"`
+     - Post a comment explaining why: `node scripts/gh.tsissue comment <id> --body "**BLOCKED — elaboration verdict: not-ready**\n\nContext: <1-2 sentences about what's missing or unresolvable>\n\nNeeded: <what must be fixed before this can proceed>"`
      - Add blocked flag: `node scripts/block.ts <id> "Elaboration verdict: not-ready — <reason>"`
    - If the issue does NOT have `automate`: do not change labels (manual workflow — `/claim` handles labels)
 

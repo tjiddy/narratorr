@@ -13,13 +13,13 @@ Read-only skill that surveys all open issues and produces a prioritized ranking.
 
 ## GitHub CLI
 
-All GitHub commands use: `gh` (referred to as `gh` below).
+All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 ## Steps
 
-1. **Fetch all open issues:** Run `gh issue list --state open --limit 100 --json number,state,title,labels,milestone --jq '.[] | "#\(.number) [\(.state | ascii_downcase)] \(.title)\n   labels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)"'` to get all open issues.
+1. **Fetch all open issues:** Run `node scripts/gh.tsissue list --state open --limit 100 --json number,state,title,labels,milestone --jq '.[] | "#\(.number) [\(.state | ascii_downcase)] \(.title)\n   labels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)"'` to get all open issues.
 
-2. **Read each issue:** For each issue, run `gh issue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` to get the full body. Parse from body text only (NO codebase exploration):
+2. **Read each issue:** For each issue, run `node scripts/gh.tsissue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` to get the full body. Parse from body text only (NO codebase exploration):
    - Acceptance Criteria: present / missing
    - Test Plan: present / missing
    - Dependencies: list any `#<id>` references, note if those are open/closed

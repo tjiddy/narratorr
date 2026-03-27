@@ -32,7 +32,7 @@ Reviews an elaborated issue spec with fresh eyes. Explores the codebase exhausti
 
 ## GitHub CLI
 
-All GitHub commands use: `gh` (referred to as `gh` below).
+All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 ## Steps
 
@@ -40,7 +40,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
 
 0b. **Ensure latest codebase:** Run `git checkout main && git pull` before starting. Spec reviews validate assumptions against the codebase — a stale checkout produces false findings.
 
-1. **Read the issue:** Run `gh issue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`. Extract:
+1. **Read the issue:** Run `node scripts/gh.tsissue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`. Extract:
    - Title, labels
    - Full issue body (spec)
    - Existing comments (prior review findings, elaboration notes)
@@ -78,7 +78,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    > 3. Identify existing tests in the area to understand coverage patterns
    > 4. Check for related features that might interact or conflict
    > 5. Look for prior art — has something similar been built elsewhere in the codebase?
-   > 6. Run `gh pr list --state open --limit 50 --json number,state,title,headRefName,baseRefName,url --jq '.[] | "#\(.number) [\(.state | ascii_downcase)] \(.title)\n   \(.headRefName) → \(.baseRefName) | \(.url)"'` to check for conflicting open PRs
+   > 6. Run `node scripts/gh.tspr list --state open --limit 50 --json number,state,title,headRefName,baseRefName,url --jq '.[] | "#\(.number) [\(.state | ascii_downcase)] \(.title)\n   \(.headRefName) → \(.baseRefName) | \(.url)"'` to check for conflicting open PRs
    > 7. **Verify named artifacts:** If the spec names specific files to create, modify, or delete (especially cleanup targets like learning files, debt entries, config files), verify each one exists using `ls` or `git ls-files`. For files claimed to be gitignored/local-only, verify with `git check-ignore <path>`. Report any named-but-missing artifacts.
    > 8. **Mechanical artifact grep (CRITICAL):** Extract EVERY API endpoint, schema field/column, settings key, service method, and file path referenced anywhere in the spec body. For each one, verify it exists in the codebase with the type/signature the spec assumes. Use grep/read to confirm. Return a table: `| Artifact | Spec Claim | Codebase Reality | Match? |`. This is the single highest-value check — specs that reference nonexistent endpoints or wrong field types are the #1 cause of multi-round review cycles.
    >
@@ -119,7 +119,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    - Assumptions about existing code are accurate (APIs exist, types match, patterns are followed)
    - Proposed approach follows existing patterns or explicitly justifies divergence
    - Dependencies are real — referenced issues/features actually exist and are in the expected state
-   - No conflicts with in-progress work (check open PRs via `gh pr list`)
+   - No conflicts with in-progress work (check open PRs via `node scripts/gh.tspr list`)
    - **Mechanical artifact grep (MANDATORY):** Extract every API endpoint (e.g., `GET /api/settings`), schema field (e.g., `bookEvents.createdAt`), settings key (e.g., `general.logLevel`), service method (e.g., `BlacklistService.deleteExpired()`), and file path (e.g., `src/server/jobs/blacklist-cleanup.ts`) referenced in the spec. Grep or read the codebase to confirm each one exists and has the type/signature the spec assumes. Flag any that don't exist or don't match as `blocking` with category `alignment`. This is the #1 source of multi-round spec review cycles — specs reference artifacts that don't exist or have different signatures, and catching them all in round 1 saves 1-2 full review rounds.
    - **Caller surface audit:** When the spec modifies a shared service method or interface, grep for ALL callers of that method. Verify the spec covers each caller's usage. A spec that changes `getBlacklistedHashes()` but only considers the search caller while ignoring the retry-search and RSS callers has a gap. This is the #1 source of avoidable spec review ping-pong.
    - **Schema/field name verification:** Cross-check every DB column, API endpoint, field name, and status literal mentioned in the spec against the actual schema (`src/db/schema.ts`), routes, and types. If the spec references `updatedAt` but the table only has `createdAt`, that's a blocking finding. Do not assume field names are correct — verify them.
@@ -177,7 +177,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
 8. **Post review comment AND set labels (both are MANDATORY GitHub API calls — do not skip either):**
 
    **8a. Post the review comment:**
-   - Write comment to temp file, then: `gh issue comment <id> --body-file <temp-file-path>`
+   - Write comment to temp file, then: `node scripts/gh.tsissue comment <id> --body-file <temp-file-path>`
    - **Verify the comment was posted** — the command should return the comment ID. If it fails, retry once.
    - Template:
      ```

@@ -15,7 +15,7 @@ Draft a spec for a new issue using the spec template, then create it in GitHub.
 
 ## GitHub CLI
 
-All GitHub commands use: `gh` (referred to as `gh` below).
+All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 ## Steps
 
@@ -35,7 +35,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    - Status: `status/backlog` (default) or `status/ready` if user wants it next
 6. Create the issue:
    ```
-   gh issue create --title "<title>" --body-file <temp-file-path> --label "<labels>"
+   node scripts/gh.ts issue create --title "<title>" --body-file <temp-file-path> --label "<labels>"
    ```
    Write the spec body to a temp file first, then pass via `--body-file`. Clean up the temp file after.
 7. Display the created issue URL to the user.

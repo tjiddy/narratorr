@@ -16,14 +16,14 @@ Explores the codebase, extracts test stubs from the spec, and posts a structured
 
 ## GitHub CLI
 
-All GitHub commands use: `gh` (referred to as `gh` below).
+All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 ## Steps
 
-1. **Read the issue:** Run `gh issue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`. Extract title, labels, and body.
+1. **Read the issue:** Run `node scripts/gh.tsissue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`. Extract title, labels, and body.
 
 2. **Extract reviewer suggestions from approval (MANDATORY — do not skip):**
-   - Run `gh api repos/{owner}/{repo}/issues/<id>/comments --paginate --jq '.[] | "--- comment \(.id) | \(.user.login) | \(.created_at) ---\n\(.body)\n"'` to fetch all comments (this is a separate call from step 1 — `gh issue view` does not return comments)
+   - Run `node scripts/gh.tsapi repos/{owner}/{repo}/issues/<id>/comments --paginate --jq '.[] | "--- comment \(.id) | \(.user.login) | \(.created_at) ---\n\(.body)\n"'` to fetch all comments (this is a separate call from step 1 — `node scripts/gh.tsissue view` does not return comments)
    - Find the most recent comment containing `## Spec Review` with `## Verdict: approve`
    - Parse the `## Findings` JSON block from that comment
    - Extract all findings with `"severity": "suggestion"` — these are refinements the reviewer identified that must be incorporated during implementation
@@ -40,8 +40,8 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    > Do the following and return a structured summary:
    > 1. Read `CLAUDE.md` for design principles and conventions
    > 2. Find files/modules relevant to the issue scope — existing patterns, interfaces, wiring points
-   > 3. Check for overlapping work: run `gh pr list --state open --limit 50 --json number,state,title,headRefName,baseRefName,url --jq '.[] | "#\(.number) [\(.state | ascii_downcase)] \(.title)\n   \(.headRefName) → \(.baseRefName) | \(.url)"'` and look for PRs touching the same area
-   > 4. Check dependencies: run `gh issue view <dep-id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` for any referenced issues to verify status
+   > 3. Check for overlapping work: run `node scripts/gh.tspr list --state open --limit 50 --json number,state,title,headRefName,baseRefName,url --jq '.[] | "#\(.number) [\(.state | ascii_downcase)] \(.title)\n   \(.headRefName) → \(.baseRefName) | \(.url)"'` and look for PRs touching the same area
+   > 4. Check dependencies: run `node scripts/gh.tsissue view <dep-id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` for any referenced issues to verify status
    > 5. Scan `.claude/cl/learnings/` for files whose `scope` or `files` frontmatter matches this issue's labels or target files
    > 6. Check `.claude/cl/debt.md` for items in the target area
    >
@@ -106,7 +106,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
 6. **Post a plan comment** on the issue:
    - Write the comment to a temp file, then post it:
    ```bash
-   gh issue comment <id> --body-file <temp-file-path>
+   node scripts/gh.ts issue comment <id> --body-file <temp-file-path>
    ```
    Comment template (write this to the temp file):
    ```

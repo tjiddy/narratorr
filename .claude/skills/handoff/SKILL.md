@@ -23,7 +23,7 @@ Automates the "Push + Create PR + Update issue" workflow.
 
 ## GitHub CLI
 
-All GitHub commands use: `gh` (referred to as `gh` below).
+All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 ## Steps
 
@@ -156,13 +156,13 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    node scripts/git-push.ts -u origin $(git branch --show-current)
    ```
 
-7. **Read the issue** to get the title and details: `gh issue view $ARGUMENTS --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`
+7. **Read the issue** to get the title and details: `node scripts/gh.tsissue view $ARGUMENTS --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`
 
 8. **Create the PR** via the GitHub CLI:
    - Write the PR body to a temp file (avoids shell escaping issues with multiline content):
    ```bash
    # Write PR body to temp file, then create PR
-   gh pr create --title "#<id> <issue title>" --body-file <temp-file-path> --head "<branch-name>" --base main
+   node scripts/gh.ts pr create --title "#<id> <issue title>" --body-file <temp-file-path> --head "<branch-name>" --base main
    ```
    PR body template (write this to the temp file):
    ```
@@ -191,7 +191,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
 10. **Post a handoff comment** on the issue:
    - Write the comment to a temp file, then post it:
    ```bash
-   gh issue comment <id> --body-file <temp-file-path>
+   node scripts/gh.ts issue comment <id> --body-file <temp-file-path>
    ```
    Comment template (write this to the temp file):
    ```

@@ -26,7 +26,7 @@ End-to-end orchestrator skill. Claims the issue, plans the implementation, build
 
 ## GitHub CLI
 
-All GitHub commands use: `gh` (referred to as `gh` below).
+All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 ## Steps
 
@@ -53,7 +53,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
 ### Phase 3 — Implement
 
 3. **Read the issue spec one final time** — it may have been updated during elaboration:
-   - `gh issue view $ARGUMENTS --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`
+   - `node scripts/gh.tsissue view $ARGUMENTS --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`
 
 4. **Implement the feature/fix using red/green TDD:**
 
@@ -107,9 +107,9 @@ All GitHub commands use: `gh` (referred to as `gh` below).
    - **When `/handoff` returns → IMMEDIATELY continue to step 8.** Do not end your turn.
 
 8. **Verify label transition (safety net):** Check both sides of the bridge:
-   - Run `gh issue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` and check that the issue has `status/in-review`. If missing:
+   - Run `node scripts/gh.tsissue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` and check that the issue has `status/in-review`. If missing:
      - Run: `node scripts/update-labels.ts <id> --replace "status/" "status/in-review"`
-   - Run `gh pr view <pr-number> --json number,state,title,headRefName,baseRefName,author,headRefOid,url,labels,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\n\(.headRefName) → \(.baseRefName) | author: \(.author.login) | sha: \(.headRefOid) | \(.url)\nlabels: \([.labels[].name] | join(", "))\n\n\(.body // "")"'` and check that the PR has `stage/review-pr`. If missing:
+   - Run `node scripts/gh.tspr view <pr-number> --json number,state,title,headRefName,baseRefName,author,headRefOid,url,labels,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\n\(.headRefName) → \(.baseRefName) | author: \(.author.login) | sha: \(.headRefOid) | \(.url)\nlabels: \([.labels[].name] | join(", "))\n\n\(.body // "")"'` and check that the PR has `stage/review-pr`. If missing:
      - Run: `node scripts/update-labels.ts <pr-number> --pr --replace "stage/" "stage/review-pr"`
    - **Both checks are critical for the orchestrator pipeline** — the PR label drives review dispatch, the issue label tracks workflow state.
 

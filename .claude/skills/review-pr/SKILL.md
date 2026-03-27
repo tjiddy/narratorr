@@ -30,7 +30,7 @@ Reviews a PR by checking the diff against the linked issue's acceptance criteria
 
 ## GitHub CLI
 
-All GitHub commands use: `gh` (referred to as `gh` below).
+All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 ## Steps
 
@@ -38,16 +38,16 @@ All GitHub commands use: `gh` (referred to as `gh` below).
 
 0b. **Ensure latest branch state:** Run `git fetch origin` to get the latest commits on all branches. If this is a re-review (you have reviewed this PR before in this session), the author has pushed fixes since your last review — you MUST re-run ALL steps from scratch against the updated branch. Do not reuse prior results from your session context.
 
-1. **Fetch PR details:** Run `gh pr view <pr-number> --json number,state,title,headRefName,baseRefName,author,headRefOid,url,labels,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\n\(.headRefName) → \(.baseRefName) | author: \(.author.login) | sha: \(.headRefOid) | \(.url)\nlabels: \([.labels[].name] | join(", "))\n\n\(.body // "")"'`. Extract:
+1. **Fetch PR details:** Run `node scripts/gh.tspr view <pr-number> --json number,state,title,headRefName,baseRefName,author,headRefOid,url,labels,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\n\(.headRefName) → \(.baseRefName) | author: \(.author.login) | sha: \(.headRefOid) | \(.url)\nlabels: \([.labels[].name] | join(", "))\n\n\(.body // "")"'`. Extract:
    - Title, body, state, head branch, base branch, **author** (`author: <login>` in output), labels
    - Linked issue: parse `Refs #<id>` from PR body
 
-2. **Self-review guard:** Run `gh api user --jq '.login'` to get your authenticated username. Compare against the PR author from step 1.
+2. **Self-review guard:** Run `node scripts/gh.tsapi user --jq '.login'` to get your authenticated username. Compare against the PR author from step 1.
    - If your username **matches** the PR author → **STOP**: "Cannot review your own PR. The authenticated user (`<username>`) is the PR author. Run `/review-pr <pr>` from a session authenticated as a different GitHub user (e.g., the reviewer account)."
    - Before stopping, consider: did the user actually want `/respond-to-pr-review <pr>` instead? If the PR already has review comments with findings from another user, the user likely wants the author to address those findings — suggest `/respond-to-pr-review <pr>` in your stop message.
    - If they differ → proceed (you are a different user than the author).
 
-3. **Read linked issue:** Run `gh issue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`. Extract the **Acceptance Criteria** section.
+3. **Read linked issue:** Run `node scripts/gh.tsissue view <id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'`. Extract the **Acceptance Criteria** section.
 
 4. **Read project's CLAUDE.md:** Read the `CLAUDE.md` file in the repository root. Extract:
    - Design principles (SRP, DRY, Open/Closed, co-location, etc.)
@@ -66,7 +66,7 @@ All GitHub commands use: `gh` (referred to as `gh` below).
 
 5a. **Blast radius analysis:** Run `index_repository` (codebase-memory-mcp) to force a fresh incremental reindex (~1s), then run `detect_changes` with `scope='branch'` and `base_branch='main'` to map changed symbols to their callers with risk classification (CRITICAL/HIGH/MEDIUM/LOW by call-chain depth). Use this output to prioritize where to focus deepest review in steps 5d-5e — CRITICAL-risk callers indicate high-impact changes that warrant thorough behavior enumeration.
 
-5b. **Read prior review history:** Run `gh api repos/{owner}/{repo}/issues/<pr-number>/comments --paginate --jq '.[] | "--- comment \(.id) | \(.user.login) | \(.created_at) ---\n\(.body)\n"'`. Parse ALL comments containing `## Verdict:` (prior reviews) and `## Review Response` (author responses). Build a map of prior findings and their resolutions:
+5b. **Read prior review history:** Run `node scripts/gh.tsapi repos/{owner}/{repo}/issues/<pr-number>/comments --paginate --jq '.[] | "--- comment \(.id) | \(.user.login) | \(.created_at) ---\n\(.body)\n"'`. Parse ALL comments containing `## Verdict:` (prior reviews) and `## Review Response` (author responses). Build a map of prior findings and their resolutions:
    - For each prior finding ID (F1, F2, etc.), note: the original finding, the author's resolution (`fixed`, `accepted`, `disputed`), and any rationale provided.
    - **This context is mandatory for re-reviews.** If this is the first review (no prior `## Verdict:` comments), skip to step 6.
    - **This does NOT reduce the scope of the review.** Steps 5-8 still run in full — you may find net-new issues that prior rounds missed. The prior history only affects how you handle findings that overlap with previously-disputed items (see dispute engagement rules below).
@@ -295,11 +295,11 @@ All GitHub commands use: `gh` (referred to as `gh` below).
 11c. **Write review file and phase marker:**
     - Write the full review comment body (from the template below) to `.claude/state/review-pr-<pr-number>/review.md`
     - Then write the phase marker: `echo done > .claude/state/review-pr-<pr-number>/review-complete`
-    - **Do NOT call `gh pr comment` directly — the posting script is the only authorized posting mechanism.**
+    - **Do NOT call `node scripts/gh.tspr comment` directly — the posting script is the only authorized posting mechanism.**
 
 12. **Post review comment on PR (MANDATORY — this is a GitHub API call, not stdout):**
     - Run: `node scripts/post-review.ts <pr-number>`
-    - The script reads `review.md` from the state directory, posts it as a single `gh pr comment`, and writes the `posted` marker. It refuses to run if `review-complete` is missing (analysis incomplete) or `posted` already exists (double-post guard).
+    - The script reads `review.md` from the state directory, posts it as a single `node scripts/gh.tspr comment`, and writes the `posted` marker. It refuses to run if `review-complete` is missing (analysis incomplete) or `posted` already exists (double-post guard).
     - If the script outputs `ERROR:`, investigate and fix the issue before proceeding.
     - Template (written to `review.md` in step 11c):
       ```
