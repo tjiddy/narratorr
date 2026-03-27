@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { useImageError } from '@/hooks/useImageError';
 import type { BookWithAuthor } from '@/lib/api';
 import { bookStatusConfig } from '@/lib/status';
@@ -6,7 +7,7 @@ import { BookOpenIcon, MoreVerticalIcon, BrokenLinkIcon } from '@/components/ico
 import { BookContextMenu } from './BookContextMenu.js';
 
 // eslint-disable-next-line complexity -- card has inherent conditional rendering: cover, missing chip, collapsed badge, status bar, menu, hover expand
-export function LibraryBookCard({
+export const LibraryBookCard = memo(function LibraryBookCard({
   book,
   index,
   collapsedCount,
@@ -21,11 +22,11 @@ export function LibraryBookCard({
   index: number;
   collapsedCount?: number;
   isMenuOpen: boolean;
-  onMenuToggle: (e: React.MouseEvent) => void;
+  onMenuToggle: (bookId: number, e: React.MouseEvent) => void;
   onMenuClose: () => void;
-  onClick: () => void;
-  onSearchReleases: () => void;
-  onRemove: () => void;
+  onClick: (bookId: number) => void;
+  onSearchReleases: (book: BookWithAuthor) => void;
+  onRemove: (book: BookWithAuthor) => void;
 }) {
   const { hasError: imageError, onError: onImageError } = useImageError();
   const isMissing = book.status === 'missing' || book.status === 'failed';
@@ -35,8 +36,8 @@ export function LibraryBookCard({
     <div
       role="link"
       tabIndex={0}
-      onClick={onClick}
-      onKeyDown={(e) => { if (e.key === 'Enter') onClick(); }}
+      onClick={() => onClick(book.id)}
+      onKeyDown={(e) => { if (e.key === 'Enter') onClick(book.id); }}
       className="group relative rounded-2xl overflow-hidden cursor-pointer shadow-card hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300 ease-out animate-fade-in-up"
       style={{ animationDelay: `${Math.min(index, 9) * 50}ms` }}
     >
@@ -85,7 +86,7 @@ export function LibraryBookCard({
         {/* Context menu — hover-reveal only */}
         <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
           <button
-            onClick={(e) => { e.stopPropagation(); onMenuToggle(e); }}
+            onClick={(e) => { e.stopPropagation(); onMenuToggle(book.id, e); }}
             className={`p-1.5 rounded-lg backdrop-blur-md text-white/80 hover:text-white transition-all focus-ring ${isMenuOpen ? 'bg-black/70 text-white opacity-100' : 'bg-black/40 hover:bg-black/60'}`}
             aria-label="Book options"
             aria-expanded={isMenuOpen}
@@ -96,8 +97,8 @@ export function LibraryBookCard({
 
           {isMenuOpen && (
             <BookContextMenu
-              onSearchReleases={() => { onSearchReleases(); }}
-              onRemove={() => { onRemove(); }}
+              onSearchReleases={() => onSearchReleases(book)}
+              onRemove={() => onRemove(book)}
               onClose={onMenuClose}
             />
           )}
@@ -132,4 +133,4 @@ export function LibraryBookCard({
       </div>
     </div>
   );
-}
+});

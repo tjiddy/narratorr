@@ -76,19 +76,39 @@ export function useLibraryFilters() {
   };
 
   return {
-    statusFilter, setStatusFilter,
-    authorFilter, setAuthorFilter,
-    seriesFilter, setSeriesFilter,
-    narratorFilter, setNarratorFilter,
-    sortField, setSortField,
-    sortDirection, setSortDirection,
-    filtersOpen, setFiltersOpen,
-    collapseSeriesEnabled, setCollapseSeriesEnabled,
-    searchQuery, setSearchQuery, clearSearch,
-    isSearching: !!searchQuery,
-    apiParams, pagination,
-    activeFilterCount, clearAllFilters,
-    filterTabs,
+    state: {
+      statusFilter,
+      authorFilter,
+      seriesFilter,
+      narratorFilter,
+      sortField,
+      sortDirection,
+      filtersOpen,
+      collapseSeriesEnabled,
+      searchQuery,
+      isSearching: !!searchQuery,
+    },
+    actions: {
+      setStatusFilter,
+      setAuthorFilter,
+      setSeriesFilter,
+      setNarratorFilter,
+      setSortField,
+      setSortDirection,
+      setFiltersOpen,
+      setCollapseSeriesEnabled,
+      setSearchQuery,
+      clearSearch,
+      clearAllFilters,
+    },
+    counts: {
+      activeFilterCount,
+    },
+    params: {
+      apiParams,
+      pagination,
+      filterTabs,
+    },
   };
 }
 

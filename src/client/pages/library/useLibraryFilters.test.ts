@@ -17,7 +17,7 @@ describe('useLibraryFilters', () => {
   it('returns default apiParams', () => {
     const { result } = renderHook(() => useLibraryFilters());
 
-    expect(result.current.apiParams).toEqual({
+    expect(result.current.params.apiParams).toEqual({
       status: undefined,
       search: undefined,
       sortField: 'createdAt',
@@ -30,103 +30,103 @@ describe('useLibraryFilters', () => {
   it('status filter updates apiParams', () => {
     const { result } = renderHook(() => useLibraryFilters());
 
-    act(() => { result.current.setStatusFilter('wanted'); });
+    act(() => { result.current.actions.setStatusFilter('wanted'); });
 
-    expect(result.current.apiParams.status).toBe('wanted');
+    expect(result.current.params.apiParams.status).toBe('wanted');
   });
 
   it('status=all sets undefined in apiParams', () => {
     const { result } = renderHook(() => useLibraryFilters());
 
-    act(() => { result.current.setStatusFilter('wanted'); });
-    act(() => { result.current.setStatusFilter('all'); });
+    act(() => { result.current.actions.setStatusFilter('wanted'); });
+    act(() => { result.current.actions.setStatusFilter('all'); });
 
-    expect(result.current.apiParams.status).toBeUndefined();
+    expect(result.current.params.apiParams.status).toBeUndefined();
   });
 
   it('search query updates apiParams', () => {
     const { result } = renderHook(() => useLibraryFilters());
 
-    act(() => { result.current.setSearchQuery('tolkien'); });
+    act(() => { result.current.actions.setSearchQuery('tolkien'); });
     act(() => { vi.advanceTimersByTime(350); });
 
-    expect(result.current.apiParams.search).toBe('tolkien');
-    expect(result.current.isSearching).toBe(true);
+    expect(result.current.params.apiParams.search).toBe('tolkien');
+    expect(result.current.state.isSearching).toBe(true);
   });
 
   it('sort field and direction update apiParams', () => {
     const { result } = renderHook(() => useLibraryFilters());
 
     act(() => {
-      result.current.setSortField('title');
-      result.current.setSortDirection('asc');
+      result.current.actions.setSortField('title');
+      result.current.actions.setSortDirection('asc');
     });
 
-    expect(result.current.apiParams.sortField).toBe('title');
-    expect(result.current.apiParams.sortDirection).toBe('asc');
+    expect(result.current.params.apiParams.sortField).toBe('title');
+    expect(result.current.params.apiParams.sortDirection).toBe('asc');
   });
 
   it('pagination resets when status filter changes', () => {
     const { result } = renderHook(() => useLibraryFilters());
 
     // Go to page 2
-    act(() => { result.current.pagination.setPage(2); });
-    expect(result.current.pagination.page).toBe(2);
+    act(() => { result.current.params.pagination.setPage(2); });
+    expect(result.current.params.pagination.page).toBe(2);
 
     // Change status filter — should reset to page 1
-    act(() => { result.current.setStatusFilter('wanted'); });
-    expect(result.current.pagination.page).toBe(1);
+    act(() => { result.current.actions.setStatusFilter('wanted'); });
+    expect(result.current.params.pagination.page).toBe(1);
   });
 
   it('pagination resets when search query changes', () => {
     const { result } = renderHook(() => useLibraryFilters());
 
-    act(() => { result.current.pagination.setPage(3); });
-    act(() => { result.current.setSearchQuery('foo'); });
-    expect(result.current.pagination.page).toBe(1);
+    act(() => { result.current.params.pagination.setPage(3); });
+    act(() => { result.current.actions.setSearchQuery('foo'); });
+    expect(result.current.params.pagination.page).toBe(1);
   });
 
   it('pagination resets when sort changes', () => {
     const { result } = renderHook(() => useLibraryFilters());
 
-    act(() => { result.current.pagination.setPage(2); });
-    act(() => { result.current.setSortField('title'); });
-    expect(result.current.pagination.page).toBe(1);
+    act(() => { result.current.params.pagination.setPage(2); });
+    act(() => { result.current.actions.setSortField('title'); });
+    expect(result.current.params.pagination.page).toBe(1);
   });
 
   it('tracks active filter count for client-side filters', () => {
     const { result } = renderHook(() => useLibraryFilters());
 
-    expect(result.current.activeFilterCount).toBe(0);
+    expect(result.current.counts.activeFilterCount).toBe(0);
 
-    act(() => { result.current.setAuthorFilter('Author A'); });
-    expect(result.current.activeFilterCount).toBe(1);
+    act(() => { result.current.actions.setAuthorFilter('Author A'); });
+    expect(result.current.counts.activeFilterCount).toBe(1);
 
-    act(() => { result.current.setSeriesFilter('Series X'); });
-    expect(result.current.activeFilterCount).toBe(2);
+    act(() => { result.current.actions.setSeriesFilter('Series X'); });
+    expect(result.current.counts.activeFilterCount).toBe(2);
 
-    act(() => { result.current.setNarratorFilter('Michael Kramer'); });
-    expect(result.current.activeFilterCount).toBe(3);
+    act(() => { result.current.actions.setNarratorFilter('Michael Kramer'); });
+    expect(result.current.counts.activeFilterCount).toBe(3);
   });
 
   it('clearAllFilters resets all filter state', () => {
     const { result } = renderHook(() => useLibraryFilters());
 
     act(() => {
-      result.current.setStatusFilter('wanted');
-      result.current.setAuthorFilter('Author A');
-      result.current.setSeriesFilter('Series X');
-      result.current.setSearchQuery('foo');
-      result.current.pagination.setPage(3);
+      result.current.actions.setStatusFilter('wanted');
+      result.current.actions.setAuthorFilter('Author A');
+      result.current.actions.setSeriesFilter('Series X');
+      result.current.actions.setSearchQuery('foo');
+      result.current.params.pagination.setPage(3);
     });
 
-    act(() => { result.current.clearAllFilters(); });
+    act(() => { result.current.actions.clearAllFilters(); });
 
-    expect(result.current.statusFilter).toBe('all');
-    expect(result.current.authorFilter).toBe('');
-    expect(result.current.seriesFilter).toBe('');
-    expect(result.current.searchQuery).toBe('');
-    expect(result.current.pagination.page).toBe(1);
+    expect(result.current.state.statusFilter).toBe('all');
+    expect(result.current.state.authorFilter).toBe('');
+    expect(result.current.state.seriesFilter).toBe('');
+    expect(result.current.state.searchQuery).toBe('');
+    expect(result.current.params.pagination.page).toBe(1);
   });
 });
 
@@ -264,5 +264,73 @@ describe('applyClientFilters case-insensitive (issue #79)', () => {
     });
     const result = applyClientFilters([book], { ...defaultFilters, narratorFilter: 'KATE READING' });
     expect(result).toHaveLength(1);
+  });
+});
+
+describe('grouped return shape (REACT-1 refactor)', () => {
+  it('returned object has state, actions, counts, params keys with no top-level leaked values', () => {
+    const { result } = renderHook(() => useLibraryFilters());
+    expect(result.current).toHaveProperty('state');
+    expect(result.current).toHaveProperty('actions');
+    expect(result.current).toHaveProperty('counts');
+    expect(result.current).toHaveProperty('params');
+    expect(result.current).not.toHaveProperty('statusFilter');
+    expect(result.current).not.toHaveProperty('apiParams');
+    expect(result.current).not.toHaveProperty('activeFilterCount');
+    expect(result.current).not.toHaveProperty('filterTabs');
+  });
+
+  it('state group contains all filter values and isSearching', () => {
+    const { result } = renderHook(() => useLibraryFilters());
+    expect(result.current.state).toMatchObject({
+      statusFilter: 'all',
+      authorFilter: '',
+      seriesFilter: '',
+      narratorFilter: '',
+      sortField: 'createdAt',
+      sortDirection: 'desc',
+      filtersOpen: false,
+      collapseSeriesEnabled: false,
+      searchQuery: '',
+      isSearching: false,
+    });
+  });
+
+  it('state.isSearching reflects searchQuery truthiness', () => {
+    const { result } = renderHook(() => useLibraryFilters());
+    expect(result.current.state.isSearching).toBe(false);
+    act(() => { result.current.actions.setSearchQuery('tolkien'); });
+    expect(result.current.state.isSearching).toBe(true);
+    act(() => { result.current.actions.clearSearch(); });
+    expect(result.current.state.isSearching).toBe(false);
+  });
+
+  it('actions group contains all setters plus clearSearch and clearAllFilters', () => {
+    const { result } = renderHook(() => useLibraryFilters());
+    const actionNames = ['setStatusFilter', 'setAuthorFilter', 'setSeriesFilter', 'setNarratorFilter',
+      'setSortField', 'setSortDirection', 'setFiltersOpen', 'setCollapseSeriesEnabled',
+      'setSearchQuery', 'clearSearch', 'clearAllFilters'] as const;
+    for (const name of actionNames) {
+      expect(typeof result.current.actions[name]).toBe('function');
+    }
+  });
+
+  it('counts group contains activeFilterCount with correct value', () => {
+    const { result } = renderHook(() => useLibraryFilters());
+    expect(result.current.counts).toHaveProperty('activeFilterCount');
+    expect(result.current.counts.activeFilterCount).toBe(0);
+    act(() => { result.current.actions.setAuthorFilter('Tolkien'); });
+    expect(result.current.counts.activeFilterCount).toBe(1);
+  });
+
+  it('params group contains apiParams, pagination, and filterTabs', () => {
+    const { result } = renderHook(() => useLibraryFilters());
+    expect(result.current.params).toHaveProperty('apiParams');
+    expect(result.current.params).toHaveProperty('pagination');
+    expect(result.current.params).toHaveProperty('filterTabs');
+    expect(result.current.params.apiParams).toMatchObject({
+      sortField: 'createdAt',
+      sortDirection: 'desc',
+    });
   });
 });

@@ -18,16 +18,13 @@ export function ActivityPage() {
   const queuePagination = usePagination(DEFAULT_LIMITS.activity);
   const historyPagination = usePagination(DEFAULT_LIMITS.activity);
 
-  const {
-    queue, queueTotal,
-    history, historyTotal,
-    isLoading,
-    cancelMutation, retryMutation, approveMutation, rejectMutation,
-    deleteMutation, deleteHistoryMutation,
-  } = useActivity(
+  const { state, status, mutations } = useActivity(
     { limit: queuePagination.limit, offset: queuePagination.offset },
     { limit: historyPagination.limit, offset: historyPagination.offset },
   );
+  const { queue, queueTotal, history, historyTotal } = state;
+  const { isLoading } = status;
+  const { cancelMutation, retryMutation, approveMutation, rejectMutation, deleteMutation, deleteHistoryMutation } = mutations;
 
   // Clamp pages when totals shrink
   useEffect(() => { queuePagination.clampToTotal(queueTotal); }, [queueTotal, queuePagination]);

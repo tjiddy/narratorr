@@ -73,15 +73,15 @@ describe('useActivity', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.isLoading).toBe(false);
+      expect(result.current.status.isLoading).toBe(false);
     });
 
-    expect(result.current.queue).toHaveLength(1);
-    expect(result.current.queue[0].id).toBe(1);
-    expect(result.current.queueTotal).toBe(1);
-    expect(result.current.history).toHaveLength(1);
-    expect(result.current.history[0].id).toBe(2);
-    expect(result.current.historyTotal).toBe(1);
+    expect(result.current.state.queue).toHaveLength(1);
+    expect(result.current.state.queue[0].id).toBe(1);
+    expect(result.current.state.queueTotal).toBe(1);
+    expect(result.current.state.history).toHaveLength(1);
+    expect(result.current.state.history[0].id).toBe(2);
+    expect(result.current.state.historyTotal).toBe(1);
   });
 
   it('returns empty arrays while loading', () => {
@@ -91,9 +91,9 @@ describe('useActivity', () => {
       wrapper: createWrapper(),
     });
 
-    expect(result.current.queue).toEqual([]);
-    expect(result.current.history).toEqual([]);
-    expect(result.current.isLoading).toBe(true);
+    expect(result.current.state.queue).toEqual([]);
+    expect(result.current.state.history).toEqual([]);
+    expect(result.current.status.isLoading).toBe(true);
   });
 
   it('cancel mutation calls api and invalidates queries', async () => {
@@ -105,11 +105,11 @@ describe('useActivity', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.isLoading).toBe(false);
+      expect(result.current.status.isLoading).toBe(false);
     });
 
     await act(async () => {
-      result.current.cancelMutation.mutate(42);
+      result.current.mutations.cancelMutation.mutate(42);
     });
 
     await waitFor(() => {
@@ -127,11 +127,11 @@ describe('useActivity', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.isLoading).toBe(false);
+      expect(result.current.status.isLoading).toBe(false);
     });
 
     await act(async () => {
-      result.current.retryMutation.mutate(42);
+      result.current.mutations.retryMutation.mutate(42);
     });
 
     await waitFor(() => {
@@ -149,11 +149,11 @@ describe('useActivity', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.isLoading).toBe(false);
+      expect(result.current.status.isLoading).toBe(false);
     });
 
     await act(async () => {
-      result.current.approveMutation.mutate(42);
+      result.current.mutations.approveMutation.mutate(42);
     });
 
     await waitFor(() => {
@@ -171,11 +171,11 @@ describe('useActivity', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.isLoading).toBe(false);
+      expect(result.current.status.isLoading).toBe(false);
     });
 
     await act(async () => {
-      result.current.rejectMutation.mutate(42);
+      result.current.mutations.rejectMutation.mutate(42);
     });
 
     await waitFor(() => {
@@ -192,7 +192,7 @@ describe('useActivity', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.isError).toBe(true);
+      expect(result.current.status.isError).toBe(true);
     });
   });
 
@@ -204,10 +204,10 @@ describe('useActivity', () => {
       wrapper: createWrapper(),
     });
 
-    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+    await waitFor(() => { expect(result.current.status.isLoading).toBe(false); });
 
     await act(async () => {
-      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+      result.current.mutations.deleteMutation.mutate({ id: 7, bookId: 99 });
     });
 
     await waitFor(() => {
@@ -224,10 +224,10 @@ describe('useActivity', () => {
 
     const { result } = renderHook(() => useActivity(), { wrapper });
 
-    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+    await waitFor(() => { expect(result.current.status.isLoading).toBe(false); });
 
     await act(async () => {
-      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+      result.current.mutations.deleteMutation.mutate({ id: 7, bookId: 99 });
     });
 
     await waitFor(() => {
@@ -249,10 +249,10 @@ describe('useActivity', () => {
 
     const { result } = renderHook(() => useActivity(), { wrapper });
 
-    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+    await waitFor(() => { expect(result.current.status.isLoading).toBe(false); });
 
     await act(async () => {
-      result.current.deleteMutation.mutate({ id: 7, bookId: null });
+      result.current.mutations.deleteMutation.mutate({ id: 7, bookId: null });
     });
 
     await waitFor(() => {
@@ -284,10 +284,10 @@ describe('useActivity', () => {
     );
 
     const { result } = renderHook(() => useActivity(), { wrapper });
-    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+    await waitFor(() => { expect(result.current.status.isLoading).toBe(false); });
 
     act(() => {
-      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+      result.current.mutations.deleteMutation.mutate({ id: 7, bookId: 99 });
     });
 
     // onMutate should have run synchronously — cache should be updated before resolve
@@ -319,10 +319,10 @@ describe('useActivity', () => {
     );
 
     const { result } = renderHook(() => useActivity(), { wrapper });
-    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+    await waitFor(() => { expect(result.current.status.isLoading).toBe(false); });
 
     act(() => {
-      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+      result.current.mutations.deleteMutation.mutate({ id: 7, bookId: 99 });
     });
 
     // Both history pages should have the item removed and total decremented
@@ -357,10 +357,10 @@ describe('useActivity', () => {
     );
 
     const { result } = renderHook(() => useActivity(), { wrapper });
-    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+    await waitFor(() => { expect(result.current.status.isLoading).toBe(false); });
 
     act(() => {
-      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+      result.current.mutations.deleteMutation.mutate({ id: 7, bookId: 99 });
     });
 
     await waitFor(() => {
@@ -391,10 +391,10 @@ describe('useActivity', () => {
     );
 
     const { result } = renderHook(() => useActivity(), { wrapper });
-    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+    await waitFor(() => { expect(result.current.status.isLoading).toBe(false); });
 
     act(() => {
-      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+      result.current.mutations.deleteMutation.mutate({ id: 7, bookId: 99 });
     });
 
     // Verify optimistic removal happened
@@ -421,10 +421,10 @@ describe('useActivity', () => {
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
     const { result } = renderHook(() => useActivity(), { wrapper });
-    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+    await waitFor(() => { expect(result.current.status.isLoading).toBe(false); });
 
     await act(async () => {
-      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+      result.current.mutations.deleteMutation.mutate({ id: 7, bookId: 99 });
     });
 
     await waitFor(() => {
@@ -446,10 +446,10 @@ describe('useActivity', () => {
 
     const { result } = renderHook(() => useActivity(), { wrapper });
 
-    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+    await waitFor(() => { expect(result.current.status.isLoading).toBe(false); });
 
     await act(async () => {
-      result.current.deleteHistoryMutation.mutate();
+      result.current.mutations.deleteHistoryMutation.mutate();
     });
 
     await waitFor(() => {
@@ -487,7 +487,7 @@ describe('useActivity', () => {
     );
 
     const { result } = renderHook(() => useActivity(), { wrapper });
-    await waitFor(() => { expect(result.current.isLoading).toBe(false); });
+    await waitFor(() => { expect(result.current.status.isLoading).toBe(false); });
 
     // The hook calls useActivity() with no args so the history key is params={section:'history'}
     const historyKey = queryKeys.activity({ section: 'history' });
@@ -499,7 +499,7 @@ describe('useActivity', () => {
 
     // Delete while the refetch is still in-flight
     act(() => {
-      result.current.deleteMutation.mutate({ id: 7, bookId: 99 });
+      result.current.mutations.deleteMutation.mutate({ id: 7, bookId: 99 });
     });
 
     // onMutate ran: item 7 should be removed
@@ -518,5 +518,48 @@ describe('useActivity', () => {
     expect(cached?.data.map((d) => d.id)).not.toContain(7);
 
     resolveDelete({ success: true });
+  });
+});
+
+describe('grouped return shape (REACT-1 refactor)', () => {
+  it('returned object has state, mutations, status keys with no top-level leaked values', () => {
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    const { wrapper } = createWrapperWithClient();
+    const { result } = renderHook(() => useActivity({}, {}), { wrapper });
+    expect(result.current).toHaveProperty('state');
+    expect(result.current).toHaveProperty('mutations');
+    expect(result.current).toHaveProperty('status');
+    expect(result.current).not.toHaveProperty('queue');
+    expect(result.current).not.toHaveProperty('history');
+    expect(result.current).not.toHaveProperty('isLoading');
+    expect(result.current).not.toHaveProperty('cancelMutation');
+  });
+
+  it('state group contains queue, queueTotal, history, historyTotal', () => {
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    const { wrapper } = createWrapperWithClient();
+    const { result } = renderHook(() => useActivity({}, {}), { wrapper });
+    expect(result.current.state).toHaveProperty('queue');
+    expect(result.current.state).toHaveProperty('queueTotal');
+    expect(result.current.state).toHaveProperty('history');
+    expect(result.current.state).toHaveProperty('historyTotal');
+  });
+
+  it('status group contains isLoading and isError', () => {
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    const { wrapper } = createWrapperWithClient();
+    const { result } = renderHook(() => useActivity({}, {}), { wrapper });
+    expect(result.current.status).toHaveProperty('isLoading');
+    expect(result.current.status).toHaveProperty('isError');
+  });
+
+  it('mutations group contains all 6 mutations', () => {
+    vi.mocked(api.getActivity).mockResolvedValue({ data: [], total: 0 });
+    const { wrapper } = createWrapperWithClient();
+    const { result } = renderHook(() => useActivity({}, {}), { wrapper });
+    const mutationNames = ['cancelMutation', 'retryMutation', 'approveMutation', 'rejectMutation', 'deleteMutation', 'deleteHistoryMutation'] as const;
+    for (const name of mutationNames) {
+      expect(result.current.mutations).toHaveProperty(name);
+    }
   });
 });

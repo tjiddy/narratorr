@@ -20,15 +20,11 @@ export function ManualImportPage() {
 
   const libraryPath = settings?.library?.path ?? '';
 
-  const {
-    step, scanPath, setScanPath, scanError, setScanError, rows,
-    mode, setMode, editIndex, setEditIndex, duplicateCount,
-    isMatching, progress,
-    handleScan, handleToggle, handleToggleAll, handleEdit, handleImport, handleBack,
-    scanMutation, importMutation,
-    selectedCount, selectedUnmatchedCount, readyCount, reviewCount,
-    noMatchCount, pendingCount, allSelected,
-  } = useManualImport({ onScanSuccess: folderHistory.addRecent, libraryPath });
+  const { state, actions, mutations, counts } = useManualImport({ onScanSuccess: folderHistory.addRecent, libraryPath });
+  const { step, scanPath, setScanPath, scanError, setScanError, rows, mode, setMode, editIndex, setEditIndex, isMatching, progress } = state;
+  const { handleScan, handleToggle, handleToggleAll, handleEdit, handleImport, handleBack } = actions;
+  const { scanMutation, importMutation } = mutations;
+  const { selectedCount, selectedUnmatchedCount, readyCount, reviewCount, noMatchCount, pendingCount, duplicateCount, allSelected } = counts;
 
   const isInsideLibraryRoot = libraryPath ? isPathInsideLibrary(scanPath, libraryPath) : false;
 

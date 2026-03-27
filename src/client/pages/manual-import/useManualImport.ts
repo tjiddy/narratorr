@@ -194,40 +194,41 @@ export function useManualImport({ onScanSuccess, libraryPath }: UseManualImportO
   const allSelected = rows.length > 0 && rows.every(r => r.selected);
 
   return {
-    // State
-    step,
-    scanPath,
-    setScanPath,
-    scanError,
-    setScanError,
-    rows,
-    mode,
-    setMode,
-    editIndex,
-    setEditIndex,
-    isMatching,
-    progress,
-
-    // Actions
-    handleScan,
-    handleToggle,
-    handleToggleAll,
-    handleEdit,
-    handleImport,
-    handleBack,
-
-    // Mutations
-    scanMutation,
-    importMutation,
-
-    // Computed
-    selectedCount,
-    selectedUnmatchedCount,
-    readyCount,
-    reviewCount,
-    noMatchCount,
-    pendingCount,
-    duplicateCount,
-    allSelected,
+    state: {
+      step,
+      scanPath,
+      setScanPath,
+      scanError,
+      setScanError,
+      rows,
+      mode,
+      setMode,
+      editIndex,
+      setEditIndex,
+      isMatching,
+      progress,
+    },
+    actions: {
+      handleScan,
+      handleToggle,
+      handleToggleAll,
+      handleEdit,
+      handleImport,
+      handleBack,
+    },
+    mutations: {
+      scanMutation,
+      importMutation,
+    },
+    counts: {
+      selectedCount,
+      selectedUnmatchedCount,
+      readyCount,
+      reviewCount,
+      noMatchCount,
+      pendingCount,
+      duplicateCount,
+      allSelected,
+    },
   };
 }

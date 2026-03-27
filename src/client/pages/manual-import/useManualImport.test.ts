@@ -126,10 +126,10 @@ describe('useManualImport', () => {
       wrapper: createWrapper(),
     });
 
-    expect(result.current.step).toBe('path');
-    expect(result.current.scanPath).toBe('');
-    expect(result.current.rows).toEqual([]);
-    expect(result.current.selectedCount).toBe(0);
+    expect(result.current.state.step).toBe('path');
+    expect(result.current.state.scanPath).toBe('');
+    expect(result.current.state.rows).toEqual([]);
+    expect(result.current.counts.selectedCount).toBe(0);
   });
 
   it('scan creates rows from discoveries and transitions to review step', async () => {
@@ -140,24 +140,24 @@ describe('useManualImport', () => {
     });
 
     act(() => {
-      result.current.setScanPath('/audiobooks');
+      result.current.state.setScanPath('/audiobooks');
     });
 
     await act(async () => {
-      result.current.handleScan();
+      result.current.actions.handleScan();
     });
 
     await waitFor(() => {
-      expect(result.current.step).toBe('review');
+      expect(result.current.state.step).toBe('review');
     });
 
-    expect(result.current.rows).toHaveLength(2);
-    expect(result.current.rows[0].selected).toBe(true);
-    expect(result.current.rows[0].edited.title).toBe('Book A');
-    expect(result.current.rows[0].edited.author).toBe('Author A');
-    expect(result.current.rows[1].edited.title).toBe('Book B');
-    expect(result.current.rows[1].edited.author).toBe('');
-    expect(result.current.selectedCount).toBe(2);
+    expect(result.current.state.rows).toHaveLength(2);
+    expect(result.current.state.rows[0].selected).toBe(true);
+    expect(result.current.state.rows[0].edited.title).toBe('Book A');
+    expect(result.current.state.rows[0].edited.author).toBe('Author A');
+    expect(result.current.state.rows[1].edited.title).toBe('Book B');
+    expect(result.current.state.rows[1].edited.author).toBe('');
+    expect(result.current.counts.selectedCount).toBe(2);
   });
 
   it('sets scanError when scan finds no discoveries', async () => {
@@ -171,18 +171,18 @@ describe('useManualImport', () => {
     });
 
     act(() => {
-      result.current.setScanPath('/empty');
+      result.current.state.setScanPath('/empty');
     });
 
     await act(async () => {
-      result.current.handleScan();
+      result.current.actions.handleScan();
     });
 
     await waitFor(() => {
-      expect(result.current.scanError).toBeTruthy();
+      expect(result.current.state.scanError).toBeTruthy();
     });
 
-    expect(result.current.step).toBe('path'); // stays on path step
+    expect(result.current.state.step).toBe('path'); // stays on path step
   });
 
   it('goes to review step when all discoveries are duplicates (users can force-import)', async () => {
@@ -207,18 +207,18 @@ describe('useManualImport', () => {
     });
 
     act(() => {
-      result.current.setScanPath('/dupes');
+      result.current.state.setScanPath('/dupes');
     });
 
     await act(async () => {
-      result.current.handleScan();
+      result.current.actions.handleScan();
     });
 
     await waitFor(() => {
-      expect(result.current.step).toBe('review');
+      expect(result.current.state.step).toBe('review');
     });
-    expect(result.current.rows).toHaveLength(1);
-    expect(result.current.rows[0].book.isDuplicate).toBe(true);
+    expect(result.current.state.rows).toHaveLength(1);
+    expect(result.current.state.rows[0].book.isDuplicate).toBe(true);
     // No match job started when all books are duplicates — empty candidates list guard
     expect(vi.mocked(api.startMatchJob)).not.toHaveBeenCalled();
   });
@@ -231,15 +231,15 @@ describe('useManualImport', () => {
     });
 
     act(() => {
-      result.current.setScanPath('/noaccess');
+      result.current.state.setScanPath('/noaccess');
     });
 
     await act(async () => {
-      result.current.handleScan();
+      result.current.actions.handleScan();
     });
 
     await waitFor(() => {
-      expect(result.current.scanError).toBe('Permission denied');
+      expect(result.current.state.scanError).toBe('Permission denied');
     });
   });
 
@@ -252,15 +252,15 @@ describe('useManualImport', () => {
     });
 
     act(() => {
-      result.current.setScanPath('  /audiobooks  ');
+      result.current.state.setScanPath('  /audiobooks  ');
     });
 
     await act(async () => {
-      result.current.handleScan();
+      result.current.actions.handleScan();
     });
 
     await waitFor(() => {
-      expect(result.current.step).toBe('review');
+      expect(result.current.state.step).toBe('review');
     });
 
     expect(onScanSuccess).toHaveBeenCalledWith('/audiobooks');
@@ -279,15 +279,15 @@ describe('useManualImport', () => {
     });
 
     act(() => {
-      result.current.setScanPath('/empty');
+      result.current.state.setScanPath('/empty');
     });
 
     await act(async () => {
-      result.current.handleScan();
+      result.current.actions.handleScan();
     });
 
     await waitFor(() => {
-      expect(result.current.scanError).toBeTruthy();
+      expect(result.current.state.scanError).toBeTruthy();
     });
 
     expect(onScanSuccess).not.toHaveBeenCalled();
@@ -302,15 +302,15 @@ describe('useManualImport', () => {
     });
 
     act(() => {
-      result.current.setScanPath('/noaccess');
+      result.current.state.setScanPath('/noaccess');
     });
 
     await act(async () => {
-      result.current.handleScan();
+      result.current.actions.handleScan();
     });
 
     await waitFor(() => {
-      expect(result.current.scanError).toBe('Permission denied');
+      expect(result.current.state.scanError).toBe('Permission denied');
     });
 
     expect(onScanSuccess).not.toHaveBeenCalled();
@@ -322,7 +322,7 @@ describe('useManualImport', () => {
     });
 
     act(() => {
-      result.current.handleScan();
+      result.current.actions.handleScan();
     });
 
     expect(api.scanDirectory).not.toHaveBeenCalled();
@@ -335,17 +335,17 @@ describe('useManualImport', () => {
       wrapper: createWrapper(),
     });
 
-    act(() => { result.current.setScanPath('/audiobooks'); });
-    await act(async () => { result.current.handleScan(); });
-    await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
     act(() => {
-      result.current.handleToggle(0);
+      result.current.actions.handleToggle(0);
     });
 
-    expect(result.current.rows[0].selected).toBe(false);
-    expect(result.current.rows[1].selected).toBe(true);
-    expect(result.current.selectedCount).toBe(1);
+    expect(result.current.state.rows[0].selected).toBe(false);
+    expect(result.current.state.rows[1].selected).toBe(true);
+    expect(result.current.counts.selectedCount).toBe(1);
   });
 
   it('handleToggleAll selects/deselects all rows', async () => {
@@ -355,23 +355,23 @@ describe('useManualImport', () => {
       wrapper: createWrapper(),
     });
 
-    act(() => { result.current.setScanPath('/audiobooks'); });
-    await act(async () => { result.current.handleScan(); });
-    await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
     // All selected → deselect all
     act(() => {
-      result.current.handleToggleAll();
+      result.current.actions.handleToggleAll();
     });
-    expect(result.current.allSelected).toBe(false);
-    expect(result.current.selectedCount).toBe(0);
+    expect(result.current.counts.allSelected).toBe(false);
+    expect(result.current.counts.selectedCount).toBe(0);
 
     // All deselected → select all
     act(() => {
-      result.current.handleToggleAll();
+      result.current.actions.handleToggleAll();
     });
-    expect(result.current.allSelected).toBe(true);
-    expect(result.current.selectedCount).toBe(2);
+    expect(result.current.counts.allSelected).toBe(true);
+    expect(result.current.counts.selectedCount).toBe(2);
   });
 
   it('select-all then import sends forceImport: true for duplicate rows (intended behavior per spec)', async () => {
@@ -379,16 +379,16 @@ describe('useManualImport', () => {
     vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 3 });
 
     const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
-    act(() => { result.current.setScanPath('/audiobooks'); });
-    await act(async () => { result.current.handleScan(); });
-    await waitFor(() => { expect(result.current.rows).toHaveLength(3); });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
 
     // Select all rows including duplicates
-    act(() => { result.current.handleToggleAll(); });
-    expect(result.current.allSelected).toBe(true);
-    expect(result.current.selectedCount).toBe(3);
+    act(() => { result.current.actions.handleToggleAll(); });
+    expect(result.current.counts.allSelected).toBe(true);
+    expect(result.current.counts.selectedCount).toBe(3);
 
-    await act(async () => { result.current.handleImport(); });
+    await act(async () => { result.current.actions.handleImport(); });
     await waitFor(() => { expect(vi.mocked(api.confirmImport)).toHaveBeenCalled(); });
 
     const [books] = vi.mocked(api.confirmImport).mock.calls[0];
@@ -407,12 +407,12 @@ describe('useManualImport', () => {
       wrapper: createWrapper(),
     });
 
-    act(() => { result.current.setScanPath('/audiobooks'); });
-    await act(async () => { result.current.handleScan(); });
-    await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
     act(() => {
-      result.current.handleEdit(0, {
+      result.current.actions.handleEdit(0, {
         title: 'Edited Title',
         author: 'Edited Author',
         series: 'Edited Series',
@@ -420,9 +420,9 @@ describe('useManualImport', () => {
       });
     });
 
-    expect(result.current.rows[0].edited.title).toBe('Edited Title');
-    expect(result.current.rows[0].edited.author).toBe('Edited Author');
-    expect(result.current.rows[0].edited.metadata).toBe(MATCH_METADATA);
+    expect(result.current.state.rows[0].edited.title).toBe('Edited Title');
+    expect(result.current.state.rows[0].edited.author).toBe('Edited Author');
+    expect(result.current.state.rows[0].edited.metadata).toBe(MATCH_METADATA);
   });
 
   it('handleImport sends selected rows to API and navigates on success', async () => {
@@ -433,12 +433,12 @@ describe('useManualImport', () => {
       wrapper: createWrapper(),
     });
 
-    act(() => { result.current.setScanPath('/audiobooks'); });
-    await act(async () => { result.current.handleScan(); });
-    await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
     await act(async () => {
-      result.current.handleImport();
+      result.current.actions.handleImport();
     });
 
     await waitFor(() => {
@@ -463,12 +463,12 @@ describe('useManualImport', () => {
       wrapper: createWrapper(),
     });
 
-    act(() => { result.current.setScanPath('/audiobooks'); });
-    await act(async () => { result.current.handleScan(); });
-    await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
     await act(async () => {
-      result.current.handleImport();
+      result.current.actions.handleImport();
     });
 
     await waitFor(() => {
@@ -483,16 +483,16 @@ describe('useManualImport', () => {
       wrapper: createWrapper(),
     });
 
-    act(() => { result.current.setScanPath('/audiobooks'); });
-    await act(async () => { result.current.handleScan(); });
-    await waitFor(() => { expect(result.current.step).toBe('review'); });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.step).toBe('review'); });
 
     act(() => {
-      result.current.handleBack();
+      result.current.actions.handleBack();
     });
 
-    expect(result.current.step).toBe('path');
-    expect(result.current.rows).toEqual([]);
+    expect(result.current.state.step).toBe('path');
+    expect(result.current.state.rows).toEqual([]);
   });
 
   it('handleBack from path navigates to library', () => {
@@ -501,7 +501,7 @@ describe('useManualImport', () => {
     });
 
     act(() => {
-      result.current.handleBack();
+      result.current.actions.handleBack();
     });
 
     expect(mockNavigate).toHaveBeenCalledWith('/library');
@@ -512,12 +512,12 @@ describe('useManualImport', () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
-      act(() => { result.current.setScanPath('/audiobooks'); });
-      await act(async () => { result.current.handleScan(); });
-      await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
       act(() => {
-        result.current.handleEdit(0, {
+        result.current.actions.handleEdit(0, {
           title: 'Book A',
           author: 'Author A',
           series: '',
@@ -525,7 +525,7 @@ describe('useManualImport', () => {
         });
       });
 
-      expect(result.current.rows[0].edited.metadata?.narrators).toEqual(['Jim Dale']);
+      expect(result.current.state.rows[0].edited.metadata?.narrators).toEqual(['Jim Dale']);
     });
 
     it('handleImport after edit forwards metadata.narrators to ImportConfirmItem', async () => {
@@ -533,22 +533,22 @@ describe('useManualImport', () => {
       vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
-      act(() => { result.current.setScanPath('/audiobooks'); });
-      await act(async () => { result.current.handleScan(); });
-      await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
       act(() => {
-        result.current.handleEdit(0, {
+        result.current.actions.handleEdit(0, {
           title: 'Book A',
           author: 'Author A',
           series: '',
           metadata: { title: 'Book A', authors: [{ name: 'Author A' }], narrators: ['Jim Dale'] },
         });
         // deselect row 1 to simplify assertion
-        result.current.handleToggle(1);
+        result.current.actions.handleToggle(1);
       });
 
-      await act(async () => { result.current.handleImport(); });
+      await act(async () => { result.current.actions.handleImport(); });
       await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
 
       const [items] = vi.mocked(api.confirmImport).mock.calls[0];
@@ -560,22 +560,22 @@ describe('useManualImport', () => {
       vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
-      act(() => { result.current.setScanPath('/audiobooks'); });
-      await act(async () => { result.current.handleScan(); });
-      await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
       act(() => {
-        result.current.handleEdit(0, {
+        result.current.actions.handleEdit(0, {
           title: 'Book A',
           author: 'Author A',
           series: '',
           coverUrl: 'https://example.com/new-cover.jpg',
           metadata: { title: 'Book A', authors: [{ name: 'Author A' }], narrators: ['Jim Dale'], coverUrl: 'https://example.com/new-cover.jpg' },
         });
-        result.current.handleToggle(1);
+        result.current.actions.handleToggle(1);
       });
 
-      await act(async () => { result.current.handleImport(); });
+      await act(async () => { result.current.actions.handleImport(); });
       await waitFor(() => { expect(api.confirmImport).toHaveBeenCalled(); });
 
       const [items] = vi.mocked(api.confirmImport).mock.calls[0];
@@ -587,13 +587,13 @@ describe('useManualImport', () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
-      act(() => { result.current.setScanPath('/audiobooks'); });
-      await act(async () => { result.current.handleScan(); });
-      await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
       // First edit: set metadata with narrators
       act(() => {
-        result.current.handleEdit(0, {
+        result.current.actions.handleEdit(0, {
           title: 'Book A',
           author: 'Author A',
           series: '',
@@ -603,16 +603,16 @@ describe('useManualImport', () => {
 
       // Second edit: change only the title, keep same metadata
       act(() => {
-        result.current.handleEdit(0, {
+        result.current.actions.handleEdit(0, {
           title: 'Book A (Updated)',
           author: 'Author A',
           series: '',
-          metadata: result.current.rows[0].edited.metadata,
+          metadata: result.current.state.rows[0].edited.metadata,
         });
       });
 
-      expect(result.current.rows[0].edited.title).toBe('Book A (Updated)');
-      expect(result.current.rows[0].edited.metadata?.narrators).toEqual(['Jim Dale']);
+      expect(result.current.state.rows[0].edited.title).toBe('Book A (Updated)');
+      expect(result.current.state.rows[0].edited.metadata?.narrators).toEqual(['Jim Dale']);
     });
 
     it('mergeMatchResults seeds edited.metadata.narrators from bestMatch.narrators on first arrival', async () => {
@@ -633,14 +633,14 @@ describe('useManualImport', () => {
         });
 
         const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
-        act(() => { result.current.setScanPath('/audiobooks'); });
-        await act(async () => { result.current.handleScan(); });
-        await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+        act(() => { result.current.state.setScanPath('/audiobooks'); });
+        await act(async () => { result.current.actions.handleScan(); });
+        await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
         // Advance past the 2000ms poll interval so the first poll fires
         await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
 
-        expect(result.current.rows[0].edited.metadata?.narrators).toEqual(['Stephen Fry']);
+        expect(result.current.state.rows[0].edited.metadata?.narrators).toEqual(['Stephen Fry']);
       } finally {
         vi.useRealTimers();
       }
@@ -665,19 +665,19 @@ describe('useManualImport', () => {
       });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
-      act(() => { result.current.setScanPath('/audiobooks'); });
-      await act(async () => { result.current.handleScan(); });
-      await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
       // Advance past the 2000ms poll interval so match results arrive
       await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
 
       // Row 0 is high confidence and selected → ready count = 1
-      expect(result.current.readyCount).toBe(1);
+      expect(result.current.counts.readyCount).toBe(1);
 
       // Deselect the matched row → ready count drops to 0
-      act(() => { result.current.handleToggle(0); });
-      expect(result.current.readyCount).toBe(0);
+      act(() => { result.current.actions.handleToggle(0); });
+      expect(result.current.counts.readyCount).toBe(0);
     } finally {
       vi.useRealTimers();
     }
@@ -690,15 +690,15 @@ describe('useManualImport', () => {
       wrapper: createWrapper(),
     });
 
-    act(() => { result.current.setScanPath('/audiobooks'); });
-    await act(async () => { result.current.handleScan(); });
-    await waitFor(() => { expect(result.current.rows).toHaveLength(2); });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
 
     // Before any match results, all are pending
-    expect(result.current.pendingCount).toBe(2);
-    expect(result.current.noMatchCount).toBe(0);
-    expect(result.current.readyCount).toBe(0);
-    expect(result.current.reviewCount).toBe(0);
+    expect(result.current.counts.pendingCount).toBe(2);
+    expect(result.current.counts.noMatchCount).toBe(0);
+    expect(result.current.counts.readyCount).toBe(0);
+    expect(result.current.counts.reviewCount).toBe(0);
   });
 
   // ===========================================================================
@@ -709,11 +709,11 @@ describe('useManualImport', () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
-      act(() => { result.current.setScanPath('/audiobooks'); });
-      await act(async () => { result.current.handleScan(); });
-      await waitFor(() => { expect(result.current.rows).toHaveLength(3); });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
 
-      const dupRows = result.current.rows.filter(r => r.book.isDuplicate);
+      const dupRows = result.current.state.rows.filter(r => r.book.isDuplicate);
       expect(dupRows).toHaveLength(2);
       expect(dupRows.every(r => !r.selected)).toBe(true);
     });
@@ -722,9 +722,9 @@ describe('useManualImport', () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
-      act(() => { result.current.setScanPath('/audiobooks'); });
-      await act(async () => { result.current.handleScan(); });
-      await waitFor(() => { expect(result.current.rows).toHaveLength(3); });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
 
       expect(vi.mocked(api.startMatchJob)).toHaveBeenCalledWith(
         expect.arrayContaining([
@@ -740,14 +740,14 @@ describe('useManualImport', () => {
       vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
-      act(() => { result.current.setScanPath('/audiobooks'); });
-      await act(async () => { result.current.handleScan(); });
-      await waitFor(() => { expect(result.current.rows).toHaveLength(3); });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
 
       // Manually select the first duplicate row (index 1)
-      act(() => { result.current.handleToggle(1); });
+      act(() => { result.current.actions.handleToggle(1); });
 
-      await act(async () => { result.current.handleImport(); });
+      await act(async () => { result.current.actions.handleImport(); });
       await waitFor(() => { expect(vi.mocked(api.confirmImport)).toHaveBeenCalled(); });
 
       const [books] = vi.mocked(api.confirmImport).mock.calls[0];
@@ -760,12 +760,12 @@ describe('useManualImport', () => {
       vi.mocked(api.confirmImport).mockResolvedValue({ accepted: 1 });
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
-      act(() => { result.current.setScanPath('/audiobooks'); });
-      await act(async () => { result.current.handleScan(); });
-      await waitFor(() => { expect(result.current.rows).toHaveLength(3); });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
 
       // Only the non-duplicate row (index 0) is selected by default
-      await act(async () => { result.current.handleImport(); });
+      await act(async () => { result.current.actions.handleImport(); });
       await waitFor(() => { expect(vi.mocked(api.confirmImport)).toHaveBeenCalled(); });
 
       const [books] = vi.mocked(api.confirmImport).mock.calls[0];
@@ -792,13 +792,13 @@ describe('useManualImport', () => {
         });
 
         const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
-        act(() => { result.current.setScanPath('/audiobooks'); });
-        await act(async () => { result.current.handleScan(); });
-        await waitFor(() => { expect(result.current.rows).toHaveLength(3); });
+        act(() => { result.current.state.setScanPath('/audiobooks'); });
+        await act(async () => { result.current.actions.handleScan(); });
+        await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
 
         await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
 
-        const dupRow = result.current.rows.find(r => r.book.path === '/audiobooks/Existing Book');
+        const dupRow = result.current.state.rows.find(r => r.book.path === '/audiobooks/Existing Book');
         expect(dupRow?.selected).toBe(false);
       } finally {
         vi.useRealTimers();
@@ -809,11 +809,11 @@ describe('useManualImport', () => {
       vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT_WITH_DUPLICATES);
 
       const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
-      act(() => { result.current.setScanPath('/audiobooks'); });
-      await act(async () => { result.current.handleScan(); });
-      await waitFor(() => { expect(result.current.rows).toHaveLength(3); });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(3); });
 
-      expect(result.current.duplicateCount).toBe(2);
+      expect(result.current.counts.duplicateCount).toBe(2);
     });
   });
 
@@ -823,8 +823,8 @@ describe('useManualImport', () => {
         () => useManualImport({ libraryPath: '/audiobooks' }),
         { wrapper: createWrapper() },
       );
-      act(() => { result.current.setScanPath('/audiobooks/sub'); });
-      await act(async () => { result.current.handleScan(); });
+      act(() => { result.current.state.setScanPath('/audiobooks/sub'); });
+      await act(async () => { result.current.actions.handleScan(); });
       expect(vi.mocked(api.scanDirectory)).not.toHaveBeenCalled();
     });
 
@@ -833,8 +833,8 @@ describe('useManualImport', () => {
         () => useManualImport({ libraryPath: '/audiobooks' }),
         { wrapper: createWrapper() },
       );
-      act(() => { result.current.setScanPath('/audiobooks'); });
-      await act(async () => { result.current.handleScan(); });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
       expect(vi.mocked(api.scanDirectory)).not.toHaveBeenCalled();
     });
 
@@ -844,8 +844,8 @@ describe('useManualImport', () => {
         () => useManualImport({ libraryPath: '/audiobooks' }),
         { wrapper: createWrapper() },
       );
-      act(() => { result.current.setScanPath('/media/podcasts'); });
-      await act(async () => { result.current.handleScan(); });
+      act(() => { result.current.state.setScanPath('/media/podcasts'); });
+      await act(async () => { result.current.actions.handleScan(); });
       expect(vi.mocked(api.scanDirectory)).toHaveBeenCalledWith('/media/podcasts');
     });
 
@@ -855,8 +855,8 @@ describe('useManualImport', () => {
         () => useManualImport(),
         { wrapper: createWrapper() },
       );
-      act(() => { result.current.setScanPath('/audiobooks/sub'); });
-      await act(async () => { result.current.handleScan(); });
+      act(() => { result.current.state.setScanPath('/audiobooks/sub'); });
+      await act(async () => { result.current.actions.handleScan(); });
       expect(vi.mocked(api.scanDirectory)).toHaveBeenCalledWith('/audiobooks/sub');
     });
 
@@ -866,9 +866,72 @@ describe('useManualImport', () => {
         () => useManualImport({ libraryPath: '' }),
         { wrapper: createWrapper() },
       );
-      act(() => { result.current.setScanPath('/audiobooks/sub'); });
-      await act(async () => { result.current.handleScan(); });
+      act(() => { result.current.state.setScanPath('/audiobooks/sub'); });
+      await act(async () => { result.current.actions.handleScan(); });
       expect(vi.mocked(api.scanDirectory)).toHaveBeenCalledWith('/audiobooks/sub');
+    });
+  });
+});
+
+describe('grouped return shape (REACT-1 refactor)', () => {
+  it('returned object has state, actions, mutations, counts keys with no top-level leaked values', () => {
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    expect(result.current).toHaveProperty('state');
+    expect(result.current).toHaveProperty('actions');
+    expect(result.current).toHaveProperty('mutations');
+    expect(result.current).toHaveProperty('counts');
+    expect(result.current).not.toHaveProperty('step');
+    expect(result.current).not.toHaveProperty('scanPath');
+    expect(result.current).not.toHaveProperty('handleScan');
+    expect(result.current).not.toHaveProperty('scanMutation');
+    expect(result.current).not.toHaveProperty('selectedCount');
+  });
+
+  it('state group contains step, scanPath, scanError, rows, mode, editIndex, isMatching, progress and setters', () => {
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    expect(result.current.state).toMatchObject({
+      step: 'path',
+      scanPath: '',
+      scanError: null,
+      rows: [],
+      mode: 'copy',
+      editIndex: null,
+      isMatching: false,
+    });
+    expect(result.current.state).toHaveProperty('progress');
+    expect(result.current.state).toHaveProperty('setScanPath');
+    expect(result.current.state).toHaveProperty('setScanError');
+    expect(result.current.state).toHaveProperty('setMode');
+    expect(result.current.state).toHaveProperty('setEditIndex');
+  });
+
+  it('actions group contains handleScan, handleToggle, handleToggleAll, handleEdit, handleImport, handleBack', () => {
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    expect(typeof result.current.actions.handleScan).toBe('function');
+    expect(typeof result.current.actions.handleToggle).toBe('function');
+    expect(typeof result.current.actions.handleToggleAll).toBe('function');
+    expect(typeof result.current.actions.handleEdit).toBe('function');
+    expect(typeof result.current.actions.handleImport).toBe('function');
+    expect(typeof result.current.actions.handleBack).toBe('function');
+  });
+
+  it('mutations group contains scanMutation and importMutation', () => {
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    expect(result.current.mutations).toHaveProperty('scanMutation');
+    expect(result.current.mutations).toHaveProperty('importMutation');
+  });
+
+  it('counts group contains all computed counts with correct initial values', () => {
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    expect(result.current.counts).toMatchObject({
+      selectedCount: 0,
+      selectedUnmatchedCount: 0,
+      readyCount: 0,
+      reviewCount: 0,
+      noMatchCount: 0,
+      pendingCount: 0,
+      duplicateCount: 0,
+      allSelected: false,
     });
   });
 });

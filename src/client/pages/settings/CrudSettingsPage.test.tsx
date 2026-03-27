@@ -5,24 +5,33 @@ import type { CrudSettingsConfig } from '@/hooks/useCrudSettings';
 
 vi.mock('@/hooks/useCrudSettings', () => ({
   useCrudSettings: vi.fn().mockReturnValue({
-    items: [],
-    isLoading: false,
-    showForm: false,
-    editingId: null,
-    deleteTarget: null,
-    setDeleteTarget: vi.fn(),
-    createMutation: { mutate: vi.fn(), isPending: false },
-    updateMutation: { mutate: vi.fn(), isPending: false },
-    deleteMutation: { mutate: vi.fn(), isPending: false },
-    handleToggleForm: vi.fn(),
-    handleEdit: vi.fn(),
-    handleCancelEdit: vi.fn(),
-    testingId: null,
-    testResult: null,
-    testingForm: false,
-    formTestResult: null,
-    handleTest: vi.fn(),
-    handleFormTest: vi.fn(),
+    state: {
+      items: [],
+      isLoading: false,
+      showForm: false,
+      editingId: null,
+      deleteTarget: null,
+    },
+    actions: {
+      setDeleteTarget: vi.fn(),
+      handleToggleForm: vi.fn(),
+      handleEdit: vi.fn(),
+      handleCancelEdit: vi.fn(),
+    },
+    mutations: {
+      createMutation: { mutate: vi.fn(), isPending: false },
+      updateMutation: { mutate: vi.fn(), isPending: false },
+      deleteMutation: { mutate: vi.fn(), isPending: false },
+    },
+    tests: {
+      testingId: null,
+      testResult: null,
+      testingForm: false,
+      formTestResult: null,
+      handleTest: vi.fn(),
+      handleFormTest: vi.fn(),
+      clearFormTestResult: vi.fn(),
+    },
   }),
 }));
 

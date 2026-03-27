@@ -58,14 +58,11 @@ export function CrudSettingsPage<TItem extends { id: number; name: string }, TFo
   renderCard,
   renderForm,
 }: CrudSettingsPageProps<TItem, TFormData>) {
-  const {
-    items, isLoading, showForm, editingId,
-    deleteTarget, setDeleteTarget,
-    createMutation, updateMutation, deleteMutation,
-    handleToggleForm, handleEdit, handleCancelEdit,
-    testingId, testResult, testingForm, formTestResult,
-    handleTest, handleFormTest,
-  } = useCrudSettings<TItem, TFormData>(config);
+  const { state, actions, mutations, tests } = useCrudSettings<TItem, TFormData>(config);
+  const { items, isLoading, showForm, editingId, deleteTarget } = state;
+  const { setDeleteTarget, handleToggleForm, handleEdit, handleCancelEdit } = actions;
+  const { createMutation, updateMutation, deleteMutation } = mutations;
+  const { testingId, testResult, testingForm, formTestResult, handleTest, handleFormTest } = tests;
 
   return (
     <div className="space-y-6">
