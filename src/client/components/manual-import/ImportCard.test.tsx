@@ -55,10 +55,10 @@ describe('ImportCard', () => {
     });
 
     it('renders pending badge with muted variant (ring-border/20) and spinner icon', () => {
-      const { container } = render(<ImportCard {...defaultProps} row={makeRow({ matchResult: undefined })} />);
+      render(<ImportCard {...defaultProps} row={makeRow({ matchResult: undefined })} />);
       const badge = screen.getByTestId('badge');
       expect(badge).toHaveClass('bg-muted/50', 'ring-1', 'ring-border/20');
-      expect(container.querySelector('svg')).toBeInTheDocument();
+      expect(badge.firstChild?.nodeName.toLowerCase()).toBe('svg');
     });
 
     it('shows green "Matched" badge for high confidence', () => {
@@ -273,10 +273,10 @@ describe('ImportCard', () => {
     });
 
     it('renders "Already in library" badge with muted variant and no icon', () => {
-      const { container } = render(<ImportCard {...defaultProps} row={dupRow} />);
+      render(<ImportCard {...defaultProps} row={dupRow} />);
       const badge = screen.getByTestId('badge');
       expect(badge).toHaveClass('bg-muted/50', 'ring-1', 'ring-border/20');
-      expect(container.querySelector('svg')).not.toBeInTheDocument();
+      expect(badge.querySelector('svg')).not.toBeInTheDocument();
     });
 
     it('does not show confidence badge for duplicate rows', () => {
