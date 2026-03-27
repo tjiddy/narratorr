@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #157 Welcome modal — first-run onboarding with defaults, first steps, and feature highlights — 2026-03-27
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #158
+
+### Metrics
+- Files changed: 10 | Tests added/modified: 3 files (WelcomeModal.test.tsx new, Layout.test.tsx +11 tests, GeneralSettingsForm.test.tsx +6 tests)
+- Quality gate runs: 2 (pass on attempt 2 — 2nd run after coverage gap fixes)
+- Fix iterations: 0 production bugs; 3 test coverage gaps filled (escape key, dismiss error, isPending button)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Schema/registry/blast-radius pattern is well-understood; modal pattern from ConfirmModal was easy to follow; UpdateSettingsInput being a Partial type meant no cast needed; self-review and coverage subagents caught 3 real gaps
+- Friction: Layout test beforeEach needed updating to set welcomeSeen: true because createMockSettings() now deep-merges the new falsy default. GeneralSettingsForm needed restructuring from a single form return to a div wrapper to place the escape hatch button outside the form.
+
+### Token efficiency
+- Highest-token actions: Two Explore subagents (self-review + coverage analysis) — both high-value, coverage found 3 gaps
+- Avoidable waste: None
+- Suggestions: The Layout test opt-out pattern for falsy settings defaults should be documented before it bites future implementers — debt entry added
+
+### Infrastructure gaps
+- Repeated workarounds: frontend-design skill not available — noted in PR, reviewer to assess WelcomeModal visual polish
+- Missing tooling / config: None
+- Unresolved debt: Layout.test.tsx beforeEach opt-out pattern for future display-condition settings fields (logged to debt.md)
+
+### Wish I'd Known
+1. createMockSettings() deep-merges from DEFAULT_SETTINGS — any new falsy-default field that triggers UI will appear in ALL Layout tests unless beforeEach explicitly opts out
+2. UpdateSettingsInput.general is Partial<AppSettings[general]> — the old data as AppSettings[general] cast masks missing fields; removing the cast is always safe for partial updates
+3. useEscapeKey(false, handler, ref) disables escape — passing false as first arg blocks escape-to-dismiss, but it is invisible in tests without an explicit assertion
+
+
 ## #147 TS-1: Type all catch blocks as catch (error: unknown) — 2026-03-27
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #156
@@ -205,6 +235,36 @@
 2. The confirm button in BulkOperationsSection uses the same verb as the trigger button (e.g., "Re-tag All" both on the page and in the dialog confirm) — always scope modal assertions to `within(dialog)` to avoid ambiguous matches
 3. `findByDisplayValue` is the correct positive signal for vacuous negative assertions in input-interaction tests — it proves React has processed the typed value, not just that the DOM has updated
 # Workflow Log
+
+## #157 Welcome modal — first-run onboarding with defaults, first steps, and feature highlights — 2026-03-27
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #158
+
+### Metrics
+- Files changed: 10 | Tests added/modified: 3 files (WelcomeModal.test.tsx new, Layout.test.tsx +11 tests, GeneralSettingsForm.test.tsx +6 tests)
+- Quality gate runs: 2 (pass on attempt 2 — 2nd run after coverage gap fixes)
+- Fix iterations: 0 production bugs; 3 test coverage gaps filled (escape key, dismiss error, isPending button)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Schema/registry/blast-radius pattern is well-understood; modal pattern from ConfirmModal was easy to follow; UpdateSettingsInput being a Partial type meant no cast needed; self-review and coverage subagents caught 3 real gaps
+- Friction: Layout test beforeEach needed updating to set welcomeSeen: true because createMockSettings() now deep-merges the new falsy default. GeneralSettingsForm needed restructuring from a single form return to a div wrapper to place the escape hatch button outside the form.
+
+### Token efficiency
+- Highest-token actions: Two Explore subagents (self-review + coverage analysis) — both high-value, coverage found 3 gaps
+- Avoidable waste: None
+- Suggestions: The Layout test opt-out pattern for falsy settings defaults should be documented before it bites future implementers — debt entry added
+
+### Infrastructure gaps
+- Repeated workarounds: frontend-design skill not available — noted in PR, reviewer to assess WelcomeModal visual polish
+- Missing tooling / config: None
+- Unresolved debt: Layout.test.tsx beforeEach opt-out pattern for future display-condition settings fields (logged to debt.md)
+
+### Wish I'd Known
+1. createMockSettings() deep-merges from DEFAULT_SETTINGS — any new falsy-default field that triggers UI will appear in ALL Layout tests unless beforeEach explicitly opts out
+2. UpdateSettingsInput.general is Partial<AppSettings[general]> — the old data as AppSettings[general] cast masks missing fields; removing the cast is always safe for partial updates
+3. useEscapeKey(false, handler, ref) disables escape — passing false as first arg blocks escape-to-dismiss, but it is invisible in tests without an explicit assertion
+
 
 ## #148 CSS-1: Standardize z-index scale and fix a11y gaps — 2026-03-26
 **Skill path:** /implement → /claim → /plan → /handoff
