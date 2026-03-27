@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { AbsProvider } from './abs-provider.js';
@@ -104,6 +104,18 @@ describe('AbsProvider', () => {
       const result = await provider.test();
       expect(result.success).toBe(false);
       expect(result.message).toContain('401');
+    });
+
+    it('returns failure with "Unknown error" when fetch throws a non-Error value', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue('network-string-error'));
+
+      const provider = new AbsProvider({ serverUrl: ABS_BASE, apiKey: 'test-key', libraryId: 'lib-1' });
+      const result = await provider.test();
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('Connection failed: Unknown error');
+
+      vi.unstubAllGlobals();
     });
   });
 });

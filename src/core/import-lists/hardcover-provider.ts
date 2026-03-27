@@ -133,8 +133,8 @@ export class HardcoverProvider implements ImportListProvider {
       }
 
       return { success: true };
-    } catch (err) {
-      return { success: false, message: `Connection failed: ${(err as Error).message}` };
+    } catch (error: unknown) {
+      return { success: false, message: `Connection failed: ${error instanceof Error ? error.message : 'Unknown error'}` };
     }
   }
 }
