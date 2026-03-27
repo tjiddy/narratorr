@@ -349,7 +349,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
           <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
             Features Worth Knowing
           </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <InfoCard
               icon={<ListIcon className="w-5 h-5 text-primary" />}
               title="List Importing"

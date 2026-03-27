@@ -218,6 +218,66 @@ describe('settings routes', () => {
     });
   });
 
+  describe('PUT /api/settings (welcomeSeen)', () => {
+    it('round-trips welcomeSeen: false through PUT and returns updated value', async () => {
+      const updated = {
+        ...mockSettings,
+        general: { ...mockSettings.general, welcomeSeen: false },
+      };
+      (services.settings.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { general: { welcomeSeen: false } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).general.welcomeSeen).toBe(false);
+      expect(services.settings.update).toHaveBeenCalledWith(
+        expect.objectContaining({ general: expect.objectContaining({ welcomeSeen: false }) }),
+      );
+    });
+
+    it('round-trips welcomeSeen: true through PUT and returns updated value', async () => {
+      const updated = {
+        ...mockSettings,
+        general: { ...mockSettings.general, welcomeSeen: true },
+      };
+      (services.settings.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { general: { welcomeSeen: true } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).general.welcomeSeen).toBe(true);
+      expect(services.settings.update).toHaveBeenCalledWith(
+        expect.objectContaining({ general: expect.objectContaining({ welcomeSeen: true }) }),
+      );
+    });
+
+    it('preserves welcomeSeen when PUT only updates logLevel', async () => {
+      const updated = {
+        ...mockSettings,
+        general: { logLevel: 'debug', housekeepingRetentionDays: 90, recycleRetentionDays: 30, welcomeSeen: true },
+      };
+      (services.settings.update as Mock).mockResolvedValue(updated);
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/settings',
+        payload: { general: { logLevel: 'debug' } },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).general.welcomeSeen).toBe(true);
+      expect(JSON.parse(res.payload).general.logLevel).toBe('debug');
+    });
+  });
+
   describe('error paths', () => {
     it('GET /api/settings returns 500 when service throws', async () => {
       (services.settings.getAll as Mock).mockRejectedValue(new Error('DB error'));
