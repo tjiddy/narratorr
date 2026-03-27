@@ -15,6 +15,7 @@ import {
   CheckCircleIcon,
   AlertCircleIcon,
 } from '@/components/icons';
+import { Badge } from '@/components/Badge';
 import type { BookEditState } from './types.js';
 export type { BookEditState } from './types.js';
 
@@ -122,10 +123,9 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
                   <div className="flex items-start gap-2">
                     <p className="text-sm font-semibold leading-tight line-clamp-2 flex-1">{selectedMetadata.title}</p>
                     {isBookInLibrary(selectedMetadata, libraryBooks) && (
-                      <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/20">
-                        <CheckCircleIcon className="w-3 h-3" />
+                      <Badge variant="success" icon={CheckCircleIcon} className="shrink-0">
                         In library
-                      </span>
+                      </Badge>
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground truncate">
