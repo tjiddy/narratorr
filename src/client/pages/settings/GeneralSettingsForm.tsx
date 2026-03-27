@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ClockIcon, TerminalIcon } from '@/components/icons';
-import { logLevelSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
+import { logLevelSchema, DEFAULT_SETTINGS } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 const generalFormSchema = z.object({
@@ -47,18 +47,30 @@ export function GeneralSettingsForm() {
 
   const mutation = useMutation({
     mutationFn: (data: GeneralFormData) =>
-      api.updateSettings({ general: data as AppSettings['general'] }),
+      api.updateSettings({ general: data }),
     onSuccess: (_result, submittedData) => {
       reset(submittedData);
       queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
       toast.success('General settings saved');
     },
-    onError: (err) => {
+    onError: (err: unknown) => {
       toast.error(err instanceof Error ? err.message : 'Failed to save settings');
     },
   });
 
+  const resetWelcomeMutation = useMutation({
+    mutationFn: () => api.updateSettings({ general: { welcomeSeen: false } }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
+      toast.success('Welcome message will appear on next view');
+    },
+    onError: (err: unknown) => {
+      toast.error(err instanceof Error ? err.message : 'Failed to reset welcome message');
+    },
+  });
+
   return (
+    <div className="space-y-8">
     <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-8">
       <SettingsSection
         icon={<ClockIcon className="w-5 h-5 text-primary" />}
@@ -138,5 +150,42 @@ export function GeneralSettingsForm() {
         )}
       </SettingsSection>
     </form>
+
+    <SettingsSection
+      icon={<EyeIcon className="w-5 h-5 text-primary" />}
+      title="Onboarding"
+      description="Re-display the welcome modal"
+    >
+      <p className="text-sm text-muted-foreground">
+        Show the welcome modal again to review key defaults and feature highlights.
+      </p>
+      <button
+        type="button"
+        onClick={() => resetWelcomeMutation.mutate()}
+        disabled={resetWelcomeMutation.isPending}
+        className="px-4 py-2.5 border border-border font-medium rounded-xl hover:bg-muted disabled:opacity-50 transition-all text-sm focus-ring"
+      >
+        {resetWelcomeMutation.isPending ? 'Saving...' : 'Show Welcome Message'}
+      </button>
+    </SettingsSection>
+    </div>
+  );
+}
+
+function EyeIcon({ className = '' }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
   );
 }

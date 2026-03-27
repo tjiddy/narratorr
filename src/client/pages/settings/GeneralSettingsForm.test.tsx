@@ -179,4 +179,83 @@ describe('GeneralSettingsForm', () => {
       expect(mockToast.error).toHaveBeenCalledWith('Save failed');
     });
   });
+
+  describe('Show Welcome Message escape hatch (#157)', () => {
+    it('renders "Show Welcome Message" button', async () => {
+      renderWithProviders(<GeneralSettingsForm />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+      });
+    });
+
+    it('clicking "Show Welcome Message" calls updateSettings({ general: { welcomeSeen: false } })', async () => {
+      const user = userEvent.setup();
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      renderWithProviders(<GeneralSettingsForm />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith({
+          general: { welcomeSeen: false },
+        });
+      });
+    });
+
+    it('shows success toast after successful reset', async () => {
+      const user = userEvent.setup();
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      renderWithProviders(<GeneralSettingsForm />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+
+      await waitFor(() => {
+        expect(mockToast.success).toHaveBeenCalledWith('Welcome message will appear on next view');
+      });
+    });
+
+    it('shows error toast on reset failure', async () => {
+      const user = userEvent.setup();
+      mockApi.updateSettings.mockRejectedValue(new Error('Reset failed'));
+      renderWithProviders(<GeneralSettingsForm />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /show welcome message/i })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /show welcome message/i }));
+
+      await waitFor(() => {
+        expect(mockToast.error).toHaveBeenCalledWith('Reset failed');
+      });
+    });
+
+    it('form main save does not include welcomeSeen in the general payload', async () => {
+      const user = userEvent.setup();
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      renderWithProviders(<GeneralSettingsForm />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Log Level')).toHaveValue('warn');
+      });
+
+      await user.selectOptions(screen.getByLabelText('Log Level'), 'debug');
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith({
+          general: expect.not.objectContaining({ welcomeSeen: expect.anything() }),
+        });
+      });
+    });
+  });
 });
