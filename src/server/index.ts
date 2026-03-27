@@ -97,8 +97,8 @@ async function main() {
     if (generalSettings?.logLevel) {
       app.log.level = generalSettings.logLevel;
     }
-  } catch (err) {
-    app.log.warn(err, 'Failed to load log level setting, using default');
+  } catch (error: unknown) {
+    app.log.warn(error, 'Failed to load log level setting, using default');
   }
 
   // Initialize auth and register cookie/auth plugins

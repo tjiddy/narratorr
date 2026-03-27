@@ -23,8 +23,8 @@ export function LoginPage() {
       // Invalidate auth status to refetch with new session cookie
       await queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
       navigate('/library', { replace: true });
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.status === 401) {
         setError('Invalid username or password');
       } else {
         setError('Login failed. Please try again.');

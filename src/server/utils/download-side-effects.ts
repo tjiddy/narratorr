@@ -25,7 +25,7 @@ export function emitGrabStarted(args: EmitGrabStartedArgs): void {
     broadcaster.emit('grab_started', {
       download_id: downloadId, book_id: bookId, book_title: bookTitle, release_title: releaseTitle,
     });
-  } catch (e) { log.debug(e, 'SSE emit failed'); }
+  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
 }
 
 // ── emitBookStatusChangeOnGrab ──────────────────────────────────────────
@@ -46,7 +46,7 @@ export function emitBookStatusChangeOnGrab(args: EmitBookStatusChangeOnGrabArgs)
     broadcaster.emit('book_status_change', {
       book_id: bookId, old_status: 'wanted' as BookStatus, new_status: newStatus as BookStatus,
     });
-  } catch (e) { log.debug(e, 'SSE emit failed'); }
+  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
 }
 
 // ── emitDownloadProgress ────────────────────────────────────────────────
@@ -67,7 +67,7 @@ export function emitDownloadProgress(args: EmitDownloadProgressArgs): void {
     broadcaster.emit('download_progress', {
       download_id: downloadId, book_id: bookId, percentage: progress, speed: null, eta: null,
     });
-  } catch (e) { log.debug(e, 'SSE emit failed'); }
+  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
 }
 
 // ── emitDownloadStatusChange ────────────────────────────────────────────
@@ -89,7 +89,7 @@ export function emitDownloadStatusChange(args: EmitDownloadStatusChangeArgs): vo
     broadcaster.emit('download_status_change', {
       download_id: downloadId, book_id: bookId, old_status: oldStatus as DownloadStatus, new_status: newStatus as DownloadStatus,
     });
-  } catch (e) { log.debug(e, 'SSE emit failed'); }
+  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
 }
 
 // ── emitBookStatusChange ────────────────────────────────────────────────
@@ -110,7 +110,7 @@ export function emitBookStatusChange(args: EmitBookStatusChangeArgs): void {
     broadcaster.emit('book_status_change', {
       book_id: bookId, old_status: oldStatus as BookStatus, new_status: newStatus as BookStatus,
     });
-  } catch (e) { log.debug(e, 'SSE emit failed'); }
+  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
 }
 
 // ── notifyGrab ──────────────────────────────────────────────────────────

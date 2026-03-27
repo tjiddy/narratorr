@@ -23,7 +23,7 @@ export function emitDownloadImporting(args: EmitDownloadImportingArgs): void {
   if (!broadcaster) return;
   try {
     broadcaster.emit('download_status_change', { download_id: downloadId, book_id: bookId, old_status: downloadStatus as DownloadStatus, new_status: 'importing' as DownloadStatus });
-  } catch (e) { log.debug(e, 'SSE emit failed'); }
+  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
 }
 
 // ── emitBookImporting ───────────────────────────────────────────────────
@@ -41,7 +41,7 @@ export function emitBookImporting(args: EmitBookImportingArgs): void {
   if (!broadcaster) return;
   try {
     broadcaster.emit('book_status_change', { book_id: bookId, old_status: bookStatus as BookStatus, new_status: 'importing' as BookStatus });
-  } catch (e) { log.debug(e, 'SSE emit failed'); }
+  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
 }
 
 // ── emitImportSuccess ───────────────────────────────────────────────────
@@ -62,8 +62,8 @@ export function emitImportSuccess(args: EmitImportSuccessArgs): void {
     broadcaster.emit('download_status_change', { download_id: downloadId, book_id: bookId, old_status: 'importing' as DownloadStatus, new_status: 'imported' as DownloadStatus });
     broadcaster.emit('book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: 'imported' as BookStatus });
     broadcaster.emit('import_complete', { download_id: downloadId, book_id: bookId, book_title: bookTitle });
-  } catch (e) {
-    log.debug(e, 'SSE emit failed');
+  } catch (error: unknown) {
+    log.debug(error, 'SSE emit failed');
   }
 }
 
@@ -141,7 +141,7 @@ export function emitImportFailure(args: EmitImportFailureArgs): void {
   try {
     broadcaster.emit('download_status_change', { download_id: downloadId, book_id: bookId, old_status: 'importing' as DownloadStatus, new_status: 'failed' as DownloadStatus });
     broadcaster.emit('book_status_change', { book_id: bookId, old_status: 'importing' as BookStatus, new_status: revertedBookStatus as BookStatus });
-  } catch (e) { log.debug(e, 'SSE emit failed'); }
+  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
 }
 
 export interface NotifyImportFailureArgs {

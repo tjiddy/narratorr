@@ -176,7 +176,7 @@ function emitProgressEvents(
     if (download.status !== newStatus) {
       broadcaster?.emit('download_status_change', { download_id: download.id, book_id: download.bookId, old_status: download.status as DownloadStatus, new_status: newStatus as DownloadStatus });
     }
-  } catch (e) { log.debug(e, 'SSE emit failed'); }
+  } catch (error: unknown) { log.debug(error, 'SSE emit failed'); }
 }
 
 /** Handle failure status transitions with retry recovery. */
@@ -239,8 +239,8 @@ async function blacklistOnInfraError(
       blacklistType: 'temporary',
     });
     log.info({ downloadId: download.id, infoHash: download.infoHash }, 'Blacklisted release as infrastructure_error (temporary)');
-  } catch (err) {
-    log.warn({ downloadId: download.id, err }, 'Failed to blacklist release on infrastructure error');
+  } catch (error: unknown) {
+    log.warn({ downloadId: download.id, error }, 'Failed to blacklist release on infrastructure error');
   }
 }
 
@@ -265,8 +265,8 @@ async function handleDownloadFailure(
   try {
     const importSettings = await retryDeps.retrySearchDeps.settingsService.get('import');
     redownloadFailed = importSettings.redownloadFailed;
-  } catch (err) {
-    log.warn({ downloadId, err }, 'Failed to read import settings — proceeding with retry');
+  } catch (error: unknown) {
+    log.warn({ downloadId, error }, 'Failed to read import settings — proceeding with retry');
   }
 
   if (!redownloadFailed) {
@@ -286,8 +286,8 @@ async function handleDownloadFailure(
         blacklistType,
       });
       log.info({ downloadId, infoHash, reason, blacklistType }, 'Blacklisted failed release before retry');
-    } catch (err) {
-      log.warn({ downloadId, err }, 'Failed to blacklist release — proceeding with retry');
+    } catch (error: unknown) {
+      log.warn({ downloadId, error }, 'Failed to blacklist release — proceeding with retry');
     }
   } else {
     log.debug({ downloadId }, 'Skipping blacklist — no infoHash (Usenet download)');

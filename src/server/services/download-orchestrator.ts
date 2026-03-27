@@ -136,7 +136,7 @@ export class DownloadOrchestrator {
 
   /** Run a side-effect function, catching and logging any error. */
   private safe(fn: () => void): void {
-    try { fn(); } catch (e) { this.log.warn(e, 'Side-effect dispatch failed'); }
+    try { fn(); } catch (error: unknown) { this.log.warn(error, 'Side-effect dispatch failed'); }
   }
 
   /** Set download error with SSE dispatch. */

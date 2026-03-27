@@ -58,8 +58,8 @@ export class MergeService {
           book_title: bookTitle,
           success: true,
         });
-      } catch (e) {
-        this.log.debug(e, 'SSE emit failed');
+      } catch (error: unknown) {
+        this.log.debug(error, 'SSE emit failed');
       }
     }
   }

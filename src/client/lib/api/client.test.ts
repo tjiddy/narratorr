@@ -96,8 +96,8 @@ describe('fetchApi', () => {
 
     try {
       await fetchApi('/books');
-    } catch (err) {
-      const apiErr = err as ApiError;
+    } catch (error: unknown) {
+      const apiErr = error as ApiError;
       expect(apiErr.status).toBe(400);
       expect(apiErr.message).toBe('Validation failed');
       expect(apiErr.body).toEqual({ error: 'Validation failed' });
@@ -115,8 +115,8 @@ describe('fetchApi', () => {
 
     try {
       await fetchApi('/books');
-    } catch (err) {
-      const apiErr = err as ApiError;
+    } catch (error: unknown) {
+      const apiErr = error as ApiError;
       expect(apiErr.status).toBe(500);
       expect(apiErr.message).toBe('HTTP 500');
       expect(apiErr.body).toEqual({ error: 'HTTP 500' });

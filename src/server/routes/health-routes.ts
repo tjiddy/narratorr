@@ -47,8 +47,8 @@ export async function healthRoutes(app: FastifyInstance, services: Services, db:
       if (row) {
         dbSize = (row[0] as number) * (row[1] as number);
       }
-    } catch (err) {
-      request.log.debug(err, 'Failed to query DB size');
+    } catch (error: unknown) {
+      request.log.debug(error, 'Failed to query DB size');
     }
 
     let freeSpace: number | null = null;
