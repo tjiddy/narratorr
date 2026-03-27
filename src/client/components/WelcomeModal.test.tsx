@@ -132,7 +132,7 @@ describe('WelcomeModal', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
     // Click the outermost container (backdrop area) outside the dialog panel
     const container = screen.getByRole('presentation');
-    await user.click(container, { skipPointerEventsCheck: true });
+    await user.click(container);
     expect(onDismiss).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
