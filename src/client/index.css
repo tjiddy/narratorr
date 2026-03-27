@@ -184,6 +184,10 @@
   ::-webkit-scrollbar-thumb:hover {
     @apply bg-muted-foreground/40;
   }
+
+  input::placeholder {
+    @apply text-muted-foreground/40;
+  }
 }
 
 @layer components {
