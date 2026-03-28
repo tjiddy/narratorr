@@ -101,6 +101,13 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
   // Focus trap: keep keyboard focus inside the modal; no escape-to-dismiss
   // (onboarding requires explicit "Get Started" action)
   useFocusTrap(isOpen, modalRef);
+  // When pending, pull focus back to the dialog container so card links are
+  // not reachable via Tab while saving (regression guard from issue #169)
+  useEffect(() => {
+    if (isOpen && isPending && modalRef.current) {
+      modalRef.current.focus();
+    }
+  }, [isOpen, isPending]);
   if (!isOpen) return null;
   return (
     <div

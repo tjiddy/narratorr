@@ -95,11 +95,9 @@ describe('WelcomeModal', () => {
     expect(document.activeElement).toBe(links[0]);
   });
 
-  it('places focus on modal container when isPending=true disables the only non-link tabbable element', () => {
+  it('places focus on dialog container when isPending=true (card links remain active but keyboard focus is locked to container)', () => {
     render(<WelcomeModal isOpen isPending onDismiss={onDismiss} />);
-    // With isPending, Get Started is disabled; first tabbable is first card link
-    const links = screen.getAllByRole('link');
-    expect(document.activeElement).toBe(links[0]);
+    expect(document.activeElement).toBe(screen.getByRole('dialog'));
   });
 
   it('Tab from Get Started button wraps forward to first card link', async () => {
