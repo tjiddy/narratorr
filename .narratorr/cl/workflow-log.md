@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #185 Test coverage: Manual Import components and hooks — 2026-03-28
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #193
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 27 new tests
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Test-only issue with clear AC — each test maps directly to a branch in production code. Existing test patterns (fake timers, mock setup, factories) are well-established.
+- Friction / issues encountered: Spec review took 3 rounds due to stale coverage gaps in the original spec. The elaborate phase didn't verify existing tests line-by-line, so several already-covered behaviors were listed as gaps.
+
+### Token efficiency
+- Highest-token actions: Spec review response rounds (3 rounds of reading comments + updating issue body)
+- Avoidable waste: First elaborate pass should have verified each AC against existing test files
+- Suggestions: For test coverage issues, grep existing test descriptions against AC items before writing the spec
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: debt.md items for useManualImport, useLibraryImport, and BookEditModal marked resolved
+
+### Wish I'd Known
+1. Test-only specs go stale fast — always verify existing tests line-by-line before writing coverage specs (see `test-only-spec-staleness.md`)
+2. TanStack Query logs a warning when mock data is `undefined` — this is expected for testing query-not-resolved guards (see `usequery-undefined-mock.md`)
+3. The useLibraryImport match merge pattern is identical to useManualImport — testing one informs the other's test structure directly
+
 ## #186 Test coverage: Settings components — 2026-03-28
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #192
