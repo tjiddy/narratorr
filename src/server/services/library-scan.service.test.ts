@@ -1491,6 +1491,51 @@ describe('LibraryScanService', () => {
       });
     });
 
+    it('marks book missing when background copy source is inside library root', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).limit.mockResolvedValue([{
+        id: 1,
+        title: 'Book',
+        narrator: null,
+        duration: null,
+        coverUrl: null,
+      }]);
+
+      await service.confirmImport(
+        [{ path: '/library/already-there', title: 'Book', authorName: 'Author' }],
+        'copy',
+      );
+
+      await vi.waitFor(() => {
+        expect((mockDb as Record<string, ReturnType<typeof vi.fn>>).set).toHaveBeenCalledWith(
+          expect.objectContaining({ status: 'missing' }),
+        );
+      });
+      expect(mkdir).not.toHaveBeenCalled();
+      expect(cp).not.toHaveBeenCalled();
+    });
+
+    it('marks book missing and skips rm when background move source is inside library root', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).limit.mockResolvedValue([{
+        id: 1,
+        title: 'Book',
+        narrator: null,
+        duration: null,
+        coverUrl: null,
+      }]);
+
+      await service.confirmImport(
+        [{ path: '/library/already-there', title: 'Book', authorName: 'Author' }],
+        'move',
+      );
+
+      await vi.waitFor(() => {
+        expect((mockDb as Record<string, ReturnType<typeof vi.fn>>).set).toHaveBeenCalledWith(
+          expect.objectContaining({ status: 'missing' }),
+        );
+      });
+      expect(rm).not.toHaveBeenCalled();
+    });
+
     it('calls enrichBookFromAudio in background processing', async () => {
       await service.confirmImport([
         { path: '/audiobooks/Book', title: 'Book' },
