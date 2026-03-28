@@ -527,10 +527,11 @@ describe('search pending state (#185)', () => {
 
     await waitFor(() => {
       expect(searchBtn).toBeDisabled();
+      expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
     });
   });
 
-  it('search button re-enables when search completes', async () => {
+  it('search button re-enables and spinner disappears when search completes', async () => {
     const { api: mockApi } = await import('@/lib/api');
     vi.mocked(mockApi.searchMetadata).mockResolvedValueOnce({
       books: [makeMetadata({ title: 'Result' })],
@@ -545,6 +546,7 @@ describe('search pending state (#185)', () => {
 
     await waitFor(() => {
       expect(searchBtn).toBeEnabled();
+      expect(screen.queryByTestId('loading-spinner')).not.toBeInTheDocument();
     });
   });
 });
@@ -598,7 +600,7 @@ describe('applyMetadata (#185)', () => {
 });
 
 describe('initialResults fallback (#185)', () => {
-  it('alternatives=undefined returns only initial.metadata (no crash)', () => {
+  it('alternatives=undefined seeds searchResults with initial.metadata (results section renders)', () => {
     const meta = makeMetadata({ title: 'Only Match', providerId: 'only' });
 
     // Render without alternatives prop (undefined)
@@ -607,11 +609,13 @@ describe('initialResults fallback (#185)', () => {
       // alternatives intentionally omitted → undefined
     });
 
-    // Should not crash and should show the initial metadata
-    expect(screen.getAllByText('Only Match').length).toBeGreaterThanOrEqual(1);
+    // "Other matches" heading only renders when searchResults is seeded (searchResults.length > 0)
+    expect(screen.getByText('Other matches')).toBeInTheDocument();
+    // Title appears in both the preview and the results list (2 occurrences proves seeding)
+    expect(screen.getAllByText('Only Match').length).toBeGreaterThanOrEqual(2);
   });
 
-  it('alternatives=[] returns only initial.metadata', () => {
+  it('alternatives=[] seeds searchResults with initial.metadata (results section renders)', () => {
     const meta = makeMetadata({ title: 'Solo Match', providerId: 'solo' });
 
     renderModal({
@@ -619,8 +623,10 @@ describe('initialResults fallback (#185)', () => {
       alternatives: [],
     });
 
-    // Should show the initial metadata
-    expect(screen.getAllByText('Solo Match').length).toBeGreaterThanOrEqual(1);
+    // "Other matches" heading only renders when searchResults is seeded
+    expect(screen.getByText('Other matches')).toBeInTheDocument();
+    // Title appears in both preview and results list
+    expect(screen.getAllByText('Solo Match').length).toBeGreaterThanOrEqual(2);
   });
 });
 

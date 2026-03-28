@@ -507,39 +507,71 @@ describe('retry mechanics (#185)', () => {
     mockCancelMatchJob.mockResolvedValue({ cancelled: true });
   });
 
-  it('handleRetry resets prevMatchCountRef before triggering new scan', async () => {
+  it('handleRetry resets stale offset so post-retry match results merge into rows from index 0', async () => {
+    // Phase 1: initial scan + first match result arrives
     mockScanDirectory.mockResolvedValue(mockScanResult);
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1', status: 'completed', total: 1, matched: 1,
+      results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'high', bestMatch: { title: 'First Match', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+    });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
 
-    // First scan completed, now retry
+    // Wait for initial match results to merge (poll interval fires)
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    await waitFor(() => {
+      expect(result.current.rows[nonDupIdx].edited.title).toBe('First Match');
+    }, { timeout: 5000 });
+
+    // Phase 2: retry — new scan + new match with different result
     mockScanDirectory.mockResolvedValue(mockScanResult);
+    mockStartMatchJob.mockResolvedValue({ jobId: 'job-2' });
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-2', status: 'completed', total: 1, matched: 1,
+      results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'high', bestMatch: { title: 'Retry Match', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+    });
 
     await act(async () => { result.current.handleRetry(); });
+    await waitFor(() => expect(result.current.step).toBe('review'));
 
-    // scanDirectory called twice: initial + retry
-    expect(mockScanDirectory).toHaveBeenCalledTimes(2);
-    expect(mockScanDirectory).toHaveBeenCalledWith('/audiobooks');
+    // Observable: post-retry result is merged from index 0, not lost to stale offset
+    const retryNonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    await waitFor(() => {
+      expect(result.current.rows[retryNonDupIdx].edited.title).toBe('Retry Match');
+    }, { timeout: 5000 });
   });
 
-  it('handleRetryMatch resets prevMatchCountRef and calls startMatching', async () => {
+  it('handleRetryMatch resets stale offset so new match results merge after retry', async () => {
+    // Phase 1: initial scan + match completes with none confidence
     mockScanDirectory.mockResolvedValue(mockScanResult);
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1', status: 'completed', total: 1, matched: 1,
+      results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'none', bestMatch: null, alternatives: [] }],
+    });
 
     const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.step).toBe('review'));
 
-    // Initial scan called startMatchJob once
-    expect(mockStartMatchJob).toHaveBeenCalledTimes(1);
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    await waitFor(() => {
+      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('none');
+    }, { timeout: 5000 });
+
+    // Phase 2: retryMatch — new match job with different result
+    mockStartMatchJob.mockResolvedValue({ jobId: 'job-2' });
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-2', status: 'completed', total: 1, matched: 1,
+      results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'high', bestMatch: { title: 'Better Match', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+    });
 
     act(() => { result.current.handleRetryMatch(); });
 
-    // startMatchJob called again with non-duplicate candidates
-    expect(mockStartMatchJob).toHaveBeenCalledTimes(2);
-    const retryCandidates = mockStartMatchJob.mock.calls[1][0] as Array<{ path: string; title: string }>;
-    expect(retryCandidates).toEqual([
-      expect.objectContaining({ path: '/audiobooks/AuthorA/Book1', title: 'Book One' }),
-    ]);
+    // Observable: post-retry result merged at index 0 — confidence upgraded and title changed
+    await waitFor(() => {
+      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('high');
+    }, { timeout: 5000 });
+    expect(result.current.rows[nonDupIdx].edited.title).toBe('Better Match');
   });
 });
 
