@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import type { SearchResult, SearchResponse } from '@/lib/api';
 import { createMockBook } from '@/__tests__/factories';
+import { queryKeys } from '@/lib/queryKeys';
 
 const { MockApiError } = vi.hoisted(() => {
   class MockApiError extends Error {
@@ -732,6 +735,49 @@ describe('SearchReleasesModal', () => {
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to blacklist: Server error');
+    });
+  });
+
+  it('refresh button is disabled while query is fetching', () => {
+    vi.mocked(api.searchBooks).mockReturnValue(new Promise(() => {})); // never resolves
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    expect(screen.getByLabelText('Refresh results')).toBeDisabled();
+  });
+
+  it('invalidates books and activity queries on successful grab', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    vi.mocked(api.searchGrab).mockResolvedValue({
+      id: 1,
+      title: 'The Way of Kings [Unabridged]',
+      protocol: 'torrent',
+      status: 'queued' as const,
+      progress: 0,
+      addedAt: '2024-01-01T00:00:00Z',
+      indexerName: null,
+    });
+    const user = userEvent.setup();
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+    await user.click(screen.getAllByText('Grab')[0]);
+
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activity() });
     });
   });
 });
