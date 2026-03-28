@@ -369,4 +369,47 @@ describe('AudnexusProvider', () => {
       expect(result).toBeNull();
     });
   });
+
+  describe('redirect protection', () => {
+    it('getBook() on 302 with Location header throws TransientError with redirect message', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return new HttpResponse(null, {
+            status: 302,
+            headers: { Location: 'https://auth.internal/login' },
+          });
+        }),
+      );
+
+      await expect(provider.getBook('B0030DL4GK')).rejects.toThrow(/redirect/i);
+    });
+
+    it('getAuthor() on 302 with Location header throws TransientError with redirect message', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors/:asin', () => {
+          return new HttpResponse(null, {
+            status: 302,
+            headers: { Location: 'https://auth.internal/login' },
+          });
+        }),
+      );
+
+      await expect(provider.getAuthor('B001TEST')).rejects.toThrow(/redirect/i);
+    });
+
+    it('getBook() on 3xx with no Location header throws TransientError with redirect message', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return new HttpResponse(null, { status: 302 });
+        }),
+      );
+
+      await expect(provider.getBook('B0030DL4GK')).rejects.toThrow(/redirect/i);
+    });
+
+    it('getBook() on 2xx response returns data normally (regression)', async () => {
+      const book = await provider.getBook('B0030DL4GK');
+      expect(book).not.toBeNull();
+    });
+  });
 });

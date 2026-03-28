@@ -2,6 +2,7 @@ import { BookMetadataSchema, AuthorMetadataSchema, SeriesMetadataSchema } from '
 import { RateLimitError, TransientError } from './errors.js';
 import { REGION_LANGUAGES } from './region-languages.js';
 import { AUDIBLE_TIMEOUT_MS } from '../utils/constants.js';
+import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import type {
   MetadataSearchProvider,
   BookMetadata,
@@ -167,7 +168,7 @@ export class AudibleProvider implements MetadataSearchProvider {
 
   private async request<T>(url: string): Promise<T | null> {
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      const res = await fetchWithTimeout(url, {}, REQUEST_TIMEOUT_MS);
       if (res.status === 429) {
         const retryAfter = res.headers.get('Retry-After');
         const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : DEFAULT_RATE_LIMIT_WAIT_MS;
