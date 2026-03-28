@@ -667,12 +667,13 @@ describe('activity routes', () => {
 
     it('returns 400 when download has non-terminal status', async () => {
       (services.download.delete as Mock).mockRejectedValue(
-        new Error("Cannot delete download with status 'downloading' — use cancel instead"),
+        new DownloadError("Cannot delete download with status 'downloading' — use cancel instead", 'INVALID_STATUS'),
       );
 
       const res = await app.inject({ method: 'DELETE', url: '/api/activity/1/history' });
 
       expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toEqual({ error: "Cannot delete download with status 'downloading' — use cancel instead" });
     });
 
     it('returns 400 for NaN id', async () => {
@@ -686,7 +687,7 @@ describe('activity routes', () => {
       const res = await app.inject({ method: 'DELETE', url: '/api/activity/1/history' });
 
       expect(res.statusCode).toBe(500);
-      expect(JSON.parse(res.payload)).toEqual({ error: 'db unavailable' });
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Internal server error' });
     });
   });
 

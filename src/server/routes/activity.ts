@@ -7,7 +7,6 @@ import type { ImportService } from '../services/import.service.js';
 import type { ImportOrchestrator } from '../services/import-orchestrator.js';
 import { idParamSchema, paginationParamsSchema, DEFAULT_LIMITS } from '../../shared/schemas.js';
 import { z } from 'zod';
-import { getErrorMessage } from '../utils/error-message.js';
 
 type IdParam = z.infer<typeof idParamSchema>;
 
@@ -87,20 +86,12 @@ export async function activityRoutes(app: FastifyInstance, downloadService: Down
     async (request, reply) => {
       const { id } = request.params;
 
-      try {
-        const deleted = await downloadService.delete(id);
-        if (!deleted) {
-          return await reply.status(404).send({ error: 'Download not found' });
-        }
-        request.log.info({ id }, 'Download history item deleted');
-        return { success: true };
-      } catch (error) {
-        const message = getErrorMessage(error);
-        if (message.includes('use cancel instead')) {
-          return reply.status(400).send({ error: message });
-        }
-        return reply.status(500).send({ error: message });
+      const deleted = await downloadService.delete(id);
+      if (!deleted) {
+        return reply.status(404).send({ error: 'Download not found' });
       }
+      request.log.info({ id }, 'Download history item deleted');
+      return { success: true };
     },
   );
 
