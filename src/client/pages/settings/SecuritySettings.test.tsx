@@ -142,6 +142,10 @@ describe('SecuritySettings', () => {
       expect(screen.getByText('API Key')).toBeInTheDocument();
     });
 
+    // Clear call count after initial load so we can assert refetch separately
+    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockClear();
+    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, apiKey: 'new-key-67890' });
+
     // Click regenerate button
     const regenButton = screen.getByRole('button', { name: /regenerate api key/i });
     await user.click(regenButton);
@@ -164,9 +168,15 @@ describe('SecuritySettings', () => {
       expect(screen.queryByText(/regenerating will invalidate/i)).not.toBeInTheDocument();
     });
 
-    // Success toast and new key displayed (auth.config refetch populates new key)
+    // Success toast and auth.config refetch triggered by queryKey invalidation
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('API key regenerated');
+      expect(api.getAuthConfig).toHaveBeenCalled();
+    });
+
+    // Refetched config renders the new key
+    await waitFor(() => {
+      expect(screen.getByText('new-key-67890')).toBeInTheDocument();
     });
   });
 
