@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isPathInsideLibrary } from './pathUtils.js';
+import { isPathInsideLibrary, makeRelativePath } from './pathUtils.js';
 
 describe('isPathInsideLibrary', () => {
   describe('path containment detection', () => {
@@ -83,6 +83,68 @@ describe('isPathInsideLibrary', () => {
 
     it('returns false when scan path is whitespace only', () => {
       expect(isPathInsideLibrary('   ', '/audiobooks')).toBe(false);
+    });
+  });
+});
+
+describe('makeRelativePath', () => {
+  describe('normal relative path computation', () => {
+    it('returns relative path for direct subdirectory', () => {
+      expect(makeRelativePath('/audiobooks/sub', '/audiobooks')).toBe('sub');
+    });
+
+    it('returns relative path without leading slash when root has no trailing slash', () => {
+      expect(makeRelativePath('/audiobooks/sub', '/audiobooks')).toBe('sub');
+    });
+
+    it('returns relative path without leading slash when root has trailing slash', () => {
+      expect(makeRelativePath('/audiobooks/sub', '/audiobooks/')).toBe('sub');
+    });
+
+    it('returns nested relative path with author/title structure', () => {
+      expect(makeRelativePath('/audiobooks/Author Name/Book Title', '/audiobooks')).toBe('Author Name/Book Title');
+    });
+  });
+
+  describe('non-ancestry cases return undefined', () => {
+    it('returns undefined when path is a sibling of library root (shares prefix but diverges at segment boundary)', () => {
+      expect(makeRelativePath('/audiobooks-old/sub', '/audiobooks')).toBeUndefined();
+    });
+
+    it('returns undefined when path is a parent of library root', () => {
+      expect(makeRelativePath('/', '/audiobooks')).toBeUndefined();
+    });
+
+    it('returns undefined when path is completely unrelated to library root', () => {
+      expect(makeRelativePath('/media/podcasts/ep1', '/audiobooks')).toBeUndefined();
+    });
+
+    it('returns undefined when path uses .. traversal to escape the library root', () => {
+      expect(makeRelativePath('/audiobooks/../etc/passwd', '/audiobooks')).toBeUndefined();
+    });
+  });
+
+  describe('root-equality edge case', () => {
+    it('returns undefined when absolutePath exactly equals libraryPath (so ImportCard falls back to short-path display)', () => {
+      expect(makeRelativePath('/audiobooks', '/audiobooks')).toBeUndefined();
+    });
+  });
+
+  describe('empty and missing inputs', () => {
+    it('returns undefined when absolutePath is empty string', () => {
+      expect(makeRelativePath('', '/audiobooks')).toBeUndefined();
+    });
+
+    it('returns undefined when absolutePath is whitespace only', () => {
+      expect(makeRelativePath('   ', '/audiobooks')).toBeUndefined();
+    });
+
+    it('returns undefined when libraryPath is empty string', () => {
+      expect(makeRelativePath('/audiobooks/sub', '')).toBeUndefined();
+    });
+
+    it('returns undefined when libraryPath is whitespace only', () => {
+      expect(makeRelativePath('/audiobooks/sub', '   ')).toBeUndefined();
     });
   });
 });
