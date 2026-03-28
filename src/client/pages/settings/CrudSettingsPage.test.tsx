@@ -11,12 +11,8 @@ vi.mock('@/hooks/useCrudSettings', () => ({
 
 const mockUseCrudSettings = useCrudSettings as ReturnType<typeof vi.fn>;
 
-function createMockHookReturn(overrides: {
-  state?: Partial<ReturnType<typeof useCrudSettings>['state']>;
-  actions?: Partial<ReturnType<typeof useCrudSettings>['actions']>;
-  mutations?: Partial<ReturnType<typeof useCrudSettings>['mutations']>;
-  tests?: Partial<ReturnType<typeof useCrudSettings>['tests']>;
-} = {}) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- test mock factory; full UseMutationResult typing adds noise without value
+function createMockHookReturn(overrides: Record<string, any> = {}) {
   return {
     state: {
       items: [] as { id: number; name: string }[],
@@ -151,12 +147,13 @@ describe('CrudSettingsPage', () => {
         state: { showForm: true },
         mutations: { createMutation: { mutate: createMutate, isPending: false } },
       }));
-      const renderForm = vi.fn(() => null);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- capture handlers from mock call
+      let capturedHandlers: any;
+      const renderForm = vi.fn((handlers: unknown) => { capturedHandlers = handlers; return null; });
       render(<CrudSettingsPage {...baseProps} renderForm={renderForm} />);
 
       expect(renderForm).toHaveBeenCalledOnce();
-      const handlers = renderForm.mock.calls[0][0];
-      handlers.onSubmit({ name: 'test' });
+      capturedHandlers.onSubmit({ name: 'test' });
       expect(createMutate).toHaveBeenCalledWith({ name: 'test' });
     });
   });
@@ -202,32 +199,42 @@ describe('CrudSettingsPage', () => {
       { id: 2, name: 'Widget B' },
     ];
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- capture render callback args from mock
+    function createCapturingRenderCard(): { fn: typeof baseProps.renderCard; calls: Array<{ item: any; handlers: any }> } {
+      const calls: Array<{ item: unknown; handlers: unknown }> = [];
+      const fn = vi.fn((item: unknown, handlers: unknown) => {
+        calls.push({ item, handlers });
+        return null;
+      });
+      return { fn: fn as typeof baseProps.renderCard, calls };
+    }
+
     it('calls renderCard for each item', () => {
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { items } }));
-      const renderCard = vi.fn(() => null);
+      const { fn: renderCard, calls } = createCapturingRenderCard();
       render(<CrudSettingsPage {...baseProps} renderCard={renderCard} />);
 
       expect(renderCard).toHaveBeenCalledTimes(2);
-      expect(renderCard.mock.calls[0][0]).toEqual({ id: 1, name: 'Widget A' });
-      expect(renderCard.mock.calls[1][0]).toEqual({ id: 2, name: 'Widget B' });
+      expect(calls[0]!.item).toEqual({ id: 1, name: 'Widget A' });
+      expect(calls[1]!.item).toEqual({ id: 2, name: 'Widget B' });
     });
 
     it('passes mode "edit" when editingId matches item id', () => {
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { items, editingId: 1 } }));
-      const renderCard = vi.fn(() => null);
+      const { fn: renderCard, calls } = createCapturingRenderCard();
       render(<CrudSettingsPage {...baseProps} renderCard={renderCard} />);
 
-      expect(renderCard.mock.calls[0][1].mode).toBe('edit');
-      expect(renderCard.mock.calls[1][1].mode).toBe('view');
+      expect(calls[0]!.handlers.mode).toBe('edit');
+      expect(calls[1]!.handlers.mode).toBe('view');
     });
 
     it('passes mode "view" when editingId does not match item id', () => {
       mockUseCrudSettings.mockReturnValue(createMockHookReturn({ state: { items, editingId: null } }));
-      const renderCard = vi.fn(() => null);
+      const { fn: renderCard, calls } = createCapturingRenderCard();
       render(<CrudSettingsPage {...baseProps} renderCard={renderCard} />);
 
-      expect(renderCard.mock.calls[0][1].mode).toBe('view');
-      expect(renderCard.mock.calls[1][1].mode).toBe('view');
+      expect(calls[0]!.handlers.mode).toBe('view');
+      expect(calls[1]!.handlers.mode).toBe('view');
     });
 
     it('onSubmit wraps payload as { id, data } for updateMutation', () => {
@@ -236,11 +243,10 @@ describe('CrudSettingsPage', () => {
         state: { items },
         mutations: { updateMutation: { mutate: updateMutate, isPending: false } },
       }));
-      const renderCard = vi.fn(() => null);
+      const { fn: renderCard, calls } = createCapturingRenderCard();
       render(<CrudSettingsPage {...baseProps} renderCard={renderCard} />);
 
-      const handlers = renderCard.mock.calls[0][1];
-      handlers.onSubmit({ name: 'updated' });
+      calls[0]!.handlers.onSubmit({ name: 'updated' });
       expect(updateMutate).toHaveBeenCalledWith({ id: 1, data: { name: 'updated' } });
     });
 
@@ -250,11 +256,10 @@ describe('CrudSettingsPage', () => {
         state: { items },
         actions: { setDeleteTarget },
       }));
-      const renderCard = vi.fn(() => null);
+      const { fn: renderCard, calls } = createCapturingRenderCard();
       render(<CrudSettingsPage {...baseProps} renderCard={renderCard} />);
 
-      const handlers = renderCard.mock.calls[0][1];
-      handlers.onDelete();
+      calls[0]!.handlers.onDelete();
       expect(setDeleteTarget).toHaveBeenCalledWith({ id: 1, name: 'Widget A' });
     });
   });
