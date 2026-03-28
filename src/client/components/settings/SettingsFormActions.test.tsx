@@ -103,4 +103,17 @@ describe('SettingsFormActions', () => {
     const submitButton = screen.getByText('Adding...').closest('button')!;
     expect(submitButton).toBeDisabled();
   });
+
+  it('submit button has type="submit" so form submission fires on click', () => {
+    render(
+      <SettingsFormActions
+        isEdit={false}
+        onFormTest={vi.fn()}
+        entityLabel="Indexer"
+      />,
+    );
+
+    const submitButton = screen.getByText('Add Indexer').closest('button')!;
+    expect(submitButton).toHaveAttribute('type', 'submit');
+  });
 });
