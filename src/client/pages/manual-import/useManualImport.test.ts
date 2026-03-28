@@ -874,6 +874,28 @@ describe('useManualImport', () => {
 });
 
 describe('grouped return shape (REACT-1 refactor)', () => {
+  it.todo('returned object has state, actions, mutations, counts keys with no top-level leaked values — EXISTING');
+});
+
+describe('handleScan guards (#185)', () => {
+  it.todo('whitespace-only path does not trigger scan mutation');
+});
+
+describe('match merge — boundary values (#185)', () => {
+  it.todo('bestMatch=null preserves existing edited state');
+  it.todo('bestMatch with empty authors array falls back to existing row.edited.author');
+  it.todo('confidence=none auto-unchecks the row (selected → false)');
+});
+
+describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
+  it.todo('unselected row with metadata provided auto-selects the row');
+  it.todo('already-selected row with metadata provided remains selected');
+  it.todo('selected row with metadata removed/null remains selected');
+  it.todo('row with matchResult confidence=none and new metadata — confidence upgrades to medium');
+  it.todo('row with no matchResult and new metadata — no upgrade attempted, no crash');
+});
+
+describe('grouped return shape (REACT-1 refactor)', () => {
   it('returned object has state, actions, mutations, counts keys with no top-level leaked values', () => {
     const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
     expect(result.current).toHaveProperty('state');

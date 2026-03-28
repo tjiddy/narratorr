@@ -494,6 +494,34 @@ describe('BookEditModal', () => {
       expect(badge.firstChild?.nodeName.toLowerCase()).toBe('svg');
     });
 
+    it.todo('does not show "In library" badge when no identifier matches — EXISTING');
+  });
+});
+
+describe('ARIA attributes (#185)', () => {
+  it.todo('modal renders with role="dialog", aria-modal="true", and aria-label');
+});
+
+describe('search pending state (#185)', () => {
+  it.todo('search button shows spinner and disables while provider search isPending');
+  it.todo('search button re-enables when search completes');
+});
+
+describe('applyMetadata (#185)', () => {
+  it.todo('metadata with no series clears series field to empty string');
+  it.todo('metadata with series populates series field from meta.series[0].name');
+});
+
+describe('initialResults fallback (#185)', () => {
+  it.todo('alternatives=undefined returns only initial.metadata (no crash)');
+  it.todo('alternatives=[] returns only initial.metadata');
+});
+
+describe('save behavior (#185)', () => {
+  it.todo('save with selectedMetadata=null preserves manual edits only');
+});
+
+describe('"In library" badge', () => {
     it('does not show "In library" badge when no identifier matches', () => {
       mockIdentifiers = [{ asin: 'B999', title: 'Other Book', authorName: 'Other Author' }];
       const meta = makeMetadata({ asin: 'B001' });

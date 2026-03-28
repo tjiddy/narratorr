@@ -341,6 +341,27 @@ describe('useLibraryImport hook (#133)', () => {
     expect(mockStartMatchJob).toHaveBeenCalled();
   });
 
+  it.todo('scanError is null (not set) when emptyResult is triggered — EXISTING');
+});
+
+describe('match merge — selection behavior (#185)', () => {
+  it.todo('high/medium confidence preserves existing row.selected value (no auto-select)');
+});
+
+describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck (#185)', () => {
+  it.todo('unselected row with metadata attached auto-selects the row');
+  it.todo('confidence upgrade from none to medium when metadata provided');
+  it.todo('slug-duplicate row: title+author still collides → stays duplicate');
+  it.todo('slug-duplicate row: title+author no longer collides → duplicate cleared');
+  it.todo('undefined bookIdentifiers (query not yet resolved) — no crash, guard prevents recheck');
+});
+
+describe('retry mechanics (#185)', () => {
+  it.todo('handleRetry resets prevMatchCountRef before triggering new scan');
+  it.todo('handleRetryMatch resets prevMatchCountRef and calls startMatching');
+});
+
+describe('empty result edge case', () => {
   it('scanError is null (not set) when emptyResult is triggered', async () => {
     mockScanDirectory.mockResolvedValue({ discoveries: [], totalFolders: 0 });
 
