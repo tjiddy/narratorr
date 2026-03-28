@@ -43,7 +43,18 @@ function buildLoggerConfig(): boolean | { transport: { target: string; options: 
 async function main() {
   const app = Fastify({
     logger: buildLoggerConfig(),
+    disableRequestLogging: true,
   }).withTypeProvider<ZodTypeProvider>();
+
+  // Request logging at trace level (Fastify defaults to info which is too noisy)
+  app.addHook('onRequest', (request, _reply, done) => {
+    request.log.trace({ url: request.url, method: request.method, reqId: request.id }, 'incoming request');
+    done();
+  });
+  app.addHook('onResponse', (request, reply, done) => {
+    request.log.trace({ url: request.url, method: request.method, statusCode: reply.statusCode, responseTime: reply.elapsedTime }, 'request completed');
+    done();
+  });
 
   // Set up Zod validation
   app.setValidatorCompiler(validatorCompiler);
