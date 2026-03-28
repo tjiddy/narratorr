@@ -138,7 +138,8 @@ export function ghSafe(...args: string[]): { ok: boolean; output: string } {
 // GitHub's `gh issue edit` only has --add-label/--remove-label; this uses the
 // REST API's PUT endpoint for atomic replacement.
 export function ghSetLabels(issueOrPrNumber: string, labels: string[]): string {
-  return withTempFile(JSON.stringify({ labels }), (path) =>
+  const cleaned = labels.filter(l => !/^closes\s+#/i.test(l));
+  return withTempFile(JSON.stringify({ labels: cleaned }), (path) =>
     gh("api", `repos/{owner}/{repo}/issues/${issueOrPrNumber}/labels`, "-X", "PUT", "--input", path,
       "--jq", `[.[].name] | join(", ")`)
   );

@@ -38,8 +38,8 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 ### Phase 1 — Claim
 
 1. **Claim the issue** by running: `node scripts/claim.ts <id>`
-   - If output starts with `ERROR:` → write `echo done > .narratorr/state/implement-<id>/stopped` then STOP. Do not continue.
-   - If output starts with `CLAIMED:` → write phase marker: `echo done > .narratorr/state/implement-<id>/claim-complete` and continue to Phase 2.
+   - If output starts with `ERROR:` → write `mkdir -p .narratorr/state/implement-<id> && echo done > .narratorr/state/implement-<id>/stopped` then STOP. Do not continue.
+   - If output starts with `CLAIMED:` → write phase marker: `mkdir -p .narratorr/state/implement-<id> && echo done > .narratorr/state/implement-<id>/claim-complete` and continue to Phase 2.
 
 ### Phase 2 — Plan
 
@@ -48,7 +48,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 2. **Invoke `/plan <id>`** via the Skill tool. Include in your message to the Skill tool: "Current branch: `<branch-name-from-step-1b>`" so the downstream skill can verify it is operating on the correct branch.
    - `/plan` explores the codebase, extracts test stubs from the spec, and posts a structured implementation plan on the issue.
    - The plan comment and test stubs feed directly into the implementation phase.
-   - When `/plan` returns → write phase marker: `echo done > .narratorr/state/implement-<id>/plan-complete` and continue to Phase 3.
+   - When `/plan` returns → write phase marker: `mkdir -p .narratorr/state/implement-<id> && echo done > .narratorr/state/implement-<id>/plan-complete` and continue to Phase 3.
 
 ### Phase 3 — Implement
 
@@ -80,11 +80,11 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    - **AC contracts need assertion tests.** If an AC specifies a query contract (sort order, filter behavior, join behavior, pagination), write a test that asserts the contract directly — not just that data comes back in the right shape. If an AC says "sorted by date descending," the test must verify ordering, not just row count.
    - **Derive from schema, don't build from memory.** When creating partial selects, response shapes, or form defaults, start from the actual schema/type definition and subtract — don't build include-lists from memory. Read `src/db/schema.ts` for DB columns, `src/shared/schemas/` for Zod types.
    - **Follow design principles** (CLAUDE.md § Design Principles) — single responsibility per file, DRY (extract shared patterns), extend don't modify (new files over growing lists). If the plan comment flagged design warnings, address them during implementation.
-   - **Stay in scope** — if requirements expand beyond the issue spec, write `echo done > .narratorr/state/implement-<id>/stopped`, run `node scripts/block.ts <id> "<reason>"` and STOP
+   - **Stay in scope** — if requirements expand beyond the issue spec, write `mkdir -p .narratorr/state/implement-<id> && echo done > .narratorr/state/implement-<id>/stopped`, run `node scripts/block.ts <id> "<reason>"` and STOP
 
 5. **Run quality gates:** Execute `node scripts/verify.ts`
    - If output starts with `VERIFY: fail` → fix failures and re-run (max 2 attempts)
-   - If still failing after 2 attempts → write `echo done > .narratorr/state/implement-<id>/stopped`, run `node scripts/block.ts <id> "Quality gates failing after 2 fix attempts"` and STOP
+   - If still failing after 2 attempts → write `mkdir -p .narratorr/state/implement-<id> && echo done > .narratorr/state/implement-<id>/stopped`, run `node scripts/block.ts <id> "Quality gates failing after 2 fix attempts"` and STOP
    - If output starts with `VERIFY: pass` → continue to step 6 RIGHT NOW. You have 4 more steps to complete.
 
 5b. **Branch guard:** Run `git branch --show-current` and verify the output matches `feature/issue-<id>-*`. If not, STOP: "Branch mismatch before frontend-design — expected feature/issue-<id>-*, got <actual>." Save the branch name.
@@ -94,7 +94,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    - If the `frontend-design` skill is not available (it's an external plugin — check the skills list in system reminders), skip this step and note it in the handoff.
    - If the issue is backend-only → skip this step.
 
-6c. **Write phase marker:** `echo done > .narratorr/state/implement-<id>/implement-complete`
+6c. **Write phase marker:** `mkdir -p .narratorr/state/implement-<id> && echo done > .narratorr/state/implement-<id>/implement-complete`
 
 ### Phase 4 — Handoff
 
@@ -115,13 +115,13 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 9. **Drain background tasks (post-handoff):** Run TaskList again. `/handoff` may have spawned its own background tasks (coverage subagent, self-review, etc.). For each task still in `running` state, call TaskStop to terminate it. Do not proceed until TaskList shows no running tasks. **This is critical** — any outstanding background task will keep the session alive indefinitely after completion.
 
-10. **Write final phase marker and clean up:** `echo done > .narratorr/state/implement-<id>/handoff-complete`
+10. **Write final phase marker and clean up:** `mkdir -p .narratorr/state/implement-<id> && echo done > .narratorr/state/implement-<id>/handoff-complete`
    - Then clean up state: `rm -rf .narratorr/state/implement-<id>/`
 
 11. **Report completion** to the user: "**#<id> complete** — <PR link> — <1-line summary of what was built>"
 
 ## Important
 
-- Each phase gates the next — if any phase STOPs, write `echo done > .narratorr/state/implement-<id>/stopped` first, then STOP
+- Each phase gates the next — if any phase STOPs, write `mkdir -p .narratorr/state/implement-<id> && echo done > .narratorr/state/implement-<id>/stopped` first, then STOP
 - Do NOT skip claim, `/plan`, or `/handoff` — claim runs via script, `/plan` and `/handoff` via the Skill tool
 - Scope creep is a STOP condition, not a TODO — write the stopped marker, run `node scripts/block.ts` and halt

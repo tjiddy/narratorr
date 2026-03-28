@@ -168,7 +168,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    - **Enumerate, don't summarize:** When a finding says data in the spec is wrong or stale (audit tables, version numbers, parent paths, field names, file lists), list every specific row/claim that is wrong and what the correct value is. "Refresh this table" is an umbrella finding — the author will regenerate sloppily and you'll re-raise the same finding next round with a narrower scope. Instead: "Row X says parent is Y but audit shows Z; row A is missing entirely; row B lists the wrong severity." Give the author a punch list, not a vague direction.
    - **Exhaust the category:** When you find one instance of a problem pattern (e.g., one wrong audit path, one missing policy case, one untested endpoint), actively look for MORE instances of the same pattern before writing the finding. A finding that says "the rollup path is wrong" when ajv and minimatch paths are also wrong will bounce back. Sweep the full surface once so you can write one comprehensive finding instead of discovering siblings in round 2.
 
-6b. **Write phase marker:** `echo done > .narratorr/state/review-spec-<id>/review-complete`
+6b. **Write phase marker:** `mkdir -p .narratorr/state/review-spec-<id> && echo done > .narratorr/state/review-spec-<id>/review-complete`
 
 7. **Determine verdict:**
    - **`approve`**: Zero blocking findings. Spec is ready for implementation.
@@ -260,7 +260,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
    **You are NOT done until BOTH 8a and 8b have executed.** Posting the comment without setting the label leaves the issue in a dead state — the orchestrator will never pick it up.
 
-9. **Write final phase marker and clean up:** `echo done > .narratorr/state/review-spec-<id>/posted`
+9. **Write final phase marker and clean up:** `mkdir -p .narratorr/state/review-spec-<id> && echo done > .narratorr/state/review-spec-<id>/posted`
     - Then clean up state: `rm -rf .narratorr/state/review-spec-<id>/`
 
 11. **Report:** Summary of verdict and key findings.

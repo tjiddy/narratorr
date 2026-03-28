@@ -294,7 +294,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 11c. **Write review file and phase marker:**
     - Write the full review comment body (from the template below) to `.narratorr/state/review-pr-<pr-number>/review.md`
-    - Then write the phase marker: `echo done > .narratorr/state/review-pr-<pr-number>/review-complete`
+    - Then write the phase marker: `mkdir -p .narratorr/state/review-pr-<pr-number> && echo done > .narratorr/state/review-pr-<pr-number>/review-complete`
     - **Do NOT call `node scripts/gh.tspr comment` directly — the posting script is the only authorized posting mechanism.**
 
 12. **Post review comment on PR (MANDATORY — this is a GitHub API call, not stdout):**

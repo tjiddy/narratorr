@@ -29,7 +29,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 0. **Initialize stop-gate state:** `mkdir -p .narratorr/state/handoff-<id>/`
 
-1. **Verify branch:** Run `git branch --show-current`. It must match `feature/issue-<id>-*`. If not, write `echo done > .narratorr/state/handoff-<id>/stopped` then STOP: "Not on the expected feature branch for #<id>."
+1. **Verify branch:** Run `git branch --show-current`. It must match `feature/issue-<id>-*`. If not, write `mkdir -p .narratorr/state/handoff-<id> && echo done > .narratorr/state/handoff-<id>/stopped` then STOP: "Not on the expected feature branch for #<id>."
 
 2. **Author self-review (pre-flight depth check)** via an Explore subagent:
 
@@ -89,7 +89,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
    If RESULT is `fail` → STOP and report the issues. Fix them in the main context, then restart from step 2. Do NOT proceed past this step with known bugs.
 
-2b. **Write phase marker:** `echo done > .narratorr/state/handoff-<id>/self-review-complete`
+2b. **Write phase marker:** `mkdir -p .narratorr/state/handoff-<id> && echo done > .narratorr/state/handoff-<id>/self-review-complete`
 
 3. **Check for remaining test stubs.**
    Search for `it.todo(` in all test files changed on this branch (use `git diff main --name-only -- '*.test.*'`).
@@ -140,14 +140,14 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
    If RESULT is `fail` (any behavior marked UNTESTED) → STOP — write the missing tests in the main context, then restart from step 2. Do NOT proceed to push with untested behavior.
 
-4b. **Write phase marker:** `echo done > .narratorr/state/handoff-<id>/coverage-complete`
+4b. **Write phase marker:** `mkdir -p .narratorr/state/handoff-<id> && echo done > .narratorr/state/handoff-<id>/coverage-complete`
 
 5. **Run quality gates** by executing: `node scripts/verify.ts`
 
    This is a script, not an LLM call — it runs lint → test+coverage → typecheck → build and returns a one-line summary on success or structured failures.
 
    - If output starts with `VERIFY: fail` → STOP and report failures (do NOT fix — that's the caller's job).
-   - If output starts with `VERIFY: pass` → write phase marker: `echo done > .narratorr/state/handoff-<id>/verify-complete` and continue to step 6 immediately.
+   - If output starts with `VERIFY: pass` → write phase marker: `mkdir -p .narratorr/state/handoff-<id> && echo done > .narratorr/state/handoff-<id>/verify-complete` and continue to step 6 immediately.
 
 6. **Pre-push audit:** Run `git status` and inspect the output for untracked or modified files that should have been committed — especially in `drizzle/`, `src/`, and `scripts/`. If you find uncommitted artifacts from your changes (e.g., migration meta files, generated code), stage and commit them before pushing. This catches files that `verify.ts` can't detect because they only matter in a clean checkout (like CI).
 
@@ -282,7 +282,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
     ```
     If there's nothing to commit (no new CL files), skip this step.
 
-15. **Write final phase marker and clean up:** `echo done > .narratorr/state/handoff-<id>/pr-created`
+15. **Write final phase marker and clean up:** `mkdir -p .narratorr/state/handoff-<id> && echo done > .narratorr/state/handoff-<id>/pr-created`
     - Then clean up state: `rm -rf .narratorr/state/handoff-<id>/`
 
 16. Tell the user the PR is created and show the link.

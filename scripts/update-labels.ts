@@ -49,6 +49,9 @@ for (const op of ops) {
   }
 }
 
+// Strip junk labels (agents sometimes pass "Closes #N" as a label)
+labels = labels.filter(l => !/^closes\s+#/i.test(l));
+
 // Update — ghSetLabels works for both issues and PRs (same GitHub API endpoint)
 const result = ghSetLabels(id, labels);
 console.log(result);
