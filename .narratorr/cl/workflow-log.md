@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #187 Test coverage: SSEProvider, SearchReleasesModal split, bulk-op TTL — 2026-03-28
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #191
+
+### Metrics
+- Files changed: 6 | Tests added/modified: 5 files (+2 SSEProvider, +1 narrator-absent, +2 TTL cleanup)
+- Quality gate runs: 2 (pass on attempt 2 — one lint fix: unused import in ReleaseCard.tsx, one typecheck fix: invalid AuthMode value)
+- Fix iterations: 2 (unused `resolveBookQualityInputs` import; `'password'` is not a valid `AuthMode` — should be `'forms'`)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: TDD cycle was clean; all three modules followed the existing test patterns exactly; the `match-job.service.test.ts:172` TTL pattern transferred directly to bulk-op
+- Friction / issues encountered: (1) Imported `resolveBookQualityInputs` into `ReleaseCard.tsx` — it's only used by the parent to derive props. Caught by lint. (2) Used `'password'` as `AuthMode` in SSEProvider test — the actual enum values are `'none' | 'basic' | 'forms'`. Always check the Zod enum definition, not assumed values.
+
+### Token efficiency
+- Highest-token actions: Two Explore subagents (codebase analysis for plan, coverage review for handoff)
+- Avoidable waste: Coverage review flagged pre-existing guard paths (`handleGrab`/`handleBlacklist` without URL/hash) — spent time writing tests that couldn't be triggered because React disables click events on disabled buttons
+- Suggestions: Coverage review prompt could explicitly exclude defensive guards that are unreachable via UI (button always disabled when guard condition is true)
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: Resolved debt items #10, #13, #21 from debt.md
+
+### Wish I'd Known
+1. `AuthConfig.apiKey` is `string` (non-nullable) — the only `null` path into `useEventSource` is while the React Query result is still `undefined` (pending), not from a resolved response. See `sse-provider-null-path-pending-only.md`.
+2. `waitForJob()` uses internal `setTimeout(resolve, 10)` — it stalls with fake timers. Use `vi.advanceTimersByTimeAsync(1)` ×10 instead. See `bulk-op-ttl-no-waitforjob-with-faketimers.md`.
+3. React prevents click events on disabled buttons at the browser level — `fireEvent.click` doesn't fire `onClick` on disabled elements. Defensive guards inside handlers that are only reachable when the button is disabled are untestable via Testing Library.
+
 ## #188 Enforce catch (error: unknown) via tsconfig — 2026-03-28
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #190
