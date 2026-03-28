@@ -52,7 +52,7 @@ export function BookContextMenu({
       <button
         role="menuitem"
         onClick={onSearchReleases}
-        className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-left hover:bg-muted/80 transition-colors focus:bg-muted/80 focus:outline-none"
+        className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-left hover:bg-muted/80 transition-colors focus:bg-muted/80 focus-ring"
       >
         <SearchIcon className="w-4 h-4 text-muted-foreground" />
         Search Releases
@@ -61,7 +61,7 @@ export function BookContextMenu({
       <button
         role="menuitem"
         onClick={onRemove}
-        className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-left text-destructive hover:bg-destructive/10 transition-colors focus:bg-destructive/10 focus:outline-none"
+        className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-left text-destructive hover:bg-destructive/10 transition-colors focus:bg-destructive/10 focus-ring"
       >
         <TrashIcon className="w-4 h-4" />
         Remove from Library

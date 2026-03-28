@@ -438,4 +438,15 @@ describe('OverflowMenu', () => {
       expect(screen.getByRole('menuitem', { name: /search wanted/i })).toHaveFocus();
     });
   });
+
+  describe('accessibility', () => {
+    it('all menu items have the focus-ring utility class applied', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<OverflowMenu {...defaultProps()} />);
+      await user.click(screen.getByRole('button', { name: /more actions/i }));
+      const items = screen.getAllByRole('menuitem');
+      expect(items.length).toBeGreaterThan(0);
+      items.forEach((item) => expect(item).toHaveClass('focus-ring'));
+    });
+  });
 });

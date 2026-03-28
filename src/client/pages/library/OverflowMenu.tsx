@@ -101,7 +101,7 @@ export function OverflowMenu({
             type="button"
             onClick={() => handleAction(onSearchAllWanted)}
             disabled={isSearchingAllWanted}
-            className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus:outline-none"
+            className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus-ring"
           >
             {isSearchingAllWanted
               ? <LoadingSpinner className="w-3.5 h-3.5" />
@@ -114,7 +114,7 @@ export function OverflowMenu({
             type="button"
             onClick={() => handleAction(onRescan)}
             disabled={isRescanning}
-            className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus:outline-none"
+            className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors disabled:opacity-50 disabled:pointer-events-none focus:bg-muted/50 focus-ring"
           >
             {isRescanning
               ? <LoadingSpinner className="w-3.5 h-3.5" />
@@ -126,7 +126,7 @@ export function OverflowMenu({
             role="menuitem"
             to="/import"
             onClick={() => setOpen(false)}
-            className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors focus:bg-muted/50 focus:outline-none"
+            className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors focus:bg-muted/50 focus-ring"
           >
             <FolderIcon className="w-3.5 h-3.5" />
             Import
@@ -139,7 +139,7 @@ export function OverflowMenu({
                 role="menuitem"
                 type="button"
                 onClick={() => handleAction(onRemoveMissing)}
-                className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors focus:bg-red-500/10 focus:outline-none"
+                className="flex items-center gap-2.5 w-full px-3 py-2.5 text-xs text-left text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors focus:bg-red-500/10 focus-ring"
               >
                 <TrashIcon className="w-3.5 h-3.5" />
                 Remove Missing
