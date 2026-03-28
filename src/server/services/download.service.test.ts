@@ -1215,6 +1215,16 @@ describe('DownloadService', () => {
       },
     );
 
+    it('throws DownloadError with code INVALID_STATUS for non-terminal status (not a plain Error)', async () => {
+      db.select.mockReturnValue(
+        mockDbChain([{ download: { ...mockDownload, status: 'downloading' }, book: mockBook }]),
+      );
+
+      const error = await service.delete(1).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DownloadError);
+      expect((error as DownloadError).code).toBe('INVALID_STATUS');
+    });
+
     it('returns false when id does not exist', async () => {
       db.select.mockReturnValue(mockDbChain([]));
 
