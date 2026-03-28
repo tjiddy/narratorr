@@ -5,14 +5,14 @@
 
 import {
   gh, ghSafe, ghSetLabels, git, parseLabels, replaceLabel, removeLabel,
-  parseLinkedIssue, parseClosingIssues, parseAuthor, parseSha, parseState, parseHeadBranch,
+  parseLinkedIssue, parseAuthor, parseSha, parseState, parseHeadBranch,
   parseComments, withTempFile, die, JQ, GH_FIELDS,
 } from "./lib.ts";
 
 const prNum = process.argv[2];
 if (!prNum) die("ERROR: usage: node scripts/merge.ts <pr-number>");
 
-// 1. Fetch PR
+// 1. Fetch PR (two calls: formatted output for parsing, structured for linked issues)
 const pr = gh("pr", "view", prNum, "--json", GH_FIELDS.PR, "--jq", JQ.PR);
 const state = parseState(pr);
 if (state !== "open") die(`ERROR: PR #${prNum} is not open (state: ${state})`);
@@ -21,7 +21,18 @@ const prAuthor = parseAuthor(pr);
 const sha = parseSha(pr);
 const headBranch = parseHeadBranch(pr);
 const linkedIssueId = parseLinkedIssue(pr);
-const closingIssueIds = parseClosingIssues(pr);
+
+// Resolve closing issue IDs: GitHub formal links first, branch name fallback
+const closingRefsJson = gh("pr", "view", prNum, "--json", "closingIssuesReferences", "--jq", "[.closingIssuesReferences[].number]");
+let closingIssueIds: string[] = [];
+try {
+  closingIssueIds = (JSON.parse(closingRefsJson) as number[]).map(String);
+} catch { /* empty or malformed — fall through to branch fallback */ }
+
+if (closingIssueIds.length === 0) {
+  const branchMatch = headBranch?.match(/^feature\/issue-(\d+)-/);
+  if (branchMatch) closingIssueIds = [branchMatch[1]];
+}
 
 // 2. Check approval — find latest verdict from a non-author user
 const commentsRaw = gh("api", `repos/{owner}/{repo}/issues/${prNum}/comments`, "--paginate", "--jq", JQ.COMMENTS);
