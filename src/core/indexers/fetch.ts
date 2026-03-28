@@ -97,7 +97,7 @@ async function fetchViaProxy(
         body: JSON.stringify(body),
         signal: controller.signal,
       });
-    } catch (error) {
+    } catch (error: unknown) {
       // Network-level failure reaching the proxy itself
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw new Error(`FlareSolverr proxy timed out after ${Math.round(timeoutMs / 1000)}s`);

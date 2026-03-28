@@ -96,7 +96,7 @@ export async function processAudioFiles(
     } else {
       return await convertFiles(targetDir, audioFiles, config, context, chapterSources);
     }
-  } catch (error) {
+  } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Audio processing failed';
     const stderr = (error as { stderr?: string }).stderr;
     return {
@@ -182,7 +182,7 @@ async function mergeFiles(
     await removeSourceFiles(audioFiles, outputPath);
 
     return { success: true, outputFiles: [outputPath] };
-  } catch (error) {
+  } catch (error: unknown) {
     // Clean up temp files but preserve source files on failure
     await cleanupTempFiles(concatPath, join(targetDir, '_metadata.txt')).catch(() => {});
     throw error;

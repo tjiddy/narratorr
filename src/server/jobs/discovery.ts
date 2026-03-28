@@ -22,7 +22,7 @@ export async function runDiscoveryJob(
     for (const warning of result.warnings) {
       log.warn({ warning }, 'Discovery refresh warning');
     }
-  } catch (error) {
+  } catch (error: unknown) {
     log.error(error, 'Discovery refresh failed');
   }
 }

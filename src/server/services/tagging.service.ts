@@ -191,7 +191,7 @@ export async function tagFile(
     await rename(tmpPath, filePath);
 
     return { file: fileName, status: 'tagged' };
-  } catch (error) {
+  } catch (error: unknown) {
     // Clean up temp file on failure
     await unlink(tmpPath).catch(() => {});
     const message = error instanceof Error ? error.message : 'Unknown error';

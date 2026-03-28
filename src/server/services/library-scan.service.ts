@@ -295,7 +295,7 @@ export class LibraryScanService {
     let book: Awaited<ReturnType<typeof this.bookService.create>>;
     try {
       book = await this.bookService.create(buildBookCreatePayload(item, meta, 'imported'));
-    } catch (error) {
+    } catch (error: unknown) {
       this.eventHistory.create({
         bookId: null,
         bookTitle: item.title,
@@ -312,7 +312,7 @@ export class LibraryScanService {
     try {
       const enriched = await this.enrichImportedBook(item, book, meta, mode);
       return { imported: true, bookId: book.id, enriched };
-    } catch (error) {
+    } catch (error: unknown) {
       // Record failure event (fire-and-forget) then re-throw so the route returns 500
       this.eventHistory.create({
         bookId: book.id,
@@ -477,7 +477,7 @@ export class LibraryScanService {
         const book = await this.bookService.create(buildBookCreatePayload(item, item.metadata ?? null, 'importing'));
 
         accepted.push({ bookId: book.id, item });
-      } catch (error) {
+      } catch (error: unknown) {
         this.log.error({ error, title: item.title }, 'Failed to create placeholder for import');
       }
     }
@@ -503,7 +503,7 @@ export class LibraryScanService {
       try {
         await this.processOneImport(bookId, item, mode);
         this.log.info({ bookId, title: item.title }, 'Book import completed');
-      } catch (error) {
+      } catch (error: unknown) {
         this.log.error({ error, bookId, title: item.title }, 'Book import failed');
         await this.db.update(books).set({
           status: 'missing',
@@ -608,7 +608,7 @@ export class LibraryScanService {
             this.log.debug({ providerId: match.providerId, asin: detail.asin }, 'Fetched full book detail for ASIN');
             match = { ...match, ...detail, title: match.title };
           }
-        } catch (error) {
+        } catch (error: unknown) {
           this.log.warn({ error, providerId: match.providerId }, 'Failed to fetch book detail — using search result');
         }
       }
@@ -618,7 +618,7 @@ export class LibraryScanService {
         'Metadata match found for imported book',
       );
       return match;
-    } catch (error) {
+    } catch (error: unknown) {
       this.log.warn({ error, title }, 'Metadata lookup failed during import');
       return null;
     }
@@ -650,7 +650,7 @@ export class LibraryScanService {
           }
         }
       }
-    } catch (error) {
+    } catch (error: unknown) {
       this.log.warn({ error, path: dirPath }, 'Error scanning directory');
     }
 
@@ -677,7 +677,7 @@ export class LibraryScanService {
           totalSize += sub.totalSize;
         }
       }
-    } catch (error) {
+    } catch (error: unknown) {
       this.log.warn({ error, path: dirPath }, 'Error getting audio stats');
     }
 
@@ -742,7 +742,7 @@ export class LibraryScanService {
           this.log.info({ bookId, asin, wasAlternate: asin !== opts.primaryAsin }, 'Audnexus enrichment applied');
           break;
         }
-      } catch (error) {
+      } catch (error: unknown) {
         this.log.warn({ error, bookId, asin }, 'Audnexus enrichment failed');
       }
     }

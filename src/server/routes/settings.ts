@@ -127,7 +127,7 @@ export async function settingsRoutes(
         const version = await healthCheckService!.probeFfmpeg(path);
         request.log.info({ version, path }, 'ffmpeg probe successful');
         return { version };
-      } catch (error) {
+      } catch (error: unknown) {
         request.log.warn({ error }, 'ffmpeg probe failed');
         return reply.status(400).send({
           error: getErrorMessage(error, 'ffmpeg probe failed'),
@@ -150,7 +150,7 @@ export async function settingsRoutes(
         const ip = await healthCheckService!.probeProxy(proxyUrl);
         request.log.info({ ip, proxyUrl: redactProxyUrl(proxyUrl) }, 'Proxy test successful');
         return { success: true, ip };
-      } catch (error) {
+      } catch (error: unknown) {
         const message = getErrorMessage(error, 'Proxy test failed');
         request.log.warn({ error, proxyUrl: redactProxyUrl(request.body.proxyUrl) }, 'Proxy test failed');
         return reply.status(200).send({ success: false, message });

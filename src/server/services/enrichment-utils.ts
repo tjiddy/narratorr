@@ -80,7 +80,7 @@ export async function enrichBookFromAudio(
         await writeFile(coverPath, scanResult.coverImage);
         update.coverUrl = `/api/books/${bookId}/cover`;
         log.info({ bookId, coverPath }, 'Saved embedded cover art');
-      } catch (coverError) {
+      } catch (coverError: unknown) {
         log.warn({ error: coverError, bookId }, 'Failed to save embedded cover art');
       }
     }
@@ -98,7 +98,7 @@ export async function enrichBookFromAudio(
       'Audio file enrichment complete',
     );
     return { enriched: true };
-  } catch (error) {
+  } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     log.warn({ error, bookId, targetPath }, 'Audio file enrichment failed');
     return { enriched: false, error: message };

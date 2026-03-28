@@ -21,7 +21,7 @@ export function startHousekeepingJob(
     try {
       await db.run(sql`VACUUM`);
       log.info('Housekeeping: VACUUM completed');
-    } catch (error) {
+    } catch (error: unknown) {
       log.error(error, 'Housekeeping: VACUUM failed');
     }
 
@@ -31,7 +31,7 @@ export function startHousekeepingJob(
       const retentionDays = generalSettings.housekeepingRetentionDays ?? 90;
       const deletedCount = await eventHistoryService.pruneOlderThan(retentionDays);
       log.info({ deletedCount, retentionDays }, 'Housekeeping: event history pruned');
-    } catch (error) {
+    } catch (error: unknown) {
       log.error(error, 'Housekeeping: event history pruning failed');
     }
 
@@ -39,7 +39,7 @@ export function startHousekeepingJob(
     try {
       const deletedCount = await blacklistService.deleteExpired();
       log.info({ deletedCount }, 'Housekeeping: expired blacklist entries cleaned');
-    } catch (error) {
+    } catch (error: unknown) {
       log.error(error, 'Housekeeping: blacklist cleanup failed');
     }
 

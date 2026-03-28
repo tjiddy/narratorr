@@ -130,7 +130,7 @@ export async function retrySearch(
 
     log.info({ bookId, title: best.title, attempt }, 'Retry search grabbed candidate');
     return { outcome: 'retried', download: newDownload };
-  } catch (error) {
+  } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     log.warn({ bookId, error, attempt }, 'Retry search failed');
     return { outcome: 'retry_error', error: message };

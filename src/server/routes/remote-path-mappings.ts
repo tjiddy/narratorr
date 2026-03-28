@@ -79,7 +79,7 @@ export async function remotePathMappingRoutes(
         }
         request.log.info({ id }, 'Remote path mapping deleted');
         return { success: true };
-      } catch (error) {
+      } catch (error: unknown) {
         request.log.error({ id, error }, 'Failed to delete remote path mapping');
         return reply.status(500).send({
           error: getErrorMessage(error, 'Failed to delete'),

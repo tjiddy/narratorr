@@ -14,7 +14,7 @@ export function startEnrichmentJob(db: Db, metadataService: MetadataService, log
   cron.schedule('*/5 * * * *', async () => {
     try {
       await runEnrichment(db, metadataService, log);
-    } catch (error) {
+    } catch (error: unknown) {
       log.error(error, 'Enrichment job error');
     }
   });
@@ -75,7 +75,7 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, lo
     let result;
     try {
       result = await metadataService.enrichBook(asin);
-    } catch (error) {
+    } catch (error: unknown) {
       if (error instanceof RateLimitError) {
         log.warn({ provider: error.provider, retryAfterMs: error.retryAfterMs }, 'Rate limited during enrichment — remaining candidates stay pending');
         break; // Remaining candidates stay pending for next cycle

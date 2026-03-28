@@ -172,7 +172,7 @@ describe('AudibleProvider', () => {
 
       try {
         await provider.searchBooks('test');
-      } catch (error) {
+      } catch (error: unknown) {
         expect(error).toBeInstanceOf(RateLimitError);
         expect((error as RateLimitError).retryAfterMs).toBe(45000);
       }
@@ -187,7 +187,7 @@ describe('AudibleProvider', () => {
 
       try {
         await provider.searchBooks('test');
-      } catch (error) {
+      } catch (error: unknown) {
         expect(error).toBeInstanceOf(RateLimitError);
         expect((error as RateLimitError).retryAfterMs).toBe(60000);
       }
@@ -422,7 +422,7 @@ describe('AudibleProvider', () => {
 
       try {
         await provider.searchBooks('test');
-      } catch (error) {
+      } catch (error: unknown) {
         expect(error).toBeInstanceOf(RateLimitError);
         // parseInt('not-a-number') = NaN, NaN * 1000 = NaN
         expect((error as RateLimitError).retryAfterMs).toBeNaN();
@@ -509,7 +509,7 @@ describe('AudibleProvider', () => {
 
       try {
         await provider.searchBooks('test');
-      } catch (error) {
+      } catch (error: unknown) {
         expect(error).toBeInstanceOf(RateLimitError);
         // Empty string is falsy → ternary falls to 60_000
         expect((error as RateLimitError).retryAfterMs).toBe(60000);

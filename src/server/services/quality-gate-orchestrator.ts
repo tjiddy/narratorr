@@ -61,7 +61,7 @@ export class QualityGateOrchestrator {
         let savePath: string;
         try {
           savePath = await resolveSavePath(row.download, this.downloadClientService, this.remotePathMappingService);
-        } catch (error) {
+        } catch (error: unknown) {
           this.log.error({ error, downloadId: row.download.id }, 'Quality gate: failed to resolve save path');
           await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
           continue;
@@ -71,7 +71,7 @@ export class QualityGateOrchestrator {
         let scanResult;
         try {
           scanResult = await scanAudioDirectory(savePath, { skipCover: true });
-        } catch (error) {
+        } catch (error: unknown) {
           this.log.error({ error, downloadId: row.download.id }, 'Quality gate: scan failed');
           await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
           continue;
@@ -88,7 +88,7 @@ export class QualityGateOrchestrator {
 
         // Dispatch side effects based on decision
         await this.dispatchSideEffects(decision.action, row.download, row.book, decision.reason, decision.statusTransition);
-      } catch (error) {
+      } catch (error: unknown) {
         this.log.error({ error, downloadId: row.download.id }, 'Quality gate error');
         // Set pending_review with probeFailure on unhandled error
         await this.qualityGateService.setStatus(row.download.id, 'pending_review');

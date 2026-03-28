@@ -11,7 +11,7 @@ export function startImportJob(importOrchestrator: ImportOrchestrator, qualityGa
       await qualityGateOrchestrator.processCompletedDownloads();
       // Import picks up downloads that passed the gate (still completed)
       await importOrchestrator.processCompletedDownloads();
-    } catch (error) {
+    } catch (error: unknown) {
       log.error(error, 'Import job error');
     }
   });

@@ -32,7 +32,7 @@ export async function importListsRoutes(app: FastifyInstance, importListService:
         }
         const data = await res.json() as { libraries?: Array<{ id: string; name: string }> };
         return { libraries: data.libraries ?? [] };
-      } catch (error) {
+      } catch (error: unknown) {
         return reply.status(502).send({
           error: `Connection failed: ${(error as Error).message}`,
         });
@@ -49,7 +49,7 @@ export async function importListsRoutes(app: FastifyInstance, importListService:
         const { type, settings } = request.body;
         const result = await importListService.preview({ type, settings: settings as Record<string, unknown> });
         return result;
-      } catch (error) {
+      } catch (error: unknown) {
         request.log.error(error, 'Import list preview failed');
         return reply.status(500).send({
           error: getErrorMessage(error, 'Preview failed'),

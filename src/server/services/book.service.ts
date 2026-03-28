@@ -172,7 +172,7 @@ export class BookService {
           enrichedAsin = detail.asin;
           this.log.info({ title: data.title, providerId: data.providerId, asin: enrichedAsin }, 'Enriched book with ASIN from provider');
         }
-      } catch (error) {
+      } catch (error: unknown) {
         this.log.warn({ error, providerId: data.providerId }, 'ASIN enrichment failed');
       }
     }
@@ -202,7 +202,7 @@ export class BookService {
       if (data.narrators && data.narrators.length > 0) {
         await this.syncNarrators(bookId, data.narrators);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       // Compensating delete: remove the orphaned book row so create() remains all-or-nothing.
       await this.db.delete(books).where(eq(books.id, bookId));
       throw error;

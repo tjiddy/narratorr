@@ -38,7 +38,7 @@ export class RecyclingBinService {
       try {
         await access(bookPath);
         await this.moveFiles(bookPath, recyclePath);
-      } catch (error) {
+      } catch (error: unknown) {
         // If files don't exist (ENOENT), continue — still create recycling record for metadata recovery
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
           throw error;
@@ -100,7 +100,7 @@ export class RecyclingBinService {
       try {
         await access(entry.recyclePath);
         await this.moveFiles(entry.recyclePath, entry.originalPath);
-      } catch (error) {
+      } catch (error: unknown) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
           throw new RecyclingBinError('Recycled files not found on disk', 'FILESYSTEM');
         }
@@ -181,7 +181,7 @@ export class RecyclingBinService {
         }
         await this.db.delete(recyclingBin).where(eq(recyclingBin.id, entry.id));
         purged++;
-      } catch (error) {
+      } catch (error: unknown) {
         failed++;
         this.log.error({ entryId: entry.id, error }, 'Failed to purge recycling bin entry');
       }
@@ -217,7 +217,7 @@ export class RecyclingBinService {
         }
         await this.db.delete(recyclingBin).where(eq(recyclingBin.id, entry.id));
         purged++;
-      } catch (error) {
+      } catch (error: unknown) {
         failed++;
         this.log.error({ entryId: entry.id, error }, 'Failed to purge expired recycling bin entry');
       }
@@ -247,7 +247,7 @@ export class RecyclingBinService {
 
     try {
       await rename(fromPath, toPath);
-    } catch (error) {
+    } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException).code === 'EXDEV') {
         this.log.info({ fromPath, toPath }, 'Cross-volume move — falling back to copy+delete');
         await cp(fromPath, toPath, { recursive: true });

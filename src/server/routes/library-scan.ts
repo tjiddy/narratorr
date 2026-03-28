@@ -39,7 +39,7 @@ export async function libraryScanRoutes(
       try {
         const result = await libraryScan.scanSingleBook(path);
         return result;
-      } catch (error) {
+      } catch (error: unknown) {
         request.log.warn({ error, path }, 'Single book scan failed');
         return reply.status(400).send({
           error: getErrorMessage(error, 'Scan failed'),
@@ -60,7 +60,7 @@ export async function libraryScanRoutes(
       try {
         const result = await libraryScan.importSingleBook(importItem, metadata as ImportConfirmItem['metadata'], mode);
         return result;
-      } catch (error) {
+      } catch (error: unknown) {
         request.log.error(error, 'Single book import failed');
         return reply.status(500).send({
           error: getErrorMessage(error, 'Import failed'),
@@ -75,7 +75,7 @@ export async function libraryScanRoutes(
     try {
       const result = await libraryScan.rescanLibrary();
       return result;
-    } catch (error) {
+    } catch (error: unknown) {
       if (error instanceof ScanInProgressError) {
         return reply.status(409).send({ error: error.message });
       }
@@ -101,7 +101,7 @@ export async function libraryScanRoutes(
       try {
         const result = await libraryScan.scanDirectory(path);
         return scanResultSchema.parse(result);
-      } catch (error) {
+      } catch (error: unknown) {
         request.log.error(error, 'Directory scan failed');
         return reply.status(500).send({
           error: getErrorMessage(error, 'Scan failed'),
@@ -122,7 +122,7 @@ export async function libraryScanRoutes(
       try {
         const result = await libraryScan.confirmImport(items as ImportConfirmItem[], mode);
         return await reply.status(202).send(result);
-      } catch (error) {
+      } catch (error: unknown) {
         request.log.error(error, 'Import confirmation failed');
         return reply.status(500).send({
           error: getErrorMessage(error, 'Import failed'),

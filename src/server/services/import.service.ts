@@ -136,7 +136,7 @@ export class ImportService {
         await this.handleTorrentRemoval(download, importSettings.minSeedTime);
       }
       return { downloadId, bookId: book.id, targetPath, fileCount, totalSize: targetSize };
-    } catch (error) {
+    } catch (error: unknown) {
       // handleImportFailure does core cleanup (rm files, revert DB) then rethrows.
       // Orchestrator catches the rethrow for failure-path side effects.
       return handleImportFailure({
@@ -221,7 +221,7 @@ export class ImportService {
         await adapter.removeDownload(download.externalId, true);
         this.log.info({ downloadId: download.id }, 'Torrent removed from client after import');
       }
-    } catch (error) {
+    } catch (error: unknown) {
       this.log.error({ error, downloadId: download.id }, 'Failed to remove torrent after import');
     }
   }

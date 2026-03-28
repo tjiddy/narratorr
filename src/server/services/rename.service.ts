@@ -154,7 +154,7 @@ export class RenameService {
 
     try {
       await rename(oldPath, newPath);
-    } catch (error) {
+    } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException).code === 'EXDEV') {
         // Cross-volume: copy then delete
         this.log.info({ oldPath, newPath }, 'Cross-volume move — falling back to copy+delete');

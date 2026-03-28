@@ -63,7 +63,7 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
       }
       if (!response.ok) return null;
       return (await response.json()) as T;
-    } catch (error) {
+    } catch (error: unknown) {
       if (error instanceof RateLimitError) throw error;
       if (error instanceof TransientError) throw error;
       const message = error instanceof Error ? error.message : String(error);

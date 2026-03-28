@@ -119,13 +119,13 @@ export async function renameFilesWithTemplate(
       completed.push({ from, to });
       log.debug({ from, to }, 'Renamed file using template');
     }
-  } catch (error) {
+  } catch (error: unknown) {
     // Attempt rollback
     log.error({ error, completed: completed.length, total: renames.length }, 'Rename failed mid-operation, attempting rollback');
     for (const { from, to } of completed.reverse()) {
       try {
         await rename(join(targetPath, to), join(targetPath, from));
-      } catch (rollbackError) {
+      } catch (rollbackError: unknown) {
         log.error({ rollbackError, file: to }, 'Rollback failed for file');
       }
     }

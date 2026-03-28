@@ -69,7 +69,7 @@ describe('checkoutOrCreateBranch — unmerged file detection', () => {
       .toThrow(UnmergedFilesError);
     try {
       checkoutOrCreateBranch('42', 'feature/issue-42-test', mockGit);
-    } catch (e) {
+    } catch (e: unknown) {
       expect(e).toBeInstanceOf(UnmergedFilesError);
       expect((e as UnmergedFilesError).files).toEqual(['some/file.ts']);
     }
@@ -80,7 +80,7 @@ describe('checkoutOrCreateBranch — unmerged file detection', () => {
     try {
       checkoutOrCreateBranch('42', 'feature/issue-42-test', mockGit);
       expect.unreachable('should have thrown');
-    } catch (e) {
+    } catch (e: unknown) {
       expect(e).toBeInstanceOf(UnmergedFilesError);
       expect((e as UnmergedFilesError).files).toEqual(['file1.ts', 'file2.ts']);
     }

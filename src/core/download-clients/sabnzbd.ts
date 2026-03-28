@@ -211,7 +211,7 @@ export class SABnzbdClient implements DownloadClientAdapter {
         success: true,
         message: `SABnzbd ${response.version}`,
       };
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Connection failed',

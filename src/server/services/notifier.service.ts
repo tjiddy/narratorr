@@ -82,7 +82,7 @@ export class NotifierService {
           } else {
             this.log.debug({ notifier: notifier.name, event }, 'Notification sent');
           }
-        } catch (error) {
+        } catch (error: unknown) {
           this.log.warn({ notifier: notifier.name, event, error }, 'Notification error');
         }
       }),
@@ -98,7 +98,7 @@ export class NotifierService {
     try {
       const adapter = this.createAdapter(notifier);
       return await adapter.test();
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Unknown error',
@@ -114,7 +114,7 @@ export class NotifierService {
       } as NotifierRow;
       const adapter = this.createAdapter(fakeRow);
       return await adapter.test();
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Unknown error',

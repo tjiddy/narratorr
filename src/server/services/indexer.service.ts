@@ -189,7 +189,7 @@ export class IndexerService {
       const result = await adapter.test();
       this.log.debug({ type: data.type, success: result.success, message: result.message }, 'Indexer config test result');
       return result;
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Unknown error',
@@ -208,7 +208,7 @@ export class IndexerService {
       const result = await adapter.test();
       this.log.debug({ id, success: result.success }, 'Indexer test result');
       return result;
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Unknown error',
@@ -271,7 +271,7 @@ export class IndexerService {
         const indexerResults = await adapter.search(query, options);
         this.log.debug({ indexer: indexer.name, results: indexerResults.length }, 'Indexer search completed');
         results.push(...indexerResults.map(r => ({ ...r, indexerId: indexer.id })));
-      } catch (error) {
+      } catch (error: unknown) {
         this.log.warn({ indexer: indexer.name, query, error }, 'Error searching indexer');
       }
     }

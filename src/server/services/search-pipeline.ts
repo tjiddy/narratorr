@@ -177,7 +177,7 @@ export async function searchAndGrabForBook(
     });
     log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
     return { result: 'grabbed', title: best.title };
-  } catch (grabError) {
+  } catch (grabError: unknown) {
     const message = grabError instanceof Error ? grabError.message : String(grabError);
     if (message.includes('already has an active download')) {
       log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book already has active download');

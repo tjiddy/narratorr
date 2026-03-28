@@ -60,7 +60,7 @@ export async function runSearchJob(
       if (result.result === 'grab_error') {
         log.warn({ error: result.error, bookId: book.id, title: book.title }, 'Search failed for book');
       }
-    } catch (error) {
+    } catch (error: unknown) {
       log.warn({ error, bookId: book.id, title: book.title }, 'Search failed for book');
     }
   }
@@ -105,7 +105,7 @@ export async function searchAllWanted(
         errors++;
         log.warn({ error: result.error, bookId: book.id, title: book.title }, 'Grab failed for book');
       }
-    } catch (error) {
+    } catch (error: unknown) {
       errors++;
       log.warn({ error, bookId: book.id, title: book.title }, 'Search failed for book');
     }
@@ -201,7 +201,7 @@ export async function runUpgradeSearchJob(
         });
         grabbed++;
         log.info({ bookId: book.id, title: best.title }, 'Upgrade grabbed');
-      } catch (grabError) {
+      } catch (grabError: unknown) {
         const message = grabError instanceof Error ? grabError.message : String(grabError);
         if (message.includes('already has an active download')) {
           log.debug({ bookId: book.id }, 'Skipping upgrade grab — active download exists');
@@ -209,7 +209,7 @@ export async function runUpgradeSearchJob(
           throw grabError;
         }
       }
-    } catch (error) {
+    } catch (error: unknown) {
       log.warn({ error, bookId: book.id, title: book.title }, 'Upgrade search failed for book');
     }
   }
@@ -239,17 +239,17 @@ export function startSearchJob(
       setTimeout(async () => {
         try {
           await runSearchJob(settingsService, bookListService, indexerService, downloadOrchestrator, log, retryBudget);
-        } catch (error) {
+        } catch (error: unknown) {
           log.error(error, 'Search job error');
         }
         try {
           await runUpgradeSearchJob(settingsService, bookService, indexerService, downloadOrchestrator, log);
-        } catch (error) {
+        } catch (error: unknown) {
           log.error(error, 'Upgrade search job error');
         }
         scheduleNext();
       }, intervalMs);
-    } catch (error) {
+    } catch (error: unknown) {
       log.error(error, 'Failed to read search interval, retrying in 5 minutes');
       setTimeout(scheduleNext, 5 * 60 * 1000);
     }

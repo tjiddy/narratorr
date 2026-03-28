@@ -75,7 +75,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
       if (deps.recyclingBinService) {
         try {
           await deps.recyclingBinService.moveToRecycleBin(book, book.path);
-        } catch (error) {
+        } catch (error: unknown) {
           request.log.error({ bookId: id, error }, 'Failed to move book to recycling bin');
           return reply.status(500).send({ error: 'Failed to move book files to recycling bin' });
         }
@@ -83,7 +83,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
         try {
           const librarySettings = await deps.settingsService.get('library');
           await deps.bookService.deleteBookFiles(book.path, librarySettings.path);
-        } catch (error) {
+        } catch (error: unknown) {
           request.log.error({ bookId: id, error }, 'Failed to delete book files');
           return reply.status(500).send({ error: 'Failed to delete book files from disk' });
         }
@@ -95,7 +95,7 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     for (const download of activeDownloads) {
       try {
         await deps.downloadOrchestrator.cancel(download.id);
-      } catch (error) {
+      } catch (error: unknown) {
         request.log.warn({ downloadId: download.id, error }, 'Failed to cancel download during book deletion');
       }
     }

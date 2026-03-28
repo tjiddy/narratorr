@@ -46,7 +46,7 @@ export async function validateSource(
   let sourceStats: Stats;
   try {
     sourceStats = await stat(savePath);
-  } catch (statError) {
+  } catch (statError: unknown) {
     if ((statError as NodeJS.ErrnoException).code === 'ENOENT') {
       const hasMapping = remotePathMappingService && downloadClientId
         ? (await remotePathMappingService.getByClientId(downloadClientId)).length > 0
@@ -97,7 +97,7 @@ export async function checkDiskSpace(args: CheckDiskSpaceArgs): Promise<void> {
   try {
     const fsStats = await statfs(libraryPath);
     freeBytes = Number(fsStats.bavail) * Number(fsStats.bsize);
-  } catch (statfsError) {
+  } catch (statfsError: unknown) {
     throw new Error(`Disk space check failed: ${statfsError instanceof Error ? statfsError.message : 'unknown error'}`);
   }
 
@@ -228,7 +228,7 @@ export async function cleanupOldBookPath(args: CleanupOldBookPathArgs): Promise<
   try {
     await rm(bookPath, { recursive: true, force: true });
     log.info({ oldPath: bookPath, newPath: targetPath }, 'Deleted old book files during upgrade');
-  } catch (rmError) {
+  } catch (rmError: unknown) {
     log.warn({ error: rmError, oldPath: bookPath }, 'Failed to delete old book files during upgrade — continuing');
   }
 }
@@ -270,7 +270,7 @@ export async function embedTagsForImport(args: EmbedTagsArgs): Promise<void> {
       { bookId, tagged: tagResult.tagged, skipped: tagResult.skipped, failed: tagResult.failed },
       'Tag embedding during import',
     );
-  } catch (tagError) {
+  } catch (tagError: unknown) {
     log.warn({ error: tagError, bookId }, 'Tag embedding failed during import — continuing');
   }
 }
@@ -303,7 +303,7 @@ export async function runImportPostProcessing(args: RunImportPostProcessingArgs)
       fileCount,
       log,
     });
-  } catch (scriptError) {
+  } catch (scriptError: unknown) {
     log.warn({ error: scriptError, bookId }, 'Post-processing script failed during import — continuing');
   }
 }

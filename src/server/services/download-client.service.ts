@@ -157,7 +157,7 @@ export class DownloadClientService {
       const result = await adapter.test();
       this.log.debug({ type: data.type, success: result.success, message: result.message }, 'Download client config test result');
       return result;
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Unknown error',
@@ -179,7 +179,7 @@ export class DownloadClientService {
       const categories = await adapter.getCategories();
       this.log.debug({ id, count: categories.length }, 'Fetched download client categories');
       return { categories };
-    } catch (error) {
+    } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       this.log.warn({ id, error }, 'Failed to fetch categories from download client');
       return { categories: [], error: message };
@@ -198,7 +198,7 @@ export class DownloadClientService {
 
       const categories = await adapter.getCategories();
       return { categories };
-    } catch (error) {
+    } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       this.log.warn({ type: data.type, error }, 'Failed to fetch categories from download client config');
       return { categories: [], error: message };
@@ -216,7 +216,7 @@ export class DownloadClientService {
       const result = await adapter.test();
       this.log.debug({ id, success: result.success }, 'Download client test result');
       return result;
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Unknown error',
