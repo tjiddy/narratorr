@@ -22,7 +22,6 @@
 
 ## Code Hardening
 
-- **src/core/metadata/ (audible.ts, audnexus.ts)**: Redirect protection still absent — `AbortSignal.timeout()` was added in #94 but `redirect: 'manual'` (via `fetchWithTimeout`) was explicitly kept out of scope. (discovered in #23, partially resolved in #94)
 - **src/client/pages/manual-import/PathStep.tsx**: frontend-design skill was unavailable — visual polish pass not applied; amber accent hover states and glass-card styling may need review for consistency. (discovered in #81)
 - **src/client/pages/manual-import/pathUtils.ts**: `makeRelativePath` and `isPathInsideLibrary` are co-located in the Manual Import folder but used by both Manual Import and Library Import — should be moved to a shared location (e.g., `src/client/lib/pathUtils.ts`) when a third consumer appears. (discovered in #175)
 - **src/client/pages/library-import/LibraryImportPage.tsx**: Pre-existing behavioral test gaps: deselect-all action, register button text with selectedCount=0, manual edit then register flow, duplicate visibility label text toggle, back link href, EditModal save with user-edited metadata, EditModal with missing matchResult/alternatives, summary bar counter accuracy. None introduced by #175. (discovered in #175)
