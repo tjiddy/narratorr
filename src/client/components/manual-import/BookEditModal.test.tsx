@@ -494,34 +494,6 @@ describe('BookEditModal', () => {
       expect(badge.firstChild?.nodeName.toLowerCase()).toBe('svg');
     });
 
-    it.todo('does not show "In library" badge when no identifier matches — EXISTING');
-  });
-});
-
-describe('ARIA attributes (#185)', () => {
-  it.todo('modal renders with role="dialog", aria-modal="true", and aria-label');
-});
-
-describe('search pending state (#185)', () => {
-  it.todo('search button shows spinner and disables while provider search isPending');
-  it.todo('search button re-enables when search completes');
-});
-
-describe('applyMetadata (#185)', () => {
-  it.todo('metadata with no series clears series field to empty string');
-  it.todo('metadata with series populates series field from meta.series[0].name');
-});
-
-describe('initialResults fallback (#185)', () => {
-  it.todo('alternatives=undefined returns only initial.metadata (no crash)');
-  it.todo('alternatives=[] returns only initial.metadata');
-});
-
-describe('save behavior (#185)', () => {
-  it.todo('save with selectedMetadata=null preserves manual edits only');
-});
-
-describe('"In library" badge', () => {
     it('does not show "In library" badge when no identifier matches', () => {
       mockIdentifiers = [{ asin: 'B999', title: 'Other Book', authorName: 'Other Author' }];
       const meta = makeMetadata({ asin: 'B001' });
@@ -531,3 +503,149 @@ describe('"In library" badge', () => {
     });
   });
 });
+
+describe('ARIA attributes (#185)', () => {
+  it('modal renders with role="dialog", aria-modal="true", and aria-label', () => {
+    renderModal();
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAttribute('aria-label', 'Edit book metadata');
+  });
+});
+
+describe('search pending state (#185)', () => {
+  it('search button shows spinner and disables while provider search isPending', async () => {
+    const { api: mockApi } = await import('@/lib/api');
+    // Make search hang (never resolve) to keep isPending=true
+    vi.mocked(mockApi.searchMetadata).mockReturnValue(new Promise(() => {}));
+
+    renderModal({ initial: makeEditState({ title: 'Test', author: 'Author' }) });
+
+    const searchBtn = screen.getByText('Search Providers').closest('button')!;
+    await userEvent.click(searchBtn);
+
+    await waitFor(() => {
+      expect(searchBtn).toBeDisabled();
+    });
+  });
+
+  it('search button re-enables when search completes', async () => {
+    const { api: mockApi } = await import('@/lib/api');
+    vi.mocked(mockApi.searchMetadata).mockResolvedValueOnce({
+      books: [makeMetadata({ title: 'Result' })],
+      authors: [],
+      series: [],
+    });
+
+    renderModal({ initial: makeEditState({ title: 'Test', author: 'Author' }) });
+
+    const searchBtn = screen.getByText('Search Providers').closest('button')!;
+    await userEvent.click(searchBtn);
+
+    await waitFor(() => {
+      expect(searchBtn).toBeEnabled();
+    });
+  });
+});
+
+describe('applyMetadata (#185)', () => {
+  it('metadata with no series clears series field to empty string', async () => {
+    const alt = makeMetadata({
+      title: 'No Series Book',
+      authors: [{ name: 'Author X' }],
+      series: undefined,
+      providerId: 'noseries',
+    });
+
+    renderModal({
+      initial: makeEditState({ series: 'Original Series', metadata: makeMetadata({ providerId: 'best' }) }),
+      alternatives: [alt],
+    });
+
+    // Series field initially has value
+    expect(screen.getByDisplayValue('Original Series')).toBeInTheDocument();
+
+    // Click the no-series alternative
+    await userEvent.click(screen.getByText('No Series Book'));
+
+    // Series field should be cleared
+    await waitFor(() => {
+      const seriesInput = screen.getByLabelText('Series') as HTMLInputElement;
+      expect(seriesInput.value).toBe('');
+    });
+  });
+
+  it('metadata with series populates series field from meta.series[0].name', async () => {
+    const alt = makeMetadata({
+      title: 'Series Book',
+      authors: [{ name: 'Author Y' }],
+      series: [{ name: 'Awesome Series', position: 1 }],
+      providerId: 'withseries',
+    });
+
+    renderModal({
+      initial: makeEditState({ series: '', metadata: makeMetadata({ providerId: 'best' }) }),
+      alternatives: [alt],
+    });
+
+    await userEvent.click(screen.getByText('Series Book'));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Awesome Series')).toBeInTheDocument();
+    });
+  });
+});
+
+describe('initialResults fallback (#185)', () => {
+  it('alternatives=undefined returns only initial.metadata (no crash)', () => {
+    const meta = makeMetadata({ title: 'Only Match', providerId: 'only' });
+
+    // Render without alternatives prop (undefined)
+    renderModal({
+      initial: makeEditState({ metadata: meta }),
+      // alternatives intentionally omitted → undefined
+    });
+
+    // Should not crash and should show the initial metadata
+    expect(screen.getAllByText('Only Match').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('alternatives=[] returns only initial.metadata', () => {
+    const meta = makeMetadata({ title: 'Solo Match', providerId: 'solo' });
+
+    renderModal({
+      initial: makeEditState({ metadata: meta }),
+      alternatives: [],
+    });
+
+    // Should show the initial metadata
+    expect(screen.getAllByText('Solo Match').length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('save behavior (#185)', () => {
+  it('save with selectedMetadata=null preserves manual edits only', async () => {
+    const onSave = vi.fn();
+
+    // Render with no metadata (selectedMetadata will be null)
+    renderModal({
+      onSave,
+      initial: makeEditState({ title: 'Manual Title', author: 'Manual Author', series: 'Manual Series' }),
+    });
+
+    await userEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Manual Title',
+        author: 'Manual Author',
+        series: 'Manual Series',
+        metadata: undefined,
+        coverUrl: undefined,
+        asin: undefined,
+      }));
+    });
+  });
+});
+
