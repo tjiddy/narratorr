@@ -414,6 +414,12 @@ export class LibraryScanService {
       return targetPath;
     }
 
+    // Guard: block sources inside (or equal to) the library root
+    const rel = relative(resolve(librarySettings.path), resolve(item.path));
+    if (!rel.startsWith('..') && !isAbsolute(rel)) {
+      throw new Error('Source path is inside the library root — cannot import a path already managed by the library');
+    }
+
     await mkdir(targetPath, { recursive: true });
     this.log.info({ source: item.path, target: targetPath, mode }, 'Copying files to library');
     await cp(item.path, targetPath, { recursive: true, errorOnExist: false });

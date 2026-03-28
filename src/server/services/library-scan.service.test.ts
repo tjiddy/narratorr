@@ -1292,17 +1292,55 @@ describe('LibraryScanService', () => {
       expect(rm).not.toHaveBeenCalled();
     });
 
-    it('proceeds with copy when source is inside library root but target path differs', async () => {
-      // Source is inside library but folder format would rename it
-      const result = await service.importSingleBook(
+    it('throws when source is nested inside library root (copy mode)', async () => {
+      await expect(service.importSingleBook(
         { path: '/library/old-folder-name', title: 'Title', authorName: 'Author' },
         null,
         'copy',
-      );
+      )).rejects.toThrow('Source path is inside the library root');
+      expect(mkdir).not.toHaveBeenCalled();
+      expect(cp).not.toHaveBeenCalled();
+    });
 
-      // buildTargetPath returns '/library/Author/Title' which differs from source
+    it('throws when source IS the library root exactly', async () => {
+      await expect(service.importSingleBook(
+        { path: '/library', title: 'Title', authorName: 'Author' },
+        null,
+        'copy',
+      )).rejects.toThrow('Source path is inside the library root');
+      expect(mkdir).not.toHaveBeenCalled();
+      expect(cp).not.toHaveBeenCalled();
+    });
+
+    it('does not call rm when source is inside library root (move mode)', async () => {
+      await expect(service.importSingleBook(
+        { path: '/library/sub/nested', title: 'Title', authorName: 'Author' },
+        null,
+        'move',
+      )).rejects.toThrow('Source path is inside the library root');
+      expect(mkdir).not.toHaveBeenCalled();
+      expect(rm).not.toHaveBeenCalled();
+    });
+
+    it('allows source with a path that is a prefix of the library root name (/library-old vs /library)', async () => {
+      const result = await service.importSingleBook(
+        { path: '/library-old/book', title: 'Title', authorName: 'Author' },
+        null,
+        'copy',
+      );
       expect(result.imported).toBe(true);
-      expect(cp).toHaveBeenCalledWith('/library/old-folder-name', '/library/Author/Title', expect.anything());
+      expect(cp).toHaveBeenCalledWith('/library-old/book', '/library/Author/Title', expect.anything());
+    });
+
+    it('allows source with .. segments that resolve outside the library root', async () => {
+      // /library/sub/../../downloads/book resolves to /downloads/book — outside root
+      const result = await service.importSingleBook(
+        { path: '/library/sub/../../downloads/book', title: 'Title', authorName: 'Author' },
+        null,
+        'copy',
+      );
+      expect(result.imported).toBe(true);
+      expect(cp).toHaveBeenCalled();
     });
   });
 
@@ -1451,6 +1489,57 @@ describe('LibraryScanService', () => {
       await vi.waitFor(() => {
         expect(rm).toHaveBeenCalledWith('/downloads/Book', { recursive: true });
       });
+    });
+
+    it('marks book missing when background copy source is inside library root', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).limit.mockResolvedValue([{
+        id: 1,
+        title: 'Book',
+        narrator: null,
+        duration: null,
+        coverUrl: null,
+      }]);
+
+      await service.confirmImport(
+        [{ path: '/library/already-there', title: 'Book', authorName: 'Author' }],
+        'copy',
+      );
+
+      await vi.waitFor(() => {
+        expect((mockDb as Record<string, ReturnType<typeof vi.fn>>).set).toHaveBeenCalledWith(
+          expect.objectContaining({ status: 'missing' }),
+        );
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({ eventType: 'import_failed', source: 'manual', bookId: 1, bookTitle: 'Book' }),
+        );
+      });
+      expect(mkdir).not.toHaveBeenCalled();
+      expect(cp).not.toHaveBeenCalled();
+    });
+
+    it('marks book missing and skips rm when background move source is inside library root', async () => {
+      (mockDb as Record<string, ReturnType<typeof vi.fn>>).limit.mockResolvedValue([{
+        id: 1,
+        title: 'Book',
+        narrator: null,
+        duration: null,
+        coverUrl: null,
+      }]);
+
+      await service.confirmImport(
+        [{ path: '/library/already-there', title: 'Book', authorName: 'Author' }],
+        'move',
+      );
+
+      await vi.waitFor(() => {
+        expect((mockDb as Record<string, ReturnType<typeof vi.fn>>).set).toHaveBeenCalledWith(
+          expect.objectContaining({ status: 'missing' }),
+        );
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({ eventType: 'import_failed', source: 'manual', bookId: 1, bookTitle: 'Book' }),
+        );
+      });
+      expect(rm).not.toHaveBeenCalled();
     });
 
     it('calls enrichBookFromAudio in background processing', async () => {
