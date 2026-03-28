@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #174 Add redirect protection to metadata fetch calls — 2026-03-28
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #180
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 9 new redirect tests across 2 test files
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 1 (redirect tests initially vacuous — see Wish I'd Known #1)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Implementation was a 1-line swap per file; fetchWithTimeout was already fully capable; debt item pre-identified the exact fix needed
+- Friction / issues encountered: Unresolved merge conflict in debt.md (from concurrent branch work) blocked initial commit; redirect tests initially passed before implementation because MSW unhandled-request errors also produce TransientError — required tightening assertions to match /redirect/i
+
+### Token efficiency
+- Highest-token actions: Explore subagents for plan + coverage review
+- Avoidable waste: Running both test files together caused a worker timeout; running them separately gave cleaner output
+- Suggestions: For co-located test suites with delay(infinite) tests, always run separately
+
+### Infrastructure gaps
+- Repeated workarounds: Merge conflict resolution in .claude/cl/ files (second time this session)
+- Missing tooling / config: None
+- Unresolved debt: audnexus.ts 429 Retry-After tests and region param tests are pre-existing gaps (logged in debt.md)
+
+### Wish I'd Known
+1. MSW redirect tests are vacuous if you only assert  — MSW's unhandled-request error also produces TransientError, so tests pass before implementation. Assert  to verify the actual redirect message.
+2. Running timeout-heavy test files (with delay("infinite")) together in one vitest run causes worker pool crashes — always run each file individually when timeout tests are present.
+3. A merge conflict in .claude/cl/debt.md will block commits if not resolved first — check git status before the first commit on any branch that touches CL files.
+
+
 ## #175 Replace startsWith() path ancestry check in LibraryImportPage — 2026-03-28
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #179
