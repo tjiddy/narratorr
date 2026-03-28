@@ -158,6 +158,11 @@ describe('SecuritySettings', () => {
     await waitFor(() => {
       expect(api.authRegenerateApiKey).toHaveBeenCalled();
     });
+
+    // Confirmation dialog should close after success
+    await waitFor(() => {
+      expect(screen.queryByText(/regenerating will invalidate/i)).not.toBeInTheDocument();
+    });
   });
 
   it('create credentials form → success message', async () => {
@@ -669,6 +674,17 @@ describe('SecuritySettings', () => {
       await user.click(screen.getByRole('checkbox', { name: /enable local bypass/i }));
 
       await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Local bypass setting updated'));
+    });
+
+    it('toggle error shows error toast', async () => {
+      (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network error'));
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByRole('checkbox', { name: /enable local bypass/i })).toBeInTheDocument());
+      await user.click(screen.getByRole('checkbox', { name: /enable local bypass/i }));
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to update local bypass'));
     });
   });
 
