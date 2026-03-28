@@ -16,6 +16,7 @@ import {
   AlertCircleIcon,
 } from '@/components/icons';
 import { Badge } from '@/components/Badge';
+import { Modal } from '@/components/Modal';
 import type { BookEditState } from './types.js';
 export type { BookEditState } from './types.js';
 
@@ -76,14 +77,12 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
-      <div data-testid="modal-backdrop" className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+    <Modal onClose={onClose} className="w-full max-w-lg flex flex-col max-h-[85vh]">
       <div
         ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-label="Edit book metadata"
-        className="relative w-full max-w-lg flex flex-col glass-card rounded-2xl shadow-2xl animate-fade-in-up max-h-[85vh]"
         tabIndex={-1}
       >
         {/* Header */}
@@ -93,6 +92,7 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
             <p className="text-xs text-muted-foreground/50 truncate mt-0.5">{book.path}</p>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors focus-ring"
             aria-label="Close"
@@ -279,6 +279,6 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
