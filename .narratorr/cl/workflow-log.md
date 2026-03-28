@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #188 Enforce catch (error: unknown) via tsconfig — 2026-03-28
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #190
+
+### Metrics
+- Files changed: 73 | Tests added/modified: 3 new (search-grab-flow.e2e.test.ts guard tests)
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Annotation sweep was straightforward — sed batch replacements across 72 files. The null-throw red/green cycle worked cleanly: confirmed the test failed before the fix (Fastify's error handler returns `{ error: 'Internal Server Error' }`) and passed after (route returns `{ error: 'Unknown error' }`).
+- Friction / issues encountered: The spec went through 3 review rounds before approval. Core issue: original spec described `useUnknownInCatchVariables` as a new behavior-changing switch, but the repo already has `strict: true` which includes the flag since TS 4.4. Once reframed as a clarity/style cleanup + one genuine runtime bug fix, the spec cleared.
+
+### Token efficiency
+- Highest-token actions: Multiple spec review rounds (3 rounds, each with a full codebase re-read by the reviewer bot)
+- Avoidable waste: Could have caught the strict-mode inclusion of the flag during /elaborate, saving 2 spec review rounds
+- Suggestions: Before writing a spec around enabling a tsconfig flag, always grep for `"strict": true` and check whether the flag is part of the strict family
+
+### Infrastructure gaps
+- Repeated workarounds: none
+- Missing tooling / config: none
+- Unresolved debt: debt.md line 19 (149 catch sites from #147) is now resolved by this PR
+
+### Wish I'd Known
+1. `strict: true` already includes `useUnknownInCatchVariables` since TS 4.4 — the "missing" flag was already active, making the issue a style/consistency cleanup rather than a type-safety enforcement
+2. The null-throw crash isn't obvious from the cast syntax: `(error as T).code` looks safe but at runtime `null.code` throws a TypeError that escapes the catch block
+3. For annotation sweeps, `sed -i` batch replacements are the right tool — trying to use the Edit tool on 70+ files would be extremely slow and context-consuming
+
 ## #176 Add server-side library-root guardrail to copyToLibrary — 2026-03-28
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #189
