@@ -403,7 +403,7 @@ export class DownloadService {
     if (!existing) return false;
 
     if (!isTerminalStatus(existing.status)) {
-      throw new Error(`Cannot delete download with status '${existing.status}' — use cancel instead`);
+      throw new DownloadError(`Cannot delete download with status '${existing.status}' — use cancel instead`, 'INVALID_STATUS');
     }
 
     await this.db.delete(downloads).where(eq(downloads.id, id));
