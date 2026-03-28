@@ -1,6 +1,6 @@
 ---
 scope: []
-files: [.claude/cl/debt.md]
+files: [.narratorr/cl/debt.md]
 issue: 448
 source: spec-review
 date: 2026-03-18

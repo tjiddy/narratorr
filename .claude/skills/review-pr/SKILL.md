@@ -26,7 +26,7 @@ Reviews a PR by checking the diff against the linked issue's acceptance criteria
 
 ## Guardrails
 
-**This skill is READ-ONLY for source code.** Never stage, commit, or modify any files outside of `.claude/cl/` and `.narratorr/state/` (aliased as `.agents/cl/` and `.agents/state/` in some clones). The reviewer does not fix code — it reports findings for the author to address. If you find yourself editing source files, test files, config files, or anything under `src/`, STOP — you are doing the author's job.
+**This skill is READ-ONLY for source code.** Never stage, commit, or modify any files outside of `.narratorr/cl/` and `.narratorr/state/` (aliased as `.agents/cl/` and `.agents/state/` in some clones). The reviewer does not fix code — it reports findings for the author to address. If you find yourself editing source files, test files, config files, or anything under `src/`, STOP — you are doing the author's job.
 
 ## GitHub CLI
 
@@ -269,7 +269,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
     For each such finding, analyze: "This code was in the diff during my round 1 review. Could I have caught this then? What specific addition or change to the `/review-pr` prompt would have helped me identify this in the first round?"
 
-    Write a retrospective file: `.claude/cl/reviews/reviewer-pr-<issue-id>-round-<N>.md`. Create `.claude/cl/reviews/` if it doesn't exist.
+    Write a retrospective file: `.narratorr/cl/reviews/reviewer-pr-<issue-id>-round-<N>.md`. Create `.narratorr/cl/reviews/` if it doesn't exist.
 
     Format:
     ```yaml
@@ -394,7 +394,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
     ```bash
     git checkout main
     git pull origin main
-    git add .claude/cl/
+    git add .narratorr/cl/
     git commit -m "CL from PR #<pr-number> review"
     node scripts/git-push.ts origin main
     ```

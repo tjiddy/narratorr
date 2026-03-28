@@ -52,14 +52,14 @@
 - Suggestions: For co-located test suites with delay(infinite) tests, always run separately
 
 ### Infrastructure gaps
-- Repeated workarounds: Merge conflict resolution in .claude/cl/ files (second time this session)
+- Repeated workarounds: Merge conflict resolution in .narratorr/cl/ files (second time this session)
 - Missing tooling / config: None
 - Unresolved debt: audnexus.ts 429 Retry-After tests and region param tests are pre-existing gaps (logged in debt.md)
 
 ### Wish I'd Known
 1. MSW redirect tests are vacuous if you only assert  — MSW's unhandled-request error also produces TransientError, so tests pass before implementation. Assert  to verify the actual redirect message.
 2. Running timeout-heavy test files (with delay("infinite")) together in one vitest run causes worker pool crashes — always run each file individually when timeout tests are present.
-3. A merge conflict in .claude/cl/debt.md will block commits if not resolved first — check git status before the first commit on any branch that touches CL files.
+3. A merge conflict in .narratorr/cl/debt.md will block commits if not resolved first — check git status before the first commit on any branch that touches CL files.
 
 
 ## #175 Replace startsWith() path ancestry check in LibraryImportPage — 2026-03-28
@@ -82,7 +82,7 @@
 - Suggestions: Coverage subagent prompt could be tightened to "behaviors introduced by this branch" rather than "all behaviors in changed files"
 
 ### Infrastructure gaps
-- Repeated workarounds: Write tool blocked on .claude/cl/ files — had to use Bash with tee/python3 for learnings and debt updates
+- Repeated workarounds: Write tool blocked on .narratorr/cl/ files — had to use Bash with tee/python3 for learnings and debt updates
 - Missing tooling / config: frontend-design skill not available as plugin
 - Unresolved debt: pathUtils.ts co-location (manual-import folder, used by library-import too) — deferred until a third consumer appears
 
@@ -944,9 +944,9 @@
 - Unresolved debt: None introduced
 
 ### Wish I'd Known
-1. `as const` on `Map` template literal tuples narrows the key type to a union — use explicit `Map<string, V>` typing instead (see `.claude/cl/learnings/map-key-type-narrowing-trap.md`)
-2. When adding a required field to a shared interface, grep for ALL constructors of that type across the full repo — `getBookDetails()` and test factory functions in component files are easy to miss (see `.claude/cl/learnings/required-field-all-constructors.md`)
-3. When removing a field from an API shape, grep ALL test files for the removed field name before marking any module done — fixture objects in unrelated component tests also contain the old shape (see `.claude/cl/learnings/scan-skip-to-flag-pattern.md`)
+1. `as const` on `Map` template literal tuples narrows the key type to a union — use explicit `Map<string, V>` typing instead (see `.narratorr/cl/learnings/map-key-type-narrowing-trap.md`)
+2. When adding a required field to a shared interface, grep for ALL constructors of that type across the full repo — `getBookDetails()` and test factory functions in component files are easy to miss (see `.narratorr/cl/learnings/required-field-all-constructors.md`)
+3. When removing a field from an API shape, grep ALL test files for the removed field name before marking any module done — fixture objects in unrelated component tests also contain the old shape (see `.narratorr/cl/learnings/scan-skip-to-flag-pattern.md`)
 
 ## #118 Add Redownload Failed toggle to import settings — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
@@ -1003,9 +1003,9 @@
 - Unresolved debt: SSEProvider has no dedicated lifecycle tests (pre-existing, logged to debt.md)
 
 ### Wish I'd Known
-1. `mockClear()` vs `mockReset()` distinction — `mockClear()` only clears call counts, not the implementation. When tests override `mockImplementation`, subsequent tests inherit the override unless `mockReset()` is called. See `.claude/cl/learnings/vitest-mock-reset-vs-clear.md`.
+1. `mockClear()` vs `mockReset()` distinction — `mockClear()` only clears call counts, not the implementation. When tests override `mockImplementation`, subsequent tests inherit the override unless `mockReset()` is called. See `.narratorr/cl/learnings/vitest-mock-reset-vs-clear.md`.
 2. Nav-order tests must assert the full sequence, not just presence/absence of individual items — the spec explicitly required both discovery-enabled and discovery-disabled order contracts; the existing test only asserted Discover's absence.
-3. Client-only settings sections should NOT use react-hook-form/dirty-state/save pattern — the toggle fires directly via the hook; no mutation or save button needed. See `.claude/cl/learnings/settings-section-no-form-pattern.md`.
+3. Client-only settings sections should NOT use react-hook-form/dirty-state/save pattern — the toggle fires directly via the hook; no mutation or save button needed. See `.narratorr/cl/learnings/settings-section-no-form-pattern.md`.
 
 ## #117 Fix monitor routing failed SABnzbd/NZBGet downloads to failure path — 2026-03-25
 **Skill path:** /implement → /claim → /plan → /handoff
@@ -1268,7 +1268,7 @@
 - Unresolved debt: none introduced
 
 ### Wish I'd Known
-1. The three canonical polish substitutions for folder-list rows are documented in .claude/cl/learnings/pathstep-glass-card-pattern.md — future similar components can skip the explore phase
+1. The three canonical polish substitutions for folder-list rows are documented in .narratorr/cl/learnings/pathstep-glass-card-pattern.md — future similar components can skip the explore phase
 2. The glass-card utility uses backdrop-blur-xl which creates a stacking context — nested popovers inside glass-card must portal to body
 3. State directories written during /plan can disappear before /handoff; always mkdir -p before writing markers
 
@@ -2401,7 +2401,7 @@
 ### Token efficiency
 - Highest-token actions: 3 rounds of spec review with elaborate/respond-to-spec-review (codebase exploration subagents per round)
 - Avoidable waste: Both wrong fix proposals could have been avoided by reading vite-base-buildtime-vs-runtime.md during the first /elaborate pass
-- Suggestions: When a bug involves Vite config or SPA asset serving, grep .claude/cl/learnings/ for vite and base before proposing a fix
+- Suggestions: When a bug involves Vite config or SPA asset serving, grep .narratorr/cl/learnings/ for vite and base before proposing a fix
 
 ### Infrastructure gaps
 - Repeated workarounds: State directory recreation (.claude/state/implement-10/ was lost between phases, required mkdir -p repeatedly)

@@ -42,8 +42,8 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    > 2. Find files/modules relevant to the issue scope — existing patterns, interfaces, wiring points
    > 3. Check for overlapping work: run `node scripts/gh.tspr list --state open --limit 50 --json number,state,title,headRefName,baseRefName,url --jq '.[] | "#\(.number) [\(.state | ascii_downcase)] \(.title)\n   \(.headRefName) → \(.baseRefName) | \(.url)"'` and look for PRs touching the same area
    > 4. Check dependencies: run `node scripts/gh.tsissue view <dep-id> --json number,state,title,labels,milestone,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\nlabels: \([.labels[].name] | join(", "))\(.milestone.title // "" | if . != "" then " | milestone: \(.)" else "" end)\n\n\(.body // "")"'` for any referenced issues to verify status
-   > 5. Scan `.claude/cl/learnings/` for files whose `scope` or `files` frontmatter matches this issue's labels or target files
-   > 6. Check `.claude/cl/debt.md` for items in the target area
+   > 5. Scan `.narratorr/cl/learnings/` for files whose `scope` or `files` frontmatter matches this issue's labels or target files
+   > 6. Check `.narratorr/cl/debt.md` for items in the target area
    >
    > 7. **Run architecture checks** from `.claude/docs/architecture-checks.md` against the files the plan will touch. Focus on the "Always check" and context-appropriate checks:
    >    - **OCP-1 (Wiring Cost):** Count files that need type-registration edits (enums, schemas, constants, factories). If >3, flag it.
@@ -62,7 +62,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    > WIRING POINTS: <files that need modification to wire the feature>
    > OVERLAPPING WORK: <open PRs in the same area, or "none">
    > DEPENDENCIES: <dep status, or "none">
-   > KNOWN LEARNINGS: <relevant learnings from .claude/cl/learnings/ and debt items, or "none">
+   > KNOWN LEARNINGS: <relevant learnings from .narratorr/cl/learnings/ and debt items, or "none">
    > DESIGN CONCERNS: <any architecture check violations found, with check IDs (e.g., OCP-1, LSP-1), or "none">
    > FIXTURE BLAST RADIUS: <test files with hardcoded settings fixtures, or "N/A (no settings changes)">
    > ```
@@ -118,7 +118,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    - Expected changes: `<files/modules>`
    - Verification: `<tests to run>`
    - Codebase findings: <relevant patterns, interfaces, wiring points>
-   - Known learnings: <relevant learnings from `.claude/cl/learnings/` and `.claude/cl/debt.md`, or "none">
+   - Known learnings: <relevant learnings from `.narratorr/cl/learnings/` and `.narratorr/cl/debt.md`, or "none">
    - Reviewer suggestions: <suggestion findings from the approval comment (step 2), or "none">
    - Architecture checks (from `.claude/docs/architecture-checks.md`):
        - [ ] SRP: Each new file has a single responsibility, no function touches 3+ side-effect categories

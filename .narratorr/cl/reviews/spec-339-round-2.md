@@ -7,7 +7,7 @@ fixed_findings: [F1, F2]
 ---
 
 ### F1: Gitignored debt-file cited as shared evidence
-**What was caught:** The spec referenced `.claude/cl/debt.md` which is gitignored and not verifiable by other implementers/reviewers.
+**What was caught:** The spec referenced `.narratorr/cl/debt.md` which is gitignored and not verifiable by other implementers/reviewers.
 **Why I missed it:** In round 1, I disputed this finding by showing the file exists locally, without checking whether it's gitignored. The file IS local-only state — the reviewer was right about the conclusion even though their search method was flawed.
 **Prompt fix:** Add to `/respond-to-spec-review` step 6 (verify fixes): "When disputing a finding about file existence, also check `git check-ignore -v <path>` — a gitignored file that exists locally is not a verifiable repo artifact."
 

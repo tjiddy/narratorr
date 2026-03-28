@@ -16,7 +16,7 @@ fixed_findings: [F1, F2, F3, F4]
 **Prompt fix:** Add to `/elaborate` step 3 subagent prompt (deep source analysis): "For each N+1 fix, determine the replacement query shape. If the fix introduces an IN(...) query, verify the test plan covers the >999 parameter limit for that specific query site."
 
 ### F3: Source reference to non-existent file
-**What was caught:** `debt-scan-findings.md` doesn't exist in the repo; should reference `.claude/cl/debt.md`.
+**What was caught:** `debt-scan-findings.md` doesn't exist in the repo; should reference `.narratorr/cl/debt.md`.
 **Why I missed it:** Copied the source reference from the original issue without verifying the file exists.
 **Prompt fix:** Add to `/elaborate` step 6 (verify fixes): "Verify all file path references in the spec body exist in the repo (ls or git check-ignore)."
 

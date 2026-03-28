@@ -53,19 +53,19 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 3. **Continuous Learning graduation** — after the issue triage, process accumulated learnings and debt:
 
-   a. **Read learnings:** Scan all files in `.claude/cl/learnings/`. Group by theme (same scope, same files, same type of problem).
+   a. **Read learnings:** Scan all files in `.narratorr/cl/learnings/`. Group by theme (same scope, same files, same type of problem).
 
-   b. **Read debt:** Read `.claude/cl/debt.md` if it exists.
+   b. **Read debt:** Read `.narratorr/cl/debt.md` if it exists.
 
-   c. **Read "Wish I'd Known" entries:** Scan `.claude/cl/workflow-log.md` for `### Wish I'd Known` sections. Note any items that recur across multiple issues.
+   c. **Read "Wish I'd Known" entries:** Scan `.narratorr/cl/workflow-log.md` for `### Wish I'd Known` sections. Note any items that recur across multiple issues.
 
-   c2. **Read review retrospectives:** Scan all files in `.claude/cl/reviews/`. These contain specific "Prompt fix" suggestions from implementers (respond-to-*) and reviewers (review-*) identifying what prompt changes would have caught issues earlier. Group by target skill — multiple retrospectives suggesting changes to the same skill prompt are high-signal candidates for graduation.
+   c2. **Read review retrospectives:** Scan all files in `.narratorr/cl/reviews/`. These contain specific "Prompt fix" suggestions from implementers (respond-to-*) and reviewers (review-*) identifying what prompt changes would have caught issues earlier. Group by target skill — multiple retrospectives suggesting changes to the same skill prompt are high-signal candidates for graduation.
 
    d. **Classify each cluster/item** into one of:
       - **Code fix** — a concrete change to the repo would eliminate this class of problem (e.g., "mock factories would prevent stale mock breakage"). → Suggest creating a GitHub issue. Include the proposed scope and rationale.
-      - **Workflow change** — a change to a skill prompt would catch or prevent this (e.g., "review-spec should check for catch-all blocks"). Review retrospectives (`.claude/cl/reviews/`) are the primary source here — they contain pre-written "Prompt fix" suggestions. When multiple retrospectives across different issues suggest the same prompt change, that's a strong signal to graduate. → Suggest which skill to change and what to add, quoting the retrospective's proposed text where available.
+      - **Workflow change** — a change to a skill prompt would catch or prevent this (e.g., "review-spec should check for catch-all blocks"). Review retrospectives (`.narratorr/cl/reviews/`) are the primary source here — they contain pre-written "Prompt fix" suggestions. When multiple retrospectives across different issues suggest the same prompt change, that's a strong signal to graduate. → Suggest which skill to change and what to add, quoting the retrospective's proposed text where available.
       - **CLAUDE.md rule** — a convention or pattern that should be documented for all contributors (e.g., "always use FastifyBaseLogger, not BaseLogger from pino"). → Suggest the specific addition.
-      - **Inherent** — no action possible; this is a runtime/tooling reality that can't be fixed, only known (e.g., "jsdom doesn't support responsive breakpoints"). → No action. Learning stays in `.claude/cl/learnings/` for `/claim` to surface.
+      - **Inherent** — no action possible; this is a runtime/tooling reality that can't be fixed, only known (e.g., "jsdom doesn't support responsive breakpoints"). → No action. Learning stays in `.narratorr/cl/learnings/` for `/claim` to surface.
 
    e. **Report graduation recommendations** in a structured section:
       ```
@@ -86,7 +86,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
    f. **Do NOT auto-create issues or edit skills** — just recommend. The user decides what to act on. This step is advisory.
 
-   g. **Prune learnings (mandatory).** For each file in `.claude/cl/learnings/`, sort into one of three buckets:
+   g. **Prune learnings (mandatory).** For each file in `.narratorr/cl/learnings/`, sort into one of three buckets:
       - **Graduate** — the insight is valuable and recurring. Capture it in a durable location (skill prompt change, CLAUDE.md rule, debt issue, or memory), then delete the file.
       - **Keep** — genuinely useful gotcha not yet captured elsewhere. Leave it.
       - **Delete (dogshit)** — nuke the file. Criteria for deletion:
@@ -95,7 +95,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
         - *Stale* — references code/patterns that have been refactored away
         - *Duplicate* — same insight exists in another learning or has already been graduated
 
-      Present the three-way sort to the user for approval before deleting. Also remove resolved debt items from `.claude/cl/debt.md`.
+      Present the three-way sort to the user for approval before deleting. Also remove resolved debt items from `.narratorr/cl/debt.md`.
 
    h. **Truncate workflow-log.md** — replace contents with just `# Workflow Log\n`. All useful items have been graduated to their destinations (debt.md, GitHub issues, skill prompt changes). Non-graduated entries are discarded. This keeps the file bounded since it's tracked in git.
 

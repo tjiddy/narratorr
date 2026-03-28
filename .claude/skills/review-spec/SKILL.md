@@ -28,7 +28,7 @@ Reviews an elaborated issue spec with fresh eyes. Explores the codebase exhausti
 
 ## Guardrails
 
-**This skill is READ-ONLY.** Never stage, commit, or modify any files outside of `.claude/cl/` and `.narratorr/state/` (aliased as `.agents/cl/` and `.agents/state/` in some clones). The reviewer does not edit specs — it reports findings for the author to address. If you find yourself editing issue bodies, source files, or anything under `src/`, STOP — you are doing the author's job.
+**This skill is READ-ONLY.** Never stage, commit, or modify any files outside of `.narratorr/cl/` and `.narratorr/state/` (aliased as `.agents/cl/` and `.agents/state/` in some clones). The reviewer does not edit specs — it reports findings for the author to address. If you find yourself editing issue bodies, source files, or anything under `src/`, STOP — you are doing the author's job.
 
 ## GitHub CLI
 

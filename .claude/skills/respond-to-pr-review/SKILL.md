@@ -55,8 +55,8 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    - **`deferred`** — Create a chore issue in GitHub: `node scripts/gh.tsissue create --title "<title>" --body-file <path> --label "type/chore"`. Reference the new issue number in the response. Valid for `suggestion` severity only.
    - **`disputed`** — The finding is genuinely wrong. Provide a rebuttal with evidence (code references, docs, test results). Valid for `blocking` findings only — if you believe a blocking finding is incorrect, dispute it rather than silently accepting.
 
-   **Root cause capture:** For every finding resolved as `fixed`, write a learning file to `.claude/cl/learnings/` capturing what gap let this slip through. Create the directory if it doesn't exist.
-   - Filename: `.claude/cl/learnings/review-<issue-id>-<finding-id-lowercase>.md` (e.g., `review-158-f1.md`)
+   **Root cause capture:** For every finding resolved as `fixed`, write a learning file to `.narratorr/cl/learnings/` capturing what gap let this slip through. Create the directory if it doesn't exist.
+   - Filename: `.narratorr/cl/learnings/review-<issue-id>-<finding-id-lowercase>.md` (e.g., `review-158-f1.md`)
    - Format:
      ```yaml
      ---
@@ -126,7 +126,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 6. **Prompt improvement retrospective (for `fixed` findings only):**
    For each finding resolved as `fixed`, analyze: "Why did I miss this during implementation? What specific addition or change to a skill prompt (`/plan`, `/implement`, or CLAUDE.md) would have helped me catch this before it went out for review?"
 
-   Write a single retrospective file: `.claude/cl/reviews/pr-<issue-id>-round-<N>.md` (where N is the review round number, inferred from the number of prior `## Verdict:` comments + 1). Create `.claude/cl/reviews/` if it doesn't exist.
+   Write a single retrospective file: `.narratorr/cl/reviews/pr-<issue-id>-round-<N>.md` (where N is the review round number, inferred from the number of prior `## Verdict:` comments + 1). Create `.narratorr/cl/reviews/` if it doesn't exist.
 
    Format:
    ```yaml
@@ -151,7 +151,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 7. **Commit and push CL files:** Learning and retrospective files from step 6 should be included in the feature branch push so they land on main when the PR merges:
    ```bash
-   git add .claude/cl/
+   git add .narratorr/cl/
    git commit -m "CL from PR #<pr-number> review response"
    ```
    These will be pushed along with the code fixes in step 4's push. If there's nothing to commit (no new CL files), skip this step.
