@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #162 Extract shared Button component with variant system — 2026-03-28
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #170
+
+### Metrics
+- Files changed: 7 | Tests added/modified: 3 (Button.test.tsx new, SettingsFormActions.test.tsx +1, DownloadActions.test.tsx +8)
+- Quality gate runs: 2 (pass on both attempts)
+- Fix iterations: 2 (added type="submit" assertion caught by self-review; added pending_review tests caught by coverage review)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Badge extraction pattern translated directly — variantClasses Record, icon prop, className forwarding all mapped cleanly. TDD cycle was fast (22 tests, all passing first run). Existing test suites for all migrated surfaces passed without changes.
+- Friction / issues encountered: (1) Coverage review found DownloadActions pending_review (approve/reject) tests completely missing — 8 tests added post-implementation. (2) Self-review flagged missing type="submit" assertion in SettingsFormActions.test.tsx. (3) frontend-design skill not available.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (read all 5 migration targets + test files); coverage review subagent
+- Avoidable waste: Coverage gaps could have been caught earlier if pending_review stubs had been written during /plan into DownloadActions.test.tsx
+- Suggestions: When spec includes caller/wrapper contract preservation tests, create stubs in those existing test files during /plan
+
+### Infrastructure gaps
+- Repeated workarounds: Write tool required touch + Read before writing new .cl/learnings/ files (file permissions in that dir)
+- Missing tooling / config: frontend-design skill not in skills list — UI polish pass skipped for scope/frontend issue
+- Unresolved debt: TestButton passes disabled:hover:bg-transparent as className override — secondary Button variant should include this by default
+
+### Wish I'd Known
+1. DownloadActions pending_review approve/reject had zero existing tests — coverage review is mandatory even when the existing test file looks comprehensive
+2. The soft (bg-X/10) button style in DownloadActions and SettingsCardShell silently becomes solid on migration — spec should acknowledge this visual normalization
+3. disabled:hover:bg-transparent is needed on secondary/ghost variants or hover effect bleeds through on disabled buttons
+
 ## #163 Extract shared Badge component for status indicators — 2026-03-27
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #168
@@ -294,6 +323,35 @@
 2. The confirm button in BulkOperationsSection uses the same verb as the trigger button (e.g., "Re-tag All" both on the page and in the dialog confirm) — always scope modal assertions to `within(dialog)` to avoid ambiguous matches
 3. `findByDisplayValue` is the correct positive signal for vacuous negative assertions in input-interaction tests — it proves React has processed the typed value, not just that the DOM has updated
 # Workflow Log
+
+## #162 Extract shared Button component with variant system — 2026-03-28
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #170
+
+### Metrics
+- Files changed: 7 | Tests added/modified: 3 (Button.test.tsx new, SettingsFormActions.test.tsx +1, DownloadActions.test.tsx +8)
+- Quality gate runs: 2 (pass on both attempts)
+- Fix iterations: 2 (added type="submit" assertion caught by self-review; added pending_review tests caught by coverage review)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Badge extraction pattern translated directly — variantClasses Record, icon prop, className forwarding all mapped cleanly. TDD cycle was fast (22 tests, all passing first run). Existing test suites for all migrated surfaces passed without changes.
+- Friction / issues encountered: (1) Coverage review found DownloadActions pending_review (approve/reject) tests completely missing — 8 tests added post-implementation. (2) Self-review flagged missing type="submit" assertion in SettingsFormActions.test.tsx. (3) frontend-design skill not available.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (read all 5 migration targets + test files); coverage review subagent
+- Avoidable waste: Coverage gaps could have been caught earlier if pending_review stubs had been written during /plan into DownloadActions.test.tsx
+- Suggestions: When spec includes caller/wrapper contract preservation tests, create stubs in those existing test files during /plan
+
+### Infrastructure gaps
+- Repeated workarounds: Write tool required touch + Read before writing new .cl/learnings/ files (file permissions in that dir)
+- Missing tooling / config: frontend-design skill not in skills list — UI polish pass skipped for scope/frontend issue
+- Unresolved debt: TestButton passes disabled:hover:bg-transparent as className override — secondary Button variant should include this by default
+
+### Wish I'd Known
+1. DownloadActions pending_review approve/reject had zero existing tests — coverage review is mandatory even when the existing test file looks comprehensive
+2. The soft (bg-X/10) button style in DownloadActions and SettingsCardShell silently becomes solid on migration — spec should acknowledge this visual normalization
+3. disabled:hover:bg-transparent is needed on secondary/ghost variants or hover effect bleeds through on disabled buttons
 
 ## #157 Welcome modal — first-run onboarding with defaults, first steps, and feature highlights — 2026-03-27
 **Skill path:** /implement → /claim → /plan → /handoff
