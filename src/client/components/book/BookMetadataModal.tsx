@@ -4,6 +4,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useAudnexusSearch } from '@/hooks/useAudnexusSearch';
 import { resolveUrl } from '@/lib/url-utils';
 import { XIcon, SearchIcon, LoadingSpinner, HeadphonesIcon, AlertCircleIcon, ArrowLeftIcon } from '@/components/icons';
+import { Modal } from '@/components/Modal';
 
 type SearchView = 'edit' | 'search';
 
@@ -91,15 +92,12 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+    <Modal onClose={onClose} className="w-full max-w-lg flex flex-col max-h-[85vh]">
       <div
         ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-label="Edit book metadata"
-        className="relative w-full max-w-lg flex flex-col glass-card rounded-2xl shadow-2xl animate-fade-in-up max-h-[85vh]"
-        onClick={(e) => e.stopPropagation()}
         tabIndex={-1}
       >
         {/* Header */}
@@ -107,6 +105,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
           <div className="flex items-center gap-3">
             {view === 'search' && (
               <button
+                type="button"
                 onClick={handleDismissSearch}
                 className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors focus-ring"
                 aria-label="Back to edit"
@@ -119,6 +118,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
             </h2>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors focus-ring"
             aria-label="Close"
@@ -274,6 +274,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
                   {searchResults.slice(0, 8).map((meta, i) => (
                     <button
                       key={meta.asin || meta.providerId || i}
+                      type="button"
                       onClick={() => applyMetadata(meta)}
                       className="w-full flex items-center gap-3 px-2.5 py-2 text-left rounded-xl hover:bg-muted/40 border border-transparent hover:border-border/30 transition-all group"
                     >
@@ -330,12 +331,14 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
         {view === 'edit' && (
           <div className="px-6 py-4 border-t border-white/5 flex justify-end gap-3 shrink-0">
             <button
+              type="button"
               onClick={onClose}
               className="px-4 py-2 text-sm font-medium glass-card rounded-xl hover:border-primary/30 transition-all focus-ring"
             >
               Cancel
             </button>
             <button
+              type="button"
               onClick={handleSave}
               disabled={!canSave}
               className="px-5 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
@@ -345,6 +348,6 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
           </div>
         )}
       </div>
-    </div>
+    </Modal>
   );
 }

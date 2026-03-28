@@ -11,6 +11,7 @@ import {
   LoadingSpinner,
   AlertCircleIcon,
 } from '@/components/icons';
+import { Modal } from '@/components/Modal';
 
 interface DirectoryBrowserModalProps {
   isOpen: boolean;
@@ -70,14 +71,12 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: Omit<Direct
   const breadcrumbs = parseBreadcrumbs(currentPath);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
-      <div data-testid="modal-backdrop" className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+    <Modal onClose={onClose} className="w-full max-w-lg flex flex-col max-h-[80vh]">
       <div
         ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-label="Browse directories"
-        className="relative w-full max-w-lg glass-card rounded-2xl shadow-2xl animate-fade-in-up flex flex-col max-h-[80vh]"
       >
         {/* Header */}
         <div className="px-6 pt-5 pb-4 flex items-center justify-between shrink-0">
@@ -186,7 +185,7 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: Omit<Direct
           </div>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }
 

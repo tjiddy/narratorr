@@ -1,6 +1,7 @@
 import { useRef, type ReactNode } from 'react';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { Button } from '@/components/Button';
+import { Modal } from '@/components/Modal';
 
 interface ConfirmModalProps {
   isOpen: boolean;
@@ -48,22 +49,13 @@ export function ConfirmModal({
   if (!isOpen) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"
-      onClick={onCancel}
-    >
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-
-      {/* Modal */}
+    <Modal onClose={onCancel} className="w-full max-w-md p-6">
       <div
         ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-modal-title"
         aria-describedby="confirm-modal-description"
-        className="relative w-full max-w-md glass-card rounded-2xl p-6 shadow-2xl animate-fade-in-up"
-        onClick={(e) => e.stopPropagation()}
         tabIndex={-1}
       >
         {/* Icon */}
@@ -105,6 +97,6 @@ export function ConfirmModal({
           </Button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

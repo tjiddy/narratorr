@@ -403,9 +403,7 @@ describe('LibrarySettingsSection', () => {
       await act(async () => { fireEvent.blur(pathInput); });
 
       await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument());
-      // Click the outer fixed container (has onClick={onCancel}) — inner dialog stops propagation
-      const outerContainer = screen.getByRole('dialog').parentElement!;
-      fireEvent.click(outerContainer);
+      fireEvent.click(screen.getByTestId('modal-backdrop'));
 
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
       expect(mockApi.rescanLibrary).not.toHaveBeenCalled();

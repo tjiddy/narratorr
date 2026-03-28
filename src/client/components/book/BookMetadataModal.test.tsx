@@ -16,10 +16,6 @@ vi.mock('@/lib/api', async () => {
   };
 });
 
-// Mock useEscapeKey
-vi.mock('@/hooks/useEscapeKey', () => ({
-  useEscapeKey: vi.fn(),
-}));
 
 const mockBook = createMockBook({
   title: 'The Way of Kings',
@@ -600,13 +596,45 @@ describe('BookMetadataModal', () => {
     });
   });
 
-  it('calls onClose when the backdrop overlay is clicked', async () => {
+  it('calls onClose when the backdrop is clicked', async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
-    const { container } = renderModal({ onClose });
-    // The backdrop is the absolute inset-0 div inside the outer wrapper
-    const backdrop = container.querySelector('.absolute.inset-0') as HTMLElement;
-    await user.click(backdrop);
+    renderModal({ onClose });
+    await user.click(screen.getByTestId('modal-backdrop'));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('calls onClose when Escape is pressed', async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    renderModal({ onClose });
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('Cancel and Save footer buttons have explicit type="button"', () => {
+    renderModal();
+
+    expect(screen.getByRole('button', { name: /^cancel$/i })).toHaveAttribute('type', 'button');
+    expect(screen.getByRole('button', { name: /^save$/i })).toHaveAttribute('type', 'button');
+  });
+
+  it('search-result selection buttons have explicit type="button"', async () => {
+    const { api: mockApi } = await import('@/lib/api');
+    vi.mocked(mockApi.searchMetadata).mockResolvedValueOnce({
+      books: [createMockBookMetadata({ title: 'Result One', authors: [{ name: 'Author A' }] })],
+      authors: [],
+      series: [],
+    });
+    const user = userEvent.setup();
+    renderModal();
+
+    await user.click(screen.getByText('Search Audnexus for metadata'));
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    await waitFor(() => {
+      const resultBtn = screen.getByText('Result One').closest('button');
+      expect(resultBtn).toHaveAttribute('type', 'button');
+    });
   });
 });

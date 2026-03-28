@@ -105,11 +105,18 @@ describe('ConfirmModal', () => {
     expect(cancelBtn).not.toHaveClass('bg-destructive');
   });
 
-  it('calls onCancel when the backdrop overlay is clicked', () => {
+  it('calls onCancel when the backdrop is clicked', () => {
     const onCancel = vi.fn();
-    const { container } = render(<ConfirmModal {...defaultProps} onCancel={onCancel} />);
-    const overlay = container.firstChild as HTMLElement;
-    fireEvent.click(overlay);
+    render(<ConfirmModal {...defaultProps} onCancel={onCancel} />);
+    fireEvent.click(screen.getByTestId('modal-backdrop'));
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it('calls onCancel when Escape is pressed', async () => {
+    const onCancel = vi.fn();
+    const user = userEvent.setup();
+    render(<ConfirmModal {...defaultProps} onCancel={onCancel} />);
+    await user.keyboard('{Escape}');
     expect(onCancel).toHaveBeenCalledOnce();
   });
 });

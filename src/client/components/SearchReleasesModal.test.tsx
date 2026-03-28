@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import type { SearchResult, SearchResponse } from '@/lib/api';
 import { createMockBook } from '@/__tests__/factories';
+import { queryKeys } from '@/lib/queryKeys';
 
 const { MockApiError } = vi.hoisted(() => {
   class MockApiError extends Error {
@@ -203,13 +206,25 @@ describe('SearchReleasesModal', () => {
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />,
     );
 
-    // Click the backdrop (outermost overlay div)
-    const backdrop = screen.getByText('Releases for: The Way of Kings').closest('.fixed') as HTMLElement;
-    await user.click(backdrop);
+    await user.click(screen.getByTestId('modal-backdrop'));
 
     await waitFor(() => {
       expect(onClose).toHaveBeenCalled();
     });
+  });
+
+  it('calls onClose when Escape is pressed', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse([]));
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />,
+    );
+
+    await user.keyboard('{Escape}');
+
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('shows protocol badges on results', async () => {
@@ -736,6 +751,128 @@ describe('SearchReleasesModal', () => {
       expect(toast.error).toHaveBeenCalledWith('Failed to blacklist: Server error');
     });
   });
+
+  it('Grab, Blacklist, and unsupported-toggle buttons have explicit type="button"', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue(
+      searchResponse(mockResults, { count: 1, titles: ['Part "1" of "2"'] }),
+    );
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+
+    screen.getAllByText('Grab').forEach((el) => {
+      expect(el.closest('button')).toHaveAttribute('type', 'button');
+    });
+    screen.getAllByText('Blacklist').forEach((el) => {
+      expect(el.closest('button')).toHaveAttribute('type', 'button');
+    });
+    const toggleBtn = screen.getByText(/unsupported format/i).closest('button');
+    expect(toggleBtn).toHaveAttribute('type', 'button');
+  });
+
+  it('refresh button is disabled while query is fetching', () => {
+    vi.mocked(api.searchBooks).mockReturnValue(new Promise(() => {})); // never resolves
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    expect(screen.getByLabelText('Refresh results')).toBeDisabled();
+  });
+
+  it('refresh button click triggers a refetch', async () => {
+    vi.mocked(api.searchBooks)
+      .mockResolvedValueOnce(searchResponse(mockResults))
+      .mockResolvedValue(searchResponse([]));
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+    await user.click(screen.getByLabelText('Refresh results'));
+
+    await waitFor(() => {
+      expect(api.searchBooks).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('grab buttons are all disabled while a grab mutation is pending', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    vi.mocked(api.searchGrab).mockReturnValue(new Promise(() => {})); // never resolves
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+    const grabButtons = screen.getAllByText('Grab');
+    await user.click(grabButtons[0]);
+
+    await waitFor(() => {
+      screen.getAllByText('Grab').forEach((btn) => {
+        expect(btn.closest('button')).toBeDisabled();
+      });
+    });
+  });
+
+  it('blacklist buttons are all disabled while a blacklist mutation is pending', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    vi.mocked(api.addToBlacklist).mockReturnValue(new Promise(() => {})); // never resolves
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+    const blacklistButtons = screen.getAllByText('Blacklist');
+    await user.click(blacklistButtons[0]);
+
+    await waitFor(() => {
+      screen.getAllByText('Blacklist').forEach((btn) => {
+        expect(btn.closest('button')).toBeDisabled();
+      });
+    });
+  });
+
+  it('invalidates books and activity queries on successful grab', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    vi.mocked(api.searchGrab).mockResolvedValue({
+      id: 1,
+      title: 'The Way of Kings [Unabridged]',
+      protocol: 'torrent',
+      status: 'queued' as const,
+      progress: 0,
+      addedAt: '2024-01-01T00:00:00Z',
+      indexerName: null,
+    });
+    const user = userEvent.setup();
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+    await user.click(screen.getAllByText('Grab')[0]);
+
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.books() });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.activity() });
+    });
+  });
 });
 
 describe('SearchReleasesModal duration unknown', () => {
@@ -998,6 +1135,70 @@ describe('SearchReleasesModal unsupported results', () => {
 
       // mock formatBytes: (500*1024*1024 / 1024^3).toFixed(1) = "0.5 GB"
       expect(screen.getByText('0.5 GB')).toBeInTheDocument();
+    });
+  });
+
+  describe('nested ConfirmModal stacking', () => {
+    it('inner ConfirmModal is interactive and visible while SearchReleasesModal is open', async () => {
+      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      vi.mocked(api.searchGrab).mockRejectedValue(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }));
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      // ConfirmModal appears above SearchReleasesModal
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+
+      // SearchReleasesModal content is still present
+      expect(screen.getByText('Releases for: The Way of Kings')).toBeInTheDocument();
+
+      // ConfirmModal Cancel button is interactive
+      await user.click(screen.getByText('Cancel'));
+
+      // After cancel, ConfirmModal is dismissed but SearchReleasesModal remains
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: /replace/i })).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('Releases for: The Way of Kings')).toBeInTheDocument();
+    });
+
+    it('clicking ConfirmModal backdrop closes only the inner ConfirmModal, not SearchReleasesModal', async () => {
+      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      vi.mocked(api.searchGrab).mockRejectedValue(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }));
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />,
+      );
+
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+
+      // Two backdrops: SearchReleasesModal's and ConfirmModal's (ConfirmModal is second in DOM)
+      const backdrops = screen.getAllByTestId('modal-backdrop');
+      expect(backdrops).toHaveLength(2);
+      await user.click(backdrops[1]);
+
+      // ConfirmModal closes
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: /replace/i })).not.toBeInTheDocument();
+      });
+      // SearchReleasesModal's onClose was NOT called
+      expect(onClose).not.toHaveBeenCalled();
+      // SearchReleasesModal remains open
+      expect(screen.getByText('Releases for: The Way of Kings')).toBeInTheDocument();
     });
   });
 });

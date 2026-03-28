@@ -340,7 +340,7 @@ describe('LibraryPage', () => {
     });
 
     // Click the destructive "Remove" button in the modal
-    const modal = screen.getByText(/Are you sure you want to remove/).closest('div[class*="relative w-full"]') as HTMLElement;
+    const modal = screen.getByRole('dialog');
     const removeButton = within(modal).getByRole('button', { name: 'Remove' });
     await user.click(removeButton);
 
@@ -389,7 +389,7 @@ describe('LibraryPage', () => {
       expect(checkbox).toBeChecked();
     });
 
-    const modal = screen.getByText(/Are you sure you want to remove/).closest('div[class*="relative w-full"]') as HTMLElement;
+    const modal = screen.getByRole('dialog');
     await user.click(within(modal).getByRole('button', { name: 'Remove' }));
 
     await waitFor(() => {
@@ -444,7 +444,7 @@ describe('LibraryPage', () => {
 
     await user.click(screen.getByLabelText('Delete files from disk'));
 
-    const modal = screen.getByText(/Are you sure you want to remove/).closest('div[class*="relative w-full"]') as HTMLElement;
+    const modal = screen.getByRole('dialog');
     await user.click(within(modal).getByRole('button', { name: 'Remove' }));
 
     await waitFor(() => {
@@ -653,7 +653,7 @@ describe('LibraryPage', () => {
       expect(screen.getByText(/Are you sure you want to remove/)).toBeInTheDocument();
     });
 
-    const modal = screen.getByText(/Are you sure you want to remove/).closest('div[class*="relative w-full"]') as HTMLElement;
+    const modal = screen.getByRole('dialog');
     const removeButton = within(modal).getByRole('button', { name: 'Remove' });
     await user.click(removeButton);
 
@@ -813,7 +813,7 @@ describe('LibraryPage', () => {
       await openOverflowMenu(user);
       await user.click(screen.getByRole('menuitem', { name: /remove missing/i }));
 
-      const modal = screen.getByText('Remove 2 missing books from library?').closest('div[class*="relative w-full"]') as HTMLElement;
+      const modal = screen.getByRole('dialog');
       await user.click(within(modal).getByRole('button', { name: 'Remove' }));
 
       await waitFor(() => {
@@ -856,7 +856,7 @@ describe('LibraryPage', () => {
       await openOverflowMenu(user);
       await user.click(screen.getByRole('menuitem', { name: /remove missing/i }));
 
-      const modal = screen.getByText('Remove 2 missing books from library?').closest('div[class*="relative w-full"]') as HTMLElement;
+      const modal = screen.getByRole('dialog');
       await user.click(within(modal).getByRole('button', { name: 'Remove' }));
 
       await waitFor(() => {
