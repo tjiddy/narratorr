@@ -1,5 +1,6 @@
 import { useRef, type ReactNode } from 'react';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { Button } from '@/components/Button';
 
 interface ConfirmModalProps {
   isOpen: boolean;
@@ -84,20 +85,24 @@ export function ConfirmModal({
 
         {/* Actions */}
         <div className="flex flex-col-reverse sm:flex-row gap-3">
-          <button
+          <Button
+            variant="secondary"
+            size="md"
             type="button"
             onClick={onCancel}
-            className="flex-1 px-4 py-3 text-sm font-medium border border-border rounded-xl hover:bg-muted transition-all focus-ring"
+            className="flex-1 text-sm"
           >
             {cancelLabel}
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="destructive"
+            size="md"
             type="button"
             onClick={onConfirm}
-            className="flex-1 px-4 py-3 text-sm font-medium bg-destructive text-destructive-foreground rounded-xl hover:opacity-90 transition-all focus-ring"
+            className="flex-1 text-sm"
           >
             {confirmLabel}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
