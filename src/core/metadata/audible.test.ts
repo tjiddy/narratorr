@@ -671,4 +671,70 @@ describe('AudibleProvider', () => {
       expect(result.message).toBeDefined();
     }, 15000);
   });
+
+  describe('redirect protection', () => {
+    it('searchBooks() on 302 with Location header throws TransientError with redirect message', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return new HttpResponse(null, {
+            status: 302,
+            headers: { Location: 'https://auth.internal/login' },
+          });
+        }),
+      );
+
+      const error = await provider.searchBooks('test').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(TransientError);
+      expect((error as TransientError).message).toMatch(/redirect/i);
+    });
+
+    it('searchBooks() rejects all 3xx codes (301, 303, 307, 308) with TransientError and redirect message', async () => {
+      for (const status of [301, 303, 307, 308]) {
+        server.use(
+          http.get('https://api.audible.com/1.0/catalog/products', () => {
+            return new HttpResponse(null, {
+              status,
+              headers: { Location: 'https://auth.internal/login' },
+            });
+          }),
+        );
+
+        const error = await provider.searchBooks('test').catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(TransientError);
+        expect((error as TransientError).message).toMatch(/redirect/i);
+      }
+    });
+
+    it('searchBooks() on 3xx with no Location header throws TransientError with redirect message', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return new HttpResponse(null, { status: 302 });
+        }),
+      );
+
+      const error = await provider.searchBooks('test').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(TransientError);
+      expect((error as TransientError).message).toMatch(/redirect/i);
+    });
+
+    it('test() on 302 redirect returns { success: false } with redirect message', async () => {
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', () => {
+          return new HttpResponse(null, {
+            status: 302,
+            headers: { Location: 'https://auth.internal/login' },
+          });
+        }),
+      );
+
+      const result = await provider.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/redirect/i);
+    });
+
+    it('searchBooks() on 2xx response returns data normally (regression)', async () => {
+      const books = await provider.searchBooks('Harry Potter');
+      expect(Array.isArray(books)).toBe(true);
+    });
+  });
 });

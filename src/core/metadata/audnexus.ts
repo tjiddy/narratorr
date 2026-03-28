@@ -2,6 +2,7 @@ import { BookMetadataSchema, AuthorMetadataSchema } from './schemas.js';
 import { RateLimitError, TransientError } from './errors.js';
 import { normalizeGenres } from './genres.js';
 import { AUDNEXUS_TIMEOUT_MS } from '../utils/constants.js';
+import { fetchWithTimeout } from '../utils/fetch-with-timeout.js';
 import type {
   MetadataEnrichmentProvider,
   BookMetadata,
@@ -51,7 +52,7 @@ export class AudnexusProvider implements MetadataEnrichmentProvider {
 
   private async fetchJson<T>(path: string): Promise<T | null> {
     try {
-      const response = await fetch(`${BASE_URL}${path}`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      const response = await fetchWithTimeout(`${BASE_URL}${path}`, {}, REQUEST_TIMEOUT_MS);
       if (response.status === 429) {
         const retryAfter = response.headers.get('Retry-After');
         const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 60_000;
