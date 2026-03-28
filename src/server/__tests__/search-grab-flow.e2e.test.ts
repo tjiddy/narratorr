@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { createE2EApp, type E2EApp } from './e2e-helpers.js';
@@ -508,6 +508,45 @@ describe('Search → Grab flow E2E', () => {
       // Book should have reverted to wanted
       const bookCheck = await e2e.app.inject({ method: 'GET', url: `/api/books/${revertBookId}` });
       expect(bookCheck.json().status).toBe('wanted');
+    });
+  });
+
+  describe('grab endpoint nullish/non-object throw guard (search.ts ACTIVE_DOWNLOAD_EXISTS path)', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('returns 500 without crashing when orchestrator throws null', async () => {
+      vi.spyOn(e2e.services.downloadOrchestrator, 'grab').mockRejectedValueOnce(null);
+      const res = await e2e.app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: { downloadUrl: MAGNET_URI, title: 'Guard Test', protocol: 'torrent', bookId, indexerId },
+      });
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).toEqual({ error: 'Unknown error' });
+    });
+
+    it('returns 500 without crashing when orchestrator throws a plain string', async () => {
+      vi.spyOn(e2e.services.downloadOrchestrator, 'grab').mockRejectedValueOnce('unexpected failure');
+      const res = await e2e.app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: { downloadUrl: MAGNET_URI, title: 'Guard Test', protocol: 'torrent', bookId, indexerId },
+      });
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).toEqual({ error: 'Unknown error' });
+    });
+
+    it('returns 500 without crashing when orchestrator throws a plain object without a code property', async () => {
+      vi.spyOn(e2e.services.downloadOrchestrator, 'grab').mockRejectedValueOnce({ message: 'no code here' });
+      const res = await e2e.app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: { downloadUrl: MAGNET_URI, title: 'Guard Test', protocol: 'torrent', bookId, indexerId },
+      });
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).toEqual({ error: 'Unknown error' });
     });
   });
 });

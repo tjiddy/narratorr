@@ -92,7 +92,7 @@ export class DownloadOrchestrator {
       try {
         const revertStatus = await revertBookStatus(this.db, { id: download.bookId, path: download.book?.path ?? null });
         this.safe(() => emitBookStatusChange({ broadcaster: this.broadcaster, bookId: download.bookId!, oldStatus: oldBookStatus as string, newStatus: revertStatus, log: this.log }));
-      } catch (revertError) {
+      } catch (revertError: unknown) {
         this.log.warn(revertError, 'Failed to revert book status during cancel');
       }
       this.safe(() => emitDownloadStatusChange({ broadcaster: this.broadcaster, downloadId: id, bookId: download.bookId!, oldStatus, newStatus: 'failed', log: this.log }));

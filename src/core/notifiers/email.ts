@@ -43,7 +43,7 @@ export class EmailNotifier implements NotifierAdapter {
       });
 
       return { success: true };
-    } catch (error) {
+    } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
       if (msg.includes('authentication') || msg.includes('auth') || msg.includes('AUTH')) {
         return { success: false, message: 'SMTP authentication failed' };

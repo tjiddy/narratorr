@@ -80,7 +80,7 @@ export function NetworkSettingsSection() {
       } else {
         toast.error(result.message || 'Proxy test failed');
       }
-    } catch (error) {
+    } catch (error: unknown) {
       toast.error(error instanceof Error ? error.message : 'Proxy test failed');
     } finally {
       setTesting(false);

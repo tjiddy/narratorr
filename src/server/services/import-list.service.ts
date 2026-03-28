@@ -6,6 +6,7 @@ import { IMPORT_LIST_ADAPTER_FACTORIES } from '../../core/import-lists/index.js'
 import type { ImportListItem } from '../../core/import-lists/index.js';
 import type { MetadataService } from './metadata.service.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
+import { getErrorMessage } from '../utils/error-message.js';
 import { slugify } from '../../core/index.js';
 
 /** Milliseconds per minute — used for sync interval calculations. */
@@ -83,7 +84,7 @@ export class ImportListService {
       if (!factory) return { success: false, message: `Unknown provider type: ${data.type}` };
       const provider = factory(data.settings);
       return await provider.test();
-    } catch (error) {
+    } catch (error: unknown) {
       return { success: false, message: error instanceof Error ? error.message : 'Unknown error' };
     }
   }
@@ -122,7 +123,7 @@ export class ImportListService {
           .set({ lastRunAt: now, nextRunAt, lastSyncError: null })
           .where(eq(importLists.id, list.id));
         this.log.info({ id: list.id, name: list.name }, 'Import list sync completed');
-      } catch (error) {
+      } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Unknown error';
         const nextRunAt = new Date(Date.now() + list.syncIntervalMinutes * MS_PER_MINUTE);
         await this.db
@@ -152,8 +153,8 @@ export class ImportListService {
 
       try {
         await this.processItem(item, list);
-      } catch (error) {
-        this.log.warn({ listId: list.id, title: item.title, error: (error as Error).message }, 'Failed to process import list item');
+      } catch (error: unknown) {
+        this.log.warn({ listId: list.id, title: item.title, error: getErrorMessage(error) }, 'Failed to process import list item');
       }
     }
   }
@@ -175,8 +176,8 @@ export class ImportListService {
         asin: asin || item.asin,
         author: item.author || match.authors?.[0]?.name,
       };
-    } catch (error) {
-      this.log.warn({ title: item.title, error: (error as Error).message }, 'Metadata enrichment failed');
+    } catch (error: unknown) {
+      this.log.warn({ title: item.title, error: getErrorMessage(error) }, 'Metadata enrichment failed');
       return { asin: item.asin, author: item.author };
     }
   }

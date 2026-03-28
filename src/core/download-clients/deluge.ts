@@ -235,7 +235,7 @@ export class DelugeClient implements DownloadClientAdapter {
       await this.login();
       const version = await this.rpc('daemon.info') as string;
       return { success: true, message: `Deluge ${version}` };
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Unknown error',

@@ -11,7 +11,7 @@ export function startHealthCheckJob(healthCheckService: HealthCheckService, log:
   cron.schedule('*/5 * * * *', async () => {
     try {
       await healthCheckService.runAllChecks();
-    } catch (error) {
+    } catch (error: unknown) {
       log.error(error, 'Health check job error');
     }
   });

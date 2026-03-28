@@ -31,7 +31,7 @@ export function startMonitorJob(
   cron.schedule(MONITOR_CRON_INTERVAL, async () => {
     try {
       await monitorDownloads(db, downloadClientService, notifierService, log, retryDeps, broadcaster);
-    } catch (error) {
+    } catch (error: unknown) {
       log.error(error, 'Monitor job error');
     }
   });
@@ -79,7 +79,7 @@ export async function monitorDownloads(
       }
 
       await processDownloadUpdate(db, download, item, notifierService, log, retryDeps, broadcaster);
-    } catch (error) {
+    } catch (error: unknown) {
       log.error({ error, id: download.id }, 'Error monitoring download');
       await blacklistOnInfraError(download, retryDeps, log);
     }
@@ -318,7 +318,7 @@ async function handleDownloadFailure(
         // Don't recover book status on retry_error — will try again next cycle
         return 'retry_error';
     }
-  } catch (error) {
+  } catch (error: unknown) {
     log.error({ downloadId, bookId, error }, 'handleDownloadFailure unexpected error');
     await db.update(downloads).set({ errorMessage: 'Retry failed - will retry next cycle' }).where(eq(downloads.id, downloadId));
     return 'retry_error';

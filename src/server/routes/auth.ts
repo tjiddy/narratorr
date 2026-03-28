@@ -31,7 +31,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
       const envBypass = Boolean(config.authBypass);
 
       return { ...status, authenticated, bypassActive, envBypass };
-    } catch (error) {
+    } catch (error: unknown) {
       request.log.error(error, 'Failed to fetch auth status');
       throw error;
     }
@@ -46,7 +46,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
       await authService.deleteCredentials();
       request.log.info('Credentials deleted via AUTH_BYPASS');
       return { success: true };
-    } catch (error) {
+    } catch (error: unknown) {
       if (error instanceof NoCredentialsError) {
         return reply.status(404).send({ error: error.message });
       }
@@ -111,7 +111,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
         await authService.createUser(username, password);
         request.log.info({ username }, 'User account created');
         return { success: true };
-      } catch (error) {
+      } catch (error: unknown) {
         if (error instanceof UserExistsError) {
           return reply.status(409).send({ error: error.message });
         }
@@ -135,7 +135,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
         const result = await authService.updateConfig(updates);
         request.log.info({ updates }, 'Auth config updated');
         return result;
-      } catch (error) {
+      } catch (error: unknown) {
         if (error instanceof AuthConfigError) {
           return reply.status(400).send({ error: error.message });
         }
@@ -160,7 +160,7 @@ export async function authRoutes(app: FastifyInstance, authService: AuthService)
         await authService.changePassword(user.username, currentPassword, newPassword, newUsername);
         request.log.info({ username: user.username, newUsername }, 'Credentials updated');
         return { success: true };
-      } catch (error) {
+      } catch (error: unknown) {
         if (error instanceof IncorrectPasswordError) {
           return reply.status(400).send({ error: error.message });
         }

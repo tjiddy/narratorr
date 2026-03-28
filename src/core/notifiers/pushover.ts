@@ -35,7 +35,7 @@ export class PushoverNotifier implements NotifierAdapter {
       }
 
       return { success: true };
-    } catch (error) {
+    } catch (error: unknown) {
       if (error instanceof DOMException && error.name === 'TimeoutError') {
         return { success: false, message: 'Request timed out' };
       }

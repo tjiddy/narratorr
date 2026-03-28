@@ -156,7 +156,7 @@ class MatchJob {
           duration = Math.round(audioResult.totalDuration / 60);
           this.log.debug({ path: book.path, duration: `${duration}min` }, 'Audio duration scanned');
         }
-      } catch (error) {
+      } catch (error: unknown) {
         this.log.debug({ error, path: book.path }, 'Audio scan failed — proceeding without duration');
       }
 
@@ -236,7 +236,7 @@ class MatchJob {
         bestMatch: detailed[0],
         alternatives: detailed.slice(1),
       };
-    } catch (error) {
+    } catch (error: unknown) {
       this.log.warn({ error, path: book.path, title: book.title }, 'Match failed for book');
       return {
         path: book.path,
@@ -261,7 +261,7 @@ class MatchJob {
             detailed.push({ ...result, ...detail, title: result.title });
             continue;
           }
-        } catch (error) {
+        } catch (error: unknown) {
           this.log.debug({ error, providerId: result.providerId }, 'Detail fetch failed, using search result');
         }
       }

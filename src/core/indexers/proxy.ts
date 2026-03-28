@@ -65,7 +65,7 @@ export async function fetchWithProxyAgent(
     let response: Response;
     try {
       response = await fetch(url, fetchOptions);
-    } catch (error) {
+    } catch (error: unknown) {
       if (!dispatcher) throw error; // Direct fetch — let caller handle
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw new ProxyError(`Proxy timed out after ${Math.round(timeoutMs / 1000)}s`);
@@ -104,7 +104,7 @@ export async function resolveProxyIp(proxyUrl: string): Promise<string> {
       throw new ProxyError('IP lookup returned empty response');
     }
     return data.ip;
-  } catch (error) {
+  } catch (error: unknown) {
     if (error instanceof ProxyError) throw error;
     const msg = error instanceof Error ? error.message : 'unknown error';
     throw new ProxyError(`Failed to resolve proxy exit IP: ${msg}`);

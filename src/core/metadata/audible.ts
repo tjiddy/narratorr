@@ -146,7 +146,7 @@ export class AudibleProvider implements MetadataSearchProvider {
         return { success: true, message: `Connected to Audible (${this.name})` };
       }
       return { success: false, message: 'No response from Audible API' };
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Connection failed',
@@ -179,7 +179,7 @@ export class AudibleProvider implements MetadataSearchProvider {
       }
       if (!res.ok) return null;
       return (await res.json()) as T;
-    } catch (error) {
+    } catch (error: unknown) {
       if (error instanceof RateLimitError) throw error;
       if (error instanceof TransientError) throw error;
       const message = error instanceof Error ? error.message : String(error);

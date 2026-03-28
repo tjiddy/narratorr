@@ -163,7 +163,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       }
 
       return { success: false, message: 'Authentication failed — check your MAM ID' };
-    } catch (error) {
+    } catch (error: unknown) {
       if (error instanceof IndexerAuthError) {
         return { success: false, message: error.message };
       }
@@ -198,7 +198,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       let response: Response;
       try {
         response = await fetch(url, fetchOptions);
-      } catch (error) {
+      } catch (error: unknown) {
         if (dispatcher) {
           if (error instanceof DOMException && error.name === 'AbortError') {
             throw new ProxyError(`Proxy timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s`);
@@ -277,7 +277,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       let response: Response;
       try {
         response = await fetch(url, fetchOptions);
-      } catch (error) {
+      } catch (error: unknown) {
         // Proxy errors must propagate — not be swallowed as undefined
         if (dispatcher) {
           if (error instanceof DOMException && error.name === 'AbortError') {
@@ -296,7 +296,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
 
       const buffer = Buffer.from(await response.arrayBuffer());
       return `data:application/x-bittorrent;base64,${buffer.toString('base64')}`;
-    } catch (error) {
+    } catch (error: unknown) {
       // ProxyError must propagate up — not be swallowed
       if (error instanceof ProxyError) {
         throw error;

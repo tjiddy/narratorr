@@ -85,11 +85,11 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
           const renameResult = await api.renameBook(bookId);
           invalidateBookQueries();
           toast.success(renameResult.message);
-        } catch (renameError) {
+        } catch (renameError: unknown) {
           toast.error(`Rename failed: ${renameError instanceof Error ? renameError.message : 'Unknown error'}`);
         }
       }
-    } catch (error) {
+    } catch (error: unknown) {
       toast.error(`Failed to update book: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsSaving(false);

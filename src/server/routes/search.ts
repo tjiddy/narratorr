@@ -100,8 +100,8 @@ export async function searchRoutes(
         const download = await downloadOrchestrator.grab(data);
         request.log.debug({ downloadId: download.id, status: download.status, externalId: download.externalId }, 'Grab completed');
         return await reply.status(201).send(download);
-      } catch (error) {
-        if ((error as { code?: string }).code === 'ACTIVE_DOWNLOAD_EXISTS') {
+      } catch (error: unknown) {
+        if (error !== null && typeof error === 'object' && 'code' in error && (error as { code: unknown }).code === 'ACTIVE_DOWNLOAD_EXISTS') {
           return reply.status(409).send({ code: 'ACTIVE_DOWNLOAD_EXISTS' });
         }
         request.log.error(error, 'Grab failed');

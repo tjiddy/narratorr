@@ -76,7 +76,7 @@ export async function runRssJob(
         log.debug({ indexer: indexer.name, count: results.length }, 'RSS feed polled');
         allResults.push(...results);
       }
-    } catch (error) {
+    } catch (error: unknown) {
       log.warn({ indexer: indexer.name, error }, 'RSS poll failed for indexer');
     }
   }
@@ -200,7 +200,7 @@ export async function runRssJob(
       });
       grabbed++;
       log.info({ bookId, title: best.title, isUpgrade: candidate.isUpgrade }, 'RSS grabbed');
-    } catch (grabError) {
+    } catch (grabError: unknown) {
       const message = grabError instanceof Error ? grabError.message : String(grabError);
       if (message.includes('already has an active download')) {
         log.debug({ bookId }, 'Skipping RSS grab — book already has active download');
@@ -235,12 +235,12 @@ export function startRssJob(
       setTimeout(async () => {
         try {
           await runRssJob(settingsService, bookListService, bookService, indexerService, downloadOrchestrator, blacklistService, log);
-        } catch (error) {
+        } catch (error: unknown) {
           log.error(error, 'RSS sync job error');
         }
         scheduleNext();
       }, intervalMs);
-    } catch (error) {
+    } catch (error: unknown) {
       log.error(error, 'Failed to read RSS interval, retrying in 5 minutes');
       setTimeout(scheduleNext, 5 * 60 * 1000);
     }

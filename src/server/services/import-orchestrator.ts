@@ -45,7 +45,7 @@ export class ImportOrchestrator {
       await this.dispatchSuccessSideEffects(result, ctx);
 
       return result;
-    } catch (error) {
+    } catch (error: unknown) {
       // Failure side effects — ImportService already cleaned up files + reverted DB
       this.dispatchFailureSideEffects(error, ctx);
       throw error;
@@ -93,7 +93,7 @@ export class ImportOrchestrator {
         book: { title: ctx.book.title, authorName: ctx.authorName, narrator: ctx.narratorStr, seriesName: ctx.book.seriesName, seriesPosition: ctx.book.seriesPosition, coverUrl: ctx.book.coverUrl },
         log: this.log,
       });
-    } catch (tagError) {
+    } catch (tagError: unknown) {
       this.log.warn({ error: tagError, bookId: ctx.bookId }, 'Tagging failed during import — continuing');
     }
 
@@ -106,7 +106,7 @@ export class ImportOrchestrator {
         targetPath: result.targetPath, bookTitle: ctx.bookTitle, bookAuthor: ctx.authorName,
         fileCount: result.fileCount, bookId: ctx.bookId, log: this.log,
       });
-    } catch (scriptError) {
+    } catch (scriptError: unknown) {
       this.log.warn({ error: scriptError, bookId: ctx.bookId }, 'Post-processing failed during import — continuing');
     }
 

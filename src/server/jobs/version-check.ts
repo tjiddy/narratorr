@@ -46,7 +46,7 @@ export async function checkForUpdate(log: FastifyBaseLogger): Promise<void> {
       cachedUpdate = undefined;
       log.debug({ currentVersion, latestVersion }, 'Version check: on latest version');
     }
-  } catch (error) {
+  } catch (error: unknown) {
     log.error(error, 'Version check: failed to check for updates');
   }
 }

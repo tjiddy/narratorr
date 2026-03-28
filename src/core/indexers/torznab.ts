@@ -77,7 +77,7 @@ export class TorznabIndexer implements IndexerAdapter {
       }
 
       return result;
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Connection failed',

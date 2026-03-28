@@ -153,7 +153,7 @@ export class TransmissionClient implements DownloadClientAdapter {
         success: true,
         message: version ? `Transmission ${version}` : `Connected to ${this.name}`,
       };
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Connection failed',

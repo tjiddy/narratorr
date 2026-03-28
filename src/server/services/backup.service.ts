@@ -121,7 +121,7 @@ export class BackupService {
 
       this.log.info({ filename, size: stat.size }, 'Backup created');
       return metadata;
-    } catch (error) {
+    } catch (error: unknown) {
       // Clean up on failure
       await fs.unlink(tempDbPath).catch(() => {});
       await fs.unlink(zipPath).catch(() => {});
@@ -172,7 +172,7 @@ export class BackupService {
       try {
         await fs.unlink(path.join(this.backupsDir, backup.filename));
         deleted++;
-      } catch (error) {
+      } catch (error: unknown) {
         this.log.warn({ filename: backup.filename, error }, 'Failed to delete old backup');
       }
     }
@@ -240,7 +240,7 @@ export class BackupService {
         backupMigrationCount: validation.backupMigrationCount!,
         appMigrationCount: validation.appMigrationCount!,
       };
-    } catch (error) {
+    } catch (error: unknown) {
       if (error instanceof RestoreUploadError) throw error;
       await fs.rm(tempDir, { recursive: true }).catch(() => {});
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -275,7 +275,7 @@ export class BackupService {
       } finally {
         client.close();
       }
-    } catch (error) {
+    } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
 
       if (message.includes('__drizzle_migrations')) {
@@ -352,7 +352,7 @@ export function applyPendingRestore(configPath: string, dbPath: string, log: { i
       fss.copyFileSync(pendingPath, dbPath);
       fss.unlinkSync(pendingPath);
       log.warn('Restored database from pending backup (copy fallback — rename failed)');
-    } catch (copyError) {
+    } catch (copyError: unknown) {
       log.warn(`Failed to apply pending restore: ${copyError instanceof Error ? copyError.message : 'unknown error'}`);
     }
   }

@@ -41,7 +41,7 @@ export async function blacklistRoutes(app: FastifyInstance, blacklistService: Bl
       try {
         const entry = await blacklistService.create(data);
         return await reply.status(201).send(entry);
-      } catch (error) {
+      } catch (error: unknown) {
         request.log.error(error, 'Failed to add to blacklist');
         const message = getErrorMessage(error);
         return reply.status(500).send({ error: message });
@@ -65,7 +65,7 @@ export async function blacklistRoutes(app: FastifyInstance, blacklistService: Bl
           return await reply.status(404).send({ error: 'Blacklist entry not found' });
         }
         return updated;
-      } catch (error) {
+      } catch (error: unknown) {
         request.log.error(error, 'Failed to toggle blacklist type');
         const message = getErrorMessage(error);
         return reply.status(500).send({ error: message });

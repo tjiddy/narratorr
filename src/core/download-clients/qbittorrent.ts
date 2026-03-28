@@ -296,7 +296,7 @@ export class QBittorrentClient implements DownloadClientAdapter {
       }
       const version = await response.text();
       return { success: true, message: `qBittorrent ${version}` };
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Unknown error',

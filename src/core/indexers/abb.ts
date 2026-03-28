@@ -65,7 +65,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
               const detailHtml = await this.fetchPage(result.detailsUrl);
               const details = this.parseDetailPage(detailHtml);
               Object.assign(result, details);
-            } catch (error) {
+            } catch (error: unknown) {
               // Proxy errors bubble up — consistent with outer catch behavior
               if (isProxyRelatedError(error)) {
                 throw error;
@@ -83,7 +83,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
             return results;
           }
         }
-      } catch (error) {
+      } catch (error: unknown) {
         // Proxy errors bubble up to IndexerService.searchAll() for warn logging
         if (isProxyRelatedError(error)) {
           throw error;
@@ -345,7 +345,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         success: false,
         message: `HTTP ${response.status}: ${response.statusText}`,
       };
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Connection failed',
@@ -364,7 +364,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
         proxyUrl: this.flareSolverrUrl,
       });
       return { success: true, message: `Connected to ${this.config.hostname} via FlareSolverr` };
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Connection failed',
@@ -381,7 +381,7 @@ export class AudioBookBayIndexer implements IndexerAdapter {
 
       const ip = await resolveProxyIp(this.proxyUrl!);
       return { success: true, message: `Connected to ${this.config.hostname} via proxy`, ip };
-    } catch (error) {
+    } catch (error: unknown) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Connection failed',

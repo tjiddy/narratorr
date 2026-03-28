@@ -38,7 +38,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
         version: getVersion(),
         commit: getCommit(),
       };
-    } catch (error) {
+    } catch (error: unknown) {
       request.log.warn(error, 'Health check DB probe failed');
       return reply.status(503).send({
         status: 'error',
@@ -129,7 +129,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
 
     try {
       return await services.backup.processRestoreUpload(data.file);
-    } catch (error) {
+    } catch (error: unknown) {
       if (error instanceof RestoreUploadError) {
         return reply.status(400).send({ error: error.message });
       }
@@ -156,7 +156,7 @@ export async function systemRoutes(app: FastifyInstance, services: Services, db:
       });
 
       return await reply;
-    } catch (error) {
+    } catch (error: unknown) {
       const message = getErrorMessage(error);
       return reply.status(400).send({ error: message });
     }

@@ -43,7 +43,7 @@ let finalBranch: string;
 let resumed: boolean;
 try {
   ({ branch: finalBranch, resumed } = checkoutOrCreateBranch(id, branch));
-} catch (e) {
+} catch (e: unknown) {
   if (e instanceof UnmergedFilesError) {
     die(`ERROR: Unmerged files detected — resolve each conflict, then stage with \`git add\`:\n${e.files.map(f => `  ${f}`).join("\n")}`);
   }

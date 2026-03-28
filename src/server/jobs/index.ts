@@ -77,7 +77,7 @@ function scheduleCron(reg: TaskRegistry, name: string, expression: string, log: 
   cron.schedule(expression, async () => {
     try {
       await reg.executeTracked(name);
-    } catch (error) {
+    } catch (error: unknown) {
       log.error(error, `${name} job error`);
     }
   });
@@ -98,12 +98,12 @@ function scheduleTimeoutLoop(
       setTimeout(async () => {
         try {
           await reg.executeTracked(name);
-        } catch (error) {
+        } catch (error: unknown) {
           log.error(error, `${name} job error`);
         }
         scheduleNext();
       }, intervalMs);
-    } catch (error) {
+    } catch (error: unknown) {
       log.error(error, `Failed to read ${name} interval, retrying in 5 minutes`);
       setTimeout(scheduleNext, 5 * 60 * 1000);
     }

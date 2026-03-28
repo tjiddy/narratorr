@@ -94,7 +94,7 @@ export class MetadataService {
     try {
       await this.throttle.acquire();
       return await fn(provider);
-    } catch (error) {
+    } catch (error: unknown) {
       if (error instanceof RateLimitError) {
         this.setRateLimited(error.provider, error.retryAfterMs);
         const remaining = Math.ceil(error.retryAfterMs / 1000);
@@ -157,7 +157,7 @@ export class MetadataService {
     try {
       await this.throttle.acquire();
       return await this.audnexus.getAuthor(id);
-    } catch (error) {
+    } catch (error: unknown) {
       if (error instanceof RateLimitError) {
         this.setRateLimited(error.provider, error.retryAfterMs);
         return null;
@@ -203,7 +203,7 @@ export class MetadataService {
         this.log.debug({ asin }, 'Audnexus returned no data for ASIN');
       }
       return result;
-    } catch (error) {
+    } catch (error: unknown) {
       if (error instanceof RateLimitError) {
         this.setRateLimited(error.provider, error.retryAfterMs);
         throw error; // Re-throw so enrichment job can handle it
@@ -263,7 +263,7 @@ export class MetadataService {
     try {
       await this.throttle.acquire();
       return await fn(provider);
-    } catch (error) {
+    } catch (error: unknown) {
       if (error instanceof RateLimitError) {
         this.setRateLimited(error.provider, error.retryAfterMs);
         return fallback;

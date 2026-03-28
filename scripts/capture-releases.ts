@@ -145,7 +145,7 @@ async function main() {
         }
 
         console.log(`  ${indexer.name} / "${term}" — ${newEntries.length} total new`);
-      } catch (err) {
+      } catch (err: unknown) {
         console.warn(`  ${indexer.name} / "${term}" — ${err instanceof Error ? err.message : 'unknown error'}`);
       }
 

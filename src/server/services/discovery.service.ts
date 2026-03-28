@@ -113,7 +113,7 @@ export class DiscoveryService {
     try {
       const stats = await this.computeDismissalStats();
       multipliers = computeWeightMultipliers(stats);
-    } catch (error) {
+    } catch (error: unknown) {
       this.log.warn(error, 'Discovery: dismissal ratio computation failed — using default weights');
     }
 
@@ -121,7 +121,7 @@ export class DiscoveryService {
     try {
       const currentSettings = await this.settingsService.get('discovery');
       await this.settingsService.set('discovery', { ...currentSettings, weightMultipliers: multipliers });
-    } catch (error) {
+    } catch (error: unknown) {
       this.log.warn(error, 'Discovery: failed to persist weight multipliers — continuing with in-memory values');
     }
 
@@ -191,7 +191,7 @@ export class DiscoveryService {
       const expired = (result as unknown as { rowsAffected?: number }).rowsAffected ?? 0;
       if (expired > 0) this.log.info({ expired }, 'Discovery: expired stale suggestions');
       return expired;
-    } catch (error) {
+    } catch (error: unknown) {
       this.log.warn(error, 'Discovery: expiry step failed');
       warnings.push('Expiry step failed — continuing with candidate generation');
       return 0;

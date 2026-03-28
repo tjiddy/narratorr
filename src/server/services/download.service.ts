@@ -239,7 +239,7 @@ export class DownloadService {
           for (const dl of replaceableActive) {
             try {
               await this.cancel(dl.id, 'Replaced by new download');
-            } catch (cancelErr) {
+            } catch (cancelErr: unknown) {
               this.log.warn({ id: dl.id, error: cancelErr }, 'Failed to cancel replaceable download — proceeding with replacement anyway');
             }
           }
@@ -343,7 +343,7 @@ export class DownloadService {
         if (adapter) {
           await adapter.removeDownload(download.externalId, true);
         }
-      } catch (error) {
+      } catch (error: unknown) {
         this.log.error({ error, id }, 'Failed to remove download from client');
       }
     }
@@ -378,7 +378,7 @@ export class DownloadService {
         // Delete the old failed download record
         try {
           await this.db.delete(downloads).where(eq(downloads.id, id));
-        } catch (error) {
+        } catch (error: unknown) {
           this.log.warn({ oldId: id, newId: result.download.id, error }, 'Failed to delete old download record after retry');
         }
         this.log.info({ oldId: id, newId: result.download.id }, 'Download retried');

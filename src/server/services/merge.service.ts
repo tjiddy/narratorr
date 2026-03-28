@@ -125,7 +125,7 @@ export class MergeService {
         message: `Merged ${topLevelAudioFiles.length} files into ${basename(stagedM4b)}`,
         enrichmentWarning,
       };
-    } catch (error) {
+    } catch (error: unknown) {
       // Clean up staging dir on any failure (before commit the originals are untouched)
       try {
         await rm(stagingDir, { recursive: true, force: true });

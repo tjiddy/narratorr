@@ -10,7 +10,7 @@ export async function runBackupJob(
     await backupService.create();
     const pruned = await backupService.prune();
     return { created: true, pruned };
-  } catch (error) {
+  } catch (error: unknown) {
     log.error(error, 'Backup job failed');
     return { created: false, pruned: 0 };
   }
@@ -29,12 +29,12 @@ export function startBackupJob(
       setTimeout(async () => {
         try {
           await runBackupJob(backupService, log);
-        } catch (error) {
+        } catch (error: unknown) {
           log.error(error, 'Backup job error');
         }
         scheduleNext();
       }, intervalMs);
-    } catch (error) {
+    } catch (error: unknown) {
       log.error(error, 'Failed to read backup interval, retrying in 5 minutes');
       setTimeout(scheduleNext, 5 * 60 * 1000);
     }
