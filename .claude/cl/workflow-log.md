@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #161 Extract shared Modal component to fix backdrop bleed-through — 2026-03-28
+**Skill path:** /implement -> /claim -> /plan -> /handoff
+**Outcome:** success — PR #172
+
+### Metrics
+- Files changed: 14 | Tests added/modified: ~60 (new Modal.test.tsx 8 tests, SearchReleasesModal +11, stacking regression +2, plus selector updates across 5 files)
+- Quality gate runs: 3 (pass on attempt 3 after two coverage-review-driven test additions)
+- Fix iterations: 4 (SearchReleasesModal multi-function JSX edit bug; sibling selector breakage in LibraryPage + LibrarySettingsSection; missing tests for refresh/grab/blacklist pending states)
+- Context compactions: 1 (caused a mid-handoff restart; no rework needed, summary was accurate)
+
+### Workflow experience
+- What went smoothly: Modal extraction itself was clean — the shared component design was straightforward; all 8 AC items verified; TDD cycle worked well
+- Friction: (1) Branch mismatch — claim.ts created issue-161 branch but git was on issue-169, all commits landed on 169 branch; handoff branch guard failed. (2) SearchReleasesModal has 3 functions in one file — JSX closing tag edit targeted the wrong function (ReleaseCard), causing esbuild parse error. (3) Coverage review subagent reported 8 untested behaviors but several were already tested in separate describe blocks it had not read. (4) Self-review subagent flagged onClick=undefined as a crash bug; React handles undefined handlers safely.
+
+### Token efficiency
+- Highest-token actions: Two coverage review subagent passes; self-review subagent; context compaction mid-handoff
+- Avoidable waste: Second coverage review avoidable if first had read all describe blocks; self-review false-positive wasted a loop
+- Suggestions: Before adding tests after coverage review fails, manually verify flagged items are not already tested in other describe blocks
+
+### Infrastructure gaps
+- Repeated workarounds: Branch mismatch — claim.ts does not verify current branch before creating new one
+- Missing tooling: Coverage subagent misses separate top-level describe blocks in large test files
+- Unresolved debt: SearchReleasesModal 3-function file structure makes JSX edits error-prone (logged in debt.md)
+
+### Wish I'd Known
+1. React onClick=undefined is silently safe — no TypeError. Self-review flagged this as a crash bug, wasting a review loop.
+2. When editing JSX closing tags in a multi-function file, include enough surrounding context to uniquely identify the target — bare closing tags match the wrong function.
+3. Coverage review subagents can stop reading before end of large test files. Before adding tests for untested behaviors, grep the full file first.
+
 ## #169 Welcome modal polish: backdrop, scroll, clickable cards, copy — 2026-03-28
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #171
@@ -353,6 +382,35 @@
 2. The confirm button in BulkOperationsSection uses the same verb as the trigger button (e.g., "Re-tag All" both on the page and in the dialog confirm) — always scope modal assertions to `within(dialog)` to avoid ambiguous matches
 3. `findByDisplayValue` is the correct positive signal for vacuous negative assertions in input-interaction tests — it proves React has processed the typed value, not just that the DOM has updated
 # Workflow Log
+
+## #161 Extract shared Modal component to fix backdrop bleed-through — 2026-03-28
+**Skill path:** /implement -> /claim -> /plan -> /handoff
+**Outcome:** success — PR #172
+
+### Metrics
+- Files changed: 14 | Tests added/modified: ~60 (new Modal.test.tsx 8 tests, SearchReleasesModal +11, stacking regression +2, plus selector updates across 5 files)
+- Quality gate runs: 3 (pass on attempt 3 after two coverage-review-driven test additions)
+- Fix iterations: 4 (SearchReleasesModal multi-function JSX edit bug; sibling selector breakage in LibraryPage + LibrarySettingsSection; missing tests for refresh/grab/blacklist pending states)
+- Context compactions: 1 (caused a mid-handoff restart; no rework needed, summary was accurate)
+
+### Workflow experience
+- What went smoothly: Modal extraction itself was clean — the shared component design was straightforward; all 8 AC items verified; TDD cycle worked well
+- Friction: (1) Branch mismatch — claim.ts created issue-161 branch but git was on issue-169, all commits landed on 169 branch; handoff branch guard failed. (2) SearchReleasesModal has 3 functions in one file — JSX closing tag edit targeted the wrong function (ReleaseCard), causing esbuild parse error. (3) Coverage review subagent reported 8 untested behaviors but several were already tested in separate describe blocks it had not read. (4) Self-review subagent flagged onClick=undefined as a crash bug; React handles undefined handlers safely.
+
+### Token efficiency
+- Highest-token actions: Two coverage review subagent passes; self-review subagent; context compaction mid-handoff
+- Avoidable waste: Second coverage review avoidable if first had read all describe blocks; self-review false-positive wasted a loop
+- Suggestions: Before adding tests after coverage review fails, manually verify flagged items are not already tested in other describe blocks
+
+### Infrastructure gaps
+- Repeated workarounds: Branch mismatch — claim.ts does not verify current branch before creating new one
+- Missing tooling: Coverage subagent misses separate top-level describe blocks in large test files
+- Unresolved debt: SearchReleasesModal 3-function file structure makes JSX edits error-prone (logged in debt.md)
+
+### Wish I'd Known
+1. React onClick=undefined is silently safe — no TypeError. Self-review flagged this as a crash bug, wasting a review loop.
+2. When editing JSX closing tags in a multi-function file, include enough surrounding context to uniquely identify the target — bare closing tags match the wrong function.
+3. Coverage review subagents can stop reading before end of large test files. Before adding tests for untested behaviors, grep the full file first.
 
 ## #162 Extract shared Button component with variant system — 2026-03-28
 **Skill path:** /implement → /claim → /plan → /handoff
