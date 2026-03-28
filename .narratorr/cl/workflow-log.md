@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #186 Test coverage: Settings components — 2026-03-28
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #192
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 22 new tests (19 CrudSettingsPage + 3 stripDefaults)
+- Quality gate runs: 3 (pass on attempt 3 — lint fix + typecheck fix)
+- Fix iterations: 2 (lint: z import type-only; typecheck: vi.fn mock.calls tuple typing)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Schema dedup was clean — `stripDefaults(importSettingsSchema)` is a drop-in replacement with zero test regressions. CrudSettingsPage tests were straightforward since the component delegates all state to useCrudSettings hook.
+- Friction / issues encountered: TypeScript strict tuple typing on `vi.fn().mock.calls[N][M]` caused typecheck failures. Required switching to a handler-capturing pattern where mock functions store arguments in external arrays.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for self-review and coverage review
+- Avoidable waste: Could have used the handler-capturing pattern from the start instead of discovering it through typecheck failure
+- Suggestions: For tests that need to inspect callback arguments, always use the capturing pattern to avoid mock.calls typing issues
+
+### Infrastructure gaps
+- Repeated workarounds: vi.fn() mock.calls strict typing is a recurring friction point in frontend tests
+- Missing tooling / config: No lint rule to catch `import { z }` when `z` is type-only — relies on manual awareness
+- Unresolved debt: None new introduced
+
+### Wish I'd Known
+1. `vi.fn().mock.calls` has strict tuple typing that breaks on untyped mocks — use a capturing function pattern instead (see `vi-fn-mock-calls-typing.md`)
+2. Replacing a local Zod schema with an imported one can make `z` import type-only, triggering `consistent-type-imports` lint rule (see `strip-defaults-type-import.md`)
+3. Most SecuritySettings and LibrarySettingsSection ACs from the original spec were already covered — reading existing tests first saved significant implementation time
+
 ## #187 Test coverage: SSEProvider, SearchReleasesModal split, bulk-op TTL — 2026-03-28
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #191
