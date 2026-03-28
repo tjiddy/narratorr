@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #176 Add server-side library-root guardrail to copyToLibrary — 2026-03-28
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #189
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 11 (1 updated + 10 new)
+- Quality gate runs: 1 (pass on attempt 1)
+- Fix iterations: 1 (coverage subagent caught missing background-path tests; added 2 more tests)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The implementation was a single 4-line guard — `relative()+isAbsolute()` pattern was already in the codebase and the spec's Technical Notes gave the exact code snippet. Red/green cycle was clean.
+- Friction / issues encountered: `pnpm exec vitest` failed on first attempt because `node_modules` wasn't installed — had to run `pnpm install` first. Coverage subagent correctly identified that background-path (`confirmImport` + `processOneImport`) tests were missing despite the guard living in a shared helper.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for self-review and coverage analysis
+- Avoidable waste: None significant
+- Suggestions: When implementing guards in shared private helpers, enumerate all callers upfront and plan tests at each integration layer before the red phase
+
+### Infrastructure gaps
+- Repeated workarounds: `node_modules` not pre-installed — required `pnpm install` before any test run
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `copyToLibrary()` is called by two separate code paths — `importSingleBook()` and `processOneImport()`. The spec mentioned both but test stubs only targeted the single-import path. Always map all callers before writing stubs.
+2. The pre-existing test at line 1295 was explicitly a regression test to invert — the spec test plan called this out. Read the spec test plan section carefully for "must be updated" notes.
+3. `pnpm install` is needed in this environment before running vitest — the binary isn't pre-installed.
+
 ## #178 Apply focus-ring utility to OverflowMenu and BookContextMenu — 2026-03-28
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #181
