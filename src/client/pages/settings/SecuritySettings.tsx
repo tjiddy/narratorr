@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -14,6 +14,7 @@ import {
 } from '@/components/icons';
 import { SettingsSection } from './SettingsSection';
 import { CredentialsSection } from './CredentialsSection';
+import { useMutationWithToast } from '@/hooks/useMutationWithToast';
 
 const MODE_LABELS: Record<AuthMode, string> = {
   none: 'None (No Authentication)',
@@ -22,8 +23,6 @@ const MODE_LABELS: Record<AuthMode, string> = {
 };
 
 export function SecuritySettings() {
-  const queryClient = useQueryClient();
-
   const { data: authConfig, isLoading } = useQuery({
     queryKey: queryKeys.auth.config(),
     queryFn: api.getAuthConfig,
@@ -52,16 +51,9 @@ export function SecuritySettings() {
       <AuthModeSection
         mode={authConfig.mode}
         hasUser={authStatus?.hasUser ?? false}
-        queryClient={queryClient}
       />
-      <LocalBypassSection
-        localBypass={authConfig.localBypass}
-        queryClient={queryClient}
-      />
-      <ApiKeySection
-        apiKey={authConfig.apiKey}
-        queryClient={queryClient}
-      />
+      <LocalBypassSection localBypass={authConfig.localBypass} />
+      <ApiKeySection apiKey={authConfig.apiKey} />
     </div>
   );
 }
@@ -71,30 +63,20 @@ export function SecuritySettings() {
 function AuthModeSection({
   mode,
   hasUser,
-  queryClient,
 }: {
   mode: AuthMode;
   hasUser: boolean;
-  queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [pendingMode, setPendingMode] = useState<AuthMode | null>(null);
 
-  const mutation = useMutation({
+  const mutation = useMutationWithToast({
     mutationFn: (newMode: AuthMode) => api.updateAuthConfig({ mode: newMode }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.auth.config() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
-      toast.success('Authentication mode updated');
-      setShowConfirm(false);
-      setPendingMode(null);
-    },
-    onError: (err) => {
-      const message = err instanceof ApiError ? err.message : 'Failed to update auth mode';
-      toast.error(message);
-      setShowConfirm(false);
-      setPendingMode(null);
-    },
+    queryKey: [queryKeys.auth.config(), queryKeys.auth.status()],
+    successMessage: 'Authentication mode updated',
+    errorMessage: (err) => err instanceof ApiError ? err.message : 'Failed to update auth mode',
+    onSuccess: () => { setShowConfirm(false); setPendingMode(null); },
+    onError: () => { setShowConfirm(false); setPendingMode(null); },
   });
 
   function handleModeChange(newMode: AuthMode) {
@@ -181,21 +163,12 @@ function AuthModeSection({
 
 // ─── Local Bypass ──────────────────────────────────────────────────
 
-function LocalBypassSection({
-  localBypass,
-  queryClient,
-}: {
-  localBypass: boolean;
-  queryClient: ReturnType<typeof useQueryClient>;
-}) {
-  const mutation = useMutation({
+function LocalBypassSection({ localBypass }: { localBypass: boolean }) {
+  const mutation = useMutationWithToast({
     mutationFn: (enabled: boolean) => api.updateAuthConfig({ localBypass: enabled }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.auth.config() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
-      toast.success('Local bypass setting updated');
-    },
-    onError: () => toast.error('Failed to update local bypass'),
+    queryKey: [queryKeys.auth.config(), queryKeys.auth.status()],
+    successMessage: 'Local bypass setting updated',
+    errorMessage: 'Failed to update local bypass',
   });
 
   return (
@@ -224,24 +197,16 @@ function LocalBypassSection({
 
 // ─── API Key ───────────────────────────────────────────────────────
 
-function ApiKeySection({
-  apiKey,
-  queryClient,
-}: {
-  apiKey: string;
-  queryClient: ReturnType<typeof useQueryClient>;
-}) {
+function ApiKeySection({ apiKey }: { apiKey: string }) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const mutation = useMutation({
+  const mutation = useMutationWithToast({
     mutationFn: api.authRegenerateApiKey,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.auth.config() });
-      toast.success('API key regenerated');
-      setShowConfirm(false);
-    },
-    onError: () => toast.error('Failed to regenerate API key'),
+    queryKey: queryKeys.auth.config(),
+    successMessage: 'API key regenerated',
+    errorMessage: 'Failed to regenerate API key',
+    onSuccess: () => setShowConfirm(false),
   });
 
   async function handleCopy() {
