@@ -163,6 +163,33 @@ describe('SecuritySettings', () => {
     await waitFor(() => {
       expect(screen.queryByText(/regenerating will invalidate/i)).not.toBeInTheDocument();
     });
+
+    // Success toast and new key displayed (auth.config refetch populates new key)
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('API key regenerated');
+    });
+  });
+
+  it('regenerate API key failure shows error toast', async () => {
+    (api.authRegenerateApiKey as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Server error'));
+    const user = userEvent.setup();
+    renderWithProviders(<SecuritySettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('API Key')).toBeInTheDocument();
+    });
+
+    const regenButton = screen.getByRole('button', { name: /regenerate api key/i });
+    await user.click(regenButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /confirm regenerate/i })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /confirm regenerate/i }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to regenerate API key');
+    });
   });
 
   it('create credentials form → success message', async () => {
@@ -552,6 +579,10 @@ describe('SecuritySettings', () => {
       // Both auth queries should be invalidated (refetched)
       await waitFor(() => expect(api.getAuthConfig).toHaveBeenCalled());
       await waitFor(() => expect(api.getAuthStatus).toHaveBeenCalled());
+      // onSuccess callback clears the confirmation dialog
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: /disable auth/i })).not.toBeInTheDocument();
+      });
     });
 
     it('switch to non-none mode fires mutation directly without confirmation dialog', async () => {
@@ -611,6 +642,10 @@ describe('SecuritySettings', () => {
       await user.click(screen.getByRole('button', { name: /disable auth/i }));
 
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Custom error'));
+      // onError callback clears the confirmation dialog
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: /disable auth/i })).not.toBeInTheDocument();
+      });
     });
   });
 

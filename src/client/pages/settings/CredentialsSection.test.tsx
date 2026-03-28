@@ -504,6 +504,7 @@ describe('CredentialsSection', () => {
         expect(invalidateSpy).toHaveBeenCalledWith(
           expect.objectContaining({ queryKey: ['auth', 'status'] }),
         );
+        expect(toast.success).toHaveBeenCalledWith('Credentials removed');
       });
     });
 
@@ -513,7 +514,7 @@ describe('CredentialsSection', () => {
       renderWithProviders(<CredentialsSection hasUser={true} currentUsername="admin" envBypass={true} />, { queryClient });
       await user.click(screen.getByRole('button', { name: 'Remove Credentials' }));
       await waitFor(() => {
-        expect(toast.error).toHaveBeenCalled();
+        expect(toast.error).toHaveBeenCalledWith('Only available when AUTH_BYPASS is active');
       });
       // Change password form should still be visible (form state preserved)
       expect(screen.getByRole('button', { name: 'Change Password' })).toBeInTheDocument();
