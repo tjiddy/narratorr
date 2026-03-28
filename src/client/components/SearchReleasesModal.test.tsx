@@ -1202,3 +1202,47 @@ describe('SearchReleasesModal unsupported results', () => {
     });
   });
 });
+
+describe('ReleaseCard', () => {
+  it('renders without narrator field when result has no narrator', async () => {
+    const withNarrator: SearchResult = {
+      title: 'Book With Narrator',
+      author: 'Author A',
+      narrator: 'Test Narrator Name',
+      protocol: 'torrent',
+      infoHash: 'wn999',
+      downloadUrl: 'magnet:?xt=urn:btih:wn999',
+      size: 1024,
+      seeders: 1,
+      indexer: 'Test',
+    };
+    const withoutNarrator: SearchResult = {
+      title: 'Book Without Narrator',
+      author: 'Author B',
+      protocol: 'torrent',
+      infoHash: 'wo999',
+      downloadUrl: 'magnet:?xt=urn:btih:wo999',
+      size: 1024,
+      seeders: 1,
+      indexer: 'Test',
+    };
+    vi.mocked(api.searchBooks).mockResolvedValue(
+      searchResponse([withNarrator, withoutNarrator]),
+    );
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Book With Narrator')).toBeInTheDocument();
+      expect(screen.getByText('Book Without Narrator')).toBeInTheDocument();
+    });
+
+    // Narrator name appears exactly once — only for the first card
+    expect(screen.getByText('Test Narrator Name')).toBeInTheDocument();
+    expect(screen.queryAllByText('Test Narrator Name')).toHaveLength(1);
+    // Both cards render without crash (narrator-absent card still renders action buttons)
+    expect(screen.getAllByRole('button', { name: /grab/i })).toHaveLength(2);
+  });
+});
