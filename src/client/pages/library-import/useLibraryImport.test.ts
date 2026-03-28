@@ -341,6 +341,241 @@ describe('useLibraryImport hook (#133)', () => {
     expect(mockStartMatchJob).toHaveBeenCalled();
   });
 
+});
+
+describe('match merge — selection behavior (#185)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSettings.mockResolvedValue(mockSettings);
+    mockGetBookIdentifiers.mockResolvedValue([]);
+    mockScanDirectory.mockResolvedValue(mockScanResult);
+    mockStartMatchJob.mockResolvedValue({ jobId: 'job-1' });
+    mockCancelMatchJob.mockResolvedValue({ cancelled: true });
+  });
+
+  it('high/medium confidence preserves existing row.selected value (no auto-select)', async () => {
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1', status: 'completed', total: 1, matched: 1,
+      results: [{
+        path: '/audiobooks/AuthorA/Book1',
+        confidence: 'high',
+        bestMatch: { title: 'Official', authors: [{ name: 'Author A' }] },
+        alternatives: [],
+      }],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    // Deselect the non-duplicate row before match results arrive
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    act(() => result.current.handleToggle(nonDupIdx));
+    expect(result.current.rows[nonDupIdx].selected).toBe(false);
+
+    // Match result with high confidence merges — should NOT auto-select
+    await waitFor(() => {
+      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('high');
+    }, { timeout: 5000 });
+
+    expect(result.current.rows[nonDupIdx].selected).toBe(false);
+  });
+});
+
+describe('handleEdit — auto-check, confidence upgrade, slug-duplicate recheck (#185)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSettings.mockResolvedValue(mockSettings);
+    mockGetBookIdentifiers.mockResolvedValue([]);
+    mockScanDirectory.mockResolvedValue(mockScanResult);
+    mockStartMatchJob.mockResolvedValue({ jobId: 'job-1' });
+    mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'matching', total: 1, matched: 0, results: [] });
+    mockCancelMatchJob.mockResolvedValue({ cancelled: true });
+  });
+
+  it('unselected row with metadata attached auto-selects the row', async () => {
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    act(() => result.current.handleToggle(nonDupIdx));
+    expect(result.current.rows[nonDupIdx].selected).toBe(false);
+
+    // Edit with metadata → auto-selects
+    act(() => {
+      result.current.handleEdit(nonDupIdx, {
+        title: 'Book One', author: 'Author A', series: '',
+        metadata: { title: 'Book One', authors: [{ name: 'Author A' }] },
+      });
+    });
+
+    expect(result.current.rows[nonDupIdx].selected).toBe(true);
+  });
+
+  it('confidence upgrade from none to medium when metadata provided', async () => {
+    // Set up match results with confidence=none
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1', status: 'completed', total: 1, matched: 1,
+      results: [{
+        path: '/audiobooks/AuthorA/Book1',
+        confidence: 'none',
+        bestMatch: null,
+        alternatives: [],
+      }],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+
+    await waitFor(() => {
+      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('none');
+    }, { timeout: 5000 });
+
+    // Edit with metadata → confidence upgrades to medium
+    act(() => {
+      result.current.handleEdit(nonDupIdx, {
+        title: 'Book One', author: 'Author A', series: '',
+        metadata: { title: 'Book One', authors: [{ name: 'Author A' }] },
+      });
+    });
+
+    expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('medium');
+  });
+
+  it('slug-duplicate row: title+author still collides → stays duplicate', async () => {
+    mockGetBookIdentifiers.mockResolvedValue([
+      { asin: null, title: 'Book Three', authorName: 'Author C', authorSlug: 'author-c' },
+    ]);
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const slugDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'slug');
+
+    // Edit but keep same colliding title+author
+    act(() => {
+      result.current.handleEdit(slugDupIdx, { title: 'Book Three', author: 'Author C', series: '' });
+    });
+
+    expect(result.current.rows[slugDupIdx].book.isDuplicate).toBe(true);
+  });
+
+  it('slug-duplicate row: title+author no longer collides → duplicate cleared', async () => {
+    mockGetBookIdentifiers.mockResolvedValue([
+      { asin: null, title: 'Book Three', authorName: 'Author C', authorSlug: 'author-c' },
+    ]);
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const slugDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'slug');
+
+    act(() => {
+      result.current.handleEdit(slugDupIdx, { title: 'New Title', author: 'New Author', series: '' });
+    });
+
+    expect(result.current.rows[slugDupIdx].book.isDuplicate).toBe(false);
+  });
+
+  it('undefined bookIdentifiers (query not yet resolved) — no crash, guard prevents recheck', async () => {
+    // Return undefined for bookIdentifiers (simulating query not yet resolved)
+    mockGetBookIdentifiers.mockReturnValue(undefined as never);
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const slugDupIdx = result.current.rows.findIndex(r => r.book.duplicateReason === 'slug');
+
+    // Edit slug-duplicate row — should not crash even though bookIdentifiers is undefined
+    act(() => {
+      result.current.handleEdit(slugDupIdx, { title: 'New Title', author: 'New Author', series: '' });
+    });
+
+    // Row stays duplicate because the guard skipped the recheck
+    expect(result.current.rows[slugDupIdx].book.isDuplicate).toBe(true);
+  });
+});
+
+describe('retry mechanics (#185)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSettings.mockResolvedValue(mockSettings);
+    mockGetBookIdentifiers.mockResolvedValue([]);
+    mockStartMatchJob.mockResolvedValue({ jobId: 'job-1' });
+    mockGetMatchJob.mockResolvedValue({ id: 'job-1', status: 'matching', total: 1, matched: 0, results: [] });
+    mockCancelMatchJob.mockResolvedValue({ cancelled: true });
+  });
+
+  it('handleRetry resets stale offset so post-retry match results merge into rows from index 0', async () => {
+    // Phase 1: initial scan + first match result arrives
+    mockScanDirectory.mockResolvedValue(mockScanResult);
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1', status: 'completed', total: 1, matched: 1,
+      results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'high', bestMatch: { title: 'First Match', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    // Wait for initial match results to merge (poll interval fires)
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    await waitFor(() => {
+      expect(result.current.rows[nonDupIdx].edited.title).toBe('First Match');
+    }, { timeout: 5000 });
+
+    // Phase 2: retry — new scan + new match with different result
+    mockScanDirectory.mockResolvedValue(mockScanResult);
+    mockStartMatchJob.mockResolvedValue({ jobId: 'job-2' });
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-2', status: 'completed', total: 1, matched: 1,
+      results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'high', bestMatch: { title: 'Retry Match', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+    });
+
+    await act(async () => { result.current.handleRetry(); });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    // Observable: post-retry result is merged from index 0, not lost to stale offset
+    const retryNonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    await waitFor(() => {
+      expect(result.current.rows[retryNonDupIdx].edited.title).toBe('Retry Match');
+    }, { timeout: 5000 });
+  });
+
+  it('handleRetryMatch resets stale offset so new match results merge after retry', async () => {
+    // Phase 1: initial scan + match completes with none confidence
+    mockScanDirectory.mockResolvedValue(mockScanResult);
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-1', status: 'completed', total: 1, matched: 1,
+      results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'none', bestMatch: null, alternatives: [] }],
+    });
+
+    const { result } = renderHook(() => useLibraryImport(), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.step).toBe('review'));
+
+    const nonDupIdx = result.current.rows.findIndex(r => !r.book.isDuplicate);
+    await waitFor(() => {
+      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('none');
+    }, { timeout: 5000 });
+
+    // Phase 2: retryMatch — new match job with different result
+    mockStartMatchJob.mockResolvedValue({ jobId: 'job-2' });
+    mockGetMatchJob.mockResolvedValue({
+      id: 'job-2', status: 'completed', total: 1, matched: 1,
+      results: [{ path: '/audiobooks/AuthorA/Book1', confidence: 'high', bestMatch: { title: 'Better Match', authors: [{ name: 'Author A' }] }, alternatives: [] }],
+    });
+
+    act(() => { result.current.handleRetryMatch(); });
+
+    // Observable: post-retry result merged at index 0 — confidence upgraded and title changed
+    await waitFor(() => {
+      expect(result.current.rows[nonDupIdx].matchResult?.confidence).toBe('high');
+    }, { timeout: 5000 });
+    expect(result.current.rows[nonDupIdx].edited.title).toBe('Better Match');
+  });
+});
+
+describe('empty result edge case', () => {
   it('scanError is null (not set) when emptyResult is triggered', async () => {
     mockScanDirectory.mockResolvedValue({ discoveries: [], totalFolders: 0 });
 

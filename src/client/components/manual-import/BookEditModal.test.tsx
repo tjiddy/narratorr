@@ -503,3 +503,155 @@ describe('BookEditModal', () => {
     });
   });
 });
+
+describe('ARIA attributes (#185)', () => {
+  it('modal renders with role="dialog", aria-modal="true", and aria-label', () => {
+    renderModal();
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAttribute('aria-label', 'Edit book metadata');
+  });
+});
+
+describe('search pending state (#185)', () => {
+  it('search button shows spinner and disables while provider search isPending', async () => {
+    const { api: mockApi } = await import('@/lib/api');
+    // Make search hang (never resolve) to keep isPending=true
+    vi.mocked(mockApi.searchMetadata).mockReturnValue(new Promise(() => {}));
+
+    renderModal({ initial: makeEditState({ title: 'Test', author: 'Author' }) });
+
+    const searchBtn = screen.getByText('Search Providers').closest('button')!;
+    await userEvent.click(searchBtn);
+
+    await waitFor(() => {
+      expect(searchBtn).toBeDisabled();
+      expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
+    });
+  });
+
+  it('search button re-enables and spinner disappears when search completes', async () => {
+    const { api: mockApi } = await import('@/lib/api');
+    vi.mocked(mockApi.searchMetadata).mockResolvedValueOnce({
+      books: [makeMetadata({ title: 'Result' })],
+      authors: [],
+      series: [],
+    });
+
+    renderModal({ initial: makeEditState({ title: 'Test', author: 'Author' }) });
+
+    const searchBtn = screen.getByText('Search Providers').closest('button')!;
+    await userEvent.click(searchBtn);
+
+    await waitFor(() => {
+      expect(searchBtn).toBeEnabled();
+      expect(screen.queryByTestId('loading-spinner')).not.toBeInTheDocument();
+    });
+  });
+});
+
+describe('applyMetadata (#185)', () => {
+  it('metadata with no series clears series field to empty string', async () => {
+    const alt = makeMetadata({
+      title: 'No Series Book',
+      authors: [{ name: 'Author X' }],
+      series: undefined,
+      providerId: 'noseries',
+    });
+
+    renderModal({
+      initial: makeEditState({ series: 'Original Series', metadata: makeMetadata({ providerId: 'best' }) }),
+      alternatives: [alt],
+    });
+
+    // Series field initially has value
+    expect(screen.getByDisplayValue('Original Series')).toBeInTheDocument();
+
+    // Click the no-series alternative
+    await userEvent.click(screen.getByText('No Series Book'));
+
+    // Series field should be cleared
+    await waitFor(() => {
+      const seriesInput = screen.getByLabelText('Series') as HTMLInputElement;
+      expect(seriesInput.value).toBe('');
+    });
+  });
+
+  it('metadata with series populates series field from meta.series[0].name', async () => {
+    const alt = makeMetadata({
+      title: 'Series Book',
+      authors: [{ name: 'Author Y' }],
+      series: [{ name: 'Awesome Series', position: 1 }],
+      providerId: 'withseries',
+    });
+
+    renderModal({
+      initial: makeEditState({ series: '', metadata: makeMetadata({ providerId: 'best' }) }),
+      alternatives: [alt],
+    });
+
+    await userEvent.click(screen.getByText('Series Book'));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Awesome Series')).toBeInTheDocument();
+    });
+  });
+});
+
+describe('initialResults fallback (#185)', () => {
+  it('alternatives=undefined seeds searchResults with initial.metadata (results section renders)', () => {
+    const meta = makeMetadata({ title: 'Only Match', providerId: 'only' });
+
+    // Render without alternatives prop (undefined)
+    renderModal({
+      initial: makeEditState({ metadata: meta }),
+      // alternatives intentionally omitted → undefined
+    });
+
+    // "Other matches" heading only renders when searchResults is seeded (searchResults.length > 0)
+    expect(screen.getByText('Other matches')).toBeInTheDocument();
+    // Title appears in both the preview and the results list (2 occurrences proves seeding)
+    expect(screen.getAllByText('Only Match').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('alternatives=[] seeds searchResults with initial.metadata (results section renders)', () => {
+    const meta = makeMetadata({ title: 'Solo Match', providerId: 'solo' });
+
+    renderModal({
+      initial: makeEditState({ metadata: meta }),
+      alternatives: [],
+    });
+
+    // "Other matches" heading only renders when searchResults is seeded
+    expect(screen.getByText('Other matches')).toBeInTheDocument();
+    // Title appears in both preview and results list
+    expect(screen.getAllByText('Solo Match').length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('save behavior (#185)', () => {
+  it('save with selectedMetadata=null preserves manual edits only', async () => {
+    const onSave = vi.fn();
+
+    // Render with no metadata (selectedMetadata will be null)
+    renderModal({
+      onSave,
+      initial: makeEditState({ title: 'Manual Title', author: 'Manual Author', series: 'Manual Series' }),
+    });
+
+    await userEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Manual Title',
+        author: 'Manual Author',
+        series: 'Manual Series',
+        metadata: undefined,
+        coverUrl: undefined,
+        asin: undefined,
+      }));
+    });
+  });
+});
+

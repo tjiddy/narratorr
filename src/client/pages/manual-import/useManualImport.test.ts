@@ -873,6 +873,258 @@ describe('useManualImport', () => {
   });
 });
 
+describe('handleScan guards (#185)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.startMatchJob).mockResolvedValue({ jobId: 'job-123' });
+    vi.mocked(api.getMatchJob).mockResolvedValue({
+      id: 'job-123', status: 'matching', matched: 0, total: 2, results: [],
+    });
+    vi.mocked(api.cancelMatchJob).mockResolvedValue(undefined as never);
+  });
+
+  it('whitespace-only path does not trigger scan mutation', () => {
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+
+    act(() => { result.current.state.setScanPath('   '); });
+    act(() => { result.current.actions.handleScan(); });
+
+    expect(api.scanDirectory).not.toHaveBeenCalled();
+  });
+});
+
+describe('match merge — boundary values (#185)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.startMatchJob).mockResolvedValue({ jobId: 'job-123' });
+    vi.mocked(api.cancelMatchJob).mockResolvedValue(undefined as never);
+  });
+
+  it('bestMatch=null preserves existing edited state', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{
+          path: '/audiobooks/Book A',
+          confidence: 'none',
+          bestMatch: null,
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+      // Existing edited state preserved (not overwritten by null bestMatch)
+      expect(result.current.state.rows[0].edited.title).toBe('Book A');
+      expect(result.current.state.rows[0].edited.author).toBe('Author A');
+      expect(result.current.state.rows[0].matchResult?.confidence).toBe('none');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bestMatch with empty authors array falls back to existing row.edited.author', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{
+          path: '/audiobooks/Book A',
+          confidence: 'high',
+          bestMatch: { title: 'Official Title', authors: [], series: [{ name: 'S1', position: 1 }] },
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+      // Title from bestMatch, author falls back to original parsed value
+      expect(result.current.state.rows[0].edited.title).toBe('Official Title');
+      expect(result.current.state.rows[0].edited.author).toBe('Author A');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('confidence=none auto-unchecks the row (selected → false)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{
+          path: '/audiobooks/Book A',
+          confidence: 'none',
+          bestMatch: null,
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      // Row starts selected
+      expect(result.current.state.rows[0].selected).toBe(true);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+
+      // After match merge with confidence=none, row is auto-unchecked
+      expect(result.current.state.rows[0].selected).toBe(false);
+      expect(result.current.state.rows[0].matchResult?.confidence).toBe('none');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('handleEdit — auto-check and confidence upgrade (#185)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.startMatchJob).mockResolvedValue({ jobId: 'job-123' });
+    vi.mocked(api.getMatchJob).mockResolvedValue({
+      id: 'job-123', status: 'matching', matched: 0, total: 2, results: [],
+    });
+    vi.mocked(api.cancelMatchJob).mockResolvedValue(undefined as never);
+  });
+
+  it('unselected row with metadata provided auto-selects the row', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    // Deselect row 0 first
+    act(() => { result.current.actions.handleToggle(0); });
+    expect(result.current.state.rows[0].selected).toBe(false);
+
+    // Edit with metadata → should auto-select
+    act(() => {
+      result.current.actions.handleEdit(0, {
+        title: 'Book A', author: 'Author A', series: '',
+        metadata: MATCH_METADATA,
+      });
+    });
+
+    expect(result.current.state.rows[0].selected).toBe(true);
+  });
+
+  it('already-selected row with metadata provided remains selected', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    expect(result.current.state.rows[0].selected).toBe(true);
+
+    act(() => {
+      result.current.actions.handleEdit(0, {
+        title: 'Book A', author: 'Author A', series: '',
+        metadata: MATCH_METADATA,
+      });
+    });
+
+    expect(result.current.state.rows[0].selected).toBe(true);
+  });
+
+  it('selected row with metadata removed/null remains selected', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    expect(result.current.state.rows[0].selected).toBe(true);
+
+    // Edit without metadata (metadata undefined) → should remain selected
+    act(() => {
+      result.current.actions.handleEdit(0, {
+        title: 'Book A', author: 'Author A', series: '',
+      });
+    });
+
+    expect(result.current.state.rows[0].selected).toBe(true);
+  });
+
+  it('row with matchResult confidence=none and new metadata — confidence upgrades to medium', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+      vi.mocked(api.getMatchJob).mockResolvedValue({
+        id: 'job-123', status: 'completed', matched: 1, total: 1,
+        results: [{
+          path: '/audiobooks/Book A',
+          confidence: 'none',
+          bestMatch: null,
+          alternatives: [],
+        }],
+      });
+
+      const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+      act(() => { result.current.state.setScanPath('/audiobooks'); });
+      await act(async () => { result.current.actions.handleScan(); });
+      await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      expect(result.current.state.rows[0].matchResult?.confidence).toBe('none');
+
+      // Edit with metadata → confidence upgrades from 'none' to 'medium'
+      act(() => {
+        result.current.actions.handleEdit(0, {
+          title: 'Book A', author: 'Author A', series: '',
+          metadata: MATCH_METADATA,
+        });
+      });
+
+      expect(result.current.state.rows[0].matchResult?.confidence).toBe('medium');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('row with no matchResult and new metadata — no upgrade attempted, no crash', async () => {
+    vi.mocked(api.scanDirectory).mockResolvedValue(SCAN_RESULT);
+
+    const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
+    act(() => { result.current.state.setScanPath('/audiobooks'); });
+    await act(async () => { result.current.actions.handleScan(); });
+    await waitFor(() => { expect(result.current.state.rows).toHaveLength(2); });
+
+    // No match results have arrived → matchResult is undefined
+    expect(result.current.state.rows[0].matchResult).toBeUndefined();
+
+    act(() => {
+      result.current.actions.handleEdit(0, {
+        title: 'Book A', author: 'Author A', series: '',
+        metadata: MATCH_METADATA,
+      });
+    });
+
+    // No crash; matchResult stays undefined (no confidence upgrade without existing matchResult)
+    expect(result.current.state.rows[0].matchResult).toBeUndefined();
+    expect(result.current.state.rows[0].selected).toBe(true);
+  });
+});
+
 describe('grouped return shape (REACT-1 refactor)', () => {
   it('returned object has state, actions, mutations, counts keys with no top-level leaked values', () => {
     const { result } = renderHook(() => useManualImport(), { wrapper: createWrapper() });
