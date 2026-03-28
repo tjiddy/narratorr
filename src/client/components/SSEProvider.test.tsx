@@ -67,7 +67,7 @@ describe('SSEProvider', () => {
   });
 
   it('passes apiKey to useEventSource when auth config resolves', async () => {
-    const authConfig: AuthConfig = { mode: 'password', apiKey: 'test-api-key', localBypass: false };
+    const authConfig: AuthConfig = { mode: 'forms', apiKey: 'test-api-key', localBypass: false };
     vi.mocked(api.getAuthConfig).mockResolvedValue(authConfig);
     renderProvider();
 

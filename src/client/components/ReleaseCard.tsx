@@ -1,5 +1,5 @@
 import { formatBytes, type SearchResult } from '@/lib/api';
-import { calculateQuality, compareQuality, resolveBookQualityInputs, qualityTierBg } from '@core/utils/index.js';
+import { calculateQuality, compareQuality, qualityTierBg } from '@core/utils/index.js';
 import {
   DownloadIcon,
   LoadingSpinner,
