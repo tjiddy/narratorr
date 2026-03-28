@@ -160,6 +160,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 8. **Create the PR** via the GitHub CLI:
    - Write the PR body to a temp file (avoids shell escaping issues with multiline content):
+   - **Do NOT pass `--label` to `gh pr create`.** `Closes #<id>` goes in the PR body (the temp file), not as a label. Passing it as `--label` creates junk labels named "Closes #N".
    ```bash
    # Write PR body to temp file, then create PR
    node scripts/gh.ts pr create --title "#<id> <issue title>" --body-file <temp-file-path> --head "<branch-name>" --base main
