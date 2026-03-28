@@ -65,4 +65,4 @@ temp/
 .claude/cl/scratch.md
 
 # Stop hook runtime state (marker files)
-.claude/state/
+.narratorr/state/

@@ -28,7 +28,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 ## Steps
 
-0. **Initialize stop-gate state:** `mkdir -p .claude/state/respond-to-pr-review-<pr-number>/`
+0. **Initialize stop-gate state:** `mkdir -p .narratorr/state/respond-to-pr-review-<pr-number>/`
 
 1. **Fetch PR and checkout branch:**
    - Run `node scripts/gh.tspr view <pr-number> --json number,state,title,headRefName,baseRefName,author,headRefOid,url,labels,body --jq '"#\(.number) [\(.state | ascii_downcase)] \(.title)\n\(.headRefName) → \(.baseRefName) | author: \(.author.login) | sha: \(.headRefOid) | \(.url)\nlabels: \([.labels[].name] | join(", "))\n\n\(.body // "")"'` to get head branch and linked issue (`Refs #<id>`)
@@ -77,7 +77,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    - `blocking` findings can only be `fixed` or `disputed`
    - `suggestion` findings can be `fixed`, `accepted`, or `deferred`
 
-3b. **Write phase marker:** `echo done > .claude/state/respond-to-pr-review-<pr-number>/findings-addressed`
+3b. **Write phase marker:** `echo done > .narratorr/state/respond-to-pr-review-<pr-number>/findings-addressed`
 
 4. **Determine flow:**
 
@@ -88,7 +88,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
      - (c) If no repeatable check exists (e.g., prose observation about naming or clarity), note in the response comment what manual verification was performed.
    - Run quality gates: `node scripts/verify.ts`
      - If output starts with `VERIFY: fail` → fix issues and re-run until clean
-     - If output starts with `VERIFY: pass` → write phase marker: `echo done > .claude/state/respond-to-pr-review-<pr-number>/verify-complete` and continue to push RIGHT NOW. You still need to push, post the response comment, and update labels.
+     - If output starts with `VERIFY: pass` → write phase marker: `echo done > .narratorr/state/respond-to-pr-review-<pr-number>/verify-complete` and continue to push RIGHT NOW. You still need to push, post the response comment, and update labels.
    - **Pre-push audit:** Run `git status` and inspect the output for untracked or modified files that should have been committed — especially in `drizzle/`, `src/`, and `scripts/`. If you find uncommitted artifacts from your changes (e.g., migration meta files, generated code), stage and commit them before pushing. This catches files that `verify.ts` can't detect because they only matter in a clean checkout (like CI).
    - Push: `node scripts/git-push.ts origin <head-branch>`
    - Post response comment (see template below)
@@ -100,7 +100,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    - Post response comment with rebuttal reasoning
    - Find linked issue number from PR body (`Refs #<id>`, `closes #<id>`, or `fixes #<id>`)
    - Add `blocked` flag to issue: `node scripts/block.ts <id> "PR #<pr-number> has disputed blocking findings requiring human input. See PR comments."`
-   - Write stopped marker: `echo done > .claude/state/respond-to-pr-review-<pr-number>/stopped`
+   - Write stopped marker: `echo done > .narratorr/state/respond-to-pr-review-<pr-number>/stopped`
    - **STOP** — do not continue. Human must weigh in.
 
 5. **Post response comment on PR:**
@@ -156,8 +156,8 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    ```
    These will be pushed along with the code fixes in step 4's push. If there's nothing to commit (no new CL files), skip this step.
 
-8. **Write final phase marker and clean up:** `echo done > .claude/state/respond-to-pr-review-<pr-number>/response-posted`
-   - Then clean up state: `rm -rf .claude/state/respond-to-pr-review-<pr-number>/`
+8. **Write final phase marker and clean up:** `echo done > .narratorr/state/respond-to-pr-review-<pr-number>/response-posted`
+   - Then clean up state: `rm -rf .narratorr/state/respond-to-pr-review-<pr-number>/`
 
 9. **Report to main agent:** "**PR #<pr-number> (issue #<id>)** — <status: ready-for-re-review | needs-human-input> — <1-line summary of resolutions>"
 

@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const SCRIPT = resolve(__dirname, "stop-gate.ts");
-const STATE_DIR = resolve(__dirname, "../../.claude/state");
+const STATE_DIR = resolve(__dirname, "../../.narratorr/state");
 
 function runHook(
   skillName: string,

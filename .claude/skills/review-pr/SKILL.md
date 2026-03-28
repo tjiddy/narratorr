@@ -26,7 +26,7 @@ Reviews a PR by checking the diff against the linked issue's acceptance criteria
 
 ## Guardrails
 
-**This skill is READ-ONLY for source code.** Never stage, commit, or modify any files outside of `.claude/cl/` and `.claude/state/` (aliased as `.agents/cl/` and `.agents/state/` in some clones). The reviewer does not fix code — it reports findings for the author to address. If you find yourself editing source files, test files, config files, or anything under `src/`, STOP — you are doing the author's job.
+**This skill is READ-ONLY for source code.** Never stage, commit, or modify any files outside of `.claude/cl/` and `.narratorr/state/` (aliased as `.agents/cl/` and `.agents/state/` in some clones). The reviewer does not fix code — it reports findings for the author to address. If you find yourself editing source files, test files, config files, or anything under `src/`, STOP — you are doing the author's job.
 
 ## GitHub CLI
 
@@ -34,7 +34,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
 ## Steps
 
-0. **Initialize stop-gate state:** `mkdir -p .claude/state/review-pr-<pr-number>/`
+0. **Initialize stop-gate state:** `mkdir -p .narratorr/state/review-pr-<pr-number>/`
 
 0b. **Ensure latest branch state:** Run `git fetch origin` to get the latest commits on all branches. If this is a re-review (you have reviewed this PR before in this session), the author has pushed fixes since your last review — you MUST re-run ALL steps from scratch against the updated branch. Do not reuse prior results from your session context.
 
@@ -293,8 +293,8 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
     Skip this step if all new findings are on code introduced by fix commits (those are genuinely new issues, not round-1 misses).
 
 11c. **Write review file and phase marker:**
-    - Write the full review comment body (from the template below) to `.claude/state/review-pr-<pr-number>/review.md`
-    - Then write the phase marker: `echo done > .claude/state/review-pr-<pr-number>/review-complete`
+    - Write the full review comment body (from the template below) to `.narratorr/state/review-pr-<pr-number>/review.md`
+    - Then write the phase marker: `echo done > .narratorr/state/review-pr-<pr-number>/review-complete`
     - **Do NOT call `node scripts/gh.tspr comment` directly — the posting script is the only authorized posting mechanism.**
 
 12. **Post review comment on PR (MANDATORY — this is a GitHub API call, not stdout):**
@@ -411,7 +411,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
       2. If the rebase succeeds (no conflicts): `node scripts/git-push.ts --force-with-lease` then re-run `node scripts/merge.ts <pr-number>`
       3. If the rebase has conflicts: `git rebase --abort && git checkout main` — fall through to the `REBASE_CONFLICT` handling below
     - If merge output starts with `REBASE_CONFLICT:` (or a `REBASE:` rebase attempt failed with conflicts above):
-      1. Overwrite `.claude/state/review-pr-<pr-number>/review.md` with a conflict verdict:
+      1. Overwrite `.narratorr/state/review-pr-<pr-number>/review.md` with a conflict verdict:
          ```
          ## Verdict: needs-work
 
@@ -432,7 +432,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
     - Verify the PR shows `stage/fixes-pr` and the issue shows `status/in-progress`
     - **STOP.** Do not attempt to fix anything — that's the author's job via `/respond-to-pr-review`
 
-15. **Clean up state:** `rm -rf .claude/state/review-pr-<pr-number>/`
+15. **Clean up state:** `rm -rf .narratorr/state/review-pr-<pr-number>/`
     - The `posted` marker was already written by `post-review.ts` in step 12 or 14.
 
 16. **Report to main agent:** Overall verdict + outcome (merged or awaiting author response).

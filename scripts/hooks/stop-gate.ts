@@ -7,7 +7,7 @@
 //   2 — block stop (stderr is reinjected as a new prompt to force continuation)
 //
 // Reads JSON from stdin with: { stop_hook_active, last_assistant_message, ... }
-// Checks marker files in .claude/state/<skill>-<id>/ to determine progress.
+// Checks marker files in .narratorr/state/<skill>-<id>/ to determine progress.
 
 import { readdirSync, existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
@@ -18,7 +18,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // --- Types ---
 
 export interface PhaseDefinition {
-  /** Marker filename (e.g., "claim-complete") — checked in .claude/state/<skill>-<id>/ */
+  /** Marker filename (e.g., "claim-complete") — checked in .narratorr/state/<skill>-<id>/ */
   marker: string;
   /** Stderr message reinjected when this phase is the next incomplete one */
   prompt: string;
@@ -47,7 +47,7 @@ function readStdin(): Promise<string> {
 
 function getStateDir(_skillName: string): string {
   const root = resolve(__dirname, "../..");
-  return join(root, ".claude", "state");
+  return join(root, ".narratorr", "state");
 }
 
 /** Find the active state directory for a skill. Returns the full path or null. */
