@@ -142,6 +142,10 @@ describe('SecuritySettings', () => {
       expect(screen.getByText('API Key')).toBeInTheDocument();
     });
 
+    // Clear call count after initial load so we can assert refetch separately
+    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockClear();
+    (api.getAuthConfig as ReturnType<typeof vi.fn>).mockResolvedValue({ ...mockConfig, apiKey: 'new-key-67890' });
+
     // Click regenerate button
     const regenButton = screen.getByRole('button', { name: /regenerate api key/i });
     await user.click(regenButton);
@@ -157,6 +161,44 @@ describe('SecuritySettings', () => {
 
     await waitFor(() => {
       expect(api.authRegenerateApiKey).toHaveBeenCalled();
+    });
+
+    // Confirmation dialog should close after success
+    await waitFor(() => {
+      expect(screen.queryByText(/regenerating will invalidate/i)).not.toBeInTheDocument();
+    });
+
+    // Success toast and auth.config refetch triggered by queryKey invalidation
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('API key regenerated');
+      expect(api.getAuthConfig).toHaveBeenCalled();
+    });
+
+    // Refetched config renders the new key
+    await waitFor(() => {
+      expect(screen.getByText('new-key-67890')).toBeInTheDocument();
+    });
+  });
+
+  it('regenerate API key failure shows error toast', async () => {
+    (api.authRegenerateApiKey as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Server error'));
+    const user = userEvent.setup();
+    renderWithProviders(<SecuritySettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('API Key')).toBeInTheDocument();
+    });
+
+    const regenButton = screen.getByRole('button', { name: /regenerate api key/i });
+    await user.click(regenButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /confirm regenerate/i })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /confirm regenerate/i }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to regenerate API key');
     });
   });
 
@@ -547,6 +589,10 @@ describe('SecuritySettings', () => {
       // Both auth queries should be invalidated (refetched)
       await waitFor(() => expect(api.getAuthConfig).toHaveBeenCalled());
       await waitFor(() => expect(api.getAuthStatus).toHaveBeenCalled());
+      // onSuccess callback clears the confirmation dialog
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: /disable auth/i })).not.toBeInTheDocument();
+      });
     });
 
     it('switch to non-none mode fires mutation directly without confirmation dialog', async () => {
@@ -606,6 +652,10 @@ describe('SecuritySettings', () => {
       await user.click(screen.getByRole('button', { name: /disable auth/i }));
 
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Custom error'));
+      // onError callback clears the confirmation dialog
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: /disable auth/i })).not.toBeInTheDocument();
+      });
     });
   });
 
@@ -669,6 +719,17 @@ describe('SecuritySettings', () => {
       await user.click(screen.getByRole('checkbox', { name: /enable local bypass/i }));
 
       await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Local bypass setting updated'));
+    });
+
+    it('toggle error shows error toast', async () => {
+      (api.updateAuthConfig as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network error'));
+      const user = userEvent.setup();
+      renderWithProviders(<SecuritySettings />);
+
+      await waitFor(() => expect(screen.getByRole('checkbox', { name: /enable local bypass/i })).toBeInTheDocument());
+      await user.click(screen.getByRole('checkbox', { name: /enable local bypass/i }));
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to update local bypass'));
     });
   });
 

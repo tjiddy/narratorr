@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { useQuery } from '@tanstack/react-query';
 import { api, type RemotePathMapping } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { useMutationWithToast } from '@/hooks/useMutationWithToast';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { PlusIcon, XIcon, LoadingSpinner, ArrowRightIcon, FolderIcon } from '@/components/icons';
 
@@ -84,7 +84,6 @@ interface RemotePathMappingsSubsectionProps {
 }
 
 export function RemotePathMappingsSubsection({ clientId }: RemotePathMappingsSubsectionProps) {
-  const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RemotePathMapping | null>(null);
@@ -94,34 +93,28 @@ export function RemotePathMappingsSubsection({ clientId }: RemotePathMappingsSub
     queryFn: () => api.getRemotePathMappingsByClientId(clientId),
   });
 
-  const createMutation = useMutation({
+  const createMutation = useMutationWithToast({
     mutationFn: api.createRemotePathMapping,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.remotePathMappings(clientId) });
-      setShowForm(false);
-      toast.success('Path mapping added');
-    },
-    onError: () => toast.error('Failed to add path mapping'),
+    queryKey: queryKeys.remotePathMappings(clientId),
+    successMessage: 'Path mapping added',
+    errorMessage: 'Failed to add path mapping',
+    onSuccess: () => setShowForm(false),
   });
 
-  const updateMutation = useMutation({
+  const updateMutation = useMutationWithToast({
     mutationFn: ({ id, data }: { id: number; data: Partial<MappingFormData> }) =>
       api.updateRemotePathMapping(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.remotePathMappings(clientId) });
-      setEditingId(null);
-      toast.success('Path mapping updated');
-    },
-    onError: () => toast.error('Failed to update path mapping'),
+    queryKey: queryKeys.remotePathMappings(clientId),
+    successMessage: 'Path mapping updated',
+    errorMessage: 'Failed to update path mapping',
+    onSuccess: () => setEditingId(null),
   });
 
-  const deleteMutation = useMutation({
+  const deleteMutation = useMutationWithToast({
     mutationFn: api.deleteRemotePathMapping,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.remotePathMappings(clientId) });
-      toast.success('Path mapping removed');
-    },
-    onError: () => toast.error('Failed to delete path mapping'),
+    queryKey: queryKeys.remotePathMappings(clientId),
+    successMessage: 'Path mapping removed',
+    errorMessage: 'Failed to delete path mapping',
   });
 
   return (
