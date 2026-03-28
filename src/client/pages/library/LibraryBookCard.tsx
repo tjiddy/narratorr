@@ -47,7 +47,7 @@ export const LibraryBookCard = memo(function LibraryBookCard({
           <img
             src={resolveUrl(book.coverUrl)}
             alt={book.title}
-            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105 origin-bottom"
             loading="lazy"
             onError={onImageError}
           />
