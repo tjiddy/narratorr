@@ -52,6 +52,22 @@ function InfoCard({ icon, title, description, href, badge }: InfoCardProps) {
   );
 }
 
+function FeaturesSection() {
+  return (
+    <section className="mb-8">
+      <h3 className="font-display text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+        Features Worth Knowing
+      </h3>
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+        <InfoCard href="https://docs.narratorr.dev/guides/import-lists/" icon={<ListIcon className="w-5 h-5 text-primary" />} title="List Importing" description="Bulk-import books from lists and monitor them automatically." />
+        <InfoCard href="https://docs.narratorr.dev/guides/audio-processing/" icon={<CpuIcon className="w-5 h-5 text-primary" />} title="Post Processing" description="Auto-convert to M4B after import. Chapters, cover art, and more." />
+        <InfoCard href="https://docs.narratorr.dev/configuration/indexers/" icon={<NetworkIcon className="w-5 h-5 text-primary" />} title="Prowlarr Support" description="Connect Prowlarr to manage all your indexers from one place." />
+        <InfoCard href="https://docs.narratorr.dev/guides/discovery/" icon={<SparklesIcon className="w-5 h-5 text-primary" />} title="Recommendations" description="Personalised suggestions based on your library. Discover what to read next." />
+      </div>
+    </section>
+  );
+}
+
 function WarningBadge() {
   return (
     <span
@@ -66,7 +82,6 @@ function WarningBadge() {
 export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const scrollableRef = useRef<HTMLDivElement>(null);
-
   // Scroll lock: prevent background page from scrolling behind the modal
   useEffect(() => {
     if (!isOpen) return;
@@ -76,7 +91,6 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
       document.body.style.overflow = previous;
     };
   }, [isOpen]);
-
   // Scroll-to-top: reset inner scrollable container when modal opens
   useEffect(() => {
     if (!isOpen) return;
@@ -84,13 +98,10 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
       scrollableRef.current.scrollTop = 0;
     }
   }, [isOpen]);
-
   // Focus trap: keep keyboard focus inside the modal; no escape-to-dismiss
   // (onboarding requires explicit "Get Started" action)
   useFocusTrap(isOpen, modalRef);
-
   if (!isOpen) return null;
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 animate-fade-in"
@@ -181,37 +192,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
         </section>
 
         {/* Row 3–4 — Feature Highlights */}
-        <section className="mb-8">
-          <h3 className="font-display text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-            Features Worth Knowing
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-            <InfoCard
-              href="https://docs.narratorr.dev/guides/import-lists/"
-              icon={<ListIcon className="w-5 h-5 text-primary" />}
-              title="List Importing"
-              description="Bulk-import books from lists and monitor them automatically."
-            />
-            <InfoCard
-              href="https://docs.narratorr.dev/guides/audio-processing/"
-              icon={<CpuIcon className="w-5 h-5 text-primary" />}
-              title="Post Processing"
-              description="Auto-convert to M4B after import. Chapters, cover art, and more."
-            />
-            <InfoCard
-              href="https://docs.narratorr.dev/configuration/indexers/"
-              icon={<NetworkIcon className="w-5 h-5 text-primary" />}
-              title="Prowlarr Support"
-              description="Connect Prowlarr to manage all your indexers from one place."
-            />
-            <InfoCard
-              href="https://docs.narratorr.dev/guides/discovery/"
-              icon={<SparklesIcon className="w-5 h-5 text-primary" />}
-              title="Recommendations"
-              description="Personalised suggestions based on your library. Discover what to read next."
-            />
-          </div>
-        </section>
+        <FeaturesSection />
 
         {/* Footer */}
         <div className="flex flex-col items-center gap-3">
