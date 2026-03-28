@@ -133,20 +133,13 @@ describe('WelcomeModal', () => {
   it('clicking the backdrop does not dismiss the modal', async () => {
     const user = userEvent.setup();
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
-    // Click the outermost container (backdrop area) outside the dialog panel
-    const container = screen.getByRole('presentation');
-    await user.click(container);
+    // Modal has no onClose prop — backdrop click is a no-op by design
+    await user.click(screen.getByTestId('modal-backdrop'));
     expect(onDismiss).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
   // #169 — Welcome modal polish
-
-  // Backdrop opacity (AC1)
-  it('backdrop uses bg-black/85 opacity class (not bg-black/60)', () => {
-    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
-    expect(document.querySelector('.bg-black\\/85')).not.toBeNull();
-  });
 
   // Scroll-to-top (AC2)
   it('scrollable content container scrollTop is 0 when modal opens', () => {

@@ -13,6 +13,7 @@ import {
   SparklesIcon,
 } from '@/components/icons.js';
 import { useFocusTrap } from '@/hooks/useFocusTrap.js';
+import { Modal } from '@/components/Modal';
 
 interface WelcomeModalProps {
   isOpen: boolean;
@@ -110,20 +111,12 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
   }, [isOpen, isPending]);
   if (!isOpen) return null;
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 animate-fade-in"
-      role="presentation"
-    >
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/85 backdrop-blur-sm" />
-
-      {/* Modal */}
+    <Modal className="w-full max-w-4xl flex flex-col max-h-[85vh]">
       <div
         ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="welcome-modal-title"
-        className="relative w-full max-w-4xl max-h-[85vh] flex flex-col glass-card rounded-2xl shadow-2xl animate-fade-in-up"
         tabIndex={-1}
       >
         {/* Scrollable content */}
@@ -217,6 +210,6 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
         </div>
         </div>{/* end scrollable content */}
       </div>
-    </div>
+    </Modal>
   );
 }
