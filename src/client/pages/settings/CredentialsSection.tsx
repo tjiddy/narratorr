@@ -1,31 +1,26 @@
 import { useState, type FormEvent } from 'react';
-import { useMutation, type QueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
 import { api, ApiError } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ShieldIcon } from '@/components/icons';
 import { SettingsSection } from './SettingsSection';
+import { useMutationWithToast } from '@/hooks/useMutationWithToast';
 
 const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all';
 const btnPrimary = 'px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring';
 const btnDestructive = 'px-5 py-3 bg-destructive text-destructive-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring';
 
-function SetupForm({ queryClient }: { queryClient: QueryClient }) {
+function SetupForm() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
 
-  const mutation = useMutation({
+  const mutation = useMutationWithToast({
     mutationFn: () => api.authSetup(username, password),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
-      toast.success('Credentials created');
-      setUsername(''); setPassword(''); setConfirmPassword(''); setError('');
-    },
-    onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to create credentials');
-    },
+    queryKey: queryKeys.auth.status(),
+    successMessage: 'Credentials created',
+    errorMessage: (err) => err instanceof ApiError ? err.message : 'Failed to create credentials',
+    onSuccess: () => { setUsername(''); setPassword(''); setConfirmPassword(''); setError(''); },
   });
 
   function handleSubmit(e: FormEvent) {
@@ -57,9 +52,8 @@ function SetupForm({ queryClient }: { queryClient: QueryClient }) {
   );
 }
 
-function ChangePasswordForm({ currentUsername, queryClient, showRemoveButton, onRemove, isRemoving }: {
+function ChangePasswordForm({ currentUsername, showRemoveButton, onRemove, isRemoving }: {
   currentUsername?: string;
-  queryClient: QueryClient;
   showRemoveButton: boolean;
   onRemove: () => void;
   isRemoving: boolean;
@@ -70,16 +64,12 @@ function ChangePasswordForm({ currentUsername, queryClient, showRemoveButton, on
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [error, setError] = useState('');
 
-  const mutation = useMutation({
+  const mutation = useMutationWithToast({
     mutationFn: () => api.authChangePassword(currentPassword, newPassword, editUsername !== currentUsername ? editUsername : undefined),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
-      toast.success('Credentials updated');
-      setCurrentPassword(''); setNewPassword(''); setConfirmNewPassword(''); setError('');
-    },
-    onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to change password');
-    },
+    queryKey: queryKeys.auth.status(),
+    successMessage: 'Credentials updated',
+    errorMessage: (err) => err instanceof ApiError ? err.message : 'Failed to change password',
+    onSuccess: () => { setCurrentPassword(''); setNewPassword(''); setConfirmNewPassword(''); setError(''); },
   });
 
   function handleSubmit(e: FormEvent) {
@@ -131,22 +121,16 @@ export function CredentialsSection({
   hasUser,
   currentUsername,
   envBypass = false,
-  queryClient,
 }: {
   hasUser: boolean;
   currentUsername?: string;
   envBypass?: boolean;
-  queryClient: QueryClient;
 }) {
-  const deleteMutation = useMutation({
+  const deleteMutation = useMutationWithToast({
     mutationFn: () => api.authDeleteCredentials(),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.auth.status() });
-      toast.success('Credentials removed');
-    },
-    onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to remove credentials');
-    },
+    queryKey: queryKeys.auth.status(),
+    successMessage: 'Credentials removed',
+    errorMessage: (err) => err instanceof ApiError ? err.message : 'Failed to remove credentials',
   });
 
   return (
@@ -156,11 +140,10 @@ export function CredentialsSection({
       description={hasUser ? 'Manage your login credentials' : 'Create login credentials to enable authentication'}
     >
       {!hasUser ? (
-        <SetupForm queryClient={queryClient} />
+        <SetupForm />
       ) : (
         <ChangePasswordForm
           currentUsername={currentUsername}
-          queryClient={queryClient}
           showRemoveButton={envBypass && hasUser}
           onRemove={() => deleteMutation.mutate()}
           isRemoving={deleteMutation.isPending}

@@ -48,7 +48,6 @@ export function SecuritySettings() {
         hasUser={authStatus?.hasUser ?? false}
         currentUsername={authStatus?.username}
         envBypass={authStatus?.envBypass ?? false}
-        queryClient={queryClient}
       />
       <AuthModeSection
         mode={authConfig.mode}

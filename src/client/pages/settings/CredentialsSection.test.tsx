@@ -46,7 +46,8 @@ describe('CredentialsSection', () => {
   describe('setup form (hasUser=false)', () => {
     function renderSetup() {
       return renderWithProviders(
-        <CredentialsSection hasUser={false} queryClient={queryClient} />,
+        <CredentialsSection hasUser={false} />,
+        { queryClient },
       );
     }
 
@@ -168,7 +169,8 @@ describe('CredentialsSection', () => {
   describe('change password form (hasUser=true)', () => {
     function renderChangePassword(currentUsername = 'admin') {
       return renderWithProviders(
-        <CredentialsSection hasUser={true} currentUsername={currentUsername} queryClient={queryClient} />,
+        <CredentialsSection hasUser={true} currentUsername={currentUsername} />,
+        { queryClient },
       );
     }
 
@@ -308,17 +310,13 @@ describe('CredentialsSection', () => {
 
   describe('conditional rendering', () => {
     it('renders setup form when hasUser=false', () => {
-      renderWithProviders(
-        <CredentialsSection hasUser={false} queryClient={queryClient} />,
-      );
+      renderWithProviders(<CredentialsSection hasUser={false} />, { queryClient });
       expect(screen.getByRole('button', { name: 'Create Credentials' })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Change Password' })).not.toBeInTheDocument();
     });
 
     it('renders change password form when hasUser=true', () => {
-      renderWithProviders(
-        <CredentialsSection hasUser={true} currentUsername="admin" queryClient={queryClient} />,
-      );
+      renderWithProviders(<CredentialsSection hasUser={true} currentUsername="admin" />, { queryClient });
       expect(screen.getByRole('button', { name: 'Change Password' })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Create Credentials' })).not.toBeInTheDocument();
     });
@@ -326,9 +324,7 @@ describe('CredentialsSection', () => {
 
   describe('HTML constraint attributes', () => {
     it('setup form: username has required, password has required and no minLength', () => {
-      renderWithProviders(
-        <CredentialsSection hasUser={false} queryClient={queryClient} />,
-      );
+      renderWithProviders(<CredentialsSection hasUser={false} />, { queryClient });
       const username = screen.getByLabelText('Username');
       const password = screen.getByLabelText('Password');
       expect(username).toBeRequired();
@@ -337,17 +333,13 @@ describe('CredentialsSection', () => {
     });
 
     it('setup form: placeholder does not reference "8 characters"', () => {
-      renderWithProviders(
-        <CredentialsSection hasUser={false} queryClient={queryClient} />,
-      );
+      renderWithProviders(<CredentialsSection hasUser={false} />, { queryClient });
       const password = screen.getByLabelText('Password');
       expect(password.getAttribute('placeholder') ?? '').not.toMatch(/8 characters/i);
     });
 
     it('change password form: username required, current password required, new password required without minLength', () => {
-      renderWithProviders(
-        <CredentialsSection hasUser={true} currentUsername="admin" queryClient={queryClient} />,
-      );
+      renderWithProviders(<CredentialsSection hasUser={true} currentUsername="admin" />, { queryClient });
       const username = screen.getByLabelText('Username');
       const currentPw = screen.getByLabelText('Current Password');
       const newPw = screen.getByLabelText('New Password');
@@ -358,9 +350,7 @@ describe('CredentialsSection', () => {
     });
 
     it('change password form: placeholder does not reference "8 characters"', () => {
-      renderWithProviders(
-        <CredentialsSection hasUser={true} currentUsername="admin" queryClient={queryClient} />,
-      );
+      renderWithProviders(<CredentialsSection hasUser={true} currentUsername="admin" />, { queryClient });
       const newPw = screen.getByLabelText('New Password');
       expect(newPw.getAttribute('placeholder') ?? '').not.toMatch(/8 characters/i);
     });
@@ -368,25 +358,19 @@ describe('CredentialsSection', () => {
 
   describe('autocomplete attributes', () => {
     it('setup form: password input has autoComplete="new-password"', () => {
-      renderWithProviders(
-        <CredentialsSection hasUser={false} queryClient={queryClient} />,
-      );
+      renderWithProviders(<CredentialsSection hasUser={false} />, { queryClient });
       const password = screen.getByLabelText('Password');
       expect(password).toHaveAttribute('autoComplete', 'new-password');
     });
 
     it('change password form: current password has autoComplete="current-password"', () => {
-      renderWithProviders(
-        <CredentialsSection hasUser={true} currentUsername="admin" queryClient={queryClient} />,
-      );
+      renderWithProviders(<CredentialsSection hasUser={true} currentUsername="admin" />, { queryClient });
       const currentPw = screen.getByLabelText('Current Password');
       expect(currentPw).toHaveAttribute('autoComplete', 'current-password');
     });
 
     it('change password form: new password has autoComplete="new-password"', () => {
-      renderWithProviders(
-        <CredentialsSection hasUser={true} currentUsername="admin" queryClient={queryClient} />,
-      );
+      renderWithProviders(<CredentialsSection hasUser={true} currentUsername="admin" />, { queryClient });
       const newPw = screen.getByLabelText('New Password');
       expect(newPw).toHaveAttribute('autoComplete', 'new-password');
     });
@@ -394,9 +378,7 @@ describe('CredentialsSection', () => {
 
   describe('confirm password — setup form', () => {
     function renderSetup() {
-      return renderWithProviders(
-        <CredentialsSection hasUser={false} queryClient={queryClient} />,
-      );
+      return renderWithProviders(<CredentialsSection hasUser={false} />, { queryClient });
     }
 
     it('renders a Confirm Password field', () => {
@@ -446,7 +428,8 @@ describe('CredentialsSection', () => {
   describe('confirm password — change password form', () => {
     function renderChangePassword(currentUsername = 'admin') {
       return renderWithProviders(
-        <CredentialsSection hasUser={true} currentUsername={currentUsername} queryClient={queryClient} />,
+        <CredentialsSection hasUser={true} currentUsername={currentUsername} />,
+        { queryClient },
       );
     }
 
@@ -496,23 +479,17 @@ describe('CredentialsSection', () => {
 
   describe('remove credentials (envBypass=true)', () => {
     it('Remove Credentials button is visible when envBypass=true and hasUser=true', () => {
-      renderWithProviders(
-        <CredentialsSection hasUser={true} currentUsername="admin" envBypass={true} queryClient={queryClient} />,
-      );
+      renderWithProviders(<CredentialsSection hasUser={true} currentUsername="admin" envBypass={true} />, { queryClient });
       expect(screen.getByRole('button', { name: 'Remove Credentials' })).toBeInTheDocument();
     });
 
     it('Remove Credentials button is NOT visible when envBypass=false', () => {
-      renderWithProviders(
-        <CredentialsSection hasUser={true} currentUsername="admin" envBypass={false} queryClient={queryClient} />,
-      );
+      renderWithProviders(<CredentialsSection hasUser={true} currentUsername="admin" envBypass={false} />, { queryClient });
       expect(screen.queryByRole('button', { name: 'Remove Credentials' })).not.toBeInTheDocument();
     });
 
     it('Remove Credentials button is NOT visible when envBypass=true but hasUser=false', () => {
-      renderWithProviders(
-        <CredentialsSection hasUser={false} envBypass={true} queryClient={queryClient} />,
-      );
+      renderWithProviders(<CredentialsSection hasUser={false} envBypass={true} />, { queryClient });
       expect(screen.queryByRole('button', { name: 'Remove Credentials' })).not.toBeInTheDocument();
     });
 
@@ -520,9 +497,7 @@ describe('CredentialsSection', () => {
       const user = userEvent.setup();
       mockApi.authDeleteCredentials.mockResolvedValue({ success: true });
       const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
-      renderWithProviders(
-        <CredentialsSection hasUser={true} currentUsername="admin" envBypass={true} queryClient={queryClient} />,
-      );
+      renderWithProviders(<CredentialsSection hasUser={true} currentUsername="admin" envBypass={true} />, { queryClient });
       await user.click(screen.getByRole('button', { name: 'Remove Credentials' }));
       await waitFor(() => {
         expect(mockApi.authDeleteCredentials).toHaveBeenCalled();
@@ -535,9 +510,7 @@ describe('CredentialsSection', () => {
     it('Remove Credentials API failure shows error toast and preserves form state', async () => {
       const user = userEvent.setup();
       mockApi.authDeleteCredentials.mockRejectedValue(new ApiError(403, { error: 'Only available when AUTH_BYPASS is active' }));
-      renderWithProviders(
-        <CredentialsSection hasUser={true} currentUsername="admin" envBypass={true} queryClient={queryClient} />,
-      );
+      renderWithProviders(<CredentialsSection hasUser={true} currentUsername="admin" envBypass={true} />, { queryClient });
       await user.click(screen.getByRole('button', { name: 'Remove Credentials' }));
       await waitFor(() => {
         expect(toast.error).toHaveBeenCalled();
@@ -549,9 +522,7 @@ describe('CredentialsSection', () => {
 
   describe('edge cases', () => {
     it('currentUsername undefined with hasUser=true initializes edit username to empty string', () => {
-      renderWithProviders(
-        <CredentialsSection hasUser={true} queryClient={queryClient} />,
-      );
+      renderWithProviders(<CredentialsSection hasUser={true} />, { queryClient });
       expect(screen.getByLabelText('Username')).toHaveValue('');
     });
   });
