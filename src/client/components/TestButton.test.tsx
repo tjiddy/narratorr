@@ -69,4 +69,18 @@ describe('TestButton', () => {
     await user.click(screen.getByRole('button'));
     expect(onClick).not.toHaveBeenCalled();
   });
+
+  it('inline variant maps to sm size (px-3 py-2 text-sm)', () => {
+    renderWithProviders(
+      <TestButton testing={false} onClick={vi.fn()} variant="inline" />,
+    );
+    expect(screen.getByRole('button')).toHaveClass('px-3', 'py-2', 'text-sm');
+  });
+
+  it('form variant maps to md size (px-4 py-3)', () => {
+    renderWithProviders(
+      <TestButton testing={false} onClick={vi.fn()} variant="form" />,
+    );
+    expect(screen.getByRole('button')).toHaveClass('px-4', 'py-3');
+  });
 });

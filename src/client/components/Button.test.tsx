@@ -76,11 +76,12 @@ describe('Button', () => {
   });
 
   describe('loading state', () => {
-    it('loading=true renders LoadingSpinner in place of the icon', () => {
+    it('loading=true renders LoadingSpinner and hides the icon (replaced, not supplemented)', () => {
       render(<Button variant="primary" icon={ZapIcon} loading>Click</Button>);
       const btn = screen.getByRole('button');
-      // LoadingSpinner is rendered (has an svg), ZapIcon is replaced
-      expect(btn.querySelector('svg')).not.toBeNull();
+      expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
+      // Exactly one SVG — the spinner replaced the icon
+      expect(btn.querySelectorAll('svg')).toHaveLength(1);
     });
 
     it('loading=true implicitly disables the button so click handler does not fire', async () => {
@@ -152,6 +153,13 @@ describe('Button', () => {
       render(<Button variant="primary" onClick={onClick}>Click</Button>);
       await user.click(screen.getByRole('button'));
       expect(onClick).toHaveBeenCalledTimes(1);
+    });
+
+    it('forwards arbitrary HTML attributes (form, aria-label) via ...rest spread', () => {
+      render(<Button variant="primary" form="settings-form" aria-label="Save">Save</Button>);
+      const btn = screen.getByRole('button', { name: 'Save' });
+      expect(btn).toHaveAttribute('form', 'settings-form');
+      expect(btn).toHaveAttribute('aria-label', 'Save');
     });
   });
 
