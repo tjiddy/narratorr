@@ -274,6 +274,7 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
                   {searchResults.slice(0, 8).map((meta, i) => (
                     <button
                       key={meta.asin || meta.providerId || i}
+                      type="button"
                       onClick={() => applyMetadata(meta)}
                       className="w-full flex items-center gap-3 px-2.5 py-2 text-left rounded-xl hover:bg-muted/40 border border-transparent hover:border-border/30 transition-all group"
                     >
@@ -330,12 +331,14 @@ export function BookMetadataModal({ book, onSave, onClose, isSaving }: BookMetad
         {view === 'edit' && (
           <div className="px-6 py-4 border-t border-white/5 flex justify-end gap-3 shrink-0">
             <button
+              type="button"
               onClick={onClose}
               className="px-4 py-2 text-sm font-medium glass-card rounded-xl hover:border-primary/30 transition-all focus-ring"
             >
               Cancel
             </button>
             <button
+              type="button"
               onClick={handleSave}
               disabled={!canSave}
               className="px-5 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-ring"

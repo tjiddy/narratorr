@@ -189,6 +189,7 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
               {book.fileCount} file{book.fileCount !== 1 ? 's' : ''} &middot; {formatBytes(book.totalSize)}
             </span>
             <button
+              type="button"
               onClick={handleSearch}
               disabled={isPending || (!title.trim() && !author.trim())}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-all disabled:opacity-40 focus-ring ${
@@ -215,6 +216,7 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
               <div className="max-h-36 overflow-y-auto space-y-1 -mx-1 px-1">
                 {searchResults.slice(0, 6).map((meta, i) => (
                   <button
+                    type="button"
                     key={meta.providerId || i}
                     onClick={() => applyMetadata(meta)}
                     className="w-full flex items-center gap-2.5 px-2.5 py-2 text-left rounded-xl hover:bg-muted/40 transition-colors group"
@@ -265,12 +267,14 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
         {/* Footer */}
         <div className="px-6 py-4 border-t border-white/5 flex justify-end gap-3 shrink-0">
           <button
+            type="button"
             onClick={onClose}
             className="px-4 py-2 text-sm font-medium glass-card rounded-xl hover:border-primary/30 transition-all focus-ring"
           >
             Cancel
           </button>
           <button
+            type="button"
             onClick={handleSave}
             disabled={!title.trim()}
             className="px-5 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed focus-ring"

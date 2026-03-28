@@ -11,10 +11,6 @@ vi.mock('@/hooks/useLibrary', () => ({
   useBookIdentifiers: () => ({ data: mockIdentifiers }),
 }));
 
-// Mock the useEscapeKey hook
-vi.mock('@/hooks/useEscapeKey', () => ({
-  useEscapeKey: vi.fn(),
-}));
 
 // Mock the API
 vi.mock('@/lib/api', async () => {
@@ -440,6 +436,39 @@ describe('BookEditModal', () => {
     renderModal({ onClose });
     await userEvent.click(screen.getByTestId('modal-backdrop'));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('calls onClose when Escape is pressed', async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    renderModal({ onClose });
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('Search Providers, Cancel, and Save buttons have explicit type="button"', () => {
+    renderModal();
+
+    expect(screen.getByText('Search Providers').closest('button')).toHaveAttribute('type', 'button');
+    expect(screen.getByRole('button', { name: /^cancel$/i })).toHaveAttribute('type', 'button');
+    expect(screen.getByRole('button', { name: /^save$/i })).toHaveAttribute('type', 'button');
+  });
+
+  it('search result-selection buttons have explicit type="button"', async () => {
+    const { api: mockApi } = await import('@/lib/api');
+    vi.mocked(mockApi.searchMetadata).mockResolvedValueOnce({
+      books: [makeMetadata({ title: 'Result One' })],
+      authors: [],
+      series: [],
+    });
+
+    renderModal({ initial: makeEditState({ title: 'Test', author: 'Author' }) });
+    await userEvent.click(screen.getByText('Search Providers'));
+
+    await waitFor(() => {
+      const resultBtn = screen.getByText('Result One').closest('button');
+      expect(resultBtn).toHaveAttribute('type', 'button');
+    });
   });
 
   describe('duplicate detection via identifiers', () => {

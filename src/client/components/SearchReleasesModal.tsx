@@ -281,6 +281,7 @@ function UnsupportedSection({ titles, count }: { titles: string[]; count: number
   return (
     <div className="border border-dashed border-border/40 rounded-xl bg-muted/20 overflow-hidden">
       <button
+        type="button"
         onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-2 w-full px-4 py-2.5 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-muted/30 transition-colors duration-200"
       >
@@ -392,6 +393,7 @@ function ReleaseCard({
         {/* Actions */}
         <div className="shrink-0 flex flex-col items-end gap-2">
           <button
+            type="button"
             onClick={onGrab}
             disabled={!result.downloadUrl || isGrabbing}
             className="flex items-center gap-1.5 px-3 py-2 text-sm bg-primary text-primary-foreground font-medium rounded-lg hover:opacity-90 hover:shadow-glow disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 focus-ring"
@@ -404,6 +406,7 @@ function ReleaseCard({
             Grab
           </button>
           <button
+            type="button"
             onClick={onBlacklist}
             disabled={!result.infoHash || isBlacklisting}
             className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-ring rounded px-1.5 py-1"

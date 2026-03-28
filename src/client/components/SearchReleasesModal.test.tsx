@@ -213,6 +213,20 @@ describe('SearchReleasesModal', () => {
     });
   });
 
+  it('calls onClose when Escape is pressed', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse([]));
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />,
+    );
+
+    await user.keyboard('{Escape}');
+
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it('shows protocol badges on results', async () => {
     const mixedResults: SearchResult[] = [
       { ...mockResults[0], protocol: 'torrent' },
@@ -736,6 +750,27 @@ describe('SearchReleasesModal', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to blacklist: Server error');
     });
+  });
+
+  it('Grab, Blacklist, and unsupported-toggle buttons have explicit type="button"', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue(
+      searchResponse(mockResults, { count: 1, titles: ['Part "1" of "2"'] }),
+    );
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+
+    screen.getAllByText('Grab').forEach((el) => {
+      expect(el.closest('button')).toHaveAttribute('type', 'button');
+    });
+    screen.getAllByText('Blacklist').forEach((el) => {
+      expect(el.closest('button')).toHaveAttribute('type', 'button');
+    });
+    const toggleBtn = screen.getByText(/unsupported format/i).closest('button');
+    expect(toggleBtn).toHaveAttribute('type', 'button');
   });
 
   it('refresh button is disabled while query is fetching', () => {

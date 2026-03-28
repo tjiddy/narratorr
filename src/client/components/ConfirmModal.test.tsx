@@ -111,4 +111,12 @@ describe('ConfirmModal', () => {
     fireEvent.click(screen.getByTestId('modal-backdrop'));
     expect(onCancel).toHaveBeenCalledOnce();
   });
+
+  it('calls onCancel when Escape is pressed', async () => {
+    const onCancel = vi.fn();
+    const user = userEvent.setup();
+    render(<ConfirmModal {...defaultProps} onCancel={onCancel} />);
+    await user.keyboard('{Escape}');
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
 });
