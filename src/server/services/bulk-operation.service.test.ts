@@ -518,3 +518,57 @@ describe('BulkOperationService — convert batch', () => {
     expect(status?.total).toBe(1);
   });
 });
+
+describe('TTL cleanup', () => {
+  it('removes job from the jobs map after TTL expires', async () => {
+    vi.useFakeTimers();
+    try {
+      const { service, db } = createService();
+      // Return empty list — rename job completes immediately with 0 items
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      const jobId = await service.startRenameJob();
+
+      // Flush microtasks to let the async job work function complete
+      for (let i = 0; i < 10; i++) {
+        await vi.advanceTimersByTimeAsync(1);
+      }
+
+      expect(service.getJob(jobId)).not.toBeNull();
+      expect(service.getJob(jobId)!.status).toBe('completed');
+
+      // Advance past 10-minute TTL
+      vi.advanceTimersByTime(10 * 60 * 1000);
+
+      expect(service.getJob(jobId)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('job remains accessible before TTL expires', async () => {
+    vi.useFakeTimers();
+    try {
+      const { service, db } = createService();
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      const jobId = await service.startRenameJob();
+
+      for (let i = 0; i < 10; i++) {
+        await vi.advanceTimersByTimeAsync(1);
+      }
+
+      expect(service.getJob(jobId)!.status).toBe('completed');
+
+      // Advance 9 minutes — still within TTL
+      vi.advanceTimersByTime(9 * 60 * 1000);
+      expect(service.getJob(jobId)).not.toBeNull();
+
+      // Advance past the 10-minute mark
+      vi.advanceTimersByTime(2 * 60 * 1000);
+      expect(service.getJob(jobId)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
