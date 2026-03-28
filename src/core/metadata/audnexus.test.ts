@@ -381,7 +381,9 @@ describe('AudnexusProvider', () => {
         }),
       );
 
-      await expect(provider.getBook('B0030DL4GK')).rejects.toThrow(/redirect/i);
+      const error = await provider.getBook('B0030DL4GK').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(TransientError);
+      expect((error as TransientError).message).toMatch(/redirect/i);
     });
 
     it('getAuthor() on 302 with Location header throws TransientError with redirect message', async () => {
@@ -394,7 +396,9 @@ describe('AudnexusProvider', () => {
         }),
       );
 
-      await expect(provider.getAuthor('B001TEST')).rejects.toThrow(/redirect/i);
+      const error = await provider.getAuthor('B001TEST').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(TransientError);
+      expect((error as TransientError).message).toMatch(/redirect/i);
     });
 
     it('getBook() on 3xx with no Location header throws TransientError with redirect message', async () => {
@@ -404,7 +408,9 @@ describe('AudnexusProvider', () => {
         }),
       );
 
-      await expect(provider.getBook('B0030DL4GK')).rejects.toThrow(/redirect/i);
+      const error = await provider.getBook('B0030DL4GK').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(TransientError);
+      expect((error as TransientError).message).toMatch(/redirect/i);
     });
 
     it('getBook() on 2xx response returns data normally (regression)', async () => {

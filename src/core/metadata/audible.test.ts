@@ -683,10 +683,12 @@ describe('AudibleProvider', () => {
         }),
       );
 
-      await expect(provider.searchBooks('test')).rejects.toThrow(/redirect/i);
+      const error = await provider.searchBooks('test').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(TransientError);
+      expect((error as TransientError).message).toMatch(/redirect/i);
     });
 
-    it('searchBooks() rejects all 3xx codes (301, 303, 307, 308) with redirect message', async () => {
+    it('searchBooks() rejects all 3xx codes (301, 303, 307, 308) with TransientError and redirect message', async () => {
       for (const status of [301, 303, 307, 308]) {
         server.use(
           http.get('https://api.audible.com/1.0/catalog/products', () => {
@@ -697,7 +699,9 @@ describe('AudibleProvider', () => {
           }),
         );
 
-        await expect(provider.searchBooks('test')).rejects.toThrow(/redirect/i);
+        const error = await provider.searchBooks('test').catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(TransientError);
+        expect((error as TransientError).message).toMatch(/redirect/i);
       }
     });
 
@@ -708,7 +712,9 @@ describe('AudibleProvider', () => {
         }),
       );
 
-      await expect(provider.searchBooks('test')).rejects.toThrow(/redirect/i);
+      const error = await provider.searchBooks('test').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(TransientError);
+      expect((error as TransientError).message).toMatch(/redirect/i);
     });
 
     it('test() on 302 redirect returns { success: false } with redirect message', async () => {
