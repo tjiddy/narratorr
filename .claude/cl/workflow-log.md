@@ -1,5 +1,35 @@
 # Workflow Log
 
+## #169 Welcome modal polish: backdrop, scroll, clickable cards, copy — 2026-03-28
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #171
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 47 total (34 new + 3 updated focus-trap tests)
+- Quality gate runs: 2 (fail on attempt 1 due to `max-lines-per-function`; pass on attempt 2 after extracting `FeaturesSection`)
+- Fix iterations: 2 (lint line limit; test assertion fixes for icon class name and link name ambiguity)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Single-file change, all ACs well-specified, test plan comprehensive. Red/green TDD cycle worked cleanly.
+- Friction / issues encountered: (1) `max-lines-per-function: 150` triggered after adding useEffect + `data-testid` + 10 card links; fixed by extracting `FeaturesSection`. (2) `document.querySelector('.lucide-headphones')` returned null — custom SVG icons have no Lucide class names; fixed by testing `stroke-width` via `data-testid`. (3) `getByRole('link', { name: /library path/i })` matched multiple elements; fixed with `/Library path:/i`.
+
+### Token efficiency
+- Highest-token actions: Explore subagent, self-review subagent, coverage subagent
+- Avoidable waste: Read WelcomeModal source in both subagent and main context — duplication. For single-file changes, skip the Explore subagent and read source directly.
+- Suggestions: For simple single-component frontend changes, skip the Explore subagent and read source directly.
+
+### Infrastructure gaps
+- Repeated workarounds: `frontend-design` skill unavailable — noted in PR for reviewer (same as #81)
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. Custom SVG icons in `icons.tsx` have no Lucide class names — test icon swaps via `data-testid` + SVG `stroke-width` attribute, not `.lucide-*` class queries
+2. Converting card divs to `<a href>` changes useFocusTrap tabbable count — update ALL Tab/Shift-Tab wrap tests in the red phase before implementing
+3. `getByRole('link', { name: /library path/i })` can match multiple elements; use a distinctive anchor (e.g., `/Library path:/i` with colon)
+
+
 ## #162 Extract shared Button component with variant system — 2026-03-28
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #170
