@@ -98,7 +98,7 @@ export async function processAudioFiles(
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Audio processing failed';
-    const stderr = (error as { stderr?: string }).stderr;
+    const stderr = error !== null && typeof error === 'object' && 'stderr' in error ? (error as { stderr?: string }).stderr : undefined;
     return {
       success: false,
       error: stderr ? `${message}\nffmpeg stderr: ${stderr}` : message,

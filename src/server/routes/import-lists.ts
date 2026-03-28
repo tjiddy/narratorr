@@ -34,7 +34,7 @@ export async function importListsRoutes(app: FastifyInstance, importListService:
         return { libraries: data.libraries ?? [] };
       } catch (error: unknown) {
         return reply.status(502).send({
-          error: `Connection failed: ${(error as Error).message}`,
+          error: `Connection failed: ${getErrorMessage(error)}`,
         });
       }
     },

@@ -6,6 +6,7 @@ import { IMPORT_LIST_ADAPTER_FACTORIES } from '../../core/import-lists/index.js'
 import type { ImportListItem } from '../../core/import-lists/index.js';
 import type { MetadataService } from './metadata.service.js';
 import { encryptFields, decryptFields, resolveSentinelFields, getKey } from '../utils/secret-codec.js';
+import { getErrorMessage } from '../utils/error-message.js';
 import { slugify } from '../../core/index.js';
 
 /** Milliseconds per minute — used for sync interval calculations. */
@@ -153,7 +154,7 @@ export class ImportListService {
       try {
         await this.processItem(item, list);
       } catch (error: unknown) {
-        this.log.warn({ listId: list.id, title: item.title, error: (error as Error).message }, 'Failed to process import list item');
+        this.log.warn({ listId: list.id, title: item.title, error: getErrorMessage(error) }, 'Failed to process import list item');
       }
     }
   }
@@ -176,7 +177,7 @@ export class ImportListService {
         author: item.author || match.authors?.[0]?.name,
       };
     } catch (error: unknown) {
-      this.log.warn({ title: item.title, error: (error as Error).message }, 'Metadata enrichment failed');
+      this.log.warn({ title: item.title, error: getErrorMessage(error) }, 'Metadata enrichment failed');
       return { asin: item.asin, author: item.author };
     }
   }
