@@ -1,30 +1,30 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient, type UseMutationOptions } from '@tanstack/react-query';
 import { toast } from 'sonner';
 
 type QueryKey = readonly unknown[];
 
-export interface UseMutationWithToastConfig<TInput, TOutput> {
-  mutationFn: (input: TInput) => Promise<TOutput>;
+export interface UseMutationWithToastConfig<TData, TError, TVariables> {
+  mutationFn: NonNullable<UseMutationOptions<TData, TError, TVariables>['mutationFn']>;
   queryKey: QueryKey | QueryKey[];
   successMessage: string;
   errorMessage: string | ((error: unknown) => string);
-  onSuccess?: (data: TOutput, variables: TInput, context: unknown) => void;
-  onError?: (error: unknown, variables: TInput, context: unknown) => void;
+  onSuccess?: (data: TData, variables: TVariables, context: unknown) => void;
+  onError?: (error: unknown, variables: TVariables, context: unknown) => void;
 }
 
-export function useMutationWithToast<TInput, TOutput>({
+export function useMutationWithToast<TData = unknown, TError = Error, TVariables = void>({
   mutationFn,
   queryKey,
   successMessage,
   errorMessage,
   onSuccess,
   onError,
-}: UseMutationWithToastConfig<TInput, TOutput>) {
+}: UseMutationWithToastConfig<TData, TError, TVariables>) {
   const queryClient = useQueryClient();
 
   const keys: QueryKey[] = Array.isArray(queryKey[0]) ? (queryKey as QueryKey[]) : [queryKey as QueryKey];
 
-  return useMutation({
+  return useMutation<TData, TError, TVariables>({
     mutationFn,
     onSuccess: (data, variables, context) => {
       for (const key of keys) {
