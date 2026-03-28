@@ -7,15 +7,10 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { PackageIcon } from '@/components/icons';
-import { DEFAULT_SETTINGS } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, importSettingsSchema, stripDefaults } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
-const importFormSchema = z.object({
-  deleteAfterImport: z.boolean(),
-  minSeedTime: z.number().int().min(0),
-  minFreeSpaceGB: z.number().min(0),
-  redownloadFailed: z.boolean(),
-});
+const importFormSchema = stripDefaults(importSettingsSchema);
 
 type ImportFormData = z.infer<typeof importFormSchema>;
 
