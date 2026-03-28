@@ -1,6 +1,7 @@
 import type { TestResult } from '@/lib/api';
 import { TestResultMessage } from '@/components/TestResultMessage';
 import { TestButton } from '@/components/TestButton';
+import { Button } from '@/components/Button';
 import { PencilIcon, TrashIcon } from '@/components/icons';
 
 export interface IdTestResult extends TestResult {
@@ -63,14 +64,15 @@ export function SettingsCardShell({
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={PencilIcon}
             onClick={onEdit}
             aria-label={`Edit ${name}`}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium border border-border rounded-xl hover:bg-muted transition-all focus-ring"
           >
-            <PencilIcon className="w-4 h-4" />
             <span className="hidden sm:inline">Edit</span>
-          </button>
+          </Button>
           <TestButton
             testing={testingId === itemId}
             onClick={() => onTest?.(itemId)}
@@ -78,14 +80,15 @@ export function SettingsCardShell({
             disabled={testDisabled}
             title={testDisabledTitle}
           />
-          <button
+          <Button
+            variant="destructive"
+            size="sm"
+            icon={TrashIcon}
             onClick={onDelete}
             aria-label={`Delete ${name}`}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-destructive border border-destructive/30 rounded-xl hover:bg-destructive hover:text-destructive-foreground transition-all focus-ring"
           >
-            <TrashIcon className="w-4 h-4" />
             <span className="hidden sm:inline">Delete</span>
-          </button>
+          </Button>
         </div>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import { TestButton } from '@/components/TestButton';
-import { LoadingSpinner, PlusIcon, CheckIcon, XIcon } from '@/components/icons';
+import { Button } from '@/components/Button';
+import { PlusIcon, CheckIcon, XIcon } from '@/components/icons';
 
 interface SettingsFormActionsProps {
   isEdit: boolean;
@@ -32,32 +33,27 @@ export function SettingsFormActions({
         title={testDisabledTitle}
       />
       {isEdit && (
-        <button
+        <Button
+          variant="secondary"
+          size="md"
+          icon={XIcon}
           type="button"
           onClick={onCancel}
-          className="flex items-center gap-2 px-4 py-3 font-medium border border-border rounded-xl hover:bg-muted transition-all focus-ring"
         >
-          <XIcon className="w-4 h-4" />
           Cancel
-        </button>
+        </Button>
       )}
-      <button
+      <Button
+        variant="primary"
+        size="md"
+        icon={isEdit ? CheckIcon : PlusIcon}
+        loading={isPending}
         type="submit"
-        disabled={isPending}
-        className="flex items-center gap-2 px-5 py-3 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all focus-ring"
       >
-        {isPending ? (
-          <>
-            <LoadingSpinner className="w-4 h-4" />
-            {isEdit ? 'Saving...' : 'Adding...'}
-          </>
-        ) : (
-          <>
-            {isEdit ? <CheckIcon className="w-4 h-4" /> : <PlusIcon className="w-4 h-4" />}
-            {isEdit ? 'Save Changes' : `Add ${entityLabel}`}
-          </>
-        )}
-      </button>
+        {isPending
+          ? (isEdit ? 'Saving...' : 'Adding...')
+          : (isEdit ? 'Save Changes' : `Add ${entityLabel}`)}
+      </Button>
     </div>
   );
 }

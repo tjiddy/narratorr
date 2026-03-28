@@ -97,6 +97,14 @@ describe('ConfirmModal', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it('confirm button uses destructive variant styling; cancel button does not', () => {
+    render(<ConfirmModal {...defaultProps} />);
+    const confirmBtn = screen.getByText('Delete').closest('button')!;
+    const cancelBtn = screen.getByText('Cancel').closest('button')!;
+    expect(confirmBtn).toHaveClass('bg-destructive', 'text-destructive-foreground');
+    expect(cancelBtn).not.toHaveClass('bg-destructive');
+  });
+
   it('calls onCancel when the backdrop overlay is clicked', () => {
     const onCancel = vi.fn();
     const { container } = render(<ConfirmModal {...defaultProps} onCancel={onCancel} />);

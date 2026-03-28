@@ -1,4 +1,5 @@
-import { LoadingSpinner, ZapIcon } from '@/components/icons';
+import { Button } from '@/components/Button';
+import { ZapIcon } from '@/components/icons';
 
 interface TestButtonProps {
   testing: boolean;
@@ -10,40 +11,25 @@ interface TestButtonProps {
 
 export function TestButton({ testing, onClick, variant, disabled, title }: TestButtonProps) {
   const isDisabled = testing || disabled;
-  if (variant === 'inline') {
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={isDisabled}
-        title={title}
-        className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium border border-border rounded-xl hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-all focus-ring"
-      >
-        {testing ? <LoadingSpinner className="w-4 h-4" /> : <ZapIcon className="w-4 h-4" />}
-        <span className="hidden sm:inline">Test</span>
-      </button>
-    );
-  }
+  const size = variant === 'inline' ? 'sm' : 'md';
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <Button
+      variant="secondary"
+      size={size}
+      icon={ZapIcon}
+      loading={testing}
       disabled={isDisabled}
+      onClick={onClick}
       title={title}
-      className="flex items-center gap-2 px-4 py-3 font-medium border border-border rounded-xl hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-all focus-ring"
+      type="button"
+      className="disabled:hover:bg-transparent"
     >
-      {testing ? (
-        <>
-          <LoadingSpinner className="w-4 h-4" />
-          Testing...
-        </>
+      {variant === 'form' ? (
+        testing ? 'Testing...' : 'Test'
       ) : (
-        <>
-          <ZapIcon className="w-4 h-4" />
-          Test
-        </>
+        <span className="hidden sm:inline">Test</span>
       )}
-    </button>
+    </Button>
   );
 }

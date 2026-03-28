@@ -4,6 +4,7 @@ import {
   CheckCircleIcon,
   TrashIcon,
 } from '@/components/icons';
+import { Button } from '@/components/Button';
 import type { Download } from '@/lib/api';
 import { isTerminalStatus } from '../../../shared/download-status-registry.js';
 
@@ -16,28 +17,30 @@ function PendingActionButtons({ onApprove, onReject, isApproving, isRejecting }:
   return (
     <>
       {onApprove && (
-        <button
+        <Button
+          variant="success"
+          size="sm"
+          icon={CheckCircleIcon}
+          loading={isApproving}
           onClick={onApprove}
-          disabled={isApproving}
-          className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-success/10 text-success rounded-xl hover:bg-success hover:text-white disabled:opacity-50 transition-all focus-ring"
         >
-          <CheckCircleIcon className="w-4 h-4" />
           <span className="hidden sm:inline">
             {isApproving ? 'Approving...' : 'Approve'}
           </span>
-        </button>
+        </Button>
       )}
       {onReject && (
-        <button
+        <Button
+          variant="destructive"
+          size="sm"
+          icon={XCircleIcon}
+          loading={isRejecting}
           onClick={onReject}
-          disabled={isRejecting}
-          className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-destructive/10 text-destructive rounded-xl hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50 transition-all focus-ring"
         >
-          <XCircleIcon className="w-4 h-4" />
           <span className="hidden sm:inline">
             {isRejecting ? 'Rejecting...' : 'Reject'}
           </span>
-        </button>
+        </Button>
       )}
     </>
   );
@@ -69,8 +72,6 @@ export function DownloadActions({
   isRetrying?: boolean;
 }) {
   const isRetryable = download.status === 'failed' && download.bookId != null;
-  const retryLabel = isRetrying ? 'Retrying...' : 'Retry';
-  const deleteLabel = isDeleting ? 'Deleting...' : 'Delete';
 
   return (
     <div className="flex items-center gap-2 shrink-0">
@@ -83,40 +84,46 @@ export function DownloadActions({
         />
       )}
       {isRetryable && onRetry && (
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="sm"
+          icon={RefreshCwIcon}
+          loading={isRetrying}
           onClick={onRetry}
-          disabled={isRetrying}
-          className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-xl hover:opacity-90 disabled:opacity-50 transition-opacity focus-ring"
-        >
-          <RefreshCwIcon className="w-4 h-4" />
-          <span className="hidden sm:inline">{retryLabel}</span>
-        </button>
-      )}
-      {['queued', 'downloading', 'paused'].includes(download.status) &&
-        onCancel && (
-          <button
-            onClick={onCancel}
-            disabled={isCancelling}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-destructive/10 text-destructive rounded-xl hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50 transition-all focus-ring"
-          >
-            <XCircleIcon className="w-4 h-4" />
-            <span className="hidden sm:inline">
-              {isCancelling ? 'Cancelling...' : 'Cancel'}
-            </span>
-          </button>
-        )}
-      {isTerminalStatus(download.status) && onDelete && (
-        <button
           type="button"
-          onClick={onDelete}
-          disabled={isDeleting}
-          aria-label="Delete"
-          className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-destructive/10 text-destructive rounded-xl hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50 transition-all focus-ring"
         >
-          <TrashIcon className="w-4 h-4" />
-          <span className="hidden sm:inline">{deleteLabel}</span>
-        </button>
+          <span className="hidden sm:inline">
+            {isRetrying ? 'Retrying...' : 'Retry'}
+          </span>
+        </Button>
+      )}
+      {['queued', 'downloading', 'paused'].includes(download.status) && onCancel && (
+        <Button
+          variant="destructive"
+          size="sm"
+          icon={XCircleIcon}
+          loading={isCancelling}
+          onClick={onCancel}
+        >
+          <span className="hidden sm:inline">
+            {isCancelling ? 'Cancelling...' : 'Cancel'}
+          </span>
+        </Button>
+      )}
+      {isTerminalStatus(download.status) && onDelete && (
+        <Button
+          variant="destructive"
+          size="sm"
+          icon={TrashIcon}
+          loading={isDeleting}
+          onClick={onDelete}
+          aria-label="Delete"
+          type="button"
+        >
+          <span className="hidden sm:inline">
+            {isDeleting ? 'Deleting...' : 'Delete'}
+          </span>
+        </Button>
       )}
     </div>
   );
