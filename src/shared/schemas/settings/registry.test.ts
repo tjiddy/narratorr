@@ -547,6 +547,17 @@ describe('settingsRegistry', () => {
       });
       expect(result.success).toBe(true);
     });
+
+    it('stripDefaults(importSettingsSchema) accepts minSeedTime=0 (boundary)', () => {
+      const formSchema = stripDefaults(importSettingsSchema);
+      const result = formSchema.safeParse({
+        deleteAfterImport: false,
+        minSeedTime: 0,
+        minFreeSpaceGB: 0,
+        redownloadFailed: true,
+      });
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('settingsToFormData', () => {
