@@ -1509,6 +1509,9 @@ describe('LibraryScanService', () => {
         expect((mockDb as Record<string, ReturnType<typeof vi.fn>>).set).toHaveBeenCalledWith(
           expect.objectContaining({ status: 'missing' }),
         );
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({ eventType: 'import_failed', source: 'manual', bookId: 1, bookTitle: 'Book' }),
+        );
       });
       expect(mkdir).not.toHaveBeenCalled();
       expect(cp).not.toHaveBeenCalled();
@@ -1531,6 +1534,9 @@ describe('LibraryScanService', () => {
       await vi.waitFor(() => {
         expect((mockDb as Record<string, ReturnType<typeof vi.fn>>).set).toHaveBeenCalledWith(
           expect.objectContaining({ status: 'missing' }),
+        );
+        expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+          expect.objectContaining({ eventType: 'import_failed', source: 'manual', bookId: 1, bookTitle: 'Book' }),
         );
       });
       expect(rm).not.toHaveBeenCalled();
