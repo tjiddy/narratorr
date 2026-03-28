@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ImportCard, ImportSummaryBar, BookEditModal } from '@/components/manual-import';
 import { ArrowLeftIcon, CheckIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';
+import { makeRelativePath } from '../manual-import/pathUtils.js';
 import { useLibraryImport } from './useLibraryImport.js';
 
 // eslint-disable-next-line max-lines-per-function, complexity -- page orchestrator with scan, match, duplicate, register flows
@@ -38,13 +39,6 @@ export function LibraryImportPage() {
   const [showExisting, setShowExisting] = useState(false);
   const displayedRows = rows.filter(r => showExisting || !r.book.isDuplicate);
   const rowIndexMap = new Map(rows.map((r, i) => [r, i]));
-
-  // Compute relative path from library root
-  function getRelativePath(absolutePath: string): string | undefined {
-    if (!libraryRoot) return undefined;
-    const root = libraryRoot.endsWith('/') ? libraryRoot : `${libraryRoot}/`;
-    return absolutePath.startsWith(root) ? absolutePath.slice(root.length) : undefined;
-  }
 
   return (
     <div className="space-y-6">
@@ -184,7 +178,7 @@ export function LibraryImportPage() {
                   onToggle={() => handleToggle(rowIndexMap.get(row) ?? -1)}
                   onEdit={() => setEditIndex(rowIndexMap.get(row) ?? -1)}
                   lockDuplicates
-                  relativePath={getRelativePath(row.book.path)}
+                  relativePath={makeRelativePath(row.book.path, libraryRoot ?? '')}
                 />
               ))}
             </div>
