@@ -203,9 +203,7 @@ describe('SearchReleasesModal', () => {
       <SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />,
     );
 
-    // Click the backdrop (outermost overlay div)
-    const backdrop = screen.getByText('Releases for: The Way of Kings').closest('.fixed') as HTMLElement;
-    await user.click(backdrop);
+    await user.click(screen.getByTestId('modal-backdrop'));
 
     await waitFor(() => {
       expect(onClose).toHaveBeenCalled();
@@ -998,6 +996,70 @@ describe('SearchReleasesModal unsupported results', () => {
 
       // mock formatBytes: (500*1024*1024 / 1024^3).toFixed(1) = "0.5 GB"
       expect(screen.getByText('0.5 GB')).toBeInTheDocument();
+    });
+  });
+
+  describe('nested ConfirmModal stacking', () => {
+    it('inner ConfirmModal is interactive and visible while SearchReleasesModal is open', async () => {
+      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      vi.mocked(api.searchGrab).mockRejectedValue(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }));
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+      );
+
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      // ConfirmModal appears above SearchReleasesModal
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+
+      // SearchReleasesModal content is still present
+      expect(screen.getByText('Releases for: The Way of Kings')).toBeInTheDocument();
+
+      // ConfirmModal Cancel button is interactive
+      await user.click(screen.getByText('Cancel'));
+
+      // After cancel, ConfirmModal is dismissed but SearchReleasesModal remains
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: /replace/i })).not.toBeInTheDocument();
+      });
+      expect(screen.getByText('Releases for: The Way of Kings')).toBeInTheDocument();
+    });
+
+    it('clicking ConfirmModal backdrop closes only the inner ConfirmModal, not SearchReleasesModal', async () => {
+      vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+      vi.mocked(api.searchGrab).mockRejectedValue(new MockApiError(409, { code: 'ACTIVE_DOWNLOAD_EXISTS' }));
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+
+      renderWithProviders(
+        <SearchReleasesModal isOpen={true} book={mockBook} onClose={onClose} />,
+      );
+
+      await screen.findByText('The Way of Kings [Unabridged]');
+      await user.click(screen.getAllByText('Grab')[0]);
+
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: /replace/i })).toBeInTheDocument();
+      });
+
+      // Two backdrops: SearchReleasesModal's and ConfirmModal's (ConfirmModal is second in DOM)
+      const backdrops = screen.getAllByTestId('modal-backdrop');
+      expect(backdrops).toHaveLength(2);
+      await user.click(backdrops[1]);
+
+      // ConfirmModal closes
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: /replace/i })).not.toBeInTheDocument();
+      });
+      // SearchReleasesModal's onClose was NOT called
+      expect(onClose).not.toHaveBeenCalled();
+      // SearchReleasesModal remains open
+      expect(screen.getByText('Releases for: The Way of Kings')).toBeInTheDocument();
     });
   });
 });

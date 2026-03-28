@@ -18,6 +18,7 @@ import {
   ChevronDownIcon,
 } from '@/components/icons';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { Modal } from '@/components/Modal';
 import { CoverImage } from '@/components/CoverImage';
 import { ProtocolBadge } from '@/components/ProtocolBadge';
 import { ConfirmModal } from '@/components/ConfirmModal';
@@ -150,33 +151,11 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
 
   return (
     <>
-    <ConfirmModal
-      isOpen={pendingReplace !== null}
-      title="Replace active download?"
-      message={`"${pendingReplace?.title ?? ''}" already has an active download. Replace it with this release?`}
-      confirmLabel="Replace"
-      cancelLabel="Cancel"
-      onConfirm={() => {
-        if (pendingReplace) {
-          grabMutation.mutate({ ...pendingReplace, replaceExisting: true });
-        }
-      }}
-      onCancel={() => setPendingReplace(null)}
-    />
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"
-      onClick={onClose}
-    >
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-
-      {/* Modal */}
+    <Modal onClose={onClose} className="w-full max-w-3xl max-h-[85vh] flex flex-col">
       <div
         ref={modalRef}
         role="dialog"
         aria-modal="true"
-        className="relative w-full max-w-3xl max-h-[85vh] flex flex-col glass-card rounded-2xl shadow-2xl animate-fade-in-up"
-        onClick={(e) => e.stopPropagation()}
         tabIndex={-1}
       >
         {/* Header */}
@@ -191,6 +170,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
           </div>
           <div className="flex items-center gap-2 shrink-0 ml-4">
             <button
+              type="button"
               onClick={() => refetch()}
               disabled={isFetching}
               className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors focus-ring"
@@ -199,6 +179,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
               <RefreshIcon className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
             </button>
             <button
+              type="button"
               onClick={onClose}
               className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors focus-ring"
               aria-label="Close modal"
@@ -273,7 +254,20 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
           )}
         </div>
       </div>
-    </div>
+    </Modal>
+    <ConfirmModal
+      isOpen={pendingReplace !== null}
+      title="Replace active download?"
+      message={`"${pendingReplace?.title ?? ''}" already has an active download. Replace it with this release?`}
+      confirmLabel="Replace"
+      cancelLabel="Cancel"
+      onConfirm={() => {
+        if (pendingReplace) {
+          grabMutation.mutate({ ...pendingReplace, replaceExisting: true });
+        }
+      }}
+      onCancel={() => setPendingReplace(null)}
+    />
     </>
   );
 }
