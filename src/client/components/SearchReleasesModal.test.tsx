@@ -748,6 +748,64 @@ describe('SearchReleasesModal', () => {
     expect(screen.getByLabelText('Refresh results')).toBeDisabled();
   });
 
+  it('refresh button click triggers a refetch', async () => {
+    vi.mocked(api.searchBooks)
+      .mockResolvedValueOnce(searchResponse(mockResults))
+      .mockResolvedValue(searchResponse([]));
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+    await user.click(screen.getByLabelText('Refresh results'));
+
+    await waitFor(() => {
+      expect(api.searchBooks).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('grab buttons are all disabled while a grab mutation is pending', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    vi.mocked(api.searchGrab).mockReturnValue(new Promise(() => {})); // never resolves
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+    const grabButtons = screen.getAllByText('Grab');
+    await user.click(grabButtons[0]);
+
+    await waitFor(() => {
+      screen.getAllByText('Grab').forEach((btn) => {
+        expect(btn.closest('button')).toBeDisabled();
+      });
+    });
+  });
+
+  it('blacklist buttons are all disabled while a blacklist mutation is pending', async () => {
+    vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
+    vi.mocked(api.addToBlacklist).mockReturnValue(new Promise(() => {})); // never resolves
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <SearchReleasesModal isOpen={true} book={mockBook} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('The Way of Kings [Unabridged]');
+    const blacklistButtons = screen.getAllByText('Blacklist');
+    await user.click(blacklistButtons[0]);
+
+    await waitFor(() => {
+      screen.getAllByText('Blacklist').forEach((btn) => {
+        expect(btn.closest('button')).toBeDisabled();
+      });
+    });
+  });
+
   it('invalidates books and activity queries on successful grab', async () => {
     vi.mocked(api.searchBooks).mockResolvedValue(searchResponse(mockResults));
     vi.mocked(api.searchGrab).mockResolvedValue({
