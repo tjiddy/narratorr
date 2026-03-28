@@ -113,4 +113,13 @@ describe('BookContextMenu', () => {
       expect(props.onClose).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('accessibility', () => {
+    it('all menu items have the focus-ring utility class applied', () => {
+      renderMenu();
+      const items = screen.getAllByRole('menuitem');
+      expect(items.length).toBeGreaterThan(0);
+      items.forEach((item) => expect(item).toHaveClass('focus-ring'));
+    });
+  });
 });
