@@ -8,8 +8,10 @@ import {
   updateSettingsSchema,
   updateSettingsFormSchema,
   settingsToFormData,
+  stripDefaults,
   type AppSettings,
 } from './registry.js';
+import { importSettingsSchema } from './import.js';
 import { processingSettingsSchema } from './processing.js';
 
 describe('settingsRegistry', () => {
@@ -524,6 +526,36 @@ describe('settingsRegistry', () => {
     it('form schema accepts fields when all values are explicitly provided', () => {
       // Proving that stripDefaults didn't break the schema — full values still pass
       const result = updateSettingsFormSchema.safeParse(DEFAULT_SETTINGS);
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('stripDefaults (direct export)', () => {
+    it('stripDefaults(importSettingsSchema) rejects empty object (defaults not silently filled)', () => {
+      const formSchema = stripDefaults(importSettingsSchema);
+      const result = formSchema.safeParse({});
+      expect(result.success).toBe(false);
+    });
+
+    it('stripDefaults(importSettingsSchema) accepts fully-provided values', () => {
+      const formSchema = stripDefaults(importSettingsSchema);
+      const result = formSchema.safeParse({
+        deleteAfterImport: false,
+        minSeedTime: 60,
+        minFreeSpaceGB: 5,
+        redownloadFailed: true,
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('stripDefaults(importSettingsSchema) accepts minSeedTime=0 (boundary)', () => {
+      const formSchema = stripDefaults(importSettingsSchema);
+      const result = formSchema.safeParse({
+        deleteAfterImport: false,
+        minSeedTime: 0,
+        minFreeSpaceGB: 0,
+        redownloadFailed: true,
+      });
       expect(result.success).toBe(true);
     });
   });

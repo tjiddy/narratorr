@@ -132,7 +132,7 @@ export const CATEGORY_SCHEMAS = Object.fromEntries(
 // Form schema derivation
 // ---------------------------------------------------------------------------
 
-function stripDefaults(schema: z.ZodObject<z.ZodRawShape>) {
+export function stripDefaults(schema: z.ZodObject<z.ZodRawShape>) {
   const newShape: Record<string, z.ZodType> = {};
   for (const [key, field] of Object.entries(schema.shape)) {
     // Zod v4: shape entries are $ZodType (internal), cast for public ZodType compat

@@ -22,4 +22,5 @@ export {
   type UpdateSettingsInput,
   type UpdateSettingsFormData,
   settingsToFormData,
+  stripDefaults,
 } from './registry.js';
