@@ -336,4 +336,69 @@ describe('LibraryImportPage (#133)', () => {
       });
     });
   });
+
+  describe('relative path computation (AC1: uses segment-based pathUtils, not startsWith)', () => {
+    it('passes relative portion as relativePath prop to ImportCard when book path is inside library root', async () => {
+      mockApi.scanDirectory.mockResolvedValue({
+        discoveries: [
+          { path: '/audiobooks/AuthorA/Book1', parsedTitle: 'Book One', parsedAuthor: 'Author A', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
+        ],
+        totalFolders: 1,
+      });
+
+      renderWithProviders(<LibraryImportPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('AuthorA/Book1')).toBeInTheDocument();
+      });
+    });
+
+    it('passes undefined as relativePath when book path is a sibling of the library root', async () => {
+      mockApi.scanDirectory.mockResolvedValue({
+        discoveries: [
+          { path: '/audiobooks-old/AuthorB/Book2', parsedTitle: 'Book Two', parsedAuthor: 'Author B', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
+        ],
+        totalFolders: 1,
+      });
+
+      renderWithProviders(<LibraryImportPage />);
+
+      // Sibling path: relativePath is undefined, so ImportCard falls back to the last 3 path segments
+      await waitFor(() => {
+        expect(screen.getByText('audiobooks-old/AuthorB/Book2')).toBeInTheDocument();
+      });
+    });
+
+    it('passes undefined as relativePath when book path uses .. traversal that escapes library root', async () => {
+      // /audiobooks/../secret/Author/Book normalizes to /secret/Author/Book (outside /audiobooks)
+      // Old startsWith() bug: '/audiobooks/../secret/Author/Book'.startsWith('/audiobooks/') === true → would show '../secret/Author/Book'
+      // Fixed makeRelativePath: normalizes segments → returns undefined → ImportCard falls back to 3-part shortpath
+      mockApi.scanDirectory.mockResolvedValue({
+        discoveries: [
+          { path: '/audiobooks/../secret/Author/Book', parsedTitle: 'Secret Book', parsedAuthor: 'Author', parsedSeries: null, fileCount: 1, totalSize: 50000, isDuplicate: false },
+        ],
+        totalFolders: 1,
+      });
+
+      renderWithProviders(<LibraryImportPage />);
+
+      // Fallback: last 3 segments of raw path = ['secret', 'Author', 'Book'] → 'secret/Author/Book'
+      // (NOT '../secret/Author/Book' which the buggy startsWith() code would produce)
+      await waitFor(() => {
+        expect(screen.getByText('secret/Author/Book')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('../secret/Author/Book')).not.toBeInTheDocument();
+    });
+
+    it('passes undefined as relativePath when library root is not set in settings', async () => {
+      mockApi.getSettings.mockResolvedValue(mockSettingsNoPath);
+
+      renderWithProviders(<LibraryImportPage />);
+
+      // No library path → page shows the no-path message; no ImportCards are rendered
+      await waitFor(() => {
+        expect(screen.getByText(/no library path/i)).toBeInTheDocument();
+      });
+    });
+  });
 });

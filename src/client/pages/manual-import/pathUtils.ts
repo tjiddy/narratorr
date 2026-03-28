@@ -41,3 +41,29 @@ export function isPathInsideLibrary(scanPath: string, libraryPath: string): bool
   // scanning the library root itself would rediscover already-managed books
   return true;
 }
+
+/**
+ * Returns the relative path from libraryPath to absolutePath, or undefined if
+ * absolutePath is not strictly inside libraryPath (non-ancestry, exact-root, or
+ * empty/whitespace inputs all return undefined).
+ *
+ * Uses segment-prefix comparison — same POSIX-safe normalization as
+ * isPathInsideLibrary() — so startsWith() false-positives and '..' traversals
+ * are both handled correctly.
+ */
+export function makeRelativePath(absolutePath: string, libraryPath: string): string | undefined {
+  if (!absolutePath?.trim() || !libraryPath?.trim()) return undefined;
+
+  const rootSegments = normalizeSegments(libraryPath);
+  const pathSegments = normalizeSegments(absolutePath);
+
+  // Must be strictly inside (more segments than root), not equal or shorter
+  if (pathSegments.length <= rootSegments.length) return undefined;
+
+  // All root segments must match the leading path segments
+  for (let i = 0; i < rootSegments.length; i++) {
+    if (rootSegments[i] !== pathSegments[i]) return undefined;
+  }
+
+  return pathSegments.slice(rootSegments.length).join('/');
+}
