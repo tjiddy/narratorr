@@ -18,7 +18,7 @@ const prNum = process.argv[2];
 if (!prNum) die("ERROR: usage: node scripts/post-review.ts <pr-number> [--force]");
 const force = process.argv.includes("--force");
 
-const stateDir = join(root, ".claude", "state", `review-pr-${prNum}`);
+const stateDir = join(root, ".narratorr", "state", `review-pr-${prNum}`);
 const reviewPath = join(stateDir, "review.md");
 const reviewCompleteMarker = join(stateDir, "review-complete");
 const postedMarker = join(stateDir, "posted");

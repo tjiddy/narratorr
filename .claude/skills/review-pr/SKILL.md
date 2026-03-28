@@ -28,6 +28,8 @@ Reviews a PR by checking the diff against the linked issue's acceptance criteria
 
 **This skill is READ-ONLY for source code.** Never stage, commit, or modify any files outside of `.narratorr/cl/` and `.narratorr/state/` (aliased as `.agents/cl/` and `.agents/state/` in some clones). The reviewer does not fix code — it reports findings for the author to address. If you find yourself editing source files, test files, config files, or anything under `src/`, STOP — you are doing the author's job.
 
+**Do NOT run tests, builds, or linting locally.** `node_modules` is not available in detached worktrees and `pnpm exec` will fail. This review is static analysis only — read code and diffs, do not execute anything. CI handles test execution.
+
 ## GitHub CLI
 
 All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
