@@ -55,7 +55,7 @@ function InfoCard({ icon, title, description, href, badge }: InfoCardProps) {
 
 function FeaturesSection() {
   return (
-    <section className="mb-8">
+    <section className="mb-8 [@media(max-height:56rem)]:hidden">
       <h3 className="font-display text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
         Features Worth Knowing
       </h3>
