@@ -153,21 +153,10 @@ async function waitForLibraryLoad() {
   });
 }
 
-async function openOverflowMenu(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole('button', { name: /more actions/i }));
-}
-
 async function switchToTableView(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByLabelText('Table view'));
   await waitFor(() => {
     expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'true');
-  });
-}
-
-async function switchToGridView(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByLabelText('Grid view'));
-  await waitFor(() => {
-    expect(screen.getByLabelText('Grid view')).toHaveAttribute('aria-pressed', 'true');
   });
 }
 
@@ -1714,7 +1703,7 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
 
   it('bulk delete with deleteFiles passes { deleteFiles: true } to mutation', async () => {
     mockLibraryData(booksWithPaths);
-    vi.mocked(api.deleteBook).mockResolvedValue(undefined);
+    vi.mocked(api.deleteBook).mockResolvedValue({ success: true });
     const user = userEvent.setup();
 
     renderWithProviders(<LibraryPage />);
@@ -1750,7 +1739,7 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
 
   it('bulk delete without deleteFiles passes undefined (no deleteFiles) to mutation', async () => {
     mockLibraryData(booksWithPaths);
-    vi.mocked(api.deleteBook).mockResolvedValue(undefined);
+    vi.mocked(api.deleteBook).mockResolvedValue({ success: true });
     const user = userEvent.setup();
 
     renderWithProviders(<LibraryPage />);
@@ -1949,7 +1938,7 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
 
   it('opens releases modal and closes menu when Search Releases is clicked', async () => {
     mockLibraryData(mockBooks);
-    vi.mocked(api.searchBooks).mockResolvedValue([]);
+    vi.mocked(api.searchBooks).mockResolvedValue({ results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } });
     const user = userEvent.setup();
 
     renderWithProviders(<LibraryPage />);
