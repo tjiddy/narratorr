@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #196 Fix computeSeriesGaps fractional position bug — 2026-03-29
+**Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #203
+
+### Metrics
+- Files changed: 5 | Tests added/modified: 17 (13 new unit, 4 updated integration)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (grid rounding used zero-origin instead of base-offset)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean bug with clear spec. Red/green TDD caught the base-offset rounding issue immediately. All 118 discovery tests passed after fix.
+- Friction / issues encountered: Initial `computeSeriesGaps` rewrite used `Math.round(i / step) * step` which snaps to zero-origin grid — produced integer gaps [3, 4] instead of fractional [3.5] for base 1.5. Fixed to `base + Math.round((i - base) / step) * step`.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (reading full source of 4 files)
+- Avoidable waste: None — straightforward bug fix
+- Suggestions: For pure-function bugs, unit tests are sufficient context; integration test blast radius check was the main value-add
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. Floating-point grid generation must use base-relative rounding, not zero-origin — `base + Math.round((i - base) / step) * step` (see `fp-grid-rounding-base-offset.md`)
+2. Separating continuation from missingPositions requires updating all filter consumers, not just the producer — downstream `includes()` calls silently break (see `continuation-position-separation.md`)
+3. The old code pushed `maxOwned + 1` into missingPositions — separating it changes the semantic contract for all consumers
+
 ## #183 Test coverage: Library page components — 2026-03-29
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #195
