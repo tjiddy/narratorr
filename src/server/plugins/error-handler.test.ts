@@ -14,7 +14,7 @@ import { RestoreUploadError } from '../services/backup.service.js';
 import { QualityGateServiceError } from '../services/quality-gate.service.js';
 import { EventHistoryServiceError } from '../services/event-history.service.js';
 import { MergeError } from '../services/merge.service.js';
-import { DownloadError } from '../services/download.service.js';
+import { DownloadError, DuplicateDownloadError } from '../services/download.service.js';
 import { TaskRegistryError } from '../services/task-registry.js';
 
 function createTestApp() {
@@ -49,6 +49,8 @@ function createTestApp() {
   app.get('/throw-download-invalid-status', async () => { throw new DownloadError('Download 1 is not in failed state', 'INVALID_STATUS'); });
   app.get('/throw-task-not-found', async () => { throw new TaskRegistryError('Task "foo" not found', 'NOT_FOUND'); });
   app.get('/throw-task-already-running', async () => { throw new TaskRegistryError('Task "foo" is already running', 'ALREADY_RUNNING'); });
+  app.get('/throw-duplicate-active', async () => { throw new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'); });
+  app.get('/throw-duplicate-pipeline', async () => { throw new DuplicateDownloadError('Book 1 has pipeline download', 'PIPELINE_ACTIVE'); });
   app.get('/throw-generic', async () => { throw new Error('disk full'); });
   app.get('/throw-non-error', async () => { throw 'string error'; });
   app.get('/success', async () => ({ ok: true }));
@@ -216,8 +218,17 @@ describe('error-handler plugin', () => {
     });
 
     // #197 — DuplicateDownloadError typed error mapping (ERR-1)
-    it.todo('maps DuplicateDownloadError ACTIVE_DOWNLOAD_EXISTS to 409');
-    it.todo('maps DuplicateDownloadError PIPELINE_ACTIVE to 409');
+    it('maps DuplicateDownloadError ACTIVE_DOWNLOAD_EXISTS to 409', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-duplicate-active' });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Book 1 already has an active download' });
+    });
+
+    it('maps DuplicateDownloadError PIPELINE_ACTIVE to 409', async () => {
+      const res = await app.inject({ method: 'GET', url: '/throw-duplicate-pipeline' });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Book 1 has pipeline download' });
+    });
   });
 
   describe('generic error handling', () => {

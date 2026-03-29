@@ -33,6 +33,16 @@ export class DownloadError extends Error {
   }
 }
 
+export class DuplicateDownloadError extends Error {
+  constructor(
+    message: string,
+    public code: 'ACTIVE_DOWNLOAD_EXISTS' | 'PIPELINE_ACTIVE',
+  ) {
+    super(message);
+    this.name = 'DuplicateDownloadError';
+  }
+}
+
 export class DownloadService {
   private retrySearchDeps?: RetrySearchDeps;
 
