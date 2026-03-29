@@ -29,6 +29,13 @@ function FieldWrapperWithWatch({ type, defaultUseProxy = false }: { type: Create
   return <IndexerFields selectedType={type} register={register} errors={errors} watch={watch} />;
 }
 
+function ProwlarrManagedWrapper({ type }: { type: string }) {
+  const { register, formState: { errors } } = useForm<CreateIndexerFormData>({
+    defaultValues: { name: '', type: 'torznab', settings: { apiUrl: 'https://prowlarr.local/api', apiKey: 'secret-key' } },
+  });
+  return <IndexerFields selectedType={type} register={register} errors={errors} prowlarrManaged />;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   (api.getSettings as Mock).mockResolvedValue({ network: { proxyUrl: '' } });
@@ -81,6 +88,50 @@ describe('IndexerFields', () => {
   it('renders nothing for unknown type', () => {
     const { container } = render(<FieldWrapper type="unknown" />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  describe('prowlarrManaged prop (#201)', () => {
+    it('prowlarrManaged=true sets readOnly attribute on API URL and API Key inputs', () => {
+      renderWithProviders(<ProwlarrManagedWrapper type="torznab" />);
+
+      const apiUrlInput = screen.getByPlaceholderText('https://indexer.example.com/api');
+      const apiKeyInput = screen.getByLabelText('API Key');
+
+      expect(apiUrlInput).toHaveAttribute('readOnly');
+      expect(apiKeyInput).toHaveAttribute('readOnly');
+    });
+
+    it('prowlarrManaged=true fields are not editable via user input', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ProwlarrManagedWrapper type="torznab" />);
+
+      const apiUrlInput = screen.getByPlaceholderText('https://indexer.example.com/api');
+      await user.type(apiUrlInput, 'should-not-appear');
+
+      // readOnly inputs do not accept typed text
+      expect(apiUrlInput).not.toHaveValue('should-not-appear');
+    });
+
+    it('prowlarrManaged=true applies disabled visual styling (opacity class)', () => {
+      renderWithProviders(<ProwlarrManagedWrapper type="torznab" />);
+
+      const apiUrlInput = screen.getByPlaceholderText('https://indexer.example.com/api');
+      expect(apiUrlInput.className).toContain('opacity-60');
+      expect(apiUrlInput.className).toContain('cursor-not-allowed');
+    });
+  });
+
+  describe('missing watch prop (#201)', () => {
+    it('proxy toggle renders with unchecked default when watch prop is omitted', async () => {
+      renderWithProviders(<FieldWrapper type="torznab" />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Route through proxy')).toBeInTheDocument();
+      });
+
+      const checkbox = screen.getByRole('checkbox');
+      expect(checkbox).not.toBeChecked();
+    });
   });
 
   describe('FlareSolverr URL field', () => {
