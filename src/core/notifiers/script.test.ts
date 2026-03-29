@@ -360,6 +360,56 @@ describe('ScriptNotifier', () => {
     );
   });
 
+  it('sets download.size env var to "0" when size is zero', async () => {
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
+      cb(null, '', '');
+      return {} as ReturnType<typeof execFile>;
+    });
+
+    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
+    await notifier.send('on_download_complete', {
+      event: 'on_download_complete',
+      download: { path: '/downloads/dune.m4b', size: 0 },
+    });
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      '/scripts/notify.sh',
+      expect.objectContaining({
+        env: expect.objectContaining({
+          NARRATORR_DOWNLOAD_PATH: '/downloads/dune.m4b',
+          NARRATORR_DOWNLOAD_SIZE: '0',
+        }),
+      }),
+      expect.any(Function),
+    );
+  });
+
+  it('sets import.fileCount env var to "0" when fileCount is zero', async () => {
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
+      cb(null, '', '');
+      return {} as ReturnType<typeof execFile>;
+    });
+
+    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
+    await notifier.send('on_import', {
+      event: 'on_import',
+      import: { libraryPath: '/audiobooks/Dune', fileCount: 0 },
+    });
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      '/scripts/notify.sh',
+      expect.objectContaining({
+        env: expect.objectContaining({
+          NARRATORR_IMPORT_PATH: '/audiobooks/Dune',
+          NARRATORR_IMPORT_FILE_COUNT: '0',
+        }),
+      }),
+      expect.any(Function),
+    );
+  });
+
   it('sets only NARRATORR_EVENT when payload has no sub-objects', async () => {
     mockExecFile.mockImplementation((_file, _opts, callback) => {
       const cb = callback as (...args: unknown[]) => void;
