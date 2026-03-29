@@ -461,9 +461,53 @@ describe('LibraryScanService', () => {
       );
     });
 
-    it.todo('records import_failed event with narrator from real metadata when book creation throws');
+    it('records import_failed event with narrator from real metadata when book creation throws', async () => {
+      const createError = new Error('DB constraint violation');
+      mockBookService.create.mockRejectedValueOnce(createError);
 
-    it.todo('logs warning and rethrows original error when both book creation and event recording fail');
+      const metadata = {
+        title: 'Test Book',
+        authors: [{ name: 'Author' }],
+        narrators: ['Stephen Fry'],
+        asin: 'B123',
+      };
+
+      await expect(service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'Test Book', authorName: 'Author' },
+        metadata,
+      )).rejects.toThrow('DB constraint violation');
+
+      expect(mockEventHistoryService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bookId: null,
+          bookTitle: 'Test Book',
+          authorName: 'Author',
+          narratorName: 'Stephen Fry',
+          eventType: 'import_failed',
+          source: 'manual',
+          reason: { error: 'DB constraint violation' },
+        }),
+      );
+    });
+
+    it('logs warning and rethrows original error when both book creation and event recording fail', async () => {
+      const createError = new Error('DB constraint violation');
+      mockBookService.create.mockRejectedValueOnce(createError);
+      mockEventHistoryService.create.mockRejectedValueOnce(new Error('Event DB failure'));
+
+      await expect(service.importSingleBook(
+        { path: '/audiobooks/Title', title: 'Test Book', authorName: 'Author' },
+        { title: 'Test Book', authors: [{ name: 'Author' }], narrators: ['Narrator'] },
+      )).rejects.toThrow('DB constraint violation');
+
+      // Event creation was attempted
+      expect(mockEventHistoryService.create).toHaveBeenCalled();
+      // Warning was logged for the event creation failure
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ err: expect.any(Error) }),
+        'Failed to record manual import failed event',
+      );
+    });
   });
 
   describe('lookupMetadata', () => {
@@ -1347,9 +1391,37 @@ describe('LibraryScanService', () => {
       expect(cp).toHaveBeenCalled();
     });
 
-    it.todo('passes narrators: undefined to buildTargetPath when metadata has no narrators');
+    it('passes narrators: undefined to buildTargetPath when metadata has no narrators', async () => {
+      await service.importSingleBook(
+        { path: '/downloads/Author/Book', title: 'Book', authorName: 'Author' },
+        { title: 'Book', authors: [{ name: 'Author' }] },
+        'copy',
+      );
 
-    it.todo('passes mapped narrators to buildTargetPath when metadata has narrators');
+      expect(buildTargetPath).toHaveBeenCalledWith(
+        '/library',
+        expect.any(String),
+        expect.objectContaining({ narrators: undefined }),
+        'Author',
+      );
+    });
+
+    it('passes mapped narrators to buildTargetPath when metadata has narrators', async () => {
+      await service.importSingleBook(
+        { path: '/downloads/Author/Book', title: 'Book', authorName: 'Author' },
+        { title: 'Book', authors: [{ name: 'Author' }], narrators: ['Stephen Fry', 'Tim Curry'] },
+        'copy',
+      );
+
+      expect(buildTargetPath).toHaveBeenCalledWith(
+        '/library',
+        expect.any(String),
+        expect.objectContaining({
+          narrators: [{ name: 'Stephen Fry' }, { name: 'Tim Curry' }],
+        }),
+        'Author',
+      );
+    });
   });
 
   // ============================================================================
