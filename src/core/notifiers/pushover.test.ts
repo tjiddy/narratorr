@@ -155,18 +155,13 @@ describe('PushoverNotifier', () => {
   });
 
   it('returns error message for non-timeout network error', async () => {
-    server.use(
-      http.post(API_URL, () => {
-        return HttpResponse.error();
-      }),
-    );
+    const spy = vi.spyOn(fetchModule, 'fetchWithTimeout').mockRejectedValueOnce(new Error('network down'));
 
     const notifier = new PushoverNotifier({ token: 'app-token', user: 'user-key' });
     const result = await notifier.send('on_grab', { event: 'on_grab' });
 
     expect(result.success).toBe(false);
-    expect(result.message).toBeDefined();
-    expect(result.message).not.toBe('Request timed out');
-    expect(result.message).not.toBe('Unknown error');
+    expect(result.message).toBe('network down');
+    spy.mockRestore();
   });
 });
