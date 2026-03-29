@@ -435,8 +435,8 @@ describe('LibrarySettingsSection', () => {
 
       // Dirty the folderFormat field
       const folderInput = screen.getByPlaceholderText('{author}/{title}');
-      await user.tripleClick(folderInput);
-      await user.keyboard('{author}/{title}/{year}');
+      await user.clear(folderInput);
+      await user.type(folderInput, 'changed-format');
 
       // Now change path and blur
       const pathInput = screen.getByPlaceholderText('/audiobooks');
@@ -500,8 +500,8 @@ describe('LibrarySettingsSection', () => {
 
       // Dirty folderFormat
       const folderInput = screen.getByPlaceholderText('{author}/{title}');
-      await user.tripleClick(folderInput);
-      await user.keyboard('{author}/{title}/{year}');
+      await user.clear(folderInput);
+      await user.type(folderInput, 'changed-format');
 
       // Path change + blur → auto-save → path no longer dirty, but folderFormat still is
       const pathInput = screen.getByPlaceholderText('/audiobooks');
