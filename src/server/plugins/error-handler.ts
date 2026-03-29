@@ -9,7 +9,7 @@ import { QualityGateServiceError } from '../services/quality-gate.service.js';
 import { EventHistoryServiceError } from '../services/event-history.service.js';
 import { UserExistsError, AuthConfigError, IncorrectPasswordError } from '../services/auth.service.js';
 import { ScanInProgressError, LibraryPathError } from '../services/library-scan.service.js';
-import { DownloadError } from '../services/download.service.js';
+import { DownloadError, DuplicateDownloadError } from '../services/download.service.js';
 import { TaskRegistryError } from '../services/task-registry.js';
 
 // ---------------------------------------------------------------------------
@@ -35,6 +35,7 @@ const ERROR_REGISTRY = new Map<new (...args: any[]) => Error, ErrorEntry>([
   [ScanInProgressError, { type: 'flat', status: 409 }],
   [LibraryPathError, { type: 'flat', status: 400 }],
   [DownloadError, { type: 'coded', codes: { NOT_FOUND: 404, NO_BOOK_LINKED: 404, INVALID_STATUS: 400 } }],
+  [DuplicateDownloadError, { type: 'coded', codes: { ACTIVE_DOWNLOAD_EXISTS: 409, PIPELINE_ACTIVE: 409 } }],
   [TaskRegistryError, { type: 'coded', codes: { NOT_FOUND: 404, ALREADY_RUNNING: 409 } }],
 ]);
 

@@ -8,6 +8,7 @@ import type { BookListService } from '../services/book-list.service.js';
 import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
+import { DuplicateDownloadError } from '../services/download.service.js';
 import { filterAndRankResults } from '../services/search-pipeline.js';
 
 const MATCH_THRESHOLD = 0.7;
@@ -201,10 +202,10 @@ export async function runRssJob(
       grabbed++;
       log.info({ bookId, title: best.title, isUpgrade: candidate.isUpgrade }, 'RSS grabbed');
     } catch (grabError: unknown) {
-      const message = grabError instanceof Error ? grabError.message : String(grabError);
-      if (message.includes('already has an active download')) {
+      if (grabError instanceof DuplicateDownloadError) {
         log.debug({ bookId }, 'Skipping RSS grab — book already has active download');
       } else {
+        const message = grabError instanceof Error ? grabError.message : String(grabError);
         log.info({ bookId, error: message }, 'RSS grab failed (possible concurrent race)');
       }
     }

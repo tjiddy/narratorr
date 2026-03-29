@@ -33,6 +33,16 @@ export class DownloadError extends Error {
   }
 }
 
+export class DuplicateDownloadError extends Error {
+  constructor(
+    message: string,
+    public code: 'ACTIVE_DOWNLOAD_EXISTS' | 'PIPELINE_ACTIVE',
+  ) {
+    super(message);
+    this.name = 'DuplicateDownloadError';
+  }
+}
+
 export class DownloadService {
   private retrySearchDeps?: RetrySearchDeps;
 
@@ -246,16 +256,14 @@ export class DownloadService {
           // Revert book status to wanted so a failed grab leaves the book in a recoverable state
           await this.db.update(books).set({ status: 'wanted' }).where(eq(books.id, params.bookId));
         } else {
-          const err = new Error(`Book ${params.bookId} already has an active download (id: ${replaceableActive[0].id})`);
-          (err as Error & { code: string }).code = 'ACTIVE_DOWNLOAD_EXISTS';
-          throw err;
+          throw new DuplicateDownloadError(`Book ${params.bookId} already has an active download (id: ${replaceableActive[0].id})`, 'ACTIVE_DOWNLOAD_EXISTS');
         }
       } else {
         // No replaceable downloads — apply existing duplicate-check for import-pipeline statuses
         // (processing_queued/importing are not replaceable but still block grabs)
         const pipelineActive = allActive.filter((dl) => !replaceableSet.has(dl.status));
         if (pipelineActive.length > 0) {
-          throw new Error(`Book ${params.bookId} already has an active download (id: ${pipelineActive[0].id})`);
+          throw new DuplicateDownloadError(`Book ${params.bookId} already has an active download (id: ${pipelineActive[0].id})`, 'PIPELINE_ACTIVE');
         }
       }
     }

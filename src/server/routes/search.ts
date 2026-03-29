@@ -5,6 +5,7 @@ import { type BlacklistService } from '../services';
 import { type SettingsService } from '../services';
 import { isMultiPartUsenetPost } from '../../core/utils/index.js';
 import { getErrorMessage } from '../utils/error-message.js';
+import { DuplicateDownloadError } from '../services/download.service.js';
 import { filterAndRankResults } from '../services/search-pipeline.js';
 import {
   searchQuerySchema,
@@ -101,8 +102,12 @@ export async function searchRoutes(
         request.log.debug({ downloadId: download.id, status: download.status, externalId: download.externalId }, 'Grab completed');
         return await reply.status(201).send(download);
       } catch (error: unknown) {
-        if (error !== null && typeof error === 'object' && 'code' in error && (error as { code: unknown }).code === 'ACTIVE_DOWNLOAD_EXISTS') {
-          return reply.status(409).send({ code: 'ACTIVE_DOWNLOAD_EXISTS' });
+        if (error instanceof DuplicateDownloadError) {
+          if (error.code === 'ACTIVE_DOWNLOAD_EXISTS') {
+            return reply.status(409).send({ code: 'ACTIVE_DOWNLOAD_EXISTS' });
+          }
+          // PIPELINE_ACTIVE — propagate to error-handler plugin (returns 409 { error: message })
+          throw error;
         }
         request.log.error(error, 'Grab failed');
         const message = getErrorMessage(error);

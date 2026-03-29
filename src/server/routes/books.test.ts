@@ -6,6 +6,7 @@ import type { Services } from './index.js';
 import { RenameError } from '../services/rename.service.js';
 import { RetagError } from '../services/tagging.service.js';
 import { MergeError } from '../services/merge.service.js';
+import { DuplicateDownloadError } from '../services/download.service.js';
 import { readdir, readFile, stat } from 'node:fs/promises';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -868,7 +869,7 @@ describe('books routes', () => {
       (services.indexer.searchAll as Mock).mockResolvedValue([
         { title: 'The Way of Kings', downloadUrl: 'https://example.com/dl', protocol: 'torrent', size: 500000, seeders: 10 },
       ]);
-      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new Error('Book 1 already has an active download'));
+      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'));
 
       const res = await app.inject({ method: 'POST', url: '/api/books/1/search' });
 

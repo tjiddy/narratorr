@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildSearchQuery, filterAndRankResults, searchAndGrabForBook } from './search-pipeline.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
+import { DuplicateDownloadError } from './download.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { SearchResult } from '../../core/index.js';
 
@@ -128,9 +129,29 @@ describe('searchAndGrabForBook', () => {
   });
 
   it('returns skipped with reason when grab throws "already has an active download"', async () => {
-    vi.mocked(downloadService.grab).mockRejectedValue(new Error('Book already has an active download'));
+    vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Book already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'));
     const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log);
     expect(result).toEqual({ result: 'skipped', reason: 'already_has_active_download' });
+  });
+
+  // #197 — DuplicateDownloadError instanceof catch (ERR-1)
+  it('returns skipped when DuplicateDownloadError is thrown (instanceof check, not string match)', async () => {
+    vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Book already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'));
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log);
+    expect(result).toEqual({ result: 'skipped', reason: 'already_has_active_download' });
+  });
+
+  it('returns skipped when DuplicateDownloadError with PIPELINE_ACTIVE is thrown', async () => {
+    vi.mocked(downloadService.grab).mockRejectedValue(new DuplicateDownloadError('Book has pipeline download', 'PIPELINE_ACTIVE'));
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log);
+    expect(result).toEqual({ result: 'skipped', reason: 'already_has_active_download' });
+  });
+
+  it('returns grab_error when non-DuplicateDownloadError is thrown (not swallowed)', async () => {
+    const genericError = new Error('Connection refused');
+    vi.mocked(downloadService.grab).mockRejectedValue(genericError);
+    const result = await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log);
+    expect(result).toEqual({ result: 'grab_error', error: genericError });
   });
 
   it('returns grab_error for non-duplicate grab errors', async () => {

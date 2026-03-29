@@ -330,7 +330,10 @@ describe('BackupService', () => {
     });
 
     it('returns valid=true for DB with fewer migrations than app', async () => {
-      mockExecute.mockResolvedValue({ rows: [{ count: 1 }] });
+      // First call: sqlite_master table check (table exists)
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+      // Second call: migration count
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
       const result = await service.validateRestore('/tmp/test.db');
@@ -339,7 +342,10 @@ describe('BackupService', () => {
     });
 
     it('returns valid=false for DB with more migrations than app', async () => {
-      mockExecute.mockResolvedValue({ rows: [{ count: 99 }] });
+      // First call: sqlite_master table check (table exists)
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+      // Second call: migration count
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 99 }] });
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
       const result = await service.validateRestore('/tmp/test.db');
@@ -348,8 +354,25 @@ describe('BackupService', () => {
       expect(result.error).toContain('newer version');
     });
 
+    // #197 — structured table-existence check replaces string matching (ERR-1)
+    it('detects missing migrations table via structured sqlite_master query (not message.includes)', async () => {
+      // sqlite_master returns 0 — table does not exist
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 0 }] });
+
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const result = await service.validateRestore('/tmp/test.db');
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('missing migrations table');
+      // Verify it used the structured query, not the migration count query
+      expect(mockExecute).toHaveBeenCalledWith(
+        expect.stringContaining('sqlite_master'),
+      );
+    });
+
     it('returns valid=false for DB without __drizzle_migrations table', async () => {
-      mockExecute.mockRejectedValue(new Error('no such table: __drizzle_migrations'));
+      // sqlite_master returns 0 — table does not exist
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 0 }] });
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
       const result = await service.validateRestore('/tmp/test.db');
@@ -519,6 +542,24 @@ describe('processRestoreUpload', () => {
     const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
     await expect(service.processRestoreUpload(Readable.from(Buffer.from('this is not a zip'))))
       .rejects.toThrow('File is not a valid zip archive');
+  });
+
+  it('rethrows system-level I/O errors unchanged instead of wrapping as INVALID_ZIP', async () => {
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const zipBuffer = await createZipBuffer([
+      { name: 'narratorr.db', content: Buffer.from('fake-sqlite-db') },
+    ]);
+
+    // Mock validateRestore to throw a system-level I/O error (e.g., disk full during DB open)
+    const ioError = new Error('ENOSPC: no space left on device') as NodeJS.ErrnoException;
+    ioError.code = 'ENOSPC';
+    vi.spyOn(service, 'validateRestore').mockRejectedValueOnce(ioError);
+
+    const err = await service.processRestoreUpload(Readable.from(zipBuffer)).catch((e: unknown) => e);
+    // System-level errors should NOT be wrapped as RestoreUploadError/INVALID_ZIP
+    expect(err).not.toBeInstanceOf(RestoreUploadError);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as NodeJS.ErrnoException).code).toBe('ENOSPC');
   });
 
   it('cleans up temp directory on failure', async () => {

@@ -3,6 +3,7 @@ import { calculateQuality } from '../../core/utils/index.js';
 import type { SearchResult } from '../../core/index.js';
 import type { IndexerService } from './indexer.service.js';
 import type { DownloadOrchestrator } from './download-orchestrator.js';
+import { DuplicateDownloadError } from './download.service.js';
 
 /** Build a search query string from a book's title and primary author. */
 export function buildSearchQuery(book: { title: string; authors?: Array<{ name: string }> | null }): string {
@@ -178,8 +179,7 @@ export async function searchAndGrabForBook(
     log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
     return { result: 'grabbed', title: best.title };
   } catch (grabError: unknown) {
-    const message = grabError instanceof Error ? grabError.message : String(grabError);
-    if (message.includes('already has an active download')) {
+    if (grabError instanceof DuplicateDownloadError) {
       log.debug({ bookId: book.id, title: book.title }, 'Skipping grab — book already has active download');
       return { result: 'skipped', reason: 'already_has_active_download' };
     }

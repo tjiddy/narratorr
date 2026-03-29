@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DownloadOrchestrator } from './download-orchestrator.js';
 import type { DownloadService, DownloadWithBook } from './download.service.js';
+import { DuplicateDownloadError } from './download.service.js';
 import type { NotifierService } from './notifier.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import type { EventBroadcasterService } from './event-broadcaster.service.js';
@@ -161,10 +162,10 @@ describe('DownloadOrchestrator', () => {
       expect(recordGrabbedEvent).toHaveBeenCalledWith(expect.objectContaining({ source: 'rss' }));
     });
 
-    it('propagates duplicate-detection throw unchanged to caller', async () => {
-      (downloadService.grab as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Book 2 already has an active download (id: 1)'));
+    it('propagates DuplicateDownloadError unchanged to caller', async () => {
+      (downloadService.grab as ReturnType<typeof vi.fn>).mockRejectedValue(new DuplicateDownloadError('Book 2 already has an active download (id: 1)', 'ACTIVE_DOWNLOAD_EXISTS'));
       await expect(orchestrator.grab({ downloadUrl: 'magnet:?xt=abc', title: 'Test', bookId: 2 }))
-        .rejects.toThrow('Book 2 already has an active download (id: 1)');
+        .rejects.toThrow(DuplicateDownloadError);
       // No side effects should fire on error
       expect(emitGrabStarted).not.toHaveBeenCalled();
     });
