@@ -7,10 +7,10 @@ interface NotifierFieldsProps {
   errors: FieldErrors<CreateNotifierFormData>;
 }
 
-const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all';
+const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all';
 
 function errorInputClass(hasError: boolean) {
-  return `w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${hasError ? 'border-destructive' : 'border-border'}`;
+  return `w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${hasError ? 'border-destructive' : 'border-border'}`;
 }
 
 function WebhookFields({ register, errors }: Omit<NotifierFieldsProps, 'selectedType'>) {

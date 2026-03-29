@@ -283,7 +283,7 @@ export function LibrarySettingsSection() {
                   },
                 };
               })()}
-              className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all font-mono text-sm ${
+              className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all font-mono text-sm ${
                 errors.folderFormat ? 'border-destructive' : 'border-border'
               }`}
               placeholder="{author}/{title}"
@@ -325,7 +325,7 @@ export function LibrarySettingsSection() {
                   },
                 };
               })()}
-              className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all font-mono text-sm ${
+              className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all font-mono text-sm ${
                 errors.fileFormat ? 'border-destructive' : 'border-border'
               }`}
               placeholder="{author} - {title}"

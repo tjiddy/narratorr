@@ -73,7 +73,7 @@ export function QualitySettingsSection() {
             id="grabFloor"
             type="number"
             {...register('grabFloor', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
               errors.grabFloor ? 'border-destructive' : 'border-border'
             }`}
             min={0}
@@ -93,7 +93,7 @@ export function QualitySettingsSection() {
           <select
             id="protocolPreference"
             {...register('protocolPreference')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
           >
             {protocolPreferenceSchema.options.map((pref) => (
               <option key={pref} value={pref}>
@@ -112,7 +112,7 @@ export function QualitySettingsSection() {
             id="minSeeders"
             type="number"
             {...register('minSeeders', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
               errors.minSeeders ? 'border-destructive' : 'border-border'
             }`}
             min={0}
@@ -133,7 +133,7 @@ export function QualitySettingsSection() {
             id="rejectWords"
             type="text"
             {...register('rejectWords')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
             placeholder="German, Abridged, Full Cast, Dramatized"
           />
           <p className="text-sm text-muted-foreground mt-2">
@@ -147,7 +147,7 @@ export function QualitySettingsSection() {
             id="requiredWords"
             type="text"
             {...register('requiredWords')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
             placeholder="M4B, Unabridged"
           />
           <p className="text-sm text-muted-foreground mt-2">

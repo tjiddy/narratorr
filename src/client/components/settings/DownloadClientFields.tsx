@@ -28,8 +28,8 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
     setShowDropdown(false);
   }
 
-  const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all';
-  const errorInputClass = 'w-full px-4 py-3 bg-background border border-destructive rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all';
+  const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all';
+  const errorInputClass = 'w-full px-4 py-3 bg-background border border-destructive rounded-xl focus-ring focus:border-transparent transition-all';
 
   return (
     <>

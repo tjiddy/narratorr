@@ -74,7 +74,7 @@ export function LoginPage() {
               autoComplete="username"
               autoFocus
               required
-              className="w-full px-4 py-3 rounded-xl bg-muted/50 border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/80 transition-all"
+              className="w-full px-4 py-3 rounded-xl bg-muted/50 border border-border text-foreground placeholder:text-muted-foreground focus-ring focus:border-primary/80 transition-all"
               placeholder="Enter username"
             />
           </div>
@@ -90,7 +90,7 @@ export function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
               required
-              className="w-full px-4 py-3 rounded-xl bg-muted/50 border border-border text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/80 transition-all"
+              className="w-full px-4 py-3 rounded-xl bg-muted/50 border border-border text-foreground placeholder:text-muted-foreground focus-ring focus:border-primary/80 transition-all"
               placeholder="Enter password"
             />
           </div>

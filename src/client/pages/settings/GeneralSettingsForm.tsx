@@ -73,7 +73,7 @@ export function GeneralSettingsForm() {
             min={1}
             max={365}
             {...register('housekeepingRetentionDays', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
               errors.housekeepingRetentionDays ? 'border-destructive' : 'border-border'
             }`}
           />
@@ -92,7 +92,7 @@ export function GeneralSettingsForm() {
             min={0}
             max={365}
             {...register('recycleRetentionDays', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
               errors.recycleRetentionDays ? 'border-destructive' : 'border-border'
             }`}
           />
@@ -115,7 +115,7 @@ export function GeneralSettingsForm() {
           <select
             id="logLevel"
             {...register('logLevel')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
           >
             {logLevelSchema.options.map((level) => (
               <option key={level} value={level}>

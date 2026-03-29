@@ -42,7 +42,7 @@ function MappingForm({
             value={form.remotePath}
             onChange={(e) => setForm({ ...form, remotePath: e.target.value })}
             placeholder="/downloads/complete/"
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl text-sm font-mono focus-ring focus:border-transparent transition-all"
           />
         </div>
         <div>
@@ -53,7 +53,7 @@ function MappingForm({
             value={form.localPath}
             onChange={(e) => setForm({ ...form, localPath: e.target.value })}
             placeholder="C:\downloads\"
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl text-sm font-mono focus-ring focus:border-transparent transition-all"
           />
         </div>
       </div>

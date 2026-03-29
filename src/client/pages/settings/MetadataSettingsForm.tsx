@@ -73,7 +73,7 @@ export function MetadataSettingsForm() {
           <select
             id="audibleRegion"
             {...register('audibleRegion')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
           >
             {audibleRegionSchema.options.map((region) => (
               <option key={region} value={region}>

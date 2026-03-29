@@ -171,7 +171,7 @@ export function IndexerCard(props: IndexerCardProps) {
           <select
             id="indexerType"
             {...register('type')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
           >
             {indexerTypeSchema.options.map((t) => (
               <option key={t} value={t}>
@@ -199,7 +199,7 @@ export function IndexerCard(props: IndexerCardProps) {
                 id="indexerPriority"
                 type="number"
                 {...register('priority', { valueAsNumber: true })}
-                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
               />
               <p className="text-sm text-muted-foreground mt-1">Lower values are checked first (1-100)</p>
             </div>
