@@ -6,6 +6,7 @@ import { AUDIO_EXTENSIONS } from './audio-constants.js';
 import { readChapterSources, resolveChapterTitle } from './chapter-resolver.js';
 import type { ChapterSource } from './chapter-resolver.js';
 import { renderFilename } from './naming.js';
+import type { NamingOptions } from './naming.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -26,6 +27,8 @@ export interface ProcessingContext {
   fileFormat?: string;
   /** Additional book-level tokens for renderFilename (series, year, narrator, etc.) */
   bookTokens?: Record<string, string | number | undefined | null>;
+  /** Naming options for separator and case transforms. */
+  namingOptions?: NamingOptions;
 }
 
 export type ProcessingResult =
@@ -125,7 +128,7 @@ async function mergeFiles(
   };
 
   const outputStem = context.fileFormat
-    ? renderFilename(context.fileFormat, baseTokens)
+    ? renderFilename(context.fileFormat, baseTokens, context.namingOptions)
     : `${context.author} - ${context.title}`;
   const outputName = `${outputStem}.${outputExt}`;
   const outputPath = join(targetDir, outputName);
@@ -219,7 +222,7 @@ async function convertFiles(
         trackTotal,
         partName: source ? resolveChapterTitle(source, i) : undefined,
       };
-      stem = renderFilename(context.fileFormat, tokens);
+      stem = renderFilename(context.fileFormat, tokens, context.namingOptions);
     } else {
       stem = basename(filePath, extname(filePath));
     }

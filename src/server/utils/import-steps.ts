@@ -6,6 +6,7 @@ import type { Db } from '../../db/index.js';
 import { downloads, books } from '../../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import type { NamingOptions } from '../../core/utils/naming.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { getErrorMessage } from './error-message.js';
 import type { TaggingService } from '../services/tagging.service.js';
@@ -155,13 +156,14 @@ export interface RunAudioProcessingArgs {
     publishedDate: string | null;
   };
   authorName: string;
+  namingOptions?: NamingOptions;
   db: Db;
   log: FastifyBaseLogger;
 }
 
 /** Run audio processing (merge/convert) on imported files. Throws on failure. */
 export async function runAudioProcessing(args: RunAudioProcessingArgs): Promise<void> {
-  const { processingSettings, librarySettings, targetPath, book, authorName, db, log } = args;
+  const { processingSettings, librarySettings, targetPath, book, authorName, namingOptions, db, log } = args;
   if (!processingSettings?.enabled) return;
 
   log.info({ targetPath, config: processingSettings }, 'Running audio processing');
@@ -176,6 +178,7 @@ export async function runAudioProcessing(args: RunAudioProcessingArgs): Promise<
     mergeBehavior: processingSettings.mergeBehavior,
   }, {
     author: authorName, title: book.title, fileFormat: librarySettings.fileFormat,
+    namingOptions,
     bookTokens: {
       authorLastFirst: toLastFirst(authorName), titleSort: toSortTitle(book.title),
       series: book.seriesName || undefined, seriesPosition: book.seriesPosition ?? undefined,

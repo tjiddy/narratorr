@@ -1,6 +1,7 @@
 import { stat, readdir, mkdir, cp } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import type { NamingOptions } from '../../core/utils/naming.js';
 
 import type { books, authors } from '../../db/schema.js';
 
@@ -37,6 +38,7 @@ export function buildTargetPath(
     publishedDate?: string | null;
   },
   authorName: string | null,
+  options?: NamingOptions,
 ): string {
   const author = authorName || 'Unknown Author';
   const narratorNames = book.narrators?.map(n => n.name) ?? [];
@@ -53,7 +55,7 @@ export function buildTargetPath(
     year: extractYear(book.publishedDate),
   };
 
-  const rendered = renderTemplate(folderFormat, tokens);
+  const rendered = renderTemplate(folderFormat, tokens, options);
   // Always use POSIX separators — paths are stored in DB and consumed inside Docker (Linux)
   return join(libraryPath, ...rendered.split('/')).split('\\').join('/');
 }

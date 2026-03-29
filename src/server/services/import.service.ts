@@ -11,6 +11,7 @@ import type { BookService, BookWithAuthor } from './book.service.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { resolveSavePath } from '../utils/download-path.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
+import type { NamingOptions } from '../../core/utils/naming.js';
 import {
   validateSource, checkDiskSpace, copyToLibrary, runAudioProcessing,
   verifyCopy, cleanupOldBookPath, handleImportFailure,
@@ -113,15 +114,16 @@ export class ImportService {
         this.settingsService.get('processing'),
       ]);
       const processingEnabled = !!processingSettings?.enabled;
-      targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName);
+      const namingOptions: NamingOptions = { separator: librarySettings.namingSeparator, case: librarySettings.namingCase };
+      targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName, namingOptions);
 
       const { sourcePath, fileCount, sourceStats } = await validateSource(savePath, this.remotePathMappingService, download.downloadClientId);
       await checkDiskSpace({ sourcePath, sourceStats, libraryPath: librarySettings.path, minFreeSpaceGB: importSettings.minFreeSpaceGB, processingEnabled });
       await copyToLibrary({ sourcePath, targetPath, sourceStats, log: this.log });
-      await runAudioProcessing({ processingSettings, librarySettings, targetPath, book: book, authorName: authorName || 'Unknown Author', db: this.db, log: this.log });
+      await runAudioProcessing({ processingSettings, librarySettings, targetPath, book: book, authorName: authorName || 'Unknown Author', namingOptions, db: this.db, log: this.log });
 
       if (librarySettings.fileFormat) {
-        await renameFilesWithTemplate(targetPath, librarySettings.fileFormat, book, authorName, this.log);
+        await renameFilesWithTemplate(targetPath, librarySettings.fileFormat, book, authorName, this.log, namingOptions);
       }
       const targetSize = await verifyCopy({ targetPath, sourcePath, processingEnabled });
       await cleanupOldBookPath({ bookPath: book.path, targetPath, log: this.log });

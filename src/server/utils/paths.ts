@@ -2,6 +2,7 @@ import { readdir, rename, rmdir } from 'node:fs/promises';
 import { join, extname, basename, dirname, normalize, resolve, relative } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
+import type { NamingOptions } from '../../core/utils/naming.js';
 
 /** Minimal book shape required by renameFilesWithTemplate. */
 export interface RenameableBook {
@@ -63,6 +64,7 @@ export async function renameFilesWithTemplate(
   book: RenameableBook,
   authorName: string | null,
   log: FastifyBaseLogger,
+  options?: NamingOptions,
 ): Promise<number> {
   const entries = await readdir(targetPath, { withFileTypes: true });
   const audioFiles = entries
@@ -98,7 +100,7 @@ export async function renameFilesWithTemplate(
       trackTotal: audioFiles.length,
       partName: basename(fileName, ext),
     };
-    let newStem = renderFilename(fileFormat, tokens);
+    let newStem = renderFilename(fileFormat, tokens, options);
 
     if (seen.has(newStem.toLowerCase())) {
       newStem = `${newStem} (${i + 1})`;
