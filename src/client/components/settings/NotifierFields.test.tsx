@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { screen, render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useForm } from 'react-hook-form';
+import { useEffect } from 'react';
 import { NotifierFields } from './NotifierFields';
 import type { CreateNotifierFormData } from '../../../shared/schemas.js';
 
@@ -9,6 +10,22 @@ function FieldWrapper({ type }: { type: string }) {
   const { register, formState: { errors } } = useForm<CreateNotifierFormData>({
     defaultValues: { name: '', type: 'webhook', events: [], settings: {} },
   });
+  return <NotifierFields selectedType={type} register={register} errors={errors} />;
+}
+
+/** Wrapper that injects form errors for specific settings fields */
+function ErrorFieldWrapper({ type, errorFields }: { type: string; errorFields: string[] }) {
+  const { register, formState: { errors }, setError } = useForm<CreateNotifierFormData>({
+    defaultValues: { name: '', type: 'webhook', events: [], settings: {} },
+  });
+
+  useEffect(() => {
+    for (const field of errorFields) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setError(`settings.${field}` as any, { type: 'manual', message: `${field} is required` });
+    }
+  }, [setError, errorFields]);
+
   return <NotifierFields selectedType={type} register={register} errors={errors} />;
 }
 
@@ -97,5 +114,88 @@ describe('NotifierFields', () => {
   it('renders nothing for unknown type', () => {
     const { container } = render(<FieldWrapper type="unknown" />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  describe('error state rendering (#201)', () => {
+    it('webhook: shows error message for settings.url validation failure', () => {
+      render(<ErrorFieldWrapper type="webhook" errorFields={['url']} />);
+
+      const urlInput = screen.getByPlaceholderText('https://example.com/webhook');
+      expect(urlInput.className).toContain('border-destructive');
+      expect(screen.getByText('url is required')).toBeInTheDocument();
+    });
+
+    it('discord: shows error message for settings.webhookUrl validation failure', () => {
+      render(<ErrorFieldWrapper type="discord" errorFields={['webhookUrl']} />);
+
+      const input = screen.getByPlaceholderText('https://discord.com/api/webhooks/...');
+      expect(input.className).toContain('border-destructive');
+      expect(screen.getByText('webhookUrl is required')).toBeInTheDocument();
+    });
+
+    it('script: shows error message for settings.path validation failure', () => {
+      render(<ErrorFieldWrapper type="script" errorFields={['path']} />);
+
+      const input = screen.getByPlaceholderText('/path/to/script.sh');
+      expect(input.className).toContain('border-destructive');
+      expect(screen.getByText('path is required')).toBeInTheDocument();
+    });
+
+    it('email: shows error messages for settings.smtpHost, settings.fromAddress, settings.toAddress', () => {
+      render(<ErrorFieldWrapper type="email" errorFields={['smtpHost', 'fromAddress', 'toAddress']} />);
+
+      expect(screen.getByPlaceholderText('smtp.gmail.com').className).toContain('border-destructive');
+      expect(screen.getByText('smtpHost is required')).toBeInTheDocument();
+
+      expect(screen.getByPlaceholderText('narratorr@example.com').className).toContain('border-destructive');
+      expect(screen.getByText('fromAddress is required')).toBeInTheDocument();
+
+      expect(screen.getByPlaceholderText('you@example.com').className).toContain('border-destructive');
+      expect(screen.getByText('toAddress is required')).toBeInTheDocument();
+    });
+
+    it('telegram: shows error messages for settings.botToken, settings.chatId', () => {
+      render(<ErrorFieldWrapper type="telegram" errorFields={['botToken', 'chatId']} />);
+
+      expect(screen.getByPlaceholderText('123456:ABC-DEF...').className).toContain('border-destructive');
+      expect(screen.getByText('botToken is required')).toBeInTheDocument();
+
+      expect(screen.getByPlaceholderText('-1001234567890').className).toContain('border-destructive');
+      expect(screen.getByText('chatId is required')).toBeInTheDocument();
+    });
+
+    it('slack: shows error message for settings.webhookUrl validation failure', () => {
+      render(<ErrorFieldWrapper type="slack" errorFields={['webhookUrl']} />);
+
+      expect(screen.getByPlaceholderText('https://hooks.slack.com/services/...').className).toContain('border-destructive');
+      expect(screen.getByText('webhookUrl is required')).toBeInTheDocument();
+    });
+
+    it('pushover: shows error messages for settings.pushoverToken, settings.pushoverUser', () => {
+      render(<ErrorFieldWrapper type="pushover" errorFields={['pushoverToken', 'pushoverUser']} />);
+
+      expect(screen.getByPlaceholderText('azGDORePK8gMa...').className).toContain('border-destructive');
+      expect(screen.getByText('pushoverToken is required')).toBeInTheDocument();
+
+      expect(screen.getByPlaceholderText('uQiRzpo4DXghD...').className).toContain('border-destructive');
+      expect(screen.getByText('pushoverUser is required')).toBeInTheDocument();
+    });
+
+    it('ntfy: shows error message for settings.ntfyTopic validation failure', () => {
+      render(<ErrorFieldWrapper type="ntfy" errorFields={['ntfyTopic']} />);
+
+      expect(screen.getByPlaceholderText('my-narratorr-alerts').className).toContain('border-destructive');
+      expect(screen.getByText('ntfyTopic is required')).toBeInTheDocument();
+    });
+
+    it('gotify: shows error messages for settings.gotifyUrl, settings.gotifyToken', () => {
+      render(<ErrorFieldWrapper type="gotify" errorFields={['gotifyUrl', 'gotifyToken']} />);
+
+      expect(screen.getByPlaceholderText('https://gotify.example.com').className).toContain('border-destructive');
+      expect(screen.getByText('gotifyUrl is required')).toBeInTheDocument();
+
+      expect(screen.getByPlaceholderText('AKxhJ3...').className).toContain('border-destructive');
+      expect(screen.getByText('gotifyToken is required')).toBeInTheDocument();
+    });
   });
 });
