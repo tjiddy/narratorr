@@ -70,7 +70,7 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
       )}
 
       {fields.apiKey && (
-        <div className="sm:col-span-2">
+        <div className="sm:col-span-2" data-testid="api-key-field">
           <label htmlFor="clientApiKey" className="block text-sm font-medium mb-2">API Key</label>
           <input id="clientApiKey" type="password" {...register('settings.apiKey')} className={errors.settings?.apiKey ? errorInputClass : inputClass} />
           {errors.settings?.apiKey && <p className="text-sm text-destructive mt-1">{errors.settings.apiKey.message}</p>}
