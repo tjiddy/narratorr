@@ -348,11 +348,47 @@ describe('AuthService', () => {
       expect(service.verifySessionCookie(cookie, secret)).toBeNull();
     });
 
-    it.todo('getSessionSecret returns sessionSecret from auth config');
+    it('getSessionSecret returns sessionSecret from auth config', async () => {
+      // Mock getAuthConfig to return auth settings with a plain sessionSecret
+      db.select.mockReturnValue(
+        mockDbChain([{ key: 'auth', value: { mode: 'none', apiKey: 'key', sessionSecret: 'my-secret' } }]),
+      );
 
-    it.todo('getSessionSecret throws when auth config is missing (not initialized)');
+      const result = await service.getSessionSecret();
+      expect(result).toBe('my-secret');
+    });
 
-    it.todo('verifySessionCookie returns null and logs debug when signature length does not match expected');
+    it('getSessionSecret throws when auth config is missing (not initialized)', async () => {
+      // getAuthConfig returns empty result → throws
+      db.select.mockReturnValue(mockDbChain([]));
+
+      await expect(service.getSessionSecret()).rejects.toThrow('Auth settings not initialized');
+    });
+
+    it('verifySessionCookie returns null and logs debug when signature length does not match expected', () => {
+      // Build a cookie with a valid payload but a signature of wrong length
+      const payloadB64 = Buffer.from(JSON.stringify({
+        username: 'admin',
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      })).toString('base64url');
+      // Real signature would be ~43 chars; use a short one to trigger length mismatch
+      const shortSig = 'short';
+      const cookie = `${payloadB64}.${shortSig}`;
+
+      const log = inject<{ debug: ReturnType<typeof vi.fn> }>(createMockLogger());
+      const logService = new AuthService(inject<Db>(db), log as never);
+
+      // Clear timingSafeEqual spy call count before this test
+      vi.mocked(timingSafeEqual).mockClear();
+
+      const result = logService.verifySessionCookie(cookie, secret);
+
+      expect(result).toBeNull();
+      expect(log.debug).toHaveBeenCalledWith('Auth: cookie signature length mismatch');
+      // timingSafeEqual should NOT have been called (early return before it)
+      expect(timingSafeEqual).not.toHaveBeenCalled();
+    });
 
     it('sliding expiry: cookie >50% through TTL flagged for renewal', () => {
       const now = Date.now();
