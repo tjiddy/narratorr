@@ -8,6 +8,7 @@ import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SearchResult } from '../../core/index.js';
+import { DuplicateDownloadError } from '../services/download.service.js';
 
 function createMockBookListService(wanted: unknown[] = []): BookListService {
   return inject<BookListService>({
@@ -236,7 +237,7 @@ describe('runRssJob', () => {
     const indexer = createMockIndexerService(rssResults);
     const download = createMockDownloadOrchestrator();
     (download.grab as Mock).mockRejectedValueOnce(
-      new Error('Book 1 already has an active download (id: 5)'),
+      new DuplicateDownloadError('Book 1 already has an active download (id: 5)', 'ACTIVE_DOWNLOAD_EXISTS'),
     );
     const blacklist = createMockBlacklistService();
 
@@ -248,10 +249,6 @@ describe('runRssJob', () => {
       'Skipping RSS grab — book already has active download',
     );
   });
-
-  // #197 — DuplicateDownloadError instanceof catch (ERR-1)
-  it.todo('skips grab when DuplicateDownloadError is thrown — logs info and continues (instanceof, not string match)');
-  it.todo('continues loop when non-DuplicateDownloadError is thrown (fire-and-forget preserved)');
 
   // --- Upgrades ---
 
