@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #201 Client test coverage — hooks, forms, and library import gaps — 2026-03-29
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #209
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 32
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0 (all tests passed on first write)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Test-only issue with clear spec made implementation straightforward. Existing test patterns (FieldWrapper, renderWithProviders, mock factories) were well-established and easy to follow. The spec's corrected field names (after reviewer feedback) were accurate.
+- Friction / issues encountered: Claim script rejected with "already in progress" since the branch pre-existed — minor, just skipped to plan phase. The `it.todo()` stubs were already partially placed in test files from a prior session.
+
+### Token efficiency
+- Highest-token actions: Reading all source files and existing test files for context (NotifierFields, IndexerFields, DownloadClientForm, LibraryImportPage, useLibraryImport, ImportSummaryBar, registries)
+- Avoidable waste: Could have skimmed registry files faster since only field names were needed
+- Suggestions: For test-only issues, read the test file + source file in parallel rather than sequentially
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: useLibraryImport handleRetry subtle reset flow still documented in debt.md
+
+### Wish I'd Known
+1. React Hook Form `setError()` in a `useEffect` is the cleanest way to test error-state rendering branches without triggering real form validation — avoids async submit complexity
+2. Test-only coverage issues invert the red/green TDD cycle — tests pass immediately since production code exists; the key is ensuring assertions are specific enough to catch regressions
+3. The LibraryImportPage summary counters each have distinct filter formulas (readyCount requires selected+non-dup+high, but reviewCount ignores selection) — reading `useLibraryImport.ts:227-233` before writing assertions prevents formula mismatches
+
 ## #199 Notifier adapter test coverage — 2026-03-29
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #208
