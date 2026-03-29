@@ -1,8 +1,8 @@
 ---
-scope: [scope/frontend]
-files: [apps/narratorr/src/client/components/settings/DownloadClientCard.tsx]
+scope: [backend]
+files: [src/server/services/backup.service.ts]
 issue: 197
 source: review
-date: 2026-02-24
+date: 2026-03-29
 ---
-Reviewer caught that urlBase was only normalized in the adapter constructors (runtime), not on save. The persisted value kept raw user input (slashes, whitespace), so the UI showed unnormalized values after save. Fix: normalize in the form submit handler before the mutation fires. When adding fields that require normalization, normalize at the persistence boundary (form submit), not just the consumption boundary (adapter constructor).
+When replacing string-based error classification with a blanket catch, don't collapse all errors into one category. System-level I/O errors (with `NodeJS.ErrnoException.code`) should propagate unchanged — only library-level parse/format errors should be translated. Check for `.code` property to distinguish system errors from library errors.
