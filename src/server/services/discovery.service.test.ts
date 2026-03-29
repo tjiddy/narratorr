@@ -2130,6 +2130,54 @@ describe('DiscoveryService', () => {
         expect(gapCandidate!.score).toBe(50);
       });
 
+      it('fractional continuation candidate passes filter and receives +20 bonus (#196)', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Fractional', seriesPosition: 0.1 }),
+          makeBookRow({ id: 2, seriesName: 'Fractional', seriesPosition: 0.2 }),
+        ]);
+        // nextPosition = 0.2 + 0.1 = 0.30000000000000004 (IEEE 754 drift)
+        // Metadata returns exact 0.3 — tolerance-aware comparison must match
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'FRAC_NEXT', title: 'Frac Next', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Fractional', position: 0.3 }] },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        const nextCandidate = candidates.find(c => c.asin === 'FRAC_NEXT');
+        expect(nextCandidate).toBeDefined();
+        expect(nextCandidate!.reason).toBe('series');
+        // Base 50 + continuation bonus 20 = 70
+        expect(nextCandidate!.score).toBe(70);
+      });
+
+      it('fractional gap candidate passes filter but does not receive continuation bonus (#196)', async () => {
+        const db = setupSeriesTest([
+          makeBookRow({ id: 1, seriesName: 'Fractional', seriesPosition: 0.1 }),
+          makeBookRow({ id: 2, seriesName: 'Fractional', seriesPosition: 0.2 }),
+          makeBookRow({ id: 3, seriesName: 'Fractional', seriesPosition: 0.4 }),
+        ]);
+        // Gap at 0.3, nextPosition = 0.5 — metadata candidate at 0.3 is a gap, not continuation
+        mockMetadataService.searchBooksForDiscovery.mockResolvedValue({
+          books: [
+            { asin: 'FRAC_GAP', title: 'Frac Gap', authors: [{ name: 'Author A' }], language: 'English', series: [{ name: 'Fractional', position: 0.3 }] },
+          ],
+          warnings: [],
+        });
+        const { service } = createService(db);
+        const signals = await service.analyzeLibrary();
+        const candidates = await service.generateCandidates(signals);
+
+        const gapCandidate = candidates.find(c => c.asin === 'FRAC_GAP');
+        expect(gapCandidate).toBeDefined();
+        expect(gapCandidate!.reason).toBe('series');
+        // Base 50 only — position 0.3 is a gap, not nextPosition (0.5), so no +20 bonus
+        expect(gapCandidate!.score).toBe(50);
+      });
+
       it('dismissed series suggestions score 50 * 0.25 = 12.5 at floor multiplier', async () => {
         const db = setupSeriesTest([
           makeBookRow({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
