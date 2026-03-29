@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #198 Audnexus test hardening — 429 retry and region param coverage — 2026-03-29
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #206
+
+### Metrics
+- Files changed: 1 | Tests added/modified: 11
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0 (clean pass)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Test-only issue with clear spec and existing reference patterns (Audible tests). MSW handler override pattern was straightforward to apply. Spec review cycle caught behavioral accuracy issues early (retry vs RateLimitError language).
+- Friction / issues encountered: None — cleanest implementation cycle so far. Spec had been through 2 review rounds before implementation started, so no ambiguity remained.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan phase (reading full audible.test.ts for reference patterns)
+- Avoidable waste: Self-review subagent was thorough but unnecessary for a test-only change with no source modifications
+- Suggestions: Consider skipping self-review for test-only issues (no source files changed)
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: AudnexusProvider NaN on malformed Retry-After header (documented, not fixed — matches Audible pattern); MetadataService doesn't wire audnexusRegion config (metadata.service.ts:52)
+
+### Wish I'd Known
+1. MSW handlers match on path only, not query params — URL capture via `request.url` in the handler callback is the only way to verify query parameters are sent correctly
+2. Test-only issues with existing production code don't follow traditional red/green TDD — tests pass immediately since the code already exists, so the "red" phase is really about verifying the assertions aren't vacuous
+3. The spec review cycle (elaborate → review-spec → respond-to-spec-review) caught the retry/RateLimitError language mismatch that would have caused implementation confusion — investing in spec accuracy pays off
+
 ## #202 Test fixture bugs, focus-ring sweep, and PathStep polish — 2026-03-29
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #205

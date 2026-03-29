@@ -5,8 +5,8 @@
 - **src/server/services/library-scan.service.ts**: `importSingleBook()` failure-path test uses `null` metadata so the narrator snapshot in `import_failed` events is never exercised with real metadata. (discovered in #104)
 - **src/client/pages/library-import/useLibraryImport.ts**: `handleRetry()` resets `prevMatchCountRef.current = 0` but does not call `startMatching()` after new scan results arrive — retry flow relies on `scanMutation.onSuccess` to call `startMatching()`, which works, but the explicit reset is subtle and undocumented. (discovered in #133)
 - **src/client/pages/library-import/LibraryImportPage.tsx**: Pre-existing behavioral test gaps: deselect-all action, register button text with selectedCount=0, manual edit then register flow, duplicate visibility label text toggle, back link href, EditModal save with user-edited metadata, EditModal with missing matchResult/alternatives, summary bar counter accuracy. None introduced by #175. (discovered in #175)
-- **src/core/metadata/audnexus.ts**: No test for 429 Retry-After header parsing or default 60s fallback in `fetchJson()`. Rate limit retry timing could silently break. (discovered in #174)
-- **src/core/metadata/audnexus.ts**: No test verifying `region` query param is sent in `getBook()` / `getAuthor()` calls. Region config changes would go undetected. (discovered in #174)
+- ~~**src/core/metadata/audnexus.ts**: No test for 429 Retry-After header parsing or default 60s fallback in `fetchJson()`. Rate limit retry timing could silently break. (discovered in #174)~~ **Resolved in #198** — 7 tests added covering valid/missing/empty/NaN/zero Retry-After headers.
+- ~~**src/core/metadata/audnexus.ts**: No test verifying `region` query param is sent in `getBook()` / `getAuthor()` calls. Region config changes would go undetected. (discovered in #174)~~ **Resolved in #198** — 4 tests added verifying region param for both methods (custom + default).
 
 ## Code Hardening
 
