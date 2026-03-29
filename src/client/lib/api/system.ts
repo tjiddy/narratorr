@@ -23,6 +23,7 @@ export interface TaskMetadata {
 export interface SystemInfo {
   version: string;
   commit: string;
+  buildTime?: string;
   nodeVersion: string;
   os: string;
   dbSize: number | null;

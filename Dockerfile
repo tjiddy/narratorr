@@ -17,11 +17,12 @@ COPY src/ src/
 COPY drizzle/ drizzle/
 COPY tsconfig.json tsup.config.ts vite.config.ts ./
 
-# Accept git commit SHA as a build arg (pass with --build-arg GIT_COMMIT=$(git rev-parse --short HEAD))
+# Accept git commit SHA and build timestamp as build args
 ARG GIT_COMMIT=unknown
+ARG BUILD_TIME=unknown
 
-# Build application — GIT_COMMIT is inlined into the server bundle by tsup esbuildOptions
-RUN GIT_COMMIT=$GIT_COMMIT pnpm build
+# Build application — GIT_COMMIT and BUILD_TIME are inlined into the server bundle by tsup esbuildOptions
+RUN GIT_COMMIT=$GIT_COMMIT BUILD_TIME=$BUILD_TIME pnpm build
 
 # Production dependencies stage
 FROM node:24-alpine AS deps

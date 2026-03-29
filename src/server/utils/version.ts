@@ -3,6 +3,7 @@ import { resolve } from 'path';
 
 let packageVersion: string | undefined;
 let packageCommit: string | undefined;
+let packageBuildTime: string | undefined;
 
 /** Returns the app version from package.json (cached after first call). */
 export function getVersion(): string {
@@ -25,6 +26,14 @@ export function getCommit(): string {
     packageCommit = raw === 'unknown' ? 'unknown' : raw.slice(0, 7);
   }
   return packageCommit;
+}
+
+/** Returns the build-injected timestamp as an ISO string, or "unknown" when not set. */
+export function getBuildTime(): string {
+  if (!packageBuildTime) {
+    packageBuildTime = process.env.BUILD_TIME || 'unknown';
+  }
+  return packageBuildTime;
 }
 
 /**

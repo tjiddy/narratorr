@@ -99,6 +99,38 @@ describe('getCommit', () => {
   });
 });
 
+describe('getBuildTime', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '0.0.0' }));
+  });
+
+  async function loadGetBuildTime() {
+    const mod = await import('./version.js');
+    return mod.getBuildTime;
+  }
+
+  it('returns the build-injected timestamp when BUILD_TIME env var is set', async () => {
+    process.env.BUILD_TIME = '2026-03-29T11:29:40Z';
+    const getBuildTime = await loadGetBuildTime();
+    expect(getBuildTime()).toBe('2026-03-29T11:29:40Z');
+    delete process.env.BUILD_TIME;
+  });
+
+  it('returns "unknown" when BUILD_TIME env var is not set', async () => {
+    delete process.env.BUILD_TIME;
+    const getBuildTime = await loadGetBuildTime();
+    expect(getBuildTime()).toBe('unknown');
+  });
+
+  it('returns "unknown" when BUILD_TIME is empty string', async () => {
+    process.env.BUILD_TIME = '';
+    const getBuildTime = await loadGetBuildTime();
+    expect(getBuildTime()).toBe('unknown');
+    delete process.env.BUILD_TIME;
+  });
+});
+
 describe('isNewerVersion', () => {
   // Import statically since isNewerVersion is a pure function with no side effects
   let isNewerVersion: (current: string, latest: string) => boolean;

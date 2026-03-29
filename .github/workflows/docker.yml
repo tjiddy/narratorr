@@ -83,9 +83,11 @@ jobs:
             VERSION="${GITHUB_REF_NAME#v}"
           fi
           MAJOR_MINOR="${VERSION%.*}"
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "major_minor=$MAJOR_MINOR" >> $GITHUB_OUTPUT
-          echo "Building version: $VERSION (major.minor: $MAJOR_MINOR)"
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION (major.minor: $MAJOR_MINOR) at $BUILD_TIME"
 
       - name: Set up QEMU (for ARM64)
         uses: docker/setup-qemu-action@v3
@@ -111,7 +113,9 @@ jobs:
             ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major_minor }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: GIT_COMMIT=${{ github.sha }}
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
 
       - name: Report image size
         run: |

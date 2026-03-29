@@ -22,6 +22,7 @@ import type { Mock } from 'vitest';
 const baseInfo = {
   version: '0.1.0',
   commit: '4445dd4',
+  buildTime: '2026-03-29T11:29:40Z',
   nodeVersion: 'v20.11.1',
   os: 'Linux 6.1.0',
   dbSize: 1048576,
@@ -75,6 +76,39 @@ describe('SystemInfo', () => {
     await waitFor(() => {
       expect(screen.getByText('0.1.0 (4445dd4)')).toBeInTheDocument();
     });
+  });
+
+  it('displays build timestamp when buildTime is a valid ISO string', async () => {
+    (api.getSystemInfo as Mock).mockResolvedValue(baseInfo);
+
+    renderWithProviders(<SystemInfo />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Built')).toBeInTheDocument();
+    });
+  });
+
+  it('hides build timestamp when buildTime is "unknown"', async () => {
+    (api.getSystemInfo as Mock).mockResolvedValue({ ...baseInfo, buildTime: 'unknown' });
+
+    renderWithProviders(<SystemInfo />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/0\.1\.0/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Built')).not.toBeInTheDocument();
+  });
+
+  it('hides build timestamp when buildTime is absent', async () => {
+    const { buildTime: _, ...infoWithoutBuildTime } = baseInfo;
+    (api.getSystemInfo as Mock).mockResolvedValue(infoWithoutBuildTime);
+
+    renderWithProviders(<SystemInfo />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/0\.1\.0/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Built')).not.toBeInTheDocument();
   });
 
   it('suppresses commit display when commit is "unknown"', async () => {
