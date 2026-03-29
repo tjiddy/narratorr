@@ -90,6 +90,26 @@ describe('buildTargetPath', () => {
     expect(result).toContain('Author');
     expect(result).toContain('Book');
   });
+
+  describe('with naming options', () => {
+    it('forwards separator option to renderTemplate — periods in token values', () => {
+      const result = buildTargetPath('/audiobooks', '{author}/{title}', { title: 'The Way of Kings' }, 'Brandon Sanderson', { separator: 'period' });
+      expect(result).toContain('Brandon.Sanderson');
+      expect(result).toContain('The.Way.of.Kings');
+    });
+
+    it('forwards case option to renderTemplate — uppercase token values', () => {
+      const result = buildTargetPath('/audiobooks', '{author}/{title}', { title: 'The Way of Kings' }, 'Brandon Sanderson', { case: 'upper' });
+      expect(result).toContain('BRANDON SANDERSON');
+      expect(result).toContain('THE WAY OF KINGS');
+    });
+
+    it('omitting options preserves existing behavior', () => {
+      const result = buildTargetPath('/audiobooks', '{author}/{title}', { title: 'The Way of Kings' }, 'Brandon Sanderson');
+      expect(result).toContain('Brandon Sanderson');
+      expect(result).toContain('The Way of Kings');
+    });
+  });
 });
 
 describe('getPathSize', () => {

@@ -32,7 +32,7 @@ function defineCategory<S extends z.ZodObject<z.ZodRawShape>>(entry: {
 export const settingsRegistry = {
   library: defineCategory({
     schema: librarySettingsSchema,
-    defaults: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+    defaults: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space' as const, namingCase: 'default' as const },
     formSchema: libraryFormSchema,
   }),
   search: defineCategory({

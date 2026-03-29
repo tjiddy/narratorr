@@ -397,6 +397,27 @@ describe('RenameService', () => {
       // Check they're different
       expect(new Set(newNames).size).toBe(2);
     });
+
+    it('forwards naming options to renderFilename for file renaming', async () => {
+      const { log } = createService();
+      (readdir as Mock).mockResolvedValue([
+        { name: 'old-name.m4b', isFile: () => true },
+      ]);
+
+      await renameFilesWithTemplate(
+        '/library/test',
+        '{author} - {title}',
+        mockBook,
+        'Brandon Sanderson',
+        inject<FastifyBaseLogger>(log),
+        { separator: 'period', case: 'upper' },
+      );
+
+      expect(rename).toHaveBeenCalled();
+      // The renamed file should use period separator and uppercase
+      const newPath = (rename as Mock).mock.calls[0][1] as string;
+      expect(newPath).toContain('BRANDON.SANDERSON');
+    });
   });
 
   describe('event history producers', () => {

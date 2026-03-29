@@ -17,10 +17,16 @@ vi.mock('../utils/book-status.js', () => ({
   revertBookStatus: vi.fn().mockResolvedValue('wanted'),
 }));
 
+vi.mock('../../core/utils/audio-processor.js', () => ({
+  processAudioFiles: vi.fn().mockResolvedValue({ success: true, outputFiles: [] }),
+}));
+
 import { stat, rm, statfs } from 'node:fs/promises';
 import { runPostProcessingScript } from '../utils/post-processing-script.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import type { Stats } from 'node:fs';
+
+import { processAudioFiles } from '../../core/utils/audio-processor.js';
 
 import {
   validateSource,
@@ -36,6 +42,7 @@ import {
   recordImportEvent,
   recordImportFailedEvent,
   handleImportFailure,
+  runAudioProcessing,
 } from './import-steps.js';
 
 function createMockLog(): FastifyBaseLogger {
@@ -609,5 +616,40 @@ describe('recordImportFailedEvent', () => {
     const log = createMockLog();
     recordImportFailedEvent({ eventHistory: undefined, bookId: 1, bookTitle: 'Book', authorName: null, downloadId: 10, error: new Error('fail'), log });
     expect(log.warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('runAudioProcessing', () => {
+  it('forwards namingOptions into processAudioFiles context', async () => {
+    const log = createMockLog();
+    const mockDb = {} as never;
+
+    await runAudioProcessing({
+      processingSettings: {
+        enabled: true,
+        ffmpegPath: '/usr/bin/ffmpeg',
+        outputFormat: 'm4b',
+        bitrate: 128,
+        keepOriginalBitrate: false,
+        mergeBehavior: 'always',
+      },
+      librarySettings: {
+        fileFormat: '{author} - {title}',
+      },
+      targetPath: '/library/Author/Book',
+      book: { id: 1, title: 'Book', seriesName: null, seriesPosition: null, narrators: null, publishedDate: null },
+      authorName: 'Author',
+      namingOptions: { separator: 'period', case: 'upper' },
+      db: mockDb,
+      log,
+    });
+
+    expect(processAudioFiles).toHaveBeenCalledWith(
+      '/library/Author/Book',
+      expect.any(Object),
+      expect.objectContaining({
+        namingOptions: { separator: 'period', case: 'upper' },
+      }),
+    );
   });
 });

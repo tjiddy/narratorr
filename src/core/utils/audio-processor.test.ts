@@ -26,9 +26,19 @@ vi.mock('./chapter-resolver.js', () => ({
   resolveChapterTitle: vi.fn(),
 }));
 
+// Spy on naming.js — passthrough to real implementation
+vi.mock('./naming.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    renderFilename: vi.fn().mockImplementation(actual.renderFilename as (...args: unknown[]) => unknown),
+  };
+});
+
 import { execFile } from 'node:child_process';
 import { readdir, rename, unlink, writeFile, rm } from 'node:fs/promises';
 import { readChapterSources, resolveChapterTitle } from './chapter-resolver.js';
+import { renderFilename } from './naming.js';
 
 // execFile is callback-based; mock the promisified version
 const mockExecFile = vi.mocked(execFile);
@@ -341,6 +351,75 @@ describe('processAudioFiles', () => {
         join('/lib/book', '02 - The Journey.m4b'),
       ]);
     }
+  });
+
+  it('forwards namingOptions to renderFilename for merged output', async () => {
+    mockReaddir.mockResolvedValue([
+      { name: '01.mp3', isFile: () => true, isDirectory: () => false },
+      { name: '02.mp3', isFile: () => true, isDirectory: () => false },
+    ] as never);
+
+    mockReadChapterSources.mockResolvedValue([
+      { filePath: '/lib/book/01.mp3', trackNumber: 1 },
+      { filePath: '/lib/book/02.mp3', trackNumber: 2 },
+    ]);
+    mockResolveChapterTitle.mockImplementation((_s, i) => `Ch ${i + 1}`);
+
+    let callCount = 0;
+    mockExecFile.mockImplementation((...args: unknown[]) => {
+      const cb = args[args.length - 1] as (err: Error | null, result: { stdout: string; stderr: string }) => void;
+      if (typeof cb === 'function') {
+        callCount++;
+        cb(null, { stdout: callCount <= 2 ? '120.0\n' : '', stderr: '' });
+      }
+      return {} as never;
+    });
+
+    const ctx: ProcessingContext = {
+      author: 'Tolkien',
+      title: 'The Hobbit',
+      fileFormat: '{author} - {title}',
+      namingOptions: { separator: 'period', case: 'upper' },
+    };
+    await processAudioFiles('/lib/book', { ...defaultConfig, mergeBehavior: 'always' }, ctx);
+
+    expect(renderFilename).toHaveBeenCalledWith(
+      '{author} - {title}',
+      expect.objectContaining({ author: 'Tolkien', title: 'The Hobbit' }),
+      expect.objectContaining({ separator: 'period', case: 'upper' }),
+    );
+  });
+
+  it('forwards namingOptions to renderFilename for converted (non-merge) output', async () => {
+    mockReaddir.mockResolvedValue([
+      { name: 'ch01.mp3', isFile: () => true, isDirectory: () => false },
+      { name: 'ch02.mp3', isFile: () => true, isDirectory: () => false },
+    ] as never);
+
+    mockReadChapterSources.mockResolvedValue([
+      { filePath: join('/lib/book', 'ch01.mp3'), trackNumber: 1, title: 'Introduction' },
+      { filePath: join('/lib/book', 'ch02.mp3'), trackNumber: 2, title: 'The Journey' },
+    ]);
+    mockResolveChapterTitle
+      .mockReturnValueOnce('Introduction')
+      .mockReturnValueOnce('The Journey');
+
+    mockExecFileSuccess('');
+
+    const ctx: ProcessingContext = {
+      author: 'Tolkien',
+      title: 'The Hobbit',
+      fileFormat: '{trackNumber:00} - {partName}',
+      namingOptions: { separator: 'period', case: 'upper' },
+    };
+    const config: ProcessingConfig = { ...defaultConfig, mergeBehavior: 'never' };
+    await processAudioFiles('/lib/book', config, ctx);
+
+    expect(renderFilename).toHaveBeenCalledWith(
+      '{trackNumber:00} - {partName}',
+      expect.objectContaining({ author: 'Tolkien', title: 'The Hobbit' }),
+      expect.objectContaining({ separator: 'period', case: 'upper' }),
+    );
   });
 
   it('output file named {Author} - {Title}.m4b for merged output', async () => {

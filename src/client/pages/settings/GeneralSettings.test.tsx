@@ -31,7 +31,18 @@ vi.mock('@core/utils/index.js', () => ({
   toLastFirst: (name: string) => name,
   toSortTitle: (title: string) => title,
   ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
+  FOLDER_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
   FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
+  NAMING_PRESETS: [
+    { id: 'standard', name: 'Standard', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+    { id: 'audiobookshelf', name: 'Audiobookshelf', folderFormat: '{author}/{series/}{title}', fileFormat: '{title}' },
+    { id: 'plex', name: 'Plex', folderFormat: '{author}/{series/}{year? - }{title}', fileFormat: '{title}{trackNumber:00? - pt}' },
+    { id: 'last-first', name: 'Last, First', folderFormat: '{authorLastFirst}/{titleSort}', fileFormat: '{authorLastFirst} - {titleSort}' },
+  ],
+  detectPreset: (folder: string, file: string) => {
+    if (folder === '{author}/{title}' && file === '{author} - {title}') return 'standard';
+    return 'custom';
+  },
 }));
 
 const { api } = await import('@/lib/api');

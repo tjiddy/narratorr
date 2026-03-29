@@ -392,3 +392,149 @@ describe('toSortTitle', () => {
     expect(toSortTitle('Mistborn')).toBe('Mistborn');
   });
 });
+
+describe('renderTemplate with separator/case options', () => {
+  const tokens = { author: 'Brandon Sanderson', title: 'The Way of Kings' };
+
+  describe('separator transforms', () => {
+    it('space separator leaves token values unchanged', () => {
+      expect(renderTemplate('{author}/{title}', tokens, { separator: 'space' }))
+        .toBe('Brandon Sanderson/The Way of Kings');
+    });
+
+    it('period separator replaces spaces within token values with periods', () => {
+      expect(renderTemplate('{author}/{title}', tokens, { separator: 'period' }))
+        .toBe('Brandon.Sanderson/The.Way.of.Kings');
+    });
+
+    it('underscore separator replaces spaces within token values with underscores', () => {
+      expect(renderTemplate('{author}/{title}', tokens, { separator: 'underscore' }))
+        .toBe('Brandon_Sanderson/The_Way_of_Kings');
+    });
+
+    it('dash separator replaces spaces within token values with dashes', () => {
+      expect(renderTemplate('{author}/{title}', tokens, { separator: 'dash' }))
+        .toBe('Brandon-Sanderson/The-Way-of-Kings');
+    });
+
+    it('does not transform literal template text like " - " or "/"', () => {
+      expect(renderTemplate('{author} - {title}', tokens, { separator: 'period' }))
+        .toBe('Brandon.Sanderson - The.Way.of.Kings');
+    });
+
+    it('does not affect single-word token values', () => {
+      expect(renderTemplate('{author}/{title}', { author: 'Sanderson', title: 'Mistborn' }, { separator: 'period' }))
+        .toBe('Sanderson/Mistborn');
+    });
+
+    it('does not create double-slash when token is missing with separator', () => {
+      expect(renderTemplate('{author}/{series}/{title}', { author: 'Author', title: 'Book' }, { separator: 'period' }))
+        .toBe('Author/Book');
+    });
+  });
+
+  describe('case transforms', () => {
+    it('default case leaves token values unchanged', () => {
+      expect(renderTemplate('{author}/{title}', tokens, { case: 'default' }))
+        .toBe('Brandon Sanderson/The Way of Kings');
+    });
+
+    it('lower case transforms token values to lowercase', () => {
+      expect(renderTemplate('{author}/{title}', tokens, { case: 'lower' }))
+        .toBe('brandon sanderson/the way of kings');
+    });
+
+    it('upper case transforms token values to uppercase', () => {
+      expect(renderTemplate('{author}/{title}', tokens, { case: 'upper' }))
+        .toBe('BRANDON SANDERSON/THE WAY OF KINGS');
+    });
+
+    it('title case capitalizes first letter of each word', () => {
+      expect(renderTemplate('{author}/{title}', { author: 'brandon sanderson', title: 'the way of kings' }, { case: 'title' }))
+        .toBe('Brandon Sanderson/The Way Of Kings');
+    });
+
+    it('does not transform literal template text', () => {
+      expect(renderTemplate('{author} - {title}', tokens, { case: 'upper' }))
+        .toBe('BRANDON SANDERSON - THE WAY OF KINGS');
+    });
+
+    it('combined separator and case: period + lowercase', () => {
+      expect(renderTemplate('{author}/{title}', tokens, { separator: 'period', case: 'lower' }))
+        .toBe('brandon.sanderson/the.way.of.kings');
+    });
+  });
+
+  describe('boundary values', () => {
+    it('empty token value with separator stays empty — no stray separators', () => {
+      expect(renderTemplate('{author}/{series}/{title}', { author: 'Author', series: '', title: 'Book' }, { separator: 'period' }))
+        .toBe('Author/Book');
+    });
+
+    it('single character token value — separator no effect, case applies', () => {
+      expect(renderTemplate('{author}/{title}', { author: 'A', title: 'B' }, { separator: 'period', case: 'lower' }))
+        .toBe('a/b');
+    });
+
+    it('zero-padded numeric tokens unaffected by separator/case', () => {
+      expect(renderTemplate('{author}/{seriesPosition:00}', { author: 'Author', seriesPosition: 3 }, { separator: 'period', case: 'upper' }))
+        .toBe('AUTHOR/03');
+    });
+
+    it('long token value truncated at 255 after transforms', () => {
+      const longName = 'A B '.repeat(100).trim(); // lots of spaces
+      const result = renderTemplate('{author}', { author: longName }, { separator: 'period' });
+      expect(result.length).toBeLessThanOrEqual(255);
+      expect(result).toContain('.');
+    });
+  });
+
+  describe('conditional blocks with transforms', () => {
+    it('case transform applies to token value but not conditional suffix text', () => {
+      // {narrator? read by } — narrator value uppercased, "read by" literal stays
+      const result = renderTemplate('{author} - {narrator? read by }{title}',
+        { author: 'John Smith', narrator: 'Jane Doe', title: 'My Book' },
+        { case: 'upper' });
+      expect(result).toBe('JOHN SMITH - JANE DOE read by MY BOOK');
+    });
+
+    it('separator applies to token value inside conditional block', () => {
+      const result = renderTemplate('{author}/{series? - }{title}',
+        { author: 'Brandon Sanderson', series: 'The Stormlight Archive', title: 'Oathbringer' },
+        { separator: 'period' });
+      expect(result).toBe('Brandon.Sanderson/The.Stormlight.Archive - Oathbringer');
+    });
+  });
+});
+
+describe('renderFilename with separator/case options', () => {
+  it('space separator leaves token values unchanged', () => {
+    expect(renderFilename('{author} - {title}', { author: 'Brandon Sanderson', title: 'The Way of Kings' }, { separator: 'space' }))
+      .toBe('Brandon Sanderson - The Way of Kings');
+  });
+
+  it('period separator replaces spaces within token values', () => {
+    expect(renderFilename('{author} - {title}', { author: 'Brandon Sanderson', title: 'The Way of Kings' }, { separator: 'period' }))
+      .toBe('Brandon.Sanderson - The.Way.of.Kings');
+  });
+
+  it('upper case transforms token values to uppercase', () => {
+    expect(renderFilename('{author} - {title}', { author: 'Brandon Sanderson', title: 'The Way of Kings' }, { case: 'upper' }))
+      .toBe('BRANDON SANDERSON - THE WAY OF KINGS');
+  });
+
+  it('combined separator and case', () => {
+    expect(renderFilename('{author} - {title}', { author: 'Brandon Sanderson', title: 'The Way of Kings' }, { separator: 'underscore', case: 'lower' }))
+      .toBe('brandon_sanderson - the_way_of_kings');
+  });
+
+  it('does not transform literal text between tokens', () => {
+    expect(renderFilename('{author} --- {title}', { author: 'Name Here', title: 'Book Title' }, { separator: 'period', case: 'upper' }))
+      .toBe('NAME.HERE --- BOOK.TITLE');
+  });
+
+  it('omitting options preserves existing behavior', () => {
+    expect(renderFilename('{author} - {title}', { author: 'Brandon Sanderson', title: 'The Way of Kings' }))
+      .toBe('Brandon Sanderson - The Way of Kings');
+  });
+});

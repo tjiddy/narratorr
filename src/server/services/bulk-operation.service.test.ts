@@ -27,6 +27,7 @@ vi.mock('../../core/utils/audio-processor.js', () => ({
   processAudioFiles: vi.fn(),
 }));
 
+
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   return {
@@ -400,6 +401,51 @@ describe('BulkOperationService — rename batch', () => {
     expect(status?.total).toBe(1);
     expect(status?.completed).toBe(1);
     expect(status?.failures).toBe(0);
+  });
+});
+
+describe('BulkOperationService — rename naming options wiring', () => {
+  beforeEach(() => { vi.resetAllMocks(); });
+
+  it('non-default namingSeparator/namingCase affect rename path comparison', async () => {
+    // With separator=period, case=upper: buildTargetPath produces /library/AUTHOR.NAME/BOOK1
+    // A book whose current path already matches this should be "alreadyMatching"
+    const { service, db } = createService({
+      settingsOverrides: {
+        library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '', namingSeparator: 'period' as const, namingCase: 'upper' as const },
+      },
+    });
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, path: '/library/AUTHOR.NAME/BOOK1', title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
+      { id: 2, path: '/library/Author Name/Book2', title: 'Book2', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
+    ]));
+    const result = await service.countRenameEligible();
+    // Book1 path matches the transformed target — already matching
+    expect(result.alreadyMatching).toBe(1);
+    // Book2 path uses default spacing/casing — mismatched under new settings
+    expect(result.mismatched).toBe(1);
+  });
+
+  it('startRenameJob only renames books whose path does not match the transformed target', async () => {
+    const renameService = makeRenameService();
+    const { service, db } = createService({
+      renameService,
+      settingsOverrides: {
+        library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '', namingSeparator: 'period' as const, namingCase: 'upper' as const },
+      },
+    });
+    db.select.mockReturnValueOnce(mockDbChain([
+      // Book1 path matches transformed target (AUTHOR.NAME/BOOK1) — should be skipped
+      { id: 1, path: '/library/AUTHOR.NAME/BOOK1', title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
+      // Book2 path uses default format — mismatched under period/upper settings
+      { id: 2, path: '/library/Author Name/Book2', title: 'Book2', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
+    ]));
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Moved', filesRenamed: 0 });
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+    // Only the mismatched book (id=2) should be processed
+    expect(renameService.renameBook).toHaveBeenCalledTimes(1);
+    expect(renameService.renameBook).toHaveBeenCalledWith(2);
   });
 });
 

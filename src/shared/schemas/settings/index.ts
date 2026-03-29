@@ -1,5 +1,5 @@
 // Barrel re-export — all category schemas, registry, and derived types
-export { folderFormatSchema, fileFormatSchema, librarySettingsSchema, libraryFormSchema, FOLDER_FORMAT_ALLOWED_TOKENS, FILE_FORMAT_ALLOWED_TOKENS } from './library.js';
+export { folderFormatSchema, fileFormatSchema, librarySettingsSchema, libraryFormSchema, FOLDER_FORMAT_ALLOWED_TOKENS, FILE_FORMAT_ALLOWED_TOKENS, namingSeparatorValues, namingSeparatorSchema, namingCaseValues, namingCaseSchema, type NamingSeparator, type NamingCase } from './library.js';
 export { searchSettingsSchema } from './search.js';
 export { importSettingsSchema } from './import.js';
 export { logLevelSchema, type LogLevel, generalSettingsSchema } from './general.js';

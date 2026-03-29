@@ -9,102 +9,28 @@ import { queryKeys } from '@/lib/queryKeys';
 import { FolderIcon } from '@/components/icons';
 import { PathInput } from '@/components/PathInput';
 import { ConfirmModal } from '@/components/ConfirmModal';
-import { renderTemplate, renderFilename, toLastFirst, toSortTitle, ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from '@core/utils/index.js';
-import { DEFAULT_SETTINGS, type AppSettings, libraryFormSchema } from '../../../shared/schemas.js';
+import { NamingTokenModal } from '@/components/settings/NamingTokenModal';
+import { renderTemplate, renderFilename, toLastFirst, toSortTitle, NAMING_PRESETS, detectPreset } from '@core/utils/index.js';
+import { DEFAULT_SETTINGS, type AppSettings, libraryFormSchema, namingSeparatorValues, namingCaseValues } from '../../../shared/schemas.js';
+import type { NamingOptions } from '@core/utils/naming.js';
 import { SettingsSection } from './SettingsSection';
 import { BulkOperationsSection } from '@/components/library/BulkOperationsSection';
 
 type LibraryFormData = AppSettings['library'];
 
-const SAMPLE_AUTHOR = 'Brandon Sanderson';
-const SAMPLE_TITLE = 'The Way of Kings';
-const SAMPLE_NARRATOR = 'Michael Kramer, Kate Reading';
 const SAMPLE_TOKENS = {
-  author: SAMPLE_AUTHOR,
-  authorLastFirst: toLastFirst(SAMPLE_AUTHOR),
-  title: SAMPLE_TITLE,
-  titleSort: toSortTitle(SAMPLE_TITLE),
-  series: 'The Stormlight Archive',
-  seriesPosition: 1,
-  year: '2010',
-  narrator: SAMPLE_NARRATOR,
-  narratorLastFirst: toLastFirst(SAMPLE_NARRATOR),
+  author: 'Brandon Sanderson', authorLastFirst: toLastFirst('Brandon Sanderson'),
+  title: 'The Way of Kings', titleSort: toSortTitle('The Way of Kings'),
+  series: 'The Stormlight Archive', seriesPosition: 1, year: '2010',
+  narrator: 'Michael Kramer, Kate Reading', narratorLastFirst: toLastFirst('Michael Kramer, Kate Reading'),
 };
-
 const SAMPLE_TOKENS_NO_SERIES = {
-  author: 'Andy Weir',
-  authorLastFirst: toLastFirst('Andy Weir'),
-  title: 'Project Hail Mary',
-  titleSort: toSortTitle('Project Hail Mary'),
-  year: '2021',
-  narrator: 'Ray Porter',
-  narratorLastFirst: toLastFirst('Ray Porter'),
+  author: 'Andy Weir', authorLastFirst: toLastFirst('Andy Weir'),
+  title: 'Project Hail Mary', titleSort: toSortTitle('Project Hail Mary'),
+  year: '2021', narrator: 'Ray Porter', narratorLastFirst: toLastFirst('Ray Porter'),
 };
-
-/** File-only tokens that don't appear in folder format */
-const FILE_ONLY_TOKENS = FILE_ALLOWED_TOKENS.filter(t => !(ALLOWED_TOKENS as readonly string[]).includes(t));
-
-interface TokenPanelProps {
-  tokens: readonly string[];
-  extraTokens?: readonly string[];
-  onInsert: (token: string) => void;
-  label: string;
-}
-
-function TokenPanel({ tokens, extraTokens, onInsert, label }: TokenPanelProps) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div className="mt-1.5">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-      >
-        <svg
-          className={`w-3 h-3 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2}
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-        </svg>
-        {label}
-      </button>
-
-      {open && (
-        <div className="flex flex-wrap gap-1.5 mt-1.5 animate-fade-in">
-          {tokens.map((token) => (
-            <button
-              key={token}
-              type="button"
-              onClick={() => onInsert(token)}
-              className="px-2 py-0.5 bg-muted hover:bg-muted/80 text-xs font-mono rounded-md transition-colors cursor-pointer"
-            >
-              {`{${token}}`}
-            </button>
-          ))}
-          {extraTokens && extraTokens.length > 0 && (
-            <>
-              <span className="w-px h-5 bg-border self-center mx-0.5" />
-              {extraTokens.map((token) => (
-                <button
-                  key={token}
-                  type="button"
-                  onClick={() => onInsert(token)}
-                  className="px-2 py-0.5 bg-primary/10 hover:bg-primary/20 text-xs font-mono rounded-md transition-colors cursor-pointer text-primary"
-                >
-                  {`{${token}}`}
-                </button>
-              ))}
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
+const SEPARATOR_LABELS: Record<string, string> = { space: 'Space', period: 'Period', underscore: 'Underscore', dash: 'Dash' };
+const CASE_LABELS: Record<string, string> = { default: 'Default', lower: 'lowercase', upper: 'UPPERCASE', title: 'Title Case' };
 
 // eslint-disable-next-line complexity, max-lines-per-function -- folder/file format validation + token insertion + preview for both templates
 export function LibrarySettingsSection() {
@@ -112,6 +38,7 @@ export function LibrarySettingsSection() {
   const folderFormatRef = useRef<HTMLInputElement | null>(null);
   const fileFormatRef = useRef<HTMLInputElement | null>(null);
   const [showRescanPrompt, setShowRescanPrompt] = useState(false);
+  const [tokenModalScope, setTokenModalScope] = useState<'folder' | 'file' | null>(null);
 
   const { data: settings } = useQuery({
     queryKey: queryKeys.settings(),
@@ -147,7 +74,6 @@ export function LibrarySettingsSection() {
       queryClient.setQueryData(queryKeys.settings(), (old: AppSettings | undefined) =>
         old ? { ...old, library: { ...old.library, path: savedPath } } : old,
       );
-      // Clear path dirty state so Save button only reflects unsaved sibling fields
       resetField('path', { defaultValue: savedPath });
       setShowRescanPrompt(true);
     },
@@ -168,8 +94,6 @@ export function LibrarySettingsSection() {
   });
 
   const { onBlur: rhfPathOnBlur, ...pathRegistration } = register('path');
-
-  // Typed as ChangeHandler (async, returns Promise<void>) so it satisfies registration.onBlur type
   const handlePathBlur: typeof rhfPathOnBlur = async (e) => {
     await rhfPathOnBlur(e);
     const currentPath = ((e.target as HTMLInputElement).value ?? '').trim();
@@ -182,41 +106,27 @@ export function LibrarySettingsSection() {
   const pathValue = watch('path');
   const folderFormat = watch('folderFormat');
   const fileFormat = watch('fileFormat');
+  const namingSeparator = watch('namingSeparator');
+  const namingCase = watch('namingCase');
 
-  const previewPath = useMemo(() => {
-    if (!folderFormat) return '';
-    return renderTemplate(folderFormat, SAMPLE_TOKENS);
-  }, [folderFormat]);
+  const namingOptions: NamingOptions = useMemo(() => ({
+    separator: namingSeparator ?? 'space', case: namingCase ?? 'default',
+  }), [namingSeparator, namingCase]);
+  const currentPreset = useMemo(() => detectPreset(folderFormat ?? '', fileFormat ?? ''), [folderFormat, fileFormat]);
 
-  const previewFilename = useMemo(() => {
-    if (!fileFormat) return '';
-    return renderFilename(fileFormat, {
-      ...SAMPLE_TOKENS,
-      trackNumber: 1,
-      trackTotal: 12,
-      partName: 'The Way of Kings',
-    });
-  }, [fileFormat]);
+  const { previewPath, previewFilename } = useMemo(() => ({
+    previewPath: folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS, namingOptions) : '',
+    previewFilename: fileFormat ? renderFilename(fileFormat, { ...SAMPLE_TOKENS, trackNumber: 1, trackTotal: 12, partName: 'The Way of Kings' }, namingOptions) : '',
+  }), [folderFormat, fileFormat, namingOptions]);
 
-  const previewPathNoSeries = useMemo(() => {
-    if (!folderFormat) return '';
-    return renderTemplate(folderFormat, SAMPLE_TOKENS_NO_SERIES);
-  }, [folderFormat]);
-
-  const previewFilenameNoSeries = useMemo(() => {
-    if (!fileFormat) return '';
-    return renderFilename(fileFormat, {
-      ...SAMPLE_TOKENS_NO_SERIES,
-      trackNumber: 1,
-      trackTotal: 8,
-      partName: 'Project Hail Mary',
-    });
-  }, [fileFormat]);
+  const { previewPathNoSeries, previewFilenameNoSeries } = useMemo(() => ({
+    previewPathNoSeries: folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '',
+    previewFilenameNoSeries: fileFormat ? renderFilename(fileFormat, { ...SAMPLE_TOKENS_NO_SERIES, trackNumber: 1, trackTotal: 8, partName: 'Project Hail Mary' }, namingOptions) : '',
+  }), [folderFormat, fileFormat, namingOptions]);
 
   const hasTitleToken = folderFormat ? /\{title(?:Sort)?(?::\d+)?(?:\?[^}]*)?\}/.test(folderFormat) : true;
   const hasAuthorToken = folderFormat ? /\{author(?:LastFirst)?(?::\d+)?(?:\?[^}]*)?\}/.test(folderFormat) : true;
   const fileTitleToken = fileFormat ? /\{title(?:Sort)?(?::\d+)?(?:\?[^}]*)?\}/.test(fileFormat) : true;
-
   const insertTokenAtCursor = (
     ref: React.RefObject<HTMLInputElement | null>,
     field: 'folderFormat' | 'fileFormat',
@@ -236,14 +146,26 @@ export function LibrarySettingsSection() {
       input.focus();
     });
   };
-
-  const insertFolderToken = (token: string) => {
-    insertTokenAtCursor(folderFormatRef, 'folderFormat', token);
+  const handlePresetChange = (presetId: string) => {
+    const preset = NAMING_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    setValue('folderFormat', preset.folderFormat, { shouldDirty: true, shouldValidate: true });
+    setValue('fileFormat', preset.fileFormat, { shouldDirty: true, shouldValidate: true });
+  };
+  const handleTokenModalInsert = (token: string) => {
+    if (tokenModalScope === 'folder') {
+      insertTokenAtCursor(folderFormatRef, 'folderFormat', token);
+    } else if (tokenModalScope === 'file') {
+      insertTokenAtCursor(fileFormatRef, 'fileFormat', token);
+    }
   };
 
-  const insertFileToken = (token: string) => {
-    insertTokenAtCursor(fileFormatRef, 'fileFormat', token);
-  };
+  const modalPreviewTokens = useMemo(() => {
+    if (tokenModalScope === 'file') {
+      return { ...SAMPLE_TOKENS, trackNumber: 1, trackTotal: 12, partName: 'The Way of Kings' };
+    }
+    return SAMPLE_TOKENS;
+  }, [tokenModalScope]);
 
   return (
     <SettingsSection
@@ -267,9 +189,61 @@ export function LibrarySettingsSection() {
           </p>
         </div>
 
+        {/* Preset + Separator + Case row */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label htmlFor="namingPreset" className="block text-xs font-medium text-muted-foreground mb-1">Preset</label>
+            <select
+              id="namingPreset"
+              value={currentPreset}
+              onChange={(e) => handlePresetChange(e.target.value)}
+              className="w-full px-3 py-2 bg-background border border-border rounded-xl text-sm focus-ring"
+            >
+              {NAMING_PRESETS.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+              {currentPreset === 'custom' && <option value="custom">Custom</option>}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="namingSeparator" className="block text-xs font-medium text-muted-foreground mb-1">Separator</label>
+            <select
+              id="namingSeparator"
+              {...register('namingSeparator')}
+              className="w-full px-3 py-2 bg-background border border-border rounded-xl text-sm focus-ring"
+            >
+              {namingSeparatorValues.map((v) => (
+                <option key={v} value={v}>{SEPARATOR_LABELS[v]}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="namingCase" className="block text-xs font-medium text-muted-foreground mb-1">Case</label>
+            <select
+              id="namingCase"
+              {...register('namingCase')}
+              className="w-full px-3 py-2 bg-background border border-border rounded-xl text-sm focus-ring"
+            >
+              {namingCaseValues.map((v) => (
+                <option key={v} value={v}>{CASE_LABELS[v]}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <div>
-            <label htmlFor="folderFormat" className="block text-sm font-medium mb-2">Folder Format</label>
+            <div className="flex items-center gap-2 mb-2">
+              <label htmlFor="folderFormat" className="text-sm font-medium">Folder Format</label>
+              <button
+                type="button"
+                onClick={() => setTokenModalScope('folder')}
+                className="w-5 h-5 rounded-full bg-muted hover:bg-muted/80 text-xs font-bold text-muted-foreground hover:text-foreground transition-colors flex items-center justify-center"
+                aria-label="Folder token reference"
+              >
+                ?
+              </button>
+            </div>
             <input
               id="folderFormat"
               type="text"
@@ -292,12 +266,6 @@ export function LibrarySettingsSection() {
               <p className="text-sm text-destructive mt-1">{errors.folderFormat.message}</p>
             )}
 
-            <TokenPanel
-              tokens={ALLOWED_TOKENS}
-              onInsert={insertFolderToken}
-              label="Insert token"
-            />
-
             {!hasTitleToken && (
               <p className="text-sm text-destructive mt-1.5">
                 Template must include {'{title}'} or {'{titleSort}'}
@@ -311,7 +279,17 @@ export function LibrarySettingsSection() {
           </div>
 
           <div>
-            <label htmlFor="fileFormat" className="block text-sm font-medium mb-2">File Format</label>
+            <div className="flex items-center gap-2 mb-2">
+              <label htmlFor="fileFormat" className="text-sm font-medium">File Format</label>
+              <button
+                type="button"
+                onClick={() => setTokenModalScope('file')}
+                className="w-5 h-5 rounded-full bg-muted hover:bg-muted/80 text-xs font-bold text-muted-foreground hover:text-foreground transition-colors flex items-center justify-center"
+                aria-label="File token reference"
+              >
+                ?
+              </button>
+            </div>
             <input
               id="fileFormat"
               type="text"
@@ -334,13 +312,6 @@ export function LibrarySettingsSection() {
               <p className="text-sm text-destructive mt-1">{errors.fileFormat.message}</p>
             )}
 
-            <TokenPanel
-              tokens={ALLOWED_TOKENS}
-              extraTokens={FILE_ONLY_TOKENS}
-              onInsert={insertFileToken}
-              label="Insert token"
-            />
-
             {!fileTitleToken && (
               <p className="text-sm text-destructive mt-1.5">
                 Template must include {'{title}'} or {'{titleSort}'}
@@ -348,12 +319,6 @@ export function LibrarySettingsSection() {
             )}
           </div>
         </div>
-
-        <p className="text-sm text-muted-foreground -mt-2">
-          Use <code className="px-1 py-0.5 bg-muted rounded text-xs">{'{series? - }'}</code> for conditional separators
-          and <code className="px-1 py-0.5 bg-muted rounded text-xs">{'{seriesPosition:00}'}</code> for zero-padding.
-          File-specific: <code className="px-1 py-0.5 bg-muted rounded text-xs">{'{trackNumber:00}'}</code> for numbering, <code className="px-1 py-0.5 bg-muted rounded text-xs">{'{partName}'}</code> for chapter names.
-        </p>
 
         {(folderFormat || fileFormat) && (
           <div className="p-3 bg-muted/50 rounded-lg border border-border space-y-2">
@@ -420,6 +385,15 @@ export function LibrarySettingsSection() {
           rescanMutation.mutate();
         }}
         onCancel={() => setShowRescanPrompt(false)}
+      />
+      <NamingTokenModal
+        isOpen={tokenModalScope !== null}
+        onClose={() => setTokenModalScope(null)}
+        onInsert={handleTokenModalInsert}
+        scope={tokenModalScope ?? 'folder'}
+        currentFormat={tokenModalScope === 'file' ? (fileFormat ?? '') : (folderFormat ?? '')}
+        previewTokens={modalPreviewTokens}
+        namingOptions={namingOptions}
       />
     </SettingsSection>
   );

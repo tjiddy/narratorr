@@ -1403,6 +1403,7 @@ describe('LibraryScanService', () => {
         expect.any(String),
         expect.objectContaining({ narrators: undefined }),
         'Author',
+        expect.objectContaining({ separator: 'space', case: 'default' }),
       );
     });
 
@@ -1420,6 +1421,7 @@ describe('LibraryScanService', () => {
           narrators: [{ name: 'Stephen Fry' }, { name: 'Tim Curry' }],
         }),
         'Author',
+        expect.objectContaining({ separator: 'space', case: 'default' }),
       );
     });
   });

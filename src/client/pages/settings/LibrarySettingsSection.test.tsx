@@ -25,12 +25,33 @@ vi.mock('@/lib/api', () => ({
 }));
 
 vi.mock('@core/utils/index.js', () => ({
-  renderTemplate: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{authorLastFirst}', 'Sanderson, Brandon').replace('{title}', 'The Way of Kings').replace('{titleSort}', 'Way of Kings').replace('{narratorLastFirst}', 'Kramer, Michael & Reading, Kate'),
-  renderFilename: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{title}', 'The Way of Kings').replace('{trackNumber}', '1').replace('{trackTotal}', '12').replace('{partName}', 'The Way of Kings'),
+  renderTemplate: (template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
+    let result = template.replace('{author}', 'Brandon Sanderson').replace('{authorLastFirst}', 'Sanderson, Brandon').replace('{title}', 'The Way of Kings').replace('{titleSort}', 'Way of Kings').replace('{narratorLastFirst}', 'Kramer, Michael & Reading, Kate');
+    if (options?.separator && options.separator !== 'space') result = `[sep:${options.separator}] ${result}`;
+    if (options?.case && options.case !== 'default') result = `[case:${options.case}] ${result}`;
+    return result;
+  },
+  renderFilename: (template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
+    let result = template.replace('{author}', 'Brandon Sanderson').replace('{title}', 'The Way of Kings').replace('{trackNumber}', '1').replace('{trackTotal}', '12').replace('{partName}', 'The Way of Kings');
+    if (options?.separator && options.separator !== 'space') result = `[sep:${options.separator}] ${result}`;
+    if (options?.case && options.case !== 'default') result = `[case:${options.case}] ${result}`;
+    return result;
+  },
   toLastFirst: (name: string) => name,
   toSortTitle: (title: string) => title,
   ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
+  FOLDER_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
   FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
+  NAMING_PRESETS: [
+    { id: 'standard', name: 'Standard', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+    { id: 'audiobookshelf', name: 'Audiobookshelf', folderFormat: '{author}/{series?/}{title}', fileFormat: '{title}' },
+    { id: 'plex', name: 'Plex', folderFormat: '{author}/{series?/}{year? - }{title}', fileFormat: '{title}{trackNumber:00? - pt}' },
+    { id: 'last-first', name: 'Last, First', folderFormat: '{authorLastFirst}/{titleSort}', fileFormat: '{authorLastFirst} - {titleSort}' },
+  ],
+  detectPreset: (folder: string, file: string) => {
+    if (folder === '{author}/{title}' && file === '{author} - {title}') return 'standard';
+    return 'custom';
+  },
 }));
 
 const { api } = await import('@/lib/api');
@@ -47,7 +68,7 @@ const mockToast = toast as unknown as {
 };
 
 const mockSettings = createMockSettings({
-  library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+  library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
 });
 
 describe('LibrarySettingsSection', () => {
@@ -90,21 +111,18 @@ describe('LibrarySettingsSection', () => {
     expect(pathInput).toHaveValue('/new-lib');
   });
 
-  it('token panels collapsed by default', async () => {
+  it('renders ? buttons for folder and file format token reference', async () => {
     renderWithProviders(<LibrarySettingsSection />);
 
     await waitFor(() => {
       expect(screen.getByText('Library Path')).toBeInTheDocument();
     });
 
-    // Token buttons not visible
-    expect(screen.queryByText('{series}')).not.toBeInTheDocument();
-    // But toggle buttons are
-    const toggles = screen.getAllByText('Insert token');
-    expect(toggles).toHaveLength(2);
+    expect(screen.getByLabelText('Folder token reference')).toBeInTheDocument();
+    expect(screen.getByLabelText('File token reference')).toBeInTheDocument();
   });
 
-  it('expands file format token panel and shows file-specific tokens', async () => {
+  it('opens file token modal and shows file-specific tokens', async () => {
     const user = userEvent.setup();
     renderWithProviders(<LibrarySettingsSection />);
 
@@ -112,13 +130,12 @@ describe('LibrarySettingsSection', () => {
       expect(screen.getByText('File Format')).toBeInTheDocument();
     });
 
-    // Expand file format token panel (second toggle)
-    const toggles = screen.getAllByText('Insert token');
-    await user.click(toggles[1]);
+    await user.click(screen.getByLabelText('File token reference'));
 
-    expect(screen.getAllByText('{trackNumber}').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('{trackTotal}').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('{partName}').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('File Token Reference')).toBeInTheDocument();
+    expect(screen.getByText('{trackNumber}')).toBeInTheDocument();
+    expect(screen.getByText('{trackTotal}')).toBeInTheDocument();
+    expect(screen.getByText('{partName}')).toBeInTheDocument();
   });
 
   it('shows preview sections', async () => {
@@ -130,7 +147,7 @@ describe('LibrarySettingsSection', () => {
     expect(screen.getByText('Without series')).toBeInTheDocument();
   });
 
-  it('inserts token into folder format when token button is clicked', async () => {
+  it('inserts token into folder format when token button is clicked in modal', async () => {
     const user = userEvent.setup();
     renderWithProviders(<LibrarySettingsSection />);
 
@@ -138,12 +155,11 @@ describe('LibrarySettingsSection', () => {
       expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
     });
 
-    // Expand folder format token panel (first toggle)
-    const toggles = screen.getAllByText('Insert token');
-    await user.click(toggles[0]);
+    // Open folder token modal
+    await user.click(screen.getByLabelText('Folder token reference'));
 
     // Click the {series} token button
-    await user.click(screen.getAllByText('{series}')[0]);
+    await user.click(screen.getByText('{series}'));
 
     // Save button should become enabled (form is dirty from token insertion)
     await waitFor(() => {
@@ -210,7 +226,7 @@ describe('LibrarySettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        library: { path: '/new-path', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+        library: { path: '/new-path', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
       });
     });
   });
@@ -257,7 +273,7 @@ describe('LibrarySettingsSection', () => {
 
   describe('library path blur → rescan prompt', () => {
     const mockSettingsLib1 = createMockSettings({
-      library: { path: '/lib1', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+      library: { path: '/lib1', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
     });
 
     beforeEach(() => {
@@ -775,12 +791,11 @@ describe('LibrarySettingsSection', () => {
       await user.click(folderInput);
       const cursorPos = folderInput.value.length; // 15 for '{author}/{title}'
 
-      // Open folder token panel (first "Insert token" toggle)
-      const toggles = screen.getAllByText('Insert token');
-      await user.click(toggles[0]);
+      // Open folder token modal
+      await user.click(screen.getByLabelText('Folder token reference'));
 
       // Click {year} token — insertTokenAtCursor schedules setSelectionRange via rAF
-      await user.click(screen.getAllByText('{year}')[0]);
+      await user.click(screen.getByText('{year}'));
 
       // Flush the requestAnimationFrame (jsdom implements rAF as setTimeout)
       await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 0)); });
@@ -810,6 +825,207 @@ describe('LibrarySettingsSection — Scan Library button (#133)', () => {
     await waitFor(() => {
       const link = screen.getByRole('link', { name: /scan library/i });
       expect(link).toHaveAttribute('href', '/library-import');
+    });
+  });
+
+  describe('presets', () => {
+    it('renders preset dropdown', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Preset')).toBeInTheDocument());
+      expect(screen.getByText('Standard')).toBeInTheDocument();
+    });
+
+    it('selecting Audiobookshelf preset populates both format fields', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}'));
+
+      await user.selectOptions(screen.getByLabelText('Preset'), 'audiobookshelf');
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{series?/}{title}');
+        expect(screen.getByPlaceholderText('{author} - {title}')).toHaveValue('{title}');
+      });
+    });
+
+    it('selecting a preset marks form as dirty', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}'));
+
+      await user.selectOptions(screen.getByLabelText('Preset'), 'audiobookshelf');
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /save/i })).not.toBeDisabled();
+      });
+    });
+
+    it('shows Custom when format values do not match any preset', async () => {
+      mockApi.getSettings.mockResolvedValue(createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{title}/{author}', fileFormat: '{title} by {author}', namingSeparator: 'space', namingCase: 'default' },
+      }));
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{title}/{author}'));
+      expect(screen.getByText('Custom')).toBeInTheDocument();
+    });
+  });
+
+  describe('separator and case dropdowns', () => {
+    it('renders separator dropdown with Space/Period/Underscore/Dash options', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Separator')).toBeInTheDocument());
+      const select = screen.getByLabelText('Separator');
+      expect(select).toBeInTheDocument();
+      expect(screen.getByText('Space')).toBeInTheDocument();
+      expect(screen.getByText('Period')).toBeInTheDocument();
+      expect(screen.getByText('Underscore')).toBeInTheDocument();
+      expect(screen.getByText('Dash')).toBeInTheDocument();
+    });
+
+    it('renders case dropdown with Default/lowercase/UPPERCASE/Title Case options', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Case')).toBeInTheDocument());
+      expect(screen.getByText('Default')).toBeInTheDocument();
+      expect(screen.getByText('lowercase')).toBeInTheDocument();
+      expect(screen.getByText('UPPERCASE')).toBeInTheDocument();
+      expect(screen.getByText('Title Case')).toBeInTheDocument();
+    });
+
+    it('separator and case values included in save payload', async () => {
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks'));
+
+      // Change separator to mark form dirty
+      await user.selectOptions(screen.getByLabelText('Separator'), 'period');
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+          library: expect.objectContaining({
+            namingSeparator: 'period',
+            namingCase: 'default',
+          }),
+        }));
+      });
+    });
+
+    it('changing separator updates the preview text', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Separator')).toBeInTheDocument());
+
+      // Default separator is 'space' — preview should NOT contain [sep:] tag
+      expect(screen.queryByText(/\[sep:/)).not.toBeInTheDocument();
+
+      // Change to period
+      await user.selectOptions(screen.getByLabelText('Separator'), 'period');
+
+      // Preview should now contain the [sep:period] tag from the mock (multiple previews)
+      await waitFor(() => {
+        expect(screen.getAllByText(/\[sep:period\]/).length).toBeGreaterThanOrEqual(1);
+      });
+    });
+
+    it('changing case updates the preview text', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Case')).toBeInTheDocument());
+
+      // Default case — preview should NOT contain [case:] tag
+      expect(screen.queryByText(/\[case:/)).not.toBeInTheDocument();
+
+      // Change to upper
+      await user.selectOptions(screen.getByLabelText('Case'), 'upper');
+
+      // Preview should now contain the [case:upper] tag from the mock (multiple previews)
+      await waitFor(() => {
+        expect(screen.getAllByText(/\[case:upper\]/).length).toBeGreaterThanOrEqual(1);
+      });
+    });
+  });
+
+  describe('token reference modal', () => {
+    it('folder format ? button opens modal scoped to folder tokens', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Folder token reference')).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText('Folder token reference'));
+      expect(screen.getByText('Folder Token Reference')).toBeInTheDocument();
+      expect(screen.queryByText('File-specific')).not.toBeInTheDocument();
+    });
+
+    it('file format ? button opens modal with all tokens including file-specific', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('File token reference')).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText('File token reference'));
+      expect(screen.getByText('File Token Reference')).toBeInTheDocument();
+      expect(screen.getByText('File-specific')).toBeInTheDocument();
+    });
+
+    it('modal closes via X button', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Folder token reference')).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText('Folder token reference'));
+      expect(screen.getByText('Folder Token Reference')).toBeInTheDocument();
+
+      await user.click(screen.getByLabelText('Close'));
+      expect(screen.queryByText('Folder Token Reference')).not.toBeInTheDocument();
+    });
+
+    it('modal closes via backdrop click', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Folder token reference')).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText('Folder token reference'));
+      expect(screen.getByText('Folder Token Reference')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId('modal-backdrop'));
+      expect(screen.queryByText('Folder Token Reference')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('inline TokenPanel removed', () => {
+    it('no "Insert token" toggle buttons rendered', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByText('Library Path')).toBeInTheDocument());
+      expect(screen.queryByText('Insert token')).not.toBeInTheDocument();
+    });
+
+    it('no inline help text paragraph about conditional separators', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByText('Library Path')).toBeInTheDocument());
+      expect(screen.queryByText(/conditional separators/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/zero-padding/i)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('validation regression', () => {
+    it('folder format without title/titleSort shows error after preset + manual edit', async () => {
+      mockApi.getSettings.mockResolvedValue(createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{author}/books', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
+      }));
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByText(/Template must include/)).toBeInTheDocument();
+      });
+    });
+
+    it('file format without title/titleSort shows error', async () => {
+      mockApi.getSettings.mockResolvedValue(createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author}', namingSeparator: 'space', namingCase: 'default' },
+      }));
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByText(/Template must include/)).toBeInTheDocument();
+      });
     });
   });
 });

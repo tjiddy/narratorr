@@ -12,6 +12,7 @@ import { RetagError } from './tagging.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
+import type { NamingOptions } from '../../core/utils/naming.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
@@ -59,6 +60,7 @@ export class BulkOperationService {
 
   async countRenameEligible(): Promise<{ mismatched: number; alreadyMatching: number }> {
     const librarySettings = await this.settingsService.get('library');
+    const namingOptions: NamingOptions = { separator: librarySettings.namingSeparator, case: librarySettings.namingCase };
 
     const rows = await this.db
       .select({
@@ -93,6 +95,7 @@ export class BulkOperationService {
         librarySettings.folderFormat,
         row,
         row.authorName ?? null,
+        namingOptions,
       );
       // Normalize both paths before comparing (handles backslash separators on Windows imports)
       const normalizedCurrent = normalize(resolve(row.path!.split('\\').join('/')));
@@ -130,6 +133,7 @@ export class BulkOperationService {
   async startRenameJob(): Promise<string> {
     this.assertNoActiveJob();
     const librarySettings = await this.settingsService.get('library');
+    const renameNamingOptions: NamingOptions = { separator: librarySettings.namingSeparator, case: librarySettings.namingCase };
     if (!librarySettings.path?.trim()) {
       throw new BulkOpError('Library path not configured', 'LIBRARY_NOT_CONFIGURED');
     }
@@ -157,7 +161,7 @@ export class BulkOperationService {
       for (const row of rows) {
         if (seen.has(row.id)) continue;
         seen.add(row.id);
-        const targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, row, row.authorName ?? null);
+        const targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, row, row.authorName ?? null, renameNamingOptions);
         const normalizedCurrent = normalize(resolve(row.path!.split('\\').join('/')));
         const normalizedTarget = normalize(resolve(targetPath));
         if (normalizedCurrent !== normalizedTarget) {

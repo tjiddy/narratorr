@@ -9,6 +9,7 @@ import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
 import { cleanEmptyParents, renameFilesWithTemplate } from '../utils/paths.js';
+import type { NamingOptions } from '../../core/utils/naming.js';
 
 export interface RenameResult {
   oldPath: string;
@@ -52,6 +53,7 @@ export class RenameService {
     }
 
     const librarySettings = await this.settingsService.get('library');
+    const namingOptions: NamingOptions = { separator: librarySettings.namingSeparator, case: librarySettings.namingCase };
 
     // Build the target path from current metadata
     const authorName = book.authors?.[0]?.name ?? null;
@@ -60,6 +62,7 @@ export class RenameService {
       librarySettings.folderFormat,
       book,
       authorName,
+      namingOptions,
     );
 
     const oldPath = book.path;
@@ -92,6 +95,7 @@ export class RenameService {
         book,
         authorName,
         this.log,
+        namingOptions,
       );
     }
 

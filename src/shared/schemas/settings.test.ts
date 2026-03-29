@@ -171,6 +171,8 @@ const validLibraryForm = {
   path: '/data/books',
   folderFormat: '{author}/{title}',
   fileFormat: '{author} - {title}',
+  namingSeparator: 'space' as const,
+  namingCase: 'default' as const,
 };
 
 describe('libraryFormSchema — trim behavior', () => {
