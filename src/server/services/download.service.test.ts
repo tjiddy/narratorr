@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain, createMockSettingsService } from '../__tests__/helpers.js';
-import { DownloadService, DownloadError } from './download.service.js';
+import { DownloadService, DownloadError, DuplicateDownloadError } from './download.service.js';
 import { type DownloadClientService } from './download-client.service.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db } from '../../db/index.js';
@@ -297,7 +297,7 @@ describe('DownloadService', () => {
           title: 'The Way of Kings',
           bookId: 1,
         }),
-      ).rejects.toThrow('already has an active download');
+      ).rejects.toThrow(DuplicateDownloadError);
 
       // No insert should have been called
       expect(db.insert).not.toHaveBeenCalled();
@@ -1341,7 +1341,7 @@ describe('DownloadService', () => {
       expect(mockAdapter.addDownload).toHaveBeenCalledTimes(1);
     });
 
-    it('throws error with code ACTIVE_DOWNLOAD_EXISTS when replaceable active download exists and replaceExisting is false/undefined', async () => {
+    it('throws DuplicateDownloadError with code ACTIVE_DOWNLOAD_EXISTS when replaceable active download exists and replaceExisting is false/undefined', async () => {
       const replaceableDownload = { ...mockDownload, id: 5, status: 'queued' as const };
       db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
 
@@ -1351,12 +1351,12 @@ describe('DownloadService', () => {
         bookId: 1,
       }).catch((e: unknown) => e);
 
-      expect(err).toBeInstanceOf(Error);
-      expect((err as { code?: string }).code).toBe('ACTIVE_DOWNLOAD_EXISTS');
+      expect(err).toBeInstanceOf(DuplicateDownloadError);
+      expect((err as DuplicateDownloadError).code).toBe('ACTIVE_DOWNLOAD_EXISTS');
       expect(db.insert).not.toHaveBeenCalled();
     });
 
-    it('throws generic duplicate error (not 409) when only processing_queued/importing downloads exist', async () => {
+    it('throws DuplicateDownloadError with PIPELINE_ACTIVE code when only processing_queued/importing downloads exist', async () => {
       const pipelineDownload = { ...mockDownload, id: 5, status: 'processing_queued' as const };
       // getActiveByBookId returns only pipeline download
       db.select.mockReturnValueOnce(mockDbChain([{ download: pipelineDownload, book: mockBook }]));
@@ -1367,15 +1367,41 @@ describe('DownloadService', () => {
         bookId: 1,
       }).catch((e: unknown) => e);
 
-      expect(err).toBeInstanceOf(Error);
-      expect((err as { code?: string }).code).toBeUndefined(); // NOT ACTIVE_DOWNLOAD_EXISTS
+      expect(err).toBeInstanceOf(DuplicateDownloadError);
+      expect((err as DuplicateDownloadError).code).toBe('PIPELINE_ACTIVE');
       expect(db.insert).not.toHaveBeenCalled();
     });
 
     // #197 — DuplicateDownloadError typed error assertions (ERR-1)
-    it.todo('throws DuplicateDownloadError with code ACTIVE_DOWNLOAD_EXISTS for replaceable-active duplicate');
-    it.todo('throws DuplicateDownloadError with code PIPELINE_ACTIVE for pipeline-active duplicate');
-    it.todo('DuplicateDownloadError has correct name property and instanceof works');
+    it('throws DuplicateDownloadError with code ACTIVE_DOWNLOAD_EXISTS for replaceable-active duplicate', async () => {
+      const replaceableDownload = { ...mockDownload, id: 5, status: 'queued' as const };
+      db.select.mockReturnValueOnce(mockDbChain([{ download: replaceableDownload, book: mockBook }]));
+
+      const err = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+        bookId: 1,
+      }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(DuplicateDownloadError);
+      expect((err as DuplicateDownloadError).code).toBe('ACTIVE_DOWNLOAD_EXISTS');
+      expect((err as DuplicateDownloadError).name).toBe('DuplicateDownloadError');
+    });
+
+    it('throws DuplicateDownloadError with code PIPELINE_ACTIVE for pipeline-active duplicate', async () => {
+      const pipelineDownload = { ...mockDownload, id: 5, status: 'processing_queued' as const };
+      db.select.mockReturnValueOnce(mockDbChain([{ download: pipelineDownload, book: mockBook }]));
+
+      const err = await service.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:abc',
+        title: 'Test',
+        bookId: 1,
+      }).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(DuplicateDownloadError);
+      expect((err as DuplicateDownloadError).code).toBe('PIPELINE_ACTIVE');
+      expect((err as DuplicateDownloadError).name).toBe('DuplicateDownloadError');
+    });
 
     it('reverts book status to wanted when cancel succeeds but follow-up grab fails', async () => {
       const replaceableDownload = { ...mockDownload, id: 5, status: 'downloading' as const };

@@ -7,6 +7,7 @@ import type { IndexerService } from '../services/indexer.service.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { RetryBudget } from '../services/retry-budget.js';
 import { buildSearchQuery, filterAndRankResults, searchAndGrabForBook } from '../services/search-pipeline.js';
+import { DuplicateDownloadError } from '../services/download.service.js';
 
 export interface SearchJobResult {
   searched: number;
@@ -202,8 +203,7 @@ export async function runUpgradeSearchJob(
         grabbed++;
         log.info({ bookId: book.id, title: best.title }, 'Upgrade grabbed');
       } catch (grabError: unknown) {
-        const message = grabError instanceof Error ? grabError.message : String(grabError);
-        if (message.includes('already has an active download')) {
+        if (grabError instanceof DuplicateDownloadError) {
           log.debug({ bookId: book.id }, 'Skipping upgrade grab — active download exists');
         } else {
           throw grabError;

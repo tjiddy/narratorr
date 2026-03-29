@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS } from '../../shared/schemas/settings/registry.js';
 import type { Services } from './index.js';
 import { filterAndRankResults } from '../services/search-pipeline.js';
 import type { SearchResult } from '../../core/index.js';
+import { DuplicateDownloadError } from '../services/download.service.js';
 
 const mockSearchResult = {
   title: 'The Way of Kings',
@@ -656,8 +657,41 @@ describe('search routes', () => {
     });
 
     // #197 — DuplicateDownloadError route handling (ERR-1)
-    it.todo('returns 409 with { code: ACTIVE_DOWNLOAD_EXISTS } when DuplicateDownloadError has ACTIVE_DOWNLOAD_EXISTS code');
-    it.todo('returns 409 with { error: message } when DuplicateDownloadError has PIPELINE_ACTIVE code (plugin-routed)');
+    it('returns 409 with { code: ACTIVE_DOWNLOAD_EXISTS } when DuplicateDownloadError has ACTIVE_DOWNLOAD_EXISTS code', async () => {
+      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(
+        new DuplicateDownloadError('Book 1 already has an active download', 'ACTIVE_DOWNLOAD_EXISTS'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: {
+          downloadUrl: 'magnet:?xt=urn:btih:abc123',
+          title: 'Test',
+        },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ code: 'ACTIVE_DOWNLOAD_EXISTS' });
+    });
+
+    it('returns 409 with { error: message } when DuplicateDownloadError has PIPELINE_ACTIVE code (plugin-routed)', async () => {
+      (services.downloadOrchestrator.grab as Mock).mockRejectedValue(
+        new DuplicateDownloadError('Book 1 has pipeline download', 'PIPELINE_ACTIVE'),
+      );
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: {
+          downloadUrl: 'magnet:?xt=urn:btih:abc123',
+          title: 'Test',
+        },
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Book 1 has pipeline download' });
+    });
   });
 
   describe('error paths', () => {
