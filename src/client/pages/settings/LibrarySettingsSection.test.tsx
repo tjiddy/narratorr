@@ -30,7 +30,18 @@ vi.mock('@core/utils/index.js', () => ({
   toLastFirst: (name: string) => name,
   toSortTitle: (title: string) => title,
   ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
+  FOLDER_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
   FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
+  NAMING_PRESETS: [
+    { id: 'standard', name: 'Standard', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+    { id: 'audiobookshelf', name: 'Audiobookshelf', folderFormat: '{author}/{series/}{title}', fileFormat: '{title}' },
+    { id: 'plex', name: 'Plex', folderFormat: '{author}/{series/}{year? - }{title}', fileFormat: '{title}{trackNumber:00? - pt}' },
+    { id: 'last-first', name: 'Last, First', folderFormat: '{authorLastFirst}/{titleSort}', fileFormat: '{authorLastFirst} - {titleSort}' },
+  ],
+  detectPreset: (folder: string, file: string) => {
+    if (folder === '{author}/{title}' && file === '{author} - {title}') return 'standard';
+    return 'custom';
+  },
 }));
 
 const { api } = await import('@/lib/api');
@@ -47,7 +58,7 @@ const mockToast = toast as unknown as {
 };
 
 const mockSettings = createMockSettings({
-  library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+  library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
 });
 
 describe('LibrarySettingsSection', () => {
@@ -90,21 +101,18 @@ describe('LibrarySettingsSection', () => {
     expect(pathInput).toHaveValue('/new-lib');
   });
 
-  it('token panels collapsed by default', async () => {
+  it('renders ? buttons for folder and file format token reference', async () => {
     renderWithProviders(<LibrarySettingsSection />);
 
     await waitFor(() => {
       expect(screen.getByText('Library Path')).toBeInTheDocument();
     });
 
-    // Token buttons not visible
-    expect(screen.queryByText('{series}')).not.toBeInTheDocument();
-    // But toggle buttons are
-    const toggles = screen.getAllByText('Insert token');
-    expect(toggles).toHaveLength(2);
+    expect(screen.getByLabelText('Folder token reference')).toBeInTheDocument();
+    expect(screen.getByLabelText('File token reference')).toBeInTheDocument();
   });
 
-  it('expands file format token panel and shows file-specific tokens', async () => {
+  it('opens file token modal and shows file-specific tokens', async () => {
     const user = userEvent.setup();
     renderWithProviders(<LibrarySettingsSection />);
 
@@ -112,13 +120,12 @@ describe('LibrarySettingsSection', () => {
       expect(screen.getByText('File Format')).toBeInTheDocument();
     });
 
-    // Expand file format token panel (second toggle)
-    const toggles = screen.getAllByText('Insert token');
-    await user.click(toggles[1]);
+    await user.click(screen.getByLabelText('File token reference'));
 
-    expect(screen.getAllByText('{trackNumber}').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('{trackTotal}').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('{partName}').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('File Token Reference')).toBeInTheDocument();
+    expect(screen.getByText('{trackNumber}')).toBeInTheDocument();
+    expect(screen.getByText('{trackTotal}')).toBeInTheDocument();
+    expect(screen.getByText('{partName}')).toBeInTheDocument();
   });
 
   it('shows preview sections', async () => {
@@ -130,7 +137,7 @@ describe('LibrarySettingsSection', () => {
     expect(screen.getByText('Without series')).toBeInTheDocument();
   });
 
-  it('inserts token into folder format when token button is clicked', async () => {
+  it('inserts token into folder format when token button is clicked in modal', async () => {
     const user = userEvent.setup();
     renderWithProviders(<LibrarySettingsSection />);
 
@@ -138,12 +145,11 @@ describe('LibrarySettingsSection', () => {
       expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
     });
 
-    // Expand folder format token panel (first toggle)
-    const toggles = screen.getAllByText('Insert token');
-    await user.click(toggles[0]);
+    // Open folder token modal
+    await user.click(screen.getByLabelText('Folder token reference'));
 
     // Click the {series} token button
-    await user.click(screen.getAllByText('{series}')[0]);
+    await user.click(screen.getByText('{series}'));
 
     // Save button should become enabled (form is dirty from token insertion)
     await waitFor(() => {
@@ -210,7 +216,7 @@ describe('LibrarySettingsSection', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        library: { path: '/new-path', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+        library: { path: '/new-path', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
       });
     });
   });
@@ -257,7 +263,7 @@ describe('LibrarySettingsSection', () => {
 
   describe('library path blur → rescan prompt', () => {
     const mockSettingsLib1 = createMockSettings({
-      library: { path: '/lib1', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+      library: { path: '/lib1', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
     });
 
     beforeEach(() => {
@@ -775,12 +781,11 @@ describe('LibrarySettingsSection', () => {
       await user.click(folderInput);
       const cursorPos = folderInput.value.length; // 15 for '{author}/{title}'
 
-      // Open folder token panel (first "Insert token" toggle)
-      const toggles = screen.getAllByText('Insert token');
-      await user.click(toggles[0]);
+      // Open folder token modal
+      await user.click(screen.getByLabelText('Folder token reference'));
 
       // Click {year} token — insertTokenAtCursor schedules setSelectionRange via rAF
-      await user.click(screen.getAllByText('{year}')[0]);
+      await user.click(screen.getByText('{year}'));
 
       // Flush the requestAnimationFrame (jsdom implements rAF as setTimeout)
       await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 0)); });
