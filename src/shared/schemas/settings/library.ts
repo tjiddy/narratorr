@@ -74,6 +74,6 @@ export const libraryFormSchema = z.object({
     (val) => validateTokens(val, FILE_FORMAT_ALLOWED_TOKENS),
     { message: 'Unknown token in file template' },
   ),
-  namingSeparator: namingSeparatorSchema,
-  namingCase: namingCaseSchema,
+  namingSeparator: z.enum(namingSeparatorValues),
+  namingCase: z.enum(namingCaseValues),
 });

@@ -109,7 +109,7 @@ describe('SettingsService', () => {
       const chain = mockDbChain();
       db.insert.mockReturnValue(chain);
 
-      await service.set('library', { path: '/new', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+      await service.set('library', { path: '/new', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' });
 
       expect(db.insert).toHaveBeenCalled();
       expect(chain.values).toHaveBeenCalled();

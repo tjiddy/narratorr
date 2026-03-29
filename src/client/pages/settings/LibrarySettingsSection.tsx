@@ -18,44 +18,19 @@ import { BulkOperationsSection } from '@/components/library/BulkOperationsSectio
 
 type LibraryFormData = AppSettings['library'];
 
-const SAMPLE_AUTHOR = 'Brandon Sanderson';
-const SAMPLE_TITLE = 'The Way of Kings';
-const SAMPLE_NARRATOR = 'Michael Kramer, Kate Reading';
 const SAMPLE_TOKENS = {
-  author: SAMPLE_AUTHOR,
-  authorLastFirst: toLastFirst(SAMPLE_AUTHOR),
-  title: SAMPLE_TITLE,
-  titleSort: toSortTitle(SAMPLE_TITLE),
-  series: 'The Stormlight Archive',
-  seriesPosition: 1,
-  year: '2010',
-  narrator: SAMPLE_NARRATOR,
-  narratorLastFirst: toLastFirst(SAMPLE_NARRATOR),
+  author: 'Brandon Sanderson', authorLastFirst: toLastFirst('Brandon Sanderson'),
+  title: 'The Way of Kings', titleSort: toSortTitle('The Way of Kings'),
+  series: 'The Stormlight Archive', seriesPosition: 1, year: '2010',
+  narrator: 'Michael Kramer, Kate Reading', narratorLastFirst: toLastFirst('Michael Kramer, Kate Reading'),
 };
-
 const SAMPLE_TOKENS_NO_SERIES = {
-  author: 'Andy Weir',
-  authorLastFirst: toLastFirst('Andy Weir'),
-  title: 'Project Hail Mary',
-  titleSort: toSortTitle('Project Hail Mary'),
-  year: '2021',
-  narrator: 'Ray Porter',
-  narratorLastFirst: toLastFirst('Ray Porter'),
+  author: 'Andy Weir', authorLastFirst: toLastFirst('Andy Weir'),
+  title: 'Project Hail Mary', titleSort: toSortTitle('Project Hail Mary'),
+  year: '2021', narrator: 'Ray Porter', narratorLastFirst: toLastFirst('Ray Porter'),
 };
-
-const SEPARATOR_LABELS: Record<string, string> = {
-  space: 'Space',
-  period: 'Period',
-  underscore: 'Underscore',
-  dash: 'Dash',
-};
-
-const CASE_LABELS: Record<string, string> = {
-  default: 'Default',
-  lower: 'lowercase',
-  upper: 'UPPERCASE',
-  title: 'Title Case',
-};
+const SEPARATOR_LABELS: Record<string, string> = { space: 'Space', period: 'Period', underscore: 'Underscore', dash: 'Dash' };
+const CASE_LABELS: Record<string, string> = { default: 'Default', lower: 'lowercase', upper: 'UPPERCASE', title: 'Title Case' };
 
 // eslint-disable-next-line complexity, max-lines-per-function -- folder/file format validation + token insertion + preview for both templates
 export function LibrarySettingsSection() {
@@ -119,7 +94,6 @@ export function LibrarySettingsSection() {
   });
 
   const { onBlur: rhfPathOnBlur, ...pathRegistration } = register('path');
-
   const handlePathBlur: typeof rhfPathOnBlur = async (e) => {
     await rhfPathOnBlur(e);
     const currentPath = ((e.target as HTMLInputElement).value ?? '').trim();
@@ -136,49 +110,23 @@ export function LibrarySettingsSection() {
   const namingCase = watch('namingCase');
 
   const namingOptions: NamingOptions = useMemo(() => ({
-    separator: namingSeparator ?? 'space',
-    case: namingCase ?? 'default',
+    separator: namingSeparator ?? 'space', case: namingCase ?? 'default',
   }), [namingSeparator, namingCase]);
+  const currentPreset = useMemo(() => detectPreset(folderFormat ?? '', fileFormat ?? ''), [folderFormat, fileFormat]);
 
-  const currentPreset = useMemo(
-    () => detectPreset(folderFormat ?? '', fileFormat ?? ''),
-    [folderFormat, fileFormat],
-  );
+  const { previewPath, previewFilename } = useMemo(() => ({
+    previewPath: folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS, namingOptions) : '',
+    previewFilename: fileFormat ? renderFilename(fileFormat, { ...SAMPLE_TOKENS, trackNumber: 1, trackTotal: 12, partName: 'The Way of Kings' }, namingOptions) : '',
+  }), [folderFormat, fileFormat, namingOptions]);
 
-  const previewPath = useMemo(() => {
-    if (!folderFormat) return '';
-    return renderTemplate(folderFormat, SAMPLE_TOKENS, namingOptions);
-  }, [folderFormat, namingOptions]);
-
-  const previewFilename = useMemo(() => {
-    if (!fileFormat) return '';
-    return renderFilename(fileFormat, {
-      ...SAMPLE_TOKENS,
-      trackNumber: 1,
-      trackTotal: 12,
-      partName: 'The Way of Kings',
-    }, namingOptions);
-  }, [fileFormat, namingOptions]);
-
-  const previewPathNoSeries = useMemo(() => {
-    if (!folderFormat) return '';
-    return renderTemplate(folderFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions);
-  }, [folderFormat, namingOptions]);
-
-  const previewFilenameNoSeries = useMemo(() => {
-    if (!fileFormat) return '';
-    return renderFilename(fileFormat, {
-      ...SAMPLE_TOKENS_NO_SERIES,
-      trackNumber: 1,
-      trackTotal: 8,
-      partName: 'Project Hail Mary',
-    }, namingOptions);
-  }, [fileFormat, namingOptions]);
+  const { previewPathNoSeries, previewFilenameNoSeries } = useMemo(() => ({
+    previewPathNoSeries: folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '',
+    previewFilenameNoSeries: fileFormat ? renderFilename(fileFormat, { ...SAMPLE_TOKENS_NO_SERIES, trackNumber: 1, trackTotal: 8, partName: 'Project Hail Mary' }, namingOptions) : '',
+  }), [folderFormat, fileFormat, namingOptions]);
 
   const hasTitleToken = folderFormat ? /\{title(?:Sort)?(?::\d+)?(?:\?[^}]*)?\}/.test(folderFormat) : true;
   const hasAuthorToken = folderFormat ? /\{author(?:LastFirst)?(?::\d+)?(?:\?[^}]*)?\}/.test(folderFormat) : true;
   const fileTitleToken = fileFormat ? /\{title(?:Sort)?(?::\d+)?(?:\?[^}]*)?\}/.test(fileFormat) : true;
-
   const insertTokenAtCursor = (
     ref: React.RefObject<HTMLInputElement | null>,
     field: 'folderFormat' | 'fileFormat',
@@ -198,14 +146,12 @@ export function LibrarySettingsSection() {
       input.focus();
     });
   };
-
   const handlePresetChange = (presetId: string) => {
     const preset = NAMING_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
     setValue('folderFormat', preset.folderFormat, { shouldDirty: true, shouldValidate: true });
     setValue('fileFormat', preset.fileFormat, { shouldDirty: true, shouldValidate: true });
   };
-
   const handleTokenModalInsert = (token: string) => {
     if (tokenModalScope === 'folder') {
       insertTokenAtCursor(folderFormatRef, 'folderFormat', token);

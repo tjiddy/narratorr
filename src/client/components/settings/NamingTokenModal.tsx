@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Modal } from '@/components/Modal';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
-import { renderTemplate, renderFilename, FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from '@core/utils/index.js';
+import { renderTemplate, renderFilename } from '@core/utils/index.js';
 import type { NamingOptions } from '@core/utils/naming.js';
 
 interface TokenGroup {

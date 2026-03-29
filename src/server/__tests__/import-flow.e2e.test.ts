@@ -103,6 +103,8 @@ describe('Import flow E2E', () => {
       path: libraryDir,
       folderFormat: '{author}/{title}',
       fileFormat: '{author} - {title}',
+      namingSeparator: 'space',
+      namingCase: 'default',
     });
 
     // Import settings: default — no auto-delete
