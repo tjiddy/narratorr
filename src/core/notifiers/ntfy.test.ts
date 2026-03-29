@@ -74,6 +74,7 @@ describe('NtfyNotifier', () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toContain('401');
+    expect(result.message).toContain('unauthorized');
   });
 
   it('returns timeout error on slow response', async () => {

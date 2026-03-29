@@ -51,6 +51,7 @@ describe('PushoverNotifier', () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toContain('400');
+    expect(result.message).toContain('token is invalid');
   });
 
   it('returns timeout error on slow response', async () => {

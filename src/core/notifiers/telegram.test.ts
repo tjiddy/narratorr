@@ -209,6 +209,7 @@ describe('TelegramNotifier', () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toContain('401');
+    expect(result.message).toContain('Unauthorized');
   });
 
   it('does not escape quotes in HTML message body', async () => {
