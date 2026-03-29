@@ -243,11 +243,7 @@ export class BackupService {
     } catch (error: unknown) {
       if (error instanceof RestoreUploadError) throw error;
       await fs.rm(tempDir, { recursive: true }).catch(() => {});
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      if (message.includes('signature') || message.includes('invalid') || message.includes('Not a valid') || message.includes('end of central directory')) {
-        throw new RestoreUploadError('File is not a valid zip archive', 'INVALID_ZIP');
-      }
-      throw error;
+      throw new RestoreUploadError('File is not a valid zip archive', 'INVALID_ZIP');
     }
   }
 
@@ -259,6 +255,14 @@ export class BackupService {
       // Check it's a valid SQLite file by attempting to open with libSQL
       const client = createClient({ url: `file:${tempPath}` });
       try {
+        // Check migrations table exists via sqlite_master (structured check, no string matching)
+        const tableCheck = await client.execute(
+          "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='__drizzle_migrations'",
+        );
+        if (Number(tableCheck.rows[0].count) === 0) {
+          return { valid: false, error: 'Not a valid Narratorr database — missing migrations table' };
+        }
+
         const result = await client.execute('SELECT COUNT(*) as count FROM __drizzle_migrations');
         const backupMigrationCount = Number(result.rows[0].count);
 
@@ -277,11 +281,6 @@ export class BackupService {
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-
-      if (message.includes('__drizzle_migrations')) {
-        return { valid: false, error: 'Not a valid Narratorr database — missing migrations table' };
-      }
-
       return { valid: false, error: `Invalid database file: ${message}` };
     }
   }

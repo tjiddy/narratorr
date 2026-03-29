@@ -330,7 +330,10 @@ describe('BackupService', () => {
     });
 
     it('returns valid=true for DB with fewer migrations than app', async () => {
-      mockExecute.mockResolvedValue({ rows: [{ count: 1 }] });
+      // First call: sqlite_master table check (table exists)
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+      // Second call: migration count
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
       const result = await service.validateRestore('/tmp/test.db');
@@ -339,7 +342,10 @@ describe('BackupService', () => {
     });
 
     it('returns valid=false for DB with more migrations than app', async () => {
-      mockExecute.mockResolvedValue({ rows: [{ count: 99 }] });
+      // First call: sqlite_master table check (table exists)
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+      // Second call: migration count
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 99 }] });
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
       const result = await service.validateRestore('/tmp/test.db');
@@ -349,10 +355,24 @@ describe('BackupService', () => {
     });
 
     // #197 — structured table-existence check replaces string matching (ERR-1)
-    it.todo('detects missing migrations table via structured query (not message.includes)');
+    it('detects missing migrations table via structured sqlite_master query (not message.includes)', async () => {
+      // sqlite_master returns 0 — table does not exist
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 0 }] });
+
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+      const result = await service.validateRestore('/tmp/test.db');
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('missing migrations table');
+      // Verify it used the structured query, not the migration count query
+      expect(mockExecute).toHaveBeenCalledWith(
+        expect.stringContaining('sqlite_master'),
+      );
+    });
 
     it('returns valid=false for DB without __drizzle_migrations table', async () => {
-      mockExecute.mockRejectedValue(new Error('no such table: __drizzle_migrations'));
+      // sqlite_master returns 0 — table does not exist
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 0 }] });
 
       const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
       const result = await service.validateRestore('/tmp/test.db');
