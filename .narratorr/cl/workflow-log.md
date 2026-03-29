@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #184 Test coverage: Activity page components — 2026-03-29
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #194
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 9 (6 refetchInterval + 3 tab switching)
+- Quality gate runs: 2 (pass on attempt 2 — first failed on unused `afterEach` import lint error)
+- Fix iterations: 1 (lint fix for unused import)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-narrowed after two rounds of spec review; implementation matched the test plan exactly
+- Friction / issues encountered: Fake timer test isolation for TanStack Query `refetchInterval` was the main challenge — `vi.useFakeTimers()` without `toFake` constraint breaks `waitFor`, and stale polling intervals leak between tests causing call-count mismatches. Required try/finally pattern with explicit unmount/clear per test.
+
+### Token efficiency
+- Highest-token actions: Debugging fake timer interaction with TanStack Query polling (4 iterations to get right)
+- Avoidable waste: Could have checked `useManualImport.test.ts` pattern for `toFake` constraint upfront instead of discovering it after 2 timeout failures
+- Suggestions: When testing TanStack Query polling, always start from the `useManualImport.test.ts` fake timer pattern
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: Resolved debt item from #146 (activity page test gaps)
+
+### Wish I'd Known
+1. `vi.useFakeTimers()` must use `{ toFake: ['setInterval', 'clearInterval'] }` when combined with `waitFor` — bare fake timers break Testing Library's internal setTimeout-based polling (see `fake-timers-tanstack-query.md`)
+2. Each fake timer test must explicitly unmount the hook and clear the QueryClient before `vi.useRealTimers()` — otherwise stale intervals from test N leak into test N+1 causing mock call count mismatches
+3. TanStack Query only evaluates `refetchInterval` after the initial fetch resolves — testing the "undefined data" path requires making the query error (with retry disabled), not leaving it pending forever
+
 ## #185 Test coverage: Manual Import components and hooks — 2026-03-28
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #193
