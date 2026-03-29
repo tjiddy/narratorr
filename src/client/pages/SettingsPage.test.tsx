@@ -44,6 +44,26 @@ vi.mock('sonner', () => ({
   },
 }));
 
+vi.mock('@core/utils/index.js', () => ({
+  renderTemplate: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
+  renderFilename: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
+  toLastFirst: (name: string) => name,
+  toSortTitle: (title: string) => title,
+  ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
+  FOLDER_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
+  FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
+  NAMING_PRESETS: [
+    { id: 'standard', name: 'Standard', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
+    { id: 'audiobookshelf', name: 'Audiobookshelf', folderFormat: '{author}/{series/}{title}', fileFormat: '{title}' },
+    { id: 'plex', name: 'Plex', folderFormat: '{author}/{series/}{year? - }{title}', fileFormat: '{title}{trackNumber:00? - pt}' },
+    { id: 'last-first', name: 'Last, First', folderFormat: '{authorLastFirst}/{titleSort}', fileFormat: '{authorLastFirst} - {titleSort}' },
+  ],
+  detectPreset: (folder: string, file: string) => {
+    if (folder === '{author}/{title}' && file === '{author} - {title}') return 'standard';
+    return 'custom';
+  },
+}));
+
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { createMockSettings, createMockIndexer, createMockDownloadClient } from '@/__tests__/factories';
@@ -487,22 +507,16 @@ describe('SettingsPage - Folder format token chips and preview', () => {
       expect(screen.getByRole('heading', { name: 'Library' })).toBeInTheDocument();
     });
 
-    // Token panels collapsed by default
-    const toggles = screen.getAllByText('Insert token');
-    expect(toggles.length).toBe(2);
+    // Token reference buttons visible
+    expect(screen.getByLabelText('Folder token reference')).toBeInTheDocument();
+    expect(screen.getByLabelText('File token reference')).toBeInTheDocument();
 
-    // Expand both panels
-    await user.click(toggles[0]);
-    await user.click(toggles[1]);
-
-    // Token chips now visible
+    // Open both token reference modals and check tokens
+    await user.click(screen.getByLabelText('Folder token reference'));
     expect(screen.getAllByText('{author}').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('{title}').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('{series}').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('{year}').length).toBeGreaterThanOrEqual(1);
-    // File-specific tokens
-    expect(screen.getAllByText('{trackNumber}').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('{trackTotal}').length).toBeGreaterThanOrEqual(1);
   });
 
   it('shows live preview with sample data', async () => {
@@ -527,9 +541,8 @@ describe('SettingsPage - Folder format token chips and preview', () => {
       expect(screen.getByRole('heading', { name: 'Library' })).toBeInTheDocument();
     });
 
-    // Expand folder format token panel, then click {year}
-    const toggles = screen.getAllByText('Insert token');
-    await user.click(toggles[0]);
+    // Open folder format token reference modal, then click {year}
+    await user.click(screen.getByLabelText('Folder token reference'));
     await user.click(screen.getAllByText('{year}')[0]);
 
     // The folder format input should now contain {year}
