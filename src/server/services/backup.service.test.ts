@@ -544,6 +544,24 @@ describe('processRestoreUpload', () => {
       .rejects.toThrow('File is not a valid zip archive');
   });
 
+  it('rethrows system-level I/O errors unchanged instead of wrapping as INVALID_ZIP', async () => {
+    const service = new BackupService(configPath, dbPath, createMockSettingsService(), createMockLog());
+    const zipBuffer = await createZipBuffer([
+      { name: 'narratorr.db', content: Buffer.from('fake-sqlite-db') },
+    ]);
+
+    // Mock validateRestore to throw a system-level I/O error (e.g., disk full during DB open)
+    const ioError = new Error('ENOSPC: no space left on device') as NodeJS.ErrnoException;
+    ioError.code = 'ENOSPC';
+    vi.spyOn(service, 'validateRestore').mockRejectedValueOnce(ioError);
+
+    const err = await service.processRestoreUpload(Readable.from(zipBuffer)).catch((e: unknown) => e);
+    // System-level errors should NOT be wrapped as RestoreUploadError/INVALID_ZIP
+    expect(err).not.toBeInstanceOf(RestoreUploadError);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as NodeJS.ErrnoException).code).toBe('ENOSPC');
+  });
+
   it('cleans up temp directory on failure', async () => {
     // Track temp dirs before test
     const tmpBefore = (await fs.readdir(os.tmpdir())).filter(f => f.startsWith('narratorr-restore-'));

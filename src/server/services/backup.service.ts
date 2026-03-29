@@ -243,6 +243,10 @@ export class BackupService {
     } catch (error: unknown) {
       if (error instanceof RestoreUploadError) throw error;
       await fs.rm(tempDir, { recursive: true }).catch(() => {});
+      // System-level I/O errors (ENOSPC, EACCES, etc.) should propagate as unexpected failures,
+      // not be misreported as bad zip files. Only zip-format parse failures become INVALID_ZIP.
+      const isSystemError = error instanceof Error && 'code' in error && typeof (error as NodeJS.ErrnoException).code === 'string';
+      if (isSystemError) throw error;
       throw new RestoreUploadError('File is not a valid zip archive', 'INVALID_ZIP');
     }
   }
