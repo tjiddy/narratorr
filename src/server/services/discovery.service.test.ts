@@ -157,7 +157,8 @@ describe('DiscoveryService', () => {
       expect(signals.seriesGaps).toHaveLength(1);
       expect(signals.seriesGaps[0].seriesName).toBe('Stormlight');
       expect(signals.seriesGaps[0].missingPositions).toContain(3);
-      expect(signals.seriesGaps[0].missingPositions).toContain(5); // next
+      expect(signals.seriesGaps[0].missingPositions).not.toContain(5);
+      expect(signals.seriesGaps[0].nextPosition).toBe(5);
       expect(signals.seriesGaps[0].maxOwned).toBe(4);
     });
 
@@ -2167,11 +2168,12 @@ describe('DiscoveryService', () => {
         // Only position 1 should be tracked; null position book is skipped
         expect(signals.seriesGaps).toHaveLength(1);
         expect(signals.seriesGaps[0].maxOwned).toBe(1);
-        // missingPositions should be [2] (continuation only, since only position 1 exists)
-        expect(signals.seriesGaps[0].missingPositions).toEqual([2]);
+        // No gaps — only continuation at nextPosition
+        expect(signals.seriesGaps[0].missingPositions).toEqual([]);
+        expect(signals.seriesGaps[0].nextPosition).toBe(2);
       });
 
-      it('accepts fractional positions — [1.5, 2.5] yields missingPositions [3.5] only (no integer gaps)', async () => {
+      it('accepts fractional positions — [1.5, 2.5] yields no gaps, nextPosition = 3.5', async () => {
         const db = setupSeriesTest([
           makeBookRow({ id: 1, seriesName: 'Fractional', seriesPosition: 1.5 }),
           makeBookRow({ id: 2, seriesName: 'Fractional', seriesPosition: 2.5 }),
@@ -2182,9 +2184,9 @@ describe('DiscoveryService', () => {
 
         const gap = signals.seriesGaps.find(g => g.seriesName === 'Fractional');
         expect(gap).toBeDefined();
-        // Loop starts at 1.5, increments by 1 → visits 1.5, 2.5. Never hits integer 2.
-        // Only continuation at maxOwned+1 = 3.5
-        expect(gap!.missingPositions).toEqual([3.5]);
+        // No gaps between consecutive fractional positions — continuation is nextPosition
+        expect(gap!.missingPositions).toEqual([]);
+        expect(gap!.nextPosition).toBe(3.5);
         expect(gap!.maxOwned).toBe(2.5);
       });
 
