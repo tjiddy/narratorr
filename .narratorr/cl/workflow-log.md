@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #197 ERR-1 cleanup — replace message.includes() error routing with typed errors — 2026-03-29
+**Skill path:** /elaborate → /respond-to-spec-review (×2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #204
+
+### Metrics
+- Files changed: 18 | Tests added/modified: 10 test files, ~25 new/updated test cases
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Well-specified spec after 3 rounds of review made implementation straightforward. Each module was cleanly isolated — commit per module worked perfectly.
+- Friction / issues encountered: Spec review took 3 rounds — first round had 5 findings (stale activity.ts AC, ambiguous duplicate-download contract, contradictory blackhole approach, conflicting backup error classes, incomplete blast radius). Second round caught that PIPELINE_ACTIVE response shape was inconsistent with error-handler plugin behavior. Third round approved.
+
+### Token efficiency
+- Highest-token actions: Spec review responses (3 rounds of reading comments + updating issue body)
+- Avoidable waste: The initial spec could have been more precise about the error-handler plugin's response format (`{ error: message }` vs `{ code: '...' }`) — this caused 2 extra review rounds
+- Suggestions: When writing specs involving error-handler plugin routing, always note the plugin's response shape explicitly
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: `activity.ts` ERR-1 item from #149 was confirmed NOT a real violation — debt entry updated
+
+### Wish I'd Known
+1. The error-handler plugin always returns `{ error: message }` — not `{ code: '...' }`. The route's manual catch is the only way to produce a custom response shape. This distinction drove 2 spec review rounds.
+2. When converting from string matching to instanceof, the blast radius always extends to test mocks — every `new Error('...')` in test files must become `new TypedError(...)`.
+3. SQLite table existence can be checked structurally via `sqlite_master` rather than catching query errors — avoids brittle string matching on error messages.
+
 ## #196 Fix computeSeriesGaps fractional position bug — 2026-03-29
 **Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #203

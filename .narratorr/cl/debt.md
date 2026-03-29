@@ -12,10 +12,10 @@
 
 - **src/client/pages/manual-import/PathStep.tsx**: frontend-design skill was unavailable — visual polish pass not applied; amber accent hover states and glass-card styling may need review for consistency. (discovered in #81)
 - **src/client/pages/manual-import/pathUtils.ts**: `makeRelativePath` and `isPathInsideLibrary` are co-located in the Manual Import folder but used by both Manual Import and Library Import — should be moved to a shared location (e.g., `src/client/lib/pathUtils.ts`) when a third consumer appears. (discovered in #175)
-- **src/server/routes/activity.ts**: `DELETE /api/activity/:id/history` still uses `message.includes('use cancel instead')` string matching for error routing — the only remaining ERR-1 violation in the codebase. Should be converted to a typed error (discovered in #149)
+- **src/server/routes/activity.ts**: ~~`DELETE /api/activity/:id/history` still uses `message.includes('use cancel instead')` string matching for error routing~~ — verified in #197: no `message.includes()` exists in `activity.ts`; error is already plugin-routed via `error-handler.ts`. **Resolved.**
 
 ## Discovered in CL triage (2026-03-28)
 
-- **ERR-1 pattern**: 7 instances of `message.includes()` for error routing remain across `search-pipeline.ts`, `jobs/rss.ts`, `jobs/search.ts`, `blackhole.ts`, `backup.service.ts`. (CL triage + coverage scan)
+- **ERR-1 pattern**: ~~7 instances of `message.includes()` for error routing remain across `search-pipeline.ts`, `jobs/rss.ts`, `jobs/search.ts`, `blackhole.ts`, `backup.service.ts`.~~ **Resolved in #197** — all sites replaced with typed `instanceof` or `NodeJS.ErrnoException.code` checks.
 - **Test fixture bugs**: `qbittorrent.test.ts` uses `HttpResponse.json()` for plain-text endpoint (lines 49/68/86); `LibrarySettingsSection.test.tsx` uses `userEvent.keyboard('{author}/')` which fires unknown key events (lines 439/504); `DownloadClientFields.test.tsx:169` uses fragile CSS selector. (CL triage)
 - **focus-ring consistency**: 50+ bare `focus:outline-none` instances in settings/form inputs should use `focus-ring` utility. (CL triage)
