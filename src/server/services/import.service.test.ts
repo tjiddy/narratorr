@@ -49,6 +49,15 @@ vi.mock('../../core/utils/audio-processor.js', () => ({
   processAudioFiles: vi.fn().mockResolvedValue({ success: true, outputFiles: [] }),
 }));
 
+// Spy on import-helpers — passthrough to real implementation so existing unit tests still work
+vi.mock('../utils/import-helpers.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    buildTargetPath: vi.fn().mockImplementation(actual.buildTargetPath as (...args: unknown[]) => unknown),
+  };
+});
+
 import { mkdir, cp, stat, readdir, writeFile, rename, rm, statfs } from 'node:fs/promises';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
@@ -330,6 +339,29 @@ describe('ImportService', () => {
 
       expect(result.downloadId).toBe(1);
       expect(mockAdapter.removeDownload).toHaveBeenCalled();
+    });
+
+    it('forwards non-default namingSeparator/namingCase to buildTargetPath', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '', namingSeparator: 'period', namingCase: 'upper' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({ enabled: false });
+        return Promise.resolve({});
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(buildTargetPath).toHaveBeenCalledWith(
+        '/audiobooks',
+        '{author}/{title}',
+        expect.any(Object),
+        expect.any(String),
+        expect.objectContaining({ separator: 'period', case: 'upper' }),
+      );
     });
 
     it('skips torrent removal when minSeedTime not elapsed', async () => {
