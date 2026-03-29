@@ -2152,6 +2152,8 @@ describe('DiscoveryService', () => {
         expect(nextCandidate!.reason).toBe('series');
         // Base 50 + continuation bonus 20 = 70
         expect(nextCandidate!.score).toBe(70);
+        // Continuation position → no "(position X)" suffix in reason text
+        expect(nextCandidate!.reasonContext).toBe('Next in Fractional — you have books 1-0.2');
       });
 
       it('fractional gap candidate passes filter but does not receive continuation bonus (#196)', async () => {
@@ -2176,6 +2178,8 @@ describe('DiscoveryService', () => {
         expect(gapCandidate!.reason).toBe('series');
         // Base 50 only — position 0.3 is a gap, not nextPosition (0.5), so no +20 bonus
         expect(gapCandidate!.score).toBe(50);
+        // Gap position → includes "(position 0.3)" suffix in reason text
+        expect(gapCandidate!.reasonContext).toContain('(position 0.3)');
       });
 
       it('dismissed series suggestions score 50 * 0.25 = 12.5 at floor multiplier', async () => {
