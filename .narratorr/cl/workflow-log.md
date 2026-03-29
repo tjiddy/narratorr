@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #200 Server service and route test gaps — 2026-03-29
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #207
+
+### Metrics
+- Files changed: 5 (test files only) | Tests added: 18
+- Quality gate runs: 2 (pass on attempt 2 — first failed on typecheck)
+- Fix iterations: 1 (backup.service.test.ts `createMockLog()` returns `as never`, needed cast for `.warn` assertions)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Test-only issue with clear line-number targets made implementation fast and focused. Each module was independent — no cross-cutting concerns.
+- Friction / issues encountered: The `createMockLog()` in backup.service.test.ts returns `as never` which hides all properties from TypeScript. Had to discover the cast pattern from the `applyPendingRestore` describe block. The `timingSafeEqual` spy in auth tests is shared across all tests in the describe without reset — caused a false positive on `.not.toHaveBeenCalled()`.
+
+### Token efficiency
+- Highest-token actions: Spec review rounds (3 rounds before approval — stale coverage baselines were the main issue)
+- Avoidable waste: Initial elaborate populated test plan with stale/already-covered items. Running actual coverage first would have prevented 2 review rounds.
+- Suggestions: For test-gap issues, always run `vitest --coverage` on target files before writing the spec to get accurate baselines.
+
+### Infrastructure gaps
+- Repeated workarounds: `createMockLog() as never` pattern in backup tests forces awkward casts when asserting on log calls
+- Missing tooling / config: None
+- Unresolved debt: None introduced (one pre-existing debt item resolved)
+
+### Wish I'd Known
+1. `createMockLog()` in backup.service.test.ts returns `as never` — need to cast through `unknown` to access `.warn`/`.info` for assertions
+2. `timingSafeEqual` spy is shared across the `session cookie` describe block — must `mockClear()` before asserting `.not.toHaveBeenCalled()`
+3. `extractSourceIndexerId` URL fallback uses raw string as pathname — `not-a-url/42/` hits the catch and regex still finds `/42/`
+
 ## #198 Audnexus test hardening — 429 retry and region param coverage — 2026-03-29
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #206
