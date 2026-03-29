@@ -226,7 +226,7 @@ export function ProcessingSettingsSection() {
                 id="ffmpegPath"
                 type="text"
                 {...register('ffmpegPath')}
-                className={`flex-1 px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+                className={`flex-1 px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
                   errors.ffmpegPath ? 'border-destructive' : 'border-border'
                 }`}
                 placeholder="/usr/bin/ffmpeg"
@@ -254,7 +254,7 @@ export function ProcessingSettingsSection() {
             <select
               id="outputFormat"
               {...register('outputFormat')}
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
             >
               {outputFormatSchema.options.map((format) => (
                 <option key={format} value={format}>
@@ -289,7 +289,7 @@ export function ProcessingSettingsSection() {
               type="number"
               {...register('bitrate', { valueAsNumber: true })}
               disabled={keepOriginalBitrate}
-              className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
+              className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
                 errors.bitrate ? 'border-destructive' : 'border-border'
               }`}
               min={32}
@@ -311,7 +311,7 @@ export function ProcessingSettingsSection() {
             <select
               id="mergeBehavior"
               {...register('mergeBehavior')}
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
             >
               {mergeBehaviorSchema.options.map((behavior) => (
                 <option key={behavior} value={behavior}>
@@ -356,7 +356,7 @@ export function ProcessingSettingsSection() {
               <select
                 id="tagMode"
                 {...register('tagMode')}
-                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
               >
                 {tagModeSchema.options.map((mode) => (
                   <option key={mode} value={mode}>

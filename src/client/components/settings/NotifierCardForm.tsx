@@ -46,7 +46,7 @@ export function NotifierCardForm(props: NotifierCardFormProps) {
         <div>
           <label htmlFor="notifierType" className="block text-sm font-medium mb-2">Type</label>
           <select id="notifierType" {...register('type')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
           >
             {notifierTypeSchema.options.map((t) => (
               <option key={t} value={t}>

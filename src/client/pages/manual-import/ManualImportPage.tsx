@@ -10,7 +10,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { useManualImport } from './useManualImport.js';
 import { useFolderHistory } from './useFolderHistory.js';
 import { PathStep } from './PathStep.js';
-import { isPathInsideLibrary } from './pathUtils.js';
+import { isPathInsideLibrary } from '@/lib/pathUtils.js';
 
 // eslint-disable-next-line complexity -- 3-step page with 21 hook props, path input, and conditional step rendering
 export function ManualImportPage() {

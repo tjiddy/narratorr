@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api } from '@/lib/api';
 
-const inputClass = 'w-full px-3 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary';
+const inputClass = 'w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring';
 const btnSecondary = 'px-3 py-1.5 text-sm font-medium rounded-lg transition-colors disabled:opacity-50';
 
 interface SettingsProps {

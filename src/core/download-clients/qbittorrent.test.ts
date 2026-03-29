@@ -46,7 +46,7 @@ describe('QBittorrentClient', () => {
       // login is private, so we exercise it via test() which calls login()
       server.use(
         http.get(`${BASE_URL}/api/v2/app/version`, () => {
-          return HttpResponse.json('v4.6.0');
+          return new HttpResponse('v4.6.0');
         }),
       );
 
@@ -65,7 +65,7 @@ describe('QBittorrentClient', () => {
 
       server.use(
         http.get(`${BASE_URL}/api/v2/app/version`, () => {
-          return HttpResponse.json('v4.6.0');
+          return new HttpResponse('v4.6.0');
         }),
       );
 
@@ -83,7 +83,7 @@ describe('QBittorrentClient', () => {
 
       server.use(
         http.get(`${BASE_URL}/api/v2/app/version`, () => {
-          return HttpResponse.json('v4.6.0');
+          return new HttpResponse('v4.6.0');
         }),
       );
 

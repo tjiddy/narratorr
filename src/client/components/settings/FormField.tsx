@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { FieldError, UseFormRegisterReturn } from 'react-hook-form';
 
-const baseInputClass = 'w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all';
+const baseInputClass = 'w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all';
 
 interface FormFieldProps {
   id: string;

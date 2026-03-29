@@ -80,7 +80,7 @@ export function PathStep({
           <AlertCircleIcon className="w-4 h-4 mt-0.5 shrink-0 text-amber-400" />
           <span className="text-sm text-amber-300/90">
             This folder is inside your library.{' '}
-            <Link to="/library-import" className="underline hover:text-amber-200 transition-colors">
+            <Link to="/library-import" className="underline hover:text-amber-200 transition-colors focus-ring rounded">
               Use Library Import to register existing books.
             </Link>
           </span>

@@ -86,7 +86,7 @@ export function DiscoverySettingsSection() {
             id="discovery-interval"
             type="number"
             {...register('intervalHours', { valueAsNumber: true })}
-            className="mt-1 w-full px-3 py-2 rounded-lg bg-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            className="mt-1 w-full px-3 py-2 rounded-lg bg-background border border-border text-sm focus-ring"
           />
           {errors.intervalHours && (
             <p className="text-xs text-destructive mt-1">{errors.intervalHours.message}</p>
@@ -102,7 +102,7 @@ export function DiscoverySettingsSection() {
             id="discovery-max-per-author"
             type="number"
             {...register('maxSuggestionsPerAuthor', { valueAsNumber: true })}
-            className="mt-1 w-full px-3 py-2 rounded-lg bg-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            className="mt-1 w-full px-3 py-2 rounded-lg bg-background border border-border text-sm focus-ring"
           />
           {errors.maxSuggestionsPerAuthor && (
             <p className="text-xs text-destructive mt-1">{errors.maxSuggestionsPerAuthor.message}</p>
@@ -121,7 +121,7 @@ export function DiscoverySettingsSection() {
             id="discovery-expiry"
             type="number"
             {...register('expiryDays', { valueAsNumber: true })}
-            className="mt-1 w-full px-3 py-2 rounded-lg bg-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            className="mt-1 w-full px-3 py-2 rounded-lg bg-background border border-border text-sm focus-ring"
           />
           {errors.expiryDays && (
             <p className="text-xs text-destructive mt-1">{errors.expiryDays.message}</p>
@@ -140,7 +140,7 @@ export function DiscoverySettingsSection() {
             id="discovery-snooze"
             type="number"
             {...register('snoozeDays', { valueAsNumber: true })}
-            className="mt-1 w-full px-3 py-2 rounded-lg bg-background border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            className="mt-1 w-full px-3 py-2 rounded-lg bg-background border border-border text-sm focus-ring"
           />
           {errors.snoozeDays && (
             <p className="text-xs text-destructive mt-1">{errors.snoozeDays.message}</p>

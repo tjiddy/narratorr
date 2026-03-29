@@ -25,7 +25,7 @@ function FlareSolverrField({ register, errors }: Pick<IndexerFieldsProps, 'regis
         id="indexerFlareSolverrUrl"
         type="text"
         {...register('settings.flareSolverrUrl')}
-        className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+        className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
           errors.settings?.flareSolverrUrl ? 'border-destructive' : 'border-border'
         }`}
         placeholder="http://flaresolverr:8191"
@@ -48,7 +48,7 @@ function AbbFields({ register, errors }: Pick<IndexerFieldsProps, 'register' | '
           id="indexerHostname"
           type="text"
           {...register('settings.hostname')}
-          className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+          className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
             errors.settings?.hostname ? 'border-destructive' : 'border-border'
           }`}
           placeholder="audiobookbay.lu"
@@ -67,7 +67,7 @@ function AbbFields({ register, errors }: Pick<IndexerFieldsProps, 'register' | '
           {...register('settings.pageLimit', { valueAsNumber: true })}
           min={1}
           max={10}
-          className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+          className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
             errors.settings?.pageLimit ? 'border-destructive' : 'border-border'
           }`}
         />
@@ -91,7 +91,7 @@ function ApiFields({ register, errors, selectedType, prowlarrManaged }: Pick<Ind
           type="text"
           {...register('settings.apiUrl')}
           readOnly={prowlarrManaged}
-          className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+          className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
             errors.settings?.apiUrl ? 'border-destructive' : 'border-border'
           } ${readOnlyClass}`}
           placeholder="https://indexer.example.com/api"
@@ -109,7 +109,7 @@ function ApiFields({ register, errors, selectedType, prowlarrManaged }: Pick<Ind
           type="password"
           {...register('settings.apiKey')}
           readOnly={prowlarrManaged}
-          className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+          className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
             errors.settings?.apiKey ? 'border-destructive' : 'border-border'
           } ${readOnlyClass}`}
         />
@@ -131,7 +131,7 @@ function MamFields({ register, errors }: Pick<IndexerFieldsProps, 'register' | '
           id="indexerMamId"
           type="password"
           {...register('settings.mamId')}
-          className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+          className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
             errors.settings?.mamId ? 'border-destructive' : 'border-border'
           }`}
         />
@@ -150,7 +150,7 @@ function MamFields({ register, errors }: Pick<IndexerFieldsProps, 'register' | '
           id="indexerBaseUrl"
           type="text"
           {...register('settings.baseUrl')}
-          className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+          className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
             errors.settings?.baseUrl ? 'border-destructive' : 'border-border'
           }`}
           placeholder="https://www.myanonamouse.net"

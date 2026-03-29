@@ -64,7 +64,7 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
   }, [selectedType, isEdit, setValue]);
 
   const isImplemented = IMPLEMENTED_TYPES.includes(selectedType);
-  const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all';
+  const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all';
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="glass-card rounded-2xl p-6 animate-fade-in-up space-y-5">

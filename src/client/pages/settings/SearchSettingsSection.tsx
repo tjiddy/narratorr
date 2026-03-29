@@ -101,7 +101,7 @@ export function SearchSettingsSection() {
             id="searchIntervalMinutes"
             type="number"
             {...register('searchIntervalMinutes', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
               errors.searchIntervalMinutes ? 'border-destructive' : 'border-border'
             }`}
             min={5}
@@ -122,7 +122,7 @@ export function SearchSettingsSection() {
             id="blacklistTtlDays"
             type="number"
             {...register('blacklistTtlDays', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
               errors.blacklistTtlDays ? 'border-destructive' : 'border-border'
             }`}
             min={1}
@@ -160,7 +160,7 @@ export function SearchSettingsSection() {
               id="rssIntervalMinutes"
               type="number"
               {...register('rssIntervalMinutes', { valueAsNumber: true })}
-              className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+              className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
                 errors.rssIntervalMinutes ? 'border-destructive' : 'border-border'
               }`}
               min={5}

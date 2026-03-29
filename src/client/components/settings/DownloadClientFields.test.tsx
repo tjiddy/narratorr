@@ -166,7 +166,7 @@ describe('DownloadClientFields', () => {
 
     it('renders API Key with full-width span', () => {
       render(<FieldWrapper type="sabnzbd" />);
-      const apiKeyContainer = screen.getByText('API Key').closest('div[class*="col-span"]');
+      const apiKeyContainer = screen.getByTestId('api-key-field');
       expect(apiKeyContainer).toHaveClass('sm:col-span-2');
     });
 

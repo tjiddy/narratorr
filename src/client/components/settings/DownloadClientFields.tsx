@@ -28,8 +28,8 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
     setShowDropdown(false);
   }
 
-  const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all';
-  const errorInputClass = 'w-full px-4 py-3 bg-background border border-destructive rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all';
+  const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all';
+  const errorInputClass = 'w-full px-4 py-3 bg-background border border-destructive rounded-xl focus-ring focus:border-transparent transition-all';
 
   return (
     <>
@@ -70,7 +70,7 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
       )}
 
       {fields.apiKey && (
-        <div className="sm:col-span-2">
+        <div className="sm:col-span-2" data-testid="api-key-field">
           <label htmlFor="clientApiKey" className="block text-sm font-medium mb-2">API Key</label>
           <input id="clientApiKey" type="password" {...register('settings.apiKey')} className={errors.settings?.apiKey ? errorInputClass : inputClass} />
           {errors.settings?.apiKey && <p className="text-sm text-destructive mt-1">{errors.settings.apiKey.message}</p>}

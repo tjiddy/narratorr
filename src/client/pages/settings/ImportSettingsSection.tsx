@@ -85,7 +85,7 @@ export function ImportSettingsSection() {
             id="minSeedTime"
             type="number"
             {...register('minSeedTime', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
               errors.minSeedTime ? 'border-destructive' : 'border-border'
             }`}
             min={0}
@@ -105,7 +105,7 @@ export function ImportSettingsSection() {
             id="minFreeSpaceGB"
             type="number"
             {...register('minFreeSpaceGB', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all ${
+            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
               errors.minFreeSpaceGB ? 'border-destructive' : 'border-border'
             }`}
             min={0}
