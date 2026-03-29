@@ -273,6 +273,36 @@ describe('BackupService', () => {
       expect(remaining).toHaveLength(3);
     });
 
+    it('logs warning and continues when fs.unlink fails for one backup during prune', async () => {
+      const backupsDir = path.join(configPath, 'backups');
+      await fs.mkdir(backupsDir, { recursive: true });
+
+      // Create 4 backups with retention=2 → should try to delete 2
+      for (let i = 1; i <= 4; i++) {
+        const name = `narratorr-backup-2026010${i}T000000000Z.zip`;
+        await fs.writeFile(path.join(backupsDir, name), `data${i}`);
+        await new Promise(r => setTimeout(r, 20));
+      }
+
+      // Make fs.unlink fail for one file, succeed for others
+      const unlinkSpy = vi.spyOn(fs, 'unlink')
+        .mockRejectedValueOnce(new Error('EACCES: permission denied'))
+        .mockResolvedValueOnce(undefined as never);
+
+      const mockLog = createMockLog() as unknown as { warn: ReturnType<typeof vi.fn>; [k: string]: unknown };
+      const service = new BackupService(configPath, dbPath, createMockSettingsService({ system: { backupRetention: 2 } }), mockLog as never);
+      const deleted = await service.prune();
+
+      // 1 succeeded, 1 failed
+      expect(deleted).toBe(1);
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ filename: expect.any(String) }),
+        'Failed to delete old backup',
+      );
+
+      unlinkSpy.mockRestore();
+    });
+
     it('with retention=3 and 2 backups, deletes nothing', async () => {
       const backupsDir = path.join(configPath, 'backups');
       await fs.mkdir(backupsDir, { recursive: true });
@@ -318,6 +348,27 @@ describe('BackupService', () => {
   });
 
   describe('validateRestore', () => {
+    it('falls back to appMigrationCount=0 and logs warning when _journal.json is unreadable', async () => {
+      // Spy on fs.readFile and make it throw for the journal path
+      const readFileSpy = vi.spyOn(fs, 'readFile').mockRejectedValueOnce(new Error('ENOENT'));
+      // sqlite_master check passes, backup has 1 migration
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+      mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+
+      const mockLog = createMockLog() as unknown as { warn: ReturnType<typeof vi.fn>; [k: string]: unknown };
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), mockLog as never);
+      const result = await service.validateRestore('/tmp/test.db');
+
+      // appMigrationCount fell back to 0, so backup (1) > app (0) → invalid
+      expect(result.valid).toBe(false);
+      expect(result.appMigrationCount).toBe(0);
+      expect(result.backupMigrationCount).toBe(1);
+      expect(result.error).toContain('newer version');
+      expect(mockLog.warn).toHaveBeenCalledWith('Could not read _journal.json, assuming 0 migrations');
+
+      readFileSpy.mockRestore();
+    });
+
     it('returns valid=true for DB with same migration count as app', async () => {
       mockExecute.mockResolvedValue({ rows: [{ count: 1 }] });
 
@@ -614,6 +665,55 @@ describe('applyPendingRestore (startup swap)', () => {
 
     expect(mockLog.info).not.toHaveBeenCalled();
     expect(mockLog.warn).not.toHaveBeenCalled();
+  });
+
+  it('falls back to copyFileSync + unlinkSync when renameSync throws', async () => {
+    const pendingPath = path.join(configPath, 'restore-pending.db');
+    await fs.writeFile(pendingPath, 'restored-data');
+    await fs.writeFile(dbPath, 'old-data');
+
+    // Make renameSync throw (simulate cross-device rename)
+    const renameSpy = vi.spyOn(fss, 'renameSync').mockImplementation(() => {
+      throw new Error('EXDEV: cross-device link not permitted');
+    });
+
+    applyPendingRestore(configPath, dbPath, mockLog);
+
+    // Should have fallen back to copy + delete
+    const content = fss.readFileSync(dbPath, 'utf-8');
+    expect(content).toBe('restored-data');
+    expect(fss.existsSync(pendingPath)).toBe(false);
+    expect(mockLog.warn).toHaveBeenCalledWith(
+      'Restored database from pending backup (copy fallback — rename failed)',
+    );
+
+    renameSpy.mockRestore();
+  });
+
+  it('logs warning when both renameSync and copyFileSync fail', async () => {
+    const pendingPath = path.join(configPath, 'restore-pending.db');
+    await fs.writeFile(pendingPath, 'restored-data');
+    await fs.writeFile(dbPath, 'old-data');
+
+    // Make both renameSync and copyFileSync throw
+    const renameSpy = vi.spyOn(fss, 'renameSync').mockImplementation(() => {
+      throw new Error('EXDEV: cross-device link not permitted');
+    });
+    const copySpy = vi.spyOn(fss, 'copyFileSync').mockImplementation(() => {
+      throw new Error('ENOSPC: no space left on device');
+    });
+
+    applyPendingRestore(configPath, dbPath, mockLog);
+
+    expect(mockLog.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to apply pending restore'),
+    );
+    // Original db should be unchanged since copy failed
+    const content = fss.readFileSync(dbPath, 'utf-8');
+    expect(content).toBe('old-data');
+
+    renameSpy.mockRestore();
+    copySpy.mockRestore();
   });
 
   it('restore-pending.db no longer exists on disk after swap', async () => {

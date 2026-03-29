@@ -39,6 +39,17 @@ describe('remote-path-mappings routes', () => {
       expect(JSON.parse(res.payload)).toHaveLength(1);
     });
 
+    it('falls back to getAll when downloadClientId query param is non-numeric (NaN)', async () => {
+      (services.remotePathMapping.getAll as Mock).mockResolvedValue([mockMapping]);
+
+      const res = await app.inject({ method: 'GET', url: '/api/remote-path-mappings?downloadClientId=abc' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toHaveLength(1);
+      expect(services.remotePathMapping.getAll).toHaveBeenCalled();
+      expect(services.remotePathMapping.getByClientId).not.toHaveBeenCalled();
+    });
+
     it('filters by downloadClientId query param', async () => {
       (services.remotePathMapping.getByClientId as Mock).mockResolvedValue([mockMapping]);
 
@@ -46,6 +57,29 @@ describe('remote-path-mappings routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(services.remotePathMapping.getByClientId).toHaveBeenCalledWith(1);
+    });
+  });
+
+  describe('GET /api/remote-path-mappings/:id', () => {
+    it('returns 404 when service returns null', async () => {
+      (services.remotePathMapping.getById as Mock).mockResolvedValue(null);
+
+      const res = await app.inject({ method: 'GET', url: '/api/remote-path-mappings/999' });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: 'Remote path mapping not found' });
+    });
+
+    it('returns 200 with mapping when found', async () => {
+      (services.remotePathMapping.getById as Mock).mockResolvedValue(mockMapping);
+
+      const res = await app.inject({ method: 'GET', url: '/api/remote-path-mappings/1' });
+
+      expect(res.statusCode).toBe(200);
+      const payload = JSON.parse(res.payload);
+      expect(payload.id).toBe(1);
+      expect(payload.remotePath).toBe('/downloads/complete/');
+      expect(payload.localPath).toBe('C:\\downloads\\');
     });
   });
 

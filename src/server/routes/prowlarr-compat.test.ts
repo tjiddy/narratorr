@@ -390,6 +390,54 @@ describe('Prowlarr-compatible API v1 routes', () => {
       );
     });
 
+    it('extractSourceIndexerId falls back to raw string when URL constructor throws (malformed baseUrl)', async () => {
+      (services.indexer.createOrUpsertProwlarr as Mock).mockResolvedValue({
+        row: mockTorznabIndexer,
+        upserted: false,
+      });
+
+      // baseUrl is not a valid URL — triggers URL constructor catch at line 77
+      // Falls back to using raw string as pathname, regex finds /42/
+      await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer',
+        payload: {
+          ...validTorznabBody,
+          fields: [
+            { name: 'baseUrl', value: 'not-a-url/42/', type: 'textbox' },
+            { name: 'apiKey', value: 'key', type: 'textbox' },
+          ],
+        },
+      });
+
+      expect(services.indexer.createOrUpsertProwlarr).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceIndexerId: 42 }),
+      );
+    });
+
+    it('sets sourceIndexerId to null when malformed baseUrl has no numeric segment', async () => {
+      (services.indexer.createOrUpsertProwlarr as Mock).mockResolvedValue({
+        row: { ...mockTorznabIndexer, sourceIndexerId: null },
+        upserted: false,
+      });
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer',
+        payload: {
+          ...validTorznabBody,
+          fields: [
+            { name: 'baseUrl', value: 'not-a-url-at-all', type: 'textbox' },
+            { name: 'apiKey', value: 'key', type: 'textbox' },
+          ],
+        },
+      });
+
+      expect(services.indexer.createOrUpsertProwlarr).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceIndexerId: null }),
+      );
+    });
+
     it('sets sourceIndexerId to null when baseUrl has no numeric path segment', async () => {
       (services.indexer.createOrUpsertProwlarr as Mock).mockResolvedValue({
         row: { ...mockTorznabIndexer, sourceIndexerId: null },
@@ -615,6 +663,45 @@ describe('Prowlarr-compatible API v1 routes', () => {
       expect(payload.message).toBeDefined();
       expect(payload.detailedDescription).toBeDefined();
     });
+
+    it('returns 400 with (missing) message when implementation is undefined', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer/test',
+        payload: {
+          fields: [
+            { name: 'baseUrl', value: 'http://localhost:9696/1/', type: 'textbox' },
+            { name: 'apiKey', value: 'key', type: 'textbox' },
+          ],
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      const payload = JSON.parse(res.payload);
+      expect(payload.message).toContain('(missing)');
+      expect(payload.isWarning).toBe(false);
+      expect(services.indexer.testConfig).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 with type name in message when implementation is unsupported', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer/test',
+        payload: {
+          implementation: 'CustomUnsupported',
+          fields: [
+            { name: 'baseUrl', value: 'http://localhost:9696/1/', type: 'textbox' },
+            { name: 'apiKey', value: 'key', type: 'textbox' },
+          ],
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      const payload = JSON.parse(res.payload);
+      expect(payload.message).toContain('CustomUnsupported');
+      expect(payload.isWarning).toBe(false);
+      expect(services.indexer.testConfig).not.toHaveBeenCalled();
+    });
   });
 
   describe('Fields translation (AC3)', () => {
@@ -686,6 +773,33 @@ describe('Prowlarr-compatible API v1 routes', () => {
       const customField = payload.fields.find((f: { name: string }) => f.name === 'customField');
       expect(customField).toBeDefined();
       expect(customField.value).toBe('customValue');
+    });
+
+    it('fromReadarrFields skips apiPath field (echo-only, not stored in settings)', async () => {
+      (services.indexer.createOrUpsertProwlarr as Mock).mockResolvedValue({
+        row: mockTorznabIndexer,
+        upserted: false,
+      });
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/v1/indexer',
+        payload: {
+          ...validTorznabBody,
+          fields: [
+            { name: 'baseUrl', value: 'http://prowlarr:9696/1/', type: 'textbox' },
+            { name: 'apiKey', value: 'abc123', type: 'textbox' },
+            { name: 'apiPath', value: '/custom-api', type: 'textbox' },
+          ],
+        },
+      });
+
+      const callArgs = (services.indexer.createOrUpsertProwlarr as Mock).mock.calls[0][0];
+      // apiPath should not appear in the settings object
+      expect(callArgs.settings).not.toHaveProperty('apiPath');
+      // But the other fields should be present
+      expect(callArgs.settings.apiUrl).toBe('http://prowlarr:9696/1/');
+      expect(callArgs.settings.apiKey).toBe('abc123');
     });
 
     it('defaults apiPath to "/api" when not provided', async () => {
