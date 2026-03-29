@@ -40,6 +40,14 @@ vi.mock('sonner', () => ({
   },
 }));
 
+// Spy on useNavigate for navigation assertions
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- vi.mock requires dynamic import
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return { ...actual, useNavigate: () => mockNavigate };
+});
+
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { createMockSettings } from '@/__tests__/factories';
@@ -120,6 +128,54 @@ function mockLibraryData(books: BookWithAuthor[]) {
   const series = [...new Set(books.map(b => b.seriesName).filter(Boolean))].sort() as string[];
   const narrators = [...new Set(books.flatMap(b => b.narrators.map(n => n.name)).filter(Boolean))].sort() as string[];
   vi.mocked(api.getBookStats).mockResolvedValue({ counts, authors, series, narrators });
+}
+
+/** Paged variant: accepts independent total so Pagination renders when total > limit (100).
+ * Use total > 100 to trigger Pagination rendering. */
+function mockPagedLibraryData(books: BookWithAuthor[], opts: { total: number }) {
+  vi.mocked(api.getBooks).mockImplementation((params?: BookListParams) => {
+    const offset = params?.offset ?? 0;
+    const limit = params?.limit ?? 100;
+    const page = books.slice(offset, offset + limit);
+    return Promise.resolve({ data: page, total: opts.total });
+  });
+  const counts = { wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 };
+  for (const b of books) {
+    if (b.status === 'wanted') counts.wanted++;
+    else if (b.status === 'searching' || b.status === 'downloading') counts.downloading++;
+    else if (b.status === 'importing' || b.status === 'imported') counts.imported++;
+    else if (b.status === 'failed') counts.failed++;
+    else if (b.status === 'missing') counts.missing++;
+  }
+  const authors = [...new Set(books.map(b => b.authors[0]?.name).filter(Boolean))].sort() as string[];
+  const series = [...new Set(books.map(b => b.seriesName).filter(Boolean))].sort() as string[];
+  const narrators = [...new Set(books.flatMap(b => b.narrators.map(n => n.name)).filter(Boolean))].sort() as string[];
+  vi.mocked(api.getBookStats).mockResolvedValue({ counts, authors, series, narrators });
+}
+
+// --- Shared toolbar interaction helpers (#183) ---
+
+async function waitForLibraryLoad() {
+  await waitFor(() => {
+    expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+  });
+}
+
+async function switchToTableView(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByLabelText('Table view'));
+  await waitFor(() => {
+    expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'true');
+  });
+}
+
+async function selectAllBooksInTable(user: ReturnType<typeof userEvent.setup>) {
+  await waitFor(() => {
+    expect(screen.getByLabelText('Select all books')).toBeInTheDocument();
+  });
+  await user.click(screen.getByLabelText('Select all books'));
+  await waitFor(() => {
+    expect(screen.getByText(/selected/i)).toBeInTheDocument();
+  });
 }
 
 beforeEach(() => {
@@ -1469,6 +1525,614 @@ describe('LibraryPage — settings-driven empty-state wiring (#133)', () => {
     await waitFor(() => {
       expect(screen.getByRole('link', { name: /settings/i })).toBeInTheDocument();
       expect(screen.queryByRole('link', { name: /scan library/i })).not.toBeInTheDocument();
+    });
+  });
+});
+
+// #183 — Test coverage gaps
+
+describe('LibraryPage — view mode localStorage edge cases (#183)', () => {
+  beforeEach(() => {
+    localStorage.removeItem('narratorr:library-view');
+  });
+
+  it('falls back to grid when localStorage has malformed value', async () => {
+    localStorage.setItem('narratorr:library-view', 'grid-view');
+    mockLibraryData(mockBooks);
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    expect(screen.getByLabelText('Grid view')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('falls back to grid when localStorage throws on getItem', async () => {
+    const getItemSpy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('localStorage unavailable');
+    });
+    mockLibraryData(mockBooks);
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    expect(screen.getByLabelText('Grid view')).toHaveAttribute('aria-pressed', 'true');
+    getItemSpy.mockRestore();
+  });
+
+  it('still changes view mode when localStorage throws on setItem', async () => {
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('localStorage full');
+    });
+    mockLibraryData(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    await user.click(screen.getByLabelText('Table view'));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Table view')).toHaveAttribute('aria-pressed', 'true');
+    });
+    setItemSpy.mockRestore();
+  });
+});
+
+describe('LibraryPage — pagination (#183)', () => {
+  // Create a page of books that mockPagedLibraryData will return
+  const pageBooks = Array.from({ length: 4 }, (_, i) =>
+    createMockBook({
+      id: i + 1,
+      title: `Book ${i + 1}`,
+      createdAt: `2024-01-0${i + 1}T00:00:00Z`,
+      updatedAt: `2024-01-0${i + 1}T00:00:00Z`,
+    }),
+  );
+
+  it('renders Pagination when total exceeds page limit', async () => {
+    // total=150 > limit=100 → pagination visible
+    mockPagedLibraryData(pageBooks, { total: 150 });
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Book 1')).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/showing/i)).toBeInTheDocument();
+    });
+  });
+
+  it('does not render Pagination when total is within page limit', async () => {
+    mockPagedLibraryData(pageBooks, { total: 4 });
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Book 1')).toBeInTheDocument();
+    });
+
+    // No pagination controls since total (4) <= limit (100)
+    expect(screen.queryByText(/showing/i)).not.toBeInTheDocument();
+  });
+
+  it('navigates to next page via pagination controls', async () => {
+    mockPagedLibraryData(pageBooks, { total: 150 });
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Book 1')).toBeInTheDocument();
+    });
+
+    const nextButton = screen.getByLabelText('Next page');
+    await user.click(nextButton);
+
+    await waitFor(() => {
+      // getBooks should be called with offset=100 for page 2
+      expect(vi.mocked(api.getBooks)).toHaveBeenCalledWith(
+        expect.objectContaining({ offset: 100 }),
+      );
+    });
+  });
+
+  it('does not render Pagination when total is zero', async () => {
+    mockPagedLibraryData([], { total: 0 });
+    // Override stats to have counts so empty-state doesn't trigger
+    vi.mocked(api.getBookStats).mockResolvedValue({
+      counts: { wanted: 5, downloading: 0, imported: 0, failed: 0, missing: 0 },
+      authors: [], series: [], narrators: [],
+    });
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('No books match your filters')).toBeInTheDocument();
+    });
+
+    // No pagination since total=0
+    expect(screen.queryByText(/showing/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
+  const booksWithPaths = [
+    createMockBook({ id: 1, path: '/audiobooks/book1', status: 'wanted' }),
+    createMockBook({ id: 2, title: 'Book 2', path: '/audiobooks/book2', status: 'wanted',
+      createdAt: '2024-01-02T00:00:00Z', updatedAt: '2024-01-02T00:00:00Z' }),
+    createMockBook({ id: 3, title: 'Book 3', path: null, status: 'imported',
+      createdAt: '2024-01-03T00:00:00Z', updatedAt: '2024-01-03T00:00:00Z' }),
+  ];
+
+  it('renders BulkActionToolbar in table mode with selections', async () => {
+    mockLibraryData(booksWithPaths);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+    await switchToTableView(user);
+    await selectAllBooksInTable(user);
+
+    expect(screen.getByText(/selected/i)).toBeInTheDocument();
+  });
+
+  it('does not render BulkActionToolbar in grid mode', async () => {
+    mockLibraryData(mockBooks);
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    // Grid mode is default — no bulk toolbar
+    expect(screen.queryByText(/selected/i)).not.toBeInTheDocument();
+  });
+
+  it('does not render BulkActionToolbar in table mode with no selections', async () => {
+    mockLibraryData(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    await switchToTableView(user);
+
+    // No selections made — no bulk toolbar
+    expect(screen.queryByText(/selected/i)).not.toBeInTheDocument();
+  });
+
+  it('bulk delete with deleteFiles passes { deleteFiles: true } to mutation', async () => {
+    mockLibraryData(booksWithPaths);
+    vi.mocked(api.deleteBook).mockResolvedValue({ success: true });
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+    await switchToTableView(user);
+    await selectAllBooksInTable(user);
+
+    // Click Delete in bulk toolbar
+    const deleteButton = screen.getByRole('button', { name: /delete/i });
+    await user.click(deleteButton);
+
+    // Check the "Delete files from disk" checkbox in the confirm modal
+    await waitFor(() => {
+      expect(screen.getByText('Delete Selected Books')).toBeInTheDocument();
+    });
+    const checkbox = screen.getByLabelText(/delete files from disk/i);
+    await user.click(checkbox);
+
+    // Confirm deletion
+    const confirmButtons = screen.getAllByRole('button', { name: /delete/i });
+    const confirmButton = confirmButtons.find(b => b.closest('[role="dialog"]'));
+    await user.click(confirmButton!);
+
+    await waitFor(() => {
+      expect(vi.mocked(api.deleteBook)).toHaveBeenCalledWith(
+        expect.any(Number),
+        { deleteFiles: true },
+      );
+    });
+  });
+
+  it('bulk delete without deleteFiles passes undefined (no deleteFiles) to mutation', async () => {
+    mockLibraryData(booksWithPaths);
+    vi.mocked(api.deleteBook).mockResolvedValue({ success: true });
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+    await switchToTableView(user);
+    await selectAllBooksInTable(user);
+
+    await user.click(screen.getByRole('button', { name: /delete/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Delete Selected Books')).toBeInTheDocument();
+    });
+
+    // Confirm without checking deleteFiles
+    const confirmButtons = screen.getAllByRole('button', { name: /delete/i });
+    const confirmButton = confirmButtons.find(b => b.closest('[role="dialog"]'));
+    await user.click(confirmButton!);
+
+    await waitFor(() => {
+      // deleteFiles=false → deleteBook(id, undefined)
+      expect(vi.mocked(api.deleteBook)).toHaveBeenCalledWith(
+        expect.any(Number),
+        undefined,
+      );
+    });
+  });
+
+  it('hides delete-files checkbox when no selected books have a path', async () => {
+    const booksNoPaths = [
+      createMockBook({ id: 1, path: null }),
+      createMockBook({ id: 2, title: 'Book 2', path: null,
+        createdAt: '2024-01-02T00:00:00Z', updatedAt: '2024-01-02T00:00:00Z' }),
+    ];
+    mockLibraryData(booksNoPaths);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+    await switchToTableView(user);
+    await selectAllBooksInTable(user);
+
+    await user.click(screen.getByRole('button', { name: /delete/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Delete Selected Books')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByLabelText(/delete files from disk/i)).not.toBeInTheDocument();
+  });
+
+  it('bulk search fires searchBook API for selected wanted books', async () => {
+    mockLibraryData(booksWithPaths);
+    vi.mocked(api.searchBook).mockResolvedValue({ result: 'no_results' });
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+    await switchToTableView(user);
+    await selectAllBooksInTable(user);
+
+    await user.click(screen.getByRole('button', { name: /^search$/i }));
+
+    await waitFor(() => {
+      expect(vi.mocked(api.searchBook)).toHaveBeenCalled();
+    });
+  });
+
+  it('bulk set status to Wanted fires updateBook and shows toast with Wanted label', async () => {
+    mockLibraryData(booksWithPaths);
+    vi.mocked(api.updateBook).mockResolvedValue(booksWithPaths[0]);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+    await switchToTableView(user);
+    await selectAllBooksInTable(user);
+
+    // Open the Set Status menu
+    await user.click(screen.getByRole('button', { name: /set status/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^wanted$/i })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /^wanted$/i }));
+
+    await waitFor(() => {
+      expect(vi.mocked(api.updateBook)).toHaveBeenCalledWith(
+        expect.any(Number),
+        { status: 'wanted' },
+      );
+    });
+
+    // Verify the label is preserved through the page wiring to the toast
+    await waitFor(() => {
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+        expect.stringContaining('to Wanted'),
+      );
+    });
+  });
+
+  it('bulk set status to Owned fires updateBook and shows toast with Owned label', async () => {
+    mockLibraryData(booksWithPaths);
+    vi.mocked(api.updateBook).mockResolvedValue(booksWithPaths[0]);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => { expect(screen.getByText('The Way of Kings')).toBeInTheDocument(); });
+
+    await switchToTableView(user);
+    await selectAllBooksInTable(user);
+
+    await user.click(screen.getByRole('button', { name: /set status/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^owned$/i })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /^owned$/i }));
+
+    await waitFor(() => {
+      expect(vi.mocked(api.updateBook)).toHaveBeenCalledWith(
+        expect.any(Number),
+        { status: 'imported' },
+      );
+    });
+
+    // Verify the label is preserved through the page wiring to the toast
+    await waitFor(() => {
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+        expect.stringContaining('to Owned'),
+      );
+    });
+  });
+});
+
+describe('LibraryPage — card menu observable behavior (#183)', () => {
+  beforeEach(() => {
+    localStorage.removeItem('narratorr:library-view');
+  });
+
+  it('opens menu when card context menu button is clicked', async () => {
+    mockLibraryData(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    const optionsButtons = screen.getAllByLabelText('Book options');
+    await user.click(optionsButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('menu')).toBeInTheDocument();
+      expect(screen.getByRole('menuitem', { name: /search releases/i })).toBeInTheDocument();
+    });
+  });
+
+  it('closes menu when same card context menu button is clicked again', async () => {
+    mockLibraryData(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    const optionsButtons = screen.getAllByLabelText('Book options');
+    await user.click(optionsButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('menu')).toBeInTheDocument();
+    });
+
+    await user.click(optionsButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    });
+  });
+
+  it('closes first menu and opens second when different card menu is clicked', async () => {
+    mockLibraryData(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    const optionsButtons = screen.getAllByLabelText('Book options');
+    await user.click(optionsButtons[0]);
+
+    await waitFor(() => {
+      expect(optionsButtons[0]).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    await user.click(optionsButtons[1]);
+
+    await waitFor(() => {
+      // First button's menu closed, second button's menu opened
+      expect(optionsButtons[0]).toHaveAttribute('aria-expanded', 'false');
+      expect(optionsButtons[1]).toHaveAttribute('aria-expanded', 'true');
+      // Still exactly one menu in the DOM
+      expect(screen.getAllByRole('menu')).toHaveLength(1);
+    });
+  });
+
+  it('opens releases modal and closes menu when Search Releases is clicked', async () => {
+    mockLibraryData(mockBooks);
+    vi.mocked(api.searchBooks).mockResolvedValue({ results: [], durationUnknown: false, unsupportedResults: { count: 0, titles: [] } });
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    const optionsButtons = screen.getAllByLabelText('Book options');
+    await user.click(optionsButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('menuitem', { name: /search releases/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('menuitem', { name: /search releases/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByText(/releases for/i)).toBeInTheDocument();
+    });
+
+    // Menu should be closed
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('opens delete confirmation modal and closes menu when Remove is clicked', async () => {
+    mockLibraryData(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    const optionsButtons = screen.getAllByLabelText('Book options');
+    await user.click(optionsButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('menuitem', { name: /remove from library/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('menuitem', { name: /remove from library/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Remove from Library')).toBeInTheDocument();
+      expect(screen.getByText(/are you sure you want to remove/i)).toBeInTheDocument();
+    });
+
+    // Menu should be closed
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('navigates to /books/:id when card body is clicked', async () => {
+    mockLibraryData(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    // Click the first book card (role="link" with tabIndex=0)
+    const bookCards = screen.getAllByRole('link').filter(el => el.getAttribute('tabindex') === '0');
+    await user.click(bookCards[0]);
+
+    // Default sort is createdAt desc, so the first rendered card is id=4 (Words of Radiance, Jan 4)
+    expect(mockNavigate).toHaveBeenCalledWith('/books/4');
+  });
+
+  it('closes menu on document click outside', async () => {
+    mockLibraryData(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    const optionsButtons = screen.getAllByLabelText('Book options');
+    await user.click(optionsButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('menu')).toBeInTheDocument();
+    });
+
+    // Click outside the menu (on the page heading)
+    await user.click(screen.getByText('Library'));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    });
+  });
+});
+
+describe('LibraryPage — import polling smoke test (#183)', () => {
+  it('triggers polling interval when books have importing status', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    const importingBooks = [
+      createMockBook({ id: 1, status: 'importing' }),
+      createMockBook({
+        id: 2, title: 'Book 2', status: 'importing',
+        createdAt: '2024-01-02T00:00:00Z', updatedAt: '2024-01-02T00:00:00Z',
+      }),
+    ];
+    mockLibraryData(importingBooks);
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+    });
+
+    // Record call count after initial load
+    const initialCallCount = vi.mocked(api.getBooks).mock.calls.length;
+
+    // Advance time by 3s — useImportPolling sets a 3s interval that invalidates queries
+    await vi.advanceTimersByTimeAsync(3100);
+
+    // getBooks should have been called again due to the polling invalidation
+    await waitFor(() => {
+      expect(vi.mocked(api.getBooks).mock.calls.length).toBeGreaterThan(initialCallCount);
+    });
+
+    vi.useRealTimers();
+  });
+});
+
+describe('LibraryPage — status counts and subtitle (#183)', () => {
+  it('shows "0 books in your collection" when stats returns zero counts', async () => {
+    mockLibraryData([]);
+
+    // Override getBookStats to return null-like zero counts (the page handles empty stats)
+    vi.mocked(api.getBookStats).mockResolvedValue({
+      counts: { wanted: 0, downloading: 0, imported: 0, failed: 0, missing: 0 },
+      authors: [],
+      series: [],
+      narrators: [],
+    });
+
+    renderWithProviders(<LibraryPage />);
+
+    // With 0 totalAll and no search, empty state renders
+    await waitFor(() => {
+      expect(screen.getByText('Your library is empty')).toBeInTheDocument();
+    });
+  });
+
+  it('shows result count subtitle when searching', async () => {
+    mockLibraryData(mockBooks);
+    const user = userEvent.setup();
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitForLibraryLoad();
+
+    // Type in search
+    const searchInput = screen.getByPlaceholderText(/search/i);
+    await user.type(searchInput, 'Recursion');
+
+    await waitFor(() => {
+      expect(screen.getByText(/1 result/)).toBeInTheDocument();
+    });
+  });
+
+  it('uses singular "book" when totalAll is 1', async () => {
+    const singleBook = [createMockBook({ id: 1 })];
+    mockLibraryData(singleBook);
+
+    renderWithProviders(<LibraryPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('1 book in your collection')).toBeInTheDocument();
     });
   });
 });
