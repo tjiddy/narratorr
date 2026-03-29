@@ -1,3 +1,42 @@
+import type { NamingSeparator, NamingCase } from '../../shared/schemas/settings/library.js';
+
+export interface NamingOptions {
+  separator?: NamingSeparator;
+  case?: NamingCase;
+}
+
+/** Apply separator and case transforms to a resolved token value. */
+function applyTokenTransforms(value: string, options?: NamingOptions): string {
+  let result = value;
+
+  // Case transform first (operates on original spacing)
+  const caseOpt = options?.case ?? 'default';
+  if (caseOpt === 'lower') {
+    result = result.toLowerCase();
+  } else if (caseOpt === 'upper') {
+    result = result.toUpperCase();
+  } else if (caseOpt === 'title') {
+    result = result.replace(/\S+/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase());
+  }
+
+  // Separator transform (replaces spaces within token values)
+  const sep = options?.separator ?? 'space';
+  if (sep === 'period') {
+    result = result.replace(/ /g, '.');
+  } else if (sep === 'underscore') {
+    result = result.replace(/ /g, '_');
+  } else if (sep === 'dash') {
+    result = result.replace(/ /g, '-');
+  }
+
+  return result;
+}
+
+/** Check if a numeric token value should skip separator/case transforms. */
+function isNumericFormatted(padSpec: string | undefined, raw: string | number | undefined | null): boolean {
+  return padSpec !== undefined && raw !== undefined && raw !== null && !isNaN(Number(raw));
+}
+
 /** Allowed token names for folder naming templates. */
 export const FOLDER_ALLOWED_TOKENS = [
   'author', 'authorLastFirst',
@@ -99,6 +138,7 @@ export function sanitizePath(segment: string): string {
 export function renderTemplate(
   template: string,
   tokens: Record<string, string | number | undefined | null>,
+  options?: NamingOptions,
 ): string {
   // Process the template in a single pass using regex
   const rendered = template.replace(
@@ -119,6 +159,11 @@ export function renderTemplate(
         if (!isNaN(num)) {
           value = String(num).padStart(padSpec.length, '0');
         }
+      }
+
+      // Apply separator/case transforms to non-numeric token values
+      if (!isNumericFormatted(padSpec, raw)) {
+        value = applyTokenTransforms(value, options);
       }
 
       // Conditional block: {token:00?text} or {token?text} — append text only if token has value
@@ -149,6 +194,7 @@ export function renderTemplate(
 export function renderFilename(
   template: string,
   tokens: Record<string, string | number | undefined | null>,
+  options?: NamingOptions,
 ): string {
   const rendered = template.replace(
     /\{(\w+)(?::(\d+))?(?:\?([^}]*))?\}/g,
@@ -167,6 +213,11 @@ export function renderFilename(
         if (!isNaN(num)) {
           value = String(num).padStart(padSpec.length, '0');
         }
+      }
+
+      // Apply separator/case transforms to non-numeric token values
+      if (!isNumericFormatted(padSpec, raw)) {
+        value = applyTokenTransforms(value, options);
       }
 
       if (conditional !== undefined) {
