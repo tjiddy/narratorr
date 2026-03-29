@@ -15,13 +15,13 @@ export const NAMING_PRESETS: readonly NamingPreset[] = [
   {
     id: 'audiobookshelf',
     name: 'Audiobookshelf',
-    folderFormat: '{author}/{series/}{title}',
+    folderFormat: '{author}/{series?/}{title}',
     fileFormat: '{title}',
   },
   {
     id: 'plex',
     name: 'Plex',
-    folderFormat: '{author}/{series/}{year? - }{title}',
+    folderFormat: '{author}/{series?/}{year? - }{title}',
     fileFormat: '{title}{trackNumber:00? - pt}',
   },
   {

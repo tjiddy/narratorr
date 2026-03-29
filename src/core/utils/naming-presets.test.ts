@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { NAMING_PRESETS, detectPreset } from './naming-presets.js';
+import { renderTemplate, renderFilename } from './naming.js';
 
 describe('NAMING_PRESETS', () => {
   it('has exactly 4 presets', () => {
@@ -18,7 +19,7 @@ describe('NAMING_PRESETS', () => {
     const preset = NAMING_PRESETS.find(p => p.id === 'audiobookshelf');
     expect(preset).toBeDefined();
     expect(preset!.name).toBe('Audiobookshelf');
-    expect(preset!.folderFormat).toBe('{author}/{series/}{title}');
+    expect(preset!.folderFormat).toBe('{author}/{series?/}{title}');
     expect(preset!.fileFormat).toBe('{title}');
   });
 
@@ -26,7 +27,7 @@ describe('NAMING_PRESETS', () => {
     const preset = NAMING_PRESETS.find(p => p.id === 'plex');
     expect(preset).toBeDefined();
     expect(preset!.name).toBe('Plex');
-    expect(preset!.folderFormat).toBe('{author}/{series/}{year? - }{title}');
+    expect(preset!.folderFormat).toBe('{author}/{series?/}{year? - }{title}');
     expect(preset!.fileFormat).toBe('{title}{trackNumber:00? - pt}');
   });
 
@@ -39,10 +40,42 @@ describe('NAMING_PRESETS', () => {
   });
 });
 
+describe('preset template validity', () => {
+  const sampleTokens = {
+    author: 'Brandon Sanderson', authorLastFirst: 'Sanderson, Brandon',
+    title: 'The Way of Kings', titleSort: 'Way of Kings',
+    series: 'The Stormlight Archive', seriesPosition: 1, year: '2010',
+    narrator: 'Michael Kramer', narratorLastFirst: 'Kramer, Michael',
+    trackNumber: 1, trackTotal: 12, partName: 'Chapter 1',
+  };
+
+  it('all preset folderFormats render without literal brace artifacts', () => {
+    for (const preset of NAMING_PRESETS) {
+      const result = renderTemplate(preset.folderFormat, sampleTokens);
+      expect(result).not.toMatch(/\{.*\}/);
+    }
+  });
+
+  it('all preset fileFormats render without literal brace artifacts', () => {
+    for (const preset of NAMING_PRESETS) {
+      const result = renderFilename(preset.fileFormat, sampleTokens);
+      expect(result).not.toMatch(/\{.*\}/);
+    }
+  });
+
+  it('Audiobookshelf preset conditionally includes series in folder path', () => {
+    const withSeries = renderTemplate('{author}/{series?/}{title}', sampleTokens);
+    expect(withSeries).toBe('Brandon Sanderson/The Stormlight Archive/The Way of Kings');
+
+    const withoutSeries = renderTemplate('{author}/{series?/}{title}', { ...sampleTokens, series: undefined });
+    expect(withoutSeries).toBe('Brandon Sanderson/The Way of Kings');
+  });
+});
+
 describe('detectPreset', () => {
   it('returns preset id when both fields match a defined preset', () => {
     expect(detectPreset('{author}/{title}', '{author} - {title}')).toBe('standard');
-    expect(detectPreset('{author}/{series/}{title}', '{title}')).toBe('audiobookshelf');
+    expect(detectPreset('{author}/{series?/}{title}', '{title}')).toBe('audiobookshelf');
     expect(detectPreset('{authorLastFirst}/{titleSort}', '{authorLastFirst} - {titleSort}')).toBe('last-first');
   });
 
