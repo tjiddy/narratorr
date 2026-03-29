@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #199 Notifier adapter test coverage — 2026-03-29
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #208
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 20
+- Quality gate runs: 2 (pass on attempt 2 — first failed on TS cast)
+- Fix iterations: 2 (MSW non-Error throw interception required spy approach; TS cast needed `unknown` intermediate)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: All four adapters share identical error structure, so the test pattern was write-once-adapt-thrice for HTTP notifiers
+- Friction / issues encountered: MSW intercepts thrown non-Error values and converts to 500, preventing test of `instanceof Error` fallback — had to spy on fetchWithTimeout directly
+
+### Token efficiency
+- Highest-token actions: Reading all 4 source + 4 test files upfront (necessary but bulky)
+- Avoidable waste: None significant — test-only issue was straightforward
+- Suggestions: For test-coverage issues, skip the full Explore subagent for plan phase — the elaborate phase already captured all needed patterns
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. MSW swallows non-Error throws and returns 500 — must spy on fetchWithTimeout directly for `instanceof Error` fallback testing
+2. ReadableStream with `controller.error()` is the clean way to test `response.text().catch()` fallback paths
+3. `process.env` variables with `NARRATORR_` prefix exist in CI env — can't assert exact NARRATORR key count in payloadToEnv tests
+
 ## #200 Server service and route test gaps — 2026-03-29
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #207
