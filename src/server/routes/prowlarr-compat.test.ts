@@ -390,6 +390,8 @@ describe('Prowlarr-compatible API v1 routes', () => {
       );
     });
 
+    it.todo('extractSourceIndexerId falls back to raw string when URL constructor throws (malformed baseUrl)');
+
     it('sets sourceIndexerId to null when baseUrl has no numeric path segment', async () => {
       (services.indexer.createOrUpsertProwlarr as Mock).mockResolvedValue({
         row: { ...mockTorznabIndexer, sourceIndexerId: null },
@@ -615,6 +617,10 @@ describe('Prowlarr-compatible API v1 routes', () => {
       expect(payload.message).toBeDefined();
       expect(payload.detailedDescription).toBeDefined();
     });
+
+    it.todo('returns 400 with (missing) message when implementation is undefined');
+
+    it.todo('returns 400 with type name in message when implementation is unsupported');
   });
 
   describe('Fields translation (AC3)', () => {
@@ -687,6 +693,8 @@ describe('Prowlarr-compatible API v1 routes', () => {
       expect(customField).toBeDefined();
       expect(customField.value).toBe('customValue');
     });
+
+    it.todo('fromReadarrFields skips apiPath field (echo-only, not stored in settings)');
 
     it('defaults apiPath to "/api" when not provided', async () => {
       (services.indexer.getById as Mock).mockResolvedValue(mockTorznabIndexer);

@@ -460,6 +460,10 @@ describe('LibraryScanService', () => {
         }),
       );
     });
+
+    it.todo('records import_failed event with narrator from real metadata when book creation throws');
+
+    it.todo('logs warning and rethrows original error when both book creation and event recording fail');
   });
 
   describe('lookupMetadata', () => {
@@ -1342,6 +1346,10 @@ describe('LibraryScanService', () => {
       expect(result.imported).toBe(true);
       expect(cp).toHaveBeenCalled();
     });
+
+    it.todo('passes narrators: undefined to buildTargetPath when metadata has no narrators');
+
+    it.todo('passes mapped narrators to buildTargetPath when metadata has narrators');
   });
 
   // ============================================================================

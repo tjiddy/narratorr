@@ -39,6 +39,8 @@ describe('remote-path-mappings routes', () => {
       expect(JSON.parse(res.payload)).toHaveLength(1);
     });
 
+    it.todo('falls back to getAll when downloadClientId query param is non-numeric (NaN)');
+
     it('filters by downloadClientId query param', async () => {
       (services.remotePathMapping.getByClientId as Mock).mockResolvedValue([mockMapping]);
 
@@ -47,6 +49,12 @@ describe('remote-path-mappings routes', () => {
       expect(res.statusCode).toBe(200);
       expect(services.remotePathMapping.getByClientId).toHaveBeenCalledWith(1);
     });
+  });
+
+  describe('GET /api/remote-path-mappings/:id', () => {
+    it.todo('returns 404 when service returns null');
+
+    it.todo('returns 200 with mapping when found');
   });
 
   describe('POST /api/remote-path-mappings', () => {

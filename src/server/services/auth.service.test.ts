@@ -348,6 +348,12 @@ describe('AuthService', () => {
       expect(service.verifySessionCookie(cookie, secret)).toBeNull();
     });
 
+    it.todo('getSessionSecret returns sessionSecret from auth config');
+
+    it.todo('getSessionSecret throws when auth config is missing (not initialized)');
+
+    it.todo('verifySessionCookie returns null and logs debug when signature length does not match expected');
+
     it('sliding expiry: cookie >50% through TTL flagged for renewal', () => {
       const now = Date.now();
       // Create cookie issued 4 days ago (>50% of 7-day TTL)

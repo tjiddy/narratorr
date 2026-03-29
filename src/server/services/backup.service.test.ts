@@ -273,6 +273,8 @@ describe('BackupService', () => {
       expect(remaining).toHaveLength(3);
     });
 
+    it.todo('logs warning and continues when fs.unlink fails for one backup during prune');
+
     it('with retention=3 and 2 backups, deletes nothing', async () => {
       const backupsDir = path.join(configPath, 'backups');
       await fs.mkdir(backupsDir, { recursive: true });
@@ -318,6 +320,8 @@ describe('BackupService', () => {
   });
 
   describe('validateRestore', () => {
+    it.todo('falls back to appMigrationCount=0 and logs warning when _journal.json is unreadable');
+
     it('returns valid=true for DB with same migration count as app', async () => {
       mockExecute.mockResolvedValue({ rows: [{ count: 1 }] });
 
@@ -615,6 +619,10 @@ describe('applyPendingRestore (startup swap)', () => {
     expect(mockLog.info).not.toHaveBeenCalled();
     expect(mockLog.warn).not.toHaveBeenCalled();
   });
+
+  it.todo('falls back to copyFileSync + unlinkSync when renameSync throws');
+
+  it.todo('logs warning when both renameSync and copyFileSync fail');
 
   it('restore-pending.db no longer exists on disk after swap', async () => {
     const pendingPath = path.join(configPath, 'restore-pending.db');
