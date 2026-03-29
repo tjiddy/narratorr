@@ -24,6 +24,7 @@ vi.mock('@/hooks/useEventSource', () => ({
 }));
 
 import { api } from '@/lib/api';
+import { useSSEConnected } from '@/hooks/useEventSource';
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -560,6 +561,228 @@ describe('grouped return shape (REACT-1 refactor)', () => {
     const mutationNames = ['cancelMutation', 'retryMutation', 'approveMutation', 'rejectMutation', 'deleteMutation', 'deleteHistoryMutation'] as const;
     for (const name of mutationNames) {
       expect(result.current.mutations).toHaveProperty(name);
+    }
+  });
+});
+
+describe('refetchInterval conditional logic', () => {
+  function createRefetchWrapper() {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: React.ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+    return { wrapper, queryClient };
+  }
+
+  function mockBothSections(
+    queueData: { data: Download[]; total: number },
+    historyData: { data: Download[]; total: number } = { data: [], total: 0 },
+  ) {
+    vi.mocked(api.getActivity).mockImplementation((params) => {
+      const p = params as ActivityListParams & { section: string };
+      return Promise.resolve(p.section === 'queue' ? queueData : historyData);
+    });
+  }
+
+  it('history section never polls (refetchInterval returns false)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    vi.clearAllMocks();
+    vi.mocked(useSSEConnected).mockReturnValue(false);
+    try {
+      const inProgressItems = [makeDownload({ id: 1, status: 'downloading' })];
+      mockBothSections(
+        { data: inProgressItems, total: 1 },
+        { data: inProgressItems, total: 1 },
+      );
+
+      const { wrapper, queryClient } = createRefetchWrapper();
+      const { unmount } = renderHook(() => useActivity(), { wrapper });
+
+      await waitFor(() => {
+        expect(api.getActivity).toHaveBeenCalledTimes(2);
+      });
+
+      vi.mocked(api.getActivity).mockClear();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+
+      const historyCalls = vi.mocked(api.getActivity).mock.calls.filter(
+        (args) => (args[0] as ActivityListParams & { section: string }).section === 'history',
+      );
+      expect(historyCalls).toHaveLength(0);
+
+      unmount();
+      queryClient.clear();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('queue with SSE connected returns false (polling disabled)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    vi.clearAllMocks();
+    vi.mocked(useSSEConnected).mockReturnValue(false);
+    try {
+      vi.mocked(useSSEConnected).mockReturnValue(true);
+      mockBothSections({ data: [makeDownload({ id: 1, status: 'downloading' })], total: 1 });
+
+      const { wrapper, queryClient } = createRefetchWrapper();
+      const { unmount } = renderHook(() => useActivity(), { wrapper });
+
+      await waitFor(() => {
+        expect(api.getActivity).toHaveBeenCalledTimes(2);
+      });
+
+      vi.mocked(api.getActivity).mockClear();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+
+      expect(api.getActivity).not.toHaveBeenCalled();
+
+      unmount();
+      queryClient.clear();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('queue with SSE disconnected and undefined data returns 5000 (default polling)', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    vi.clearAllMocks();
+    vi.mocked(useSSEConnected).mockReturnValue(false);
+    try {
+      // Queue rejects so data stays undefined; history resolves normally
+      vi.mocked(api.getActivity).mockImplementation((params) => {
+        const p = params as ActivityListParams & { section: string };
+        if (p.section === 'history') return Promise.resolve({ data: [], total: 0 });
+        return Promise.reject(new Error('network error'));
+      });
+
+      const { wrapper, queryClient } = createRefetchWrapper();
+      const { unmount } = renderHook(() => useActivity(), { wrapper });
+
+      // Wait for initial fetches to complete (queue errors, history succeeds)
+      await waitFor(() => {
+        expect(api.getActivity).toHaveBeenCalledTimes(2);
+      });
+
+      vi.mocked(api.getActivity).mockClear();
+
+      // Advance past 5000ms — queue should retry via refetchInterval since data is undefined
+      await act(async () => { await vi.advanceTimersByTimeAsync(5100); });
+
+      const queueCalls = vi.mocked(api.getActivity).mock.calls.filter(
+        (args) => (args[0] as ActivityListParams & { section: string }).section === 'queue',
+      );
+      expect(queueCalls.length).toBeGreaterThanOrEqual(1);
+
+      unmount();
+      queryClient.clear();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('queue with SSE disconnected and all terminal-status downloads returns false', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    vi.clearAllMocks();
+    vi.mocked(useSSEConnected).mockReturnValue(false);
+    try {
+      mockBothSections({
+        data: [
+          makeDownload({ id: 1, status: 'completed' }),
+          makeDownload({ id: 2, status: 'failed' }),
+        ],
+        total: 2,
+      });
+
+      const { wrapper, queryClient } = createRefetchWrapper();
+      const { unmount } = renderHook(() => useActivity(), { wrapper });
+
+      await waitFor(() => {
+        expect(api.getActivity).toHaveBeenCalledTimes(2);
+      });
+
+      vi.mocked(api.getActivity).mockClear();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+
+      const queueCalls = vi.mocked(api.getActivity).mock.calls.filter(
+        (args) => (args[0] as ActivityListParams & { section: string }).section === 'queue',
+      );
+      expect(queueCalls).toHaveLength(0);
+
+      unmount();
+      queryClient.clear();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('queue with SSE disconnected and at least one in-progress download returns 5000', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    vi.clearAllMocks();
+    vi.mocked(useSSEConnected).mockReturnValue(false);
+    try {
+      mockBothSections({
+        data: [
+          makeDownload({ id: 1, status: 'completed' }),
+          makeDownload({ id: 2, status: 'downloading' }),
+        ],
+        total: 2,
+      });
+
+      const { wrapper, queryClient } = createRefetchWrapper();
+      const { unmount } = renderHook(() => useActivity(), { wrapper });
+
+      await waitFor(() => {
+        expect(api.getActivity).toHaveBeenCalledTimes(2);
+      });
+
+      vi.mocked(api.getActivity).mockClear();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(5100); });
+
+      const queueCalls = vi.mocked(api.getActivity).mock.calls.filter(
+        (args) => (args[0] as ActivityListParams & { section: string }).section === 'queue',
+      );
+      expect(queueCalls.length).toBeGreaterThanOrEqual(1);
+
+      unmount();
+      queryClient.clear();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('queue with SSE disconnected and empty data array returns false', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    vi.clearAllMocks();
+    vi.mocked(useSSEConnected).mockReturnValue(false);
+    try {
+      mockBothSections({ data: [], total: 0 });
+
+      const { wrapper, queryClient } = createRefetchWrapper();
+      const { unmount } = renderHook(() => useActivity(), { wrapper });
+
+      await waitFor(() => {
+        expect(api.getActivity).toHaveBeenCalledTimes(2);
+      });
+
+      vi.mocked(api.getActivity).mockClear();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+
+      const queueCalls = vi.mocked(api.getActivity).mock.calls.filter(
+        (args) => (args[0] as ActivityListParams & { section: string }).section === 'queue',
+      );
+      expect(queueCalls).toHaveLength(0);
+
+      unmount();
+      queryClient.clear();
+    } finally {
+      vi.useRealTimers();
     }
   });
 });
