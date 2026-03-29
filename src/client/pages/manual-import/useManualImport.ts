@@ -6,7 +6,7 @@ import { api, type ImportMode, type ImportConfirmItem, type MatchResult } from '
 import { queryKeys } from '@/lib/queryKeys';
 import { useMatchJob } from '@/hooks/useMatchJob';
 import type { ImportRow, BookEditState } from '@/components/manual-import';
-import { isPathInsideLibrary } from './pathUtils.js';
+import { isPathInsideLibrary } from '@/lib/pathUtils.js';
 
 export type Step = 'path' | 'review';
 

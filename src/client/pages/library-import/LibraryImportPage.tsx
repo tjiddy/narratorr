@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ImportCard, ImportSummaryBar, BookEditModal } from '@/components/manual-import';
 import { ArrowLeftIcon, CheckIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';
-import { makeRelativePath } from '../manual-import/pathUtils.js';
+import { makeRelativePath } from '@/lib/pathUtils.js';
 import { useLibraryImport } from './useLibraryImport.js';
 
 // eslint-disable-next-line max-lines-per-function, complexity -- page orchestrator with scan, match, duplicate, register flows
