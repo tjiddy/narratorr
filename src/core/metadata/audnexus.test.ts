@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { http, HttpResponse, delay } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { AudnexusProvider } from './audnexus.js';
-import { TransientError } from './errors.js';
+import { RateLimitError, TransientError } from './errors.js';
 
 describe('AudnexusProvider', () => {
   const server = useMswServer();
@@ -416,6 +416,183 @@ describe('AudnexusProvider', () => {
     it('getBook() on 2xx response returns data normally (regression)', async () => {
       const book = await provider.getBook('B0030DL4GK');
       expect(book).not.toBeNull();
+    });
+  });
+
+  describe('429 Retry-After parsing', () => {
+    it('getBook() 429 with Retry-After header throws RateLimitError with retryAfterMs = header × 1000', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': '30' },
+          });
+        }),
+      );
+
+      const error = await provider.getBook('B0030DL4GK').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RateLimitError);
+      expect((error as RateLimitError).retryAfterMs).toBe(30000);
+      expect((error as RateLimitError).provider).toBe('Audnexus');
+    });
+
+    it('getBook() 429 without Retry-After header throws RateLimitError with retryAfterMs = 60000', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return new HttpResponse(null, { status: 429 });
+        }),
+      );
+
+      const error = await provider.getBook('B0030DL4GK').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RateLimitError);
+      expect((error as RateLimitError).retryAfterMs).toBe(60000);
+    });
+
+    it('getAuthor() 429 with Retry-After header throws RateLimitError with retryAfterMs = header × 1000', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors/:asin', () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': '45' },
+          });
+        }),
+      );
+
+      const error = await provider.getAuthor('B001H6UJO8').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RateLimitError);
+      expect((error as RateLimitError).retryAfterMs).toBe(45000);
+      expect((error as RateLimitError).provider).toBe('Audnexus');
+    });
+
+    it('getAuthor() 429 without Retry-After header throws RateLimitError with retryAfterMs = 60000', async () => {
+      server.use(
+        http.get('https://api.audnex.us/authors/:asin', () => {
+          return new HttpResponse(null, { status: 429 });
+        }),
+      );
+
+      const error = await provider.getAuthor('B001H6UJO8').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RateLimitError);
+      expect((error as RateLimitError).retryAfterMs).toBe(60000);
+    });
+
+    it('429 with empty string Retry-After header falls back to 60000', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': '' },
+          });
+        }),
+      );
+
+      const error = await provider.getBook('B0030DL4GK').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RateLimitError);
+      expect((error as RateLimitError).retryAfterMs).toBe(60000);
+    });
+
+    it('429 with non-numeric Retry-After header produces NaN retryAfterMs (documents existing behavior)', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': 'not-a-number' },
+          });
+        }),
+      );
+
+      const error = await provider.getBook('B0030DL4GK').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RateLimitError);
+      expect((error as RateLimitError).retryAfterMs).toBeNaN();
+    });
+
+    it('429 with zero Retry-After header produces retryAfterMs = 0', async () => {
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', () => {
+          return new HttpResponse(null, {
+            status: 429,
+            headers: { 'Retry-After': '0' },
+          });
+        }),
+      );
+
+      const error = await provider.getBook('B0030DL4GK').catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(RateLimitError);
+      expect((error as RateLimitError).retryAfterMs).toBe(0);
+    });
+  });
+
+  describe('region query parameter', () => {
+    it('getBook() sends ?region=uk when constructed with region uk', async () => {
+      const ukProvider = new AudnexusProvider({ region: 'uk' });
+      let capturedUrl = '';
+
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({
+            asin: 'B0030DL4GK',
+            title: 'Test Book',
+            authors: [{ name: 'Author' }],
+          });
+        }),
+      );
+
+      await ukProvider.getBook('B0030DL4GK');
+      expect(capturedUrl).toContain('?region=uk');
+    });
+
+    it('getBook() sends ?region=us when constructed with no config (default)', async () => {
+      let capturedUrl = '';
+
+      server.use(
+        http.get('https://api.audnex.us/books/:asin', ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({
+            asin: 'B0030DL4GK',
+            title: 'Test Book',
+            authors: [{ name: 'Author' }],
+          });
+        }),
+      );
+
+      await provider.getBook('B0030DL4GK');
+      expect(capturedUrl).toContain('?region=us');
+    });
+
+    it('getAuthor() sends ?region=ca when constructed with region ca', async () => {
+      const caProvider = new AudnexusProvider({ region: 'ca' });
+      let capturedUrl = '';
+
+      server.use(
+        http.get('https://api.audnex.us/authors/:asin', ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({
+            asin: 'B001H6UJO8',
+            name: 'Test Author',
+          });
+        }),
+      );
+
+      await caProvider.getAuthor('B001H6UJO8');
+      expect(capturedUrl).toContain('?region=ca');
+    });
+
+    it('getAuthor() sends ?region=us when constructed with no config (default)', async () => {
+      let capturedUrl = '';
+
+      server.use(
+        http.get('https://api.audnex.us/authors/:asin', ({ request }) => {
+          capturedUrl = request.url;
+          return HttpResponse.json({
+            asin: 'B001H6UJO8',
+            name: 'Test Author',
+          });
+        }),
+      );
+
+      await provider.getAuthor('B001H6UJO8');
+      expect(capturedUrl).toContain('?region=us');
     });
   });
 });
