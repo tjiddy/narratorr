@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #210 Redesign file naming UI — token modal, presets, and formatting options — 2026-03-29
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #211
+
+### Metrics
+- Files changed: 31 | Tests added/modified: 169
+- Quality gate runs: 3 (pass on attempt 3 — fixture blast radius required 2 fix cycles)
+- Fix iterations: 2 (lint max-lines and TypeScript Zod resolver type mismatch)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Red/green TDD cycle worked well for core naming transforms — 18 tests written first, all failed, implementation made them pass. Presets module was clean and fast.
+- Friction / issues encountered: (1) Fixture blast radius was larger than expected — 31 files touched total, settings fixtures across 25+ test files needed updating. (2) `max-lines` ESLint rule hit at 400 lines — required compressing constant definitions and merging memos. (3) `zodResolver` type mismatch when using `.default()` in form schema required split between settings schema (with defaults) and form schema (without).
+
+### Token efficiency
+- Highest-token actions: Explore subagent for codebase analysis (comprehensive but necessary for this scope)
+- Avoidable waste: Could have checked max-lines limit earlier before writing full component
+- Suggestions: For features touching settings schemas, enumerate ALL test files with inline fixtures up front
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available — design polish deferred to review
+- Unresolved debt: `extractYear()` duplicated in paths.ts and import-helpers.ts; LibrarySettingsSection at exact max-lines limit
+
+### Wish I'd Known
+1. **Zod `.default()` creates form resolver type mismatches** — form schemas need bare enums (no `.default()`), while settings schemas need `.default()` for backward compat. This caused a verify failure that was quick to fix but could have been avoided.
+2. **Settings blast radius is wider than the fixture list suggests** — e2e test files also hardcode library settings with `settings.set('library', {...})` which TypeScript catches but runtime tests don't. The spec's fixture blast radius missed 4 e2e files.
+3. **LibrarySettingsSection was already at 426 lines** — the max-lines limit of 400 was waiting to be triggered. Plan extraction of the NamingTokenModal to its own file from the start, and compress constants proactively.
+
 ## #201 Client test coverage — hooks, forms, and library import gaps — 2026-03-29
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #209
