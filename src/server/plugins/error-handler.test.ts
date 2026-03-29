@@ -214,6 +214,10 @@ describe('error-handler plugin', () => {
       expect(res.statusCode).toBe(409);
       expect(JSON.parse(res.payload)).toEqual({ error: 'Task "foo" is already running' });
     });
+
+    // #197 — DuplicateDownloadError typed error mapping (ERR-1)
+    it.todo('maps DuplicateDownloadError ACTIVE_DOWNLOAD_EXISTS to 409');
+    it.todo('maps DuplicateDownloadError PIPELINE_ACTIVE to 409');
   });
 
   describe('generic error handling', () => {

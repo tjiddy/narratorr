@@ -654,6 +654,10 @@ describe('search routes', () => {
       expect(res.statusCode).toBe(500);
       expect(JSON.parse(res.payload).error).toBe('No download client');
     });
+
+    // #197 — DuplicateDownloadError route handling (ERR-1)
+    it.todo('returns 409 with { code: ACTIVE_DOWNLOAD_EXISTS } when DuplicateDownloadError has ACTIVE_DOWNLOAD_EXISTS code');
+    it.todo('returns 409 with { error: message } when DuplicateDownloadError has PIPELINE_ACTIVE code (plugin-routed)');
   });
 
   describe('error paths', () => {

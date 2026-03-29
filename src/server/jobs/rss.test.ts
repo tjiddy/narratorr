@@ -249,6 +249,10 @@ describe('runRssJob', () => {
     );
   });
 
+  // #197 — DuplicateDownloadError instanceof catch (ERR-1)
+  it.todo('skips grab when DuplicateDownloadError is thrown — logs info and continues (instanceof, not string match)');
+  it.todo('continues loop when non-DuplicateDownloadError is thrown (fire-and-forget preserved)');
+
   // --- Upgrades ---
 
   it('triggers upgrade grab for monitored book with better quality', async () => {

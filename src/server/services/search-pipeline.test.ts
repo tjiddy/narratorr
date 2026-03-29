@@ -133,6 +133,10 @@ describe('searchAndGrabForBook', () => {
     expect(result).toEqual({ result: 'skipped', reason: 'already_has_active_download' });
   });
 
+  // #197 — DuplicateDownloadError instanceof catch (ERR-1)
+  it.todo('returns skipped when DuplicateDownloadError is thrown (instanceof check, not string match)');
+  it.todo('returns grab_error when non-DuplicateDownloadError is thrown (not swallowed)');
+
   it('returns grab_error for non-duplicate grab errors', async () => {
     const grabError = new Error('Connection refused');
     vi.mocked(downloadService.grab).mockRejectedValue(grabError);

@@ -1372,6 +1372,11 @@ describe('DownloadService', () => {
       expect(db.insert).not.toHaveBeenCalled();
     });
 
+    // #197 — DuplicateDownloadError typed error assertions (ERR-1)
+    it.todo('throws DuplicateDownloadError with code ACTIVE_DOWNLOAD_EXISTS for replaceable-active duplicate');
+    it.todo('throws DuplicateDownloadError with code PIPELINE_ACTIVE for pipeline-active duplicate');
+    it.todo('DuplicateDownloadError has correct name property and instanceof works');
+
     it('reverts book status to wanted when cancel succeeds but follow-up grab fails', async () => {
       const replaceableDownload = { ...mockDownload, id: 5, status: 'downloading' as const };
       // getActiveByBookId returns replaceable download

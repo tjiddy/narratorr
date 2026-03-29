@@ -648,6 +648,10 @@ describe('searchAllWanted', () => {
     );
   });
 
+  // #197 — DuplicateDownloadError instanceof catch (ERR-1)
+  it.todo('skips books where grab throws DuplicateDownloadError — increments skipped (instanceof, not string match)');
+  it.todo('re-throws non-DuplicateDownloadError to outer catch — increments errors');
+
   it('skips books where grab throws "already has an active download" — increments skipped', async () => {
     const wantedBooks = [{ id: 1, title: 'Book One', authors: [{ name: 'Author A' }] }];
     const searchResults = [mockResult(10, 'magnet:?xt=urn:btih:aaa')];

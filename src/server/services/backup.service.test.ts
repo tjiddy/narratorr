@@ -348,6 +348,9 @@ describe('BackupService', () => {
       expect(result.error).toContain('newer version');
     });
 
+    // #197 — structured table-existence check replaces string matching (ERR-1)
+    it.todo('detects missing migrations table via structured query (not message.includes)');
+
     it('returns valid=false for DB without __drizzle_migrations table', async () => {
       mockExecute.mockRejectedValue(new Error('no such table: __drizzle_migrations'));
 

@@ -175,6 +175,11 @@ describe('BlackholeClient', () => {
       expect(result.success).toBe(false);
       expect(result.message).toContain('not writable');
     });
+
+    // #197 — NodeJS.ErrnoException.code checks (ERR-1)
+    it.todo('detects ENOENT via error.code property (not message string matching)');
+    it.todo('detects EACCES via error.code property (not message string matching)');
+    it.todo('returns generic error message for other fs errors');
   });
 
   describe('protocol', () => {
