@@ -58,10 +58,30 @@ vi.mock('../utils/import-helpers.js', async (importOriginal) => {
   };
 });
 
+// Spy on import-steps — passthrough to real implementation
+vi.mock('../utils/import-steps.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    runAudioProcessing: vi.fn().mockImplementation(actual.runAudioProcessing as (...args: unknown[]) => unknown),
+  };
+});
+
+// Spy on paths — passthrough to real implementation
+vi.mock('../utils/paths.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    renameFilesWithTemplate: vi.fn().mockImplementation(actual.renameFilesWithTemplate as (...args: unknown[]) => unknown),
+  };
+});
+
 import { mkdir, cp, stat, readdir, writeFile, rename, rm, statfs } from 'node:fs/promises';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
+import { runAudioProcessing } from '../utils/import-steps.js';
+import { renameFilesWithTemplate } from '../utils/paths.js';
 
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 
@@ -360,6 +380,33 @@ describe('ImportService', () => {
         '{author}/{title}',
         expect.any(Object),
         expect.any(String),
+        expect.objectContaining({ separator: 'period', case: 'upper' }),
+      );
+    });
+
+    it('forwards non-default naming options to runAudioProcessing and renameFilesWithTemplate', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'period', namingCase: 'upper' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({ enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: true, bitrate: 128, mergeBehavior: 'always' });
+        return Promise.resolve({});
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(runAudioProcessing).toHaveBeenCalledWith(
+        expect.objectContaining({ namingOptions: { separator: 'period', case: 'upper' } }),
+      );
+      expect(renameFilesWithTemplate).toHaveBeenCalledWith(
+        expect.any(String),
+        '{author} - {title}',
+        expect.any(Object),
+        expect.any(String),
+        expect.anything(),
         expect.objectContaining({ separator: 'period', case: 'upper' }),
       );
     });

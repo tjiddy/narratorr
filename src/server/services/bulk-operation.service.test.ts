@@ -425,6 +425,28 @@ describe('BulkOperationService — rename naming options wiring', () => {
     // Book2 path uses default spacing/casing — mismatched under new settings
     expect(result.mismatched).toBe(1);
   });
+
+  it('startRenameJob only renames books whose path does not match the transformed target', async () => {
+    const renameService = makeRenameService();
+    const { service, db } = createService({
+      renameService,
+      settingsOverrides: {
+        library: { path: '/library', folderFormat: '{author}/{title}', fileFormat: '', namingSeparator: 'period' as const, namingCase: 'upper' as const },
+      },
+    });
+    db.select.mockReturnValueOnce(mockDbChain([
+      // Book1 path matches transformed target (AUTHOR.NAME/BOOK1) — should be skipped
+      { id: 1, path: '/library/AUTHOR.NAME/BOOK1', title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
+      // Book2 path uses default format — mismatched under period/upper settings
+      { id: 2, path: '/library/Author Name/Book2', title: 'Book2', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
+    ]));
+    (renameService.renameBook as Mock).mockResolvedValue({ oldPath: '', newPath: '', message: 'Moved', filesRenamed: 0 });
+    const id = await service.startRenameJob();
+    await waitForJob(service, id);
+    // Only the mismatched book (id=2) should be processed
+    expect(renameService.renameBook).toHaveBeenCalledTimes(1);
+    expect(renameService.renameBook).toHaveBeenCalledWith(2);
+  });
 });
 
 // ===== Re-tag batch =====
