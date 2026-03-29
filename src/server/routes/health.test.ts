@@ -13,6 +13,7 @@ vi.mock('fs/promises', async (importOriginal) => {
 vi.mock('../utils/version.js', () => ({
   getVersion: () => '99.88.77',
   getCommit: () => 'abc1234def',
+  getBuildTime: () => '2026-03-29T11:29:40Z',
 }));
 
 import fsp from 'fs/promises';
