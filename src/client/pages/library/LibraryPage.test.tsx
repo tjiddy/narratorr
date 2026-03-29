@@ -2026,8 +2026,8 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
     const bookCards = screen.getAllByRole('link').filter(el => el.getAttribute('tabindex') === '0');
     await user.click(bookCards[0]);
 
-    // Default sort is createdAt desc, so the first rendered card is the newest (id=4)
-    expect(mockNavigate).toHaveBeenCalledWith(expect.stringMatching(/^\/books\/\d+$/));
+    // Default sort is createdAt desc, so the first rendered card is id=4 (Words of Radiance, Jan 4)
+    expect(mockNavigate).toHaveBeenCalledWith('/books/4');
   });
 
   it('closes menu on document click outside', async () => {
