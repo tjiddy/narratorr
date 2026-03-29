@@ -42,10 +42,20 @@ export const fileFormatSchema = z.string().default('{author} - {title}').refine(
   { message: 'Unknown token in template. Allowed: {author}, {title}, {trackNumber}, {trackTotal}, {partName}, and more' },
 );
 
+export const namingSeparatorValues = ['space', 'period', 'underscore', 'dash'] as const;
+export type NamingSeparator = (typeof namingSeparatorValues)[number];
+export const namingSeparatorSchema = z.enum(namingSeparatorValues).default('space');
+
+export const namingCaseValues = ['default', 'lower', 'upper', 'title'] as const;
+export type NamingCase = (typeof namingCaseValues)[number];
+export const namingCaseSchema = z.enum(namingCaseValues).default('default');
+
 export const librarySettingsSchema = z.object({
   path: z.string().trim().min(1, 'Library path is required'),
   folderFormat: folderFormatSchema,
   fileFormat: fileFormatSchema,
+  namingSeparator: namingSeparatorSchema,
+  namingCase: namingCaseSchema,
 });
 
 export const libraryFormSchema = z.object({
@@ -64,4 +74,6 @@ export const libraryFormSchema = z.object({
     (val) => validateTokens(val, FILE_FORMAT_ALLOWED_TOKENS),
     { message: 'Unknown token in file template' },
   ),
+  namingSeparator: namingSeparatorSchema,
+  namingCase: namingCaseSchema,
 });

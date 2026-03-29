@@ -55,6 +55,8 @@ describe('settingsRegistry', () => {
         path: '/audiobooks',
         folderFormat: '{author}/{title}',
         fileFormat: '{author} - {title}',
+        namingSeparator: 'space',
+        namingCase: 'default',
       });
     });
 
