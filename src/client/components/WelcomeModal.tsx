@@ -55,7 +55,7 @@ function InfoCard({ icon, title, description, href, badge }: InfoCardProps) {
 
 function FeaturesSection() {
   return (
-    <section className="mb-8 [@media(max-height:56rem)]:hidden">
+    <section className="mb-8 [@media(max-height:60rem)]:hidden">
       <h3 className="font-display text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
         Features Worth Knowing
       </h3>
@@ -120,13 +120,13 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
         tabIndex={-1}
       >
         {/* Scrollable content */}
-        <div ref={scrollableRef} data-testid="modal-content" className="flex-1 overflow-y-auto p-6 sm:p-8">
+        <div ref={scrollableRef} data-testid="modal-content" className="flex-1 overflow-y-auto p-6 sm:p-8 [@media(max-height:60rem)]:p-5">
         {/* Header */}
-        <div className="text-center mb-8">
-          <div data-testid="welcome-header-icon" className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-primary to-amber-500 mb-4 shadow-glow">
+        <div className="text-center mb-8 [@media(max-height:60rem)]:mb-4">
+          <div data-testid="welcome-header-icon" className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-primary to-amber-500 mb-4 [@media(max-height:60rem)]:mb-2 shadow-glow">
             <HeadphonesIcon className="w-7 h-7 text-primary-foreground" />
           </div>
-          <h2 id="welcome-modal-title" className="font-display text-2xl sm:text-3xl font-semibold mb-2">
+          <h2 id="welcome-modal-title" className="font-display text-2xl sm:text-3xl [@media(max-height:60rem)]:text-2xl font-semibold mb-2">
             Welcome to narratorr
           </h2>
           <p className="text-muted-foreground text-sm sm:text-base max-w-lg mx-auto">
@@ -135,7 +135,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
         </div>
 
         {/* Row 1 — Read This */}
-        <section className="mb-6">
+        <section className="mb-6 [@media(max-height:60rem)]:mb-3">
           <h3 className="font-display text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
             Read This First
           </h3>
@@ -165,7 +165,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
         </section>
 
         {/* Row 2 — First Steps */}
-        <section className="mb-6">
+        <section className="mb-6 [@media(max-height:60rem)]:mb-3">
           <h3 className="font-display text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
             First Steps
           </h3>
