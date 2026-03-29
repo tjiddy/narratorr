@@ -423,14 +423,23 @@ describe('LibraryImportPage (#133)', () => {
         expect(screen.getByText('NoMatch')).toBeInTheDocument();
       });
 
-      // Advance to trigger poll
+      // Advance to trigger poll — mergeMatchResults auto-deselects confidence=none rows
       await act(async () => { vi.advanceTimersByTime(2000); });
 
+      // Wait for the no-match badge to appear (confirms merge happened)
       await waitFor(() => {
-        const registerBtn = screen.getByRole('button', { name: /register/i });
-        // confidence=none → selected=false (mergeMatchResults sets selected=false for none confidence)
-        // So selectedUnmatchedCount is 0 (book is deselected) — but selectedCount is also 0 → disabled
+        expect(screen.getByText('1 no match')).toBeInTheDocument();
+      });
+
+      // Re-select the unmatched row manually so selectedUnmatchedCount becomes 1
+      const selectBtn = screen.getByRole('button', { name: /^select$/i });
+      await userEvent.click(selectBtn);
+
+      // Now: selectedCount=1 AND selectedUnmatchedCount=1 → button disabled with title
+      await waitFor(() => {
+        const registerBtn = screen.getByRole('button', { name: /register 1 book$/i });
         expect(registerBtn).toBeDisabled();
+        expect(registerBtn).toHaveAttribute('title', '1 selected book needs a match');
       });
 
       vi.useRealTimers();
@@ -607,10 +616,27 @@ describe('LibraryImportPage (#133)', () => {
 
       await act(async () => { vi.advanceTimersByTime(2000); });
 
-      // reviewCount = all medium → 1 (B2)
+      // reviewCount = all medium → 1 (B2) — while B2 is still selected
       await waitFor(() => {
         expect(screen.getByText('1 review')).toBeInTheDocument();
       });
+
+      // After poll: B3 (none) was auto-deselected, so not all are selected.
+      // Click "Select all" to select all rows, then "Deselect all" to deselect all.
+      // reviewCount must persist through both selection changes.
+      await userEvent.click(screen.getByRole('button', { name: /select all/i }));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /deselect all/i })).toBeInTheDocument();
+      });
+      // reviewCount = 1 even after re-selecting all
+      expect(screen.getByText('1 review')).toBeInTheDocument();
+
+      // Now deselect all — reviewCount must still show 1 (selection-independent)
+      await userEvent.click(screen.getByRole('button', { name: /deselect all/i }));
+      await waitFor(() => {
+        expect(screen.getByText(/0 of \d+ new selected/i)).toBeInTheDocument();
+      });
+      expect(screen.getByText('1 review')).toBeInTheDocument();
 
       vi.useRealTimers();
     });
