@@ -289,8 +289,8 @@ describe('BackupService', () => {
         .mockRejectedValueOnce(new Error('EACCES: permission denied'))
         .mockResolvedValueOnce(undefined as never);
 
-      const mockLog = createMockLog();
-      const service = new BackupService(configPath, dbPath, createMockSettingsService({ system: { backupRetention: 2 } }), mockLog);
+      const mockLog = createMockLog() as unknown as { warn: ReturnType<typeof vi.fn>; [k: string]: unknown };
+      const service = new BackupService(configPath, dbPath, createMockSettingsService({ system: { backupRetention: 2 } }), mockLog as never);
       const deleted = await service.prune();
 
       // 1 succeeded, 1 failed
@@ -355,8 +355,8 @@ describe('BackupService', () => {
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
       mockExecute.mockResolvedValueOnce({ rows: [{ count: 1 }] });
 
-      const mockLog = createMockLog();
-      const service = new BackupService(configPath, dbPath, createMockSettingsService(), mockLog);
+      const mockLog = createMockLog() as unknown as { warn: ReturnType<typeof vi.fn>; [k: string]: unknown };
+      const service = new BackupService(configPath, dbPath, createMockSettingsService(), mockLog as never);
       const result = await service.validateRestore('/tmp/test.db');
 
       // appMigrationCount fell back to 0, so backup (1) > app (0) → invalid
