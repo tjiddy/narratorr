@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #183 Test coverage: Library page components — 2026-03-29
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #195
+
+### Metrics
+- Files changed: 1 | Tests added: 27
+- Quality gate runs: 3 (pass on attempt 3 — lint and typecheck fixes needed)
+- Fix iterations: 2 (unused helpers lint, mock return types typecheck)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-elaborated after 2 rounds of review, making test implementation straightforward
+- Friction / issues encountered: Global `vi.mock` for `DEFAULT_LIMITS` broke 50+ existing tests because it affected all pagination rendering globally. Had to remove it and use `total > 100` in pagination tests instead. localStorage leaked between describe blocks causing card menu tests to fail in full-suite runs.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for initial codebase analysis, reading full 1474-line test file
+- Avoidable waste: First test run failed 9 tests due to global mock + localStorage leak — could have anticipated these by reading existing test isolation patterns first
+- Suggestions: Before adding global `vi.mock` in a large test file, check how many existing tests it would affect
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `vi.mock()` is hoisted and applies file-wide — cannot be scoped to describe blocks. Using it to mock `DEFAULT_LIMITS.books` from 100 to 3 broke every existing test. Use real values + appropriate mock data instead. (see learnings/global-vi-mock-affects-all-tests.md)
+2. localStorage persists between test blocks in jsdom — earlier grid/table toggle tests left localStorage state that caused card menu tests to render in table mode instead of grid. Always clear localStorage in `beforeEach` for view-dependent tests. (see learnings/localstorage-leaks-between-tests.md)
+3. `vi.clearAllMocks()` does NOT reset `mockImplementation` — only clears history. Each test must explicitly call its mock setup function to overwrite the previous test's implementation. (see learnings/vi-clear-vs-reset-mocks.md)
+
 ## #184 Test coverage: Activity page components — 2026-03-29
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #194
