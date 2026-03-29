@@ -230,6 +230,231 @@ describe('ScriptNotifier', () => {
     });
   });
 
+  // --- #199 boundary and payloadToEnv coverage tests ---
+
+  it('uses default 30s timeout when timeout config is undefined', async () => {
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
+      cb(null, '', '');
+      return {} as ReturnType<typeof execFile>;
+    });
+
+    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
+    await notifier.send('on_grab', { event: 'on_grab' });
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      '/scripts/notify.sh',
+      expect.objectContaining({ timeout: 30000 }),
+      expect.any(Function),
+    );
+  });
+
+  it('passes 0ms timeout to execFile when timeout is 0', async () => {
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
+      cb(null, '', '');
+      return {} as ReturnType<typeof execFile>;
+    });
+
+    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh', timeout: 0 });
+    await notifier.send('on_grab', { event: 'on_grab' });
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      '/scripts/notify.sh',
+      expect.objectContaining({ timeout: 0 }),
+      expect.any(Function),
+    );
+  });
+
+  it('skips stdin write when child.stdin is null', async () => {
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
+      cb(null, '', '');
+      return { stdin: null } as unknown as ReturnType<typeof execFile>;
+    });
+
+    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
+    const result = await notifier.send('on_grab', {
+      event: 'on_grab',
+      book: { title: 'Test' },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('sets download event environment variables', async () => {
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
+      cb(null, '', '');
+      return {} as ReturnType<typeof execFile>;
+    });
+
+    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
+    await notifier.send('on_download_complete', {
+      event: 'on_download_complete',
+      download: { path: '/downloads/dune.m4b', size: 512 },
+    });
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      '/scripts/notify.sh',
+      expect.objectContaining({
+        env: expect.objectContaining({
+          NARRATORR_EVENT: 'on_download_complete',
+          NARRATORR_DOWNLOAD_PATH: '/downloads/dune.m4b',
+          NARRATORR_DOWNLOAD_SIZE: '512',
+        }),
+      }),
+      expect.any(Function),
+    );
+  });
+
+  it('sets import event environment variables', async () => {
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
+      cb(null, '', '');
+      return {} as ReturnType<typeof execFile>;
+    });
+
+    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
+    await notifier.send('on_import', {
+      event: 'on_import',
+      import: { libraryPath: '/audiobooks/Dune', fileCount: 5 },
+    });
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      '/scripts/notify.sh',
+      expect.objectContaining({
+        env: expect.objectContaining({
+          NARRATORR_EVENT: 'on_import',
+          NARRATORR_IMPORT_PATH: '/audiobooks/Dune',
+          NARRATORR_IMPORT_FILE_COUNT: '5',
+        }),
+      }),
+      expect.any(Function),
+    );
+  });
+
+  it('sets release.size env var to "0" when size is zero', async () => {
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
+      cb(null, '', '');
+      return {} as ReturnType<typeof execFile>;
+    });
+
+    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
+    await notifier.send('on_grab', {
+      event: 'on_grab',
+      release: { title: 'Dune', indexer: 'NZBGeek', size: 0 },
+    });
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      '/scripts/notify.sh',
+      expect.objectContaining({
+        env: expect.objectContaining({
+          NARRATORR_RELEASE_TITLE: 'Dune',
+          NARRATORR_RELEASE_INDEXER: 'NZBGeek',
+          NARRATORR_RELEASE_SIZE: '0',
+        }),
+      }),
+      expect.any(Function),
+    );
+  });
+
+  it('sets download.size env var to "0" when size is zero', async () => {
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
+      cb(null, '', '');
+      return {} as ReturnType<typeof execFile>;
+    });
+
+    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
+    await notifier.send('on_download_complete', {
+      event: 'on_download_complete',
+      download: { path: '/downloads/dune.m4b', size: 0 },
+    });
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      '/scripts/notify.sh',
+      expect.objectContaining({
+        env: expect.objectContaining({
+          NARRATORR_DOWNLOAD_PATH: '/downloads/dune.m4b',
+          NARRATORR_DOWNLOAD_SIZE: '0',
+        }),
+      }),
+      expect.any(Function),
+    );
+  });
+
+  it('sets import.fileCount env var to "0" when fileCount is zero', async () => {
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
+      cb(null, '', '');
+      return {} as ReturnType<typeof execFile>;
+    });
+
+    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
+    await notifier.send('on_import', {
+      event: 'on_import',
+      import: { libraryPath: '/audiobooks/Dune', fileCount: 0 },
+    });
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      '/scripts/notify.sh',
+      expect.objectContaining({
+        env: expect.objectContaining({
+          NARRATORR_IMPORT_PATH: '/audiobooks/Dune',
+          NARRATORR_IMPORT_FILE_COUNT: '0',
+        }),
+      }),
+      expect.any(Function),
+    );
+  });
+
+  it('sets only NARRATORR_EVENT when payload has no sub-objects', async () => {
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
+      cb(null, '', '');
+      return {} as ReturnType<typeof execFile>;
+    });
+
+    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
+    await notifier.send('on_grab', { event: 'on_grab' });
+
+    const callArgs = mockExecFile.mock.calls[0];
+    const env = (callArgs[1] as unknown as { env: Record<string, string> }).env;
+
+    expect(env.NARRATORR_EVENT).toBe('on_grab');
+    expect(env).not.toHaveProperty('NARRATORR_BOOK_TITLE');
+    expect(env).not.toHaveProperty('NARRATORR_BOOK_AUTHOR');
+    expect(env).not.toHaveProperty('NARRATORR_RELEASE_TITLE');
+    expect(env).not.toHaveProperty('NARRATORR_DOWNLOAD_PATH');
+    expect(env).not.toHaveProperty('NARRATORR_IMPORT_PATH');
+    expect(env).not.toHaveProperty('NARRATORR_ERROR_MESSAGE');
+    expect(env).not.toHaveProperty('NARRATORR_UPGRADE_PREV_MBHR');
+    expect(env).not.toHaveProperty('NARRATORR_HEALTH_CHECK');
+  });
+
+  it('sets only present fields for partial book payload', async () => {
+    mockExecFile.mockImplementation((_file, _opts, callback) => {
+      const cb = callback as (...args: unknown[]) => void;
+      cb(null, '', '');
+      return {} as ReturnType<typeof execFile>;
+    });
+
+    const notifier = new ScriptNotifier({ path: '/scripts/notify.sh' });
+    await notifier.send('on_grab', {
+      event: 'on_grab',
+      book: { title: 'Dune' },
+    });
+
+    const callArgs = mockExecFile.mock.calls[0];
+    const env = (callArgs[1] as unknown as { env: Record<string, string> }).env;
+
+    expect(env.NARRATORR_BOOK_TITLE).toBe('Dune');
+    expect(env).not.toHaveProperty('NARRATORR_BOOK_AUTHOR');
+    expect(env).not.toHaveProperty('NARRATORR_BOOK_COVER_URL');
+  });
+
   it('sets failure event environment variables', async () => {
     mockExecFile.mockImplementation((_file, _opts, callback) => {
       const cb = callback as (...args: unknown[]) => void;

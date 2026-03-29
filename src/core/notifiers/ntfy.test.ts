@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { NtfyNotifier } from './ntfy.js';
 import type { EventPayload } from './types.js';
+
+import * as fetchModule from '../utils/fetch-with-timeout.js';
 
 const server = setupServer();
 
@@ -72,6 +74,7 @@ describe('NtfyNotifier', () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toContain('401');
+    expect(result.message).toContain('unauthorized');
   });
 
   it('returns timeout error on slow response', async () => {
@@ -137,6 +140,60 @@ describe('NtfyNotifier', () => {
 
     const notifier = new NtfyNotifier({ topic: 'my-topic' });
     const result = await notifier.test();
+
+    expect(result.success).toBe(true);
+  });
+
+  // --- #199 error-handling and boundary tests ---
+
+  it('returns Unknown error for non-Error thrown value', async () => {
+    const spy = vi.spyOn(fetchModule, 'fetchWithTimeout').mockRejectedValueOnce('string-error');
+
+    const notifier = new NtfyNotifier({ topic: 'my-topic' });
+    const result = await notifier.send('on_grab', { event: 'on_grab' });
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe('Unknown error');
+    spy.mockRestore();
+  });
+
+  it('falls back to empty string when response.text() rejects', async () => {
+    server.use(
+      http.post('https://ntfy.sh/my-topic', () => {
+        const body = new ReadableStream({
+          start(controller) {
+            controller.error(new Error('stream broken'));
+          },
+        });
+        return new HttpResponse(body, { status: 500 });
+      }),
+    );
+
+    const notifier = new NtfyNotifier({ topic: 'my-topic' });
+    const result = await notifier.send('on_grab', { event: 'on_grab' });
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe('HTTP 500: ');
+  });
+
+  it('returns error message for non-timeout network error', async () => {
+    const spy = vi.spyOn(fetchModule, 'fetchWithTimeout').mockRejectedValueOnce(new Error('network down'));
+
+    const notifier = new NtfyNotifier({ topic: 'my-topic' });
+    const result = await notifier.send('on_grab', { event: 'on_grab' });
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe('network down');
+    spy.mockRestore();
+  });
+
+  it('normalizes multiple trailing slashes in serverUrl', async () => {
+    server.use(
+      http.post('https://ntfy.example.com/alerts', () => new HttpResponse('ok')),
+    );
+
+    const notifier = new NtfyNotifier({ topic: 'alerts', serverUrl: 'https://ntfy.example.com///' });
+    const result = await notifier.send('on_grab', { event: 'on_grab' });
 
     expect(result.success).toBe(true);
   });

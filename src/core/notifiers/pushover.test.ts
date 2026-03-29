@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { PushoverNotifier } from './pushover.js';
 import type { EventPayload } from './types.js';
+
+import * as fetchModule from '../utils/fetch-with-timeout.js';
 
 const API_URL = 'https://api.pushover.net/1/messages.json';
 
@@ -49,6 +51,7 @@ describe('PushoverNotifier', () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toContain('400');
+    expect(result.message).toContain('token is invalid');
   });
 
   it('returns timeout error on slow response', async () => {
@@ -118,5 +121,48 @@ describe('PushoverNotifier', () => {
     const result = await notifier.test();
 
     expect(result.success).toBe(true);
+  });
+
+  // --- #199 error-handling tests ---
+
+  it('returns Unknown error for non-Error thrown value', async () => {
+    const spy = vi.spyOn(fetchModule, 'fetchWithTimeout').mockRejectedValueOnce('string-error');
+
+    const notifier = new PushoverNotifier({ token: 'app-token', user: 'user-key' });
+    const result = await notifier.send('on_grab', { event: 'on_grab' });
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe('Unknown error');
+    spy.mockRestore();
+  });
+
+  it('falls back to empty string when response.text() rejects', async () => {
+    server.use(
+      http.post(API_URL, () => {
+        const body = new ReadableStream({
+          start(controller) {
+            controller.error(new Error('stream broken'));
+          },
+        });
+        return new HttpResponse(body, { status: 500 });
+      }),
+    );
+
+    const notifier = new PushoverNotifier({ token: 'app-token', user: 'user-key' });
+    const result = await notifier.send('on_grab', { event: 'on_grab' });
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe('HTTP 500: ');
+  });
+
+  it('returns error message for non-timeout network error', async () => {
+    const spy = vi.spyOn(fetchModule, 'fetchWithTimeout').mockRejectedValueOnce(new Error('network down'));
+
+    const notifier = new PushoverNotifier({ token: 'app-token', user: 'user-key' });
+    const result = await notifier.send('on_grab', { event: 'on_grab' });
+
+    expect(result.success).toBe(false);
+    expect(result.message).toBe('network down');
+    spy.mockRestore();
   });
 });
