@@ -812,4 +812,47 @@ describe('LibrarySettingsSection — Scan Library button (#133)', () => {
       expect(link).toHaveAttribute('href', '/library-import');
     });
   });
+
+  describe('presets', () => {
+    it.todo('renders preset dropdown');
+    it.todo('selecting Standard preset populates both format fields');
+    it.todo('selecting Audiobookshelf preset populates both format fields');
+    it.todo('selecting Plex preset populates both format fields');
+    it.todo('selecting "Last, First" preset populates both format fields');
+    it.todo('selecting a preset marks form as dirty');
+    it.todo('manual edit after preset selection switches dropdown to Custom');
+    it.todo('shows Custom when format values do not match any preset');
+    it.todo('preset selection updates preview');
+  });
+
+  describe('separator and case dropdowns', () => {
+    it.todo('renders separator dropdown with Space/Period/Underscore/Dash options');
+    it.todo('renders case dropdown with Default/lowercase/UPPERCASE/Title Case options');
+    it.todo('changing separator updates preview');
+    it.todo('changing case updates preview');
+    it.todo('separator and case values included in save payload');
+  });
+
+  describe('token reference modal', () => {
+    it.todo('folder format ? button opens modal scoped to folder tokens');
+    it.todo('file format ? button opens modal with all tokens including file-specific');
+    it.todo('modal shows tokens grouped by category');
+    it.todo('clicking a token inserts it into the associated format input');
+    it.todo('modal shows syntax reference section');
+    it.todo('modal shows "Good to know" section');
+    it.todo('modal footer shows live preview');
+    it.todo('modal closes via X button');
+    it.todo('modal closes via backdrop click');
+    it.todo('format field retains changes after modal close');
+  });
+
+  describe('inline TokenPanel removed', () => {
+    it.todo('no "Insert token" toggle buttons rendered');
+    it.todo('no inline help text paragraph rendered');
+  });
+
+  describe('validation regression', () => {
+    it.todo('folder format without title/titleSort shows error after preset + manual edit');
+    it.todo('file format without title/titleSort shows error');
+  });
 });

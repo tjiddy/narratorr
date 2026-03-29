@@ -392,3 +392,45 @@ describe('toSortTitle', () => {
     expect(toSortTitle('Mistborn')).toBe('Mistborn');
   });
 });
+
+describe('renderTemplate with separator/case options', () => {
+  describe('separator transforms', () => {
+    it.todo('space separator leaves token values unchanged');
+    it.todo('period separator replaces spaces within token values with periods');
+    it.todo('underscore separator replaces spaces within token values with underscores');
+    it.todo('dash separator replaces spaces within token values with dashes');
+    it.todo('does not transform literal template text like " - " or "/"');
+    it.todo('does not affect single-word token values');
+    it.todo('does not create double-slash when token is missing with separator');
+  });
+
+  describe('case transforms', () => {
+    it.todo('default case leaves token values unchanged');
+    it.todo('lower case transforms token values to lowercase');
+    it.todo('upper case transforms token values to uppercase');
+    it.todo('title case capitalizes first letter of each word');
+    it.todo('does not transform literal template text');
+    it.todo('combined separator and case: period + lowercase');
+  });
+
+  describe('boundary values', () => {
+    it.todo('empty token value with separator stays empty');
+    it.todo('single character token value — separator no effect, case applies');
+    it.todo('zero-padded numeric tokens unaffected by separator/case');
+    it.todo('long token value truncated at 255 after transforms');
+  });
+
+  describe('conditional blocks with transforms', () => {
+    it.todo('case transform applies to token value but not conditional suffix text');
+    it.todo('separator applies to token value inside conditional block');
+  });
+});
+
+describe('renderFilename with separator/case options', () => {
+  it.todo('space separator leaves token values unchanged');
+  it.todo('period separator replaces spaces within token values');
+  it.todo('upper case transforms token values to uppercase');
+  it.todo('combined separator and case');
+  it.todo('does not transform literal text between tokens');
+  it.todo('omitting options preserves existing behavior');
+});

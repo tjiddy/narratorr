@@ -90,6 +90,12 @@ describe('buildTargetPath', () => {
     expect(result).toContain('Author');
     expect(result).toContain('Book');
   });
+
+  describe('with naming options', () => {
+    it.todo('forwards separator option to renderTemplate — periods in token values');
+    it.todo('forwards case option to renderTemplate — uppercase token values');
+    it.todo('omitting options preserves existing behavior');
+  });
 });
 
 describe('getPathSize', () => {
