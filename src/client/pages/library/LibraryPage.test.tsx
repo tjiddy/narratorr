@@ -40,6 +40,14 @@ vi.mock('sonner', () => ({
   },
 }));
 
+// Spy on useNavigate for navigation assertions
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- vi.mock requires dynamic import
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return { ...actual, useNavigate: () => mockNavigate };
+});
+
 import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { createMockSettings } from '@/__tests__/factories';
@@ -1813,7 +1821,7 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
     });
   });
 
-  it('bulk set status to Wanted fires updateBook with correct status', async () => {
+  it('bulk set status to Wanted fires updateBook and shows toast with Wanted label', async () => {
     mockLibraryData(booksWithPaths);
     vi.mocked(api.updateBook).mockResolvedValue(booksWithPaths[0]);
     const user = userEvent.setup();
@@ -1839,9 +1847,16 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
         { status: 'wanted' },
       );
     });
+
+    // Verify the label is preserved through the page wiring to the toast
+    await waitFor(() => {
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+        expect.stringContaining('to Wanted'),
+      );
+    });
   });
 
-  it('bulk set status to Owned fires updateBook with imported status', async () => {
+  it('bulk set status to Owned fires updateBook and shows toast with Owned label', async () => {
     mockLibraryData(booksWithPaths);
     vi.mocked(api.updateBook).mockResolvedValue(booksWithPaths[0]);
     const user = userEvent.setup();
@@ -1864,6 +1879,13 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
       expect(vi.mocked(api.updateBook)).toHaveBeenCalledWith(
         expect.any(Number),
         { status: 'imported' },
+      );
+    });
+
+    // Verify the label is preserved through the page wiring to the toast
+    await waitFor(() => {
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+        expect.stringContaining('to Owned'),
       );
     });
   });
@@ -1925,13 +1947,16 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
     await user.click(optionsButtons[0]);
 
     await waitFor(() => {
-      expect(screen.getByRole('menu')).toBeInTheDocument();
+      expect(optionsButtons[0]).toHaveAttribute('aria-expanded', 'true');
     });
 
     await user.click(optionsButtons[1]);
 
     await waitFor(() => {
-      // Only one menu should be open
+      // First button's menu closed, second button's menu opened
+      expect(optionsButtons[0]).toHaveAttribute('aria-expanded', 'false');
+      expect(optionsButtons[1]).toHaveAttribute('aria-expanded', 'true');
+      // Still exactly one menu in the DOM
       expect(screen.getAllByRole('menu')).toHaveLength(1);
     });
   });
@@ -1990,20 +2015,19 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
   });
 
   it('navigates to /books/:id when card body is clicked', async () => {
-    // This is already covered by the existing test 'renders book cards as clickable links'
-    // which verifies the role="link" attribute. The card's onClick calls navigate(`/books/${bookId}`).
-    // Here we verify the navigate function is called correctly by checking the existing test pattern.
     mockLibraryData(mockBooks);
+    const user = userEvent.setup();
 
     renderWithProviders(<LibraryPage />);
 
     await waitForLibraryLoad();
 
-    // Verify cards have role="link" with keyboard support
-    const cardLinks = screen.getAllByRole('link');
-    // Filter to book cards (not nav links or other links)
-    const bookCards = cardLinks.filter(el => el.getAttribute('tabindex') === '0');
-    expect(bookCards.length).toBeGreaterThan(0);
+    // Click the first book card (role="link" with tabIndex=0)
+    const bookCards = screen.getAllByRole('link').filter(el => el.getAttribute('tabindex') === '0');
+    await user.click(bookCards[0]);
+
+    // Default sort is createdAt desc, so the first rendered card is the newest (id=4)
+    expect(mockNavigate).toHaveBeenCalledWith(expect.stringMatching(/^\/books\/\d+$/));
   });
 
   it('closes menu on document click outside', async () => {
@@ -2031,7 +2055,9 @@ describe('LibraryPage — card menu observable behavior (#183)', () => {
 });
 
 describe('LibraryPage — import polling smoke test (#183)', () => {
-  it('invokes useImportPolling with books that have importing status', async () => {
+  it('triggers polling interval when books have importing status', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
     const importingBooks = [
       createMockBook({ id: 1, status: 'importing' }),
       createMockBook({
@@ -2044,16 +2070,21 @@ describe('LibraryPage — import polling smoke test (#183)', () => {
     renderWithProviders(<LibraryPage />);
 
     await waitFor(() => {
-      // Books with importing status should render
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
-      expect(screen.getByText('Book 2')).toBeInTheDocument();
     });
 
-    // The useImportPolling hook should be wired — it invalidates queries on interval.
-    // We verify by checking that getBooks is called again after the initial load
-    // (the hook sets a 3s interval). Since tests don't use fake timers here,
-    // we verify that the page at minimum renders with importing books without error.
-    // Hook-level timer/toast tests are in useImportPolling.test.ts.
+    // Record call count after initial load
+    const initialCallCount = vi.mocked(api.getBooks).mock.calls.length;
+
+    // Advance time by 3s — useImportPolling sets a 3s interval that invalidates queries
+    await vi.advanceTimersByTimeAsync(3100);
+
+    // getBooks should have been called again due to the polling invalidation
+    await waitFor(() => {
+      expect(vi.mocked(api.getBooks).mock.calls.length).toBeGreaterThan(initialCallCount);
+    });
+
+    vi.useRealTimers();
   });
 });
 
