@@ -25,8 +25,18 @@ vi.mock('@/lib/api', () => ({
 }));
 
 vi.mock('@core/utils/index.js', () => ({
-  renderTemplate: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{authorLastFirst}', 'Sanderson, Brandon').replace('{title}', 'The Way of Kings').replace('{titleSort}', 'Way of Kings').replace('{narratorLastFirst}', 'Kramer, Michael & Reading, Kate'),
-  renderFilename: (template: string) => template.replace('{author}', 'Brandon Sanderson').replace('{title}', 'The Way of Kings').replace('{trackNumber}', '1').replace('{trackTotal}', '12').replace('{partName}', 'The Way of Kings'),
+  renderTemplate: (template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
+    let result = template.replace('{author}', 'Brandon Sanderson').replace('{authorLastFirst}', 'Sanderson, Brandon').replace('{title}', 'The Way of Kings').replace('{titleSort}', 'Way of Kings').replace('{narratorLastFirst}', 'Kramer, Michael & Reading, Kate');
+    if (options?.separator && options.separator !== 'space') result = `[sep:${options.separator}] ${result}`;
+    if (options?.case && options.case !== 'default') result = `[case:${options.case}] ${result}`;
+    return result;
+  },
+  renderFilename: (template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
+    let result = template.replace('{author}', 'Brandon Sanderson').replace('{title}', 'The Way of Kings').replace('{trackNumber}', '1').replace('{trackTotal}', '12').replace('{partName}', 'The Way of Kings');
+    if (options?.separator && options.separator !== 'space') result = `[sep:${options.separator}] ${result}`;
+    if (options?.case && options.case !== 'default') result = `[case:${options.case}] ${result}`;
+    return result;
+  },
   toLastFirst: (name: string) => name,
   toSortTitle: (title: string) => title,
   ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
@@ -898,6 +908,40 @@ describe('LibrarySettingsSection — Scan Library button (#133)', () => {
             namingCase: 'default',
           }),
         }));
+      });
+    });
+
+    it('changing separator updates the preview text', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Separator')).toBeInTheDocument());
+
+      // Default separator is 'space' — preview should NOT contain [sep:] tag
+      expect(screen.queryByText(/\[sep:/)).not.toBeInTheDocument();
+
+      // Change to period
+      await user.selectOptions(screen.getByLabelText('Separator'), 'period');
+
+      // Preview should now contain the [sep:period] tag from the mock (multiple previews)
+      await waitFor(() => {
+        expect(screen.getAllByText(/\[sep:period\]/).length).toBeGreaterThanOrEqual(1);
+      });
+    });
+
+    it('changing case updates the preview text', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Case')).toBeInTheDocument());
+
+      // Default case — preview should NOT contain [case:] tag
+      expect(screen.queryByText(/\[case:/)).not.toBeInTheDocument();
+
+      // Change to upper
+      await user.selectOptions(screen.getByLabelText('Case'), 'upper');
+
+      // Preview should now contain the [case:upper] tag from the mock (multiple previews)
+      await waitFor(() => {
+        expect(screen.getAllByText(/\[case:upper\]/).length).toBeGreaterThanOrEqual(1);
       });
     });
   });

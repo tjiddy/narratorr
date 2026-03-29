@@ -5,8 +5,18 @@ import { renderWithProviders } from '@/__tests__/helpers';
 import { NamingTokenModal } from './NamingTokenModal';
 
 vi.mock('@core/utils/index.js', () => ({
-  renderTemplate: (template: string) => template,
-  renderFilename: (template: string) => template,
+  renderTemplate: (template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
+    let result = template;
+    if (options?.separator && options.separator !== 'space') result = `[sep:${options.separator}] ${result}`;
+    if (options?.case && options.case !== 'default') result = `[case:${options.case}] ${result}`;
+    return result;
+  },
+  renderFilename: (template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
+    let result = template;
+    if (options?.separator && options.separator !== 'space') result = `[sep:${options.separator}] ${result}`;
+    if (options?.case && options.case !== 'default') result = `[case:${options.case}] ${result}`;
+    return result;
+  },
   FOLDER_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
   FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
 }));
@@ -96,8 +106,20 @@ describe('NamingTokenModal', () => {
     it('footer shows rendered preview of current format value', () => {
       renderWithProviders(<NamingTokenModal {...defaultProps} />);
       expect(screen.getByText('Preview')).toBeInTheDocument();
-      // The mock renderTemplate returns the template as-is
+      // The mock renderTemplate returns the template as-is when no options
       expect(screen.getByText('{author}/{title}')).toBeInTheDocument();
+    });
+
+    it('preview reflects namingOptions — separator and case tags appear', () => {
+      renderWithProviders(
+        <NamingTokenModal
+          {...defaultProps}
+          namingOptions={{ separator: 'period', case: 'upper' }}
+        />,
+      );
+      // Mock prepends [sep:period] and [case:upper] when non-default options are passed
+      expect(screen.getByText(/\[sep:period\]/)).toBeInTheDocument();
+      expect(screen.getByText(/\[case:upper\]/)).toBeInTheDocument();
     });
   });
 
