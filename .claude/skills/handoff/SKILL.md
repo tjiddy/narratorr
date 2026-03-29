@@ -102,14 +102,15 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
      These stubs were created from spec interactions during `/claim`. Each one must be implemented as a real test before handoff.
    - If none remain (or no test files changed), continue to step 4.
 
-4. **Test coverage review (HARD GATE)** via an Explore subagent (keeps file reads out of main context):
+4. **Test coverage review (HARD GATE)** — skip for small diffs (≤3 source files AND ≤50 changed lines, checked via `git diff main --stat`). For larger diffs, launch via an Explore subagent (keeps file reads out of main context). Before launching, verify `git branch --show-current` matches the expected feature branch — abort if on wrong branch.
 
    Launch an **Explore subagent** (Agent tool, `subagent_type: "Explore"`, thoroughness: "very thorough") with this prompt:
 
-   > Do an exhaustive behavioral test gap analysis for all source files changed on this branch.
+   > Do an exhaustive behavioral test gap analysis for **branch-introduced changes only** (not pre-existing gaps).
    >
    > 1. Run: `git diff main --name-only -- '*.ts' '*.tsx' | grep -v '\.test\.'` to get changed source files.
-   > 2. For each source file, **read the actual source code** and identify every:
+   > 1b. Run: `git diff main -- <file>` for each file to see the **actual diff**. Only behaviors introduced or modified by this branch need coverage. Pre-existing untested code is out of scope.
+   > 2. For each **changed hunk** (not the full file), identify every:
    >    - New function, method, or API endpoint
    >    - Conditional branch (if/else, switch, ternary) — especially error paths and edge cases
    >    - User interaction (button click, form submit, toggle, popover open/close)

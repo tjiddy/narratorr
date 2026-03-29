@@ -53,6 +53,11 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    > 8. Note naming conventions, folder structure, and test patterns used by similar features
    > 9. Check existing test files in the target area (co-located `*.test.ts(x)` files). Note what's already covered, what patterns/helpers they use, and which areas have no tests yet. This saves significant implementation time by avoiding duplicate test setup.
    >
+   > **Mechanical verification (CRITICAL — prevents spec review round-trips):**
+   > 10. For every file path, function name, schema field, or status literal mentioned in the spec, grep the codebase to confirm it exists. Report any that don't — these are fabricated artifacts that will cause implementation failures.
+   > 11. For extraction/refactoring issues: build a complete caller matrix by grepping for the function/class being extracted across ALL of `src/` (routes, services, jobs, pipelines — not just the obvious callers). Missing callers are the #1 cause of extraction spec review failures.
+   > 12. Blast radius: grep for each literal value (not just type names) across `src/` AND `**/*.test.ts*`. A type rename that misses 3 test fixtures is a guaranteed review finding.
+   >
    > **Deep source analysis for test plan (CRITICAL — read actual source, not just signatures):**
    > 10. For every service/util/route the issue will modify or call, READ THE FULL SOURCE and identify:
    >    - Null/zero/undefined guards and what happens when they trigger (e.g., returns null, throws, skips)

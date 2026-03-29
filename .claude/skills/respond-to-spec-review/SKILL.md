@@ -41,7 +41,10 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
 
    All `blocking` findings MUST be `fixed` or `disputed`. `suggestion` findings can be any disposition.
 
-6. **Verify fixes before writing.** Before updating the issue body, verify every factual claim your fixes introduce — file paths exist (`ls`), gitignore status is correct (`git check-ignore`), named artifacts are present. Each review round is expensive; don't introduce new defects while fixing old ones.
+6. **Verify fixes before writing.** Before updating the issue body:
+   - Verify every factual claim your fixes introduce — file paths exist (`ls`), gitignore status is correct (`git check-ignore`), named artifacts are present. Each review round is expensive; don't introduce new defects while fixing old ones.
+   - **Post-fix grep sweep:** After applying all fixes, grep the full spec body for old terms/values that were changed. Fixing a formula in one AC without updating the matching test plan item is the #1 cause of re-review.
+   - **Scope/AC cross-check:** Verify that every file in the blast radius section falls within the declared scope boundaries. "Backend only" scope with frontend files in blast radius, or ACs promising outcomes that scope excludes, will be caught by the reviewer.
 
 7. **Update the issue body.** Apply all `fixed` changes to the spec:
    - Preserve ALL existing content structure

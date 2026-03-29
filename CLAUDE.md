@@ -36,7 +36,7 @@ pnpm typecheck     # TypeScript checking
 
 ## Code Style
 
-TypeScript strict, ESM (`.js` extensions), functional React components, TanStack Query for server state, Tailwind CSS (no CSS files), `@/` path alias for client imports. Always use `return await` (not bare `return`) for async calls inside try/catch blocks — without `await`, the catch block is dead code for rejected promises. Non-submit `<button>` elements inside `<form>` must have `type="button"` — without it, the browser default is `type="submit"`, which triggers form submission on click. API client methods in `src/client/lib/api/` must use domain-prefixed names (e.g., `getSystemStatus` not `getStatus`) to prevent silent overwrites in the barrel export spread.
+TypeScript strict, ESM (`.js` extensions), functional React components, TanStack Query for server state, Tailwind CSS (no CSS files), `@/` path alias for client imports. ESLint enforces cyclomatic complexity ≤ 15 — extract helpers or use lookup maps to stay under. Always use `return await` (not bare `return`) for async calls inside try/catch blocks — without `await`, the catch block is dead code for rejected promises. Non-submit `<button>` elements inside `<form>` must have `type="button"` — without it, the browser default is `type="submit"`, which triggers form submission on click. API client methods in `src/client/lib/api/` must use domain-prefixed names (e.g., `getSystemStatus` not `getStatus`) to prevent silent overwrites in the barrel export spread.
 
 ## Logging
 
@@ -84,6 +84,8 @@ Graduated learnings from the CL system — non-obvious patterns that have caused
 - **`backdrop-filter` creates stacking context:** Elements with `backdrop-filter` (e.g., glass-card containers) trap z-index of descendants. Portals for dropdowns/modals must attach to `<body>`, not the nearest parent.
 - **Zod `.min(1)` allows whitespace:** Use `.trim().min(1)` for user-facing text fields — bare `.min(1)` accepts `'   '` (spaces-only).
 - **Aborted tool calls are errors:** Tool calls that return `aborted` are errors. Never continue a workflow step that depends on an aborted call. Retry the call once if it is safe to retry. If the retry fails or is aborted, stop and report the workflow as blocked. After any parallel tool call, verify that every required sub-call succeeded before proceeding.
+- **`vi.useFakeTimers()` breaks TanStack Query:** Full `useFakeTimers()` deadlocks Query's internal `setTimeout`. Use `vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })` and explicit `vi.advanceTimersByTime()` in tests that mix polling hooks with Query.
+- **TanStack Query optimistic updates:** Call `cancelQueries` before `setQueryData` — without cancel, a pending refetch can overwrite the optimistic data. For paginated queries, use `placeholderData: (prev) => prev` to prevent flicker during page transitions.
 
 ## Frontend Design Quality
 
