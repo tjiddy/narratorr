@@ -7,6 +7,16 @@ import type { WeightMultipliers } from './discovery-weights.js';
 import { DEFAULT_MULTIPLIERS } from './discovery-weights.js';
 import type { LibrarySignals } from './discovery.service.js';
 
+const FP_TOLERANCE = 1e-9;
+
+function nearlyEqual(a: number, b: number): boolean {
+  return Math.abs(a - b) < FP_TOLERANCE;
+}
+
+function includesNearly(arr: number[], value: number): boolean {
+  return arr.some(v => nearlyEqual(v, value));
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -85,11 +95,11 @@ export async function querySeriesCandidates(deps: QueryDeps, signals: LibrarySig
       ctx.warnings.push(...warnings);
       const filtered = results.filter(b => {
         const s = b.series?.find(s => s.name?.toLowerCase() === gap.seriesName.toLowerCase());
-        return s?.position != null && (gap.missingPositions.includes(s.position) || s.position === gap.nextPosition);
+        return s?.position != null && (includesNearly(gap.missingPositions, s.position) || nearlyEqual(s.position, gap.nextPosition));
       });
       filterAndScore(filtered, 'series', (book) => {
         const pos = book.series?.find(s => s.name?.toLowerCase() === gap.seriesName.toLowerCase())?.position;
-        return `Next in ${gap.seriesName} — you have books 1-${gap.maxOwned}${pos === gap.nextPosition ? '' : ` (position ${pos})`}`;
+        return `Next in ${gap.seriesName} — you have books 1-${gap.maxOwned}${pos != null && nearlyEqual(pos, gap.nextPosition) ? '' : ` (position ${pos})`}`;
       }, 1.0, ctx, map);
     } catch (error: unknown) { deps.log.warn(error, `Discovery: series query failed for ${gap.seriesName}`); }
   }
@@ -221,7 +231,7 @@ export function scoreCandidate(book: BookMetadata, reason: SuggestionReason, str
   }
   if (reason === 'series' && book.series?.[0]?.name && book.series[0].position != null) {
     const gap = signals.seriesGaps.find(g => g.seriesName.toLowerCase() === book.series![0].name!.toLowerCase());
-    if (gap && book.series[0].position === gap.nextPosition) score += 20;
+    if (gap && nearlyEqual(book.series[0].position!, gap.nextPosition)) score += 20;
   }
 
   return Math.min(Math.max(score, 0), 100);
