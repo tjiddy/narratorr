@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #202 Test fixture bugs, focus-ring sweep, and PathStep polish — 2026-03-29
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #205
+
+### Metrics
+- Files changed: 36 | Tests added/modified: 4 (3 test fixture fixes + 1 test file move)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Mechanical changes (CSS class sweep, file move) were straightforward. All 7252 tests passed on first run after the focus-ring sweep.
+- Friction / issues encountered: None — the elaboration and spec review phases had already resolved all ambiguity before implementation started.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (read 23+ files for focus-ring inventory)
+- Avoidable waste: Coverage review subagent was low-value given purely mechanical changes — the skip threshold (≤3 files, ≤50 lines) could include a "mechanical-only" bypass
+- Suggestions: For CSS class sweeps, a single sed pass with ordered patterns (most-specific first) is more efficient than 23 individual Edit tool calls
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: No "bulk CSS class replace" utility — manual sed ordering required
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. Both `keyboard()` and `type()` in userEvent v14 interpret `{text}` as special keys — `user.clear()` + `user.type(el, 'plain-string')` is the safe pattern for tests that just need to dirty a field
+2. When doing ordered sed replacements, process from most-specific pattern to least-specific to avoid partial matches (e.g., `focus:ring-primary/50` before `focus:ring-primary`)
+3. PathStep.tsx was already fully design-compliant — the debt item was stale; a quick component read would have confirmed no code changes needed before starting
+
 ## #197 ERR-1 cleanup — replace message.includes() error routing with typed errors — 2026-03-29
 **Skill path:** /elaborate → /respond-to-spec-review (×2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #204
