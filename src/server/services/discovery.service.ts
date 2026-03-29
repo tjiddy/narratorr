@@ -27,7 +27,7 @@ export type { SuggestionReason };
 export interface LibrarySignals {
   authorAffinity: Map<string, { count: number; strength: number; name: string }>;
   genreDistribution: Map<string, number>;
-  seriesGaps: Array<{ seriesName: string; authorName: string; missingPositions: number[]; maxOwned: number }>;
+  seriesGaps: Array<{ seriesName: string; authorName: string; missingPositions: number[]; maxOwned: number; nextPosition: number }>;
   narratorAffinity: Map<string, number>;
   durationStats: { median: number; stddev: number } | null;
 }

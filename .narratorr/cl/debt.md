@@ -16,7 +16,6 @@
 
 ## Discovered in CL triage (2026-03-28)
 
-- **src/server/services/discovery-signals.ts:118**: `computeSeriesGaps` broken for fractional series positions — `Number.isInteger(i)` never fires when loop starts at fractional value. Gap detection silently fails. (CL triage)
 - **ERR-1 pattern**: 7 instances of `message.includes()` for error routing remain across `search-pipeline.ts`, `jobs/rss.ts`, `jobs/search.ts`, `blackhole.ts`, `backup.service.ts`. (CL triage + coverage scan)
 - **Test fixture bugs**: `qbittorrent.test.ts` uses `HttpResponse.json()` for plain-text endpoint (lines 49/68/86); `LibrarySettingsSection.test.tsx` uses `userEvent.keyboard('{author}/')` which fires unknown key events (lines 439/504); `DownloadClientFields.test.tsx:169` uses fragile CSS selector. (CL triage)
 - **focus-ring consistency**: 50+ bare `focus:outline-none` instances in settings/form inputs should use `focus-ring` utility. (CL triage)

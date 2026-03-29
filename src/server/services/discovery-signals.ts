@@ -108,20 +108,47 @@ function computeNarratorAffinity(importedBookIds: number[], narratorRows: Narrat
   return filterNarratorThreshold(counts, 3);
 }
 
+const FP_TOLERANCE = 1e-9;
+
+function nearlyEqual(a: number, b: number): boolean {
+  return Math.abs(a - b) < FP_TOLERANCE;
+}
+
+function detectStep(sorted: number[]): number {
+  if (sorted.length < 2) return 1;
+  const allIntegers = sorted.every(Number.isInteger);
+  if (allIntegers) return 1;
+  let minDelta = Infinity;
+  for (let i = 1; i < sorted.length; i++) {
+    const delta = sorted[i] - sorted[i - 1];
+    if (delta > FP_TOLERANCE && delta < minDelta) {
+      minDelta = delta;
+    }
+  }
+  return minDelta === Infinity ? 1 : minDelta;
+}
+
 function computeSeriesGaps(seriesMap: Map<string, { authorName: string; positions: number[] }>): LibrarySignals['seriesGaps'] {
   const gaps: LibrarySignals['seriesGaps'] = [];
   for (const [seriesName, { authorName, positions }] of seriesMap) {
-    const sorted = [...positions].sort((a, b) => a - b);
+    const sorted = [...new Set(positions)].sort((a, b) => a - b);
     const maxOwned = sorted[sorted.length - 1];
+    const step = detectStep(sorted);
+    const positionSet = new Set(sorted);
     const missing: number[] = [];
 
-    for (let i = Math.min(...sorted); i <= maxOwned; i++) {
-      if (!sorted.includes(i) && Number.isInteger(i)) {
-        missing.push(i);
+    const base = sorted[0];
+    for (let i = base + step; i <= maxOwned - FP_TOLERANCE; i += step) {
+      const rounded = base + Math.round((i - base) / step) * step;
+      let found = false;
+      for (const p of positionSet) {
+        if (nearlyEqual(p, rounded)) { found = true; break; }
       }
+      if (!found) missing.push(rounded);
     }
-    missing.push(maxOwned + 1);
-    gaps.push({ seriesName, authorName, missingPositions: missing, maxOwned });
+
+    const nextPosition = maxOwned + step;
+    gaps.push({ seriesName, authorName, missingPositions: missing, maxOwned, nextPosition });
   }
   return gaps;
 }
