@@ -161,7 +161,9 @@ describe('BlackholeClient', () => {
     });
 
     it('fails when watchDir does not exist', async () => {
-      vi.mocked(access).mockRejectedValueOnce(new Error('ENOENT: no such file'));
+      const err = new Error('ENOENT: no such file') as NodeJS.ErrnoException;
+      err.code = 'ENOENT';
+      vi.mocked(access).mockRejectedValueOnce(err);
 
       const result = await client.test();
       expect(result.success).toBe(false);
@@ -169,7 +171,9 @@ describe('BlackholeClient', () => {
     });
 
     it('fails when watchDir is not writable', async () => {
-      vi.mocked(access).mockRejectedValueOnce(new Error('EACCES: permission denied'));
+      const err = new Error('EACCES: permission denied') as NodeJS.ErrnoException;
+      err.code = 'EACCES';
+      vi.mocked(access).mockRejectedValueOnce(err);
 
       const result = await client.test();
       expect(result.success).toBe(false);
@@ -177,9 +181,35 @@ describe('BlackholeClient', () => {
     });
 
     // #197 — NodeJS.ErrnoException.code checks (ERR-1)
-    it.todo('detects ENOENT via error.code property (not message string matching)');
-    it.todo('detects EACCES via error.code property (not message string matching)');
-    it.todo('returns generic error message for other fs errors');
+    it('detects ENOENT via error.code property (not message string matching)', async () => {
+      const err = new Error('some unrelated message') as NodeJS.ErrnoException;
+      err.code = 'ENOENT';
+      vi.mocked(access).mockRejectedValueOnce(err);
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('does not exist');
+    });
+
+    it('detects EACCES via error.code property (not message string matching)', async () => {
+      const err = new Error('some unrelated message') as NodeJS.ErrnoException;
+      err.code = 'EACCES';
+      vi.mocked(access).mockRejectedValueOnce(err);
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('not writable');
+    });
+
+    it('returns generic error message for other fs errors', async () => {
+      const err = new Error('EPERM: operation not permitted') as NodeJS.ErrnoException;
+      err.code = 'EPERM';
+      vi.mocked(access).mockRejectedValueOnce(err);
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('EPERM: operation not permitted');
+    });
   });
 
   describe('protocol', () => {

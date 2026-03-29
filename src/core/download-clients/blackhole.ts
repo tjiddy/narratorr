@@ -75,13 +75,14 @@ export class BlackholeClient implements DownloadClientAdapter {
       await access(this.config.watchDir, constants.R_OK | constants.W_OK);
       return { success: true, message: `Watch directory exists and is writable: ${this.config.watchDir}` };
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      if (message.includes('ENOENT')) {
+      const code = error instanceof Error && 'code' in error ? (error as NodeJS.ErrnoException).code : undefined;
+      if (code === 'ENOENT') {
         return { success: false, message: `Watch directory does not exist: ${this.config.watchDir}` };
       }
-      if (message.includes('EACCES')) {
+      if (code === 'EACCES') {
         return { success: false, message: `Watch directory is not writable: ${this.config.watchDir}` };
       }
+      const message = error instanceof Error ? error.message : 'Unknown error';
       return { success: false, message };
     }
   }
