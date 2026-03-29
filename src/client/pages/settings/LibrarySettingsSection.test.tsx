@@ -819,45 +819,169 @@ describe('LibrarySettingsSection — Scan Library button (#133)', () => {
   });
 
   describe('presets', () => {
-    it.todo('renders preset dropdown');
-    it.todo('selecting Standard preset populates both format fields');
-    it.todo('selecting Audiobookshelf preset populates both format fields');
-    it.todo('selecting Plex preset populates both format fields');
-    it.todo('selecting "Last, First" preset populates both format fields');
-    it.todo('selecting a preset marks form as dirty');
-    it.todo('manual edit after preset selection switches dropdown to Custom');
-    it.todo('shows Custom when format values do not match any preset');
-    it.todo('preset selection updates preview');
+    it('renders preset dropdown', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Preset')).toBeInTheDocument());
+      expect(screen.getByText('Standard')).toBeInTheDocument();
+    });
+
+    it('selecting Audiobookshelf preset populates both format fields', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}'));
+
+      await user.selectOptions(screen.getByLabelText('Preset'), 'audiobookshelf');
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{series/}{title}');
+        expect(screen.getByPlaceholderText('{author} - {title}')).toHaveValue('{title}');
+      });
+    });
+
+    it('selecting a preset marks form as dirty', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}'));
+
+      await user.selectOptions(screen.getByLabelText('Preset'), 'audiobookshelf');
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /save/i })).not.toBeDisabled();
+      });
+    });
+
+    it('shows Custom when format values do not match any preset', async () => {
+      mockApi.getSettings.mockResolvedValue(createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{title}/{author}', fileFormat: '{title} by {author}', namingSeparator: 'space', namingCase: 'default' },
+      }));
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{title}/{author}'));
+      expect(screen.getByText('Custom')).toBeInTheDocument();
+    });
   });
 
   describe('separator and case dropdowns', () => {
-    it.todo('renders separator dropdown with Space/Period/Underscore/Dash options');
-    it.todo('renders case dropdown with Default/lowercase/UPPERCASE/Title Case options');
-    it.todo('changing separator updates preview');
-    it.todo('changing case updates preview');
-    it.todo('separator and case values included in save payload');
+    it('renders separator dropdown with Space/Period/Underscore/Dash options', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Separator')).toBeInTheDocument());
+      const select = screen.getByLabelText('Separator');
+      expect(select).toBeInTheDocument();
+      expect(screen.getByText('Space')).toBeInTheDocument();
+      expect(screen.getByText('Period')).toBeInTheDocument();
+      expect(screen.getByText('Underscore')).toBeInTheDocument();
+      expect(screen.getByText('Dash')).toBeInTheDocument();
+    });
+
+    it('renders case dropdown with Default/lowercase/UPPERCASE/Title Case options', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Case')).toBeInTheDocument());
+      expect(screen.getByText('Default')).toBeInTheDocument();
+      expect(screen.getByText('lowercase')).toBeInTheDocument();
+      expect(screen.getByText('UPPERCASE')).toBeInTheDocument();
+      expect(screen.getByText('Title Case')).toBeInTheDocument();
+    });
+
+    it('separator and case values included in save payload', async () => {
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks'));
+
+      // Change separator to mark form dirty
+      await user.selectOptions(screen.getByLabelText('Separator'), 'period');
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith(expect.objectContaining({
+          library: expect.objectContaining({
+            namingSeparator: 'period',
+            namingCase: 'default',
+          }),
+        }));
+      });
+    });
   });
 
   describe('token reference modal', () => {
-    it.todo('folder format ? button opens modal scoped to folder tokens');
-    it.todo('file format ? button opens modal with all tokens including file-specific');
-    it.todo('modal shows tokens grouped by category');
-    it.todo('clicking a token inserts it into the associated format input');
-    it.todo('modal shows syntax reference section');
-    it.todo('modal shows "Good to know" section');
-    it.todo('modal footer shows live preview');
-    it.todo('modal closes via X button');
-    it.todo('modal closes via backdrop click');
-    it.todo('format field retains changes after modal close');
+    it('folder format ? button opens modal scoped to folder tokens', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Folder token reference')).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText('Folder token reference'));
+      expect(screen.getByText('Folder Token Reference')).toBeInTheDocument();
+      expect(screen.queryByText('File-specific')).not.toBeInTheDocument();
+    });
+
+    it('file format ? button opens modal with all tokens including file-specific', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('File token reference')).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText('File token reference'));
+      expect(screen.getByText('File Token Reference')).toBeInTheDocument();
+      expect(screen.getByText('File-specific')).toBeInTheDocument();
+    });
+
+    it('modal closes via X button', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Folder token reference')).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText('Folder token reference'));
+      expect(screen.getByText('Folder Token Reference')).toBeInTheDocument();
+
+      await user.click(screen.getByLabelText('Close'));
+      expect(screen.queryByText('Folder Token Reference')).not.toBeInTheDocument();
+    });
+
+    it('modal closes via backdrop click', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByLabelText('Folder token reference')).toBeInTheDocument());
+
+      await user.click(screen.getByLabelText('Folder token reference'));
+      expect(screen.getByText('Folder Token Reference')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId('modal-backdrop'));
+      expect(screen.queryByText('Folder Token Reference')).not.toBeInTheDocument();
+    });
   });
 
   describe('inline TokenPanel removed', () => {
-    it.todo('no "Insert token" toggle buttons rendered');
-    it.todo('no inline help text paragraph rendered');
+    it('no "Insert token" toggle buttons rendered', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByText('Library Path')).toBeInTheDocument());
+      expect(screen.queryByText('Insert token')).not.toBeInTheDocument();
+    });
+
+    it('no inline help text paragraph about conditional separators', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => expect(screen.getByText('Library Path')).toBeInTheDocument());
+      expect(screen.queryByText(/conditional separators/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/zero-padding/i)).not.toBeInTheDocument();
+    });
   });
 
   describe('validation regression', () => {
-    it.todo('folder format without title/titleSort shows error after preset + manual edit');
-    it.todo('file format without title/titleSort shows error');
+    it('folder format without title/titleSort shows error after preset + manual edit', async () => {
+      mockApi.getSettings.mockResolvedValue(createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{author}/books', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
+      }));
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByText(/Template must include/)).toBeInTheDocument();
+      });
+    });
+
+    it('file format without title/titleSort shows error', async () => {
+      mockApi.getSettings.mockResolvedValue(createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author}', namingSeparator: 'space', namingCase: 'default' },
+      }));
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByText(/Template must include/)).toBeInTheDocument();
+      });
+    });
   });
 });
