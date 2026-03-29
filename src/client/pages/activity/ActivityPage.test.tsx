@@ -24,6 +24,10 @@ vi.mock('@/lib/api', () => ({
     rejectDownload: vi.fn(),
     deleteHistoryDownload: vi.fn(),
     deleteDownloadHistory: vi.fn(),
+    getEventHistory: vi.fn(),
+    markEventFailed: vi.fn(),
+    deleteEvent: vi.fn(),
+    deleteEvents: vi.fn(),
   },
   formatBytes: (bytes?: number) => {
     if (!bytes || bytes === 0) return '0 B';
@@ -901,6 +905,67 @@ describe('ActivityPage', () => {
 
       await waitFor(() => {
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('tab switching', () => {
+    beforeEach(() => {
+      mockActivitySections([], []);
+      vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    });
+
+    it('default render shows Downloads tab content and hides Event History', async () => {
+      renderWithProviders(<ActivityPage />);
+
+      await waitFor(() => {
+        // Downloads tab content visible — "Active" section heading
+        expect(screen.getByText('Active')).toBeInTheDocument();
+      });
+
+      // Event History content not rendered
+      expect(screen.queryByText('All')).not.toBeInTheDocument();
+    });
+
+    it('clicking Event History tab shows event history content and hides downloads', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ActivityPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Active')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /event history/i }));
+
+      // Downloads content hidden
+      await waitFor(() => {
+        expect(screen.queryByText('No active downloads')).not.toBeInTheDocument();
+      });
+
+      // Event History section rendered — filter dropdown "All" option visible
+      expect(screen.getByText('All')).toBeInTheDocument();
+    });
+
+    it('clicking Downloads tab from Event History restores downloads content', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ActivityPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Active')).toBeInTheDocument();
+      });
+
+      // Switch to Event History
+      await user.click(screen.getByRole('button', { name: /event history/i }));
+      await waitFor(() => {
+        expect(screen.queryByText('No active downloads')).not.toBeInTheDocument();
+      });
+
+      // Switch back to Downloads
+      await user.click(screen.getByRole('button', { name: /downloads/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Active')).toBeInTheDocument();
+        expect(screen.getByText('No active downloads')).toBeInTheDocument();
       });
     });
   });
