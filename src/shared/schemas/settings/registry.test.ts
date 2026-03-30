@@ -612,6 +612,18 @@ describe('settingsRegistry', () => {
       expect(result.success).toBe(false);
     });
 
+    it('does not preserve .refine() chains on defaulted+refined fields (Zod v4 limitation)', () => {
+      // This documents the known Zod v4 limitation: removeDefault() on ZodDefault<ZodRefine<...>>
+      // loses the refine. Library uses an explicit form schema to work around this.
+      const schema = z.object({
+        name: z.string().default('x').refine((v) => v.length > 2, { message: 'too short' }),
+      });
+      const stripped = stripDefaults(schema);
+      // The refine should reject 'ab' but after stripDefaults it's lost
+      const result = stripped.safeParse({ name: 'ab' });
+      expect(result.success).toBe(true); // refine is lost — this is the known limitation
+    });
+
     it('handles ZodEnum with .default() — enum constraints preserved, default removed', () => {
       const schema = z.object({ level: z.enum(['a', 'b', 'c']).default('a') });
       const stripped = stripDefaults(schema);
