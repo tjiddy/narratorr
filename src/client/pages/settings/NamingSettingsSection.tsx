@@ -33,6 +33,44 @@ const SEPARATOR_LABELS: Record<NamingSeparator, string> = { space: 'Space', peri
 const CASE_LABELS: Record<NamingCase, string> = { default: 'Default', lower: 'lowercase', upper: 'UPPERCASE', title: 'Title Case' };
 
 
+const TOKEN_BOUNDARY_REGEX = /^\{(\w+)(?::(\d+))?(?:\?([^}]*))?\}$/;
+
+function createFormatKeyDownHandler(
+  ref: React.RefObject<HTMLInputElement | null>,
+  field: 'folderFormat' | 'fileFormat',
+  setFieldValue: (field: 'folderFormat' | 'fileFormat', value: string, options: { shouldDirty: boolean; shouldValidate: boolean }) => void,
+) {
+  return (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const input = ref.current;
+    if (!input) return;
+    const pos = input.selectionStart ?? 0;
+    const end = input.selectionEnd ?? pos;
+    if (pos !== end) return;
+
+    const val = input.value;
+
+    if (e.key === 'Backspace' && pos > 0 && val[pos - 1] === '}') {
+      const braceStart = val.lastIndexOf('{', pos - 2);
+      if (braceStart === -1) return;
+      const candidate = val.slice(braceStart, pos);
+      if (!TOKEN_BOUNDARY_REGEX.test(candidate)) return;
+      e.preventDefault();
+      const newValue = val.slice(0, braceStart) + val.slice(pos);
+      setFieldValue(field, newValue, { shouldDirty: true, shouldValidate: true });
+      requestAnimationFrame(() => { input.setSelectionRange(braceStart, braceStart); input.focus(); });
+    } else if (e.key === 'Delete' && pos < val.length && val[pos] === '{') {
+      const braceEnd = val.indexOf('}', pos + 1);
+      if (braceEnd === -1) return;
+      const candidate = val.slice(pos, braceEnd + 1);
+      if (!TOKEN_BOUNDARY_REGEX.test(candidate)) return;
+      e.preventDefault();
+      const newValue = val.slice(0, pos) + val.slice(braceEnd + 1);
+      setFieldValue(field, newValue, { shouldDirty: true, shouldValidate: true });
+      requestAnimationFrame(() => { input.setSelectionRange(pos, pos); input.focus(); });
+    }
+  };
+}
+
 interface FormatFieldProps {
   id: string;
   label: string;
@@ -204,39 +242,6 @@ export function NamingSettingsSection() {
     setValue(field, newValue, { shouldDirty: true, shouldValidate: true });
     requestAnimationFrame(() => { input.setSelectionRange(start + token.length + 2, start + token.length + 2); input.focus(); });
   };
-  const TOKEN_REGEX = /^\{(\w+)(?::(\d+))?(?:\?([^}]*))?\}$/;
-
-  const handleFormatKeyDown = (ref: React.RefObject<HTMLInputElement | null>, field: 'folderFormat' | 'fileFormat') =>
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      const input = ref.current;
-      if (!input) return;
-      const pos = input.selectionStart ?? 0;
-      const end = input.selectionEnd ?? pos;
-      if (pos !== end) return; // selection exists — normal deletion
-
-      const val = input.value;
-
-      if (e.key === 'Backspace' && pos > 0 && val[pos - 1] === '}') {
-        const braceStart = val.lastIndexOf('{', pos - 2);
-        if (braceStart === -1) return;
-        const candidate = val.slice(braceStart, pos);
-        if (!TOKEN_REGEX.test(candidate)) return;
-        e.preventDefault();
-        const newValue = val.slice(0, braceStart) + val.slice(pos);
-        setValue(field, newValue, { shouldDirty: true, shouldValidate: true });
-        requestAnimationFrame(() => { input.setSelectionRange(braceStart, braceStart); input.focus(); });
-      } else if (e.key === 'Delete' && pos < val.length && val[pos] === '{') {
-        const braceEnd = val.indexOf('}', pos + 1);
-        if (braceEnd === -1) return;
-        const candidate = val.slice(pos, braceEnd + 1);
-        if (!TOKEN_REGEX.test(candidate)) return;
-        e.preventDefault();
-        const newValue = val.slice(0, pos) + val.slice(braceEnd + 1);
-        setValue(field, newValue, { shouldDirty: true, shouldValidate: true });
-        requestAnimationFrame(() => { input.setSelectionRange(pos, pos); input.focus(); });
-      }
-    };
-
   const handlePresetChange = (presetId: string) => {
     const preset = NAMING_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
@@ -276,7 +281,7 @@ export function NamingSettingsSection() {
           error={errors.folderFormat} preview={folderPreview} previewNoSeries={folderPreviewNoSeries} hasValue={!!folderFormat}
           onOpenTokenModal={() => setTokenModalScope('folder')}
           onInsertToken={(token) => insertTokenAtCursor(folderFormatRef, 'folderFormat', token)}
-          onKeyDown={handleFormatKeyDown(folderFormatRef, 'folderFormat')}
+          onKeyDown={createFormatKeyDownHandler(folderFormatRef, 'folderFormat', setValue)}
           tokenGroups={FOLDER_TOKEN_GROUPS}
           inlinePanelOpen={folderPanelOpen}
           onToggleInlinePanel={() => setFolderPanelOpen((v) => !v)}
@@ -293,7 +298,7 @@ export function NamingSettingsSection() {
           error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewSuffix=".m4b" hasValue={!!fileFormat}
           onOpenTokenModal={() => setTokenModalScope('file')}
           onInsertToken={(token) => insertTokenAtCursor(fileFormatRef, 'fileFormat', token)}
-          onKeyDown={handleFormatKeyDown(fileFormatRef, 'fileFormat')}
+          onKeyDown={createFormatKeyDownHandler(fileFormatRef, 'fileFormat', setValue)}
           tokenGroups={[...FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP]}
           inlinePanelOpen={filePanelOpen}
           onToggleInlinePanel={() => setFilePanelOpen((v) => !v)}
