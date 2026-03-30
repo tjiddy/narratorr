@@ -5,28 +5,42 @@ export interface NamingOptions {
   case?: NamingCase;
 }
 
+/** Convert library settings shape to NamingOptions. */
+export function toNamingOptions(settings: { namingSeparator: NamingSeparator; namingCase: NamingCase }): NamingOptions {
+  return { separator: settings.namingSeparator, case: settings.namingCase };
+}
+
+const SEPARATOR_CHARS: Record<NamingSeparator, string> = {
+  space: ' ',
+  period: '.',
+  underscore: '_',
+  dash: '-',
+};
+
+const CASE_TRANSFORMS: Record<NamingCase, (s: string) => string> = {
+  default: (s) => s,
+  lower: (s) => s.toLowerCase(),
+  upper: (s) => s.toUpperCase(),
+  title: (s) => s.replace(/\S+/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()),
+};
+
 /** Apply separator and case transforms to a resolved token value. */
 function applyTokenTransforms(value: string, options?: NamingOptions): string {
-  let result = value;
-
   // Case transform first (operates on original spacing)
-  const caseOpt = options?.case ?? 'default';
-  if (caseOpt === 'lower') {
-    result = result.toLowerCase();
-  } else if (caseOpt === 'upper') {
-    result = result.toUpperCase();
-  } else if (caseOpt === 'title') {
-    result = result.replace(/\S+/g, (word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase());
-  }
+  let result = CASE_TRANSFORMS[options?.case ?? 'default'](value);
 
-  // Separator transform (replaces spaces within token values)
+  // Separator transform
   const sep = options?.separator ?? 'space';
-  if (sep === 'period') {
-    result = result.replace(/ /g, '.');
-  } else if (sep === 'underscore') {
-    result = result.replace(/ /g, '_');
-  } else if (sep === 'dash') {
-    result = result.replace(/ /g, '-');
+  if (sep !== 'space') {
+    // Collapse ", " → "," before replacing spaces (handles "Last, First" format)
+    result = result.replace(/, /g, ',');
+    const sepChar = SEPARATOR_CHARS[sep];
+    result = result.replace(/ /g, sepChar);
+    // Collapse consecutive separator characters
+    const escaped = sepChar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    result = result.replace(new RegExp(`${escaped}{2,}`, 'g'), sepChar);
+    // Trim leading/trailing separator characters
+    result = result.replace(new RegExp(`^${escaped}+|${escaped}+$`, 'g'), '');
   }
 
   return result;
@@ -127,28 +141,20 @@ export function sanitizePath(segment: string): string {
   return result || 'Unknown';
 }
 
-/**
- * Render a naming template with token values.
- *
- * Supports:
- * - `{token}` — simple replacement
- * - `{token?text}` — conditional: renders `text` only if token has a value
- * - `{token:00}` — zero-pad format specifier (digit count = specifier length)
- */
-export function renderTemplate(
+/** Resolve tokens in a template string — shared logic for renderTemplate/renderFilename. */
+function resolveTokens(
   template: string,
   tokens: Record<string, string | number | undefined | null>,
   options?: NamingOptions,
 ): string {
-  // Process the template in a single pass using regex
-  const rendered = template.replace(
+  return template.replace(
     /\{(\w+)(?::(\d+))?(?:\?([^}]*))?\}/g,
     (_match, name: string, padSpec: string | undefined, conditional: string | undefined) => {
       const raw = tokens[name];
       const hasValue = raw !== undefined && raw !== null && raw !== '';
 
       if (!hasValue) {
-        return conditional !== undefined ? '' : '';
+        return '';
       }
 
       let value = String(raw);
@@ -174,6 +180,22 @@ export function renderTemplate(
       return value;
     },
   );
+}
+
+/**
+ * Render a naming template with token values.
+ *
+ * Supports:
+ * - `{token}` — simple replacement
+ * - `{token?text}` — conditional: renders `text` only if token has a value
+ * - `{token:00}` — zero-pad format specifier (digit count = specifier length)
+ */
+export function renderTemplate(
+  template: string,
+  tokens: Record<string, string | number | undefined | null>,
+  options?: NamingOptions,
+): string {
+  const rendered = resolveTokens(template, tokens, options);
 
   // Split by /, sanitize non-empty segments, filter empties
   return rendered
@@ -196,38 +218,7 @@ export function renderFilename(
   tokens: Record<string, string | number | undefined | null>,
   options?: NamingOptions,
 ): string {
-  const rendered = template.replace(
-    /\{(\w+)(?::(\d+))?(?:\?([^}]*))?\}/g,
-    (_match, name: string, padSpec: string | undefined, conditional: string | undefined) => {
-      const raw = tokens[name];
-      const hasValue = raw !== undefined && raw !== null && raw !== '';
-
-      if (!hasValue) {
-        return conditional !== undefined ? '' : '';
-      }
-
-      let value = String(raw);
-
-      if (padSpec) {
-        const num = Number(value);
-        if (!isNaN(num)) {
-          value = String(num).padStart(padSpec.length, '0');
-        }
-      }
-
-      // Apply separator/case transforms to non-numeric token values
-      if (!isNumericFormatted(padSpec, raw)) {
-        value = applyTokenTransforms(value, options);
-      }
-
-      if (conditional !== undefined) {
-        return value + conditional;
-      }
-
-      return value;
-    },
-  );
-
+  const rendered = resolveTokens(template, tokens, options);
   return sanitizePath(rendered);
 }
 
@@ -281,3 +272,22 @@ export function parseTemplate(
 
   return { tokens, errors, warnings };
 }
+
+/** Token display groups for the naming token modal. */
+export interface TokenGroup {
+  label: string;
+  tokens: readonly string[];
+}
+
+export const FOLDER_TOKEN_GROUPS: readonly TokenGroup[] = [
+  { label: 'Author', tokens: ['author', 'authorLastFirst'] },
+  { label: 'Title', tokens: ['title', 'titleSort'] },
+  { label: 'Series', tokens: ['series', 'seriesPosition'] },
+  { label: 'Narrator', tokens: ['narrator', 'narratorLastFirst'] },
+  { label: 'Metadata', tokens: ['year'] },
+];
+
+export const FILE_ONLY_TOKEN_GROUP: TokenGroup = {
+  label: 'File-specific',
+  tokens: ['trackNumber', 'trackTotal', 'partName'],
+};
