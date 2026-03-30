@@ -11,7 +11,7 @@ import type { BookService, BookWithAuthor } from './book.service.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { resolveSavePath } from '../utils/download-path.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
-import type { NamingOptions } from '../../core/utils/naming.js';
+import { toNamingOptions } from '../../core/utils/naming.js';
 import {
   validateSource, checkDiskSpace, copyToLibrary, runAudioProcessing,
   verifyCopy, cleanupOldBookPath, handleImportFailure,
@@ -114,7 +114,7 @@ export class ImportService {
         this.settingsService.get('processing'),
       ]);
       const processingEnabled = !!processingSettings?.enabled;
-      const namingOptions: NamingOptions = { separator: librarySettings.namingSeparator, case: librarySettings.namingCase };
+      const namingOptions = toNamingOptions(librarySettings);
       targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName, namingOptions);
 
       const { sourcePath, fileCount, sourceStats } = await validateSource(savePath, this.remotePathMappingService, download.downloadClientId);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizePath, renderTemplate, renderFilename, parseTemplate, toLastFirst, toSortTitle, ALLOWED_TOKENS, FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from './naming.js';
+import { sanitizePath, renderTemplate, renderFilename, parseTemplate, toLastFirst, toSortTitle, toNamingOptions, ALLOWED_TOKENS, FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from './naming.js';
 
 describe('sanitizePath', () => {
   it('removes illegal filesystem characters', () => {
@@ -504,6 +504,125 @@ describe('renderTemplate with separator/case options', () => {
         { separator: 'period' });
       expect(result).toBe('Brandon.Sanderson/The.Stormlight.Archive - Oathbringer');
     });
+  });
+});
+
+describe('toNamingOptions', () => {
+  it('converts { namingSeparator, namingCase } to NamingOptions with { separator, case }', () => {
+    expect(toNamingOptions({ namingSeparator: 'dash', namingCase: 'lower' }))
+      .toEqual({ separator: 'dash', case: 'lower' });
+  });
+
+  it('handles all valid NamingSeparator values', () => {
+    for (const sep of ['space', 'period', 'underscore', 'dash'] as const) {
+      const result = toNamingOptions({ namingSeparator: sep, namingCase: 'default' });
+      expect(result.separator).toBe(sep);
+    }
+  });
+
+  it('handles all valid NamingCase values', () => {
+    for (const c of ['default', 'lower', 'upper', 'title'] as const) {
+      const result = toNamingOptions({ namingSeparator: 'space', namingCase: c });
+      expect(result.case).toBe(c);
+    }
+  });
+});
+
+describe('renderTemplate — comma-space separator edge cases', () => {
+  it('collapses comma-space to comma with dash separator — no stray dash after punctuation', () => {
+    const result = renderTemplate('{author}', { author: 'Sanderson, Brandon', title: 'Book' }, { separator: 'dash' });
+    expect(result).toBe('Sanderson,Brandon');
+  });
+
+  it('collapses comma-space to comma with period separator', () => {
+    const result = renderTemplate('{author}', { author: 'Sanderson, Brandon', title: 'Book' }, { separator: 'period' });
+    expect(result).toBe('Sanderson,Brandon');
+  });
+
+  it('collapses comma-space to comma with underscore separator', () => {
+    const result = renderTemplate('{author}', { author: 'Sanderson, Brandon', title: 'Book' }, { separator: 'underscore' });
+    expect(result).toBe('Sanderson,Brandon');
+  });
+
+  it('preserves comma-space unchanged with space separator', () => {
+    const result = renderTemplate('{author}', { author: 'Sanderson, Brandon', title: 'Book' }, { separator: 'space' });
+    expect(result).toBe('Sanderson, Brandon');
+  });
+
+  it('collapses all comma-spaces in multi-comma value with dash separator', () => {
+    // Note: trailing "." stripped by sanitizePath (removes trailing dots)
+    const result = renderTemplate('{author}', { author: 'Last, First, Jr.', title: 'Book' }, { separator: 'dash' });
+    expect(result).toBe('Last,First,Jr');
+  });
+
+  it('leaves comma without trailing space unchanged with dash separator', () => {
+    const result = renderTemplate('{author}', { author: 'LastFirst,Extra', title: 'Book' }, { separator: 'dash' });
+    expect(result).toBe('LastFirst,Extra');
+  });
+});
+
+describe('renderTemplate — consecutive separator collapse', () => {
+  it('collapses double space to single separator with period separator', () => {
+    const result = renderTemplate('{author}', { author: 'Author  Name', title: 'Book' }, { separator: 'period' });
+    expect(result).toBe('Author.Name');
+  });
+
+  it('collapses leading spaces with dash separator', () => {
+    const result = renderTemplate('{author}', { author: '  Leading', title: 'Book' }, { separator: 'dash' });
+    expect(result).not.toMatch(/^-/);
+    expect(result).toBe('Leading');
+  });
+});
+
+describe('renderTemplate — separator + numeric padding interaction', () => {
+  it('numeric formatted token {seriesPosition:00} unaffected by period separator', () => {
+    expect(renderTemplate('{author}/{seriesPosition:00}', { author: 'Author', seriesPosition: 1 }, { separator: 'period' }))
+      .toBe('Author/01');
+  });
+
+  it('conditional literal text {seriesPosition:00? - } unaffected by period separator', () => {
+    expect(renderTemplate('{seriesPosition:00? - }{title}', { title: 'Book', seriesPosition: 1 }, { separator: 'period' }))
+      .toBe('01 - Book');
+  });
+});
+
+describe('renderTemplate — unresolved tokens', () => {
+  it('erases unresolved {unknownToken} from output — not passthrough', () => {
+    const result = renderTemplate('{unknownToken} - {title}', { title: 'Book' });
+    expect(result).toBe('- Book');
+    expect(result).not.toContain('{unknownToken}');
+  });
+});
+
+describe('renderFilename — unresolved tokens', () => {
+  it('erases unresolved {unknownToken} from output — not passthrough', () => {
+    const result = renderFilename('{unknownToken} - {title}', { title: 'Book' });
+    expect(result).toBe('- Book');
+    expect(result).not.toContain('{unknownToken}');
+  });
+});
+
+describe('renderFilename — comma-space separator edge cases', () => {
+  it('collapses comma-space to comma with dash separator — no stray dash after punctuation', () => {
+    const result = renderFilename('{author} - {title}', { author: 'Sanderson, Brandon', title: 'Book' }, { separator: 'dash' });
+    expect(result).toBe('Sanderson,Brandon - Book');
+  });
+
+  it('collapses comma-space to comma with period separator', () => {
+    const result = renderFilename('{author} - {title}', { author: 'Sanderson, Brandon', title: 'Book' }, { separator: 'period' });
+    expect(result).toBe('Sanderson,Brandon - Book');
+  });
+
+  it('preserves comma-space unchanged with space separator', () => {
+    const result = renderFilename('{author} - {title}', { author: 'Sanderson, Brandon', title: 'Book' }, { separator: 'space' });
+    expect(result).toBe('Sanderson, Brandon - Book');
+  });
+});
+
+describe('renderFilename — consecutive separator collapse', () => {
+  it('collapses double space to single separator with period separator', () => {
+    const result = renderFilename('{author} - {title}', { author: 'Author  Name', title: 'Book' }, { separator: 'period' });
+    expect(result).toBe('Author.Name - Book');
   });
 });
 

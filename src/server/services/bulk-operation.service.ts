@@ -12,7 +12,7 @@ import { RetagError } from './tagging.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookService } from './book.service.js';
 import { buildTargetPath } from '../utils/import-helpers.js';
-import type { NamingOptions } from '../../core/utils/naming.js';
+import { toNamingOptions } from '../../core/utils/naming.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
@@ -60,7 +60,7 @@ export class BulkOperationService {
 
   async countRenameEligible(): Promise<{ mismatched: number; alreadyMatching: number }> {
     const librarySettings = await this.settingsService.get('library');
-    const namingOptions: NamingOptions = { separator: librarySettings.namingSeparator, case: librarySettings.namingCase };
+    const namingOptions = toNamingOptions(librarySettings);
 
     const rows = await this.db
       .select({
@@ -133,7 +133,7 @@ export class BulkOperationService {
   async startRenameJob(): Promise<string> {
     this.assertNoActiveJob();
     const librarySettings = await this.settingsService.get('library');
-    const renameNamingOptions: NamingOptions = { separator: librarySettings.namingSeparator, case: librarySettings.namingCase };
+    const renameNamingOptions = toNamingOptions(librarySettings);
     if (!librarySettings.path?.trim()) {
       throw new BulkOpError('Library path not configured', 'LIBRARY_NOT_CONFIGURED');
     }

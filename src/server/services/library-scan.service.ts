@@ -13,7 +13,7 @@ import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { buildTargetPath, getPathSize } from '../utils/import-helpers.js';
-import type { NamingOptions } from '../../core/utils/naming.js';
+import { toNamingOptions } from '../../core/utils/naming.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import type { EventHistoryService } from './event-history.service.js';
 import { getErrorMessage } from '../utils/error-message.js';
@@ -396,7 +396,7 @@ export class LibraryScanService {
     mode: ImportMode,
   ): Promise<string> {
     const librarySettings = await this.settingsService.get('library');
-    const namingOptions: NamingOptions = { separator: librarySettings.namingSeparator, case: librarySettings.namingCase };
+    const namingOptions = toNamingOptions(librarySettings);
     const targetPath = buildTargetPath(
       librarySettings.path,
       librarySettings.folderFormat,

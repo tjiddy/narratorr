@@ -1,4 +1,5 @@
 import { type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ModalProps {
   onClose?: () => void;
@@ -16,7 +17,7 @@ export function Modal({ onClose, className = '', scrollable = false, children }:
     .filter(Boolean)
     .join(' ');
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"
       onClick={onClose}
@@ -34,6 +35,7 @@ export function Modal({ onClose, className = '', scrollable = false, children }:
       >
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

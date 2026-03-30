@@ -43,6 +43,14 @@ vi.mock('@core/utils/index.js', () => ({
     if (folder === '{author}/{title}' && file === '{author} - {title}') return 'standard';
     return 'custom';
   },
+  FOLDER_TOKEN_GROUPS: [
+    { label: 'Author', tokens: ['author', 'authorLastFirst'] },
+    { label: 'Title', tokens: ['title', 'titleSort'] },
+    { label: 'Series', tokens: ['series', 'seriesPosition'] },
+    { label: 'Narrator', tokens: ['narrator', 'narratorLastFirst'] },
+    { label: 'Metadata', tokens: ['year'] },
+  ],
+  FILE_ONLY_TOKEN_GROUP: { label: 'File-specific', tokens: ['trackNumber', 'trackTotal', 'partName'] },
 }));
 
 const { api } = await import('@/lib/api');
@@ -59,12 +67,21 @@ beforeEach(() => {
 
 // Tests verify section composition after #66 refactoring
 describe('GeneralSettings', () => {
+  it('renders File Naming section after Library section', async () => {
+    renderWithProviders(<GeneralSettings />);
+    await waitFor(() => {
+      expect(screen.getByText('Library')).toBeInTheDocument();
+    });
+    expect(screen.getByText('File Naming')).toBeInTheDocument();
+  });
+
   it('renders all settings sections', async () => {
     renderWithProviders(<GeneralSettings />);
 
     await waitFor(() => {
       expect(screen.getByText('Library')).toBeInTheDocument();
     });
+    expect(screen.getByText('File Naming')).toBeInTheDocument();
     expect(screen.getByText('Search')).toBeInTheDocument();
     expect(screen.getByText('Discovery')).toBeInTheDocument();
     expect(screen.getByText('Import')).toBeInTheDocument();

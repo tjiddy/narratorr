@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { LibrarySettingsSection } from './LibrarySettingsSection';
+import { NamingSettingsSection } from './NamingSettingsSection';
 import { SearchSettingsSection } from './SearchSettingsSection';
 import { ImportSettingsSection } from './ImportSettingsSection';
 import { QualitySettingsSection } from './QualitySettingsSection';
@@ -34,6 +35,7 @@ export function GeneralSettings() {
   return (
     <div className="space-y-8">
       <LibrarySettingsSection />
+      <NamingSettingsSection />
       <SearchSettingsSection />
       <ImportSettingsSection />
       <QualitySettingsSection />

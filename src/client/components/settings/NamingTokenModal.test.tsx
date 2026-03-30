@@ -19,6 +19,14 @@ vi.mock('@core/utils/index.js', () => ({
   },
   FOLDER_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
   FILE_ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst', 'trackNumber', 'trackTotal', 'partName'],
+  FOLDER_TOKEN_GROUPS: [
+    { label: 'Author', tokens: ['author', 'authorLastFirst'] },
+    { label: 'Title', tokens: ['title', 'titleSort'] },
+    { label: 'Series', tokens: ['series', 'seriesPosition'] },
+    { label: 'Narrator', tokens: ['narrator', 'narratorLastFirst'] },
+    { label: 'Metadata', tokens: ['year'] },
+  ],
+  FILE_ONLY_TOKEN_GROUP: { label: 'File-specific', tokens: ['trackNumber', 'trackTotal', 'partName'] },
 }));
 
 const defaultProps = {

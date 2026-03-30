@@ -1,26 +1,9 @@
 import { useMemo } from 'react';
 import { Modal } from '@/components/Modal';
+import { XIcon } from '@/components/icons';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
-import { renderTemplate, renderFilename } from '@core/utils/index.js';
-import type { NamingOptions } from '@core/utils/naming.js';
-
-interface TokenGroup {
-  label: string;
-  tokens: string[];
-}
-
-const FOLDER_GROUPS: TokenGroup[] = [
-  { label: 'Author', tokens: ['author', 'authorLastFirst'] },
-  { label: 'Title', tokens: ['title', 'titleSort'] },
-  { label: 'Series', tokens: ['series', 'seriesPosition'] },
-  { label: 'Narrator', tokens: ['narrator', 'narratorLastFirst'] },
-  { label: 'Metadata', tokens: ['year'] },
-];
-
-const FILE_ONLY_GROUP: TokenGroup = {
-  label: 'File-specific',
-  tokens: ['trackNumber', 'trackTotal', 'partName'],
-};
+import { renderTemplate, renderFilename, FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP } from '@core/utils/index.js';
+import type { NamingOptions, TokenGroup } from '@core/utils/naming.js';
 
 interface NamingTokenModalProps {
   isOpen: boolean;
@@ -43,8 +26,8 @@ export function NamingTokenModal({
 }: NamingTokenModalProps) {
   useEscapeKey(isOpen, onClose);
 
-  const groups = useMemo(() => {
-    return scope === 'file' ? [...FOLDER_GROUPS, FILE_ONLY_GROUP] : FOLDER_GROUPS;
+  const groups: readonly TokenGroup[] = useMemo(() => {
+    return scope === 'file' ? [...FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP] : FOLDER_TOKEN_GROUPS;
   }, [scope]);
 
   const preview = useMemo(() => {
@@ -66,12 +49,10 @@ export function NamingTokenModal({
         <button
           type="button"
           onClick={onClose}
-          className="p-1 rounded-lg hover:bg-muted transition-colors"
+          className="p-1 rounded-lg hover:bg-muted transition-colors cursor-pointer"
           aria-label="Close"
         >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
+          <XIcon className="w-5 h-5" />
         </button>
       </div>
 
