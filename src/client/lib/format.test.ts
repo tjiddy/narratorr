@@ -32,6 +32,10 @@ describe('formatRelativeDate', () => {
 
   const NOW = '2026-03-30T12:00:00Z';
 
+  it('returns "Invalid Date" for invalid date string input', () => {
+    expect(formatRelativeDate('not-a-date')).toBe('Invalid Date');
+  });
+
   it('returns "Just now" for timestamps less than 1 minute ago', () => {
     setNow(NOW);
     expect(formatRelativeDate('2026-03-30T11:59:30Z')).toBe('Just now');
