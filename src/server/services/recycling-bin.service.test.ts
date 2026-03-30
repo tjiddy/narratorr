@@ -286,7 +286,7 @@ describe('RecyclingBinService', () => {
         expect(db.transaction).toHaveBeenCalledWith(expect.any(Function));
       });
 
-      it('rolls back book row when syncAuthors throws — recycling entry preserved', async () => {
+      it('rolls back book row when syncAuthors throws — files moved back to recyclePath', async () => {
         const entry = createMockDbRecyclingBinEntry({
           id: 5,
           authorName: ['Ghost Author'],
@@ -304,9 +304,13 @@ describe('RecyclingBinService', () => {
         expect(db.transaction).toHaveBeenCalledTimes(1);
         // Recycling entry delete was never reached (error before it)
         expect(db.delete).not.toHaveBeenCalled();
+        // Compensating file move-back: files restored to recyclePath for retry
+        expect(rename).toHaveBeenCalledTimes(2);
+        expect(rename).toHaveBeenNthCalledWith(1, './config/recycle/1', '/audiobooks/test');
+        expect(rename).toHaveBeenNthCalledWith(2, '/audiobooks/test', './config/recycle/1');
       });
 
-      it('rolls back book row and author junctions when syncNarrators throws', async () => {
+      it('rolls back book row and author junctions when syncNarrators throws — files moved back', async () => {
         const entry = createMockDbRecyclingBinEntry({
           id: 5,
           authorName: ['Brandon Sanderson'],
@@ -323,9 +327,12 @@ describe('RecyclingBinService', () => {
         expect(db.transaction).toHaveBeenCalledTimes(1);
         // syncAuthors was called successfully, but transaction rolls back everything
         expect(mockBookService.syncAuthors).toHaveBeenCalledTimes(1);
+        // Compensating file move-back
+        expect(rename).toHaveBeenCalledTimes(2);
+        expect(rename).toHaveBeenNthCalledWith(2, '/audiobooks/test', './config/recycle/1');
       });
 
-      it('rolls back entire transaction when recycling entry delete fails', async () => {
+      it('rolls back entire transaction when recycling entry delete fails — files moved back', async () => {
         const entry = createMockDbRecyclingBinEntry({
           id: 5,
           authorName: ['Brandon Sanderson'],
@@ -343,6 +350,26 @@ describe('RecyclingBinService', () => {
         expect(db.transaction).toHaveBeenCalledTimes(1);
         // syncAuthors succeeded before the delete failure
         expect(mockBookService.syncAuthors).toHaveBeenCalledTimes(1);
+        // Compensating file move-back
+        expect(rename).toHaveBeenCalledTimes(2);
+        expect(rename).toHaveBeenNthCalledWith(2, '/audiobooks/test', './config/recycle/1');
+      });
+
+      it('does not attempt compensating file move-back for metadata-only restore (no files)', async () => {
+        const entry = createMockDbRecyclingBinEntry({
+          id: 7,
+          originalPath: '',
+          recyclePath: '',
+          authorName: ['Author'],
+        });
+        db.onSelect([entry]);
+        db.onInsert([createMockDbBook({ id: 100 })]);
+        mockBookService.syncAuthors.mockRejectedValueOnce(new Error('sync failed'));
+
+        await expect(service.restore(7)).rejects.toThrow('sync failed');
+
+        // No file move happened, so no compensating move-back
+        expect(rename).not.toHaveBeenCalled();
       });
 
       it('filesystem move stays outside transaction boundary', async () => {
