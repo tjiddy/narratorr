@@ -99,8 +99,8 @@ export class BookService {
    * Deduplicates by slug within the payload, find-or-creates each author.
    * Called by create(), update(), and RecyclingBinService.restore().
    */
-  async syncAuthors(bookId: number, authorList: { name: string; asin?: string }[]): Promise<void> {
-    await this.db.delete(bookAuthors).where(eq(bookAuthors.bookId, bookId));
+  async syncAuthors(tx: Db, bookId: number, authorList: { name: string; asin?: string }[]): Promise<void> {
+    await tx.delete(bookAuthors).where(eq(bookAuthors.bookId, bookId));
 
     const seenSlugs = new Set<string>();
     const uniqueAuthors: { name: string; asin?: string }[] = [];
@@ -113,8 +113,8 @@ export class BookService {
     }
 
     for (let i = 0; i < uniqueAuthors.length; i++) {
-      const authorId = await this.findOrCreateAuthor(uniqueAuthors[i].name, uniqueAuthors[i].asin);
-      await this.db
+      const authorId = await this.findOrCreateAuthor(tx, uniqueAuthors[i].name, uniqueAuthors[i].asin);
+      await tx
         .insert(bookAuthors)
         .values({ bookId, authorId, position: i });
     }
@@ -125,8 +125,8 @@ export class BookService {
    * Deduplicates by slug within the payload, find-or-creates each narrator.
    * Called by create(), update(), and RecyclingBinService.restore().
    */
-  async syncNarrators(bookId: number, narratorNames: string[]): Promise<void> {
-    await this.db.delete(bookNarrators).where(eq(bookNarrators.bookId, bookId));
+  async syncNarrators(tx: Db, bookId: number, narratorNames: string[]): Promise<void> {
+    await tx.delete(bookNarrators).where(eq(bookNarrators.bookId, bookId));
 
     const seenSlugs = new Set<string>();
     const uniqueNarrators: string[] = [];
@@ -139,8 +139,8 @@ export class BookService {
     }
 
     for (let i = 0; i < uniqueNarrators.length; i++) {
-      const narratorId = await this.findOrCreateNarrator(uniqueNarrators[i]);
-      await this.db
+      const narratorId = await this.findOrCreateNarrator(tx, uniqueNarrators[i]);
+      await tx
         .insert(bookNarrators)
         .values({ bookId, narratorId, position: i });
     }
@@ -177,36 +177,34 @@ export class BookService {
       }
     }
 
-    const result = await this.db
-      .insert(books)
-      .values({
-        title: data.title,
-        description: data.description,
-        coverUrl: data.coverUrl,
-        asin: enrichedAsin,
-        isbn: data.isbn,
-        seriesName: data.seriesName,
-        seriesPosition: data.seriesPosition,
-        duration: data.duration,
-        publishedDate: data.publishedDate,
-        genres: data.genres,
-        status: data.status || 'wanted',
-        monitorForUpgrades: data.monitorForUpgrades ?? false,
-      })
-      .returning();
+    const bookId = await this.db.transaction(async (tx) => {
+      const result = await tx
+        .insert(books)
+        .values({
+          title: data.title,
+          description: data.description,
+          coverUrl: data.coverUrl,
+          asin: enrichedAsin,
+          isbn: data.isbn,
+          seriesName: data.seriesName,
+          seriesPosition: data.seriesPosition,
+          duration: data.duration,
+          publishedDate: data.publishedDate,
+          genres: data.genres,
+          status: data.status || 'wanted',
+          monitorForUpgrades: data.monitorForUpgrades ?? false,
+        })
+        .returning();
 
-    const bookId = result[0].id;
+      const id = result[0].id;
 
-    try {
-      await this.syncAuthors(bookId, data.authors);
+      await this.syncAuthors(tx, id, data.authors);
       if (data.narrators && data.narrators.length > 0) {
-        await this.syncNarrators(bookId, data.narrators);
+        await this.syncNarrators(tx, id, data.narrators);
       }
-    } catch (error: unknown) {
-      // Compensating delete: remove the orphaned book row so create() remains all-or-nothing.
-      await this.db.delete(books).where(eq(books.id, bookId));
-      throw error;
-    }
+
+      return id;
+    });
 
     this.log.info({ title: data.title }, 'Book added to library');
     this.trackUnmatchedGenres(data.genres).catch((error) => {
@@ -218,21 +216,27 @@ export class BookService {
   async update(id: number, data: Partial<NewBook> & { narrators?: string[]; authors?: { name: string; asin?: string }[] }): Promise<BookWithAuthor | null> {
     const { narrators: narratorNames, authors: authorList, ...bookData } = data;
 
-    const result = await this.db
-      .update(books)
-      .set({ ...bookData, updatedAt: new Date() })
-      .where(eq(books.id, id))
-      .returning();
+    const updated = await this.db.transaction(async (tx) => {
+      const result = await tx
+        .update(books)
+        .set({ ...bookData, updatedAt: new Date() })
+        .where(eq(books.id, id))
+        .returning();
 
-    if (result.length === 0) return null;
+      if (result.length === 0) return false;
 
-    if (narratorNames !== undefined) {
-      await this.syncNarrators(id, narratorNames);
-    }
+      if (narratorNames !== undefined) {
+        await this.syncNarrators(tx, id, narratorNames);
+      }
 
-    if (authorList !== undefined) {
-      await this.syncAuthors(id, authorList);
-    }
+      if (authorList !== undefined) {
+        await this.syncAuthors(tx, id, authorList);
+      }
+
+      return true;
+    });
+
+    if (!updated) return null;
 
     this.log.info({ id }, 'Book updated');
     return this.getById(id);
@@ -320,9 +324,9 @@ export class BookService {
     }));
   }
 
-  private async findOrCreateAuthor(name: string, asin?: string): Promise<number> {
+  private async findOrCreateAuthor(tx: Db, name: string, asin?: string): Promise<number> {
     const slug = slugify(name);
-    const existing = await this.db
+    const existing = await tx
       .select()
       .from(authors)
       .where(eq(authors.slug, slug))
@@ -333,14 +337,14 @@ export class BookService {
     }
 
     try {
-      const newAuthor = await this.db
+      const newAuthor = await tx
         .insert(authors)
         .values({ name, slug, asin })
         .returning();
       return newAuthor[0].id;
     } catch {
       // Unique constraint violation — concurrent creation
-      const retryAuthor = await this.db
+      const retryAuthor = await tx
         .select()
         .from(authors)
         .where(eq(authors.slug, slug))
@@ -352,9 +356,9 @@ export class BookService {
     }
   }
 
-  private async findOrCreateNarrator(name: string): Promise<number> {
+  private async findOrCreateNarrator(tx: Db, name: string): Promise<number> {
     const slug = slugify(name);
-    const existing = await this.db
+    const existing = await tx
       .select()
       .from(narrators)
       .where(eq(narrators.slug, slug))
@@ -365,14 +369,14 @@ export class BookService {
     }
 
     try {
-      const newNarrator = await this.db
+      const newNarrator = await tx
         .insert(narrators)
         .values({ name, slug })
         .returning();
       return newNarrator[0].id;
     } catch {
       // Unique constraint violation — concurrent creation
-      const retryNarrator = await this.db
+      const retryNarrator = await tx
         .select()
         .from(narrators)
         .where(eq(narrators.slug, slug))

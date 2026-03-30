@@ -22,15 +22,19 @@ function createMockDb() {
   const selectQueue: unknown[][] = [];
   const insertQueue: unknown[][] = [];
 
-  return {
+  const db = {
     insert: vi.fn().mockImplementation(() => mockDbChain(insertQueue.shift() ?? [])),
     select: vi.fn().mockImplementation(() => mockDbChain(selectQueue.shift() ?? [])),
     delete: vi.fn().mockImplementation(() => mockDbChain([])),
+    transaction: vi.fn(),
     /** Queue a result for the next select() call */
     onSelect(...results: unknown[][]) { selectQueue.push(...results); },
     /** Queue a result for the next insert().returning() call */
     onInsert(...results: unknown[][]) { insertQueue.push(...results); },
   };
+  // transaction() executes the callback with the same mock db
+  db.transaction.mockImplementation(async (cb: (tx: typeof db) => Promise<unknown>) => cb(db));
+  return db;
 }
 
 function createMockLog() {
@@ -216,7 +220,7 @@ describe('RecyclingBinService', () => {
 
       await service.restore(5);
 
-      expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [{ name: 'Brandon Sanderson', asin: 'B001' }]);
+      expect(mockBookService.syncAuthors).toHaveBeenCalledWith(expect.anything(), 99, [{ name: 'Brandon Sanderson', asin: 'B001' }]);
       // Only 1 insert (book) — junction managed by bookService
       expect(db.insert).toHaveBeenCalledTimes(1);
     });
@@ -235,7 +239,7 @@ describe('RecyclingBinService', () => {
 
       await service.restore(5);
 
-      expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [{ name: 'New Author', asin: 'B999' }]);
+      expect(mockBookService.syncAuthors).toHaveBeenCalledWith(expect.anything(), 99, [{ name: 'New Author', asin: 'B999' }]);
       // Only 1 insert (book) — junction managed by bookService
       expect(db.insert).toHaveBeenCalledTimes(1);
     });
@@ -530,7 +534,7 @@ describe('RecyclingBinService — many-to-many snapshot and restore (#71)', () =
 
       await service.restore(1);
 
-      expect(mockBookService.syncNarrators).toHaveBeenCalledWith(99, ['Kate Reading', 'Michael Kramer']);
+      expect(mockBookService.syncNarrators).toHaveBeenCalledWith(expect.anything(), 99, ['Kate Reading', 'Michael Kramer']);
     });
 
     it('restore with single narrator → calls syncNarrators with one name', async () => {
@@ -545,7 +549,7 @@ describe('RecyclingBinService — many-to-many snapshot and restore (#71)', () =
 
       await service.restore(1);
 
-      expect(mockBookService.syncNarrators).toHaveBeenCalledWith(99, ['Michael Kramer']);
+      expect(mockBookService.syncNarrators).toHaveBeenCalledWith(expect.anything(), 99, ['Michael Kramer']);
     });
   });
 });
@@ -585,7 +589,7 @@ describe('RecyclingBinService JSON array storage (issue #79)', () => {
 
     await service.restore(1);
 
-    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [
+    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(expect.anything(), 99, [
       { name: 'Author A', asin: undefined },
       { name: 'Author B', asin: undefined },
     ]);
@@ -604,7 +608,7 @@ describe('RecyclingBinService JSON array storage (issue #79)', () => {
 
     await service.restore(1);
 
-    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [
+    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(expect.anything(), 99, [
       { name: 'Brandon Sanderson', asin: undefined },
     ]);
   });
@@ -622,7 +626,7 @@ describe('RecyclingBinService JSON array storage (issue #79)', () => {
 
     await service.restore(1);
 
-    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [
+    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(expect.anything(), 99, [
       { name: 'Jordan, Robert', asin: undefined },
     ]);
   });

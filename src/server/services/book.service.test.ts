@@ -699,7 +699,7 @@ describe('BookService', () => {
       ).rejects.toThrow('Failed to find or create author');
     });
 
-    it('deletes orphaned book row when post-insert author sync fails (compensating delete)', async () => {
+    it('rolls back transaction when author sync fails — no compensating delete needed', async () => {
       // Book insert succeeds, then syncAuthors fails immediately (no author found, no retry)
       db.insert
         .mockReturnValueOnce(mockDbChain([{ id: 42 }]));  // book insert succeeds
@@ -715,8 +715,8 @@ describe('BookService', () => {
         service.create({ title: 'Orphan Book', authors: [{ name: 'Ghost Author' }] }),
       ).rejects.toThrow();
 
-      // Compensating delete must remove the book row with id=42
-      expect(db.delete).toHaveBeenCalledWith(books);
+      // Transaction handles rollback — no manual compensating delete of books table
+      expect(db.transaction).toHaveBeenCalledTimes(1);
     });
   });
 });
@@ -778,7 +778,7 @@ describe('BookService.syncAuthors / syncNarrators', () => {
   it('syncAuthors(bookId, []) clears all author junctions without error', async () => {
     db.delete.mockReturnValue(mockDbChain([]));
 
-    await service.syncAuthors(10, []);
+    await service.syncAuthors(inject<Db>(db), 10, []);
 
     expect(db.delete).toHaveBeenCalledTimes(1);
     expect(db.insert).not.toHaveBeenCalled();
@@ -787,7 +787,7 @@ describe('BookService.syncAuthors / syncNarrators', () => {
   it('syncNarrators(bookId, []) clears all narrator junctions without error', async () => {
     db.delete.mockReturnValue(mockDbChain([]));
 
-    await service.syncNarrators(10, []);
+    await service.syncNarrators(inject<Db>(db), 10, []);
 
     expect(db.delete).toHaveBeenCalledTimes(1);
     expect(db.insert).not.toHaveBeenCalled();
@@ -798,7 +798,7 @@ describe('BookService.syncAuthors / syncNarrators', () => {
     db.delete.mockReturnValue(mockDbChain([]));
     db.insert.mockReturnValue(mockDbChain([]));
 
-    await service.syncAuthors(10, [{ name: 'Brandon Sanderson' }, { name: 'Brandon Sanderson' }]);
+    await service.syncAuthors(inject<Db>(db), 10, [{ name: 'Brandon Sanderson' }, { name: 'Brandon Sanderson' }]);
 
     // 1 delete (clear junctions) + 1 bookAuthors insert (not 2)
     expect(db.insert).toHaveBeenCalledTimes(1);
@@ -809,7 +809,7 @@ describe('BookService.syncAuthors / syncNarrators', () => {
     db.delete.mockReturnValue(mockDbChain([]));
     db.insert.mockReturnValue(mockDbChain([]));
 
-    await service.syncNarrators(10, ['Kate Reading', 'Michael Kramer']);
+    await service.syncNarrators(inject<Db>(db), 10, ['Kate Reading', 'Michael Kramer']);
 
     expect(db.delete).toHaveBeenCalledTimes(1);
     expect(db.insert).toHaveBeenCalledTimes(2);  // 2 bookNarrators rows
