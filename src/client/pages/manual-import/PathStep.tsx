@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { formatDate } from '@/lib/format';
 import { PathInput } from '@/components/PathInput';
 import {
   AlertCircleIcon,
@@ -28,14 +29,6 @@ interface PathStepProps {
   libraryPath: string;
   isInsideLibraryRoot: boolean;
   folderHistory: FolderHistoryApi;
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
 }
 
 export function PathStep({
