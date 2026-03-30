@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockIndexer } from '@/__tests__/factories';
@@ -537,6 +537,28 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
 
       await user.selectOptions(screen.getByLabelText('Type'), 'torznab');
       expect((screen.getByLabelText('Type') as HTMLSelectElement).value).toBe('torznab');
+    });
+
+    it('type select shows border-destructive when errors.type is present', async () => {
+      const user = userEvent.setup();
+      const invalidIndexer = createMockIndexer({ type: 'INVALID' as never });
+      renderWithProviders(
+        <IndexerCard
+          indexer={invalidIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      const select = screen.getByLabelText('Type');
+      expect(select.className).toContain('border-border');
+      expect(select.className).not.toContain('border-destructive');
+
+      await user.click(screen.getByRole('button', { name: /save/i }));
+      await waitFor(() => {
+        expect(screen.getByLabelText('Type').className).toContain('border-destructive');
+      });
     });
   });
 });

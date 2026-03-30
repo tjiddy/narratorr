@@ -227,5 +227,25 @@ describe('DownloadClientForm (#201)', () => {
       await user.selectOptions(screen.getByLabelText('Type'), 'blackhole');
       expect((screen.getByLabelText('Type') as HTMLSelectElement).value).toBe('blackhole');
     });
+
+    it('type select shows border-destructive when errors.type is present', async () => {
+      const user = userEvent.setup();
+      const invalidClient = createMockDownloadClient({ type: 'INVALID' as never });
+      renderWithProviders(
+        <DownloadClientForm mode="edit" client={invalidClient} onSubmit={vi.fn()} onFormTest={vi.fn()} />,
+      );
+
+      const select = screen.getByLabelText('Type');
+
+      // Before submit: no validation errors yet
+      expect(select.className).toContain('border-border');
+      expect(select.className).not.toContain('border-destructive');
+
+      // Submit triggers zodResolver — invalid type produces errors.type
+      await user.click(screen.getByRole('button', { name: /save/i }));
+      await waitFor(() => {
+        expect(screen.getByLabelText('Type').className).toContain('border-destructive');
+      });
+    });
   });
 });
