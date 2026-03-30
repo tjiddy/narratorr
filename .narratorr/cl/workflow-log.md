@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #214 DB-2: Wrap multi-step DB mutations in transactions — 2026-03-30
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #218
+
+### Metrics
+- Files changed: 7 | Tests added/modified: 20+ new, 10+ updated
+- Quality gate runs: 2 (pass on attempt 2 — first failed on unused eslint-disable directive)
+- Fix iterations: 2 (eslint-disable removal, TypeScript type mismatch for tx parameter)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Straightforward refactor — existing mock patterns (mockDbChain, createMockDb) extended cleanly for transaction support. Spec was well-elaborated with clear AC.
+- Friction / issues encountered: Drizzle's transaction callback type (`SQLiteTransaction`) doesn't match `Db` (`LibSQLDatabase`) — needed a `DbOrTx` union type. Discovered during typecheck after production code was written. Also had to update ~10 existing test assertions that checked `syncAuthors`/`syncNarrators` call args (now include `tx` as first param).
+
+### Token efficiency
+- Highest-token actions: Explore subagent for initial codebase analysis, coverage review subagent
+- Avoidable waste: Could have checked Drizzle's transaction type before writing all the production code — would have caught the type mismatch earlier
+- Suggestions: For future DB refactoring issues, check the Drizzle type signatures first (`pnpm typecheck` on a minimal change) before writing the full implementation
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None discovered
+
+### Wish I'd Known
+1. Drizzle's `db.transaction()` callback receives `SQLiteTransaction`, not `LibSQLDatabase` — need a union type (`DbOrTx`) for helpers that accept both (see `drizzle-transaction-type-mismatch.md`)
+2. The mock transaction pattern is trivial: `mockImplementation(async (cb) => cb(db))` — execute callback with same mock. For isolation tests, create a separate mock db as tx (see `mock-db-transaction-passthrough.md`)
+3. Existing recycling-bin tests had ~10 `toHaveBeenCalledWith` assertions for `syncAuthors`/`syncNarrators` that needed `expect.anything()` prepended for the new tx parameter — a blast radius that wasn't immediately obvious from the spec
+
 ## #212 Polish #210 — split naming section, tighten library, fix code smells — 2026-03-30
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #213
