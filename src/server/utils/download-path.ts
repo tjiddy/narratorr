@@ -26,7 +26,8 @@ export async function resolveSavePath(
     throw new Error(`Download ${download.externalId} not found in client`);
   }
 
-  let fullPath = join(item.savePath, item.name);
+  const originalPath = join(item.savePath, item.name);
+  let fullPath = originalPath;
 
   if (remotePathMappingService && download.downloadClientId) {
     const mappings = await remotePathMappingService.getByClientId(download.downloadClientId);
@@ -35,5 +36,5 @@ export async function resolveSavePath(
     }
   }
 
-  return fullPath;
+  return { resolvedPath: fullPath, originalPath };
 }

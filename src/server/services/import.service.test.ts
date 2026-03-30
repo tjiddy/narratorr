@@ -1769,7 +1769,7 @@ describe('ImportService consolidation (issue #79)', () => {
       await service.importDownload(1);
 
       expect(log.debug).toHaveBeenCalledWith(
-        expect.objectContaining({ downloadId: 1, resolvedPath: expect.any(String) }),
+        expect.objectContaining({ downloadId: 1, resolvedPath: expect.any(String), originalPath: expect.any(String) }),
         'Resolved save path',
       );
     });

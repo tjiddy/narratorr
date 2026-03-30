@@ -94,7 +94,7 @@ describe('QualityGateOrchestrator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAdapter.removeDownload.mockResolvedValue(undefined);
-    (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue('/downloads/test');
+    (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue({ resolvedPath: '/downloads/test', originalPath: '/downloads/test' });
     (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(makeScan());
     (revertBookStatus as ReturnType<typeof vi.fn>).mockResolvedValue('imported');
   });
@@ -196,7 +196,7 @@ describe('QualityGateOrchestrator', () => {
     it('calls processDownload (not setStatus pending_review) when resolved path is a single audio file', async () => {
       const { orchestrator, qualityGateService } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
-      (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue('/downloads/SingleBook.m4b');
+      (resolveSavePath as ReturnType<typeof vi.fn>).mockResolvedValue({ resolvedPath: '/downloads/SingleBook.m4b', originalPath: '/downloads/SingleBook.m4b' });
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(makeScan());
 
       await orchestrator.processCompletedDownloads();

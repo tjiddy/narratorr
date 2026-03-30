@@ -23,7 +23,8 @@ describe('resolveSavePath', () => {
 
     const result = await resolveSavePath(download, dcs as unknown as DownloadClientService);
 
-    expect(result).toBe(join('/downloads', 'The.Book.2024'));
+    expect(result.resolvedPath).toBe(join('/downloads', 'The.Book.2024'));
+    expect(result.originalPath).toBe(join('/downloads', 'The.Book.2024'));
     expect(dcs.getAdapter).toHaveBeenCalledWith(1);
     expect(dcs.adapter.getDownload).toHaveBeenCalledWith('ext-1');
   });
@@ -36,7 +37,8 @@ describe('resolveSavePath', () => {
     const result = await resolveSavePath(download, dcs as unknown as DownloadClientService, rpms as unknown as RemotePathMappingService);
 
     // applyPathMapping normalizes to forward slashes
-    expect(result).toBe('/local/downloads/Book');
+    expect(result.resolvedPath).toBe('/local/downloads/Book');
+    expect(result.originalPath).toBe(join('/remote/downloads', 'Book'));
     expect(rpms.getByClientId).toHaveBeenCalledWith(1);
   });
 
@@ -47,7 +49,7 @@ describe('resolveSavePath', () => {
 
     const result = await resolveSavePath(download, dcs as unknown as DownloadClientService, rpms as unknown as RemotePathMappingService);
 
-    expect(result).toBe(join('/downloads', 'Book'));
+    expect(result.resolvedPath).toBe(join('/downloads', 'Book'));
   });
 
   it('returns unmapped path when remotePathMappingService is not provided', async () => {
@@ -56,7 +58,7 @@ describe('resolveSavePath', () => {
 
     const result = await resolveSavePath(download, dcs as unknown as DownloadClientService);
 
-    expect(result).toBe(join('/downloads', 'Book'));
+    expect(result.resolvedPath).toBe(join('/downloads', 'Book'));
   });
 
   it('throws when download has no downloadClientId', async () => {
