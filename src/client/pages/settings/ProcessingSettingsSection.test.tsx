@@ -472,6 +472,18 @@ describe('ProcessingSettingsSection', () => {
     });
   });
 
+  describe('schema preprocess and boundary values', () => {
+    it.todo('accepts postProcessingScriptTimeout of exactly 1 (min boundary)');
+    it.todo('rejects postProcessingScriptTimeout of 0 (below min)');
+    it.todo('handles NaN postProcessingScriptTimeout when script is empty — no validation error');
+    it.todo('handles NaN postProcessingScriptTimeout when script is set — validation error fires');
+  });
+
+  describe('cross-category form model preservation', () => {
+    it.todo('save payload includes both processing and tagging categories');
+    it.todo('tagging toggle state survives processing validation failure and correction');
+  });
+
   it('renders Keep Original toggle as a compact hidden-checkbox slider (sr-only peer pattern)', async () => {
     mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);
     renderWithProviders(<ProcessingSettingsSection />);
