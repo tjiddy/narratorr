@@ -51,9 +51,10 @@ interface FormatFieldProps {
   registerProps: Record<string, unknown>;
   inputRef: (el: HTMLInputElement | null) => void;
   hasValue: boolean;
+  onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 }
 
-function FormatField({ id, label, ariaLabel, placeholder, error, preview, previewNoSeries, previewSuffix, warnings, onOpenTokenModal, onInsertToken, tokenGroups, inlinePanelOpen, onToggleInlinePanel, registerProps, inputRef, hasValue }: FormatFieldProps) {
+function FormatField({ id, label, ariaLabel, placeholder, error, preview, previewNoSeries, previewSuffix, warnings, onOpenTokenModal, onInsertToken, tokenGroups, inlinePanelOpen, onToggleInlinePanel, registerProps, inputRef, hasValue, onKeyDown }: FormatFieldProps) {
   const panelId = `${id}-token-panel`;
   return (
     <div>
@@ -73,6 +74,7 @@ function FormatField({ id, label, ariaLabel, placeholder, error, preview, previe
         type="text"
         {...registerProps}
         ref={inputRef}
+        onKeyDown={onKeyDown}
         className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all font-mono text-sm ${
           error ? 'border-destructive' : 'border-border'
         }`}
@@ -202,6 +204,39 @@ export function NamingSettingsSection() {
     setValue(field, newValue, { shouldDirty: true, shouldValidate: true });
     requestAnimationFrame(() => { input.setSelectionRange(start + token.length + 2, start + token.length + 2); input.focus(); });
   };
+  const TOKEN_REGEX = /^\{(\w+)(?::(\d+))?(?:\?([^}]*))?\}$/;
+
+  const handleFormatKeyDown = (ref: React.RefObject<HTMLInputElement | null>, field: 'folderFormat' | 'fileFormat') =>
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      const input = ref.current;
+      if (!input) return;
+      const pos = input.selectionStart ?? 0;
+      const end = input.selectionEnd ?? pos;
+      if (pos !== end) return; // selection exists — normal deletion
+
+      const val = input.value;
+
+      if (e.key === 'Backspace' && pos > 0 && val[pos - 1] === '}') {
+        const braceStart = val.lastIndexOf('{', pos - 2);
+        if (braceStart === -1) return;
+        const candidate = val.slice(braceStart, pos);
+        if (!TOKEN_REGEX.test(candidate)) return;
+        e.preventDefault();
+        const newValue = val.slice(0, braceStart) + val.slice(pos);
+        setValue(field, newValue, { shouldDirty: true, shouldValidate: true });
+        requestAnimationFrame(() => { input.setSelectionRange(braceStart, braceStart); input.focus(); });
+      } else if (e.key === 'Delete' && pos < val.length && val[pos] === '{') {
+        const braceEnd = val.indexOf('}', pos + 1);
+        if (braceEnd === -1) return;
+        const candidate = val.slice(pos, braceEnd + 1);
+        if (!TOKEN_REGEX.test(candidate)) return;
+        e.preventDefault();
+        const newValue = val.slice(0, pos) + val.slice(braceEnd + 1);
+        setValue(field, newValue, { shouldDirty: true, shouldValidate: true });
+        requestAnimationFrame(() => { input.setSelectionRange(pos, pos); input.focus(); });
+      }
+    };
+
   const handlePresetChange = (presetId: string) => {
     const preset = NAMING_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
@@ -241,6 +276,7 @@ export function NamingSettingsSection() {
           error={errors.folderFormat} preview={folderPreview} previewNoSeries={folderPreviewNoSeries} hasValue={!!folderFormat}
           onOpenTokenModal={() => setTokenModalScope('folder')}
           onInsertToken={(token) => insertTokenAtCursor(folderFormatRef, 'folderFormat', token)}
+          onKeyDown={handleFormatKeyDown(folderFormatRef, 'folderFormat')}
           tokenGroups={FOLDER_TOKEN_GROUPS}
           inlinePanelOpen={folderPanelOpen}
           onToggleInlinePanel={() => setFolderPanelOpen((v) => !v)}
@@ -257,6 +293,7 @@ export function NamingSettingsSection() {
           error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewSuffix=".m4b" hasValue={!!fileFormat}
           onOpenTokenModal={() => setTokenModalScope('file')}
           onInsertToken={(token) => insertTokenAtCursor(fileFormatRef, 'fileFormat', token)}
+          onKeyDown={handleFormatKeyDown(fileFormatRef, 'fileFormat')}
           tokenGroups={[...FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP]}
           inlinePanelOpen={filePanelOpen}
           onToggleInlinePanel={() => setFilePanelOpen((v) => !v)}
