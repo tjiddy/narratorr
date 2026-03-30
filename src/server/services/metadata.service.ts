@@ -11,6 +11,7 @@ import {
   type AuthorMetadata,
   type SeriesMetadata,
   type SearchBooksOptions,
+  type SearchBooksResult,
 } from '../../core/index.js';
 
 const DEFAULT_THROTTLE_MS = 200;
@@ -72,7 +73,11 @@ export class MetadataService {
     this.log.debug({ query, provider: provider.name }, 'Metadata search requested');
 
     // Call each sub-search through throttle individually to prevent bursting
-    const books = await this.withThrottledSearch(provider, 'searchBooks', (p) => p.searchBooks(query), warnings);
+    const books = await this.withThrottledSearch(provider, 'searchBooks', async (p) => {
+      const result = await p.searchBooks(query);
+      this.logParseDrop(result, p.name);
+      return result.books;
+    }, warnings);
     const authors = await this.withThrottledSearch(provider, 'searchAuthors', (p) => p.searchAuthors(query), warnings);
     const series = await this.withThrottledSearch(provider, 'searchSeries', (p) => p.searchSeries(query), warnings);
 
@@ -118,7 +123,11 @@ export class MetadataService {
   }
 
   async searchBooks(query: string): Promise<BookMetadata[]> {
-    return this.withThrottle('searchBooks', (provider) => provider.searchBooks(query), []);
+    const result = await this.withThrottle<SearchBooksResult>('searchBooks', (provider) => provider.searchBooks(query), { books: [] }, { query });
+    const books = result.books;
+    this.logParseDrop(result, this.providers[0]?.name);
+    this.log.debug({ query, provider: this.providers[0]?.name, resultCount: books.length }, 'searchBooks completed');
+    return books;
   }
 
   async searchBooksForDiscovery(
@@ -141,7 +150,11 @@ export class MetadataService {
     const books = await this.withThrottledSearch(
       provider,
       'searchBooksForDiscovery',
-      (p) => p.searchBooks(query, options),
+      async (p) => {
+        const result = await p.searchBooks(query, options);
+        this.logParseDrop(result, p.name);
+        return result.books;
+      },
       warnings,
     );
 
@@ -175,11 +188,14 @@ export class MetadataService {
       return [];
     }
 
-    return this.withThrottle('searchBooks', (provider) => provider.searchBooks(author.name), []);
+    const result = await this.withThrottle<SearchBooksResult>('searchBooks', (provider) => provider.searchBooks(author.name), { books: [] });
+    return result.books;
   }
 
   async getBook(id: string): Promise<BookMetadata | null> {
-    return this.withThrottle('getBook', (provider) => provider.getBook(id), null);
+    const result = await this.withThrottle('getBook', (provider) => provider.getBook(id), null, { query: id });
+    this.log.debug({ id, provider: this.providers[0]?.name, found: result !== null }, 'getBook completed');
+    return result;
   }
 
   async getSeries(_id: string): Promise<SeriesMetadata | null> {
@@ -247,10 +263,20 @@ export class MetadataService {
     this.log.warn({ provider: providerName, retryAfterMs: durationMs }, 'Provider rate limited');
   }
 
+  private logParseDrop(result: SearchBooksResult, providerName: string | undefined): void {
+    if (result.rawCount !== undefined && result.rawCount !== result.books.length) {
+      this.log.debug(
+        { rawCount: result.rawCount, parsedCount: result.books.length, provider: providerName },
+        'Metadata search parse drop detected',
+      );
+    }
+  }
+
   private async withThrottle<T>(
     method: string,
     fn: (provider: MetadataSearchProvider) => Promise<T>,
     fallback: T,
+    context?: Record<string, unknown>,
   ): Promise<T> {
     const provider = this.providers[0];
     if (!provider) return fallback;
@@ -268,7 +294,7 @@ export class MetadataService {
         this.setRateLimited(error.provider, error.retryAfterMs);
         return fallback;
       }
-      this.log.warn(error, `Metadata ${method} failed`);
+      this.log.warn({ ...context, error }, `Metadata ${method} failed`);
       return fallback;
     }
   }
