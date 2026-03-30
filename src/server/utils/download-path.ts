@@ -11,7 +11,7 @@ export async function resolveSavePath(
   download: { id: number; downloadClientId: number | null; externalId: string | null },
   downloadClientService: DownloadClientService,
   remotePathMappingService?: RemotePathMappingService,
-): Promise<string> {
+): Promise<{ resolvedPath: string; originalPath: string }> {
   if (!download.downloadClientId || !download.externalId) {
     throw new Error(`Download ${download.id} missing client or external ID`);
   }
