@@ -385,7 +385,7 @@ describe('RecyclingBinService', () => {
         expect(mockBookService.syncNarrators).toHaveBeenCalledTimes(1);
       });
 
-      it('passes tx to bookService.syncAuthors and syncNarrators', async () => {
+      it('passes the transaction handle (not this.db) to bookService.syncAuthors and syncNarrators', async () => {
         const entry = createMockDbRecyclingBinEntry({
           id: 5,
           authorName: ['Brandon Sanderson'],
@@ -395,18 +395,24 @@ describe('RecyclingBinService', () => {
           recyclePath: './config/recycle/1',
         });
         db.onSelect([entry], []);
-        db.onInsert([createMockDbBook({ id: 99 })]);
+
+        // Create a distinct tx mock — different object from db — to prove identity
+        const txMock = {
+          insert: vi.fn().mockImplementation(() => mockDbChain([createMockDbBook({ id: 99 })])),
+          delete: vi.fn().mockImplementation(() => mockDbChain([])),
+        };
+        db.transaction.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
 
         await service.restore(5);
 
-        // First arg to syncAuthors/syncNarrators should be the tx (which is db in mock)
+        // syncAuthors/syncNarrators must receive the exact tx mock, not db
         expect(mockBookService.syncAuthors).toHaveBeenCalledWith(
-          expect.anything(),  // tx handle
+          txMock,
           99,
           [{ name: 'Brandon Sanderson', asin: 'B001' }],
         );
         expect(mockBookService.syncNarrators).toHaveBeenCalledWith(
-          expect.anything(),  // tx handle
+          txMock,
           99,
           ['Michael Kramer'],
         );
