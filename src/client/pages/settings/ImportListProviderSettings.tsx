@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '@/lib/api';
+import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 
 const inputClass = 'w-full px-3 py-2 bg-background border border-border rounded-lg focus-ring';
 const btnSecondary = 'px-3 py-1.5 text-sm font-medium rounded-lg transition-colors disabled:opacity-50';
@@ -62,17 +63,16 @@ function AbsSettings({ settings, onChange }: SettingsProps) {
         <label htmlFor="abs-libraryId" className="block text-sm font-medium mb-1">Library</label>
         <div className="flex gap-2">
           {libraries.length > 0 ? (
-            <select
+            <SelectWithChevron
               id="abs-libraryId"
               value={(settings.libraryId as string) ?? ''}
               onChange={(e) => onChange({ ...settings, libraryId: e.target.value })}
-              className={inputClass}
             >
               <option value="">Select a library...</option>
               {libraries.map((lib) => (
                 <option key={lib.id} value={lib.id}>{lib.name}</option>
               ))}
-            </select>
+            </SelectWithChevron>
           ) : (
             <input
               id="abs-libraryId"
@@ -114,15 +114,14 @@ function NytSettings({ settings, onChange }: SettingsProps) {
       </div>
       <div>
         <label htmlFor="nyt-list" className="block text-sm font-medium mb-1">Bestseller List</label>
-        <select
+        <SelectWithChevron
           id="nyt-list"
           value={(settings.list as string) ?? 'audio-fiction'}
           onChange={(e) => onChange({ ...settings, list: e.target.value })}
-          className={inputClass}
         >
           <option value="audio-fiction">Audio Fiction</option>
           <option value="audio-nonfiction">Audio Nonfiction</option>
-        </select>
+        </SelectWithChevron>
       </div>
     </>
   );
@@ -146,15 +145,14 @@ function HardcoverSettings({ settings, onChange }: SettingsProps) {
       </div>
       <div>
         <label htmlFor="hc-listType" className="block text-sm font-medium mb-1">List Type</label>
-        <select
+        <SelectWithChevron
           id="hc-listType"
           value={listType}
           onChange={(e) => onChange({ ...settings, listType: e.target.value })}
-          className={inputClass}
         >
           <option value="trending">Trending</option>
           <option value="shelf">Shelf</option>
-        </select>
+        </SelectWithChevron>
       </div>
       {listType === 'shelf' && (
         <div>

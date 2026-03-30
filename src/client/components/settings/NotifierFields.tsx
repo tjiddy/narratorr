@@ -1,5 +1,6 @@
 import type { UseFormRegister, FieldErrors } from 'react-hook-form';
 import type { CreateNotifierFormData } from '../../../shared/schemas.js';
+import { SelectWithChevron } from './SelectWithChevron';
 
 interface NotifierFieldsProps {
   selectedType: string;
@@ -23,10 +24,10 @@ function WebhookFields({ register, errors }: Omit<NotifierFieldsProps, 'selected
       </div>
       <div>
         <label htmlFor="notifierMethod" className="block text-sm font-medium mb-2">Method</label>
-        <select id="notifierMethod" {...register('settings.method')} className={inputClass}>
+        <SelectWithChevron id="notifierMethod" {...register('settings.method')}>
           <option value="POST">POST</option>
           <option value="PUT">PUT</option>
-        </select>
+        </SelectWithChevron>
       </div>
       <div>
         <label htmlFor="notifierHeaders" className="block text-sm font-medium mb-2">Headers (JSON)</label>

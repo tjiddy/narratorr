@@ -5,6 +5,7 @@ import { api, type ImportList, type ImportListItem } from '@/lib/api';
 import { importListItemKey, deduplicateKeys } from '@/lib/stableKeys.js';
 import { queryKeys } from '@/lib/queryKeys';
 import { useCrudSettings } from '@/hooks/useCrudSettings';
+import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import {
   LoadingSpinner,
@@ -117,11 +118,11 @@ function ImportListForm({
         {!initial && (
           <div>
             <label htmlFor="il-type" className="block text-sm font-medium mb-1">Provider Type</label>
-            <select id="il-type" value={type} onChange={(e) => handleTypeChange(e.target.value as ImportListFormData['type'])} className={inputClass}>
+            <SelectWithChevron id="il-type" value={type} onChange={(e) => handleTypeChange(e.target.value as ImportListFormData['type'])}>
               {Object.entries(IMPORT_LIST_REGISTRY).map(([key, m]) => (
                 <option key={key} value={key}>{m.label}</option>
               ))}
-            </select>
+            </SelectWithChevron>
           </div>
         )}
       </div>

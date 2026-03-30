@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { HeadphonesIcon } from '@/components/icons';
+import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { audibleRegionSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
@@ -70,17 +71,13 @@ export function MetadataSettingsForm() {
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
         <div>
           <label htmlFor="audibleRegion" className="block text-sm font-medium mb-2">Audible Region</label>
-          <select
-            id="audibleRegion"
-            {...register('audibleRegion')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-          >
+          <SelectWithChevron id="audibleRegion" {...register('audibleRegion')}>
             {audibleRegionSchema.options.map((region) => (
               <option key={region} value={region}>
                 {AUDIBLE_REGION_LABELS[region] ?? region}
               </option>
             ))}
-          </select>
+          </SelectWithChevron>
           <p className="text-sm text-muted-foreground mt-2">
             Select your Audible region for metadata lookups. Affects which catalog is searched for audiobook details, narrators, and cover art.
           </p>

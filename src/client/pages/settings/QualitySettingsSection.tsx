@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ZapIcon } from '@/components/icons';
+import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { protocolPreferenceSchema, DEFAULT_SETTINGS, qualityFormSchema } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
@@ -80,17 +81,13 @@ export function QualitySettingsSection() {
 
         <div>
           <label htmlFor="protocolPreference" className="block text-sm font-medium mb-2">Protocol Preference</label>
-          <select
-            id="protocolPreference"
-            {...register('protocolPreference')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-          >
+          <SelectWithChevron id="protocolPreference" {...register('protocolPreference')}>
             {protocolPreferenceSchema.options.map((pref) => (
               <option key={pref} value={pref}>
                 {PROTOCOL_LABELS[pref] ?? pref}
               </option>
             ))}
-          </select>
+          </SelectWithChevron>
           <p className="text-sm text-muted-foreground mt-2">
             Preferred download protocol. Affects result ordering but does not exclude results.
           </p>
