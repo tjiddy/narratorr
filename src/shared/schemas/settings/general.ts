@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { stripDefaults } from './strip-defaults.js';
 
 export const logLevelSchema = z.enum(['error', 'warn', 'info', 'debug', 'trace']);
 export type LogLevel = z.infer<typeof logLevelSchema>;
@@ -10,11 +11,17 @@ export const generalSettingsSchema = z.object({
   welcomeSeen: z.boolean().default(false),
 });
 
-// Form schema excludes welcomeSeen — it's managed by Layout.tsx for onboarding,
-// not by the General settings form. Including it would overwrite onboarding state.
-// Derived via .pick().omit() to reuse validators from the settings schema shape.
-export const generalFormSchema = z.object({
-  logLevel: logLevelSchema,
-  housekeepingRetentionDays: z.number().int().min(1).max(365),
-  recycleRetentionDays: z.number().int().min(0).max(365),
-});
+// Form schema derived from generalSettingsSchema via stripDefaults(), excluding
+// welcomeSeen — it's managed by Layout.tsx for onboarding, not by the General
+// settings form. Including it would overwrite onboarding state.
+// Cast to typed ZodObject for zodResolver/z.infer compatibility (Zod v4 limitation:
+// stripDefaults returns untyped shape; runtime behavior is correct).
+export const generalFormSchema = stripDefaults(generalSettingsSchema).pick({
+  logLevel: true,
+  housekeepingRetentionDays: true,
+  recycleRetentionDays: true,
+}) as z.ZodObject<{
+  logLevel: typeof logLevelSchema;
+  housekeepingRetentionDays: z.ZodNumber;
+  recycleRetentionDays: z.ZodNumber;
+}>;
