@@ -22,10 +22,7 @@ const processingFormSchema = z.object({
   mergeBehavior: mergeBehaviorSchema,
   maxConcurrentProcessing: z.number().int().min(1),
   postProcessingScript: z.string(),
-  postProcessingScriptTimeout: z.preprocess(
-    (v) => (typeof v === 'number' && Number.isNaN(v) ? undefined : v),
-    z.number().int().min(1).optional(),
-  ),
+  postProcessingScriptTimeout: z.number().int().min(1).optional(),
   taggingEnabled: z.boolean(),
   tagMode: tagModeSchema,
   embedCover: z.boolean(),
@@ -108,7 +105,7 @@ function CustomScriptSection({ register, errors }: Pick<UseFormReturn<Processing
           id="postProcessingScriptTimeout"
           label="Script Timeout (seconds)"
           type="number"
-          registration={register('postProcessingScriptTimeout', { valueAsNumber: true })}
+          registration={register('postProcessingScriptTimeout', { setValueAs: (v: string) => { const n = Number(v); return v === '' || Number.isNaN(n) ? undefined : n; } })}
           error={errors.postProcessingScriptTimeout}
           min={1}
           placeholder="300"
@@ -153,13 +150,7 @@ export function ProcessingSettingsSection() {
 
   const { register, handleSubmit, reset, watch, formState: { errors, isDirty } } = useForm<ProcessingFormData>({
     defaultValues: toFormData({ ...DEFAULT_SETTINGS } as AppSettings),
-    // Cast required: this component uses a flattened cross-category form (processing + tagging
-    // fields with renamed keys like processingEnabled/taggingEnabled), and
-    // preprocess(nanToUndefined) + .optional() on postProcessingScriptTimeout creates
-    // input/output type divergence that zodResolver can't reconcile.
-    // See #219 for potential typed adapter pattern to remove this cast.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see comment above
-    resolver: zodResolver(processingFormSchema) as any,
+    resolver: zodResolver(processingFormSchema),
   });
 
   useEffect(() => {

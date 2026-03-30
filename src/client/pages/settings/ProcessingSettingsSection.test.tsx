@@ -473,15 +473,192 @@ describe('ProcessingSettingsSection', () => {
   });
 
   describe('schema preprocess and boundary values', () => {
-    it.todo('accepts postProcessingScriptTimeout of exactly 1 (min boundary)');
-    it.todo('rejects postProcessingScriptTimeout of 0 (below min)');
-    it.todo('handles NaN postProcessingScriptTimeout when script is empty — no validation error');
-    it.todo('handles NaN postProcessingScriptTimeout when script is set — validation error fires');
+    it('accepts postProcessingScriptTimeout of exactly 1 (min boundary)', async () => {
+      const user = userEvent.setup();
+      const settingsWithScript = createMockSettings({
+        processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
+      });
+      mockApi.getSettings.mockResolvedValue(settingsWithScript);
+      mockApi.updateSettings.mockResolvedValue(settingsWithScript);
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Script Timeout (seconds)')).toHaveValue(60);
+      });
+
+      const timeoutInput = screen.getByLabelText('Script Timeout (seconds)');
+      await user.clear(timeoutInput);
+      await user.type(timeoutInput, '1');
+
+      await act(async () => {
+        fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+      });
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            processing: expect.objectContaining({
+              postProcessingScript: '/scripts/post.sh',
+              postProcessingScriptTimeout: 1,
+            }),
+          }),
+        );
+      });
+    });
+
+    it('rejects postProcessingScriptTimeout of 0 (below min)', async () => {
+      const user = userEvent.setup();
+      const settingsWithScript = createMockSettings({
+        processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
+      });
+      mockApi.getSettings.mockResolvedValue(settingsWithScript);
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Script Timeout (seconds)')).toHaveValue(60);
+      });
+
+      const timeoutInput = screen.getByLabelText('Script Timeout (seconds)');
+      await user.clear(timeoutInput);
+      await user.type(timeoutInput, '0');
+
+      await act(async () => {
+        fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+      });
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).not.toHaveBeenCalled();
+      });
+    });
+
+    it('handles NaN postProcessingScriptTimeout when script is empty — no validation error', async () => {
+      const user = userEvent.setup();
+      const settingsWithTimeout = createMockSettings({
+        processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 60 },
+      });
+      mockApi.getSettings.mockResolvedValue(settingsWithTimeout);
+      mockApi.updateSettings.mockResolvedValue(settingsWithTimeout);
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Script Timeout (seconds)')).toHaveValue(60);
+      });
+
+      // Clear the timeout — valueAsNumber produces NaN, preprocess converts to undefined
+      const timeoutInput = screen.getByLabelText('Script Timeout (seconds)');
+      await user.clear(timeoutInput);
+
+      await act(async () => {
+        fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+      });
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            processing: expect.objectContaining({
+              postProcessingScript: '',
+              postProcessingScriptTimeout: undefined,
+            }),
+          }),
+        );
+      });
+    });
+
+    it('handles NaN postProcessingScriptTimeout when script is set — validation error fires', async () => {
+      const user = userEvent.setup();
+      const settingsWithScript = createMockSettings({
+        processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
+      });
+      mockApi.getSettings.mockResolvedValue(settingsWithScript);
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Script Timeout (seconds)')).toHaveValue(60);
+      });
+
+      const timeoutInput = screen.getByLabelText('Script Timeout (seconds)');
+      await user.clear(timeoutInput);
+
+      await act(async () => {
+        fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+      });
+
+      expect(screen.getByText('Timeout is required when a post-processing script is configured')).toBeInTheDocument();
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+    });
   });
 
   describe('cross-category form model preservation', () => {
-    it.todo('save payload includes both processing and tagging categories');
-    it.todo('tagging toggle state survives processing validation failure and correction');
+    it('save payload includes both processing and tagging categories', async () => {
+      const user = userEvent.setup();
+      const settings = createMockSettings({
+        processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+        tagging: { enabled: false, mode: 'populate_missing', embedCover: true },
+      });
+      mockApi.getSettings.mockResolvedValue(settings);
+      mockApi.updateSettings.mockResolvedValue(settings);
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
+      });
+
+      // Toggle tagging to make dirty
+      await user.click(screen.getByLabelText('Tag Embedding'));
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        const call = mockApi.updateSettings.mock.calls[0][0];
+        expect(call).toHaveProperty('processing');
+        expect(call).toHaveProperty('tagging');
+        expect(call.processing).toMatchObject({ enabled: true, ffmpegPath: '/usr/bin/ffmpeg' });
+        // Tag Embedding was toggled: enabled false → true, embedCover stays true
+        expect(call.tagging).toMatchObject({ enabled: true, mode: 'populate_missing', embedCover: true });
+      });
+    });
+
+    it('tagging toggle state survives processing validation failure and correction', async () => {
+      const user = userEvent.setup();
+      mockApi.getSettings.mockResolvedValue(defaultMockSettings);
+      mockApi.updateSettings.mockResolvedValue(defaultMockSettings);
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
+      });
+
+      // Toggle tagging on
+      await user.click(screen.getByLabelText('Tag Embedding'));
+
+      // Enable processing without ffmpegPath → validation error
+      await user.click(screen.getByLabelText('Enable Post Processing'));
+
+      await act(async () => {
+        fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+      });
+
+      expect(screen.getByText('ffmpeg path is required when processing is enabled')).toBeInTheDocument();
+      expect(mockApi.updateSettings).not.toHaveBeenCalled();
+
+      // Fix the validation error
+      const ffmpegInput = screen.getByLabelText('ffmpeg Path');
+      await user.type(ffmpegInput, '/usr/bin/ffmpeg');
+
+      await act(async () => {
+        fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+      });
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tagging: expect.objectContaining({
+              // Tag Embedding was toggled on before the validation failure
+              enabled: true,
+            }),
+          }),
+        );
+      });
+    });
   });
 
   it('renders Keep Original toggle as a compact hidden-checkbox slider (sr-only peer pattern)', async () => {
