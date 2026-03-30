@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SUGGESTION_REASONS } from '../discovery.js';
+import { stripDefaults } from './strip-defaults.js';
 
 const multiplierField = z.number().min(0).max(1).default(1);
 
@@ -16,4 +17,14 @@ export const discoverySettingsSchema = z.object({
   weightMultipliers: weightMultipliersSchema.default(
     Object.fromEntries(SUGGESTION_REASONS.map((r) => [r, 1])) as Record<string, number>,
   ),
+});
+
+// Form schema excludes weightMultipliers — it's computed by DiscoveryService
+// during refreshes, not editable in the Discovery settings form.
+export const discoveryFormSchema = stripDefaults(discoverySettingsSchema).pick({
+  enabled: true,
+  intervalHours: true,
+  maxSuggestionsPerAuthor: true,
+  expiryDays: true,
+  snoozeDays: true,
 });

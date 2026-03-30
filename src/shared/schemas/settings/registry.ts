@@ -132,14 +132,10 @@ export const CATEGORY_SCHEMAS = Object.fromEntries(
 // Form schema derivation
 // ---------------------------------------------------------------------------
 
-export function stripDefaults(schema: z.ZodObject<z.ZodRawShape>) {
-  const newShape: Record<string, z.ZodType> = {};
-  for (const [key, field] of Object.entries(schema.shape)) {
-    // Zod v4: shape entries are $ZodType (internal), cast for public ZodType compat
-    newShape[key] = (field instanceof z.ZodDefault ? field.removeDefault() : field) as never;
-  }
-  return z.object(newShape);
-}
+// Re-export from standalone module to avoid circular imports
+// (category files like quality.ts need stripDefaults but registry imports them)
+export { stripDefaults } from './strip-defaults.js';
+import { stripDefaults } from './strip-defaults.js';
 
 function getFormSchema(entry: { schema: z.ZodObject<z.ZodRawShape>; formSchema?: z.ZodObject<z.ZodRawShape> }) {
   return entry.formSchema ?? stripDefaults(entry.schema);

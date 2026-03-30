@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { stripDefaults } from './strip-defaults.js';
 
 export const protocolPreferenceSchema = z.enum(['usenet', 'torrent', 'none']);
 export type ProtocolPreference = z.infer<typeof protocolPreferenceSchema>;
@@ -12,3 +13,5 @@ export const qualitySettingsSchema = z.object({
   rejectWords: z.string().default(''),
   requiredWords: z.string().default(''),
 });
+
+export const qualityFormSchema = stripDefaults(qualitySettingsSchema);

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { z } from 'zod';
 import {
   settingsRegistry,
   SETTINGS_CATEGORIES,
@@ -13,6 +14,9 @@ import {
 } from './registry.js';
 import { importSettingsSchema } from './import.js';
 import { processingSettingsSchema } from './processing.js';
+import { generalFormSchema } from './general.js';
+import { discoveryFormSchema } from './discovery.js';
+import { qualityFormSchema } from './quality.js';
 
 describe('settingsRegistry', () => {
   describe('invariants', () => {
@@ -586,6 +590,118 @@ describe('settingsRegistry', () => {
       const result = settingsToFormData(settings);
       // Spread of empty object over defaults = defaults win
       expect(result.search).toEqual(DEFAULT_SETTINGS.search);
+    });
+  });
+
+  describe('stripDefaults — schema derivation correctness', () => {
+    it('strips .default() from fields — output schema requires values (no longer optional)', () => {
+      const schema = z.object({ name: z.string().default('hi'), age: z.number().default(0) });
+      const stripped = stripDefaults(schema);
+      // Without defaults, missing fields should fail
+      const result = stripped.safeParse({});
+      expect(result.success).toBe(false);
+      // With values, should pass
+      const result2 = stripped.safeParse({ name: 'test', age: 5 });
+      expect(result2.success).toBe(true);
+    });
+
+    it('preserves .trim().min(1) validation after stripping defaults', () => {
+      const schema = z.object({ name: z.string().trim().min(1).default('hi') });
+      const stripped = stripDefaults(schema);
+      const result = stripped.safeParse({ name: '   ' });
+      expect(result.success).toBe(false);
+    });
+
+    it('handles ZodEnum with .default() — enum constraints preserved, default removed', () => {
+      const schema = z.object({ level: z.enum(['a', 'b', 'c']).default('a') });
+      const stripped = stripDefaults(schema);
+      const valid = stripped.safeParse({ level: 'b' });
+      expect(valid.success).toBe(true);
+      const invalid = stripped.safeParse({ level: 'x' });
+      expect(invalid.success).toBe(false);
+      // Without value, should fail (no default)
+      const missing = stripped.safeParse({});
+      expect(missing.success).toBe(false);
+    });
+  });
+
+  describe('hidden field preservation — general', () => {
+    it('generalFormSchema omits welcomeSeen from parsed output', () => {
+      const result = generalFormSchema.safeParse({
+        logLevel: 'info',
+        housekeepingRetentionDays: 90,
+        recycleRetentionDays: 30,
+        welcomeSeen: true,
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).not.toHaveProperty('welcomeSeen');
+      }
+    });
+
+    it('generalFormSchema accepts valid general settings without welcomeSeen', () => {
+      const result = generalFormSchema.safeParse({
+        logLevel: 'debug',
+        housekeepingRetentionDays: 30,
+        recycleRetentionDays: 7,
+      });
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('hidden field preservation — discovery', () => {
+    it('discoveryFormSchema omits weightMultipliers from parsed output', () => {
+      const result = discoveryFormSchema.safeParse({
+        enabled: true,
+        intervalHours: 24,
+        maxSuggestionsPerAuthor: 5,
+        expiryDays: 90,
+        snoozeDays: 30,
+        weightMultipliers: { some: 0.5 },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).not.toHaveProperty('weightMultipliers');
+      }
+    });
+
+    it('discoveryFormSchema accepts valid discovery settings without weightMultipliers', () => {
+      const result = discoveryFormSchema.safeParse({
+        enabled: false,
+        intervalHours: 48,
+        maxSuggestionsPerAuthor: 10,
+        expiryDays: 60,
+        snoozeDays: 14,
+      });
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('qualityFormSchema derivation', () => {
+    it('qualityFormSchema accepts valid quality settings', () => {
+      const result = qualityFormSchema.safeParse({
+        grabFloor: 0,
+        protocolPreference: 'none',
+        minSeeders: 1,
+        searchImmediately: false,
+        monitorForUpgrades: false,
+        rejectWords: '',
+        requiredWords: '',
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('qualityFormSchema rejects out-of-range values', () => {
+      const result = qualityFormSchema.safeParse({
+        grabFloor: -1, // nonnegative
+        protocolPreference: 'none',
+        minSeeders: 1,
+        searchImmediately: false,
+        monitorForUpgrades: false,
+        rejectWords: '',
+        requiredWords: '',
+      });
+      expect(result.success).toBe(false);
     });
   });
 });
