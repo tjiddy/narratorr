@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #217 Polish file naming UI — inline previews and token caret toggle — 2026-03-30
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #222
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 17
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (coverage review caught weak token insertion assertion)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean two-module TDD cycle — preview layout and caret toggle split naturally. All spec review rounds were already resolved before implementation. Token groups reused from existing exports without any new types.
+- Friction / issues encountered: `toHaveValue()` with `expect.stringContaining()` doesn't work — jest-dom does exact comparison. DOM traversal for scoping repeated FormatField instances was unreliable; switched to data-testid approach.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (full source reads of NamingSettingsSection, NamingTokenModal, naming.ts)
+- Avoidable waste: None significant — the spec had 3 rounds of review before implementation which frontloaded all decisions
+- Suggestions: For pure UI polish issues, the self-review subagent adds limited value — could be lighter-weight
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: frontend-design skill not available (noted in handoff)
+- Unresolved debt: None new
+
+### Wish I'd Known
+1. `toHaveValue()` in jest-dom is exact-match only — cannot compose with `expect.stringContaining()`. Use `(el as HTMLInputElement).value` + `.toContain()` for partial assertions.
+2. When testing repeated sub-components, `closest('div').parentElement` DOM traversal is unreliable — always use `data-testid` + `getAllByTestId()` with index-based selection.
+3. The existing mock for `@core/utils/index.js` already includes `FOLDER_TOKEN_GROUPS` and `FILE_ONLY_TOKEN_GROUP` — no need to add them since the barrel re-export brings them in automatically.
+
 ## #216 REACT-3/CSS-1: Extract shared form primitives and fix z-index — 2026-03-30
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #221
