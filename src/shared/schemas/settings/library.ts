@@ -4,19 +4,62 @@ import { FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS, TOKEN_PATTERN_SOURCE } from
 export const FOLDER_FORMAT_ALLOWED_TOKENS = [...FOLDER_ALLOWED_TOKENS];
 export const FILE_FORMAT_ALLOWED_TOKENS = [...FILE_ALLOWED_TOKENS];
 
+/**
+ * Extract disambiguated token names from a template string.
+ * Shares the suffix-first precedence logic with validateTokens/parseTemplate.
+ */
+function extractTokenNames(val: string, allowedTokens: ReadonlySet<string>): string[] {
+  const tokenPattern = new RegExp(TOKEN_PATTERN_SOURCE, 'g');
+  const names: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = tokenPattern.exec(val)) !== null) {
+    const candidatePrefix = match[1];
+    const candidateName = match[2];
+    let tokenName = candidateName;
+    if (candidatePrefix) {
+      const firstWordMatch = candidatePrefix.match(/\w+/);
+      if (firstWordMatch && allowedTokens.has(firstWordMatch[0])) {
+        tokenName = firstWordMatch[0];
+      }
+    }
+    names.push(tokenName);
+  }
+  return names;
+}
+
+/** All known tokens for disambiguation (superset — used by hasTitle/hasAuthor). */
+const ALL_TOKENS = new Set<string>([...FILE_ALLOWED_TOKENS]);
+
 export function hasTitle(val: string): boolean {
-  return /\{title(?:Sort)?(?::\d+)?(?:\?[^}]*)?\}/.test(val);
+  const names = extractTokenNames(val, ALL_TOKENS);
+  return names.some(n => n === 'title' || n === 'titleSort');
 }
 
 export function hasAuthor(val: string): boolean {
-  return /\{author(?:LastFirst)?(?::\d+)?(?:\?[^}]*)?\}/.test(val);
+  const names = extractTokenNames(val, ALL_TOKENS);
+  return names.some(n => n === 'author' || n === 'authorLastFirst');
 }
 
 export function validateTokens(val: string, allowed: readonly string[]): boolean {
+  const allowedSet = new Set(allowed);
   const tokenPattern = new RegExp(TOKEN_PATTERN_SOURCE, 'g');
   let match: RegExpExecArray | null;
   while ((match = tokenPattern.exec(val)) !== null) {
-    if (!allowed.includes(match[1])) return false;
+    // Groups: (1) optional prefix, (2) token candidate, (3) pad spec, (4) optional suffix
+    const candidatePrefix = match[1];
+    const candidateName = match[2];
+
+    // Suffix-first disambiguation: if candidate prefix contains a known token name,
+    // the real token is that word (suffix syntax). Otherwise, candidateName is the token (prefix syntax).
+    let tokenName = candidateName;
+    if (candidatePrefix) {
+      const firstWordMatch = candidatePrefix.match(/\w+/);
+      if (firstWordMatch && allowedSet.has(firstWordMatch[0])) {
+        tokenName = firstWordMatch[0];
+      }
+    }
+
+    if (!allowedSet.has(tokenName)) return false;
   }
   return true;
 }

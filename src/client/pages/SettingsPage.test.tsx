@@ -45,7 +45,7 @@ vi.mock('sonner', () => ({
 }));
 
 vi.mock('@core/utils/index.js', () => ({
-  TOKEN_PATTERN_SOURCE: String.raw`\{(\w+)(?::(\d+))?(?:\?([^}]*))?\}`,
+  TOKEN_PATTERN_SOURCE: String.raw`\{(?:([^}?]*?)\?)?(\w+)(?::(\d+))?(?:\?([^}]*))?\}`,
   renderTemplate: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
   renderFilename: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
   toLastFirst: (name: string) => name,
@@ -56,7 +56,7 @@ vi.mock('@core/utils/index.js', () => ({
   NAMING_PRESETS: [
     { id: 'standard', name: 'Standard', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
     { id: 'audiobookshelf', name: 'Audiobookshelf', folderFormat: '{author}/{series?/}{title}', fileFormat: '{title}' },
-    { id: 'plex', name: 'Plex', folderFormat: '{author}/{series?/}{year? - }{title}', fileFormat: '{title}{trackNumber:00? - pt}' },
+    { id: 'plex', name: 'Plex', folderFormat: '{author}/{series?/}{year? - }{title}', fileFormat: '{title}{ - pt?trackNumber:00}' },
     { id: 'last-first', name: 'Last, First', folderFormat: '{authorLastFirst}/{titleSort}', fileFormat: '{authorLastFirst} - {titleSort}' },
   ],
   FOLDER_TOKEN_GROUPS: [

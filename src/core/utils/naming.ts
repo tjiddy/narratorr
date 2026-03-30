@@ -1,7 +1,19 @@
 import type { NamingSeparator, NamingCase } from '../../shared/schemas/settings/library.js';
 
-/** Token grammar: `{name}`, `{name:digits}`, `{name?text}`, or `{name:digits?text}`. */
-export const TOKEN_PATTERN_SOURCE = String.raw`\{(\w+)(?::(\d+))?(?:\?([^}]*))?\}`;
+/**
+ * Token grammar:
+ * - `{name}` — simple replacement
+ * - `{name:digits}` — zero-padded
+ * - `{name?text}` — conditional suffix
+ * - `{name:digits?text}` — padded + suffix
+ * - `{text?name}` — conditional prefix (when text is not a known token)
+ * - `{text?name:digits}` — prefix + padded
+ * - `{text?name?text}` — prefix + suffix
+ *
+ * Disambiguation: suffix-first precedence. See `disambiguateTokenMatch()`.
+ * Groups: (1) optional prefix, (2) token candidate, (3) pad spec, (4) optional suffix.
+ */
+export const TOKEN_PATTERN_SOURCE = String.raw`\{(?:([^}?]*?)\?)?(\w+)(?::(\d+))?(?:\?([^}]*))?\}`;
 
 export interface NamingOptions {
   separator?: NamingSeparator;
@@ -144,6 +156,57 @@ export function sanitizePath(segment: string): string {
   return result || 'Unknown';
 }
 
+/**
+ * Suffix-first disambiguation for the token regex.
+ *
+ * The regex captures: (1) optional prefix text, (2) \w+ candidate, (3) pad, (4) suffix.
+ * For `{author?title}`, group 1="author", group 2="title".
+ * For `{ - pt?trackNumber:00}`, group 1=" - pt", group 2="trackNumber".
+ *
+ * Rule: extract the first `\w+` from group 1. If it IS a known token → re-interpret
+ * as suffix syntax (group 1's word is the real token, everything after `?` is suffix).
+ * If NOT known → keep as prefix syntax.
+ */
+function disambiguateTokenMatch(
+  candidatePrefix: string | undefined,
+  candidateName: string,
+  padSpec: string | undefined,
+  candidateSuffix: string | undefined,
+  allowedTokens: ReadonlySet<string>,
+): { prefix: string | undefined; name: string; padSpec: string | undefined; suffix: string | undefined } {
+  if (!candidatePrefix) {
+    // No prefix group → simple token or suffix-only syntax
+    return { prefix: undefined, name: candidateName, padSpec, suffix: candidateSuffix };
+  }
+
+  // Extract first \w+ from the candidate prefix
+  const firstWordMatch = candidatePrefix.match(/\w+/);
+  if (firstWordMatch && allowedTokens.has(firstWordMatch[0])) {
+    // The first word is a known token → re-interpret as suffix syntax
+    // The real token is the first word; everything after ? is suffix text
+    const realToken = firstWordMatch[0];
+    // Reconstruct the suffix: candidateName + (padSpec if any) + (candidateSuffix if any)
+    let reconstructedSuffix = candidateName;
+    if (padSpec !== undefined) {
+      reconstructedSuffix += ':' + padSpec;
+    }
+    if (candidateSuffix !== undefined) {
+      reconstructedSuffix += '?' + candidateSuffix;
+    }
+    // The original candidatePrefix may have had text before the token word — that was literal text
+    // But the regex `([^}?]*?)\?` captures greedily up to the first `?`, so the prefix IS the full first word
+    // Extract padSpec from original prefix if present (e.g., {author:00?title} — unlikely but possible)
+    // For suffix reinterpretation, there's no pad spec from the prefix — the original token format was {name?suffix}
+    return { prefix: undefined, name: realToken, padSpec: undefined, suffix: reconstructedSuffix };
+  }
+
+  // First word is NOT a known token → keep as prefix syntax
+  return { prefix: candidatePrefix, name: candidateName, padSpec, suffix: candidateSuffix };
+}
+
+/** Build a set of all known token names for disambiguation. */
+const ALL_KNOWN_TOKENS = new Set<string>([...FILE_ALLOWED_TOKENS]);
+
 /** Resolve tokens in a template string — shared logic for renderTemplate/renderFilename. */
 function resolveTokens(
   template: string,
@@ -152,7 +215,11 @@ function resolveTokens(
 ): string {
   return template.replace(
     new RegExp(TOKEN_PATTERN_SOURCE, 'g'),
-    (_match, name: string, padSpec: string | undefined, conditional: string | undefined) => {
+    (_match, candidatePrefix: string | undefined, candidateName: string, rawPadSpec: string | undefined, candidateSuffix: string | undefined) => {
+      const { prefix, name, padSpec, suffix } = disambiguateTokenMatch(
+        candidatePrefix, candidateName, rawPadSpec, candidateSuffix, ALL_KNOWN_TOKENS,
+      );
+
       const raw = tokens[name];
       const hasValue = raw !== undefined && raw !== null && raw !== '';
 
@@ -175,12 +242,16 @@ function resolveTokens(
         value = applyTokenTransforms(value, options);
       }
 
-      // Conditional block: {token:00?text} or {token?text} — append text only if token has value
-      if (conditional !== undefined) {
-        return value + conditional;
+      // Build result: prefix + value + suffix
+      let result = value;
+      if (prefix !== undefined) {
+        result = prefix + result;
+      }
+      if (suffix !== undefined) {
+        result = result + suffix;
       }
 
-      return value;
+      return result;
     },
   );
 }
@@ -251,12 +322,14 @@ export function parseTemplate(
   const tokens: string[] = [];
   const allowedSet = new Set<string>(allowedTokens);
 
-  // Extract all token names from {token}, {token:spec}, {token?text}
+  // Extract all token names from {token}, {token:spec}, {token?text}, {prefix?token}
   const tokenPattern = new RegExp(TOKEN_PATTERN_SOURCE, 'g');
   let match: RegExpExecArray | null;
 
   while ((match = tokenPattern.exec(template)) !== null) {
-    const name = match[1];
+    const { name } = disambiguateTokenMatch(
+      match[1], match[2], match[3], match[4], allowedSet,
+    );
     if (!tokens.includes(name)) {
       tokens.push(name);
     }
@@ -265,11 +338,12 @@ export function parseTemplate(
     }
   }
 
-  if (!tokens.includes('title') && !tokens.includes('titleSort')) {
+  // Only check for required tokens if the template is non-empty
+  if (template && !tokens.includes('title') && !tokens.includes('titleSort')) {
     errors.push('Template must include {title} or {titleSort}');
   }
 
-  if (!tokens.includes('author') && !tokens.includes('authorLastFirst')) {
+  if (template && !tokens.includes('author') && !tokens.includes('authorLastFirst')) {
     warnings.push('Consider including {author} or {authorLastFirst} for better organization');
   }
 

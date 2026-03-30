@@ -28,7 +28,7 @@ describe('NAMING_PRESETS', () => {
     expect(preset).toBeDefined();
     expect(preset!.name).toBe('Plex');
     expect(preset!.folderFormat).toBe('{author}/{series?/}{year? - }{title}');
-    expect(preset!.fileFormat).toBe('{title}{trackNumber:00? - pt}');
+    expect(preset!.fileFormat).toBe('{title}{ - pt?trackNumber:00}');
   });
 
   it('contains "Last, First" preset with correct formats', () => {
@@ -69,6 +69,27 @@ describe('preset template validity', () => {
 
     const withoutSeries = renderTemplate('{author}/{series?/}{title}', { ...sampleTokens, series: undefined });
     expect(withoutSeries).toBe('Brandon Sanderson/The Way of Kings');
+  });
+});
+
+describe('Plex preset with prefix conditional syntax', () => {
+  it('Plex preset fileFormat uses prefix syntax { - pt?trackNumber:00}', () => {
+    const plex = NAMING_PRESETS.find(p => p.id === 'plex');
+    expect(plex!.fileFormat).toBe('{title}{ - pt?trackNumber:00}');
+  });
+
+  it('Plex preset renders "Title - pt01" for multi-file', () => {
+    const result = renderFilename('{title}{ - pt?trackNumber:00}', {
+      title: 'The Way of Kings', trackNumber: 1, trackTotal: 12,
+    });
+    expect(result).toBe('The Way of Kings - pt01');
+  });
+
+  it('Plex preset renders "Title" for single-file (no trackNumber)', () => {
+    const result = renderFilename('{title}{ - pt?trackNumber:00}', {
+      title: 'The Way of Kings',
+    });
+    expect(result).toBe('The Way of Kings');
   });
 });
 

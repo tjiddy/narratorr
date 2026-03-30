@@ -22,7 +22,7 @@ export const NAMING_PRESETS: readonly NamingPreset[] = [
     id: 'plex',
     name: 'Plex',
     folderFormat: '{author}/{series?/}{year? - }{title}',
-    fileFormat: '{title}{trackNumber:00? - pt}',
+    fileFormat: '{title}{ - pt?trackNumber:00}',
   },
   {
     id: 'last-first',

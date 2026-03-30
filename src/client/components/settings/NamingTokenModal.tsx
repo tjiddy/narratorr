@@ -94,7 +94,15 @@ export function NamingTokenModal({
             </div>
             <div className="flex gap-3">
               <code className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono shrink-0">{'{token? text}'}</code>
-              <span className="text-muted-foreground">Conditional — includes text only if token has value</span>
+              <span className="text-muted-foreground">Conditional suffix — appends text only if token has value</span>
+            </div>
+            <div className="flex gap-3">
+              <code className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono shrink-0">{'{text?token}'}</code>
+              <span className="text-muted-foreground">Conditional prefix — prepends text only if token has value</span>
+            </div>
+            <div className="flex gap-3">
+              <code className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono shrink-0">{'{pre?token?suf}'}</code>
+              <span className="text-muted-foreground">Both prefix and suffix — wraps value when token has value</span>
             </div>
           </div>
         </div>
@@ -108,6 +116,7 @@ export function NamingTokenModal({
             <li>Consecutive spaces are collapsed to a single space</li>
             <li>Illegal filesystem characters are automatically stripped</li>
             <li>Path segments are truncated to 255 characters</li>
+            <li>Prefix vs suffix: if the text before ? is not a token name, it&apos;s a prefix; otherwise it&apos;s a suffix</li>
           </ul>
         </div>
       </div>

@@ -8,6 +8,7 @@ import {
   FOLDER_TOKEN_MSG,
   FILE_TITLE_MSG,
   FILE_TOKEN_MSG,
+  FILE_FORMAT_ALLOWED_TOKENS,
   libraryFormSchema,
   namingFormSchema,
 } from './library.js';
@@ -79,6 +80,56 @@ describe('validateTokens', () => {
 
   it('returns true for plain text with no tokens', () => {
     expect(validateTokens('just text', FOLDER_ALLOWED_TOKENS)).toBe(true);
+  });
+});
+
+describe('hasTitle — prefix conditional syntax', () => {
+  it('returns true for {pre?title} (prefix syntax with title token)', () => {
+    expect(hasTitle('{pre?title}')).toBe(true);
+  });
+
+  it('returns true for { - ?title} (prefix syntax)', () => {
+    expect(hasTitle('{ - ?title}')).toBe(true);
+  });
+
+  it('returns true for {pre?titleSort} (prefix syntax with titleSort)', () => {
+    expect(hasTitle('{pre?titleSort}')).toBe(true);
+  });
+
+  it('returns false for {author?title} — suffix-first: "author" is a known token, "title" is suffix text', () => {
+    expect(hasTitle('{author?title}')).toBe(false);
+  });
+
+  it('returns false for {series?titleSort} — suffix-first: "series" is a known token', () => {
+    expect(hasTitle('{series?titleSort}')).toBe(false);
+  });
+});
+
+describe('hasAuthor — prefix conditional syntax', () => {
+  it('returns true for {pre?author} (prefix syntax with author token)', () => {
+    expect(hasAuthor('{pre?author}')).toBe(true);
+  });
+
+  it('returns true for {pre?authorLastFirst}', () => {
+    expect(hasAuthor('{pre?authorLastFirst}')).toBe(true);
+  });
+
+  it('returns false for {title?author} — suffix-first: "title" is a known token, "author" is suffix text', () => {
+    expect(hasAuthor('{title?author}')).toBe(false);
+  });
+});
+
+describe('validateTokens — prefix conditional syntax', () => {
+  it('extracts token name from prefix syntax, not prefix text', () => {
+    expect(validateTokens('{ - pt?trackNumber:00}', FILE_FORMAT_ALLOWED_TOKENS)).toBe(true);
+  });
+
+  it('accepts {title}{ - pt?trackNumber:00} as valid file format', () => {
+    expect(validateTokens('{title}{ - pt?trackNumber:00}', FILE_FORMAT_ALLOWED_TOKENS)).toBe(true);
+  });
+
+  it('rejects prefix syntax with unknown token name', () => {
+    expect(validateTokens('{pre?unknownToken}', FOLDER_ALLOWED_TOKENS)).toBe(false);
   });
 });
 

@@ -131,6 +131,28 @@ describe('NamingTokenModal', () => {
     });
   });
 
+  describe('prefix conditional syntax reference', () => {
+    it('shows prefix syntax example: {text?token}', () => {
+      renderWithProviders(<NamingTokenModal {...defaultProps} />);
+      expect(screen.getByText('{text?token}')).toBeInTheDocument();
+    });
+
+    it('shows combined prefix+suffix syntax example: {pre?token?suf}', () => {
+      renderWithProviders(<NamingTokenModal {...defaultProps} />);
+      expect(screen.getByText('{pre?token?suf}')).toBeInTheDocument();
+    });
+
+    it('explains disambiguation: prefix vs suffix in Good to know', () => {
+      renderWithProviders(<NamingTokenModal {...defaultProps} />);
+      expect(screen.getByText(/prefix.*not a token name/i)).toBeInTheDocument();
+    });
+
+    it('existing suffix syntax {token? text} still documented', () => {
+      renderWithProviders(<NamingTokenModal {...defaultProps} />);
+      expect(screen.getByText('{token? text}')).toBeInTheDocument();
+    });
+  });
+
   describe('close behavior', () => {
     it('closes when X button is clicked', async () => {
       const onClose = vi.fn();

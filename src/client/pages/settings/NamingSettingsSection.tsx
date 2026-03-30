@@ -28,6 +28,10 @@ const SAMPLE_TOKENS_NO_SERIES = {
   title: 'Project Hail Mary', titleSort: toSortTitle('Project Hail Mary'),
   year: '2021', narrator: 'Ray Porter', narratorLastFirst: toLastFirst('Ray Porter'),
 };
+const SAMPLE_TOKENS_MULTIFILE = {
+  ...SAMPLE_TOKENS,
+  trackNumber: 3, trackTotal: 12, partName: 'Chapter 3',
+};
 
 const SEPARATOR_LABELS: Record<NamingSeparator, string> = { space: 'Space', period: 'Period', underscore: 'Underscore', dash: 'Dash' };
 const CASE_LABELS: Record<NamingCase, string> = { default: 'Default', lower: 'lowercase', upper: 'UPPERCASE', title: 'Title Case' };
@@ -79,6 +83,7 @@ interface FormatFieldProps {
   error?: FieldError;
   preview: string;
   previewNoSeries: string;
+  previewMultiFile?: string;
   previewSuffix?: string;
   warnings?: ReactNode;
   onOpenTokenModal: () => void;
@@ -92,7 +97,7 @@ interface FormatFieldProps {
   onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 }
 
-function FormatField({ id, label, ariaLabel, placeholder, error, preview, previewNoSeries, previewSuffix, warnings, onOpenTokenModal, onInsertToken, tokenGroups, inlinePanelOpen, onToggleInlinePanel, registerProps, inputRef, hasValue, onKeyDown }: FormatFieldProps) {
+function FormatField({ id, label, ariaLabel, placeholder, error, preview, previewNoSeries, previewMultiFile, previewSuffix, warnings, onOpenTokenModal, onInsertToken, tokenGroups, inlinePanelOpen, onToggleInlinePanel, registerProps, inputRef, hasValue, onKeyDown }: FormatFieldProps) {
   const panelId = `${id}-token-panel`;
   return (
     <div>
@@ -168,6 +173,14 @@ function FormatField({ id, label, ariaLabel, placeholder, error, preview, previe
               {previewNoSeries ? <>{previewNoSeries}{previewSuffix}</> : <span className="text-muted-foreground italic">Empty</span>}
             </span>
           </div>
+          {previewMultiFile !== undefined && (
+            <div className="flex items-baseline gap-3">
+              <span className="w-24 text-right shrink-0 text-xs text-muted-foreground">Multi-file</span>
+              <span data-testid="preview-multi-file" className="text-sm font-mono break-all">
+                {previewMultiFile ? <>{previewMultiFile}{previewSuffix}</> : <span className="text-muted-foreground italic">Empty</span>}
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -226,8 +239,9 @@ export function NamingSettingsSection() {
 
   const folderPreview = useMemo(() => folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS, namingOptions) : '', [folderFormat, namingOptions]);
   const folderPreviewNoSeries = useMemo(() => folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '', [folderFormat, namingOptions]);
-  const filePreview = useMemo(() => fileFormat ? renderFilename(fileFormat, { ...SAMPLE_TOKENS, trackNumber: 1, trackTotal: 12, partName: 'The Way of Kings' }, namingOptions) : '', [fileFormat, namingOptions]);
-  const filePreviewNoSeries = useMemo(() => fileFormat ? renderFilename(fileFormat, { ...SAMPLE_TOKENS_NO_SERIES, trackNumber: 1, trackTotal: 8, partName: 'Project Hail Mary' }, namingOptions) : '', [fileFormat, namingOptions]);
+  const filePreview = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS, namingOptions) : '', [fileFormat, namingOptions]);
+  const filePreviewNoSeries = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '', [fileFormat, namingOptions]);
+  const filePreviewMultiFile = useMemo(() => fileFormat ? renderFilename(fileFormat, SAMPLE_TOKENS_MULTIFILE, namingOptions) : '', [fileFormat, namingOptions]);
 
   const hasTitleToken = folderFormat ? hasTitle(folderFormat) : true;
   const hasAuthorToken = folderFormat ? hasAuthor(folderFormat) : true;
@@ -295,7 +309,7 @@ export function NamingSettingsSection() {
 
         <FormatField
           id="fileFormat" label="File Format" ariaLabel="File token reference" placeholder="{author} - {title}"
-          error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewSuffix=".m4b" hasValue={!!fileFormat}
+          error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewMultiFile={filePreviewMultiFile} previewSuffix=".m4b" hasValue={!!fileFormat}
           onOpenTokenModal={() => setTokenModalScope('file')}
           onInsertToken={(token) => insertTokenAtCursor(fileFormatRef, 'fileFormat', token)}
           onKeyDown={createFormatKeyDownHandler(fileFormatRef, 'fileFormat', setValue)}

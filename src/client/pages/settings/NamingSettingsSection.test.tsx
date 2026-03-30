@@ -17,19 +17,19 @@ vi.mock('@/lib/api', () => ({
 }));
 
 vi.mock('@core/utils/index.js', () => ({
-  TOKEN_PATTERN_SOURCE: String.raw`\{(\w+)(?::(\d+))?(?:\?([^}]*))?\}`,
+  TOKEN_PATTERN_SOURCE: String.raw`\{(?:([^}?]*?)\?)?(\w+)(?::(\d+))?(?:\?([^}]*))?\}`,
   renderTemplate: (template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
     let result = template.replace('{author}', 'Brandon Sanderson').replace('{authorLastFirst}', 'Sanderson, Brandon').replace('{title}', 'The Way of Kings').replace('{titleSort}', 'Way of Kings').replace('{narratorLastFirst}', 'Kramer, Michael & Reading, Kate');
     if (options?.separator && options.separator !== 'space') result = `[sep:${options.separator}] ${result}`;
     if (options?.case && options.case !== 'default') result = `[case:${options.case}] ${result}`;
     return result;
   },
-  renderFilename: (template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
+  renderFilename: vi.fn((template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
     let result = template.replace('{author}', 'Brandon Sanderson').replace('{title}', 'The Way of Kings').replace('{trackNumber}', '1').replace('{trackTotal}', '12').replace('{partName}', 'The Way of Kings');
     if (options?.separator && options.separator !== 'space') result = `[sep:${options.separator}] ${result}`;
     if (options?.case && options.case !== 'default') result = `[case:${options.case}] ${result}`;
     return result;
-  },
+  }),
   toLastFirst: (name: string) => name,
   toSortTitle: (title: string) => title,
   ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
@@ -38,7 +38,7 @@ vi.mock('@core/utils/index.js', () => ({
   NAMING_PRESETS: [
     { id: 'standard', name: 'Standard', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
     { id: 'audiobookshelf', name: 'Audiobookshelf', folderFormat: '{author}/{series?/}{title}', fileFormat: '{title}' },
-    { id: 'plex', name: 'Plex', folderFormat: '{author}/{series?/}{year? - }{title}', fileFormat: '{title}{trackNumber:00? - pt}' },
+    { id: 'plex', name: 'Plex', folderFormat: '{author}/{series?/}{year? - }{title}', fileFormat: '{title}{ - pt?trackNumber:00}' },
     { id: 'last-first', name: 'Last, First', folderFormat: '{authorLastFirst}/{titleSort}', fileFormat: '{authorLastFirst} - {titleSort}' },
   ],
   detectPreset: (folder: string, file: string) => {
@@ -57,6 +57,7 @@ vi.mock('@core/utils/index.js', () => ({
 
 const { api } = await import('@/lib/api');
 const { toast } = await import('sonner');
+const { renderFilename: mockRenderFilename } = await import('@core/utils/index.js') as unknown as { renderFilename: ReturnType<typeof vi.fn> };
 const mockApi = api as unknown as {
   getSettings: ReturnType<typeof vi.fn>;
   updateSettings: ReturnType<typeof vi.fn>;
@@ -1016,6 +1017,132 @@ describe('NamingSettingsSection', () => {
       fireEvent.keyDown(input, { key: 'Backspace' });
       await waitFor(() => {
         expect(input.value).toBe('{author} - ');
+      });
+    });
+  });
+
+  describe('multi-file preview', () => {
+    it('file format field renders three preview labels: With series, Without series, Multi-file', async () => {
+      mockApi.getSettings.mockResolvedValue(mockSettings);
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getAllByText('With series').length).toBeGreaterThanOrEqual(1);
+      });
+      // Both folder and file have "With series"/"Without series", but only file has "Multi-file"
+      expect(screen.getByText('Multi-file')).toBeInTheDocument();
+    });
+
+    it('folder format field renders exactly two preview labels (no Multi-file)', async () => {
+      mockApi.getSettings.mockResolvedValue(mockSettings);
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getAllByText('With series').length).toBeGreaterThanOrEqual(1);
+      });
+      // Only 1 "Multi-file" label (file only — folder has no multi-file preview)
+      const multiFileLabels = screen.getAllByText('Multi-file');
+      expect(multiFileLabels).toHaveLength(1);
+    });
+
+    it('single-file previews omit track tokens; multi-file preview uses trackNumber=3, trackTotal=12', async () => {
+      mockApi.getSettings.mockResolvedValue(mockSettings);
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByText('Multi-file')).toBeInTheDocument();
+      });
+
+      // renderFilename is called 3 times for file format: with-series, without-series, multi-file
+      const filenameCalls = mockRenderFilename.mock.calls.filter(
+        (call: unknown[]) => typeof call[0] === 'string' && call[0] === '{author} - {title}',
+      );
+      // With-series call: tokens should NOT have trackNumber
+      const withSeriesTokens = filenameCalls[0]?.[1] as Record<string, unknown>;
+      expect(withSeriesTokens).not.toHaveProperty('trackNumber');
+      expect(withSeriesTokens).not.toHaveProperty('trackTotal');
+      expect(withSeriesTokens).not.toHaveProperty('partName');
+
+      // Without-series call: tokens should NOT have trackNumber
+      const withoutSeriesTokens = filenameCalls[1]?.[1] as Record<string, unknown>;
+      expect(withoutSeriesTokens).not.toHaveProperty('trackNumber');
+      expect(withoutSeriesTokens).not.toHaveProperty('trackTotal');
+      expect(withoutSeriesTokens).not.toHaveProperty('partName');
+
+      // Multi-file call: tokens should have trackNumber=3, trackTotal=12, partName='Chapter 3'
+      const multiFileTokens = filenameCalls[2]?.[1] as Record<string, unknown>;
+      expect(multiFileTokens).toHaveProperty('trackNumber', 3);
+      expect(multiFileTokens).toHaveProperty('trackTotal', 12);
+      expect(multiFileTokens).toHaveProperty('partName', 'Chapter 3');
+    });
+
+    it('multi-file preview row receives updated separator/case options', async () => {
+      const user = userEvent.setup();
+      mockApi.getSettings.mockResolvedValue(mockSettings);
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByText('Multi-file')).toBeInTheDocument();
+      });
+
+      // Change separator to period
+      mockRenderFilename.mockClear();
+      await user.selectOptions(screen.getByLabelText('Separator'), 'period');
+
+      await waitFor(() => {
+        const calls = mockRenderFilename.mock.calls.filter(
+          (call: unknown[]) => typeof call[0] === 'string' && call[0] === '{author} - {title}',
+        );
+        const multiFileOptions = calls[2]?.[2] as { separator?: string; case?: string } | undefined;
+        expect(multiFileOptions).toEqual(expect.objectContaining({ separator: 'period' }));
+      });
+
+      // Change case to upper
+      mockRenderFilename.mockClear();
+      await user.selectOptions(screen.getByLabelText('Case'), 'upper');
+
+      await waitFor(() => {
+        const calls = mockRenderFilename.mock.calls.filter(
+          (call: unknown[]) => typeof call[0] === 'string' && call[0] === '{author} - {title}',
+        );
+        const multiFileOptions = calls[2]?.[2] as { separator?: string; case?: string } | undefined;
+        expect(multiFileOptions).toEqual(expect.objectContaining({ case: 'upper' }));
+      });
+    });
+  });
+
+  describe('atomic deletion — prefix conditional tokens', () => {
+    it('Backspace at end of { - pt?trackNumber:00} deletes entire token', async () => {
+      const plexSettings = createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{title}{ - pt?trackNumber:00}', namingSeparator: 'space', namingCase: 'default' },
+      });
+      mockApi.getSettings.mockResolvedValue(plexSettings);
+      renderWithProviders(<NamingSettingsSection />);
+      const input = await waitFor(() => {
+        const el = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
+        expect(el).toHaveValue('{title}{ - pt?trackNumber:00}');
+        return el;
+      });
+      // Cursor after closing brace of { - pt?trackNumber:00}: '{title}{ - pt?trackNumber:00}'.length = 29
+      input.setSelectionRange(29, 29);
+      fireEvent.keyDown(input, { key: 'Backspace' });
+      await waitFor(() => {
+        expect(input.value).toBe('{title}');
+      });
+    });
+
+    it('Delete at start of { - pt?trackNumber:00} deletes entire token', async () => {
+      const plexSettings = createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{title}{ - pt?trackNumber:00}', namingSeparator: 'space', namingCase: 'default' },
+      });
+      mockApi.getSettings.mockResolvedValue(plexSettings);
+      renderWithProviders(<NamingSettingsSection />);
+      const input = await waitFor(() => {
+        const el = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
+        expect(el).toHaveValue('{title}{ - pt?trackNumber:00}');
+        return el;
+      });
+      // Cursor at opening brace of { - pt?trackNumber:00}: position 7 (after '{title}')
+      input.setSelectionRange(7, 7);
+      fireEvent.keyDown(input, { key: 'Delete' });
+      await waitFor(() => {
+        expect(input.value).toBe('{title}');
       });
     });
   });
