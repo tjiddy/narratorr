@@ -73,6 +73,8 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    > Exhaustively explore the codebase relevant to issue #<id>: "<issue title>".
    > Scope labels: <labels>. Key areas from spec: <summarize AC and implementation hints>.
    >
+   > **IMPORTANT: Show your work.** Every claim must include evidence — the search queries you ran, the files you read, the line numbers you found. Conclusions without receipts are unacceptable; providing proof forces thorough investigation.
+   >
    > Be thorough — most high-value review findings come from discovering the spec's assumptions don't match reality.
    >
    > 1. Find existing code that the spec will touch or extend

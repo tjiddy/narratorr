@@ -38,6 +38,8 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    > Explore the codebase to validate issue #<id>: "<issue title>".
    > Issue scope: <labels>. Key areas from spec: <summarize AC and implementation hints>.
    >
+   > **IMPORTANT: Show your work.** Every claim must include evidence — the search queries you ran, the files you read, the line numbers you found. "X doesn't exist" must include what you searched for and where. "Found 3 callers" must list them. Conclusions without receipts are unacceptable; providing proof forces thorough investigation and lets the consuming agent challenge weak searches.
+   >
    > Do ALL of the following and return a structured summary:
    >
    > **Workflow history:**

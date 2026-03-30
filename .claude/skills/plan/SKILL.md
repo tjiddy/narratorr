@@ -37,6 +37,8 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    > Explore the codebase for implementation planning of issue #<id>: "<issue title>".
    > Scope labels: <labels>. Key areas from spec: <summarize relevant AC and implementation hints>.
    >
+   > **IMPORTANT: Show your work.** Every claim must include evidence — the search queries you ran, the files you read, the line numbers you found. Conclusions without receipts are unacceptable; providing proof forces thorough investigation.
+   >
    > Do the following and return a structured summary:
    > 1. Read `CLAUDE.md` for design principles and conventions
    > 2. Find files/modules relevant to the issue scope — existing patterns, interfaces, wiring points

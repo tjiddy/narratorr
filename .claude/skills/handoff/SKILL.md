@@ -36,6 +36,9 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    This catches behavioral bugs and security issues before running expensive quality gates — things where the code itself is wrong, not just untested. Launch an **Explore subagent** (Agent tool, `subagent_type: "Explore"`, thoroughness: "very thorough") with this prompt:
 
    > You are the author reviewing your own code before handing off for external review.
+   >
+   > **IMPORTANT: Show your work.** Every claim must include evidence — the files you read, the line numbers you checked, the specific code you evaluated. Conclusions without receipts are unacceptable; providing proof forces thorough investigation.
+   >
    > Run `git diff main --name-only -- '*.ts' '*.tsx' | grep -v '\.test\.'` to get changed source files.
    > Read each changed source file and its diff (`git diff main -- <file>`).
    >
@@ -107,6 +110,8 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    Launch an **Explore subagent** (Agent tool, `subagent_type: "Explore"`, thoroughness: "very thorough") with this prompt:
 
    > Do an exhaustive behavioral test gap analysis for **branch-introduced changes only** (not pre-existing gaps).
+   >
+   > **IMPORTANT: Show your work.** Every claim must include evidence — the files you read, the line numbers you checked, the test files you verified. Conclusions without receipts are unacceptable; providing proof forces thorough investigation.
    >
    > 1. Run: `git diff main --name-only -- '*.ts' '*.tsx' | grep -v '\.test\.'` to get changed source files.
    > 1b. Run: `git diff main -- <file>` for each file to see the **actual diff**. Only behaviors introduced or modified by this branch need coverage. Pre-existing untested code is out of scope.
