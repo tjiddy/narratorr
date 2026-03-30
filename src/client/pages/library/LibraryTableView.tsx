@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { formatBytes } from '@/lib/api';
+import { formatDate } from '@/lib/format';
 import { ArrowUpDownIcon } from '@/components/icons';
 import type { DisplayBook, SortField, SortDirection } from './helpers.js';
 import { computeMbPerHour } from './helpers.js';
@@ -14,11 +15,6 @@ function formatSize(book: DisplayBook): string {
   const size = book.audioTotalSize ?? book.size;
   if (!size) return '—';
   return formatBytes(size);
-}
-
-function formatDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 const statusStyles: Record<string, { text: string; bg: string }> = {

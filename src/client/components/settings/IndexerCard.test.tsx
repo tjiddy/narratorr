@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockIndexer } from '@/__tests__/factories';
@@ -505,5 +505,60 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
     const apiUrlInput = screen.getByLabelText('API URL');
     expect(nameInput).not.toHaveAttribute('readonly');
     expect(apiUrlInput).not.toHaveAttribute('readonly');
+  });
+
+  describe('SelectWithChevron migration (#224)', () => {
+    it('type select in edit mode renders with appearance-none and ChevronDownIcon', () => {
+      renderWithProviders(
+        <IndexerCard
+          indexer={mockIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      const select = screen.getByLabelText('Type');
+      expect(select.className).toContain('appearance-none');
+      const selectParent = select.parentElement!;
+      expect(selectParent.querySelector('svg')).not.toBeNull();
+    });
+
+    it('selecting an indexer type via SelectWithChevron updates form state', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <IndexerCard
+          indexer={mockIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      await user.selectOptions(screen.getByLabelText('Type'), 'torznab');
+      expect((screen.getByLabelText('Type') as HTMLSelectElement).value).toBe('torznab');
+    });
+
+    it('type select shows border-destructive when errors.type is present', async () => {
+      const user = userEvent.setup();
+      const invalidIndexer = createMockIndexer({ type: 'INVALID' as never });
+      renderWithProviders(
+        <IndexerCard
+          indexer={invalidIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      const select = screen.getByLabelText('Type');
+      expect(select.className).toContain('border-border');
+      expect(select.className).not.toContain('border-destructive');
+
+      await user.click(screen.getByRole('button', { name: /save/i }));
+      await waitFor(() => {
+        expect(screen.getByLabelText('Type').className).toContain('border-destructive');
+      });
+    });
   });
 });

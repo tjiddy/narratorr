@@ -7,6 +7,7 @@ import { FormField } from './FormField';
 import { SettingsFormActions } from './SettingsFormActions';
 import { DownloadClientFields } from './DownloadClientFields';
 import { BlackholeFields } from './BlackholeFields';
+import { SelectWithChevron } from './SelectWithChevron';
 import { RemotePathMappingsSubsection } from './RemotePathMappingsSubsection';
 import {
   createDownloadClientFormSchema,
@@ -64,19 +65,15 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
   }, [selectedType, isEdit, setValue]);
 
   const isImplemented = IMPLEMENTED_TYPES.includes(selectedType);
-  const inputClass = 'w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all';
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="glass-card rounded-2xl p-6 animate-fade-in-up space-y-5">
       <h3 className="font-display text-lg font-semibold">{isEdit ? 'Edit Download Client' : 'Add Download Client'}</h3>
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField id="clientName" label="Name" registration={register('name')} error={errors.name} placeholder={DOWNLOAD_CLIENT_REGISTRY[selectedType]?.label} />
-        <div>
-          <label htmlFor="clientType" className="block text-sm font-medium mb-2">Type</label>
-          <select id="clientType" {...register('type')} className={inputClass}>
-            {downloadClientTypeSchema.options.map((t) => <option key={t} value={t}>{DOWNLOAD_CLIENT_REGISTRY[t]?.label || t}</option>)}
-          </select>
-        </div>
+        <SelectWithChevron id="clientType" label="Type" {...register('type')} error={!!errors.type}>
+          {downloadClientTypeSchema.options.map((t) => <option key={t} value={t}>{DOWNLOAD_CLIENT_REGISTRY[t]?.label || t}</option>)}
+        </SelectWithChevron>
         {selectedType === 'blackhole'
           ? <BlackholeFields register={register} errors={errors} isEdit={isEdit} />
           : <DownloadClientFields selectedType={selectedType} register={register} errors={errors} clientId={client?.id} setValue={setValue} getValues={getValues} isDirty={isDirty} isEdit={isEdit} />

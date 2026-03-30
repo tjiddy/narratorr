@@ -6,6 +6,7 @@ import { TestResultMessage } from '@/components/TestResultMessage';
 import { FormField } from './FormField';
 import { SettingsCardShell, type IdTestResult } from './SettingsCardShell';
 import { SettingsFormActions } from './SettingsFormActions';
+import { SelectWithChevron } from './SelectWithChevron';
 import { IndexerFields } from './IndexerFields';
 import {
   createIndexerFormSchema,
@@ -166,20 +167,13 @@ export function IndexerCard(props: IndexerCardProps) {
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField id="indexerName" label="Name" registration={register('name')} error={errors.name} placeholder={INDEXER_REGISTRY[selectedType]?.label} readOnly={isProwlarrManaged} />
 
-        <div>
-          <label htmlFor="indexerType" className="block text-sm font-medium mb-2">Type</label>
-          <select
-            id="indexerType"
-            {...register('type')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-          >
-            {indexerTypeSchema.options.map((t) => (
-              <option key={t} value={t}>
-                {INDEXER_REGISTRY[t]?.label || t}
-              </option>
-            ))}
-          </select>
-        </div>
+        <SelectWithChevron id="indexerType" label="Type" {...register('type')} error={!!errors.type}>
+          {indexerTypeSchema.options.map((t) => (
+            <option key={t} value={t}>
+              {INDEXER_REGISTRY[t]?.label || t}
+            </option>
+          ))}
+        </SelectWithChevron>
 
         {isEdit && (
           <>

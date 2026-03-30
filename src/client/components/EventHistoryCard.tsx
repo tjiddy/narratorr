@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { type BookEvent } from '@/lib/api';
+import { formatRelativeDate } from '@/lib/format';
 import {
   ArrowDownIcon,
   CheckCircleIcon,
@@ -35,21 +36,6 @@ const EVENT_CONFIG: Record<string, EventTypeConfig> = {
 
 const DEFAULT_CONFIG: EventTypeConfig = { icon: ClockIcon, label: 'Unknown', color: 'text-muted-foreground', bgColor: 'bg-muted' };
 
-function formatDate(dateStr: string): string {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
-}
-
 export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onDelete, isDeleting, showBookTitle = true, index = 0 }: {
   event: BookEvent;
   onMarkFailed?: (id: number) => void;
@@ -77,7 +63,7 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onDelet
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-semibold">{config.label}</span>
-            <span className="text-xs text-muted-foreground/70">{formatDate(event.createdAt)}</span>
+            <span className="text-xs text-muted-foreground/70">{formatRelativeDate(event.createdAt)}</span>
             <span className="text-xs px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground font-medium">
               {event.source}
             </span>
