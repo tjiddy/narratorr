@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #219 Remove as-any cast from ProcessingSettingsSection zodResolver — 2026-03-30
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #223
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 6 new tests
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (first approach with `.transform()` still had type divergence; switched to `setValueAs`)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Small, focused scope made the issue straightforward. Existing test coverage was comprehensive — new tests validated existing behavior, not new behavior.
+- Friction / issues encountered: First fix attempt (replacing `z.preprocess` with `z.union().optional().transform()`) failed typecheck because `.transform()` also creates `ZodEffects` with different input/output types. Had to step back and realize the fundamental issue is ANY Zod construct that transforms types will cause divergence — the fix needed to move coercion out of Zod entirely.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for self-review and coverage review (necessary but verbose for a 2-file change)
+- Avoidable waste: Could have tried `pnpm typecheck` after the first approach before writing tests
+- Suggestions: For type-only chores, try typecheck first before committing to an approach
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: Shared `processingFormSchema` in `processing.ts` still uses `z.preprocess` (logged in debt.md)
+
+### Wish I'd Known
+1. `z.transform()` also creates `ZodEffects` with input/output divergence — not just `z.preprocess()`. Any Zod construct that changes the type creates this problem with zodResolver.
+2. react-hook-form's `setValueAs` in `register()` is the correct layer for input coercion when zodResolver is involved — it runs before the schema sees the value.
+3. The diff was only 2 files but the explore/review subagents added significant overhead — for type-only chores, a lighter handoff process would be more efficient.
+
 ## #217 Polish file naming UI — inline previews and token caret toggle — 2026-03-30
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #222
