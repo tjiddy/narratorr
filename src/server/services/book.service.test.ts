@@ -4,7 +4,7 @@ import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js'
 import { BookService } from './book.service.js';
 import { books } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db, DbOrTx } from '../../db/index.js';
 import type { MetadataService } from './metadata.service.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -778,7 +778,7 @@ describe('BookService.syncAuthors / syncNarrators', () => {
   it('syncAuthors(bookId, []) clears all author junctions without error', async () => {
     db.delete.mockReturnValue(mockDbChain([]));
 
-    await service.syncAuthors(inject<Db>(db), 10, []);
+    await service.syncAuthors(inject<DbOrTx>(db), 10, []);
 
     expect(db.delete).toHaveBeenCalledTimes(1);
     expect(db.insert).not.toHaveBeenCalled();
@@ -787,7 +787,7 @@ describe('BookService.syncAuthors / syncNarrators', () => {
   it('syncNarrators(bookId, []) clears all narrator junctions without error', async () => {
     db.delete.mockReturnValue(mockDbChain([]));
 
-    await service.syncNarrators(inject<Db>(db), 10, []);
+    await service.syncNarrators(inject<DbOrTx>(db), 10, []);
 
     expect(db.delete).toHaveBeenCalledTimes(1);
     expect(db.insert).not.toHaveBeenCalled();
@@ -798,7 +798,7 @@ describe('BookService.syncAuthors / syncNarrators', () => {
     db.delete.mockReturnValue(mockDbChain([]));
     db.insert.mockReturnValue(mockDbChain([]));
 
-    await service.syncAuthors(inject<Db>(db), 10, [{ name: 'Brandon Sanderson' }, { name: 'Brandon Sanderson' }]);
+    await service.syncAuthors(inject<DbOrTx>(db), 10, [{ name: 'Brandon Sanderson' }, { name: 'Brandon Sanderson' }]);
 
     // 1 delete (clear junctions) + 1 bookAuthors insert (not 2)
     expect(db.insert).toHaveBeenCalledTimes(1);
@@ -809,7 +809,7 @@ describe('BookService.syncAuthors / syncNarrators', () => {
     db.delete.mockReturnValue(mockDbChain([]));
     db.insert.mockReturnValue(mockDbChain([]));
 
-    await service.syncNarrators(inject<Db>(db), 10, ['Kate Reading', 'Michael Kramer']);
+    await service.syncNarrators(inject<DbOrTx>(db), 10, ['Kate Reading', 'Michael Kramer']);
 
     expect(db.delete).toHaveBeenCalledTimes(1);
     expect(db.insert).toHaveBeenCalledTimes(2);  // 2 bookNarrators rows
@@ -1012,7 +1012,7 @@ describe('BookService — transaction atomicity (#214)', () => {
       const tx = createMockDb();
       tx.select.mockReturnValue(mockDbChain([{ id: 1 }]));  // author found
 
-      await service.syncAuthors(inject<Db>(tx), 10, [{ name: 'Brandon Sanderson' }]);
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson' }]);
 
       // tx.delete called (clear junctions), tx.insert called (junction row)
       expect(tx.delete).toHaveBeenCalledTimes(1);
@@ -1026,7 +1026,7 @@ describe('BookService — transaction atomicity (#214)', () => {
       const tx = createMockDb();
       tx.select.mockReturnValue(mockDbChain([{ id: 5 }]));  // narrator found
 
-      await service.syncNarrators(inject<Db>(tx), 10, ['Michael Kramer']);
+      await service.syncNarrators(inject<DbOrTx>(tx), 10, ['Michael Kramer']);
 
       expect(tx.delete).toHaveBeenCalledTimes(1);
       expect(tx.insert).toHaveBeenCalledTimes(1);
@@ -1041,7 +1041,7 @@ describe('BookService — transaction atomicity (#214)', () => {
         .mockReturnValueOnce(mockDbChain([{ id: 7 }]))  // author created
         .mockReturnValueOnce(mockDbChain([]));            // junction
 
-      await service.syncAuthors(inject<Db>(tx), 10, [{ name: 'New Author' }]);
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'New Author' }]);
 
       // tx.select for lookup, tx.insert for author creation + junction
       expect(tx.select).toHaveBeenCalledTimes(1);
@@ -1057,7 +1057,7 @@ describe('BookService — transaction atomicity (#214)', () => {
         .mockReturnValueOnce(mockDbChain([{ id: 3 }]))  // narrator created
         .mockReturnValueOnce(mockDbChain([]));            // junction
 
-      await service.syncNarrators(inject<Db>(tx), 10, ['New Narrator']);
+      await service.syncNarrators(inject<DbOrTx>(tx), 10, ['New Narrator']);
 
       expect(tx.select).toHaveBeenCalledTimes(1);
       expect(tx.insert).toHaveBeenCalledTimes(2);

@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { cleanEmptyParents } from '../utils/paths.js';
 import { eq, and, sql, inArray } from 'drizzle-orm';
-import type { Db } from '../../db/index.js';
+import type { Db, DbOrTx } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
 import { slugify, findUnmatchedGenres } from '../../core/index.js';
@@ -99,7 +99,7 @@ export class BookService {
    * Deduplicates by slug within the payload, find-or-creates each author.
    * Called by create(), update(), and RecyclingBinService.restore().
    */
-  async syncAuthors(tx: Db, bookId: number, authorList: { name: string; asin?: string }[]): Promise<void> {
+  async syncAuthors(tx: DbOrTx, bookId: number, authorList: { name: string; asin?: string }[]): Promise<void> {
     await tx.delete(bookAuthors).where(eq(bookAuthors.bookId, bookId));
 
     const seenSlugs = new Set<string>();
@@ -125,7 +125,7 @@ export class BookService {
    * Deduplicates by slug within the payload, find-or-creates each narrator.
    * Called by create(), update(), and RecyclingBinService.restore().
    */
-  async syncNarrators(tx: Db, bookId: number, narratorNames: string[]): Promise<void> {
+  async syncNarrators(tx: DbOrTx, bookId: number, narratorNames: string[]): Promise<void> {
     await tx.delete(bookNarrators).where(eq(bookNarrators.bookId, bookId));
 
     const seenSlugs = new Set<string>();
@@ -324,7 +324,7 @@ export class BookService {
     }));
   }
 
-  private async findOrCreateAuthor(tx: Db, name: string, asin?: string): Promise<number> {
+  private async findOrCreateAuthor(tx: DbOrTx, name: string, asin?: string): Promise<number> {
     const slug = slugify(name);
     const existing = await tx
       .select()
@@ -356,7 +356,7 @@ export class BookService {
     }
   }
 
-  private async findOrCreateNarrator(tx: Db, name: string): Promise<number> {
+  private async findOrCreateNarrator(tx: DbOrTx, name: string): Promise<number> {
     const slug = slugify(name);
     const existing = await tx
       .select()
