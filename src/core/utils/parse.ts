@@ -305,11 +305,12 @@ export function isMultiPartUsenetPost(title: string): MultiPartResult {
 
 export { slugify } from '../../shared/utils.js';
 
-export function formatBytes(bytes: number): string {
-  if (!isFinite(bytes) || bytes < 0) return '0 B';
-  if (bytes === 0) return '0 B';
+export function formatBytes(bytes?: number): string {
+  if (bytes == null || bytes === 0) return '0 B';
+  if (!isFinite(bytes) || bytes < 0) return 'Unknown';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
+  if (i < 0 || i >= sizes.length) return 'Unknown';
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }

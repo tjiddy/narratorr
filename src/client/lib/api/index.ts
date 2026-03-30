@@ -20,7 +20,8 @@ export type { ImportList, ImportListItem, ImportListPreview } from './import-lis
 export type { SuggestionRow, DiscoverStats, AddSuggestionResult, RefreshResult } from './discover.js';
 export type { BulkOpType, BulkJobStatus, RenameCount } from './bulk-operations.js';
 
-export { formatBytes, formatProgress } from './utils.js';
+export { formatBytes } from '@core/utils/parse.js';
+export { formatProgress } from './utils.js';
 
 import { booksApi } from './books.js';
 import { searchApi } from './search.js';
