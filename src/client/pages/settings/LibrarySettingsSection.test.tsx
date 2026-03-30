@@ -3,7 +3,6 @@ import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
-import { queryKeys } from '@/lib/queryKeys';
 import { LibrarySettingsSection } from './LibrarySettingsSection';
 
 vi.mock('sonner', () => ({

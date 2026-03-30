@@ -1,6 +1,6 @@
-import { useRef, useMemo, useState, useEffect } from 'react';
+import { useRef, useMemo, useState, useEffect, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, type FieldError } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
@@ -32,18 +32,14 @@ function validateTokens(val: string, allowed: readonly string[]): boolean {
 
 const namingFormSchema = z.object({
   folderFormat: z.string().trim().min(1, 'Folder format is required').refine(
-    hasTitle,
-    { message: 'Template must include {title} or {titleSort}' },
+    hasTitle, { message: 'Template must include {title} or {titleSort}' },
   ).refine(
-    (val) => validateTokens(val, FOLDER_ALLOWED_TOKENS),
-    { message: 'Unknown token in template' },
+    (val) => validateTokens(val, FOLDER_ALLOWED_TOKENS), { message: 'Unknown token in template' },
   ),
   fileFormat: z.string().trim().min(1, 'File format is required').refine(
-    hasTitle,
-    { message: 'Template must include {title} or {titleSort}' },
+    hasTitle, { message: 'Template must include {title} or {titleSort}' },
   ).refine(
-    (val) => validateTokens(val, FILE_ALLOWED_TOKENS),
-    { message: 'Unknown token in file template' },
+    (val) => validateTokens(val, FILE_ALLOWED_TOKENS), { message: 'Unknown token in file template' },
   ),
   namingSeparator: z.enum(namingSeparatorValues),
   namingCase: z.enum(namingCaseValues),
@@ -64,16 +60,93 @@ const SAMPLE_TOKENS_NO_SERIES = {
 const SEPARATOR_LABELS: Record<NamingSeparator, string> = { space: 'Space', period: 'Period', underscore: 'Underscore', dash: 'Dash' };
 const CASE_LABELS: Record<NamingCase, string> = { default: 'Default', lower: 'lowercase', upper: 'UPPERCASE', title: 'Title Case' };
 
+function SelectWithChevron({ id, label, children, ...selectProps }: { id: string; label: string; children: ReactNode } & React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <div>
+      <label htmlFor={id} className="block text-xs font-medium text-muted-foreground mb-1">{label}</label>
+      <div className="relative">
+        <select
+          id={id}
+          className="w-full appearance-none px-4 py-3 pr-10 bg-background border border-border rounded-xl text-sm focus-ring cursor-pointer"
+          {...selectProps}
+        >
+          {children}
+        </select>
+        <ChevronDownIcon className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+      </div>
+    </div>
+  );
+}
+
+interface FormatFieldProps {
+  id: string;
+  label: string;
+  ariaLabel: string;
+  placeholder: string;
+  error?: FieldError;
+  preview: string;
+  previewNoSeries: string;
+  previewSuffix?: string;
+  warnings?: ReactNode;
+  onOpenTokenModal: () => void;
+  registerProps: React.InputHTMLAttributes<HTMLInputElement>;
+  inputRef: (el: HTMLInputElement | null) => void;
+  hasValue: boolean;
+}
+
+function FormatField({ id, label, ariaLabel, placeholder, error, preview, previewNoSeries, previewSuffix, warnings, onOpenTokenModal, registerProps, inputRef, hasValue }: FormatFieldProps) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-2">
+        <label htmlFor={id} className="text-sm font-medium">{label}</label>
+        <button
+          type="button"
+          onClick={onOpenTokenModal}
+          className="w-5 h-5 rounded-full bg-muted hover:bg-muted/80 text-xs font-bold text-muted-foreground hover:text-foreground transition-colors flex items-center justify-center cursor-pointer"
+          aria-label={ariaLabel}
+        >
+          ?
+        </button>
+      </div>
+      <input
+        id={id}
+        type="text"
+        {...registerProps}
+        ref={inputRef}
+        className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all font-mono text-sm ${
+          error ? 'border-destructive' : 'border-border'
+        }`}
+        placeholder={placeholder}
+      />
+      {error && <p className="text-sm text-destructive mt-1">{error.message}</p>}
+      {warnings}
+      {hasValue && (
+        <div className="mt-2 p-3 bg-muted/50 rounded-lg border border-border space-y-2">
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">With series</p>
+            <p className="text-sm font-mono break-all">
+              {preview ? <span className="text-muted-foreground">{preview}{previewSuffix}</span> : <span className="text-muted-foreground italic">Empty</span>}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">Without series</p>
+            <p className="text-sm font-mono break-all">
+              {previewNoSeries ? <span className="text-muted-foreground">{previewNoSeries}{previewSuffix}</span> : <span className="text-muted-foreground italic">Empty</span>}
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function NamingSettingsSection() {
   const queryClient = useQueryClient();
   const folderFormatRef = useRef<HTMLInputElement | null>(null);
   const fileFormatRef = useRef<HTMLInputElement | null>(null);
   const [tokenModalScope, setTokenModalScope] = useState<'folder' | 'file' | null>(null);
 
-  const { data: settings } = useQuery({
-    queryKey: queryKeys.settings(),
-    queryFn: api.getSettings,
-  });
+  const { data: settings } = useQuery({ queryKey: queryKeys.settings(), queryFn: api.getSettings });
 
   const { register, handleSubmit, reset, watch, setValue, formState: { errors, isDirty } } = useForm<NamingFormData>({
     defaultValues: {
@@ -88,10 +161,8 @@ export function NamingSettingsSection() {
   useEffect(() => {
     if (settings?.library && !isDirty) {
       reset({
-        folderFormat: settings.library.folderFormat,
-        fileFormat: settings.library.fileFormat,
-        namingSeparator: settings.library.namingSeparator,
-        namingCase: settings.library.namingCase,
+        folderFormat: settings.library.folderFormat, fileFormat: settings.library.fileFormat,
+        namingSeparator: settings.library.namingSeparator, namingCase: settings.library.namingCase,
       });
     }
   }, [settings, reset, isDirty]);
@@ -103,12 +174,10 @@ export function NamingSettingsSection() {
       queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
       toast.success('File naming settings saved');
     },
-    onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to save settings');
-    },
+    onError: (err) => { toast.error(err instanceof Error ? err.message : 'Failed to save settings'); },
   });
 
-  // eslint-disable-next-line react-hooks/incompatible-library -- watch() is the standard RHF API; Compiler skip is expected
+  // eslint-disable-next-line react-hooks/incompatible-library -- watch() is the standard RHF API
   const folderFormat = watch('folderFormat');
   const fileFormat = watch('fileFormat');
   const namingSeparator = watch('namingSeparator');
@@ -119,41 +188,23 @@ export function NamingSettingsSection() {
   }), [namingSeparator, namingCase]);
   const currentPreset = useMemo(() => detectPreset(folderFormat ?? '', fileFormat ?? ''), [folderFormat, fileFormat]);
 
-  const folderPreview = useMemo(() =>
-    folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS, namingOptions) : '',
-  [folderFormat, namingOptions]);
-  const folderPreviewNoSeries = useMemo(() =>
-    folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '',
-  [folderFormat, namingOptions]);
-  const filePreview = useMemo(() =>
-    fileFormat ? renderFilename(fileFormat, { ...SAMPLE_TOKENS, trackNumber: 1, trackTotal: 12, partName: 'The Way of Kings' }, namingOptions) : '',
-  [fileFormat, namingOptions]);
-  const filePreviewNoSeries = useMemo(() =>
-    fileFormat ? renderFilename(fileFormat, { ...SAMPLE_TOKENS_NO_SERIES, trackNumber: 1, trackTotal: 8, partName: 'Project Hail Mary' }, namingOptions) : '',
-  [fileFormat, namingOptions]);
+  const folderPreview = useMemo(() => folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS, namingOptions) : '', [folderFormat, namingOptions]);
+  const folderPreviewNoSeries = useMemo(() => folderFormat ? renderTemplate(folderFormat, SAMPLE_TOKENS_NO_SERIES, namingOptions) : '', [folderFormat, namingOptions]);
+  const filePreview = useMemo(() => fileFormat ? renderFilename(fileFormat, { ...SAMPLE_TOKENS, trackNumber: 1, trackTotal: 12, partName: 'The Way of Kings' }, namingOptions) : '', [fileFormat, namingOptions]);
+  const filePreviewNoSeries = useMemo(() => fileFormat ? renderFilename(fileFormat, { ...SAMPLE_TOKENS_NO_SERIES, trackNumber: 1, trackTotal: 8, partName: 'Project Hail Mary' }, namingOptions) : '', [fileFormat, namingOptions]);
 
   const hasTitleToken = folderFormat ? /\{title(?:Sort)?(?::\d+)?(?:\?[^}]*)?\}/.test(folderFormat) : true;
   const hasAuthorToken = folderFormat ? /\{author(?:LastFirst)?(?::\d+)?(?:\?[^}]*)?\}/.test(folderFormat) : true;
   const fileTitleToken = fileFormat ? /\{title(?:Sort)?(?::\d+)?(?:\?[^}]*)?\}/.test(fileFormat) : true;
 
-  const insertTokenAtCursor = (
-    ref: React.RefObject<HTMLInputElement | null>,
-    field: 'folderFormat' | 'fileFormat',
-    token: string,
-  ) => {
+  const insertTokenAtCursor = (ref: React.RefObject<HTMLInputElement | null>, field: 'folderFormat' | 'fileFormat', token: string) => {
     const input = ref.current;
     if (!input) return;
     const start = input.selectionStart ?? input.value.length;
     const end = input.selectionEnd ?? start;
-    const before = input.value.slice(0, start);
-    const after = input.value.slice(end);
-    const newValue = `${before}{${token}}${after}`;
+    const newValue = `${input.value.slice(0, start)}{${token}}${input.value.slice(end)}`;
     setValue(field, newValue, { shouldDirty: true, shouldValidate: true });
-    requestAnimationFrame(() => {
-      const pos = start + token.length + 2;
-      input.setSelectionRange(pos, pos);
-      input.focus();
-    });
+    requestAnimationFrame(() => { input.setSelectionRange(start + token.length + 2, start + token.length + 2); input.focus(); });
   };
   const handlePresetChange = (presetId: string) => {
     const preset = NAMING_PRESETS.find((p) => p.id === presetId);
@@ -162,215 +213,64 @@ export function NamingSettingsSection() {
     setValue('fileFormat', preset.fileFormat, { shouldDirty: true, shouldValidate: true });
   };
   const handleTokenModalInsert = (token: string) => {
-    if (tokenModalScope === 'folder') {
-      insertTokenAtCursor(folderFormatRef, 'folderFormat', token);
-    } else if (tokenModalScope === 'file') {
-      insertTokenAtCursor(fileFormatRef, 'fileFormat', token);
-    }
+    if (tokenModalScope === 'folder') insertTokenAtCursor(folderFormatRef, 'folderFormat', token);
+    else if (tokenModalScope === 'file') insertTokenAtCursor(fileFormatRef, 'fileFormat', token);
   };
 
-  const modalPreviewTokens = useMemo(() => {
-    if (tokenModalScope === 'file') {
-      return { ...SAMPLE_TOKENS, trackNumber: 1, trackTotal: 12, partName: 'The Way of Kings' };
-    }
-    return SAMPLE_TOKENS;
-  }, [tokenModalScope]);
+  const modalPreviewTokens = useMemo(() =>
+    tokenModalScope === 'file' ? { ...SAMPLE_TOKENS, trackNumber: 1, trackTotal: 12, partName: 'The Way of Kings' } : SAMPLE_TOKENS,
+  [tokenModalScope]);
+
+  const folderReg = register('folderFormat');
+  const fileReg = register('fileFormat');
 
   return (
-    <SettingsSection
-      icon={<TagIcon className="w-5 h-5 text-primary" />}
-      title="File Naming"
-      description="Configure how audiobook files and folders are named"
-    >
+    <SettingsSection icon={<TagIcon className="w-5 h-5 text-primary" />} title="File Naming" description="Configure how audiobook files and folders are named">
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
-        {/* Preset + Separator + Case row */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div>
-            <label htmlFor="namingPreset" className="block text-xs font-medium text-muted-foreground mb-1">Preset</label>
-            <div className="relative">
-              <select
-                id="namingPreset"
-                value={currentPreset}
-                onChange={(e) => handlePresetChange(e.target.value)}
-                className="w-full appearance-none px-4 py-3 pr-10 bg-background border border-border rounded-xl text-sm focus-ring cursor-pointer"
-              >
-                {NAMING_PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-                {currentPreset === 'custom' && <option value="custom">Custom</option>}
-              </select>
-              <ChevronDownIcon className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-            </div>
-          </div>
-          <div>
-            <label htmlFor="namingSeparator" className="block text-xs font-medium text-muted-foreground mb-1">Separator</label>
-            <div className="relative">
-              <select
-                id="namingSeparator"
-                {...register('namingSeparator')}
-                className="w-full appearance-none px-4 py-3 pr-10 bg-background border border-border rounded-xl text-sm focus-ring cursor-pointer"
-              >
-                {namingSeparatorValues.map((v) => (
-                  <option key={v} value={v}>{SEPARATOR_LABELS[v]}</option>
-                ))}
-              </select>
-              <ChevronDownIcon className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-            </div>
-          </div>
-          <div>
-            <label htmlFor="namingCase" className="block text-xs font-medium text-muted-foreground mb-1">Case</label>
-            <div className="relative">
-              <select
-                id="namingCase"
-                {...register('namingCase')}
-                className="w-full appearance-none px-4 py-3 pr-10 bg-background border border-border rounded-xl text-sm focus-ring cursor-pointer"
-              >
-                {namingCaseValues.map((v) => (
-                  <option key={v} value={v}>{CASE_LABELS[v]}</option>
-                ))}
-              </select>
-              <ChevronDownIcon className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-            </div>
-          </div>
+          <SelectWithChevron id="namingPreset" label="Preset" value={currentPreset} onChange={(e) => handlePresetChange(e.currentTarget.value)}>
+            {NAMING_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            {currentPreset === 'custom' && <option value="custom">Custom</option>}
+          </SelectWithChevron>
+          <SelectWithChevron id="namingSeparator" label="Separator" {...register('namingSeparator')}>
+            {namingSeparatorValues.map((v) => <option key={v} value={v}>{SEPARATOR_LABELS[v]}</option>)}
+          </SelectWithChevron>
+          <SelectWithChevron id="namingCase" label="Case" {...register('namingCase')}>
+            {namingCaseValues.map((v) => <option key={v} value={v}>{CASE_LABELS[v]}</option>)}
+          </SelectWithChevron>
         </div>
 
-        {/* Folder Format — full width with per-field preview */}
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <label htmlFor="folderFormat" className="text-sm font-medium">Folder Format</label>
-            <button
-              type="button"
-              onClick={() => setTokenModalScope('folder')}
-              className="w-5 h-5 rounded-full bg-muted hover:bg-muted/80 text-xs font-bold text-muted-foreground hover:text-foreground transition-colors flex items-center justify-center cursor-pointer"
-              aria-label="Folder token reference"
-            >
-              ?
-            </button>
-          </div>
-          <input
-            id="folderFormat"
-            type="text"
-            {...(() => {
-              const { ref: rhfRef, ...rest } = register('folderFormat');
-              return {
-                ...rest,
-                ref: (el: HTMLInputElement | null) => {
-                  rhfRef(el);
-                  folderFormatRef.current = el;
-                },
-              };
-            })()}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all font-mono text-sm ${
-              errors.folderFormat ? 'border-destructive' : 'border-border'
-            }`}
-            placeholder="{author}/{title}"
-          />
-          {errors.folderFormat && (
-            <p className="text-sm text-destructive mt-1">{errors.folderFormat.message}</p>
-          )}
-          {!hasTitleToken && (
-            <p className="text-sm text-destructive mt-1.5">
-              Template must include {'{title}'} or {'{titleSort}'}
-            </p>
-          )}
-          {hasTitleToken && !hasAuthorToken && (
-            <p className="text-sm text-amber-500 mt-1.5">
-              Consider including {'{author}'} for better organization
-            </p>
-          )}
-          {folderFormat && (
-            <div className="mt-2 p-3 bg-muted/50 rounded-lg border border-border space-y-2">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">With series</p>
-                <p className="text-sm font-mono break-all">
-                  {folderPreview ? <span className="text-muted-foreground">{folderPreview}</span> : <span className="text-muted-foreground italic">Empty path</span>}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Without series</p>
-                <p className="text-sm font-mono break-all">
-                  {folderPreviewNoSeries ? <span className="text-muted-foreground">{folderPreviewNoSeries}</span> : <span className="text-muted-foreground italic">Empty path</span>}
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
+        <FormatField
+          id="folderFormat" label="Folder Format" ariaLabel="Folder token reference" placeholder="{author}/{title}"
+          error={errors.folderFormat} preview={folderPreview} previewNoSeries={folderPreviewNoSeries} hasValue={!!folderFormat}
+          onOpenTokenModal={() => setTokenModalScope('folder')}
+          registerProps={{ ...folderReg, ref: undefined }}
+          inputRef={(el) => { folderReg.ref(el); folderFormatRef.current = el; }}
+          warnings={<>
+            {!hasTitleToken && <p className="text-sm text-destructive mt-1.5">Template must include {'{title}'} or {'{titleSort}'}</p>}
+            {hasTitleToken && !hasAuthorToken && <p className="text-sm text-amber-500 mt-1.5">Consider including {'{author}'} for better organization</p>}
+          </>}
+        />
 
-        {/* File Format — full width with per-field preview */}
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <label htmlFor="fileFormat" className="text-sm font-medium">File Format</label>
-            <button
-              type="button"
-              onClick={() => setTokenModalScope('file')}
-              className="w-5 h-5 rounded-full bg-muted hover:bg-muted/80 text-xs font-bold text-muted-foreground hover:text-foreground transition-colors flex items-center justify-center cursor-pointer"
-              aria-label="File token reference"
-            >
-              ?
-            </button>
-          </div>
-          <input
-            id="fileFormat"
-            type="text"
-            {...(() => {
-              const { ref: rhfRef, ...rest } = register('fileFormat');
-              return {
-                ...rest,
-                ref: (el: HTMLInputElement | null) => {
-                  rhfRef(el);
-                  fileFormatRef.current = el;
-                },
-              };
-            })()}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all font-mono text-sm ${
-              errors.fileFormat ? 'border-destructive' : 'border-border'
-            }`}
-            placeholder="{author} - {title}"
-          />
-          {errors.fileFormat && (
-            <p className="text-sm text-destructive mt-1">{errors.fileFormat.message}</p>
-          )}
-          {!fileTitleToken && (
-            <p className="text-sm text-destructive mt-1.5">
-              Template must include {'{title}'} or {'{titleSort}'}
-            </p>
-          )}
-          {fileFormat && (
-            <div className="mt-2 p-3 bg-muted/50 rounded-lg border border-border space-y-2">
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">With series</p>
-                <p className="text-sm font-mono break-all">
-                  {filePreview ? <span>{filePreview}.m4b</span> : <span className="text-muted-foreground italic">Empty</span>}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Without series</p>
-                <p className="text-sm font-mono break-all">
-                  {filePreviewNoSeries ? <span>{filePreviewNoSeries}.m4b</span> : <span className="text-muted-foreground italic">Empty</span>}
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
+        <FormatField
+          id="fileFormat" label="File Format" ariaLabel="File token reference" placeholder="{author} - {title}"
+          error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewSuffix=".m4b" hasValue={!!fileFormat}
+          onOpenTokenModal={() => setTokenModalScope('file')}
+          registerProps={{ ...fileReg, ref: undefined }}
+          inputRef={(el) => { fileReg.ref(el); fileFormatRef.current = el; }}
+          warnings={!fileTitleToken ? <p className="text-sm text-destructive mt-1.5">Template must include {'{title}'} or {'{titleSort}'}</p> : null}
+        />
 
         {isDirty && (
-          <button
-            type="submit"
-            disabled={mutation.isPending}
-            className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
-          >
+          <button type="submit" disabled={mutation.isPending} className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in">
             {mutation.isPending ? 'Saving...' : 'Save'}
           </button>
         )}
       </form>
       <NamingTokenModal
-        isOpen={tokenModalScope !== null}
-        onClose={() => setTokenModalScope(null)}
-        onInsert={handleTokenModalInsert}
-        scope={tokenModalScope ?? 'folder'}
-        currentFormat={tokenModalScope === 'file' ? (fileFormat ?? '') : (folderFormat ?? '')}
-        previewTokens={modalPreviewTokens}
-        namingOptions={namingOptions}
+        isOpen={tokenModalScope !== null} onClose={() => setTokenModalScope(null)} onInsert={handleTokenModalInsert}
+        scope={tokenModalScope ?? 'folder'} currentFormat={tokenModalScope === 'file' ? (fileFormat ?? '') : (folderFormat ?? '')}
+        previewTokens={modalPreviewTokens} namingOptions={namingOptions}
       />
     </SettingsSection>
   );
