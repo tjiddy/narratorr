@@ -284,6 +284,250 @@ describe('NamingSettingsSection', () => {
     });
   });
 
+  describe('preview layout', () => {
+    it('renders preview labels and values on the same flex row (not stacked)', async () => {
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
+      });
+      // Each "With series" label should share a flex row with its preview value
+      const withSeriesLabels = screen.getAllByText('With series');
+      for (const label of withSeriesLabels) {
+        const row = label.closest('div');
+        expect(row).toHaveClass('flex', 'items-baseline');
+      }
+    });
+
+    it('file format preview shows .m4b suffix', async () => {
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author} - {title}')).toHaveValue('{author} - {title}');
+      });
+      // File format previews should contain .m4b suffix
+      const previews = screen.getAllByTestId('preview-with-series');
+      // The second preview-with-series belongs to the file format field
+      expect(previews.length).toBe(2);
+      expect(previews[1].textContent).toContain('.m4b');
+    });
+
+    it('folder format preview does not show .m4b suffix', async () => {
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
+      });
+      // The first preview-with-series belongs to the folder format field
+      const previews = screen.getAllByTestId('preview-with-series');
+      expect(previews[0].textContent).not.toContain('.m4b');
+    });
+
+    it('preview container not rendered when format field is empty', async () => {
+      const emptySettings = createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '', fileFormat: '', namingSeparator: 'space', namingCase: 'default' },
+      });
+      mockApi.getSettings.mockResolvedValue(emptySettings);
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('');
+      });
+      expect(screen.queryByText('With series')).not.toBeInTheDocument();
+      expect(screen.queryByText('Without series')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('inline token panel', () => {
+    it('renders caret toggle button for folder format field', async () => {
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Folder token reference')).toBeInTheDocument();
+      });
+      expect(screen.getByLabelText('Toggle folder tokens')).toBeInTheDocument();
+    });
+
+    it('renders caret toggle button for file format field', async () => {
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('File token reference')).toBeInTheDocument();
+      });
+      expect(screen.getByLabelText('Toggle file tokens')).toBeInTheDocument();
+    });
+
+    it('caret button has aria-expanded="false" when panel is closed', async () => {
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Toggle folder tokens')).toBeInTheDocument();
+      });
+      expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.getByLabelText('Toggle file tokens')).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('clicking caret opens inline token panel and sets aria-expanded="true"', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Toggle folder tokens')).toBeInTheDocument();
+      });
+      await user.click(screen.getByLabelText('Toggle folder tokens'));
+      expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'true');
+      // Panel should be visible with token group headings
+      expect(screen.getByText('Author')).toBeInTheDocument();
+    });
+
+    it('clicking caret again closes inline token panel', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Toggle folder tokens')).toBeInTheDocument();
+      });
+      await user.click(screen.getByLabelText('Toggle folder tokens'));
+      expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'true');
+      await user.click(screen.getByLabelText('Toggle folder tokens'));
+      expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('caret button has aria-controls pointing to inline panel id', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Toggle folder tokens')).toBeInTheDocument();
+      });
+      const caretBtn = screen.getByLabelText('Toggle folder tokens');
+      const panelId = caretBtn.getAttribute('aria-controls');
+      expect(panelId).toBeTruthy();
+      await user.click(caretBtn);
+      expect(document.getElementById(panelId!)).toBeInTheDocument();
+    });
+
+    it('folder inline panel shows only folder-scoped token groups', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Toggle folder tokens')).toBeInTheDocument();
+      });
+      await user.click(screen.getByLabelText('Toggle folder tokens'));
+      // Should show folder-scoped groups
+      expect(screen.getByText('Author')).toBeInTheDocument();
+      expect(screen.getByText('Title')).toBeInTheDocument();
+      expect(screen.getByText('Series')).toBeInTheDocument();
+      expect(screen.getByText('Narrator')).toBeInTheDocument();
+      expect(screen.getByText('Metadata')).toBeInTheDocument();
+      // Should NOT show file-specific group
+      expect(screen.queryByText('File-specific')).not.toBeInTheDocument();
+    });
+
+    it('file inline panel shows all token groups including File-specific', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Toggle file tokens')).toBeInTheDocument();
+      });
+      await user.click(screen.getByLabelText('Toggle file tokens'));
+      expect(screen.getByText('Author')).toBeInTheDocument();
+      expect(screen.getByText('File-specific')).toBeInTheDocument();
+      // File-specific tokens should be present
+      expect(screen.getByText('{trackNumber}')).toBeInTheDocument();
+      expect(screen.getByText('{trackTotal}')).toBeInTheDocument();
+      expect(screen.getByText('{partName}')).toBeInTheDocument();
+    });
+
+    it('clicking token button in inline panel inserts token at cursor position and marks field dirty', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
+      });
+      // Focus the input and move cursor to end
+      const input = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
+      await user.click(input);
+      input.setSelectionRange(input.value.length, input.value.length);
+      // Open inline panel and click a token
+      await user.click(screen.getByLabelText('Toggle folder tokens'));
+      await user.click(screen.getByText('{series}'));
+      // Token should be appended at the end since cursor was at the end
+      await waitFor(() => {
+        expect(input.value).toBe('{author}/{title}{series}');
+      });
+      // Form should be dirty — save button visible
+      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+    });
+
+    it('clicking token button replaces selected text in the input', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
+      });
+      // Focus and select "{title}" (characters 9-16 in "{author}/{title}")
+      const input = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
+      await user.click(input);
+      input.setSelectionRange(9, 16);
+      // Open inline panel and click {series} to replace the selection
+      await user.click(screen.getByLabelText('Toggle folder tokens'));
+      await user.click(screen.getByText('{series}'));
+      // {title} should be replaced with {series}
+      await waitFor(() => {
+        expect(input.value).toBe('{author}/{series}');
+      });
+    });
+
+    it('inline panel remains open after inserting a token', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Toggle folder tokens')).toBeInTheDocument();
+      });
+      await user.click(screen.getByLabelText('Toggle folder tokens'));
+      expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'true');
+      await user.click(screen.getByText('{series}'));
+      // Panel should still be open after token insertion
+      expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'true');
+      expect(screen.getByText('Author')).toBeInTheDocument();
+    });
+
+    it('inline panel and ? modal can be open simultaneously', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Toggle folder tokens')).toBeInTheDocument();
+      });
+      // Open inline panel
+      await user.click(screen.getByLabelText('Toggle folder tokens'));
+      expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'true');
+      // Open modal
+      await user.click(screen.getByLabelText('Folder token reference'));
+      expect(screen.getByText('Folder Token Reference')).toBeInTheDocument();
+      // Inline panel should still be open
+      expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    it('both folder and file inline panels can be open simultaneously', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Toggle folder tokens')).toBeInTheDocument();
+      });
+      await user.click(screen.getByLabelText('Toggle folder tokens'));
+      await user.click(screen.getByLabelText('Toggle file tokens'));
+      expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'true');
+      expect(screen.getByLabelText('Toggle file tokens')).toHaveAttribute('aria-expanded', 'true');
+    });
+
+    it('closing one panel does not affect the other panel state', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Toggle folder tokens')).toBeInTheDocument();
+      });
+      // Open both panels
+      await user.click(screen.getByLabelText('Toggle folder tokens'));
+      await user.click(screen.getByLabelText('Toggle file tokens'));
+      // Close folder panel
+      await user.click(screen.getByLabelText('Toggle folder tokens'));
+      expect(screen.getByLabelText('Toggle folder tokens')).toHaveAttribute('aria-expanded', 'false');
+      // File panel should still be open
+      expect(screen.getByLabelText('Toggle file tokens')).toHaveAttribute('aria-expanded', 'true');
+    });
+  });
+
   describe('validation', () => {
     it('shows error for folder format without {title} token', async () => {
       const settingsNoTitle = createMockSettings({
