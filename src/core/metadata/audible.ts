@@ -9,6 +9,7 @@ import type {
   AuthorMetadata,
   SeriesMetadata,
   SearchBooksOptions,
+  SearchBooksResult,
 } from './types.js';
 
 /** Default wait time (ms) when rate-limited without a Retry-After header. */
@@ -51,7 +52,7 @@ export class AudibleProvider implements MetadataSearchProvider {
     this.name = `Audible${this.tld}`;
   }
 
-  async searchBooks(query: string, options?: SearchBooksOptions): Promise<BookMetadata[]> {
+  async searchBooks(query: string, options?: SearchBooksOptions): Promise<SearchBooksResult> {
     const params = new URLSearchParams({
       keywords: query,
       num_results: String(options?.maxResults ?? MAX_RESULTS),
@@ -61,6 +62,7 @@ export class AudibleProvider implements MetadataSearchProvider {
     });
 
     const products = await this.fetchProducts(params);
+    const rawCount = products.length;
     const books: BookMetadata[] = [];
     for (const product of products) {
       const mapped = mapProduct(product);
@@ -76,12 +78,12 @@ export class AudibleProvider implements MetadataSearchProvider {
       return aMatch - bMatch;
     });
 
-    return books;
+    return { books, rawCount };
   }
 
   async searchAuthors(query: string): Promise<AuthorMetadata[]> {
     // Audible doesn't have a dedicated author search — extract from book results
-    const books = await this.searchBooks(query);
+    const { books } = await this.searchBooks(query);
     const authorMap = new Map<string, AuthorMetadata>();
     for (const book of books) {
       for (const authorRef of book.authors) {
@@ -99,7 +101,7 @@ export class AudibleProvider implements MetadataSearchProvider {
 
   async searchSeries(query: string): Promise<SeriesMetadata[]> {
     // Audible doesn't have a dedicated series search — extract from book results
-    const books = await this.searchBooks(query);
+    const { books } = await this.searchBooks(query);
     const seriesMap = new Map<string, SeriesMetadata>();
     for (const book of books) {
       for (const seriesRef of book.series ?? []) {
