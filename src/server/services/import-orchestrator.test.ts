@@ -315,4 +315,12 @@ describe('ImportOrchestrator', () => {
       expect(importService.releaseSlot).toHaveBeenCalledTimes(1);
     });
   });
+
+  // ── #229 Observability — batch summary logging ──────────────────────────
+  describe('batch summary logging (#229)', () => {
+    it.todo('logs { total, succeeded, failed, elapsedMs } at info after mixed results');
+    it.todo('no summary log emitted when zero eligible downloads');
+    it.todo('all imports succeed: failed is 0');
+    it.todo('all imports fail: succeeded is 0');
+  });
 });

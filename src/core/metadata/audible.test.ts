@@ -737,4 +737,12 @@ describe('AudibleProvider', () => {
       expect(Array.isArray(books)).toBe(true);
     });
   });
+
+  // ── #229 Observability — SearchBooksResult contract ─────────────────────
+  describe('SearchBooksResult contract (#229)', () => {
+    it.todo('searchBooks() returns { books, rawCount } shape');
+    it.todo('searchBooks() rawCount equals products.length before filtering');
+    it.todo('searchAuthors() correctly unwraps .books from internal searchBooks()');
+    it.todo('searchSeries() correctly unwraps .books from internal searchBooks()');
+  });
 });

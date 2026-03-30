@@ -617,4 +617,10 @@ describe('TTL cleanup', () => {
       vi.useRealTimers();
     }
   });
+
+  // ── #229 Observability — elapsed time and correlation ───────────────────
+  describe('logging improvements (#229)', () => {
+    it.todo('bulk operation completion log includes elapsedMs field');
+    it.todo('per-book warn logs include jobId field');
+  });
 });

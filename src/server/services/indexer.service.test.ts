@@ -1014,4 +1014,12 @@ describe('IndexerService', () => {
       });
     });
   });
+
+  // ── #229 Observability — logging improvements ───────────────────────────
+  describe('logging improvements (#229)', () => {
+    it.todo('per-indexer search logs { indexer, resultCount, elapsedMs } at debug');
+    it.todo('per-indexer search that throws does not emit elapsed time log');
+    it.todo('parseReleaseNames debug log includes indexerName field');
+    it.todo('parseReleaseNames called from pollRss passes indexer name');
+  });
 });

@@ -1732,4 +1732,17 @@ describe('ImportService consolidation (issue #79)', () => {
     expect(ctx.authorName).toBe('Brandon Sanderson');
     expect(ctx.narratorStr).toBeNull();
   });
+
+  // ── #229 Observability — logging improvements ───────────────────────────
+  describe('logging improvements (#229)', () => {
+    it.todo('resolveSavePath result logged at debug with { downloadId, resolvedPath, originalPath }');
+    it.todo('import pipeline success log includes elapsedMs field');
+    it.todo('import pipeline failure log includes elapsedMs field');
+    it.todo('intermediate logs include bookTitle between start and completion');
+    it.todo('verifyCopy success logged at debug by ImportService with { sourceSize, targetSize }');
+    it.todo('buildTargetPath result logged at debug by ImportService');
+    it.todo('validateSource success logged at debug with { fileCount, sourceSize }');
+    it.todo('checkDiskSpace success logged at debug with { freeGB, requiredGB }');
+    it.todo('torrent removal log includes { externalId, clientType, deleteFiles }');
+  });
 });

@@ -461,4 +461,9 @@ describe('RenameService', () => {
       );
     });
   });
+
+  // ── #229 Observability — skip logging ───────────────────────────────────
+  describe('logging improvements (#229)', () => {
+    it.todo('already organized skip logged at debug with { bookId }');
+  });
 });

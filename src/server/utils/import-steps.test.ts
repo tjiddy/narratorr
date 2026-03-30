@@ -652,4 +652,11 @@ describe('runAudioProcessing', () => {
       }),
     );
   });
+
+  // ── #229 Observability — checkDiskSpace return type ─────────────────────
+  describe('checkDiskSpace return type (#229)', () => {
+    it.todo('returns { freeGB, requiredGB } on success');
+    it.todo('still throws on insufficient disk space');
+    it.todo('still throws on statfs failure');
+  });
 });

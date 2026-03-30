@@ -2378,4 +2378,9 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
 
     expect(result).toEqual({ discoveries: [], totalFolders: 0 });
   });
+
+  // ── #229 Observability — elapsed time ───────────────────────────────────
+  describe('logging improvements (#229)', () => {
+    it.todo('library scan completion log includes elapsedMs field');
+  });
 });

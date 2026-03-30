@@ -1065,4 +1065,11 @@ describe('BookService — transaction atomicity (#214)', () => {
       expect(db.insert).not.toHaveBeenCalled();
     });
   });
+
+  // ── #229 Observability — CRUD log enrichment ────────────────────────────
+  describe('logging improvements (#229)', () => {
+    it.todo('create log includes { authors, asin }');
+    it.todo('update log includes { changedFields }');
+    it.todo('delete log includes { title }');
+  });
 });

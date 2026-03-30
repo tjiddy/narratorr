@@ -857,4 +857,10 @@ describe('MatchJobService', () => {
       expect(service.getJob(id)!.status).toBe('completed');
     });
   });
+
+  // ── #229 Observability — elapsed time ───────────────────────────────────
+  describe('elapsed time (#229)', () => {
+    it.todo('match job completion log includes elapsedMs field');
+    it.todo('cancelled match job completion log still includes elapsedMs');
+  });
 });

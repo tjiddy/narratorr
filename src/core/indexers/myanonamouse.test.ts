@@ -742,4 +742,11 @@ describe('MyAnonamouseIndexer', () => {
       await expect(indexer.search('test')).rejects.not.toThrow(ProxyError);
     });
   });
+
+  // ── #229 Observability — console.warn removal ──────────────────────────
+  describe('search — console.warn removal (#229)', () => {
+    it.todo('HTTP error response returns undefined downloadUrl without console.warn');
+    it.todo('catch-block non-ProxyError returns undefined downloadUrl without console.warn');
+    it.todo('ProxyError still re-throws and is not swallowed');
+  });
 });

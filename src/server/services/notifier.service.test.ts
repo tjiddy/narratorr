@@ -376,4 +376,9 @@ describe('NotifierService', () => {
       fetchSpy.mockRestore();
     });
   });
+
+  // ── #229 Observability — send log enrichment ────────────────────────────
+  describe('logging improvements (#229)', () => {
+    it.todo('send logs include notifier name and type at debug');
+  });
 });

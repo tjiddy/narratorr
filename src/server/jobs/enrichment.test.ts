@@ -301,4 +301,10 @@ describe('enrichment job', () => {
       'Rate limited during enrichment — remaining candidates stay pending',
     );
   });
+
+  // ── #229 Observability — batch completion logging ───────────────────────
+  describe('batch completion logging (#229)', () => {
+    it.todo('enrichment batch completion log includes elapsedMs');
+    it.todo('enrichment batch completion log includes filled flags (duration, narrators)');
+  });
 });

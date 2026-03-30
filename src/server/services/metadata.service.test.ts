@@ -476,4 +476,24 @@ describe('MetadataService', () => {
       expect(factoryFn).toHaveBeenCalledWith({ region: 'us' });
     });
   });
+
+  // ── #229 Observability — debug logging ──────────────────────────────────
+  describe('debug logging (#229)', () => {
+    it.todo('searchBooks() logs { query, provider, resultCount } at debug on completion');
+    it.todo('searchBooks() with zero results logs resultCount: 0');
+    it.todo('getBook() found case logs { id, provider, found: true } at debug');
+    it.todo('getBook() not-found case logs { id, provider, found: false } at debug');
+    it.todo('Audible parse drop: rawCount > books.length logs { rawCount, parsedCount, provider }');
+    it.todo('Audible parse drop: rawCount === books.length emits no extra log');
+    it.todo('non-Audible provider omitting rawCount emits no extra log');
+    it.todo('withThrottle failure log includes query field when context provided');
+  });
+
+  // ── #229 Observability — SearchBooksResult contract ─────────────────────
+  describe('SearchBooksResult contract (#229)', () => {
+    it.todo('search() correctly unwraps .books from SearchBooksResult');
+    it.todo('searchBooks() correctly unwraps .books');
+    it.todo('searchBooksForDiscovery() correctly unwraps .books');
+    it.todo('getAuthorBooks() correctly unwraps .books');
+  });
 });

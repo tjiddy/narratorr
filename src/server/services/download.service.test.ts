@@ -1601,4 +1601,9 @@ describe('DownloadService', () => {
       });
     });
   });
+
+  // ── #229 Observability — addDownload logging ────────────────────────────
+  describe('logging improvements (#229)', () => {
+    it.todo('addDownload success logged at debug with { externalId, clientName, bookId }');
+  });
 });
