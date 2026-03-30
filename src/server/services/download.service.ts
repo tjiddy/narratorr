@@ -201,7 +201,7 @@ export class DownloadService {
   }
 
   /** Send a download to the client and return the external ID. */
-  private async sendToClient(downloadUrl: string, protocol: DownloadProtocol, torrentFile?: Buffer): Promise<{ externalId: string | null; clientId: number; clientType: string }> {
+  private async sendToClient(downloadUrl: string, protocol: DownloadProtocol, torrentFile?: Buffer): Promise<{ externalId: string | null; clientId: number; clientType: string; clientName: string }> {
     const client = await this.downloadClientService.getFirstEnabledForProtocol(protocol);
     if (!client) throw new Error('No download client configured');
     const adapter = await this.downloadClientService.getAdapter(client.id);
@@ -210,7 +210,7 @@ export class DownloadService {
     const category = (settings.category as string | undefined)?.trim() || undefined;
     const addOptions = { ...(category ? { category } : {}), ...(torrentFile ? { torrentFile } : {}) };
     const externalId = await adapter.addDownload(downloadUrl, Object.keys(addOptions).length > 0 ? addOptions : undefined);
-    return { externalId, clientId: client.id, clientType: client.type };
+    return { externalId, clientId: client.id, clientType: client.type, clientName: client.name };
   }
 
   /** Parse data: URI torrent files into a buffer + metadata. */
@@ -273,7 +273,8 @@ export class DownloadService {
 
     // Send to download client
     this.log.debug({ protocol, downloadUrl: logUrl, infoHash }, 'Sending download to client');
-    const { externalId, clientId, clientType } = await this.sendToClient(params.downloadUrl, protocol, torrentFile);
+    const { externalId, clientId, clientType, clientName } = await this.sendToClient(params.downloadUrl, protocol, torrentFile);
+    this.log.debug({ externalId, clientName, bookId: params.bookId }, 'Download sent to client');
 
     // Handoff clients (e.g. Blackhole) return null externalId — mark as completed immediately
     const isHandoff = !externalId;

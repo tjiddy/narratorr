@@ -315,4 +315,54 @@ describe('ImportOrchestrator', () => {
       expect(importService.releaseSlot).toHaveBeenCalledTimes(1);
     });
   });
+
+  // ── #229 Observability — batch summary logging ──────────────────────────
+  describe('batch summary logging (#229)', () => {
+    it('logs { total, succeeded, failed, elapsedMs } at info after mixed results', async () => {
+      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([1, 2]);
+      (importService.importDownload as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(mockResult)
+        .mockRejectedValueOnce(new Error('fail'));
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ total: 2, succeeded: 1, failed: 1, elapsedMs: expect.any(Number) }),
+        'Import batch completed',
+      );
+    });
+
+    it('no summary log emitted when zero eligible downloads', async () => {
+      await orchestrator.processCompletedDownloads();
+
+      expect(log.info).not.toHaveBeenCalledWith(
+        expect.objectContaining({ total: expect.any(Number) }),
+        'Import batch completed',
+      );
+    });
+
+    it('all imports succeed: failed is 0', async () => {
+      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([1]);
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockResult);
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ total: 1, succeeded: 1, failed: 0, elapsedMs: expect.any(Number) }),
+        'Import batch completed',
+      );
+    });
+
+    it('all imports fail: succeeded is 0', async () => {
+      (importService.getEligibleDownloads as ReturnType<typeof vi.fn>).mockResolvedValue([1]);
+      (importService.importDownload as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('boom'));
+
+      await orchestrator.processCompletedDownloads();
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ total: 1, succeeded: 0, failed: 1, elapsedMs: expect.any(Number) }),
+        'Import batch completed',
+      );
+    });
+  });
 });

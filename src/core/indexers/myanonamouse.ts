@@ -290,7 +290,6 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       }
 
       if (!response.ok) {
-        console.warn(`MAM torrent fetch failed for tid=${torrentId}: HTTP ${response.status}`);
         return undefined;
       }
 
@@ -301,8 +300,6 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       if (error instanceof ProxyError) {
         throw error;
       }
-      const msg = error instanceof Error ? error.message : 'unknown error';
-      console.warn(`MAM torrent fetch failed for tid=${torrentId}: ${msg}`);
       return undefined;
     } finally {
       clearTimeout(timeoutId);

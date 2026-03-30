@@ -84,10 +84,15 @@ export interface CheckDiskSpaceArgs {
   processingEnabled: boolean;
 }
 
+export interface DiskSpaceResult {
+  freeGB: number;
+  requiredGB: number;
+}
+
 /** Check that enough disk space is available for the import. */
-export async function checkDiskSpace(args: CheckDiskSpaceArgs): Promise<void> {
+export async function checkDiskSpace(args: CheckDiskSpaceArgs): Promise<DiskSpaceResult> {
   const { sourcePath, sourceStats, libraryPath, minFreeSpaceGB, processingEnabled } = args;
-  if (minFreeSpaceGB <= 0) return;
+  if (minFreeSpaceGB <= 0) return { freeGB: -1, requiredGB: 0 };
 
   const sourceSize = sourceStats.isDirectory() ? await getPathSize(sourcePath) : sourceStats.size;
   const multiplier = processingEnabled ? 1.5 : 1;
@@ -102,11 +107,14 @@ export async function checkDiskSpace(args: CheckDiskSpaceArgs): Promise<void> {
     throw new Error(`Disk space check failed: ${statfsError instanceof Error ? statfsError.message : 'unknown error'}`);
   }
 
+  const freeGB = Math.round((freeBytes / 1024 ** 3) * 10) / 10;
+  const requiredGB = Math.round((requiredBytes / 1024 ** 3) * 10) / 10;
+
   if (freeBytes < requiredBytes) {
-    const freeGB = (freeBytes / 1024 ** 3).toFixed(1);
-    const requiredGB = (requiredBytes / 1024 ** 3).toFixed(1);
-    throw new Error(`Import blocked — insufficient disk space (${freeGB} GB free, ${requiredGB} GB required)`);
+    throw new Error(`Import blocked — insufficient disk space (${freeGB.toFixed(1)} GB free, ${requiredGB.toFixed(1)} GB required)`);
   }
+
+  return { freeGB, requiredGB };
 }
 
 // ── copyToLibrary ───────────────────────────────────────────────────────
@@ -320,11 +328,12 @@ export interface HandleImportFailureArgs {
   downloadId: number;
   book: { id: number; title: string; path: string | null };
   log: FastifyBaseLogger;
+  elapsedMs?: number;
 }
 
 /** Clean up after a failed import: remove files, revert DB statuses. Rethrows. */
 export async function handleImportFailure(args: HandleImportFailureArgs): Promise<never> {
-  const { error, targetPath, db, downloadId, book, log } = args;
+  const { error, targetPath, db, downloadId, book, log, elapsedMs } = args;
 
   // Clean up copied files
   if (targetPath) {
@@ -341,7 +350,7 @@ export async function handleImportFailure(args: HandleImportFailureArgs): Promis
   // Recover book status
   const revertStatus = await revertBookStatus(db, book);
 
-  log.error({ error, downloadId, bookStatus: revertStatus }, 'Import failed');
+  log.error({ error, downloadId, bookStatus: revertStatus, elapsedMs }, 'Import failed');
 
   throw error;
 }

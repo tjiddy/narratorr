@@ -215,8 +215,6 @@ describe('MyAnonamouseIndexer', () => {
     });
 
     it('keeps result with downloadUrl undefined when torrent fetch fails', async () => {
-      vi.spyOn(console, 'warn').mockImplementation(() => {});
-
       server.use(
         http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
           return HttpResponse.json({ data: [makeResult()] });
@@ -232,7 +230,7 @@ describe('MyAnonamouseIndexer', () => {
       expect(results[0].title).toBe('The Way of Kings');
     });
 
-    it('logs warning when torrent fetch fails', async () => {
+    it('does not call console.warn when torrent fetch fails (#229)', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       server.use(
@@ -245,7 +243,7 @@ describe('MyAnonamouseIndexer', () => {
       );
 
       await indexer.search('test');
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('MAM torrent fetch failed'));
+      expect(warnSpy).not.toHaveBeenCalled();
     });
   });
 
@@ -698,7 +696,6 @@ describe('MyAnonamouseIndexer', () => {
       });
 
       const searchResponse = JSON.stringify({ data: [makeResult()] });
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       const fetchSpy = vi.spyOn(globalThis, 'fetch')
         .mockResolvedValueOnce(
@@ -716,7 +713,6 @@ describe('MyAnonamouseIndexer', () => {
       expect(results[0].downloadUrl).toBeUndefined();
 
       fetchSpy.mockRestore();
-      warnSpy.mockRestore();
     });
 
     it('search rethrows ProxyError', async () => {
@@ -742,4 +738,5 @@ describe('MyAnonamouseIndexer', () => {
       await expect(indexer.search('test')).rejects.not.toThrow(ProxyError);
     });
   });
+
 });

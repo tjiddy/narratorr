@@ -11,7 +11,7 @@ export async function resolveSavePath(
   download: { id: number; downloadClientId: number | null; externalId: string | null },
   downloadClientService: DownloadClientService,
   remotePathMappingService?: RemotePathMappingService,
-): Promise<string> {
+): Promise<{ resolvedPath: string; originalPath: string }> {
   if (!download.downloadClientId || !download.externalId) {
     throw new Error(`Download ${download.id} missing client or external ID`);
   }
@@ -26,7 +26,8 @@ export async function resolveSavePath(
     throw new Error(`Download ${download.externalId} not found in client`);
   }
 
-  let fullPath = join(item.savePath, item.name);
+  const originalPath = join(item.savePath, item.name);
+  let fullPath = originalPath;
 
   if (remotePathMappingService && download.downloadClientId) {
     const mappings = await remotePathMappingService.getByClientId(download.downloadClientId);
@@ -35,5 +36,5 @@ export async function resolveSavePath(
     }
   }
 
-  return fullPath;
+  return { resolvedPath: fullPath, originalPath };
 }

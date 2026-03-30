@@ -101,6 +101,7 @@ export class RenameService {
 
     // Determine result message
     if (!pathChanged && filesRenamed === 0) {
+      this.log.debug({ bookId }, 'Book already organized — skipping rename');
       return { oldPath, newPath: oldPath, message: 'Already organized', filesRenamed: 0 };
     }
 

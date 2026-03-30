@@ -1065,4 +1065,60 @@ describe('BookService — transaction atomicity (#214)', () => {
       expect(db.insert).not.toHaveBeenCalled();
     });
   });
+
+  // ── #229 Observability — CRUD log enrichment ────────────────────────────
+  describe('logging improvements (#229)', () => {
+    it('create log includes { authors, asin }', async () => {
+      const log = createMockLogger();
+      const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.select
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))    // findOrCreateAuthor
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, asin: 'B003P2WO5E' }, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      await svc.create({
+        title: 'The Way of Kings',
+        authors: [{ name: 'Brandon Sanderson' }],
+        asin: 'B003P2WO5E',
+      });
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ authors: ['Brandon Sanderson'], asin: 'B003P2WO5E' }),
+        'Book added to library',
+      );
+    });
+
+    it('update log includes { changedFields }', async () => {
+      const log = createMockLogger();
+      const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+
+      db.update.mockReturnValue(mockDbChain([mockBook]));
+      setupGetById(db);
+
+      await svc.update(1, { title: 'Updated Title', description: 'New description' });
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, changedFields: expect.arrayContaining(['title', 'description']) }),
+        'Book updated',
+      );
+    });
+
+    it('delete log includes { title }', async () => {
+      const log = createMockLogger();
+      const svc = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+
+      setupGetById(db);
+      db.delete.mockReturnValue(mockDbChain());
+
+      await svc.delete(1);
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, title: 'The Way of Kings' }),
+        'Book removed',
+      );
+    });
+  });
 });

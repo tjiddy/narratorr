@@ -91,6 +91,7 @@ export class LibraryScanService {
       throw new ScanInProgressError();
     }
     this.scanning = true;
+    const startMs = Date.now();
 
     try {
       const librarySettings = await this.settingsService.get('library');
@@ -145,7 +146,7 @@ export class LibraryScanService {
         }
       }
 
-      this.log.info({ scanned, missing, restored }, 'Library rescan complete');
+      this.log.info({ scanned, missing, restored, elapsedMs: Date.now() - startMs }, 'Library rescan complete');
       return { scanned, missing, restored };
     } finally {
       this.scanning = false;

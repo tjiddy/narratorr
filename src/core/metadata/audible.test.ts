@@ -14,7 +14,7 @@ describe('AudibleProvider', () => {
 
   describe('searchBooks', () => {
     it('returns books mapped from Audible catalog API', async () => {
-      const books = await provider.searchBooks('Harry Potter Chamber of Secrets');
+      const { books } = await provider.searchBooks('Harry Potter Chamber of Secrets');
 
       expect(books).toHaveLength(2);
       expect(books[0].title).toBe('Harry Potter and the Chamber of Secrets');
@@ -37,7 +37,7 @@ describe('AudibleProvider', () => {
     });
 
     it('extracts narrators from search results', async () => {
-      const books = await provider.searchBooks('Harry Potter');
+      const { books } = await provider.searchBooks('Harry Potter');
 
       expect(books[0].narrators).toEqual(['Jim Dale']);
       // Second result has multiple narrators (full-cast edition)
@@ -46,13 +46,13 @@ describe('AudibleProvider', () => {
     });
 
     it('extracts duration in minutes', async () => {
-      const books = await provider.searchBooks('Harry Potter');
+      const { books } = await provider.searchBooks('Harry Potter');
 
       expect(books[0].duration).toBe(542);
     });
 
     it('extracts series with position', async () => {
-      const books = await provider.searchBooks('Harry Potter');
+      const { books } = await provider.searchBooks('Harry Potter');
 
       expect(books[0].series).toEqual(
         expect.arrayContaining([
@@ -62,13 +62,13 @@ describe('AudibleProvider', () => {
     });
 
     it('extracts cover URL from product images', async () => {
-      const books = await provider.searchBooks('Harry Potter');
+      const { books } = await provider.searchBooks('Harry Potter');
 
       expect(books[0].coverUrl).toContain('media-amazon.com');
     });
 
     it('preserves safe HTML tags in description', async () => {
-      const books = await provider.searchBooks('Harry Potter');
+      const { books } = await provider.searchBooks('Harry Potter');
 
       expect(books[0].description).toContain('<p>');
       expect(books[0].description).toContain('<i>');
@@ -76,20 +76,20 @@ describe('AudibleProvider', () => {
     });
 
     it('cleans "Book N" suffix from title', async () => {
-      const books = await provider.searchBooks('Harry Potter');
+      const { books } = await provider.searchBooks('Harry Potter');
 
       // Original title is "Harry Potter and the Chamber of Secrets, Book 2"
       expect(books[0].title).toBe('Harry Potter and the Chamber of Secrets');
     });
 
     it('extracts publisher', async () => {
-      const books = await provider.searchBooks('Harry Potter');
+      const { books } = await provider.searchBooks('Harry Potter');
 
       expect(books[0].publisher).toBe('Pottermore Publishing');
     });
 
     it('extracts language capitalized', async () => {
-      const books = await provider.searchBooks('Harry Potter');
+      const { books } = await provider.searchBooks('Harry Potter');
 
       expect(books[0].language).toBe('English');
     });
@@ -121,7 +121,7 @@ describe('AudibleProvider', () => {
         }),
       );
 
-      const books = await provider.searchBooks('nonexistent');
+      const { books } = await provider.searchBooks('nonexistent');
       expect(books).toEqual([]);
     });
 
@@ -139,7 +139,7 @@ describe('AudibleProvider', () => {
         }),
       );
 
-      const books = await provider.searchBooks('test');
+      const { books } = await provider.searchBooks('test');
       expect(books).toHaveLength(1);
       expect(books[0].title).toBe('Minimal Book');
       expect(books[0].narrators).toBeUndefined();
@@ -227,8 +227,8 @@ describe('AudibleProvider', () => {
         }),
       );
 
-      const books = await ukProvider.searchBooks('test');
-      expect(books).toEqual([]);
+      const result = await ukProvider.searchBooks('test');
+      expect(result.books).toEqual([]);
     });
 
     it('defaults to .com for unknown region', async () => {
@@ -328,7 +328,7 @@ describe('AudibleProvider', () => {
       );
 
       // Default provider uses 'us' region → preferred language is 'english'
-      const books = await provider.searchBooks('test');
+      const { books } = await provider.searchBooks('test');
       expect(books[0].language).toBe('English');
       expect(books[1].language).toBe('French');
     });
@@ -368,7 +368,7 @@ describe('AudibleProvider', () => {
         }),
       );
 
-      const books = await provider.searchBooks('test');
+      const { books } = await provider.searchBooks('test');
       expect(books[0].series![0].position).toBe(1.5);
     });
 
@@ -386,7 +386,7 @@ describe('AudibleProvider', () => {
         }),
       );
 
-      const books = await provider.searchBooks('test');
+      const { books } = await provider.searchBooks('test');
       expect(books[0].series![0].position).toBe(3);
     });
 
@@ -404,7 +404,7 @@ describe('AudibleProvider', () => {
         }),
       );
 
-      const books = await provider.searchBooks('test');
+      const { books } = await provider.searchBooks('test');
       expect(books[0].series![0].position).toBeUndefined();
     });
   });
@@ -456,7 +456,7 @@ describe('AudibleProvider', () => {
         }),
       );
 
-      const books = await provider.searchBooks('test');
+      const { books } = await provider.searchBooks('test');
       expect(books[0].series![0].position).toBeUndefined();
     });
 
@@ -474,7 +474,7 @@ describe('AudibleProvider', () => {
         }),
       );
 
-      const books = await provider.searchBooks('test');
+      const { books } = await provider.searchBooks('test');
       expect(books[0].duration).toBeUndefined();
     });
 
@@ -492,7 +492,7 @@ describe('AudibleProvider', () => {
         }),
       );
 
-      const books = await provider.searchBooks('test');
+      const { books } = await provider.searchBooks('test');
       // 0 is falsy, so duration should be undefined
       expect(books[0].duration).toBeUndefined();
     });
@@ -529,7 +529,7 @@ describe('AudibleProvider', () => {
         }),
       );
 
-      const books = await provider.searchBooks('test');
+      const { books } = await provider.searchBooks('test');
       expect(books).toHaveLength(1);
       expect(books[0].authors).toEqual([]);
     });
@@ -601,7 +601,7 @@ describe('AudibleProvider', () => {
       );
 
       const result = await provider.searchBooks('test');
-      expect(result).toEqual([]);
+      expect(result.books).toEqual([]);
     });
 
     it('getBook() on timeout throws TransientError', async () => {
@@ -733,8 +733,37 @@ describe('AudibleProvider', () => {
     });
 
     it('searchBooks() on 2xx response returns data normally (regression)', async () => {
-      const books = await provider.searchBooks('Harry Potter');
+      const { books } = await provider.searchBooks('Harry Potter');
       expect(Array.isArray(books)).toBe(true);
+    });
+  });
+
+  // ── #229 Observability — SearchBooksResult contract ─────────────────────
+  describe('SearchBooksResult contract (#229)', () => {
+    it('searchBooks() returns { books, rawCount } shape', async () => {
+      const result = await provider.searchBooks('Harry Potter');
+      expect(result).toHaveProperty('books');
+      expect(result).toHaveProperty('rawCount');
+      expect(Array.isArray(result.books)).toBe(true);
+      expect(typeof result.rawCount).toBe('number');
+    });
+
+    it('searchBooks() rawCount equals products.length before filtering', async () => {
+      // Default MSW handler returns 2 products that both pass validation
+      const result = await provider.searchBooks('Harry Potter');
+      expect(result.rawCount).toBe(result.books.length);
+    });
+
+    it('searchAuthors() correctly unwraps .books from internal searchBooks()', async () => {
+      const authors = await provider.searchAuthors('Harry Potter');
+      // Should not throw — searchAuthors destructures { books } internally
+      expect(Array.isArray(authors)).toBe(true);
+    });
+
+    it('searchSeries() correctly unwraps .books from internal searchBooks()', async () => {
+      const series = await provider.searchSeries('Harry Potter');
+      // Should not throw — searchSeries destructures { books } internally
+      expect(Array.isArray(series)).toBe(true);
     });
   });
 });

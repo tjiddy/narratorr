@@ -19,6 +19,11 @@ export interface SearchBooksOptions {
   maxResults?: number;
 }
 
+export interface SearchBooksResult {
+  books: BookMetadata[];
+  rawCount?: number;
+}
+
 /** Shared fields for all metadata providers. */
 export interface MetadataProviderBase {
   readonly name: string;
@@ -27,7 +32,7 @@ export interface MetadataProviderBase {
 
 /** Search provider — catalog search, book/series detail, connectivity test. */
 export interface MetadataSearchProvider extends MetadataProviderBase {
-  searchBooks(query: string, options?: SearchBooksOptions): Promise<BookMetadata[]>;
+  searchBooks(query: string, options?: SearchBooksOptions): Promise<SearchBooksResult>;
   searchAuthors(query: string): Promise<AuthorMetadata[]>;
   searchSeries(query: string): Promise<SeriesMetadata[]>;
   getBook(id: string): Promise<BookMetadata | null>;

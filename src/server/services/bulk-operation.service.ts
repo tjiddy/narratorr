@@ -179,7 +179,7 @@ export class BulkOperationService {
             tick(false); // skip silently
             continue;
           }
-          this.log.warn({ bookId, error }, 'Bulk rename: book failed');
+          this.log.warn({ bookId, jobId: id, error }, 'Bulk rename: book failed');
           tick(true); // failure
           continue;
         }
@@ -213,7 +213,7 @@ export class BulkOperationService {
             tick(false); // skip silently
             continue;
           }
-          this.log.warn({ bookId, error }, 'Bulk re-tag: book failed');
+          this.log.warn({ bookId, jobId: id, error }, 'Bulk re-tag: book failed');
           tick(true); // failure
           continue;
         }
@@ -256,7 +256,7 @@ export class BulkOperationService {
         try {
           await this.convertBook(row.id, row.path, row.title, processingSettings);
         } catch (error: unknown) {
-          this.log.warn({ bookId: row.id, error }, 'Bulk convert: book failed');
+          this.log.warn({ bookId: row.id, jobId: id, error }, 'Bulk convert: book failed');
           tick(true); // failure
           continue;
         }
@@ -385,6 +385,7 @@ class BulkJob {
   private _failures = 0;
   private _total = 0;
   private _status: 'running' | 'completed' = 'running';
+  private startMs = Date.now();
 
   constructor(
     private id: string,
@@ -425,7 +426,7 @@ class BulkJob {
     } finally {
       this._status = 'completed';
       this.log.info(
-        { jobId: this.id, type: this.type, total: this._total, failures: this._failures },
+        { jobId: this.id, type: this.type, total: this._total, failures: this._failures, elapsedMs: Date.now() - this.startMs },
         'Bulk job completed',
       );
       this.onComplete();

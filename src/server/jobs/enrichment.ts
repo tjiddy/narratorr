@@ -24,6 +24,10 @@ export function startEnrichmentJob(db: Db, metadataService: MetadataService, log
 
 // eslint-disable-next-line complexity -- linear enrichment pipeline with null guards per category
 export async function runEnrichment(db: Db, metadataService: MetadataService, log: FastifyBaseLogger) {
+  const startMs = Date.now();
+  let enrichedCount = 0;
+  let filledDuration = 0;
+  let filledNarrators = 0;
   // Skip books without ASIN → set to 'skipped'
   const noAsinBooks = await db
     .select({ id: books.id })
@@ -100,6 +104,7 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, lo
         const book = existing[0];
         if (!book.duration && result.duration) {
           updates.duration = result.duration;
+          filledDuration++;
         }
       }
 
@@ -111,6 +116,7 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, lo
           .where(eq(bookNarrators.bookId, candidate.id))
           .limit(1);
         if (existingNarrators.length === 0) {
+          filledNarrators++;
           for (let i = 0; i < result.narrators.length; i++) {
             const name = result.narrators[i].trim();
             if (!name) continue;
@@ -136,6 +142,7 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, lo
         .set(updates)
         .where(eq(books.id, candidate.id));
 
+      enrichedCount++;
       log.info({ bookId: candidate.id, asin }, 'Book enriched successfully');
     } else {
       await db
@@ -145,5 +152,9 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, lo
 
       log.warn({ bookId: candidate.id, asin }, 'Book enrichment failed');
     }
+  }
+
+  if (candidates.length > 0) {
+    log.info({ enrichedCount, filledDuration, filledNarrators, elapsedMs: Date.now() - startMs }, 'Enrichment batch completed');
   }
 }

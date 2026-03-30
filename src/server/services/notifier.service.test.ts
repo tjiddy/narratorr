@@ -376,4 +376,24 @@ describe('NotifierService', () => {
       fetchSpy.mockRestore();
     });
   });
+
+  // ── #229 Observability — send log enrichment ────────────────────────────
+  describe('logging improvements (#229)', () => {
+    it('send logs include notifier name and type at debug', async () => {
+      db.select.mockReturnValue(mockDbChain([mockWebhookNotifier]));
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('ok', { status: 200 }),
+      );
+
+      await service.notify('on_grab', { event: 'on_grab', book: { title: 'Test' } });
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ notifier: 'Test Webhook', notifierType: 'webhook', event: 'on_grab' }),
+        'Notification sent',
+      );
+
+      fetchSpy.mockRestore();
+    });
+  });
 });

@@ -857,4 +857,37 @@ describe('MatchJobService', () => {
       expect(service.getJob(id)!.status).toBe('completed');
     });
   });
+
+  // ── #229 Observability — elapsed time ───────────────────────────────────
+  describe('elapsed time (#229)', () => {
+    it('match job completion log includes elapsedMs field', async () => {
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: 'test-job-id', elapsedMs: expect.any(Number) }),
+        'Match job finished',
+      );
+    });
+
+    it('cancelled match job completion log still includes elapsedMs', async () => {
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        return [];
+      });
+
+      const id = service.createJob([sampleCandidate]);
+      service.cancelJob(id);
+      await waitForJob(service, id);
+      // Allow the async run() to flush its final log after cancellation
+      await flushPromises();
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: 'test-job-id', cancelled: true, elapsedMs: expect.any(Number) }),
+        'Match job finished',
+      );
+    });
+  });
 });

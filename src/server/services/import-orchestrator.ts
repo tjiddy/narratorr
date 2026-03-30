@@ -61,6 +61,7 @@ export class ImportOrchestrator {
 
     if (admittedIds.length === 0) return [];
 
+    const startMs = Date.now();
     const importPromises = admittedIds.map((id) =>
       this.importDownload(id)
         .then((result): ImportResult | null => result)
@@ -78,6 +79,11 @@ export class ImportOrchestrator {
         results.push(outcome.value);
       }
     }
+
+    const succeeded = results.length;
+    const failed = admittedIds.length - succeeded;
+    this.log.info({ total: admittedIds.length, succeeded, failed, elapsedMs: Date.now() - startMs }, 'Import batch completed');
+
     return results;
   }
 

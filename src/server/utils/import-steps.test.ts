@@ -652,4 +652,40 @@ describe('runAudioProcessing', () => {
       }),
     );
   });
+
+  // ── #229 Observability — checkDiskSpace return type ─────────────────────
+  describe('checkDiskSpace return type (#229)', () => {
+    it('returns { freeGB, requiredGB } on success', async () => {
+      vi.mocked(statfs).mockResolvedValue({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) } as never);
+
+      const result = await checkDiskSpace({
+        sourcePath: '/src', sourceStats: { isDirectory: () => false, size: 1_000_000_000 } as unknown as Stats,
+        libraryPath: '/lib', minFreeSpaceGB: 1, processingEnabled: false,
+      });
+
+      expect(result).toHaveProperty('freeGB');
+      expect(result).toHaveProperty('requiredGB');
+      expect(typeof result.freeGB).toBe('number');
+      expect(typeof result.requiredGB).toBe('number');
+      expect(result.freeGB).toBeGreaterThan(0);
+    });
+
+    it('still throws on insufficient disk space', async () => {
+      vi.mocked(statfs).mockResolvedValue({ bavail: BigInt(1_000_000_000), bsize: BigInt(1) } as never);
+
+      await expect(checkDiskSpace({
+        sourcePath: '/src', sourceStats: { isDirectory: () => false, size: 5_000_000_000 } as unknown as Stats,
+        libraryPath: '/lib', minFreeSpaceGB: 5, processingEnabled: false,
+      })).rejects.toThrow('insufficient disk space');
+    });
+
+    it('still throws on statfs failure', async () => {
+      vi.mocked(statfs).mockRejectedValue(new Error('disk error'));
+
+      await expect(checkDiskSpace({
+        sourcePath: '/src', sourceStats: { isDirectory: () => false, size: 100 } as unknown as Stats,
+        libraryPath: '/lib', minFreeSpaceGB: 1, processingEnabled: false,
+      })).rejects.toThrow('Disk space check failed');
+    });
+  });
 });

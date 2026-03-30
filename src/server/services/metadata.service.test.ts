@@ -10,7 +10,7 @@ const mockAudibleProvider = {
   name: 'Audible.com',
   type: 'audible',
   searchAuthors: vi.fn().mockResolvedValue([]),
-  searchBooks: vi.fn().mockResolvedValue([]),
+  searchBooks: vi.fn().mockResolvedValue({ books: [] }),
   searchSeries: vi.fn().mockResolvedValue([]),
   getBook: vi.fn().mockResolvedValue(null),
   test: vi.fn().mockResolvedValue({ success: true }),
@@ -43,7 +43,7 @@ describe('MetadataService', () => {
     vi.clearAllMocks();
     // Reset mock return values
     mockAudibleProvider.searchAuthors.mockResolvedValue([]);
-    mockAudibleProvider.searchBooks.mockResolvedValue([]);
+    mockAudibleProvider.searchBooks.mockResolvedValue({ books: [] });
     mockAudibleProvider.searchSeries.mockResolvedValue([]);
     mockAudibleProvider.getBook.mockResolvedValue(null);
     mockAudibleProvider.test.mockResolvedValue({ success: true });
@@ -69,7 +69,7 @@ describe('MetadataService', () => {
       const mockBooks = [{ title: 'Book A' }];
       const mockAuthors = [{ name: 'Author A' }];
       const mockSeries = [{ name: 'Series A' }];
-      mockAudibleProvider.searchBooks.mockResolvedValueOnce(mockBooks);
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: mockBooks });
       mockAudibleProvider.searchAuthors.mockResolvedValueOnce(mockAuthors);
       mockAudibleProvider.searchSeries.mockResolvedValueOnce(mockSeries);
 
@@ -83,7 +83,7 @@ describe('MetadataService', () => {
   describe('searchBooks', () => {
     it('delegates to search provider', async () => {
       const mockBooks = [{ title: 'Test Book' }];
-      mockAudibleProvider.searchBooks.mockResolvedValueOnce(mockBooks);
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: mockBooks });
 
       const result = await service.searchBooks('query');
       expect(result).toEqual(mockBooks);
@@ -240,7 +240,7 @@ describe('MetadataService', () => {
       const mockAuthor = { name: 'Brandon Sanderson', asin: 'B001IGFHW6' };
       const mockBooks = [{ title: 'The Way of Kings' }, { title: 'Mistborn' }];
       mockAudnexus.getAuthor.mockResolvedValueOnce(mockAuthor);
-      mockAudibleProvider.searchBooks.mockResolvedValueOnce(mockBooks);
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: mockBooks });
 
       const result = await service.getAuthorBooks('B001IGFHW6');
       expect(result).toEqual(mockBooks);
@@ -285,7 +285,7 @@ describe('MetadataService', () => {
   describe('searchBooksForDiscovery', () => {
     it('returns books and empty warnings on success', async () => {
       const mockBooks = [{ asin: 'B001', title: 'Test Book' }];
-      mockAudibleProvider.searchBooks.mockResolvedValueOnce(mockBooks);
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: mockBooks });
 
       const result = await service.searchBooksForDiscovery('Brandon Sanderson');
       expect(result).toEqual({ books: mockBooks, warnings: [] });
@@ -293,7 +293,7 @@ describe('MetadataService', () => {
     });
 
     it('passes maxResults option to provider', async () => {
-      mockAudibleProvider.searchBooks.mockResolvedValueOnce([]);
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [] });
 
       await service.searchBooksForDiscovery('Author Name', { maxResults: 25 });
       expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('Author Name', { maxResults: 25 });
@@ -311,7 +311,7 @@ describe('MetadataService', () => {
     });
 
     it('returns default maxResults when no options provided', async () => {
-      mockAudibleProvider.searchBooks.mockResolvedValueOnce([]);
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [] });
 
       await service.searchBooksForDiscovery('test query');
       // Called with query and undefined options (provider applies its own default)
@@ -346,7 +346,10 @@ describe('MetadataService', () => {
 
       const result = await service.getBook('B000TEST');
       expect(result).toBeNull();
-      expect(mockLog.warn).toHaveBeenCalledWith(transientErr, 'Metadata getBook failed');
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ query: 'B000TEST', error: transientErr }),
+        'Metadata getBook failed',
+      );
     });
 
     it('getAuthor(): Audnexus TransientError returns null and logs warning', async () => {
@@ -474,6 +477,107 @@ describe('MetadataService', () => {
       new MetadataService(inject<FastifyBaseLogger>(createMockLogger()));
 
       expect(factoryFn).toHaveBeenCalledWith({ region: 'us' });
+    });
+  });
+
+  // ── #229 Observability — debug logging ──────────────────────────────────
+  describe('debug logging (#229)', () => {
+    it('searchBooks() logs { query, provider, resultCount } at debug on completion', async () => {
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [{ title: 'A' }] });
+      await service.searchBooks('my query');
+      expect(mockLog.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ query: 'my query', provider: 'Audible.com', resultCount: 1 }),
+        'searchBooks completed',
+      );
+    });
+
+    it('searchBooks() with zero results logs resultCount: 0', async () => {
+      await service.searchBooks('nothing');
+      expect(mockLog.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ query: 'nothing', resultCount: 0 }),
+        'searchBooks completed',
+      );
+    });
+
+    it('getBook() found case logs { id, provider, found: true } at debug', async () => {
+      mockAudibleProvider.getBook.mockResolvedValueOnce({ title: 'Found' });
+      await service.getBook('B123');
+      expect(mockLog.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'B123', provider: 'Audible.com', found: true }),
+        'getBook completed',
+      );
+    });
+
+    it('getBook() not-found case logs { id, provider, found: false } at debug', async () => {
+      await service.getBook('B999');
+      expect(mockLog.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'B999', provider: 'Audible.com', found: false }),
+        'getBook completed',
+      );
+    });
+
+    it('Audible parse drop: rawCount > books.length logs { rawCount, parsedCount, provider }', async () => {
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [{ title: 'A' }], rawCount: 3 });
+      await service.searchBooks('test');
+      expect(mockLog.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ rawCount: 3, parsedCount: 1, provider: 'Audible.com' }),
+        'Metadata search parse drop detected',
+      );
+    });
+
+    it('Audible parse drop: rawCount === books.length emits no extra log', async () => {
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [{ title: 'A' }], rawCount: 1 });
+      await service.searchBooks('test');
+      expect(mockLog.debug).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'Metadata search parse drop detected',
+      );
+    });
+
+    it('non-Audible provider omitting rawCount emits no extra log', async () => {
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [{ title: 'A' }] });
+      await service.searchBooks('test');
+      expect(mockLog.debug).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'Metadata search parse drop detected',
+      );
+    });
+
+    it('withThrottle failure log includes query field when context provided', async () => {
+      mockAudibleProvider.searchBooks.mockRejectedValueOnce(new Error('fail'));
+      await service.searchBooks('my-query');
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ query: 'my-query' }),
+        'Metadata searchBooks failed',
+      );
+    });
+  });
+
+  // ── #229 Observability — SearchBooksResult contract ─────────────────────
+  describe('SearchBooksResult contract (#229)', () => {
+    it('search() correctly unwraps .books from SearchBooksResult', async () => {
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [{ title: 'X' }] });
+      const result = await service.search('test');
+      expect(result.books).toEqual([{ title: 'X' }]);
+    });
+
+    it('searchBooks() correctly unwraps .books', async () => {
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [{ title: 'Y' }] });
+      const result = await service.searchBooks('test');
+      expect(result).toEqual([{ title: 'Y' }]);
+    });
+
+    it('searchBooksForDiscovery() correctly unwraps .books', async () => {
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [{ title: 'Z' }] });
+      const result = await service.searchBooksForDiscovery('test');
+      expect(result.books).toEqual([{ title: 'Z' }]);
+    });
+
+    it('getAuthorBooks() correctly unwraps .books', async () => {
+      mockAudnexus.getAuthor.mockResolvedValueOnce({ name: 'Author', asin: 'A1' });
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [{ title: 'W' }] });
+      const result = await service.getAuthorBooks('A1');
+      expect(result).toEqual([{ title: 'W' }]);
     });
   });
 });

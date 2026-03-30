@@ -60,7 +60,7 @@ export class QualityGateOrchestrator {
         // Resolve save path
         let savePath: string;
         try {
-          savePath = await resolveSavePath(row.download, this.downloadClientService, this.remotePathMappingService);
+          ({ resolvedPath: savePath } = await resolveSavePath(row.download, this.downloadClientService, this.remotePathMappingService));
         } catch (error: unknown) {
           this.log.error({ error, downloadId: row.download.id }, 'Quality gate: failed to resolve save path');
           await this.holdForProbeFailure(row.download, row.book, 'probe_failed', error);
