@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #231 Omit track tokens from renameFilesWithTemplate for single-file books — 2026-03-30
+**Skill path:** /elaborate → /respond-to-spec-review (x3) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #236
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 8
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0 (clean implementation)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Tiny implementation surface (3-line conditional spread), well-documented spec after 3 review rounds, existing pattern in tagging.service.ts to mirror
+- Friction / issues encountered: 3 spec review rounds before implementation — F1 (AC5 misdescribed convertFiles behavior), F2 (test plan expected empty strings where sanitizePath returns Unknown), F3 (literal separator not stripped by sanitizePath). All were test plan assertion accuracy issues, not design problems.
+
+### Token efficiency
+- Highest-token actions: Spec review response rounds (reading comments, verifying naming.ts behavior)
+- Avoidable waste: Could have verified sanitizePath behavior during initial /elaborate instead of discovering it across 2 review rounds
+- Suggestions: When elaborating naming/template issues, always read sanitizePath and resolveTokens source to validate expected outputs before writing test plan bullets
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: `convertFiles()` in audio-processor.ts still injects track tokens unconditionally for single-file inputs (logged in debt.md)
+
+### Wish I'd Known
+1. `sanitizePath()` preserves literal punctuation (hyphens, dots) — only trims whitespace and trailing dots. Test plan assertions about "renders as Title" need conditional syntax, not literal separators around missing tokens. (See `sanitizepath-preserves-literal-punctuation.md`)
+2. The naming pipeline has a 3-layer contract: `resolveTokens` (token → empty string), `sanitizePath` (empty stem → Unknown, trim whitespace), `renderFilename` (combines both). All 3 layers must be understood to write correct test assertions.
+3. `processAudioFiles()` routes single non-`.m4b` files through `convertFiles()`, not just multi-file batches — the spec's initial "already handles this correctly" claim was wrong for this path.
+
 ## #229 Observability improvements — logging gaps across all services — 2026-03-30
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #233
