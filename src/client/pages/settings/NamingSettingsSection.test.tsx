@@ -1093,5 +1093,24 @@ describe('NamingSettingsSection', () => {
         expect(input.value).toBe('{title}');
       });
     });
+
+    it('Delete at start of { - pt?trackNumber:00} deletes entire token', async () => {
+      const plexSettings = createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{title}{ - pt?trackNumber:00}', namingSeparator: 'space', namingCase: 'default' },
+      });
+      mockApi.getSettings.mockResolvedValue(plexSettings);
+      renderWithProviders(<NamingSettingsSection />);
+      const input = await waitFor(() => {
+        const el = screen.getByPlaceholderText('{author} - {title}') as HTMLInputElement;
+        expect(el).toHaveValue('{title}{ - pt?trackNumber:00}');
+        return el;
+      });
+      // Cursor at opening brace of { - pt?trackNumber:00}: position 7 (after '{title}')
+      input.setSelectionRange(7, 7);
+      fireEvent.keyDown(input, { key: 'Delete' });
+      await waitFor(() => {
+        expect(input.value).toBe('{title}');
+      });
+    });
   });
 });
