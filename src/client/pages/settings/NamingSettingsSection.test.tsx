@@ -429,23 +429,44 @@ describe('NamingSettingsSection', () => {
       expect(screen.getByText('{partName}')).toBeInTheDocument();
     });
 
-    it('clicking token button in inline panel updates input value and marks field dirty', async () => {
+    it('clicking token button in inline panel inserts token at cursor position and marks field dirty', async () => {
       const user = userEvent.setup();
       renderWithProviders(<NamingSettingsSection />);
       await waitFor(() => {
         expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
       });
+      // Focus the input and move cursor to end
+      const input = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
+      await user.click(input);
+      input.setSelectionRange(input.value.length, input.value.length);
+      // Open inline panel and click a token
       await user.click(screen.getByLabelText('Toggle folder tokens'));
-      // Click the {series} token button
       await user.click(screen.getByText('{series}'));
-      // The input value should now contain {series} token — setValue inserts at cursor position
-      // In jsdom selectionStart defaults to the end of value, so {series} appends
+      // Token should be appended at the end since cursor was at the end
       await waitFor(() => {
-        const input = screen.getByPlaceholderText('{author}/{title}');
-        expect((input as HTMLInputElement).value).toContain('{series}');
+        expect(input.value).toBe('{author}/{title}{series}');
       });
       // Form should be dirty — save button visible
       expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+    });
+
+    it('clicking token button replaces selected text in the input', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
+      });
+      // Focus and select "{title}" (characters 9-16 in "{author}/{title}")
+      const input = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
+      await user.click(input);
+      input.setSelectionRange(9, 16);
+      // Open inline panel and click {series} to replace the selection
+      await user.click(screen.getByLabelText('Toggle folder tokens'));
+      await user.click(screen.getByText('{series}'));
+      // {title} should be replaced with {series}
+      await waitFor(() => {
+        expect(input.value).toBe('{author}/{series}');
+      });
     });
 
     it('inline panel remains open after inserting a token', async () => {
