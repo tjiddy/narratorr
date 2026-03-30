@@ -109,7 +109,7 @@ export class ImportService {
     let targetPath: string | undefined;
     try {
       const savePath = await resolveSavePath(download, this.downloadClientService, this.remotePathMappingService);
-      this.log.debug({ downloadId, bookTitle: book.title, resolvedPath: savePath, originalPath: download.savePath }, 'Resolved save path');
+      this.log.debug({ downloadId, bookTitle: book.title, resolvedPath: savePath }, 'Resolved save path');
       const [librarySettings, importSettings, processingSettings] = await Promise.all([
         this.settingsService.get('library'),
         this.settingsService.get('import'),
