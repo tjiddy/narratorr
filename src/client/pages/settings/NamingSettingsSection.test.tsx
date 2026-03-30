@@ -57,7 +57,7 @@ vi.mock('@core/utils/index.js', () => ({
 
 const { api } = await import('@/lib/api');
 const { toast } = await import('sonner');
-const { renderFilename: mockRenderFilename } = await import('@core/utils/index.js') as { renderFilename: ReturnType<typeof vi.fn> };
+const { renderFilename: mockRenderFilename } = await import('@core/utils/index.js') as unknown as { renderFilename: ReturnType<typeof vi.fn> };
 const mockApi = api as unknown as {
   getSettings: ReturnType<typeof vi.fn>;
   updateSettings: ReturnType<typeof vi.fn>;
