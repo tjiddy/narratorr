@@ -751,11 +751,11 @@ describe('parseTemplate — prefix conditional syntax', () => {
     expect(result.errors).toEqual([]);
   });
 
-  it('empty template returns empty tokens and no errors', () => {
+  it('empty template returns empty tokens, no errors, no warnings', () => {
     const result = parseTemplate('');
     expect(result.tokens).toEqual([]);
-    // Empty template will still get the "missing title" error
-    expect(result.errors).toContain('Template must include {title} or {titleSort}');
+    expect(result.errors).toEqual([]);
+    expect(result.warnings).toEqual([]);
   });
 
   it('{unknownPrefix?title} — parsed as prefix syntax, valid', () => {

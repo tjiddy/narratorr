@@ -338,11 +338,12 @@ export function parseTemplate(
     }
   }
 
-  if (!tokens.includes('title') && !tokens.includes('titleSort')) {
+  // Only check for required tokens if the template is non-empty
+  if (template && !tokens.includes('title') && !tokens.includes('titleSort')) {
     errors.push('Template must include {title} or {titleSort}');
   }
 
-  if (!tokens.includes('author') && !tokens.includes('authorLastFirst')) {
+  if (template && !tokens.includes('author') && !tokens.includes('authorLastFirst')) {
     warnings.push('Consider including {author} or {authorLastFirst} for better organization');
   }
 
