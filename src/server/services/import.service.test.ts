@@ -1735,14 +1735,147 @@ describe('ImportService consolidation (issue #79)', () => {
 
   // ── #229 Observability — logging improvements ───────────────────────────
   describe('logging improvements (#229)', () => {
-    it.todo('resolveSavePath result logged at debug with { downloadId, resolvedPath, originalPath }');
-    it.todo('import pipeline success log includes elapsedMs field');
-    it.todo('import pipeline failure log includes elapsedMs field');
-    it.todo('intermediate logs include bookTitle between start and completion');
-    it.todo('verifyCopy success logged at debug by ImportService with { sourceSize, targetSize }');
-    it.todo('buildTargetPath result logged at debug by ImportService');
-    it.todo('validateSource success logged at debug with { fileCount, sourceSize }');
-    it.todo('checkDiskSpace success logged at debug with { freeGB, requiredGB }');
-    it.todo('torrent removal log includes { externalId, clientType, deleteFiles }');
+    let service: ImportService;
+    let mockBookService: { getById: ReturnType<typeof vi.fn> };
+
+    function withAuthor(book: Record<string, unknown>) {
+      return {
+        ...book,
+        authors: [createMockDbAuthor()],
+        narrators: [],
+      };
+    }
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      db = createMockDb();
+      log = createMockLogger();
+      clientService = createMockDownloadClientService();
+      settingsService = createMockSettingsService();
+      mockBookService = { getById: vi.fn().mockResolvedValue(withAuthor(mockBook)) };
+      service = new ImportService(inject<Db>(db), clientService, settingsService, inject<FastifyBaseLogger>(log), undefined, mockBookService as never);
+
+      vi.mocked(stat).mockResolvedValue({ isFile: () => false, isDirectory: () => true, size: 500_000_000 } as never);
+      vi.mocked(readdir).mockResolvedValue([
+        { name: 'chapter1.mp3', isFile: () => true, isDirectory: () => false },
+      ] as never);
+      vi.mocked(statfs).mockResolvedValue({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) } as never);
+    });
+
+    it('resolveSavePath result logged at debug with { downloadId, resolvedPath, originalPath }', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: 1, resolvedPath: expect.any(String) }),
+        'Resolved save path',
+      );
+    });
+
+    it('import pipeline success log includes elapsedMs field', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ elapsedMs: expect.any(Number) }),
+        'Import completed successfully',
+      );
+    });
+
+    it('import pipeline failure log includes elapsedMs field', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+      vi.mocked(stat).mockRejectedValueOnce(new Error('ENOENT'));
+
+      await expect(service.importDownload(1)).rejects.toThrow();
+
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ elapsedMs: expect.any(Number) }),
+        'Import failed',
+      );
+    });
+
+    it('intermediate logs include bookTitle between start and completion', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ bookTitle: 'The Way of Kings' }),
+        'Built target path',
+      );
+    });
+
+    it('verifyCopy success logged at debug by ImportService with { sourceSize, targetSize }', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceSize: expect.any(Number), targetSize: expect.any(Number) }),
+        'Copy verified',
+      );
+    });
+
+    it('buildTargetPath result logged at debug by ImportService', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ targetPath: expect.any(String) }),
+        'Built target path',
+      );
+    });
+
+    it('validateSource success logged at debug with { fileCount, sourceSize }', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ fileCount: expect.any(Number), sourceSize: expect.any(Number) }),
+        'Validated source',
+      );
+    });
+
+    it('checkDiskSpace success logged at debug with { freeGB, requiredGB }', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ freeGB: expect.any(Number), requiredGB: expect.any(Number) }),
+        'Disk space check passed',
+      );
+    });
+
+    it('torrent removal log includes { externalId, clientType, deleteFiles }', async () => {
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: true, minSeedTime: 0 });
+        return Promise.resolve({});
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ externalId: 'ext-1', deleteFiles: true }),
+        'Torrent removed from client after import',
+      );
+    });
   });
 });

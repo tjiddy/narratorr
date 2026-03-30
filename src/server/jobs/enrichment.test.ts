@@ -304,7 +304,49 @@ describe('enrichment job', () => {
 
   // ── #229 Observability — batch completion logging ───────────────────────
   describe('batch completion logging (#229)', () => {
-    it.todo('enrichment batch completion log includes elapsedMs');
-    it.todo('enrichment batch completion log includes filled flags (duration, narrators)');
+    it('enrichment batch completion log includes elapsedMs', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // no-asin
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B003P2WO5E' }]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ narrator: null, duration: null }]));
+
+      metadataService.enrichBook.mockResolvedValueOnce({
+        title: 'Book', authors: [{ name: 'Author' }], duration: 600,
+      });
+      db.update.mockReturnValue(mockDbChain());
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<FastifyBaseLogger>(log));
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ elapsedMs: expect.any(Number) }),
+        'Enrichment batch completed',
+      );
+    });
+
+    it('enrichment batch completion log includes filled flags (duration, narrators)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))  // no-asin
+        .mockReturnValueOnce(mockDbChain([{ id: 1, asin: 'B003P2WO5E' }]))  // candidates
+        .mockReturnValueOnce(mockDbChain([{ narrator: null, duration: null }]));  // existing: both empty
+
+      metadataService.enrichBook.mockResolvedValueOnce({
+        title: 'Book', authors: [{ name: 'Author' }],
+        narrators: ['Jim Dale'],
+        duration: 600,
+      });
+      db.update.mockReturnValue(mockDbChain());
+      db.insert.mockReturnValue(mockDbChain([]));
+      // narrator lookup: no existing narrators
+      db.select.mockReturnValueOnce(mockDbChain([]));
+      // findOrCreateNarrator: not found, insert
+      db.select.mockReturnValueOnce(mockDbChain([]));
+
+      await runEnrichment(inject<Db>(db), inject<MetadataService>(metadataService), inject<FastifyBaseLogger>(log));
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ filledDuration: expect.any(Number), filledNarrators: expect.any(Number) }),
+        'Enrichment batch completed',
+      );
+    });
   });
 });

@@ -620,7 +620,32 @@ describe('TTL cleanup', () => {
 
   // ── #229 Observability — elapsed time and correlation ───────────────────
   describe('logging improvements (#229)', () => {
-    it.todo('bulk operation completion log includes elapsedMs field');
-    it.todo('per-book warn logs include jobId field');
+    it('bulk operation completion log includes elapsedMs field', async () => {
+      const { service, db, log } = createService();
+      db.select.mockReturnValue(mockDbChain([])); // empty batch — completes immediately
+      const id = await service.startRenameJob();
+      await waitForJob(service, id);
+
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: id, elapsedMs: expect.any(Number) }),
+        'Bulk job completed',
+      );
+    });
+
+    it('per-book warn logs include jobId field', async () => {
+      const renameService = makeRenameService();
+      (renameService.renameBook as Mock).mockRejectedValueOnce(new Error('rename failed'));
+      const { service, db, log } = createService({ renameService });
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, path: '/library/Author Name/OldName', title: 'Book1', seriesName: null, seriesPosition: null, publishedDate: null, authorName: 'Author Name' },
+      ]));
+      const id = await service.startRenameJob();
+      await waitForJob(service, id);
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: id, bookId: 1 }),
+        expect.stringContaining('book failed'),
+      );
+    });
   });
 });

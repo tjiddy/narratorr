@@ -2381,6 +2381,34 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
 
   // ── #229 Observability — elapsed time ───────────────────────────────────
   describe('logging improvements (#229)', () => {
-    it.todo('library scan completion log includes elapsedMs field');
+    it('library scan completion log includes elapsedMs field', async () => {
+      const mockLog = { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn(), child: vi.fn(), silent: vi.fn() };
+      const rescanDb = createMockDb();
+      const chainMethods = {
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockResolvedValue([]),
+        limit: vi.fn().mockResolvedValue([]),
+        set: vi.fn().mockReturnThis(),
+      };
+      rescanDb.select.mockReturnValue(chainMethods as never);
+      rescanDb.update.mockReturnValue(chainMethods as never);
+      const rescanService = new LibraryScanService(
+        inject<Db>(Object.assign(rescanDb, chainMethods)),
+        inject<BookService>({ findDuplicate: vi.fn(), create: vi.fn(), update: vi.fn() }),
+        inject<MetadataService>({ searchBooks: vi.fn(), getBook: vi.fn(), enrichBook: vi.fn() }),
+        inject<SettingsService>(createMockSettingsService({ library: { path: '/audiobooks' } })),
+        inject<FastifyBaseLogger>(mockLog),
+        inject<EventHistoryService>({ create: vi.fn().mockResolvedValue({}) }),
+      );
+
+      vi.mocked(access).mockResolvedValue(undefined);
+
+      await rescanService.rescanLibrary();
+
+      expect(mockLog.info).toHaveBeenCalledWith(
+        expect.objectContaining({ elapsedMs: expect.any(Number) }),
+        'Library rescan complete',
+      );
+    });
   });
 });

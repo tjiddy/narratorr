@@ -1604,6 +1604,33 @@ describe('DownloadService', () => {
 
   // ── #229 Observability — addDownload logging ────────────────────────────
   describe('logging improvements (#229)', () => {
-    it.todo('addDownload success logged at debug with { externalId, clientName, bookId }');
+    it('addDownload success logged at debug with { externalId, clientType, bookId }', async () => {
+      const log = createMockLogger();
+      const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
+
+      const mockAdapter = {
+        addDownload: vi.fn().mockResolvedValue('ext-123'),
+        removeDownload: vi.fn(),
+      };
+      const enabledClient = { id: 1, name: 'qBit', type: 'qbittorrent', enabled: true, settings: {} };
+      (clientService.getFirstEnabledForProtocol as Mock).mockResolvedValue(enabledClient);
+      (clientService.getAdapter as Mock).mockResolvedValue(mockAdapter);
+
+      db.insert.mockReturnValue(mockDbChain([{ id: 1 }]));
+      db.update.mockReturnValue(mockDbChain());
+      db.select.mockReturnValueOnce(mockDbChain([])); // no active downloads
+      db.select.mockReturnValueOnce(mockDbChain([{ download: mockDownload, book: mockBook }]));
+
+      await svc.grab({
+        downloadUrl: 'magnet:?xt=urn:btih:aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d',
+        title: 'The Way of Kings',
+        bookId: 1,
+      });
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ externalId: 'ext-123', clientType: 'qbittorrent', bookId: 1 }),
+        'Download sent to client',
+      );
+    });
   });
 });

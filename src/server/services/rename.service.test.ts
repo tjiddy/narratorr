@@ -464,6 +464,18 @@ describe('RenameService', () => {
 
   // ── #229 Observability — skip logging ───────────────────────────────────
   describe('logging improvements (#229)', () => {
-    it.todo('already organized skip logged at debug with { bookId }');
+    it('already organized skip logged at debug with { bookId }', async () => {
+      const { service, bookService, settingsService, log } = createService();
+      (settingsService.get as Mock).mockResolvedValue({ ...libraryOverrides.library, fileFormat: '' });
+      const book = { ...mockBook, path: '/library/Brandon Sanderson/The Way of Kings' };
+      bookService.getById.mockResolvedValue(book);
+
+      await service.renameBook(1);
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ bookId: 1 }),
+        'Book already organized — skipping rename',
+      );
+    });
   });
 });

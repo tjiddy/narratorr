@@ -1017,9 +1017,67 @@ describe('IndexerService', () => {
 
   // ── #229 Observability — logging improvements ───────────────────────────
   describe('logging improvements (#229)', () => {
-    it.todo('per-indexer search logs { indexer, resultCount, elapsedMs } at debug');
-    it.todo('per-indexer search that throws does not emit elapsed time log');
-    it.todo('parseReleaseNames debug log includes indexerName field');
-    it.todo('parseReleaseNames called from pollRss passes indexer name');
+    it('per-indexer search logs { indexer, resultCount, elapsedMs } at debug', async () => {
+      const log = createMockLogger();
+      const svc = new IndexerService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+      const mockResult = { title: 'Book', indexer: 'AudioBookBay', protocol: 'torrent' as const, downloadUrl: 'magnet:?xt=urn:btih:abc' };
+      const mockAdapter = { type: 'abb', name: 'AudioBookBay', search: vi.fn().mockResolvedValue([mockResult]), test: vi.fn() };
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      vi.spyOn(svc, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      await svc.searchAll('test');
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ indexer: 'AudioBookBay', resultCount: 1, elapsedMs: expect.any(Number) }),
+        'Indexer search completed',
+      );
+    });
+
+    it('per-indexer search that throws does not emit elapsed time log', async () => {
+      const log = createMockLogger();
+      const svc = new IndexerService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+      const mockAdapter = { type: 'abb', name: 'AudioBookBay', search: vi.fn().mockRejectedValue(new Error('timeout')), test: vi.fn() };
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      vi.spyOn(svc, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      await svc.searchAll('test');
+
+      expect(log.debug).not.toHaveBeenCalledWith(
+        expect.objectContaining({ indexer: 'AudioBookBay', elapsedMs: expect.any(Number) }),
+        'Indexer search completed',
+      );
+    });
+
+    it('parseReleaseNames debug log includes indexerName field', async () => {
+      const log = createMockLogger();
+      const svc = new IndexerService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+      const unparseable = { title: 'Some Random Title Without Author Delimiter', indexer: 'AudioBookBay', protocol: 'torrent' as const, downloadUrl: 'magnet:?xt=urn:btih:abc' };
+      const mockAdapter = { type: 'abb', name: 'AudioBookBay', search: vi.fn().mockResolvedValue([unparseable]), test: vi.fn() };
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+      vi.spyOn(svc, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      await svc.searchAll('test');
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ indexerName: 'AudioBookBay' }),
+        'Unparsed release name',
+      );
+    });
+
+    it('parseReleaseNames called from pollRss passes indexer name', async () => {
+      const log = createMockLogger();
+      const svc = new IndexerService(inject<Db>(db), inject<FastifyBaseLogger>(log));
+      const torznabIndexer = createMockDbIndexer({ id: 1, name: 'Torznab', type: 'torznab', settings: { apiUrl: 'https://tracker.test', apiKey: 'key' } });
+      const unparseable = { title: 'UnparseableTitle', indexer: 'Torznab', protocol: 'torrent' as const, downloadUrl: 'magnet:?xt=urn:btih:abc' };
+      const mockAdapter = { type: 'torznab', name: 'Torznab', search: vi.fn().mockResolvedValue([unparseable]), test: vi.fn() };
+      vi.spyOn(svc, 'getAdapter').mockResolvedValue(mockAdapter as never);
+
+      await svc.pollRss(torznabIndexer);
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ indexerName: 'Torznab' }),
+        'Unparsed release name',
+      );
+    });
   });
 });
