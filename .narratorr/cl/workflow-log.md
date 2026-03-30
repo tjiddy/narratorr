@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #216 REACT-3/CSS-1: Extract shared form primitives and fix z-index — 2026-03-30
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #221
+
+### Metrics
+- Files changed: 15 | Tests added/modified: 3 (SelectWithChevron.test.tsx new, DownloadClientFields.test.tsx, BookContextMenu.test.tsx updated)
+- Quality gate runs: 2 (pass on attempt 2 — first failed on ReactNode import)
+- Fix iterations: 1 (ReactNode import removal left dangling reference)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Mechanical conversion of 12 selects was straightforward — all existing tests passed without modification, confirming the component is a drop-in replacement
+- Friction / issues encountered: Spec review took 4 rounds (right-click wording, scope enumeration, subform boundary, Import Lists labels). The Import Lists label errors were introduced during elaboration when I guessed control names instead of reading the source.
+
+### Token efficiency
+- Highest-token actions: Spec review round-trips (4 rounds of elaborate/review/respond) before implementation could start
+- Avoidable waste: Could have verified Import Lists control labels during elaboration instead of guessing — would have saved 1-2 review rounds
+- Suggestions: Always read the source at the cited line numbers when populating spec file lists, even for seemingly obvious labels
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: `inputClass` constants still duplicated across 5+ settings component files; ImportListProviderSettings has no direct test file
+
+### Wish I'd Known
+1. When removing a local component from a file, always check if its type imports (`ReactNode`, etc.) are used elsewhere in the same file — tests pass but typecheck fails
+2. When elaborating spec file lists with control labels, read the actual `<label>` element at the cited line — don't infer from context. Wrong labels caused an extra review round.
+3. The coverage review subagent looks for exact filename matches (e.g., `ImportListsSettings.test.tsx`) and misses differently-named test files (`ImportListsSettingsSection.test.tsx`) — verify its "no test file" claims manually
+
 ## #215 DRY-2/ZOD-2: Eliminate schema and logic duplication across settings — 2026-03-30
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #220
