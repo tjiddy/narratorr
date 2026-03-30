@@ -138,6 +138,7 @@ const mockAdapter = {
 function createMockDownloadClientService(): DownloadClientService {
   return inject<DownloadClientService>({
     getAdapter: vi.fn().mockResolvedValue(mockAdapter),
+    getById: vi.fn().mockResolvedValue({ id: 1, name: 'qBit', type: 'qbittorrent', enabled: true }),
   });
 }
 
@@ -1873,7 +1874,7 @@ describe('ImportService consolidation (issue #79)', () => {
       await service.importDownload(1);
 
       expect(log.info).toHaveBeenCalledWith(
-        expect.objectContaining({ externalId: 'ext-1', deleteFiles: true }),
+        expect.objectContaining({ externalId: 'ext-1', clientType: 'qbittorrent', deleteFiles: true }),
         'Torrent removed from client after import',
       );
     });

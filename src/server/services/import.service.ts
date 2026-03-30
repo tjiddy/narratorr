@@ -224,10 +224,11 @@ export class ImportService {
     }
 
     try {
+      const client = await this.downloadClientService.getById(download.downloadClientId);
       const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
       if (adapter) {
         await adapter.removeDownload(download.externalId, true);
-        this.log.info({ downloadId: download.id, externalId: download.externalId, deleteFiles: true }, 'Torrent removed from client after import');
+        this.log.info({ downloadId: download.id, externalId: download.externalId, clientType: client?.type, deleteFiles: true }, 'Torrent removed from client after import');
       }
     } catch (error: unknown) {
       this.log.error({ error, downloadId: download.id }, 'Failed to remove torrent after import');
