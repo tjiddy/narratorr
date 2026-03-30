@@ -1072,6 +1072,28 @@ describe('NamingSettingsSection', () => {
       expect(multiFileTokens).toHaveProperty('trackTotal', 12);
       expect(multiFileTokens).toHaveProperty('partName', 'Chapter 3');
     });
+
+    it('multi-file preview row receives updated separator/case options', async () => {
+      const user = userEvent.setup();
+      mockApi.getSettings.mockResolvedValue(mockSettings);
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByText('Multi-file')).toBeInTheDocument();
+      });
+
+      // Change separator to period
+      mockRenderFilename.mockClear();
+      await user.selectOptions(screen.getByLabelText('Separator'), 'period');
+
+      await waitFor(() => {
+        // Find multi-file call (third renderFilename call for the file format)
+        const calls = mockRenderFilename.mock.calls.filter(
+          (call: unknown[]) => typeof call[0] === 'string' && call[0] === '{author} - {title}',
+        );
+        const multiFileOptions = calls[2]?.[2] as { separator?: string; case?: string } | undefined;
+        expect(multiFileOptions).toEqual(expect.objectContaining({ separator: 'period' }));
+      });
+    });
   });
 
   describe('atomic deletion — prefix conditional tokens', () => {
