@@ -12,10 +12,11 @@ function NotifierCardFormWrapper({ onSubmit = vi.fn() }: { onSubmit?: (data: Cre
       name: '',
       type: 'webhook',
       enabled: true,
-      events: ['grabbed'],
-      settings: { webhookUrl: '', webhookMethod: 'POST' },
+      events: ['on_grab'],
+      settings: { webhookUrl: '', method: 'POST' },
     },
   });
+  // eslint-disable-next-line react-hooks/incompatible-library
   const selectedType = form.watch('type');
   const watchedEvents = form.watch('events') ?? [];
 
