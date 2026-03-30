@@ -217,7 +217,7 @@ export class IndexerService {
   }
 
   /** Parse release names to extract author/title for results that don't already have them */
-  private parseReleaseNames(results: SearchResult[]): void {
+  private parseReleaseNames(results: SearchResult[], indexerName?: string): void {
     for (const result of results) {
       if (result.author) continue;
       const parsed = parseAudiobookTitle(result.title);
@@ -228,7 +228,7 @@ export class IndexerService {
       if (parsed.author) result.author = parsed.author;
       if (parsed.narrator && !result.narrator) result.narrator = parsed.narrator;
       if (!parsed.author && !/^[a-f0-9]{32,}$/i.test(result.title)) {
-        this.log.debug({ rawTitle: result.rawTitle ?? result.title }, 'Unparsed release name');
+        this.log.debug({ rawTitle: result.rawTitle ?? result.title, indexerName }, 'Unparsed release name');
       }
     }
   }
@@ -250,7 +250,7 @@ export class IndexerService {
   async pollRss(indexer: IndexerRow): Promise<SearchResult[]> {
     const adapter = await this.getAdapter(indexer);
     const results = await adapter.search('');
-    this.parseReleaseNames(results);
+    this.parseReleaseNames(results, indexer.name);
     return results;
   }
 
@@ -267,16 +267,17 @@ export class IndexerService {
 
     for (const indexer of enabledIndexers) {
       try {
+        const indexerStartMs = Date.now();
         const adapter = await this.getAdapter(indexer);
         const indexerResults = await adapter.search(query, options);
-        this.log.debug({ indexer: indexer.name, results: indexerResults.length }, 'Indexer search completed');
-        results.push(...indexerResults.map(r => ({ ...r, indexerId: indexer.id })));
+        this.log.debug({ indexer: indexer.name, resultCount: indexerResults.length, elapsedMs: Date.now() - indexerStartMs }, 'Indexer search completed');
+        const mapped = indexerResults.map(r => ({ ...r, indexerId: indexer.id }));
+        this.parseReleaseNames(mapped, indexer.name);
+        results.push(...mapped);
       } catch (error: unknown) {
         this.log.warn({ indexer: indexer.name, query, error }, 'Error searching indexer');
       }
     }
-
-    this.parseReleaseNames(results);
 
     // Score results against search context when title is provided
     if (options?.title) {

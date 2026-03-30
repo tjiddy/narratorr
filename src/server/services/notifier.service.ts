@@ -78,12 +78,12 @@ export class NotifierService {
           const adapter = this.createAdapter(notifier);
           const result = await adapter.send(event, payload);
           if (!result.success) {
-            this.log.warn({ notifier: notifier.name, event, message: result.message }, 'Notification failed');
+            this.log.warn({ notifier: notifier.name, notifierType: notifier.type, event, message: result.message }, 'Notification failed');
           } else {
-            this.log.debug({ notifier: notifier.name, event }, 'Notification sent');
+            this.log.debug({ notifier: notifier.name, notifierType: notifier.type, event }, 'Notification sent');
           }
         } catch (error: unknown) {
-          this.log.warn({ notifier: notifier.name, event, error }, 'Notification error');
+          this.log.warn({ notifier: notifier.name, notifierType: notifier.type, event, error }, 'Notification error');
         }
       }),
     );

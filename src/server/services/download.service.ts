@@ -274,6 +274,7 @@ export class DownloadService {
     // Send to download client
     this.log.debug({ protocol, downloadUrl: logUrl, infoHash }, 'Sending download to client');
     const { externalId, clientId, clientType } = await this.sendToClient(params.downloadUrl, protocol, torrentFile);
+    this.log.debug({ externalId, clientType, bookId: params.bookId }, 'Download sent to client');
 
     // Handoff clients (e.g. Blackhole) return null externalId — mark as completed immediately
     const isHandoff = !externalId;

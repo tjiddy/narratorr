@@ -85,6 +85,7 @@ class MatchJob {
   private results: MatchResult[] = [];
   private cancelled = false;
   private done = false;
+  private startMs = Date.now();
   private semaphore = new Semaphore(MAX_CONCURRENCY);
 
   constructor(
@@ -126,6 +127,7 @@ class MatchJob {
         total: this.books.length,
         matched: this.results.filter(r => r.confidence !== 'none').length,
         cancelled: this.cancelled,
+        elapsedMs: Date.now() - this.startMs,
       },
       'Match job finished',
     );

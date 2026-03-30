@@ -206,7 +206,7 @@ export class BookService {
       return id;
     });
 
-    this.log.info({ title: data.title }, 'Book added to library');
+    this.log.info({ title: data.title, authors: data.authors?.map(a => a.name), asin: data.asin }, 'Book added to library');
     this.trackUnmatchedGenres(data.genres).catch((error) => {
       this.log.debug({ error }, 'Failed to track unmatched genres');
     });
@@ -238,7 +238,8 @@ export class BookService {
 
     if (!updated) return null;
 
-    this.log.info({ id }, 'Book updated');
+    const changedFields = Object.keys(data).filter(k => data[k as keyof typeof data] !== undefined);
+    this.log.info({ id, changedFields }, 'Book updated');
     return this.getById(id);
   }
 
@@ -258,7 +259,7 @@ export class BookService {
     if (!existing) return false;
 
     await this.db.delete(books).where(eq(books.id, id));
-    this.log.info({ id }, 'Book removed');
+    this.log.info({ id, title: existing.title }, 'Book removed');
     return true;
   }
 

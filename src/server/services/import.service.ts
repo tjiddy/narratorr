@@ -95,6 +95,7 @@ export class ImportService {
    * Side effects (SSE, notifications, events, tagging, post-processing) are dispatched by the orchestrator.
    */
   async importDownload(downloadId: number): Promise<ImportResult> {
+    const startMs = Date.now();
     const download = await this.getDownload(downloadId);
     if (!download) throw new Error(`Download ${downloadId} not found`);
     if (!download.bookId) throw new Error(`Download ${downloadId} has no linked book`);
@@ -108,6 +109,7 @@ export class ImportService {
     let targetPath: string | undefined;
     try {
       const savePath = await resolveSavePath(download, this.downloadClientService, this.remotePathMappingService);
+      this.log.debug({ downloadId, bookTitle: book.title, resolvedPath: savePath, originalPath: download.savePath }, 'Resolved save path');
       const [librarySettings, importSettings, processingSettings] = await Promise.all([
         this.settingsService.get('library'),
         this.settingsService.get('import'),
@@ -116,9 +118,12 @@ export class ImportService {
       const processingEnabled = !!processingSettings?.enabled;
       const namingOptions = toNamingOptions(librarySettings);
       targetPath = buildTargetPath(librarySettings.path, librarySettings.folderFormat, book, authorName, namingOptions);
+      this.log.debug({ downloadId, bookTitle: book.title, targetPath }, 'Built target path');
 
       const { sourcePath, fileCount, sourceStats } = await validateSource(savePath, this.remotePathMappingService, download.downloadClientId);
-      await checkDiskSpace({ sourcePath, sourceStats, libraryPath: librarySettings.path, minFreeSpaceGB: importSettings.minFreeSpaceGB, processingEnabled });
+      this.log.debug({ downloadId, bookTitle: book.title, fileCount, sourceSize: sourceStats.size }, 'Validated source');
+      const diskSpace = await checkDiskSpace({ sourcePath, sourceStats, libraryPath: librarySettings.path, minFreeSpaceGB: importSettings.minFreeSpaceGB, processingEnabled });
+      this.log.debug({ downloadId, bookTitle: book.title, freeGB: diskSpace.freeGB, requiredGB: diskSpace.requiredGB }, 'Disk space check passed');
       await copyToLibrary({ sourcePath, targetPath, sourceStats, log: this.log });
       await runAudioProcessing({ processingSettings, librarySettings, targetPath, book: book, authorName: authorName || 'Unknown Author', namingOptions, db: this.db, log: this.log });
 
@@ -126,13 +131,14 @@ export class ImportService {
         await renameFilesWithTemplate(targetPath, librarySettings.fileFormat, book, authorName, this.log, namingOptions);
       }
       const targetSize = await verifyCopy({ targetPath, sourcePath, processingEnabled });
+      this.log.debug({ downloadId, bookTitle: book.title, sourceSize: sourceStats.size, targetSize }, 'Copy verified');
       await cleanupOldBookPath({ bookPath: book.path, targetPath, log: this.log });
 
       await this.db.update(books).set({ status: 'imported', path: targetPath, size: targetSize, updatedAt: new Date() }).where(eq(books.id, book.id));
       await enrichBookFromAudio(book.id, targetPath, book, this.db, this.log);
 
       await this.db.update(downloads).set({ status: 'imported' }).where(eq(downloads.id, downloadId));
-      this.log.info({ downloadId, bookId: book.id, targetPath, fileCount, totalSize: targetSize }, 'Import completed successfully');
+      this.log.info({ downloadId, bookId: book.id, bookTitle: book.title, targetPath, fileCount, totalSize: targetSize, elapsedMs: Date.now() - startMs }, 'Import completed successfully');
 
       if (importSettings.deleteAfterImport) {
         await this.handleTorrentRemoval(download, importSettings.minSeedTime);
@@ -143,7 +149,7 @@ export class ImportService {
       // Orchestrator catches the rethrow for failure-path side effects.
       return handleImportFailure({
         error, targetPath, db: this.db, downloadId,
-        book, log: this.log,
+        book, log: this.log, elapsedMs: Date.now() - startMs,
       });
     }
   }
@@ -221,7 +227,7 @@ export class ImportService {
       const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
       if (adapter) {
         await adapter.removeDownload(download.externalId, true);
-        this.log.info({ downloadId: download.id }, 'Torrent removed from client after import');
+        this.log.info({ downloadId: download.id, externalId: download.externalId, deleteFiles: true }, 'Torrent removed from client after import');
       }
     } catch (error: unknown) {
       this.log.error({ error, downloadId: download.id }, 'Failed to remove torrent after import');
