@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #226 Atomic token deletion — backspace/delete removes entire {token} — 2026-03-30
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #230
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 17
+- Quality gate runs: 2 (pass on attempt 2 — first run caught max-lines-per-function lint violation)
+- Fix iterations: 1 (cursor position off-by-one in 5 tests due to manual character counting)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean single-file feature — all logic in NamingSettingsSection.tsx, mirroring the existing insertTokenAtCursor pattern
+- Friction / issues encountered: Manually counting cursor positions for token strings like `{seriesPosition:00}` led to 5 wrong test positions. Should use programmatic `string.length` checks. Also, adding the handler inline pushed the component past the 150-line lint threshold, requiring extraction.
+
+### Token efficiency
+- Highest-token actions: Test writing (17 tests with setup helpers and exact value assertions)
+- Avoidable waste: Could have verified string lengths upfront instead of debugging position mismatches
+- Suggestions: For cursor-position-dependent tests, write a helper that computes positions from the string and token name
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: frontend-design skill not available (noted in handoff, no visual changes so N/A)
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. Token strings like `{seriesPosition:00}` are 20 chars, not 18 — always verify lengths programmatically (see `cursor-position-off-by-one-in-tests.md`)
+2. NamingSettingsSection is at 150-line ESLint limit — any new handler needs module-level extraction from the start (see `max-lines-extraction-pattern.md`)
+3. `screen.getByText()` throws when multiple validation messages match — use `getAllByText` + length assertion (see `getbytext-multiple-matches-validation.md`)
+
 ## #224 Cleanup leftovers — select migrations and formatDate consolidation — 2026-03-30
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #225
