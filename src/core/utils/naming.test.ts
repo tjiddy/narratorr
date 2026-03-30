@@ -507,6 +507,39 @@ describe('renderTemplate with separator/case options', () => {
   });
 });
 
+describe('toNamingOptions', () => {
+  it.todo('converts { namingSeparator, namingCase } to NamingOptions with { separator, case }');
+  it.todo('handles all valid NamingSeparator values');
+  it.todo('handles all valid NamingCase values');
+});
+
+describe('renderTemplate — comma-space separator edge cases', () => {
+  it.todo('collapses comma-space to comma with dash separator — no stray dash after punctuation');
+  it.todo('collapses comma-space to comma with period separator');
+  it.todo('collapses comma-space to comma with underscore separator');
+  it.todo('preserves comma-space unchanged with space separator');
+  it.todo('collapses all comma-spaces in multi-comma value (Last, First, Jr.) with dash separator');
+  it.todo('leaves comma without trailing space unchanged (LastFirst,Extra) with dash separator');
+});
+
+describe('renderTemplate — consecutive separator collapse', () => {
+  it.todo('collapses double space to single separator with period separator');
+  it.todo('collapses leading spaces with dash separator');
+});
+
+describe('renderTemplate — separator + numeric padding interaction', () => {
+  it.todo('numeric formatted token {seriesPosition:00} unaffected by period separator');
+  it.todo('conditional literal text {seriesPosition:00? - } unaffected by period separator');
+});
+
+describe('renderTemplate — unresolved tokens', () => {
+  it.todo('erases unresolved {unknownToken} from output — not passthrough');
+});
+
+describe('renderFilename — unresolved tokens', () => {
+  it.todo('erases unresolved {unknownToken} from output — not passthrough');
+});
+
 describe('renderFilename with separator/case options', () => {
   it('space separator leaves token values unchanged', () => {
     expect(renderFilename('{author} - {title}', { author: 'Brandon Sanderson', title: 'The Way of Kings' }, { separator: 'space' }))

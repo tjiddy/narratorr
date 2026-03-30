@@ -68,4 +68,17 @@ describe('Modal', () => {
     const panel = child.parentElement!;
     expect(panel).toHaveClass('max-w-2xl');
   });
+
+  describe('portal rendering', () => {
+    it.todo('renders modal content into document.body via createPortal');
+    it.todo('backdrop covers full viewport when opened inside a container element');
+    it.todo('modal content centered on viewport, not on parent container');
+  });
+
+  describe('nested modal stacking', () => {
+    it.todo('outer modal remains visible when inner modal opens');
+    it.todo('both modals render separate backdrops — getAllByTestId returns 2');
+    it.todo('clicking inner backdrop closes only the inner modal, outer onClose NOT called');
+    it.todo('clicking inner panel does not propagate to outer modal — stopPropagation');
+  });
 });

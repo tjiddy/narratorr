@@ -59,6 +59,9 @@ beforeEach(() => {
 
 // Tests verify section composition after #66 refactoring
 describe('GeneralSettings', () => {
+  it.todo('renders File Naming section after Library section');
+  it.todo('each section manages independent form state — no shared form context');
+
   it('renders all settings sections', async () => {
     renderWithProviders(<GeneralSettings />);
 
