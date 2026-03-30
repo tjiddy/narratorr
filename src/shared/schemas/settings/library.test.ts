@@ -95,6 +95,14 @@ describe('hasTitle — prefix conditional syntax', () => {
   it('returns true for {pre?titleSort} (prefix syntax with titleSort)', () => {
     expect(hasTitle('{pre?titleSort}')).toBe(true);
   });
+
+  it('returns false for {author?title} — suffix-first: "author" is a known token, "title" is suffix text', () => {
+    expect(hasTitle('{author?title}')).toBe(false);
+  });
+
+  it('returns false for {series?titleSort} — suffix-first: "series" is a known token', () => {
+    expect(hasTitle('{series?titleSort}')).toBe(false);
+  });
 });
 
 describe('hasAuthor — prefix conditional syntax', () => {
@@ -104,6 +112,10 @@ describe('hasAuthor — prefix conditional syntax', () => {
 
   it('returns true for {pre?authorLastFirst}', () => {
     expect(hasAuthor('{pre?authorLastFirst}')).toBe(true);
+  });
+
+  it('returns false for {title?author} — suffix-first: "title" is a known token, "author" is suffix text', () => {
+    expect(hasAuthor('{title?author}')).toBe(false);
   });
 });
 

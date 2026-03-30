@@ -4,14 +4,40 @@ import { FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS, TOKEN_PATTERN_SOURCE } from
 export const FOLDER_FORMAT_ALLOWED_TOKENS = [...FOLDER_ALLOWED_TOKENS];
 export const FILE_FORMAT_ALLOWED_TOKENS = [...FILE_ALLOWED_TOKENS];
 
+/**
+ * Extract disambiguated token names from a template string.
+ * Shares the suffix-first precedence logic with validateTokens/parseTemplate.
+ */
+function extractTokenNames(val: string, allowedTokens: ReadonlySet<string>): string[] {
+  const tokenPattern = new RegExp(TOKEN_PATTERN_SOURCE, 'g');
+  const names: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = tokenPattern.exec(val)) !== null) {
+    const candidatePrefix = match[1];
+    const candidateName = match[2];
+    let tokenName = candidateName;
+    if (candidatePrefix) {
+      const firstWordMatch = candidatePrefix.match(/\w+/);
+      if (firstWordMatch && allowedTokens.has(firstWordMatch[0])) {
+        tokenName = firstWordMatch[0];
+      }
+    }
+    names.push(tokenName);
+  }
+  return names;
+}
+
+/** All known tokens for disambiguation (superset — used by hasTitle/hasAuthor). */
+const ALL_TOKENS = new Set<string>([...FILE_ALLOWED_TOKENS]);
+
 export function hasTitle(val: string): boolean {
-  // Match both suffix syntax {title...} and prefix syntax {prefix?title...}
-  return /\{(?:[^}?]*?\?)?title(?:Sort)?(?::\d+)?(?:\?[^}]*)?\}/.test(val);
+  const names = extractTokenNames(val, ALL_TOKENS);
+  return names.some(n => n === 'title' || n === 'titleSort');
 }
 
 export function hasAuthor(val: string): boolean {
-  // Match both suffix syntax {author...} and prefix syntax {prefix?author...}
-  return /\{(?:[^}?]*?\?)?author(?:LastFirst)?(?::\d+)?(?:\?[^}]*)?\}/.test(val);
+  const names = extractTokenNames(val, ALL_TOKENS);
+  return names.some(n => n === 'author' || n === 'authorLastFirst');
 }
 
 export function validateTokens(val: string, allowed: readonly string[]): boolean {
