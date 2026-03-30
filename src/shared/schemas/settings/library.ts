@@ -17,27 +17,22 @@ function validateTokens(val: string, allowed: readonly string[]): boolean {
   return true;
 }
 
-const folderFormatRefinements = (schema: z.ZodString) =>
-  schema.refine(
-    hasTitle,
-    { message: 'Template must include {title} or {titleSort}' },
-  ).refine(
-    (val) => validateTokens(val, FOLDER_ALLOWED_TOKENS),
-    { message: 'Unknown token in template. Allowed: {author}, {authorLastFirst}, {title}, {titleSort}, {series}, {seriesPosition}, {year}, {narrator}, {narratorLastFirst}' },
-  );
+const FOLDER_TITLE_MSG = 'Template must include {title} or {titleSort}';
+const FOLDER_TOKEN_MSG = 'Unknown token in template. Allowed: {author}, {authorLastFirst}, {title}, {titleSort}, {series}, {seriesPosition}, {year}, {narrator}, {narratorLastFirst}';
+const FILE_TITLE_MSG = FOLDER_TITLE_MSG;
+const FILE_TOKEN_MSG = 'Unknown token in template. Allowed: {author}, {title}, {trackNumber}, {trackTotal}, {partName}, and more';
 
-const fileFormatRefinements = (schema: z.ZodString) =>
-  schema.refine(
-    hasTitle,
-    { message: 'Template must include {title} or {titleSort}' },
-  ).refine(
-    (val) => validateTokens(val, FILE_ALLOWED_TOKENS),
-    { message: 'Unknown token in template. Allowed: {author}, {title}, {trackNumber}, {trackTotal}, {partName}, and more' },
-  );
+export const folderFormatSchema = z.string().default('{author}/{title}').refine(
+  hasTitle, { message: FOLDER_TITLE_MSG },
+).refine(
+  (val) => validateTokens(val, FOLDER_ALLOWED_TOKENS), { message: FOLDER_TOKEN_MSG },
+);
 
-export const folderFormatSchema = folderFormatRefinements(z.string().default('{author}/{title}'));
-
-export const fileFormatSchema = fileFormatRefinements(z.string().default('{author} - {title}'));
+export const fileFormatSchema = z.string().default('{author} - {title}').refine(
+  hasTitle, { message: FILE_TITLE_MSG },
+).refine(
+  (val) => validateTokens(val, FILE_ALLOWED_TOKENS), { message: FILE_TOKEN_MSG },
+);
 
 export const namingSeparatorValues = ['space', 'period', 'underscore', 'dash'] as const;
 export type NamingSeparator = (typeof namingSeparatorValues)[number];
@@ -57,8 +52,16 @@ export const librarySettingsSchema = z.object({
 
 export const libraryFormSchema = z.object({
   path: z.string().trim().min(1, 'Library path is required'),
-  folderFormat: folderFormatRefinements(z.string().trim().min(1, 'Folder format is required')),
-  fileFormat: fileFormatRefinements(z.string().trim().min(1, 'File format is required')),
+  folderFormat: z.string().trim().min(1, 'Folder format is required').refine(
+    hasTitle, { message: FOLDER_TITLE_MSG },
+  ).refine(
+    (val) => validateTokens(val, FOLDER_ALLOWED_TOKENS), { message: 'Unknown token in template' },
+  ),
+  fileFormat: z.string().trim().min(1, 'File format is required').refine(
+    hasTitle, { message: FILE_TITLE_MSG },
+  ).refine(
+    (val) => validateTokens(val, FILE_ALLOWED_TOKENS), { message: 'Unknown token in file template' },
+  ),
   namingSeparator: z.enum(namingSeparatorValues),
   namingCase: z.enum(namingCaseValues),
 });
