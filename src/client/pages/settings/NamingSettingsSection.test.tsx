@@ -1086,12 +1086,23 @@ describe('NamingSettingsSection', () => {
       await user.selectOptions(screen.getByLabelText('Separator'), 'period');
 
       await waitFor(() => {
-        // Find multi-file call (third renderFilename call for the file format)
         const calls = mockRenderFilename.mock.calls.filter(
           (call: unknown[]) => typeof call[0] === 'string' && call[0] === '{author} - {title}',
         );
         const multiFileOptions = calls[2]?.[2] as { separator?: string; case?: string } | undefined;
         expect(multiFileOptions).toEqual(expect.objectContaining({ separator: 'period' }));
+      });
+
+      // Change case to upper
+      mockRenderFilename.mockClear();
+      await user.selectOptions(screen.getByLabelText('Case'), 'upper');
+
+      await waitFor(() => {
+        const calls = mockRenderFilename.mock.calls.filter(
+          (call: unknown[]) => typeof call[0] === 'string' && call[0] === '{author} - {title}',
+        );
+        const multiFileOptions = calls[2]?.[2] as { separator?: string; case?: string } | undefined;
+        expect(multiFileOptions).toEqual(expect.objectContaining({ case: 'upper' }));
       });
     });
   });
