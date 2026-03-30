@@ -58,6 +58,14 @@ vi.mock('@core/utils/index.js', () => ({
     { id: 'plex', name: 'Plex', folderFormat: '{author}/{series?/}{year? - }{title}', fileFormat: '{title}{trackNumber:00? - pt}' },
     { id: 'last-first', name: 'Last, First', folderFormat: '{authorLastFirst}/{titleSort}', fileFormat: '{authorLastFirst} - {titleSort}' },
   ],
+  FOLDER_TOKEN_GROUPS: [
+    { label: 'Author', tokens: ['author', 'authorLastFirst'] },
+    { label: 'Title', tokens: ['title', 'titleSort'] },
+    { label: 'Series', tokens: ['series', 'seriesPosition'] },
+    { label: 'Narrator', tokens: ['narrator', 'narratorLastFirst'] },
+    { label: 'Metadata', tokens: ['year'] },
+  ],
+  FILE_ONLY_TOKEN_GROUP: { label: 'File-specific', tokens: ['trackNumber', 'trackTotal', 'partName'] },
   detectPreset: (folder: string, file: string) => {
     if (folder === '{author}/{title}' && file === '{author} - {title}') return 'standard';
     return 'custom';
@@ -504,7 +512,7 @@ describe('SettingsPage - Folder format token chips and preview', () => {
     renderSettingsPage('/settings');
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Library' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
 
     // Token reference buttons visible
@@ -523,13 +531,13 @@ describe('SettingsPage - Folder format token chips and preview', () => {
     renderSettingsPage('/settings');
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Library' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
 
     // Preview shows both with-series and without-series examples
     await waitFor(() => {
-      expect(screen.getByText('With series')).toBeInTheDocument();
-      expect(screen.getByText('Without series')).toBeInTheDocument();
+      expect(screen.getAllByText('With series').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Without series').length).toBeGreaterThan(0);
     });
   });
 
@@ -538,7 +546,7 @@ describe('SettingsPage - Folder format token chips and preview', () => {
     renderSettingsPage('/settings');
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Library' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'File Naming' })).toBeInTheDocument();
     });
 
     // Open folder format token reference modal, then click {year}
