@@ -1019,4 +1019,16 @@ describe('NamingSettingsSection', () => {
       });
     });
   });
+
+  describe('multi-file preview', () => {
+    it.todo('file format field renders three preview labels: With series, Without series, Multi-file');
+    it.todo('folder format field renders exactly two preview labels (no Multi-file)');
+    it.todo('single-file previews omit trackNumber/trackTotal/partName from token map');
+    it.todo('multi-file preview uses trackNumber=3, trackTotal=12');
+  });
+
+  describe('atomic deletion — prefix conditional tokens', () => {
+    it.todo('Backspace at end of { - pt?trackNumber:00} deletes entire token');
+    it.todo('Delete at start of {pre?token?suf} deletes entire token');
+  });
 });

@@ -72,6 +72,12 @@ describe('preset template validity', () => {
   });
 });
 
+describe('Plex preset with prefix conditional syntax', () => {
+  it.todo('Plex preset fileFormat is {title}{ - pt?trackNumber:00}');
+  it.todo('Plex preset renders Title - pt01.m4b for multi-file');
+  it.todo('Plex preset renders Title.m4b for single-file (no trackNumber)');
+});
+
 describe('detectPreset', () => {
   it('returns preset id when both fields match a defined preset', () => {
     expect(detectPreset('{author}/{title}', '{author} - {title}')).toBe('standard');

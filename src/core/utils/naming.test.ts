@@ -626,6 +626,48 @@ describe('renderFilename — consecutive separator collapse', () => {
   });
 });
 
+describe('prefix conditional syntax — resolveTokens / renderTemplate / renderFilename', () => {
+  describe('positive cases', () => {
+    it.todo('renders prefix + zero-padded value: {title}{ - pt?trackNumber:00} with trackNumber=1');
+    it.todo('omits prefix when token absent: { - pt?trackNumber:00} with no trackNumber');
+    it.todo('renders prefix with series: { - ?series}{title} with series present');
+    it.todo('omits prefix when series absent: { - ?series}{title}');
+    it.todo('renders both prefix and suffix: {pre?token?suf} with token present');
+    it.todo('omits all when token absent: {pre?token?suf}');
+    it.todo('empty prefix renders just value: {?trackNumber} with trackNumber=5');
+  });
+
+  describe('backward compatibility', () => {
+    it.todo('existing suffix syntax unchanged: {seriesPosition:00? - } with seriesPosition=3');
+    it.todo('suffix omitted when token missing');
+    it.todo('plain token renders value: {title}');
+    it.todo('zero-padding without conditional: {trackNumber:00}');
+  });
+
+  describe('disambiguation — suffix-first precedence', () => {
+    it.todo('{author?title} parses as token=author, suffix="title" (both are known tokens)');
+    it.todo('{title?series} parses as token=title, suffix="series" (both are known tokens)');
+    it.todo('{ - pt?trackNumber:00} parses as prefix=" - pt", token=trackNumber (prefix is not a token)');
+    it.todo('{Chapter ?partName} parses as prefix="Chapter ", token=partName');
+  });
+
+  describe('boundary / edge cases', () => {
+    it.todo('whitespace-only prefix: { ?token} renders space + value');
+    it.todo('prefix + pad + suffix: { - pt?trackNumber:000?!} renders all parts');
+    it.todo('multiple prefix-conditional tokens: {title}{ - pt?trackNumber:00}{ of ?trackTotal}');
+  });
+});
+
+describe('parseTemplate — prefix conditional syntax', () => {
+  it.todo('prefix tokens reported by token name, not prefix text');
+  it.todo('prefix syntax with unknown token name produces error');
+  it.todo('template with both prefix and suffix conditionals extracts all tokens');
+  it.todo('empty template returns empty tokens and no errors');
+  it.todo('{unknownPrefix?title} — parsed as prefix syntax, valid');
+  it.todo('{?unknownToken} — error: unknown token');
+  it.todo('{title?unknownSuffix} — suffix syntax, valid');
+});
+
 describe('renderFilename with separator/case options', () => {
   it('space separator leaves token values unchanged', () => {
     expect(renderFilename('{author} - {title}', { author: 'Brandon Sanderson', title: 'The Way of Kings' }, { separator: 'space' }))

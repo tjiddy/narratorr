@@ -82,6 +82,23 @@ describe('validateTokens', () => {
   });
 });
 
+describe('hasTitle — prefix conditional syntax', () => {
+  it.todo('returns true for {pre?title} (prefix syntax with title token)');
+  it.todo('returns true for { - ?title} (prefix syntax)');
+  it.todo('returns true for {pre?titleSort} (prefix syntax with titleSort)');
+});
+
+describe('hasAuthor — prefix conditional syntax', () => {
+  it.todo('returns true for {pre?author} (prefix syntax with author token)');
+  it.todo('returns true for {pre?authorLastFirst}');
+});
+
+describe('validateTokens — prefix conditional syntax', () => {
+  it.todo('extracts token name from prefix syntax, not prefix text');
+  it.todo('accepts {title}{ - pt?trackNumber:00} as valid file format');
+  it.todo('rejects prefix syntax with unknown token name');
+});
+
 describe('error message constants', () => {
   it('exports folder title message', () => {
     expect(FOLDER_TITLE_MSG).toBe('Template must include {title} or {titleSort}');

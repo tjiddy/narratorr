@@ -131,6 +131,13 @@ describe('NamingTokenModal', () => {
     });
   });
 
+  describe('prefix conditional syntax reference', () => {
+    it.todo('shows prefix syntax example: {text?token}');
+    it.todo('shows combined prefix+suffix syntax example: {prefix?token?suffix}');
+    it.todo('explains disambiguation: prefix vs suffix');
+    it.todo('existing suffix syntax {token?text} still documented');
+  });
+
   describe('close behavior', () => {
     it('closes when X button is clicked', async () => {
       const onClose = vi.fn();
