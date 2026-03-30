@@ -24,12 +24,12 @@ vi.mock('@core/utils/index.js', () => ({
     if (options?.case && options.case !== 'default') result = `[case:${options.case}] ${result}`;
     return result;
   },
-  renderFilename: (template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
+  renderFilename: vi.fn((template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
     let result = template.replace('{author}', 'Brandon Sanderson').replace('{title}', 'The Way of Kings').replace('{trackNumber}', '1').replace('{trackTotal}', '12').replace('{partName}', 'The Way of Kings');
     if (options?.separator && options.separator !== 'space') result = `[sep:${options.separator}] ${result}`;
     if (options?.case && options.case !== 'default') result = `[case:${options.case}] ${result}`;
     return result;
-  },
+  }),
   toLastFirst: (name: string) => name,
   toSortTitle: (title: string) => title,
   ALLOWED_TOKENS: ['author', 'authorLastFirst', 'title', 'titleSort', 'series', 'seriesPosition', 'year', 'narrator', 'narratorLastFirst'],
@@ -57,6 +57,7 @@ vi.mock('@core/utils/index.js', () => ({
 
 const { api } = await import('@/lib/api');
 const { toast } = await import('sonner');
+const { renderFilename: mockRenderFilename } = await import('@core/utils/index.js') as { renderFilename: ReturnType<typeof vi.fn> };
 const mockApi = api as unknown as {
   getSettings: ReturnType<typeof vi.fn>;
   updateSettings: ReturnType<typeof vi.fn>;
@@ -1040,6 +1041,36 @@ describe('NamingSettingsSection', () => {
       // Only 1 "Multi-file" label (file only — folder has no multi-file preview)
       const multiFileLabels = screen.getAllByText('Multi-file');
       expect(multiFileLabels).toHaveLength(1);
+    });
+
+    it('single-file previews omit track tokens; multi-file preview uses trackNumber=3, trackTotal=12', async () => {
+      mockApi.getSettings.mockResolvedValue(mockSettings);
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByText('Multi-file')).toBeInTheDocument();
+      });
+
+      // renderFilename is called 3 times for file format: with-series, without-series, multi-file
+      const filenameCalls = mockRenderFilename.mock.calls.filter(
+        (call: unknown[]) => typeof call[0] === 'string' && call[0] === '{author} - {title}',
+      );
+      // With-series call: tokens should NOT have trackNumber
+      const withSeriesTokens = filenameCalls[0]?.[1] as Record<string, unknown>;
+      expect(withSeriesTokens).not.toHaveProperty('trackNumber');
+      expect(withSeriesTokens).not.toHaveProperty('trackTotal');
+      expect(withSeriesTokens).not.toHaveProperty('partName');
+
+      // Without-series call: tokens should NOT have trackNumber
+      const withoutSeriesTokens = filenameCalls[1]?.[1] as Record<string, unknown>;
+      expect(withoutSeriesTokens).not.toHaveProperty('trackNumber');
+      expect(withoutSeriesTokens).not.toHaveProperty('trackTotal');
+      expect(withoutSeriesTokens).not.toHaveProperty('partName');
+
+      // Multi-file call: tokens should have trackNumber=3, trackTotal=12, partName='Chapter 3'
+      const multiFileTokens = filenameCalls[2]?.[1] as Record<string, unknown>;
+      expect(multiFileTokens).toHaveProperty('trackNumber', 3);
+      expect(multiFileTokens).toHaveProperty('trackTotal', 12);
+      expect(multiFileTokens).toHaveProperty('partName', 'Chapter 3');
     });
   });
 
