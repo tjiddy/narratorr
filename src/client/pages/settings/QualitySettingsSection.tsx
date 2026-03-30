@@ -2,12 +2,12 @@ import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ZapIcon } from '@/components/icons';
-import { protocolPreferenceSchema, DEFAULT_SETTINGS } from '../../../shared/schemas.js';
+import { protocolPreferenceSchema, DEFAULT_SETTINGS, qualityFormSchema } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 const PROTOCOL_LABELS: Record<string, string> = {
@@ -15,16 +15,6 @@ const PROTOCOL_LABELS: Record<string, string> = {
   usenet: 'Prefer Usenet',
   torrent: 'Prefer Torrent',
 };
-
-const qualityFormSchema = z.object({
-  grabFloor: z.number().nonnegative(),
-  protocolPreference: protocolPreferenceSchema,
-  minSeeders: z.number().int().nonnegative(),
-  searchImmediately: z.boolean(),
-  monitorForUpgrades: z.boolean(),
-  rejectWords: z.string(),
-  requiredWords: z.string(),
-});
 
 type QualityFormData = z.infer<typeof qualityFormSchema>;
 

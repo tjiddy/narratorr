@@ -344,4 +344,43 @@ describe('DiscoverySettingsSection', () => {
       expect(toast.error).toHaveBeenCalledWith('Server error');
     });
   });
+
+  it('save payload omits weightMultipliers even when settings include it', async () => {
+    const settingsWithWeights = makeSettings({
+      discovery: {
+        enabled: false,
+        intervalHours: 24,
+        maxSuggestionsPerAuthor: 5,
+        expiryDays: 90,
+        snoozeDays: 30,
+        weightMultipliers: { same_author: 0.8, same_narrator: 0.5, same_series: 1 },
+      },
+    });
+    mockApi.getSettings.mockResolvedValue(settingsWithWeights);
+    mockApi.updateSettings.mockResolvedValue(settingsWithWeights);
+
+    renderWithProviders(<DiscoverySettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/enable discovery/i)).toBeInTheDocument();
+    });
+
+    // Edit a visible field to make the form dirty
+    await userEvent.click(screen.getByLabelText(/enable discovery/i));
+    await userEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => {
+      expect(mockApi.updateSettings).toHaveBeenCalledTimes(1);
+    });
+
+    const payload = mockApi.updateSettings.mock.calls[0][0];
+    expect(payload.discovery).toEqual({
+      enabled: true,
+      intervalHours: 24,
+      maxSuggestionsPerAuthor: 5,
+      expiryDays: 90,
+      snoozeDays: 30,
+    });
+    expect(payload.discovery).not.toHaveProperty('weightMultipliers');
+  });
 });

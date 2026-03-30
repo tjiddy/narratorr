@@ -2,19 +2,13 @@ import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ClockIcon, TerminalIcon } from '@/components/icons';
-import { logLevelSchema, DEFAULT_SETTINGS } from '../../../shared/schemas.js';
+import { logLevelSchema, DEFAULT_SETTINGS, generalFormSchema } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
-
-const generalFormSchema = z.object({
-  logLevel: logLevelSchema,
-  housekeepingRetentionDays: z.number().int().min(1).max(365),
-  recycleRetentionDays: z.number().int().min(0).max(365),
-});
 
 type GeneralFormData = z.infer<typeof generalFormSchema>;
 
