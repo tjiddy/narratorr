@@ -45,6 +45,7 @@ vi.mock('sonner', () => ({
 }));
 
 vi.mock('@core/utils/index.js', () => ({
+  TOKEN_PATTERN_SOURCE: String.raw`\{(\w+)(?::(\d+))?(?:\?([^}]*))?\}`,
   renderTemplate: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
   renderFilename: (template: string) => template.replace('{author}', 'Author').replace('{title}', 'Title'),
   toLastFirst: (name: string) => name,

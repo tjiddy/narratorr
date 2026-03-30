@@ -8,7 +8,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { TagIcon, ChevronRightIcon } from '@/components/icons';
 import { NamingTokenModal } from '@/components/settings/NamingTokenModal';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
-import { renderTemplate, renderFilename, toLastFirst, toSortTitle, NAMING_PRESETS, detectPreset, FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP } from '@core/utils/index.js';
+import { renderTemplate, renderFilename, toLastFirst, toSortTitle, NAMING_PRESETS, detectPreset, FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP, TOKEN_PATTERN_SOURCE } from '@core/utils/index.js';
 import { DEFAULT_SETTINGS, namingSeparatorValues, namingCaseValues, namingFormSchema, hasTitle, hasAuthor, FOLDER_TITLE_MSG, AUTHOR_ADVISORY_MSG } from '../../../shared/schemas.js';
 import type { NamingSeparator, NamingCase } from '../../../shared/schemas/settings/library.js';
 import type { NamingOptions, TokenGroup } from '@core/utils/naming.js';
@@ -33,7 +33,7 @@ const SEPARATOR_LABELS: Record<NamingSeparator, string> = { space: 'Space', peri
 const CASE_LABELS: Record<NamingCase, string> = { default: 'Default', lower: 'lowercase', upper: 'UPPERCASE', title: 'Title Case' };
 
 
-const TOKEN_BOUNDARY_REGEX = /^\{(\w+)(?::(\d+))?(?:\?([^}]*))?\}$/;
+const TOKEN_BOUNDARY_REGEX = new RegExp(`^${TOKEN_PATTERN_SOURCE}$`);
 
 function createFormatKeyDownHandler(
   ref: React.RefObject<HTMLInputElement | null>,

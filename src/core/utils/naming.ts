@@ -1,5 +1,8 @@
 import type { NamingSeparator, NamingCase } from '../../shared/schemas/settings/library.js';
 
+/** Token grammar: `{name}`, `{name:digits}`, `{name?text}`, or `{name:digits?text}`. */
+export const TOKEN_PATTERN_SOURCE = String.raw`\{(\w+)(?::(\d+))?(?:\?([^}]*))?\}`;
+
 export interface NamingOptions {
   separator?: NamingSeparator;
   case?: NamingCase;
@@ -148,7 +151,7 @@ function resolveTokens(
   options?: NamingOptions,
 ): string {
   return template.replace(
-    /\{(\w+)(?::(\d+))?(?:\?([^}]*))?\}/g,
+    new RegExp(TOKEN_PATTERN_SOURCE, 'g'),
     (_match, name: string, padSpec: string | undefined, conditional: string | undefined) => {
       const raw = tokens[name];
       const hasValue = raw !== undefined && raw !== null && raw !== '';
@@ -249,7 +252,7 @@ export function parseTemplate(
   const allowedSet = new Set<string>(allowedTokens);
 
   // Extract all token names from {token}, {token:spec}, {token?text}
-  const tokenPattern = /\{(\w+)(?::\d+)?(?:\?[^}]*)?\}/g;
+  const tokenPattern = new RegExp(TOKEN_PATTERN_SOURCE, 'g');
   let match: RegExpExecArray | null;
 
   while ((match = tokenPattern.exec(template)) !== null) {

@@ -17,6 +17,7 @@ vi.mock('@/lib/api', () => ({
 }));
 
 vi.mock('@core/utils/index.js', () => ({
+  TOKEN_PATTERN_SOURCE: String.raw`\{(\w+)(?::(\d+))?(?:\?([^}]*))?\}`,
   renderTemplate: (template: string, _tokens: unknown, options?: { separator?: string; case?: string }) => {
     let result = template.replace('{author}', 'Brandon Sanderson').replace('{authorLastFirst}', 'Sanderson, Brandon').replace('{title}', 'The Way of Kings').replace('{titleSort}', 'Way of Kings').replace('{narratorLastFirst}', 'Kramer, Michael & Reading, Kate');
     if (options?.separator && options.separator !== 'space') result = `[sep:${options.separator}] ${result}`;
@@ -829,6 +830,44 @@ describe('NamingSettingsSection', () => {
     });
   });
 
+  describe('atomic token deletion — start/end boundary guards', () => {
+    it('Backspace at position 0 is a no-op', async () => {
+      const settings = createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
+      });
+      mockApi.getSettings.mockResolvedValue(settings);
+      renderWithProviders(<NamingSettingsSection />);
+      const input = await waitFor(() => {
+        const el = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
+        expect(el).toHaveValue('{author}/{title}');
+        return el;
+      });
+      input.setSelectionRange(0, 0);
+      const event = new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true });
+      const prevented = !input.dispatchEvent(event);
+      expect(prevented).toBe(false);
+      expect(input.value).toBe('{author}/{title}');
+    });
+
+    it('Delete at input.value.length is a no-op', async () => {
+      const settings = createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
+      });
+      mockApi.getSettings.mockResolvedValue(settings);
+      renderWithProviders(<NamingSettingsSection />);
+      const input = await waitFor(() => {
+        const el = screen.getByPlaceholderText('{author}/{title}') as HTMLInputElement;
+        expect(el).toHaveValue('{author}/{title}');
+        return el;
+      });
+      input.setSelectionRange(16, 16);
+      const event = new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true });
+      const prevented = !input.dispatchEvent(event);
+      expect(prevented).toBe(false);
+      expect(input.value).toBe('{author}/{title}');
+    });
+  });
+
   describe('atomic token deletion — stray/unmatched braces', () => {
     async function setupWithValue(folderFormat: string) {
       const settings = createMockSettings({
@@ -867,6 +906,16 @@ describe('NamingSettingsSection', () => {
       const event = new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true });
       const prevented = !input.dispatchEvent(event);
       expect(prevented).toBe(false);
+    });
+
+    it('falls through to normal deletion on Delete when candidate {..} is not a valid token', async () => {
+      const input = await setupWithValue('{not a token}rest');
+      // Before { at position 0 — {not a token} has closing } at 12 but fails regex
+      input.setSelectionRange(0, 0);
+      const event = new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true });
+      const prevented = !input.dispatchEvent(event);
+      expect(prevented).toBe(false);
+      expect(input.value).toBe('{not a token}rest');
     });
 
     it('falls through to normal deletion for } with preceding { but non-token content between', async () => {
