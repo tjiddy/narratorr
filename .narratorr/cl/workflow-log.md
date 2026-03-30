@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #228 Prefix conditional syntax and multi-file preview for naming templates — 2026-03-30
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #232
+
+### Metrics
+- Files changed: 12 | Tests added/modified: 30+
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: TDD cycle worked well — 6 modules with clean red→green transitions. Spec was thoroughly reviewed (3 review rounds) which meant no ambiguity during implementation.
+- Friction / issues encountered: Off-by-one in test for string length (`{title}{ - pt?trackNumber:00}` = 29 chars not 28). `renderTemplate()` trims path segments which affects prefix text with leading spaces — had to adjust test strategy.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (reading all source + test files)
+- Avoidable waste: Could have skipped reading test files that only needed mock string updates
+- Suggestions: For blast-radius-only changes, a targeted grep+edit is faster than reading full test files
+
+### Infrastructure gaps
+- Repeated workarounds: Test mocks hardcode TOKEN_PATTERN_SOURCE string — must be updated in 4 test files when regex changes
+- Missing tooling / config: frontend-design skill not available (noted in PR)
+- Unresolved debt: hasTitle/hasAuthor use independent regexes instead of deriving from TOKEN_PATTERN_SOURCE
+
+### Wish I'd Known
+1. When adding regex capture groups, the group index shift cascades to EVERY consumer — enumerate them ALL before starting (see `regex-group-shift-blast-radius.md`)
+2. `renderTemplate()` trims path segments, so prefix text with leading spaces behaves differently — use `renderFilename()` for isolated prefix testing (see `render-template-trims-segments.md`)
+3. The suffix-first disambiguation rule can't be implemented purely in regex — post-match logic checking against known token names is the clean pattern (see `suffix-first-disambiguation-pattern.md`)
+
 ## #226 Atomic token deletion — backspace/delete removes entire {token} — 2026-03-30
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #230
