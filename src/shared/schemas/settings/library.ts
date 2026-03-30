@@ -59,12 +59,12 @@ export const libraryFormSchema = z.object({
   folderFormat: z.string().trim().min(1, 'Folder format is required').refine(
     hasTitle, { message: FOLDER_TITLE_MSG },
   ).refine(
-    (val) => validateTokens(val, FOLDER_ALLOWED_TOKENS), { message: 'Unknown token in template' },
+    (val) => validateTokens(val, FOLDER_ALLOWED_TOKENS), { message: FOLDER_TOKEN_MSG },
   ),
   fileFormat: z.string().trim().min(1, 'File format is required').refine(
     hasTitle, { message: FILE_TITLE_MSG },
   ).refine(
-    (val) => validateTokens(val, FILE_ALLOWED_TOKENS), { message: 'Unknown token in file template' },
+    (val) => validateTokens(val, FILE_ALLOWED_TOKENS), { message: FILE_TOKEN_MSG },
   ),
   namingSeparator: z.enum(namingSeparatorValues),
   namingCase: z.enum(namingCaseValues),
