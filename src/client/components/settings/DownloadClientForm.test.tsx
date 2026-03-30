@@ -203,4 +203,9 @@ describe('DownloadClientForm (#201)', () => {
       expect(onCancel).toHaveBeenCalled();
     });
   });
+
+  describe('SelectWithChevron migration (#224)', () => {
+    it.todo('type select renders with SelectWithChevron (appearance-none and ChevronDownIcon visible)');
+    it.todo('selecting a download client type via SelectWithChevron updates form state');
+  });
 });

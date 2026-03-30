@@ -506,4 +506,9 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
     expect(nameInput).not.toHaveAttribute('readonly');
     expect(apiUrlInput).not.toHaveAttribute('readonly');
   });
+
+  describe('SelectWithChevron migration (#224)', () => {
+    it.todo('type select in edit mode renders with SelectWithChevron (appearance-none and ChevronDownIcon visible)');
+    it.todo('selecting an indexer type via SelectWithChevron updates form state');
+  });
 });
