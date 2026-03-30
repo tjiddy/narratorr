@@ -531,6 +531,31 @@ describe('ProcessingSettingsSection', () => {
       });
     });
 
+    it('rejects decimal postProcessingScriptTimeout (non-integer)', async () => {
+      const user = userEvent.setup();
+      const settingsWithScript = createMockSettings({
+        processing: { enabled: false, ffmpegPath: '', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '/scripts/post.sh', postProcessingScriptTimeout: 60 },
+      });
+      mockApi.getSettings.mockResolvedValue(settingsWithScript);
+      renderWithProviders(<ProcessingSettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Script Timeout (seconds)')).toHaveValue(60);
+      });
+
+      const timeoutInput = screen.getByLabelText('Script Timeout (seconds)');
+      await user.clear(timeoutInput);
+      await user.type(timeoutInput, '1.5');
+
+      await act(async () => {
+        fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+      });
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).not.toHaveBeenCalled();
+      });
+    });
+
     it('handles NaN postProcessingScriptTimeout when script is empty — no validation error', async () => {
       const user = userEvent.setup();
       const settingsWithTimeout = createMockSettings({
