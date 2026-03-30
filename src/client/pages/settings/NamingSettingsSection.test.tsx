@@ -564,4 +564,51 @@ describe('NamingSettingsSection', () => {
       });
     });
   });
+
+  describe('atomic token deletion — Backspace', () => {
+    it.todo('deletes entire {title} token when Backspace pressed after closing }');
+    it.todo('deletes entire {seriesPosition:00} token (format specifier) on Backspace');
+    it.todo('deletes entire {series? - } token (conditional text) on Backspace');
+    it.todo('deletes entire {series?} token (empty conditional) on Backspace');
+    it.todo('deletes entire {trackNumber:00? - pt} token (combined format+conditional) on Backspace');
+    it.todo('deletes entire {seriesPosition:00? - } token (combined format+conditional with trailing space) on Backspace');
+  });
+
+  describe('atomic token deletion — Delete', () => {
+    it.todo('deletes entire {title} token when Delete pressed before opening {');
+    it.todo('deletes entire {seriesPosition:00} token (format specifier) on Delete');
+    it.todo('deletes entire {series? - } token (conditional text) on Delete');
+    it.todo('deletes entire {trackNumber:00? - pt} token (combined format+conditional) on Delete');
+  });
+
+  describe('atomic token deletion — passthrough cases', () => {
+    it.todo('does normal char deletion when cursor is inside a token (not at boundary) — Backspace');
+    it.todo('does normal char deletion when cursor is inside a token (not at boundary) — Delete');
+    it.todo('does normal selection deletion when text selection exists');
+    it.todo('does normal single-char deletion for non-token character — Backspace after /');
+    it.todo('does normal single-char deletion for non-token character — Delete before /');
+  });
+
+  describe('atomic token deletion — boundary values', () => {
+    it.todo('deletes entire value when field contains only {title}');
+    it.todo('deletes only {author} from adjacent tokens {author}{title} — Backspace after first }');
+    it.todo('deletes only {title} from adjacent tokens {author}{title} — Delete before second {');
+  });
+
+  describe('atomic token deletion — stray/unmatched braces', () => {
+    it.todo('falls through to normal deletion when } has no matching { (stray closing brace)');
+    it.todo('falls through to normal deletion when { has no matching } (stray opening brace)');
+    it.todo('falls through to normal deletion when candidate {..} is not a valid token');
+    it.todo('falls through to normal deletion for } with preceding { but non-token content between');
+  });
+
+  describe('atomic token deletion — form state integration', () => {
+    it.todo('marks form dirty after atomic deletion (save button appears)');
+    it.todo('shows validation error after deleting required {title} token');
+  });
+
+  describe('atomic token deletion — both fields', () => {
+    it.todo('atomic deletion works in Folder Format input');
+    it.todo('atomic deletion works in File Format input');
+  });
 });
