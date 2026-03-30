@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #212 Polish #210 — split naming section, tighten library, fix code smells — 2026-03-30
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #213
+
+### Metrics
+- Files changed: 18 | Tests added/modified: ~80 across 7 test files
+- Quality gate runs: 3 (pass on attempt 3 — lint fixes then typecheck fix)
+- Fix iterations: 2 (ESLint complexity extraction, then TS register props typing)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Core utils (naming.ts) module was clean — TDD cycle worked perfectly with 9 red tests → all green in one pass. Service caller replacement was mechanical (5 sites, identical pattern). Modal portal change was low-risk with all 7 blast-radius tests passing immediately.
+- Friction / issues encountered: (1) Zod v4 generic refinement typing blocked schema consolidation — couldn't create reusable `addFolderFormatRefinements<T>` due to internal type constraints. Settled for shared helper functions + inline refine calls. (2) NamingSettingsSection hit ESLint complexity (25) and max-lines (296) on first pass — required extracting FormatField and SelectWithChevron sub-components. (3) LibrarySettingsSection.test.tsx rewrite was significant (~1400 lines → ~200 lines) due to naming UI extraction.
+
+### Token efficiency
+- Highest-token actions: Reading full source of LibrarySettingsSection.tsx (400 lines), its test file (1400+ lines), and naming.test.ts (540 lines) during planning
+- Avoidable waste: Could have committed modules 6+7+8 together from the start instead of separately reading each file
+- Suggestions: For large UI extraction tasks, read the source once during planning and keep structural notes rather than re-reading during implementation
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: frontend-design skill not available for production polish pass
+- Unresolved debt: Zod v4 refinement chain duplication in library.ts (see debt.md)
+
+### Wish I'd Known
+1. **Zod v4 breaks generic refinement wrappers** — `z.ZodType<string, z.ZodTypeDef, string>` doesn't satisfy `$ZodTypeInternals` constraints in object schemas. Don't attempt type-generic refine helpers; use shared functions + inline calls instead. (See `zod-generic-refinement-typing.md`)
+2. **sanitizePath strips trailing dots** — test assertions for comma-separated values like "Jr." must account for the full transform pipeline, not just the separator transform. (See `sanitize-path-trailing-dots.md`)
+3. **Extract sub-components early for large settings sections** — React components with forms + previews + modals easily exceed complexity limits. Plan for FormatField/SelectWithChevron-style extraction from the start. (See `eslint-complexity-extraction-pattern.md`)
+
 ## #210 Redesign file naming UI — token modal, presets, and formatting options — 2026-03-29
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #211
