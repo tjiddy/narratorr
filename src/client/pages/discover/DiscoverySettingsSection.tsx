@@ -2,21 +2,13 @@ import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ZapIcon } from '@/components/icons';
-import { DEFAULT_SETTINGS } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, discoveryFormSchema } from '../../../shared/schemas.js';
 import { SettingsSection } from '../settings/SettingsSection';
-
-const discoveryFormSchema = z.object({
-  enabled: z.boolean(),
-  intervalHours: z.number().int().min(1).max(168),
-  maxSuggestionsPerAuthor: z.number().int().min(1).max(50),
-  expiryDays: z.number().int().min(1),
-  snoozeDays: z.number().int().min(1),
-});
 
 type DiscoveryFormData = z.infer<typeof discoveryFormSchema>;
 
