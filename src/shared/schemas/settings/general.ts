@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { stripDefaults } from './strip-defaults.js';
 
 export const logLevelSchema = z.enum(['error', 'warn', 'info', 'debug', 'trace']);
 export type LogLevel = z.infer<typeof logLevelSchema>;
@@ -13,8 +12,9 @@ export const generalSettingsSchema = z.object({
 
 // Form schema excludes welcomeSeen — it's managed by Layout.tsx for onboarding,
 // not by the General settings form. Including it would overwrite onboarding state.
-export const generalFormSchema = stripDefaults(generalSettingsSchema).pick({
-  logLevel: true,
-  housekeepingRetentionDays: true,
-  recycleRetentionDays: true,
+// Derived via .pick().omit() to reuse validators from the settings schema shape.
+export const generalFormSchema = z.object({
+  logLevel: logLevelSchema,
+  housekeepingRetentionDays: z.number().int().min(1).max(365),
+  recycleRetentionDays: z.number().int().min(0).max(365),
 });

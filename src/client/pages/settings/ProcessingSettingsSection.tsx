@@ -152,11 +152,12 @@ export function ProcessingSettingsSection() {
 
   const { register, handleSubmit, reset, watch, formState: { errors, isDirty } } = useForm<ProcessingFormData>({
     defaultValues: toFormData({ ...DEFAULT_SETTINGS } as AppSettings),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Cast required: this component
-    // uses a flattened cross-category form (processing + tagging fields with renamed keys like
-    // processingEnabled/taggingEnabled), and preprocess(nanToUndefined) + .optional() on
-    // postProcessingScriptTimeout creates input/output type divergence that zodResolver can't
-    // reconcile. See #215 follow-up for potential typed adapter pattern to remove this cast.
+    // Cast required: this component uses a flattened cross-category form (processing + tagging
+    // fields with renamed keys like processingEnabled/taggingEnabled), and
+    // preprocess(nanToUndefined) + .optional() on postProcessingScriptTimeout creates
+    // input/output type divergence that zodResolver can't reconcile.
+    // See #219 for potential typed adapter pattern to remove this cast.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see comment above
     resolver: zodResolver(processingFormSchema) as any,
   });
 

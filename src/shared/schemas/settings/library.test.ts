@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from '../../../core/utils/naming.js';
+import { FOLDER_ALLOWED_TOKENS } from '../../../core/utils/naming.js';
 import {
   hasTitle,
   hasAuthor,

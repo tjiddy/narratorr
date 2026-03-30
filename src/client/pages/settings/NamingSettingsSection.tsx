@@ -8,7 +8,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { TagIcon, ChevronDownIcon } from '@/components/icons';
 import { NamingTokenModal } from '@/components/settings/NamingTokenModal';
 import { renderTemplate, renderFilename, toLastFirst, toSortTitle, NAMING_PRESETS, detectPreset } from '@core/utils/index.js';
-import { DEFAULT_SETTINGS, type AppSettings, namingSeparatorValues, namingCaseValues, namingFormSchema, hasTitle, hasAuthor, FOLDER_TITLE_MSG } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, namingSeparatorValues, namingCaseValues, namingFormSchema, hasTitle, hasAuthor, FOLDER_TITLE_MSG } from '../../../shared/schemas.js';
 import type { NamingSeparator, NamingCase } from '../../../shared/schemas/settings/library.js';
 import type { NamingOptions } from '@core/utils/naming.js';
 import { SettingsSection } from './SettingsSection';

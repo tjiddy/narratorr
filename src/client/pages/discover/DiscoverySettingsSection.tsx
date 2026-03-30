@@ -20,14 +20,22 @@ export function DiscoverySettingsSection() {
     queryFn: api.getSettings,
   });
 
+  const pickFormFields = (src: typeof DEFAULT_SETTINGS.discovery): DiscoveryFormData => ({
+    enabled: src.enabled,
+    intervalHours: src.intervalHours,
+    maxSuggestionsPerAuthor: src.maxSuggestionsPerAuthor,
+    expiryDays: src.expiryDays,
+    snoozeDays: src.snoozeDays,
+  });
+
   const { register, handleSubmit, reset, formState: { errors, isDirty } } = useForm<DiscoveryFormData>({
-    defaultValues: DEFAULT_SETTINGS.discovery,
+    defaultValues: pickFormFields(DEFAULT_SETTINGS.discovery),
     resolver: zodResolver(discoveryFormSchema),
   });
 
   useEffect(() => {
     if (settings?.discovery && !isDirty) {
-      reset(settings.discovery);
+      reset(pickFormFields(settings.discovery));
     }
   }, [settings, reset, isDirty]);
 
