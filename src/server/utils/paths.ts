@@ -96,9 +96,11 @@ export async function renameFilesWithTemplate(
     const ext = extname(fileName);
     const tokens = {
       ...baseTokens,
-      trackNumber: i + 1,
-      trackTotal: audioFiles.length,
-      partName: basename(fileName, ext),
+      ...(audioFiles.length > 1 && {
+        trackNumber: i + 1,
+        trackTotal: audioFiles.length,
+        partName: basename(fileName, ext),
+      }),
     };
     let newStem = renderFilename(fileFormat, tokens, options);
 
