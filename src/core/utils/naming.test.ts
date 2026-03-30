@@ -626,46 +626,156 @@ describe('renderFilename — consecutive separator collapse', () => {
   });
 });
 
-describe('prefix conditional syntax — resolveTokens / renderTemplate / renderFilename', () => {
+describe('prefix conditional syntax — renderFilename', () => {
   describe('positive cases', () => {
-    it.todo('renders prefix + zero-padded value: {title}{ - pt?trackNumber:00} with trackNumber=1');
-    it.todo('omits prefix when token absent: { - pt?trackNumber:00} with no trackNumber');
-    it.todo('renders prefix with series: { - ?series}{title} with series present');
-    it.todo('omits prefix when series absent: { - ?series}{title}');
-    it.todo('renders both prefix and suffix: {pre?token?suf} with token present');
-    it.todo('omits all when token absent: {pre?token?suf}');
-    it.todo('empty prefix renders just value: {?trackNumber} with trackNumber=5');
+    it('renders prefix + zero-padded value: {title}{ - pt?trackNumber:00} with trackNumber=1', () => {
+      const result = renderFilename('{title}{ - pt?trackNumber:00}', { title: 'The Way of Kings', trackNumber: 1 });
+      expect(result).toBe('The Way of Kings - pt01');
+    });
+
+    it('omits prefix when token absent: { - pt?trackNumber:00} with no trackNumber', () => {
+      const result = renderFilename('{title}{ - pt?trackNumber:00}', { title: 'The Way of Kings' });
+      expect(result).toBe('The Way of Kings');
+    });
+
+    it('renders prefix with series via renderTemplate: {title}{ - ?series}', () => {
+      // renderTemplate trims segments, so leading space in " - Stormlight" is trimmed
+      const result = renderTemplate('{author}/{title}{ - ?series}', { author: 'Author', title: 'The Way of Kings', series: 'Stormlight' });
+      expect(result).toBe('Author/The Way of Kings - Stormlight');
+    });
+
+    it('omits prefix when series absent via renderTemplate', () => {
+      const result = renderTemplate('{author}/{title}{ - ?series}', { author: 'Author', title: 'The Way of Kings' });
+      expect(result).toBe('Author/The Way of Kings');
+    });
+
+    it('renders both prefix and suffix: {pre?series?suf} with token present', () => {
+      const result = renderFilename('{pre?series?suf}', { title: 'X', series: 'Stormlight' });
+      expect(result).toBe('preStormlightsuf');
+    });
+
+    it('omits all when token absent: {pre?series?suf}', () => {
+      const result = renderFilename('{title}{pre?series?suf}', { title: 'Book' });
+      expect(result).toBe('Book');
+    });
+
+    it('empty prefix renders just value: {?trackNumber} with trackNumber=5', () => {
+      const result = renderFilename('{title}{?trackNumber}', { title: 'Book', trackNumber: 5 });
+      expect(result).toBe('Book5');
+    });
   });
 
   describe('backward compatibility', () => {
-    it.todo('existing suffix syntax unchanged: {seriesPosition:00? - } with seriesPosition=3');
-    it.todo('suffix omitted when token missing');
-    it.todo('plain token renders value: {title}');
-    it.todo('zero-padding without conditional: {trackNumber:00}');
+    it('existing suffix syntax unchanged: {seriesPosition:00? - } with seriesPosition=3', () => {
+      const result = renderFilename('{seriesPosition:00? - }{title}', { title: 'Book', seriesPosition: 3 });
+      expect(result).toBe('03 - Book');
+    });
+
+    it('suffix omitted when token missing', () => {
+      const result = renderFilename('{seriesPosition:00? - }{title}', { title: 'Book' });
+      expect(result).toBe('Book');
+    });
+
+    it('plain token renders value: {title}', () => {
+      const result = renderFilename('{title}', { title: 'Book' });
+      expect(result).toBe('Book');
+    });
+
+    it('zero-padding without conditional: {trackNumber:00}', () => {
+      const result = renderFilename('{trackNumber:00}', { title: 'X', trackNumber: 1 });
+      expect(result).toBe('01');
+    });
   });
 
   describe('disambiguation — suffix-first precedence', () => {
-    it.todo('{author?title} parses as token=author, suffix="title" (both are known tokens)');
-    it.todo('{title?series} parses as token=title, suffix="series" (both are known tokens)');
-    it.todo('{ - pt?trackNumber:00} parses as prefix=" - pt", token=trackNumber (prefix is not a token)');
-    it.todo('{Chapter ?partName} parses as prefix="Chapter ", token=partName');
+    it('{author?title} parses as token=author, suffix="title" (both are known tokens)', () => {
+      // "author" is a known token → suffix syntax: token=author, suffix="title"
+      const result = renderFilename('{author?title}', { author: 'Sanderson', title: 'Book' });
+      expect(result).toBe('Sandersontitle');
+    });
+
+    it('{title?series} parses as token=title, suffix="series"', () => {
+      const result = renderFilename('{title?series}', { title: 'Book', series: 'Arc' });
+      expect(result).toBe('Bookseries');
+    });
+
+    it('{ - pt?trackNumber:00} parses as prefix, token=trackNumber', () => {
+      const result = renderFilename('{title}{ - pt?trackNumber:00}', { title: 'Book', trackNumber: 1 });
+      expect(result).toBe('Book - pt01');
+    });
+
+    it('{Chapter ?partName} parses as prefix="Chapter ", token=partName', () => {
+      const result = renderFilename('{Chapter ?partName}', { title: 'X', partName: 'Intro' });
+      expect(result).toBe('Chapter Intro');
+    });
   });
 
   describe('boundary / edge cases', () => {
-    it.todo('whitespace-only prefix: { ?token} renders space + value');
-    it.todo('prefix + pad + suffix: { - pt?trackNumber:000?!} renders all parts');
-    it.todo('multiple prefix-conditional tokens: {title}{ - pt?trackNumber:00}{ of ?trackTotal}');
+    it('whitespace-only prefix: { ?series} renders space + value', () => {
+      const result = renderFilename('{title}{ ?series}', { title: 'Book', series: 'Arc' });
+      expect(result).toBe('Book Arc');
+    });
+
+    it('prefix + pad + suffix: { - pt?trackNumber:000?!} renders all parts', () => {
+      const result = renderFilename('{title}{ - pt?trackNumber:000?!}', { title: 'Book', trackNumber: 1 });
+      expect(result).toBe('Book - pt001!');
+    });
+
+    it('multiple prefix-conditional tokens: {title}{ - pt?trackNumber:00}{ of ?trackTotal}', () => {
+      const result = renderFilename('{title}{ - pt?trackNumber:00}{ of ?trackTotal}', { title: 'Book', trackNumber: 1, trackTotal: 12 });
+      expect(result).toBe('Book - pt01 of 12');
+    });
   });
 });
 
 describe('parseTemplate — prefix conditional syntax', () => {
-  it.todo('prefix tokens reported by token name, not prefix text');
-  it.todo('prefix syntax with unknown token name produces error');
-  it.todo('template with both prefix and suffix conditionals extracts all tokens');
-  it.todo('empty template returns empty tokens and no errors');
-  it.todo('{unknownPrefix?title} — parsed as prefix syntax, valid');
-  it.todo('{?unknownToken} — error: unknown token');
-  it.todo('{title?unknownSuffix} — suffix syntax, valid');
+  it('prefix tokens reported by token name, not prefix text', () => {
+    const result = parseTemplate('{title}{ - pt?trackNumber:00}', FILE_ALLOWED_TOKENS);
+    expect(result.tokens).toContain('trackNumber');
+    expect(result.tokens).toContain('title');
+    expect(result.tokens).not.toContain(' - pt');
+    expect(result.errors).toEqual([]);
+  });
+
+  it('prefix syntax with unknown token name produces error', () => {
+    const result = parseTemplate('{pre?unknownToken}', FOLDER_ALLOWED_TOKENS);
+    expect(result.errors).toContain('Unknown token: {unknownToken}');
+  });
+
+  it('template with both prefix and suffix conditionals extracts all tokens', () => {
+    const result = parseTemplate('{author}/{series? - }{title}{ - pt?trackNumber:00}', FILE_ALLOWED_TOKENS);
+    expect(result.tokens).toContain('author');
+    expect(result.tokens).toContain('series');
+    expect(result.tokens).toContain('title');
+    expect(result.tokens).toContain('trackNumber');
+    expect(result.errors).toEqual([]);
+  });
+
+  it('empty template returns empty tokens and no errors', () => {
+    const result = parseTemplate('');
+    expect(result.tokens).toEqual([]);
+    // Empty template will still get the "missing title" error
+    expect(result.errors).toContain('Template must include {title} or {titleSort}');
+  });
+
+  it('{unknownPrefix?title} — parsed as prefix syntax, valid', () => {
+    // "unknownPrefix" is not a known token, "title" is → prefix syntax
+    const result = parseTemplate('{unknownPrefix?title}', FOLDER_ALLOWED_TOKENS);
+    expect(result.tokens).toContain('title');
+    expect(result.errors).toEqual([]);
+  });
+
+  it('{?unknownToken} — error: unknown token', () => {
+    const result = parseTemplate('{title}{?unknownToken}', FOLDER_ALLOWED_TOKENS);
+    expect(result.errors).toContain('Unknown token: {unknownToken}');
+  });
+
+  it('{title?unknownSuffix} — suffix syntax, valid', () => {
+    // "title" is a known token → suffix syntax, "unknownSuffix" is just text
+    const result = parseTemplate('{title?unknownSuffix}', FOLDER_ALLOWED_TOKENS);
+    expect(result.tokens).toContain('title');
+    expect(result.errors).toEqual([]);
+  });
 });
 
 describe('renderFilename with separator/case options', () => {
