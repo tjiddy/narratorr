@@ -438,10 +438,14 @@ describe('NamingSettingsSection', () => {
       await user.click(screen.getByLabelText('Toggle folder tokens'));
       // Click the {series} token button
       await user.click(screen.getByText('{series}'));
-      // The input value should now include {series} and form should be dirty
+      // The input value should now contain {series} token — setValue inserts at cursor position
+      // In jsdom selectionStart defaults to the end of value, so {series} appends
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+        const input = screen.getByPlaceholderText('{author}/{title}');
+        expect((input as HTMLInputElement).value).toContain('{series}');
       });
+      // Form should be dirty — save button visible
+      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
     });
 
     it('inline panel remains open after inserting a token', async () => {
