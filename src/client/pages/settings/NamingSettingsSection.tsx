@@ -89,7 +89,7 @@ interface FormatFieldProps {
   previewSuffix?: string;
   warnings?: ReactNode;
   onOpenTokenModal: () => void;
-  registerProps: React.InputHTMLAttributes<HTMLInputElement>;
+  registerProps: Record<string, unknown>;
   inputRef: (el: HTMLInputElement | null) => void;
   hasValue: boolean;
 }
