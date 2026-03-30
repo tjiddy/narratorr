@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from '../../../core/utils/naming.js';
+import { FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS, TOKEN_PATTERN_SOURCE } from '../../../core/utils/naming.js';
 
 export const FOLDER_FORMAT_ALLOWED_TOKENS = [...FOLDER_ALLOWED_TOKENS];
 export const FILE_FORMAT_ALLOWED_TOKENS = [...FILE_ALLOWED_TOKENS];
@@ -13,7 +13,7 @@ export function hasAuthor(val: string): boolean {
 }
 
 export function validateTokens(val: string, allowed: readonly string[]): boolean {
-  const tokenPattern = /\{(\w+)(?::\d+)?(?:\?[^}]*)?\}/g;
+  const tokenPattern = new RegExp(TOKEN_PATTERN_SOURCE, 'g');
   let match: RegExpExecArray | null;
   while ((match = tokenPattern.exec(val)) !== null) {
     if (!allowed.includes(match[1])) return false;
