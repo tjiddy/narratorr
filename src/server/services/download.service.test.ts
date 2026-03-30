@@ -1604,7 +1604,7 @@ describe('DownloadService', () => {
 
   // ── #229 Observability — addDownload logging ────────────────────────────
   describe('logging improvements (#229)', () => {
-    it('addDownload success logged at debug with { externalId, clientType, bookId }', async () => {
+    it('addDownload success logged at debug with { externalId, clientName, bookId }', async () => {
       const log = createMockLogger();
       const svc = new DownloadService(inject<Db>(db), clientService, inject<FastifyBaseLogger>(log));
 
@@ -1628,7 +1628,7 @@ describe('DownloadService', () => {
       });
 
       expect(log.debug).toHaveBeenCalledWith(
-        expect.objectContaining({ externalId: 'ext-123', clientType: 'qbittorrent', bookId: 1 }),
+        expect.objectContaining({ externalId: 'ext-123', clientName: 'qBit', bookId: 1 }),
         'Download sent to client',
       );
     });
