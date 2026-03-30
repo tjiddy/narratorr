@@ -110,7 +110,7 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
           <div className="relative">
             <input id="clientCategory" type="text" {...register('settings.category')} className={inputClass} placeholder="audiobooks" />
             {showDropdown && (
-              <div className="absolute z-10 mt-1 w-full bg-background border border-border rounded-xl shadow-lg max-h-48 overflow-y-auto">
+              <div className="absolute z-30 mt-1 w-full bg-background border border-border rounded-xl shadow-lg max-h-48 overflow-y-auto">
                 {categories.length > 0 ? (
                   categories.map((cat) => (
                     <button key={cat} type="button" onClick={() => handleSelectCategory(cat)} className="w-full px-4 py-2.5 text-left text-sm hover:bg-accent transition-colors first:rounded-t-xl last:rounded-b-xl">

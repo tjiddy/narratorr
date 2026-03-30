@@ -122,4 +122,12 @@ describe('BookContextMenu', () => {
       items.forEach((item) => expect(item).toHaveClass('focus-ring'));
     });
   });
+
+  describe('z-index scale (CSS-1)', () => {
+    it('context menu container has z-30 class (dropdown scale)', () => {
+      renderMenu();
+      const menu = screen.getByRole('menu');
+      expect(menu).toHaveClass('z-30');
+    });
+  });
 });
