@@ -9,6 +9,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { FORMAT_LABELS, MERGE_LABELS, TAG_MODE_LABELS } from '@/lib/constants';
 import { ZapIcon, CheckCircleIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';
 import { FormField } from '@/components/settings/FormField';
+import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { outputFormatSchema, mergeBehaviorSchema, tagModeSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
@@ -256,17 +257,13 @@ export function ProcessingSettingsSection() {
 
           <div>
             <label htmlFor="outputFormat" className="block text-sm font-medium mb-2">Output Format</label>
-            <select
-              id="outputFormat"
-              {...register('outputFormat')}
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-            >
+            <SelectWithChevron id="outputFormat" {...register('outputFormat')}>
               {outputFormatSchema.options.map((format) => (
                 <option key={format} value={format}>
                   {FORMAT_LABELS[format] ?? format}
                 </option>
               ))}
-            </select>
+            </SelectWithChevron>
             {currentOutputFormat === 'mp3' && (
               <div className="mt-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-center gap-2">
                 <AlertCircleIcon className="w-4 h-4 text-amber-500 shrink-0" />
@@ -313,17 +310,13 @@ export function ProcessingSettingsSection() {
 
           <div>
             <label htmlFor="mergeBehavior" className="block text-sm font-medium mb-2">Merge Behavior</label>
-            <select
-              id="mergeBehavior"
-              {...register('mergeBehavior')}
-              className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-            >
+            <SelectWithChevron id="mergeBehavior" {...register('mergeBehavior')}>
               {mergeBehaviorSchema.options.map((behavior) => (
                 <option key={behavior} value={behavior}>
                   {MERGE_LABELS[behavior] ?? behavior}
                 </option>
               ))}
-            </select>
+            </SelectWithChevron>
             <p className="text-sm text-muted-foreground mt-2">
               Controls when multiple audio files are merged into a single output file with chapter markers
             </p>
@@ -358,17 +351,13 @@ export function ProcessingSettingsSection() {
           {taggingEnabled && <div className="space-y-5 mt-5">
             <div>
               <label htmlFor="tagMode" className="block text-sm font-medium mb-2">Tag Mode</label>
-              <select
-                id="tagMode"
-                {...register('tagMode')}
-                className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-              >
+              <SelectWithChevron id="tagMode" {...register('tagMode')}>
                 {tagModeSchema.options.map((mode) => (
                   <option key={mode} value={mode}>
                     {TAG_MODE_LABELS[mode] ?? mode}
                   </option>
                 ))}
-              </select>
+              </SelectWithChevron>
               <p className="text-sm text-muted-foreground mt-2">
                 &ldquo;Populate missing&rdquo; only writes tags to fields that are currently empty. &ldquo;Overwrite&rdquo; replaces all tag fields.
               </p>

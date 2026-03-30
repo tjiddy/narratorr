@@ -1,5 +1,6 @@
 import type { UseFormRegister, FieldErrors } from 'react-hook-form';
 import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
+import { SelectWithChevron } from './SelectWithChevron';
 
 interface BlackholeFieldsProps {
   register: UseFormRegister<CreateDownloadClientFormData>;
@@ -25,10 +26,10 @@ export function BlackholeFields({ register, errors, isEdit }: BlackholeFieldsPro
 
       <div>
         <label htmlFor="clientProtocol" className="block text-sm font-medium mb-2">Protocol</label>
-        <select id="clientProtocol" {...register('settings.protocol')} className={errors.settings?.protocol ? errorInputClass : inputClass}>
+        <SelectWithChevron id="clientProtocol" {...register('settings.protocol')} error={!!errors.settings?.protocol}>
           <option value="torrent">Torrent</option>
           <option value="usenet">Usenet</option>
-        </select>
+        </SelectWithChevron>
         {errors.settings?.protocol ? (
           <p className="text-sm text-destructive mt-1">{errors.settings.protocol.message}</p>
         ) : (

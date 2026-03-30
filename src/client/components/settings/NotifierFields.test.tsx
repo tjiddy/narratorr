@@ -44,6 +44,18 @@ describe('NotifierFields', () => {
     expect(url).toHaveValue('https://hooks.test.com');
   });
 
+  it('webhook method select uses shared SelectWithChevron contract', async () => {
+    const user = userEvent.setup();
+    render(<FieldWrapper type="webhook" />);
+
+    const select = screen.getByLabelText('Method') as HTMLSelectElement;
+    expect(select).toHaveClass('appearance-none');
+    expect(select.parentElement!.querySelector('svg')).toBeInTheDocument();
+    expect(select.value).toBe('POST');
+    await user.selectOptions(select, 'PUT');
+    expect(select.value).toBe('PUT');
+  });
+
   it('renders discord fields and accepts webhook URL input', async () => {
     const user = userEvent.setup();
     render(<FieldWrapper type="discord" />);

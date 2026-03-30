@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ClockIcon, TerminalIcon } from '@/components/icons';
+import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { logLevelSchema, DEFAULT_SETTINGS, generalFormSchema } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
@@ -106,17 +107,13 @@ export function GeneralSettingsForm() {
       >
         <div>
           <label htmlFor="logLevel" className="block text-sm font-medium mb-2">Log Level</label>
-          <select
-            id="logLevel"
-            {...register('logLevel')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-          >
+          <SelectWithChevron id="logLevel" {...register('logLevel')}>
             {logLevelSchema.options.map((level) => (
               <option key={level} value={level}>
                 {level.charAt(0).toUpperCase() + level.slice(1)}
               </option>
             ))}
-          </select>
+          </SelectWithChevron>
           <p className="text-sm text-muted-foreground mt-2">
             Set to Debug for detailed diagnostic output, or Error to reduce noise
           </p>

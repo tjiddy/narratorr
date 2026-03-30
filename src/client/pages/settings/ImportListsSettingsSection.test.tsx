@@ -538,6 +538,81 @@ describe('ImportListsSettings', () => {
       expect(label!.textContent).toContain('Enabled');
     });
 
+    it('provider type select uses shared SelectWithChevron contract', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await screen.findByText('No import lists configured');
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+
+      const typeSelect = screen.getByLabelText('Provider Type');
+      expect(typeSelect).toHaveClass('appearance-none');
+      expect(typeSelect.parentElement!.querySelector('svg')).toBeInTheDocument();
+    });
+
+    it('NYT bestseller list select uses shared SelectWithChevron contract', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await screen.findByText('No import lists configured');
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'nyt');
+
+      const listSelect = screen.getByLabelText('Bestseller List');
+      expect(listSelect).toHaveClass('appearance-none');
+      expect(listSelect.parentElement!.querySelector('svg')).toBeInTheDocument();
+    });
+
+    it('Hardcover list type select uses shared SelectWithChevron contract', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await screen.findByText('No import lists configured');
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+      await user.selectOptions(screen.getByLabelText('Provider Type'), 'hardcover');
+
+      const listTypeSelect = screen.getByLabelText('List Type');
+      expect(listTypeSelect).toHaveClass('appearance-none');
+      expect(listTypeSelect.parentElement!.querySelector('svg')).toBeInTheDocument();
+    });
+
+    it('ABS library select uses shared SelectWithChevron contract after fetch', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([]);
+      (api.fetchAbsLibraries as Mock).mockResolvedValue({
+        libraries: [
+          { id: 'lib1', name: 'Audiobooks' },
+          { id: 'lib2', name: 'Podcasts' },
+        ],
+      });
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await screen.findByText('No import lists configured');
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+
+      // Fill required fields to enable Fetch
+      await user.type(screen.getByLabelText('Server URL'), 'http://abs.local');
+      await user.type(screen.getByLabelText('API Key'), 'test-key');
+      await user.click(screen.getByRole('button', { name: /fetch libraries/i }));
+
+      await waitFor(() => {
+        const librarySelect = screen.getByLabelText('Library');
+        expect(librarySelect.tagName).toBe('SELECT');
+      });
+
+      const librarySelect = screen.getByLabelText('Library') as HTMLSelectElement;
+      expect(librarySelect).toHaveClass('appearance-none');
+      expect(librarySelect.parentElement!.querySelector('svg')).toBeInTheDocument();
+      expect(librarySelect.querySelectorAll('option')).toHaveLength(3); // placeholder + 2 libs
+
+      // Verify selecting an option updates the value through the onChange handler
+      await user.selectOptions(librarySelect, 'lib1');
+      expect(librarySelect.value).toBe('lib1');
+    });
+
     it('existing labels (il-name, il-type, il-syncInterval) remain accessible via getByLabelText', async () => {
       (api.getImportLists as Mock).mockResolvedValue([]);
       const user = userEvent.setup();

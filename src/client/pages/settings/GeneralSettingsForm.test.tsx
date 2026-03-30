@@ -47,6 +47,16 @@ describe('GeneralSettingsForm', () => {
     });
   });
 
+  it('log level select uses shared SelectWithChevron contract', async () => {
+    renderWithProviders(<GeneralSettingsForm />);
+    await waitFor(() => {
+      expect(screen.getByLabelText('Log Level')).toBeInTheDocument();
+    });
+    const select = screen.getByLabelText('Log Level');
+    expect(select).toHaveClass('appearance-none');
+    expect(select.parentElement!.querySelector('svg')).toBeInTheDocument();
+  });
+
   it('shows save button when a field is changed', async () => {
     const user = userEvent.setup();
     renderWithProviders(<GeneralSettingsForm />);

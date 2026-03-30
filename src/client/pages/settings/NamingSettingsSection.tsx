@@ -5,8 +5,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
-import { TagIcon, ChevronDownIcon } from '@/components/icons';
+import { TagIcon } from '@/components/icons';
 import { NamingTokenModal } from '@/components/settings/NamingTokenModal';
+import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 import { renderTemplate, renderFilename, toLastFirst, toSortTitle, NAMING_PRESETS, detectPreset } from '@core/utils/index.js';
 import { DEFAULT_SETTINGS, namingSeparatorValues, namingCaseValues, namingFormSchema, hasTitle, hasAuthor, FOLDER_TITLE_MSG, AUTHOR_ADVISORY_MSG } from '../../../shared/schemas.js';
 import type { NamingSeparator, NamingCase } from '../../../shared/schemas/settings/library.js';
@@ -31,23 +32,6 @@ const SAMPLE_TOKENS_NO_SERIES = {
 const SEPARATOR_LABELS: Record<NamingSeparator, string> = { space: 'Space', period: 'Period', underscore: 'Underscore', dash: 'Dash' };
 const CASE_LABELS: Record<NamingCase, string> = { default: 'Default', lower: 'lowercase', upper: 'UPPERCASE', title: 'Title Case' };
 
-function SelectWithChevron({ id, label, children, ...selectProps }: { id: string; label: string; children: ReactNode } & React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return (
-    <div>
-      <label htmlFor={id} className="block text-xs font-medium text-muted-foreground mb-1">{label}</label>
-      <div className="relative">
-        <select
-          id={id}
-          className="w-full appearance-none px-4 py-3 pr-10 bg-background border border-border rounded-xl text-sm focus-ring cursor-pointer"
-          {...selectProps}
-        >
-          {children}
-        </select>
-        <ChevronDownIcon className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-      </div>
-    </div>
-  );
-}
 
 interface FormatFieldProps {
   id: string;

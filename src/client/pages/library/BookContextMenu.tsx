@@ -45,7 +45,7 @@ export function BookContextMenu({
     <div
       ref={menuRef}
       role="menu"
-      className="absolute right-0 top-full mt-1 w-44 glass-card rounded-xl overflow-hidden shadow-lg z-10 animate-fade-in"
+      className="absolute right-0 top-full mt-1 w-44 glass-card rounded-xl overflow-hidden shadow-lg z-30 animate-fade-in"
       onClick={(e) => e.stopPropagation()}
       onKeyDown={handleKeyDown}
     >

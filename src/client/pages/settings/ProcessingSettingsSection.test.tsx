@@ -108,6 +108,35 @@ describe('ProcessingSettingsSection', () => {
     });
   });
 
+  it('output format, merge behavior, and tag mode selects use shared SelectWithChevron contract', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ProcessingSettingsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Enable Post Processing')).toBeInTheDocument();
+    });
+    await user.click(screen.getByLabelText('Enable Post Processing'));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Output Format')).toBeInTheDocument();
+    });
+
+    for (const label of ['Output Format', 'Merge Behavior']) {
+      const select = screen.getByLabelText(label);
+      expect(select).toHaveClass('appearance-none');
+      expect(select.parentElement!.querySelector('svg')).toBeInTheDocument();
+    }
+
+    // Tag Mode requires tagging toggle
+    await user.click(screen.getByLabelText('Tag Embedding'));
+    await waitFor(() => {
+      expect(screen.getByLabelText('Tag Mode')).toBeInTheDocument();
+    });
+    const tagSelect = screen.getByLabelText('Tag Mode');
+    expect(tagSelect).toHaveClass('appearance-none');
+    expect(tagSelect.parentElement!.querySelector('svg')).toBeInTheDocument();
+  });
+
   it('disables bitrate input when "Keep original" is checked', async () => {
     const user = userEvent.setup();
     mockApi.getSettings.mockResolvedValue(enabledProcessingSettings);

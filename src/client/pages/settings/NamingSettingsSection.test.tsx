@@ -113,6 +113,16 @@ describe('NamingSettingsSection', () => {
   });
 
   describe('preset interaction', () => {
+    it('preset select uses shared SelectWithChevron contract', async () => {
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Preset')).toBeInTheDocument();
+      });
+      const select = screen.getByLabelText('Preset');
+      expect(select).toHaveClass('appearance-none');
+      expect(select.parentElement!.querySelector('svg')).toBeInTheDocument();
+    });
+
     it('changing preset updates both format fields', async () => {
       const user = userEvent.setup();
       renderWithProviders(<NamingSettingsSection />);
@@ -137,12 +147,15 @@ describe('NamingSettingsSection', () => {
       expect(options).toHaveLength(4);
     });
 
-    it('renders case dropdown with all options', async () => {
+    it('renders case dropdown with all options and shared SelectWithChevron contract', async () => {
       renderWithProviders(<NamingSettingsSection />);
       await waitFor(() => {
         expect(screen.getByLabelText('Case')).toBeInTheDocument();
       });
-      const options = screen.getByLabelText('Case').querySelectorAll('option');
+      const select = screen.getByLabelText('Case');
+      expect(select).toHaveClass('appearance-none');
+      expect(select.parentElement!.querySelector('svg')).toBeInTheDocument();
+      const options = select.querySelectorAll('option');
       expect(options).toHaveLength(4);
     });
 
