@@ -5,13 +5,13 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
-import { TagIcon } from '@/components/icons';
+import { TagIcon, ChevronRightIcon } from '@/components/icons';
 import { NamingTokenModal } from '@/components/settings/NamingTokenModal';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
-import { renderTemplate, renderFilename, toLastFirst, toSortTitle, NAMING_PRESETS, detectPreset } from '@core/utils/index.js';
+import { renderTemplate, renderFilename, toLastFirst, toSortTitle, NAMING_PRESETS, detectPreset, FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP } from '@core/utils/index.js';
 import { DEFAULT_SETTINGS, namingSeparatorValues, namingCaseValues, namingFormSchema, hasTitle, hasAuthor, FOLDER_TITLE_MSG, AUTHOR_ADVISORY_MSG } from '../../../shared/schemas.js';
 import type { NamingSeparator, NamingCase } from '../../../shared/schemas/settings/library.js';
-import type { NamingOptions } from '@core/utils/naming.js';
+import type { NamingOptions, TokenGroup } from '@core/utils/naming.js';
 import { SettingsSection } from './SettingsSection';
 import type { z } from 'zod';
 
@@ -44,12 +44,17 @@ interface FormatFieldProps {
   previewSuffix?: string;
   warnings?: ReactNode;
   onOpenTokenModal: () => void;
+  onInsertToken: (token: string) => void;
+  tokenGroups: readonly TokenGroup[];
+  inlinePanelOpen: boolean;
+  onToggleInlinePanel: () => void;
   registerProps: Record<string, unknown>;
   inputRef: (el: HTMLInputElement | null) => void;
   hasValue: boolean;
 }
 
-function FormatField({ id, label, ariaLabel, placeholder, error, preview, previewNoSeries, previewSuffix, warnings, onOpenTokenModal, registerProps, inputRef, hasValue }: FormatFieldProps) {
+function FormatField({ id, label, ariaLabel, placeholder, error, preview, previewNoSeries, previewSuffix, warnings, onOpenTokenModal, onInsertToken, tokenGroups, inlinePanelOpen, onToggleInlinePanel, registerProps, inputRef, hasValue }: FormatFieldProps) {
+  const panelId = `${id}-token-panel`;
   return (
     <div>
       <div className="flex items-center gap-2 mb-2">
@@ -75,6 +80,40 @@ function FormatField({ id, label, ariaLabel, placeholder, error, preview, previe
       />
       {error && <p className="text-sm text-destructive mt-1">{error.message}</p>}
       {warnings}
+      <button
+        type="button"
+        onClick={onToggleInlinePanel}
+        aria-expanded={inlinePanelOpen}
+        aria-controls={panelId}
+        aria-label={`Toggle ${id === 'folderFormat' ? 'folder' : 'file'} tokens`}
+        className="mt-1.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+      >
+        <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${inlinePanelOpen ? 'rotate-90' : ''}`} />
+        <span>Tokens</span>
+      </button>
+      {inlinePanelOpen && (
+        <div id={panelId} className="mt-1.5 p-3 bg-muted/30 rounded-lg border border-border/50 space-y-2">
+          {tokenGroups.map((group) => (
+            <div key={group.label}>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
+                {group.label}
+              </h4>
+              <div className="flex flex-wrap gap-1">
+                {group.tokens.map((token) => (
+                  <button
+                    key={token}
+                    type="button"
+                    onClick={() => onInsertToken(token)}
+                    className="px-2 py-0.5 bg-muted hover:bg-muted/80 text-xs font-mono rounded transition-colors cursor-pointer hover:ring-1 hover:ring-primary/30"
+                  >
+                    {`{${token}}`}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       {hasValue && (
         <div className="mt-2 p-3 bg-muted/50 rounded-lg border border-border space-y-1">
           <div className="flex items-baseline gap-3">
@@ -100,6 +139,8 @@ export function NamingSettingsSection() {
   const folderFormatRef = useRef<HTMLInputElement | null>(null);
   const fileFormatRef = useRef<HTMLInputElement | null>(null);
   const [tokenModalScope, setTokenModalScope] = useState<'folder' | 'file' | null>(null);
+  const [folderPanelOpen, setFolderPanelOpen] = useState(false);
+  const [filePanelOpen, setFilePanelOpen] = useState(false);
 
   const { data: settings } = useQuery({ queryKey: queryKeys.settings(), queryFn: api.getSettings });
 
@@ -199,6 +240,10 @@ export function NamingSettingsSection() {
           id="folderFormat" label="Folder Format" ariaLabel="Folder token reference" placeholder="{author}/{title}"
           error={errors.folderFormat} preview={folderPreview} previewNoSeries={folderPreviewNoSeries} hasValue={!!folderFormat}
           onOpenTokenModal={() => setTokenModalScope('folder')}
+          onInsertToken={(token) => insertTokenAtCursor(folderFormatRef, 'folderFormat', token)}
+          tokenGroups={FOLDER_TOKEN_GROUPS}
+          inlinePanelOpen={folderPanelOpen}
+          onToggleInlinePanel={() => setFolderPanelOpen((v) => !v)}
           registerProps={{ ...folderReg, ref: undefined }}
           inputRef={(el) => { folderReg.ref(el); folderFormatRef.current = el; }}
           warnings={<>
@@ -211,6 +256,10 @@ export function NamingSettingsSection() {
           id="fileFormat" label="File Format" ariaLabel="File token reference" placeholder="{author} - {title}"
           error={errors.fileFormat} preview={filePreview} previewNoSeries={filePreviewNoSeries} previewSuffix=".m4b" hasValue={!!fileFormat}
           onOpenTokenModal={() => setTokenModalScope('file')}
+          onInsertToken={(token) => insertTokenAtCursor(fileFormatRef, 'fileFormat', token)}
+          tokenGroups={[...FOLDER_TOKEN_GROUPS, FILE_ONLY_TOKEN_GROUP]}
+          inlinePanelOpen={filePanelOpen}
+          onToggleInlinePanel={() => setFilePanelOpen((v) => !v)}
           registerProps={{ ...fileReg, ref: undefined }}
           inputRef={(el) => { fileReg.ref(el); fileFormatRef.current = el; }}
           warnings={!fileTitleToken ? <p className="text-sm text-destructive mt-1.5">{FOLDER_TITLE_MSG}</p> : null}
