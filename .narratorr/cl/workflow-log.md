@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #215 DRY-2/ZOD-2: Eliminate schema and logic duplication across settings — 2026-03-30
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #220
+
+### Metrics
+- Files changed: 18 | Tests added/modified: 39 new tests across 2 files
+- Quality gate runs: 2 (pass on attempt 2 — lint/typecheck fixes needed)
+- Fix iterations: 1 (lint: unused imports, eslint-disable position; typecheck: stripDefaults losing TS types requiring explicit form schemas)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Module-by-module red/green TDD worked well; formatBytes consolidation was clean since barrel re-export preserved mock paths
+- Friction / issues encountered: `stripDefaults()` loses both refine chains AND TypeScript types when used dynamically. Had to switch from derived schemas to explicit form schemas for general/discovery/quality to satisfy both runtime behavior and type safety. Circular import risk between registry.ts and category files required extracting stripDefaults to its own module.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (comprehensive but justified — 40+ test files in blast radius needed enumeration)
+- Avoidable waste: Could have tested stripDefaults type behavior earlier instead of discovering it at typecheck phase
+- Suggestions: When refactoring Zod schemas, always test TypeScript types (not just runtime behavior) before committing the approach
+
+### Infrastructure gaps
+- Repeated workarounds: Explicit form schemas instead of derived ones for 3 categories
+- Missing tooling / config: No type-preserving `stripDefaults<T>()` generic — Zod v4 limitation
+- Unresolved debt: ProcessingSettingsSection as-any cast (#219), stripDefaults type loss
+
+### Wish I'd Known
+1. `stripDefaults()` loses TypeScript field types — the dynamic `z.object(newShape)` return erases the shape. Should have tested `z.infer` early instead of at typecheck phase. See `strip-defaults-loses-typescript-types.md`.
+2. `removeDefault()` on `ZodDefault<ZodRefine<...>>` loses the refine chains entirely. The spec anticipated this but confirming it upfront would have saved the exploratory test. See `strip-defaults-loses-refine-chains.md`.
+3. Circular imports between `registry.ts` and category files are inevitable when categories need shared utilities. Extracting utilities to standalone modules should be the default pattern. See `circular-import-settings-registry.md`.
+
 ## #214 DB-2: Wrap multi-step DB mutations in transactions — 2026-03-30
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #218
