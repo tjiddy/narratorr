@@ -508,7 +508,35 @@ describe('IndexerCard — Prowlarr-managed indicators (AC8)', () => {
   });
 
   describe('SelectWithChevron migration (#224)', () => {
-    it.todo('type select in edit mode renders with SelectWithChevron (appearance-none and ChevronDownIcon visible)');
-    it.todo('selecting an indexer type via SelectWithChevron updates form state');
+    it('type select in edit mode renders with appearance-none and ChevronDownIcon', () => {
+      renderWithProviders(
+        <IndexerCard
+          indexer={mockIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      const select = screen.getByLabelText('Type');
+      expect(select.className).toContain('appearance-none');
+      const selectParent = select.parentElement!;
+      expect(selectParent.querySelector('svg')).not.toBeNull();
+    });
+
+    it('selecting an indexer type via SelectWithChevron updates form state', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <IndexerCard
+          indexer={mockIndexer}
+          mode="edit"
+          onSubmit={vi.fn()}
+          onFormTest={vi.fn()}
+        />,
+      );
+
+      await user.selectOptions(screen.getByLabelText('Type'), 'torznab');
+      expect((screen.getByLabelText('Type') as HTMLSelectElement).value).toBe('torznab');
+    });
   });
 });

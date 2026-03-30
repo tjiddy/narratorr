@@ -205,7 +205,27 @@ describe('DownloadClientForm (#201)', () => {
   });
 
   describe('SelectWithChevron migration (#224)', () => {
-    it.todo('type select renders with SelectWithChevron (appearance-none and ChevronDownIcon visible)');
-    it.todo('selecting a download client type via SelectWithChevron updates form state');
+    it('type select renders with appearance-none and ChevronDownIcon', () => {
+      renderWithProviders(
+        <DownloadClientForm mode="create" onSubmit={vi.fn()} onFormTest={vi.fn()} />,
+      );
+
+      const select = screen.getByLabelText('Type');
+      expect(select.className).toContain('appearance-none');
+      // ChevronDownIcon renders an SVG sibling
+      const selectParent = select.parentElement!;
+      expect(selectParent.querySelector('svg')).not.toBeNull();
+    });
+
+    it('selecting a download client type via SelectWithChevron updates form state', async () => {
+      const user = userEvent.setup();
+      const onSubmit = vi.fn();
+      renderWithProviders(
+        <DownloadClientForm mode="create" onSubmit={onSubmit} onFormTest={vi.fn()} />,
+      );
+
+      await user.selectOptions(screen.getByLabelText('Type'), 'blackhole');
+      expect((screen.getByLabelText('Type') as HTMLSelectElement).value).toBe('blackhole');
+    });
   });
 });

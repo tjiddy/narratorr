@@ -3,6 +3,7 @@ import type { TestResult } from '@/lib/api';
 import { TestResultMessage } from '@/components/TestResultMessage';
 import { FormField } from './FormField';
 import { SettingsFormActions } from './SettingsFormActions';
+import { SelectWithChevron } from './SelectWithChevron';
 import { NotifierFields } from './NotifierFields';
 import { NOTIFIER_REGISTRY } from '../../../shared/notifier-registry.js';
 import { EVENT_LABELS } from '../../../shared/notification-events.js';
@@ -43,18 +44,13 @@ export function NotifierCardForm(props: NotifierCardFormProps) {
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField id="notifierName" label="Name" registration={register('name')} error={errors.name} placeholder="My Webhook" />
 
-        <div>
-          <label htmlFor="notifierType" className="block text-sm font-medium mb-2">Type</label>
-          <select id="notifierType" {...register('type')}
-            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
-          >
-            {notifierTypeSchema.options.map((t) => (
-              <option key={t} value={t}>
-                {NOTIFIER_REGISTRY[t]?.label || t}
-              </option>
-            ))}
-          </select>
-        </div>
+        <SelectWithChevron id="notifierType" label="Type" {...register('type')} error={!!errors.type}>
+          {notifierTypeSchema.options.map((t) => (
+            <option key={t} value={t}>
+              {NOTIFIER_REGISTRY[t]?.label || t}
+            </option>
+          ))}
+        </SelectWithChevron>
 
         {isEdit && (
           <div>
