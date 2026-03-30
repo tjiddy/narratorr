@@ -73,7 +73,6 @@ export class RecyclingBinService {
   }
 
   /** Restore a recycling bin entry — move files back and re-create the book in DB. */
-  // eslint-disable-next-line complexity -- restore pipeline: path conflict check, file move, DB insert, author/narrator sync
   async restore(entryId: number): Promise<{ bookId: number }> {
     const entry = await this.getById(entryId);
     if (!entry) {
@@ -108,45 +107,58 @@ export class RecyclingBinService {
       }
     }
 
-    // Re-create book in DB with snapshot metadata
-    // If originalPath is empty (metadata-only recycling record), set path=null and status='wanted'
+    // Wrap all DB mutations in a transaction — filesystem move already happened above
     const hasPath = Boolean(entry.originalPath);
-    const [newBook] = await this.db.insert(books).values({
-      title: entry.title,
-      description: entry.description,
-      coverUrl: entry.coverUrl,
-      asin: entry.asin,
-      isbn: entry.isbn,
-      seriesName: entry.seriesName,
-      seriesPosition: entry.seriesPosition,
-      duration: entry.duration,
-      publishedDate: entry.publishedDate,
-      genres: entry.genres,
-      monitorForUpgrades: entry.monitorForUpgrades,
-      status: hasPath ? 'imported' : 'wanted',
-      enrichmentStatus: 'pending',
-      path: hasPath ? entry.originalPath : null,
-    }).returning();
+    const filesMoved = Boolean(entry.recyclePath && entry.originalPath);
+    let newBookId: number;
+    try {
+      newBookId = await this.db.transaction(async (tx) => {
+        const [newBook] = await tx.insert(books).values({
+          title: entry.title,
+          description: entry.description,
+          coverUrl: entry.coverUrl,
+          asin: entry.asin,
+          isbn: entry.isbn,
+          seriesName: entry.seriesName,
+          seriesPosition: entry.seriesPosition,
+          duration: entry.duration,
+          publishedDate: entry.publishedDate,
+          genres: entry.genres,
+          monitorForUpgrades: entry.monitorForUpgrades,
+          status: hasPath ? 'imported' : 'wanted',
+          enrichmentStatus: 'pending',
+          path: hasPath ? entry.originalPath : null,
+        }).returning();
 
-    // Restore author junction rows from snapshot (authorName is a JSON string array)
-    if (entry.authorName?.length && this.bookService) {
-      const authorList = entry.authorName.map((name, i) => ({
-        name,
-        asin: i === 0 ? (entry.authorAsin ?? undefined) : undefined,
-      }));
-      await this.bookService.syncAuthors(newBook.id, authorList);
+        // Restore author junction rows from snapshot (authorName is a JSON string array)
+        if (entry.authorName?.length && this.bookService) {
+          const authorList = entry.authorName.map((name, i) => ({
+            name,
+            asin: i === 0 ? (entry.authorAsin ?? undefined) : undefined,
+          }));
+          await this.bookService.syncAuthors(tx, newBook.id, authorList);
+        }
+
+        // Restore narrator junction rows from snapshot (narrator is a JSON string array)
+        if (entry.narrator?.length && this.bookService) {
+          await this.bookService.syncNarrators(tx, newBook.id, entry.narrator);
+        }
+
+        // Remove recycling bin record
+        await tx.delete(recyclingBin).where(eq(recyclingBin.id, entryId));
+
+        return newBook.id;
+      });
+    } catch (error: unknown) {
+      // Compensating file move: restore files to recyclePath so the entry is retryable
+      if (filesMoved) {
+        await this.moveFiles(entry.originalPath!, entry.recyclePath!);
+      }
+      throw error;
     }
 
-    // Restore narrator junction rows from snapshot (narrator is a JSON string array)
-    if (entry.narrator?.length && this.bookService) {
-      await this.bookService.syncNarrators(newBook.id, entry.narrator);
-    }
-
-    // Remove recycling bin record
-    await this.db.delete(recyclingBin).where(eq(recyclingBin.id, entryId));
-    this.log.info({ entryId, newBookId: newBook.id }, 'Book restored from recycling bin');
-
-    return { bookId: newBook.id };
+    this.log.info({ entryId, newBookId }, 'Book restored from recycling bin');
+    return { bookId: newBookId };
   }
 
   /** Permanently delete a single recycling bin entry. */

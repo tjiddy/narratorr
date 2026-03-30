@@ -4,7 +4,7 @@ import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js'
 import { BookService } from './book.service.js';
 import { books } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
-import type { Db } from '../../db/index.js';
+import type { Db, DbOrTx } from '../../db/index.js';
 import type { MetadataService } from './metadata.service.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -699,7 +699,7 @@ describe('BookService', () => {
       ).rejects.toThrow('Failed to find or create author');
     });
 
-    it('deletes orphaned book row when post-insert author sync fails (compensating delete)', async () => {
+    it('rolls back transaction when author sync fails — no compensating delete needed', async () => {
       // Book insert succeeds, then syncAuthors fails immediately (no author found, no retry)
       db.insert
         .mockReturnValueOnce(mockDbChain([{ id: 42 }]));  // book insert succeeds
@@ -715,8 +715,8 @@ describe('BookService', () => {
         service.create({ title: 'Orphan Book', authors: [{ name: 'Ghost Author' }] }),
       ).rejects.toThrow();
 
-      // Compensating delete must remove the book row with id=42
-      expect(db.delete).toHaveBeenCalledWith(books);
+      // Transaction handles rollback — no manual compensating delete of books table
+      expect(db.transaction).toHaveBeenCalledTimes(1);
     });
   });
 });
@@ -778,7 +778,7 @@ describe('BookService.syncAuthors / syncNarrators', () => {
   it('syncAuthors(bookId, []) clears all author junctions without error', async () => {
     db.delete.mockReturnValue(mockDbChain([]));
 
-    await service.syncAuthors(10, []);
+    await service.syncAuthors(inject<DbOrTx>(db), 10, []);
 
     expect(db.delete).toHaveBeenCalledTimes(1);
     expect(db.insert).not.toHaveBeenCalled();
@@ -787,7 +787,7 @@ describe('BookService.syncAuthors / syncNarrators', () => {
   it('syncNarrators(bookId, []) clears all narrator junctions without error', async () => {
     db.delete.mockReturnValue(mockDbChain([]));
 
-    await service.syncNarrators(10, []);
+    await service.syncNarrators(inject<DbOrTx>(db), 10, []);
 
     expect(db.delete).toHaveBeenCalledTimes(1);
     expect(db.insert).not.toHaveBeenCalled();
@@ -798,7 +798,7 @@ describe('BookService.syncAuthors / syncNarrators', () => {
     db.delete.mockReturnValue(mockDbChain([]));
     db.insert.mockReturnValue(mockDbChain([]));
 
-    await service.syncAuthors(10, [{ name: 'Brandon Sanderson' }, { name: 'Brandon Sanderson' }]);
+    await service.syncAuthors(inject<DbOrTx>(db), 10, [{ name: 'Brandon Sanderson' }, { name: 'Brandon Sanderson' }]);
 
     // 1 delete (clear junctions) + 1 bookAuthors insert (not 2)
     expect(db.insert).toHaveBeenCalledTimes(1);
@@ -809,9 +809,260 @@ describe('BookService.syncAuthors / syncNarrators', () => {
     db.delete.mockReturnValue(mockDbChain([]));
     db.insert.mockReturnValue(mockDbChain([]));
 
-    await service.syncNarrators(10, ['Kate Reading', 'Michael Kramer']);
+    await service.syncNarrators(inject<DbOrTx>(db), 10, ['Kate Reading', 'Michael Kramer']);
 
     expect(db.delete).toHaveBeenCalledTimes(1);
     expect(db.insert).toHaveBeenCalledTimes(2);  // 2 bookNarrators rows
+  });
+});
+
+describe('BookService — transaction atomicity (#214)', () => {
+  let db: ReturnType<typeof createMockDb>;
+  let service: BookService;
+
+  beforeEach(() => {
+    db = createMockDb();
+    service = new BookService(inject<Db>(db), inject<FastifyBaseLogger>(createMockLogger()));
+  });
+
+  describe('create() transaction wrapping', () => {
+    it('wraps insert + syncAuthors + syncNarrators in db.transaction()', async () => {
+      // book insert + author lookup (found) + junction insert
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 1 }]));
+      db.select
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))  // findOrCreateAuthor: found
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      await service.create({ title: 'Test', authors: [{ name: 'Brandon Sanderson' }] });
+
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+      expect(db.transaction).toHaveBeenCalledWith(expect.any(Function));
+    });
+
+    it('rolls back book row when syncAuthors throws', async () => {
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 1 }]));  // book insert
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))   // findOrCreateAuthor: not found
+        .mockReturnValueOnce(mockDbChain([]));   // retry: still not found
+
+      const failChain = mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') });
+      db.insert.mockReturnValueOnce(failChain);
+
+      await expect(
+        service.create({ title: 'Test', authors: [{ name: 'Ghost' }] }),
+      ).rejects.toThrow('Failed to find or create author');
+
+      // Transaction was called — Drizzle auto-rolls back on thrown error
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('rolls back book row and author junctions when syncNarrators throws', async () => {
+      // book insert succeeds, syncAuthors succeeds, syncNarrators fails
+      db.insert
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))   // book insert
+        .mockReturnValueOnce(mockDbChain([]));             // bookAuthors junction
+
+      db.select
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))    // findOrCreateAuthor: found
+        .mockReturnValueOnce(mockDbChain([]))              // findOrCreateNarrator: not found
+        .mockReturnValueOnce(mockDbChain([]));             // retry: still not found
+
+      const failChain = mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') });
+      db.insert.mockReturnValueOnce(failChain);  // narrator insert fails
+
+      await expect(
+        service.create({
+          title: 'Test',
+          authors: [{ name: 'Brandon Sanderson' }],
+          narrators: ['Ghost Narrator'],
+        }),
+      ).rejects.toThrow('Failed to find or create narrator');
+
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not contain manual compensating delete — transaction rollback handles cleanup', async () => {
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 1 }]));
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const failChain = mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') });
+      db.insert.mockReturnValueOnce(failChain);
+
+      await expect(
+        service.create({ title: 'Test', authors: [{ name: 'Ghost' }] }),
+      ).rejects.toThrow();
+
+      // No delete call on books table — compensating delete is removed
+      expect(db.delete).not.toHaveBeenCalledWith(books);
+    });
+
+    it('happy path: book + authors + narrators all committed inside transaction', async () => {
+      db.insert.mockReturnValueOnce(mockDbChain([{ id: 1 }]));  // book
+      db.select
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))   // findOrCreateAuthor
+        .mockReturnValueOnce(mockDbChain([mockNarrator]))  // findOrCreateNarrator
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([{ narrator: mockNarrator, position: 0 }]));
+
+      const result = await service.create({
+        title: 'The Way of Kings',
+        authors: [{ name: 'Brandon Sanderson' }],
+        narrators: ['Michael Kramer'],
+      });
+
+      expect(result.title).toBe('The Way of Kings');
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+      // insert: book + bookAuthors junction + bookNarrators junction
+      expect(db.insert).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  describe('update() transaction wrapping', () => {
+    it('wraps update + syncNarrators + syncAuthors in db.transaction()', async () => {
+      db.update.mockReturnValueOnce(mockDbChain([{ id: 1 }]));  // book update returns row
+      db.select
+        .mockReturnValueOnce(mockDbChain([mockNarrator]))  // findOrCreateNarrator
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))    // findOrCreateAuthor
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      await service.update(1, {
+        title: 'Updated',
+        narrators: ['Michael Kramer'],
+        authors: [{ name: 'Brandon Sanderson' }],
+      });
+
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('rolls back book metadata when syncNarrators throws', async () => {
+      db.update.mockReturnValueOnce(mockDbChain([{ id: 1 }]));  // book update succeeds
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))   // findOrCreateNarrator: not found
+        .mockReturnValueOnce(mockDbChain([]));   // retry: not found
+
+      const failChain = mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') });
+      db.insert.mockReturnValueOnce(failChain);
+
+      await expect(
+        service.update(1, { narrators: ['Ghost'] }),
+      ).rejects.toThrow('Failed to find or create narrator');
+
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('rolls back book metadata and narrator junctions when syncAuthors throws', async () => {
+      db.update.mockReturnValueOnce(mockDbChain([{ id: 1 }]));
+      db.select
+        .mockReturnValueOnce(mockDbChain([mockNarrator]))  // findOrCreateNarrator: found (success)
+        .mockReturnValueOnce(mockDbChain([]))              // findOrCreateAuthor: not found
+        .mockReturnValueOnce(mockDbChain([]));             // retry: not found
+
+      const failChain = mockDbChain(undefined, { error: new Error('UNIQUE constraint failed') });
+      db.insert
+        .mockReturnValueOnce(mockDbChain([]))              // bookNarrators junction (success)
+        .mockReturnValueOnce(failChain);                   // author insert fails
+
+      await expect(
+        service.update(1, {
+          narrators: ['Michael Kramer'],
+          authors: [{ name: 'Ghost' }],
+        }),
+      ).rejects.toThrow('Failed to find or create author');
+
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns null without transaction when book ID does not match', async () => {
+      db.update.mockReturnValueOnce(mockDbChain([]));  // no rows returned
+
+      const result = await service.update(999, { title: 'Nope' });
+
+      expect(result).toBeNull();
+      // Transaction is still called (wraps the update), but returns false early
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('happy path: book metadata + junctions updated inside transaction', async () => {
+      db.update.mockReturnValueOnce(mockDbChain([{ id: 1 }]));
+      db.select
+        .mockReturnValueOnce(mockDbChain([mockAuthor]))    // findOrCreateAuthor
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.update(1, {
+        title: 'Updated Title',
+        authors: [{ name: 'Brandon Sanderson' }],
+      });
+
+      expect(result).not.toBeNull();
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('syncAuthors/syncNarrators tx parameter', () => {
+    it('syncAuthors uses tx for delete and insert operations, not this.db', async () => {
+      const tx = createMockDb();
+      tx.select.mockReturnValue(mockDbChain([{ id: 1 }]));  // author found
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'Brandon Sanderson' }]);
+
+      // tx.delete called (clear junctions), tx.insert called (junction row)
+      expect(tx.delete).toHaveBeenCalledTimes(1);
+      expect(tx.insert).toHaveBeenCalledTimes(1);
+      // Original db should NOT have been used for these operations
+      expect(db.delete).not.toHaveBeenCalled();
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('syncNarrators uses tx for delete and insert operations, not this.db', async () => {
+      const tx = createMockDb();
+      tx.select.mockReturnValue(mockDbChain([{ id: 5 }]));  // narrator found
+
+      await service.syncNarrators(inject<DbOrTx>(tx), 10, ['Michael Kramer']);
+
+      expect(tx.delete).toHaveBeenCalledTimes(1);
+      expect(tx.insert).toHaveBeenCalledTimes(1);
+      expect(db.delete).not.toHaveBeenCalled();
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('findOrCreateAuthor uses tx for select and insert, not this.db', async () => {
+      const tx = createMockDb();
+      tx.select.mockReturnValueOnce(mockDbChain([]));  // not found → will insert
+      tx.insert
+        .mockReturnValueOnce(mockDbChain([{ id: 7 }]))  // author created
+        .mockReturnValueOnce(mockDbChain([]));            // junction
+
+      await service.syncAuthors(inject<DbOrTx>(tx), 10, [{ name: 'New Author' }]);
+
+      // tx.select for lookup, tx.insert for author creation + junction
+      expect(tx.select).toHaveBeenCalledTimes(1);
+      expect(tx.insert).toHaveBeenCalledTimes(2);
+      expect(db.select).not.toHaveBeenCalled();
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('findOrCreateNarrator uses tx for select and insert, not this.db', async () => {
+      const tx = createMockDb();
+      tx.select.mockReturnValueOnce(mockDbChain([]));  // not found → will insert
+      tx.insert
+        .mockReturnValueOnce(mockDbChain([{ id: 3 }]))  // narrator created
+        .mockReturnValueOnce(mockDbChain([]));            // junction
+
+      await service.syncNarrators(inject<DbOrTx>(tx), 10, ['New Narrator']);
+
+      expect(tx.select).toHaveBeenCalledTimes(1);
+      expect(tx.insert).toHaveBeenCalledTimes(2);
+      expect(db.select).not.toHaveBeenCalled();
+      expect(db.insert).not.toHaveBeenCalled();
+    });
   });
 });

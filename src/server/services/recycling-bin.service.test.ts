@@ -22,15 +22,19 @@ function createMockDb() {
   const selectQueue: unknown[][] = [];
   const insertQueue: unknown[][] = [];
 
-  return {
+  const db = {
     insert: vi.fn().mockImplementation(() => mockDbChain(insertQueue.shift() ?? [])),
     select: vi.fn().mockImplementation(() => mockDbChain(selectQueue.shift() ?? [])),
     delete: vi.fn().mockImplementation(() => mockDbChain([])),
+    transaction: vi.fn(),
     /** Queue a result for the next select() call */
     onSelect(...results: unknown[][]) { selectQueue.push(...results); },
     /** Queue a result for the next insert().returning() call */
     onInsert(...results: unknown[][]) { insertQueue.push(...results); },
   };
+  // transaction() executes the callback with the same mock db
+  db.transaction.mockImplementation(async (cb: (tx: typeof db) => Promise<unknown>) => cb(db));
+  return db;
 }
 
 function createMockLog() {
@@ -216,7 +220,7 @@ describe('RecyclingBinService', () => {
 
       await service.restore(5);
 
-      expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [{ name: 'Brandon Sanderson', asin: 'B001' }]);
+      expect(mockBookService.syncAuthors).toHaveBeenCalledWith(expect.anything(), 99, [{ name: 'Brandon Sanderson', asin: 'B001' }]);
       // Only 1 insert (book) — junction managed by bookService
       expect(db.insert).toHaveBeenCalledTimes(1);
     });
@@ -235,7 +239,7 @@ describe('RecyclingBinService', () => {
 
       await service.restore(5);
 
-      expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [{ name: 'New Author', asin: 'B999' }]);
+      expect(mockBookService.syncAuthors).toHaveBeenCalledWith(expect.anything(), 99, [{ name: 'New Author', asin: 'B999' }]);
       // Only 1 insert (book) — junction managed by bookService
       expect(db.insert).toHaveBeenCalledTimes(1);
     });
@@ -262,6 +266,184 @@ describe('RecyclingBinService', () => {
     it('returns NOT_FOUND when entry does not exist', async () => {
       db.onSelect([]);  // getById returns nothing
       await expect(service.restore(999)).rejects.toThrow('not found');
+    });
+
+    describe('transaction atomicity (#214)', () => {
+      it('wraps book insert + syncAuthors + syncNarrators + recycling delete in db.transaction()', async () => {
+        const entry = createMockDbRecyclingBinEntry({
+          id: 5,
+          authorName: ['Brandon Sanderson'],
+          narrator: ['Michael Kramer'],
+          originalPath: '/audiobooks/Brandon Sanderson/The Way of Kings',
+          recyclePath: './config/recycle/1',
+        });
+        db.onSelect([entry], []);
+        db.onInsert([createMockDbBook({ id: 99 })]);
+
+        await service.restore(5);
+
+        expect(db.transaction).toHaveBeenCalledTimes(1);
+        expect(db.transaction).toHaveBeenCalledWith(expect.any(Function));
+      });
+
+      it('rolls back book row when syncAuthors throws — files moved back to recyclePath', async () => {
+        const entry = createMockDbRecyclingBinEntry({
+          id: 5,
+          authorName: ['Ghost Author'],
+          narrator: null,
+          originalPath: '/audiobooks/test',
+          recyclePath: './config/recycle/1',
+        });
+        db.onSelect([entry], []);
+        db.onInsert([createMockDbBook({ id: 99 })]);
+        mockBookService.syncAuthors.mockRejectedValueOnce(new Error('sync failed'));
+
+        await expect(service.restore(5)).rejects.toThrow('sync failed');
+
+        // Transaction was called — Drizzle auto-rolls back on thrown error
+        expect(db.transaction).toHaveBeenCalledTimes(1);
+        // Recycling entry delete was never reached (error before it)
+        expect(db.delete).not.toHaveBeenCalled();
+        // Compensating file move-back: files restored to recyclePath for retry
+        expect(rename).toHaveBeenCalledTimes(2);
+        expect(rename).toHaveBeenNthCalledWith(1, './config/recycle/1', '/audiobooks/test');
+        expect(rename).toHaveBeenNthCalledWith(2, '/audiobooks/test', './config/recycle/1');
+      });
+
+      it('rolls back book row and author junctions when syncNarrators throws — files moved back', async () => {
+        const entry = createMockDbRecyclingBinEntry({
+          id: 5,
+          authorName: ['Brandon Sanderson'],
+          narrator: ['Ghost Narrator'],
+          originalPath: '/audiobooks/test',
+          recyclePath: './config/recycle/1',
+        });
+        db.onSelect([entry], []);
+        db.onInsert([createMockDbBook({ id: 99 })]);
+        mockBookService.syncNarrators.mockRejectedValueOnce(new Error('narrator sync failed'));
+
+        await expect(service.restore(5)).rejects.toThrow('narrator sync failed');
+
+        expect(db.transaction).toHaveBeenCalledTimes(1);
+        // syncAuthors was called successfully, but transaction rolls back everything
+        expect(mockBookService.syncAuthors).toHaveBeenCalledTimes(1);
+        // Compensating file move-back
+        expect(rename).toHaveBeenCalledTimes(2);
+        expect(rename).toHaveBeenNthCalledWith(2, '/audiobooks/test', './config/recycle/1');
+      });
+
+      it('rolls back entire transaction when recycling entry delete fails — files moved back', async () => {
+        const entry = createMockDbRecyclingBinEntry({
+          id: 5,
+          authorName: ['Brandon Sanderson'],
+          narrator: null,
+          originalPath: '/audiobooks/test',
+          recyclePath: './config/recycle/1',
+        });
+        db.onSelect([entry], []);
+        db.onInsert([createMockDbBook({ id: 99 })]);
+        // Make delete throw after all syncs succeed
+        db.delete.mockReturnValueOnce(mockDbChain(undefined, { error: new Error('delete failed') }));
+
+        await expect(service.restore(5)).rejects.toThrow('delete failed');
+
+        expect(db.transaction).toHaveBeenCalledTimes(1);
+        // syncAuthors succeeded before the delete failure
+        expect(mockBookService.syncAuthors).toHaveBeenCalledTimes(1);
+        // Compensating file move-back
+        expect(rename).toHaveBeenCalledTimes(2);
+        expect(rename).toHaveBeenNthCalledWith(2, '/audiobooks/test', './config/recycle/1');
+      });
+
+      it('does not attempt compensating file move-back for metadata-only restore (no files)', async () => {
+        const entry = createMockDbRecyclingBinEntry({
+          id: 7,
+          originalPath: '',
+          recyclePath: '',
+          authorName: ['Author'],
+        });
+        db.onSelect([entry]);
+        db.onInsert([createMockDbBook({ id: 100 })]);
+        mockBookService.syncAuthors.mockRejectedValueOnce(new Error('sync failed'));
+
+        await expect(service.restore(7)).rejects.toThrow('sync failed');
+
+        // No file move happened, so no compensating move-back
+        expect(rename).not.toHaveBeenCalled();
+      });
+
+      it('filesystem move stays outside transaction boundary', async () => {
+        const entry = createMockDbRecyclingBinEntry({
+          id: 5,
+          authorName: null,
+          narrator: null,
+          originalPath: '/audiobooks/test',
+          recyclePath: './config/recycle/1',
+        });
+        db.onSelect([entry], []);
+        db.onInsert([createMockDbBook({ id: 99 })]);
+
+        await service.restore(5);
+
+        // rename (filesystem move) called before transaction
+        expect(rename).toHaveBeenCalledTimes(1);
+        expect(db.transaction).toHaveBeenCalledTimes(1);
+      });
+
+      it('happy path: all DB operations committed inside transaction', async () => {
+        const entry = createMockDbRecyclingBinEntry({
+          id: 5,
+          authorName: ['Brandon Sanderson'],
+          authorAsin: 'B001',
+          narrator: ['Michael Kramer'],
+          originalPath: '/audiobooks/test',
+          recyclePath: './config/recycle/1',
+        });
+        db.onSelect([entry], []);
+        db.onInsert([createMockDbBook({ id: 99 })]);
+
+        const result = await service.restore(5);
+
+        expect(result).toEqual({ bookId: 99 });
+        expect(db.transaction).toHaveBeenCalledTimes(1);
+        expect(db.insert).toHaveBeenCalledTimes(1);  // book insert
+        expect(db.delete).toHaveBeenCalledTimes(1);  // recycling entry delete
+        expect(mockBookService.syncAuthors).toHaveBeenCalledTimes(1);
+        expect(mockBookService.syncNarrators).toHaveBeenCalledTimes(1);
+      });
+
+      it('passes the transaction handle (not this.db) to bookService.syncAuthors and syncNarrators', async () => {
+        const entry = createMockDbRecyclingBinEntry({
+          id: 5,
+          authorName: ['Brandon Sanderson'],
+          authorAsin: 'B001',
+          narrator: ['Michael Kramer'],
+          originalPath: '/audiobooks/test',
+          recyclePath: './config/recycle/1',
+        });
+        db.onSelect([entry], []);
+
+        // Create a distinct tx mock — different object from db — to prove identity
+        const txMock = {
+          insert: vi.fn().mockImplementation(() => mockDbChain([createMockDbBook({ id: 99 })])),
+          delete: vi.fn().mockImplementation(() => mockDbChain([])),
+        };
+        db.transaction.mockImplementationOnce(async (cb: (tx: unknown) => Promise<unknown>) => cb(txMock));
+
+        await service.restore(5);
+
+        // syncAuthors/syncNarrators must receive the exact tx mock, not db
+        expect(mockBookService.syncAuthors).toHaveBeenCalledWith(
+          txMock,
+          99,
+          [{ name: 'Brandon Sanderson', asin: 'B001' }],
+        );
+        expect(mockBookService.syncNarrators).toHaveBeenCalledWith(
+          txMock,
+          99,
+          ['Michael Kramer'],
+        );
+      });
     });
   });
 
@@ -520,7 +702,7 @@ describe('RecyclingBinService — many-to-many snapshot and restore (#71)', () =
 
       await service.restore(1);
 
-      expect(mockBookService.syncNarrators).toHaveBeenCalledWith(99, ['Kate Reading', 'Michael Kramer']);
+      expect(mockBookService.syncNarrators).toHaveBeenCalledWith(expect.anything(), 99, ['Kate Reading', 'Michael Kramer']);
     });
 
     it('restore with single narrator → calls syncNarrators with one name', async () => {
@@ -535,7 +717,7 @@ describe('RecyclingBinService — many-to-many snapshot and restore (#71)', () =
 
       await service.restore(1);
 
-      expect(mockBookService.syncNarrators).toHaveBeenCalledWith(99, ['Michael Kramer']);
+      expect(mockBookService.syncNarrators).toHaveBeenCalledWith(expect.anything(), 99, ['Michael Kramer']);
     });
   });
 });
@@ -575,7 +757,7 @@ describe('RecyclingBinService JSON array storage (issue #79)', () => {
 
     await service.restore(1);
 
-    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [
+    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(expect.anything(), 99, [
       { name: 'Author A', asin: undefined },
       { name: 'Author B', asin: undefined },
     ]);
@@ -594,7 +776,7 @@ describe('RecyclingBinService JSON array storage (issue #79)', () => {
 
     await service.restore(1);
 
-    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [
+    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(expect.anything(), 99, [
       { name: 'Brandon Sanderson', asin: undefined },
     ]);
   });
@@ -612,7 +794,7 @@ describe('RecyclingBinService JSON array storage (issue #79)', () => {
 
     await service.restore(1);
 
-    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(99, [
+    expect(mockBookService.syncAuthors).toHaveBeenCalledWith(expect.anything(), 99, [
       { name: 'Jordan, Robert', asin: undefined },
     ]);
   });

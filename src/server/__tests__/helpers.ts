@@ -115,13 +115,17 @@ export function mockDbChain(result: unknown = [], opts?: { error: Error }) {
  * Use `mockReturnValue(mockDbChain(data))` or `mockReturnValueOnce` on the
  * returned stubs to control per-call results.
  */
-export function createMockDb(): Record<'select' | 'insert' | 'update' | 'delete', Mock> {
-  return {
+export function createMockDb(): Record<'select' | 'insert' | 'update' | 'delete' | 'transaction', Mock> {
+  const db: Record<'select' | 'insert' | 'update' | 'delete' | 'transaction', Mock> = {
     select: vi.fn().mockReturnValue(mockDbChain()),
     insert: vi.fn().mockReturnValue(mockDbChain()),
     update: vi.fn().mockReturnValue(mockDbChain()),
     delete: vi.fn().mockReturnValue(mockDbChain()),
+    transaction: vi.fn(),
   };
+  // transaction() executes the callback with the same mock db, simulating Drizzle's tx handle
+  db.transaction.mockImplementation(async (cb: (tx: typeof db) => Promise<unknown>) => cb(db));
+  return db;
 }
 
 /**
