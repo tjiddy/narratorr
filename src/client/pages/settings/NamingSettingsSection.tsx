@@ -8,42 +8,13 @@ import { queryKeys } from '@/lib/queryKeys';
 import { TagIcon, ChevronDownIcon } from '@/components/icons';
 import { NamingTokenModal } from '@/components/settings/NamingTokenModal';
 import { renderTemplate, renderFilename, toLastFirst, toSortTitle, NAMING_PRESETS, detectPreset } from '@core/utils/index.js';
-import { DEFAULT_SETTINGS, type AppSettings, namingSeparatorValues, namingCaseValues } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, type AppSettings, namingSeparatorValues, namingCaseValues, namingFormSchema, hasTitle, hasAuthor, FOLDER_TITLE_MSG } from '../../../shared/schemas.js';
 import type { NamingSeparator, NamingCase } from '../../../shared/schemas/settings/library.js';
 import type { NamingOptions } from '@core/utils/naming.js';
 import { SettingsSection } from './SettingsSection';
-import { z } from 'zod';
-import { FOLDER_ALLOWED_TOKENS, FILE_ALLOWED_TOKENS } from '@core/utils/index.js';
+import type { z } from 'zod';
 
-type NamingFormData = Pick<AppSettings['library'], 'folderFormat' | 'fileFormat' | 'namingSeparator' | 'namingCase'>;
-
-function hasTitle(val: string): boolean {
-  return /\{title(?:Sort)?(?::\d+)?(?:\?[^}]*)?\}/.test(val);
-}
-
-function validateTokens(val: string, allowed: readonly string[]): boolean {
-  const tokenPattern = /\{(\w+)(?::\d+)?(?:\?[^}]*)?\}/g;
-  let match: RegExpExecArray | null;
-  while ((match = tokenPattern.exec(val)) !== null) {
-    if (!allowed.includes(match[1])) return false;
-  }
-  return true;
-}
-
-const namingFormSchema = z.object({
-  folderFormat: z.string().trim().min(1, 'Folder format is required').refine(
-    hasTitle, { message: 'Template must include {title} or {titleSort}' },
-  ).refine(
-    (val) => validateTokens(val, FOLDER_ALLOWED_TOKENS), { message: 'Unknown token in template' },
-  ),
-  fileFormat: z.string().trim().min(1, 'File format is required').refine(
-    hasTitle, { message: 'Template must include {title} or {titleSort}' },
-  ).refine(
-    (val) => validateTokens(val, FILE_ALLOWED_TOKENS), { message: 'Unknown token in file template' },
-  ),
-  namingSeparator: z.enum(namingSeparatorValues),
-  namingCase: z.enum(namingCaseValues),
-});
+type NamingFormData = z.infer<typeof namingFormSchema>;
 
 const SAMPLE_TOKENS = {
   author: 'Brandon Sanderson', authorLastFirst: toLastFirst('Brandon Sanderson'),
@@ -193,9 +164,9 @@ export function NamingSettingsSection() {
   const filePreview = useMemo(() => fileFormat ? renderFilename(fileFormat, { ...SAMPLE_TOKENS, trackNumber: 1, trackTotal: 12, partName: 'The Way of Kings' }, namingOptions) : '', [fileFormat, namingOptions]);
   const filePreviewNoSeries = useMemo(() => fileFormat ? renderFilename(fileFormat, { ...SAMPLE_TOKENS_NO_SERIES, trackNumber: 1, trackTotal: 8, partName: 'Project Hail Mary' }, namingOptions) : '', [fileFormat, namingOptions]);
 
-  const hasTitleToken = folderFormat ? /\{title(?:Sort)?(?::\d+)?(?:\?[^}]*)?\}/.test(folderFormat) : true;
-  const hasAuthorToken = folderFormat ? /\{author(?:LastFirst)?(?::\d+)?(?:\?[^}]*)?\}/.test(folderFormat) : true;
-  const fileTitleToken = fileFormat ? /\{title(?:Sort)?(?::\d+)?(?:\?[^}]*)?\}/.test(fileFormat) : true;
+  const hasTitleToken = folderFormat ? hasTitle(folderFormat) : true;
+  const hasAuthorToken = folderFormat ? hasAuthor(folderFormat) : true;
+  const fileTitleToken = fileFormat ? hasTitle(fileFormat) : true;
 
   const insertTokenAtCursor = (ref: React.RefObject<HTMLInputElement | null>, field: 'folderFormat' | 'fileFormat', token: string) => {
     const input = ref.current;
@@ -247,7 +218,7 @@ export function NamingSettingsSection() {
           registerProps={{ ...folderReg, ref: undefined }}
           inputRef={(el) => { folderReg.ref(el); folderFormatRef.current = el; }}
           warnings={<>
-            {!hasTitleToken && <p className="text-sm text-destructive mt-1.5">Template must include {'{title}'} or {'{titleSort}'}</p>}
+            {!hasTitleToken && <p className="text-sm text-destructive mt-1.5">{FOLDER_TITLE_MSG}</p>}
             {hasTitleToken && !hasAuthorToken && <p className="text-sm text-amber-500 mt-1.5">Consider including {'{author}'} for better organization</p>}
           </>}
         />
@@ -258,7 +229,7 @@ export function NamingSettingsSection() {
           onOpenTokenModal={() => setTokenModalScope('file')}
           registerProps={{ ...fileReg, ref: undefined }}
           inputRef={(el) => { fileReg.ref(el); fileFormatRef.current = el; }}
-          warnings={!fileTitleToken ? <p className="text-sm text-destructive mt-1.5">Template must include {'{title}'} or {'{titleSort}'}</p> : null}
+          warnings={!fileTitleToken ? <p className="text-sm text-destructive mt-1.5">{FOLDER_TITLE_MSG}</p> : null}
         />
 
         {isDirty && (
