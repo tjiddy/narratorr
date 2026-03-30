@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #224 Cleanup leftovers — select migrations and formatDate consolidation — 2026-03-30
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #225
+
+### Metrics
+- Files changed: 11 | Tests added/modified: 4 (format.test.ts new, NotifierCardForm.test.tsx new, DownloadClientForm.test.tsx modified, IndexerCard.test.tsx modified)
+- Quality gate runs: 3 (pass on attempt 3 — unused inputClass variable, eslint-disable false positive, TS type errors in test defaults)
+- Fix iterations: 3 (unused var, unnecessary eslint-disable, wrong event enum/settings field in test)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Mechanical substitutions were straightforward; SelectWithChevron's forwardRef and props interface made drop-in replacement easy. Elaboration caught the semantic formatDate difference early.
+- Friction / issues encountered: Quality gates caught 3 issues sequentially rather than all at once — the unused `inputClass` variable, then an unnecessary eslint-disable, then TS type errors in NotifierCardForm test defaults (wrong event name, wrong settings field name). Each required a separate verify run.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (comprehensive codebase scan)
+- Avoidable waste: Coverage review flagged pre-existing PathStep test gap as a branch issue; could skip consumer import-swap-only files in coverage review
+- Suggestions: For mechanical chore issues, the coverage review threshold (≤3 files AND ≤50 lines) should consider that import swaps don't add new behavior
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: 4 remaining raw selects in FilterRow.tsx/ImportSummaryBar.tsx, PathStep.tsx has no test file
+
+### Wish I'd Known
+1. EventHistoryCard's formatDate is a relative time formatter — not a duplicate of the absolute date formatDate. Elaboration caught this but it would have caused a bug if consolidation had been done blindly.
+2. NotifierCardForm receives `form` as a prop (unlike DownloadClientForm/IndexerCard which own their own `useForm`), requiring a test wrapper component that creates the form externally.
+3. The `inputClass` variable in DownloadClientForm was only used by the raw select — removing the select made it unused, triggering a lint failure.
+
 ## #219 Remove as-any cast from ProcessingSettingsSection zodResolver — 2026-03-30
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #223
