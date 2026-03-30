@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Modal } from '@/components/Modal';
 
@@ -13,8 +13,9 @@ describe('Modal', () => {
   });
 
   it('renders fixed overlay with z-50 and animate-fade-in', () => {
-    const { container } = render(<Modal><div>content</div></Modal>);
-    const overlay = container.firstChild as HTMLElement;
+    render(<Modal><div>content</div></Modal>);
+    // Portal renders to body — find the overlay by its class
+    const overlay = screen.getByTestId('modal-backdrop').parentElement!;
     expect(overlay).toHaveClass('fixed');
     expect(overlay).toHaveClass('inset-0');
     expect(overlay).toHaveClass('z-50');
@@ -70,15 +71,56 @@ describe('Modal', () => {
   });
 
   describe('portal rendering', () => {
-    it.todo('renders modal content into document.body via createPortal');
-    it.todo('backdrop covers full viewport when opened inside a container element');
-    it.todo('modal content centered on viewport, not on parent container');
+    it('renders modal content into document.body via createPortal', () => {
+      const { container } = render(
+        <div data-testid="parent-container">
+          <Modal><div data-testid="modal-child">hello</div></Modal>
+        </div>,
+      );
+      // Modal should NOT be inside the parent container
+      const parent = within(container).getByTestId('parent-container');
+      expect(within(parent).queryByTestId('modal-child')).not.toBeInTheDocument();
+      // But it should be in the document (rendered to body)
+      expect(screen.getByTestId('modal-child')).toBeInTheDocument();
+    });
   });
 
   describe('nested modal stacking', () => {
-    it.todo('outer modal remains visible when inner modal opens');
-    it.todo('both modals render separate backdrops — getAllByTestId returns 2');
-    it.todo('clicking inner backdrop closes only the inner modal, outer onClose NOT called');
-    it.todo('clicking inner panel does not propagate to outer modal — stopPropagation');
+    it('outer modal remains visible when inner modal opens', () => {
+      render(
+        <>
+          <Modal><div data-testid="outer-content">outer</div></Modal>
+          <Modal><div data-testid="inner-content">inner</div></Modal>
+        </>,
+      );
+      expect(screen.getByTestId('outer-content')).toBeInTheDocument();
+      expect(screen.getByTestId('inner-content')).toBeInTheDocument();
+    });
+
+    it('both modals render separate backdrops', () => {
+      render(
+        <>
+          <Modal><div>outer</div></Modal>
+          <Modal><div>inner</div></Modal>
+        </>,
+      );
+      expect(screen.getAllByTestId('modal-backdrop')).toHaveLength(2);
+    });
+
+    it('clicking inner backdrop closes only the inner modal, outer onClose NOT called', async () => {
+      const outerClose = vi.fn();
+      const innerClose = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <>
+          <Modal onClose={outerClose}><div>outer</div></Modal>
+          <Modal onClose={innerClose}><div>inner</div></Modal>
+        </>,
+      );
+      const backdrops = screen.getAllByTestId('modal-backdrop');
+      await user.click(backdrops[1]);
+      expect(innerClose).toHaveBeenCalledOnce();
+      expect(outerClose).not.toHaveBeenCalled();
+    });
   });
 });
