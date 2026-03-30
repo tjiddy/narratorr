@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -28,16 +29,16 @@ export function LibrarySettingsSection() {
     queryFn: api.getSettings,
   });
 
-  const { register, reset, resetField, watch, setValue, formState: { errors } } = useForm<LibraryPathFormData>({
+  const { register, reset, resetField, watch, setValue, formState: { errors, isDirty } } = useForm<LibraryPathFormData>({
     defaultValues: { path: DEFAULT_SETTINGS.library.path },
     resolver: zodResolver(libraryPathSchema),
   });
 
   useEffect(() => {
-    if (settings?.library) {
+    if (settings?.library && !isDirty) {
       reset({ path: settings.library.path });
     }
-  }, [settings, reset]);
+  }, [settings, reset, isDirty]);
 
   const pathSaveMutation = useMutation({
     mutationFn: (path: string) => api.updateSettings({ library: { path } }),
@@ -83,7 +84,16 @@ export function LibrarySettingsSection() {
       description="Configure where audiobooks are stored"
     >
       <div>
-        <label htmlFor="libraryPath" className="block text-sm font-medium mb-2">Library Path</label>
+        <div className="flex items-center justify-between mb-2">
+          <label htmlFor="libraryPath" className="text-sm font-medium">Library Path</label>
+          <Link
+            to="/library-import"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium glass-card rounded-lg hover:border-primary/30 hover:text-primary transition-all focus-ring"
+          >
+            <FolderIcon className="w-3.5 h-3.5" />
+            Scan Library
+          </Link>
+        </div>
         <PathInput
           id="libraryPath"
           value={pathValue ?? ''}

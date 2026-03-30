@@ -602,6 +602,30 @@ describe('renderFilename — unresolved tokens', () => {
   });
 });
 
+describe('renderFilename — comma-space separator edge cases', () => {
+  it('collapses comma-space to comma with dash separator — no stray dash after punctuation', () => {
+    const result = renderFilename('{author} - {title}', { author: 'Sanderson, Brandon', title: 'Book' }, { separator: 'dash' });
+    expect(result).toBe('Sanderson,Brandon - Book');
+  });
+
+  it('collapses comma-space to comma with period separator', () => {
+    const result = renderFilename('{author} - {title}', { author: 'Sanderson, Brandon', title: 'Book' }, { separator: 'period' });
+    expect(result).toBe('Sanderson,Brandon - Book');
+  });
+
+  it('preserves comma-space unchanged with space separator', () => {
+    const result = renderFilename('{author} - {title}', { author: 'Sanderson, Brandon', title: 'Book' }, { separator: 'space' });
+    expect(result).toBe('Sanderson, Brandon - Book');
+  });
+});
+
+describe('renderFilename — consecutive separator collapse', () => {
+  it('collapses double space to single separator with period separator', () => {
+    const result = renderFilename('{author} - {title}', { author: 'Author  Name', title: 'Book' }, { separator: 'period' });
+    expect(result).toBe('Author.Name - Book');
+  });
+});
+
 describe('renderFilename with separator/case options', () => {
   it('space separator leaves token values unchanged', () => {
     expect(renderFilename('{author} - {title}', { author: 'Brandon Sanderson', title: 'The Way of Kings' }, { separator: 'space' }))

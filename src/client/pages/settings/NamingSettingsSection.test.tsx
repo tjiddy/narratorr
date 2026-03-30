@@ -248,6 +248,27 @@ describe('NamingSettingsSection', () => {
         expect(mockToast.error).toHaveBeenCalledWith('Network error');
       });
     });
+
+    it('keeps edited values and save button visible after save failure so user can retry', async () => {
+      mockApi.updateSettings.mockRejectedValueOnce(new Error('Network error'));
+      const user = userEvent.setup();
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Case')).toBeInTheDocument();
+      });
+      // Change case to 'upper'
+      await user.selectOptions(screen.getByLabelText('Case'), 'upper');
+      const saveBtn = screen.getByRole('button', { name: /save/i });
+      expect(saveBtn).toBeInTheDocument();
+      // Submit and let it fail
+      fireEvent.submit(saveBtn.closest('form')!);
+      await waitFor(() => {
+        expect(mockToast.error).toHaveBeenCalledWith('Network error');
+      });
+      // Edited value still selected and save button still visible for retry
+      expect(screen.getByLabelText('Case')).toHaveValue('upper');
+      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+    });
   });
 
   describe('validation', () => {
@@ -261,6 +282,29 @@ describe('NamingSettingsSection', () => {
         expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}');
       });
       expect(screen.getByText(/Template must include/)).toBeInTheDocument();
+    });
+
+    it('shows error for file format without {title} token and blocks save', async () => {
+      const settingsNoFileTitle = createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author}', namingSeparator: 'space', namingCase: 'default' },
+      });
+      mockApi.getSettings.mockResolvedValue(settingsNoFileTitle);
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author} - {title}')).toHaveValue('{author}');
+      });
+      // File format validation warning should be shown
+      const warnings = screen.getAllByText(/Template must include/);
+      expect(warnings.length).toBeGreaterThanOrEqual(1);
+      // Make form dirty to trigger save button
+      const user = userEvent.setup();
+      await user.selectOptions(screen.getByLabelText('Separator'), 'dash');
+      // Submit should be blocked by validation — updateSettings should not be called
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+      await waitFor(() => {
+        // Give time for submit to process
+        expect(mockApi.updateSettings).not.toHaveBeenCalled();
+      });
     });
   });
 });

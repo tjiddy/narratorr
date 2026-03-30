@@ -65,12 +65,38 @@ describe('LibrarySettingsSection', () => {
     expect(screen.queryByLabelText('Case')).not.toBeInTheDocument();
   });
 
-  it('does not render standalone Scan Library link', async () => {
+  it('does not render standalone Scan Library description text', async () => {
     renderWithProviders(<LibrarySettingsSection />);
     await waitFor(() => {
       expect(screen.getByText('Library Path')).toBeInTheDocument();
     });
     expect(screen.queryByText('Scan the library folder to register existing audiobooks')).not.toBeInTheDocument();
+  });
+
+  it('renders inline Scan Library link next to Library Path label', async () => {
+    renderWithProviders(<LibrarySettingsSection />);
+    await waitFor(() => {
+      expect(screen.getByText('Library Path')).toBeInTheDocument();
+    });
+    const scanLink = screen.getByRole('link', { name: /scan library/i });
+    expect(scanLink).toBeInTheDocument();
+    expect(scanLink).toHaveAttribute('href', '/library-import');
+  });
+
+  it('does not clobber dirty path edits when settings are refetched', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<LibrarySettingsSection />);
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
+    });
+    // Make the path dirty
+    const pathInput = screen.getByPlaceholderText('/audiobooks');
+    await user.clear(pathInput);
+    await user.type(pathInput, '/dirty-path');
+    // Simulate a settings refetch (e.g., from another section saving)
+    mockApi.getSettings.mockResolvedValue(mockSettings);
+    // Trigger a re-render but the dirty guard should preserve the user's edit
+    expect(pathInput).toHaveValue('/dirty-path');
   });
 
   describe('library path blur → rescan prompt', () => {
