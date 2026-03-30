@@ -263,6 +263,16 @@ describe('RecyclingBinService', () => {
       db.onSelect([]);  // getById returns nothing
       await expect(service.restore(999)).rejects.toThrow('not found');
     });
+
+    describe('transaction atomicity (#214)', () => {
+      it.todo('wraps book insert + syncAuthors + syncNarrators + recycling delete in db.transaction()');
+      it.todo('rolls back book row when syncAuthors throws — recycling entry preserved');
+      it.todo('rolls back book row and author junctions when syncNarrators throws');
+      it.todo('rolls back entire transaction when recycling entry delete fails');
+      it.todo('filesystem move stays outside transaction boundary');
+      it.todo('happy path: all DB operations committed inside transaction');
+      it.todo('passes tx to bookService.syncAuthors and syncNarrators');
+    });
   });
 
   describe('purge', () => {

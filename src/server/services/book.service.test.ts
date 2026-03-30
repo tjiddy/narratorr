@@ -815,3 +815,30 @@ describe('BookService.syncAuthors / syncNarrators', () => {
     expect(db.insert).toHaveBeenCalledTimes(2);  // 2 bookNarrators rows
   });
 });
+
+describe('BookService — transaction atomicity (#214)', () => {
+  describe('create() transaction wrapping', () => {
+    it.todo('wraps insert + syncAuthors + syncNarrators in db.transaction()');
+    it.todo('rolls back book row when syncAuthors throws');
+    it.todo('rolls back book row and author junctions when syncNarrators throws');
+    it.todo('does not contain manual compensating delete — transaction rollback handles cleanup');
+    it.todo('happy path: book + authors + narrators all committed inside transaction');
+    it.todo('passes tx to syncAuthors and syncNarrators, not this.db');
+  });
+
+  describe('update() transaction wrapping', () => {
+    it.todo('wraps update + syncNarrators + syncAuthors in db.transaction()');
+    it.todo('rolls back book metadata when syncNarrators throws');
+    it.todo('rolls back book metadata and narrator junctions when syncAuthors throws');
+    it.todo('returns null without transaction when book ID does not match');
+    it.todo('happy path: book metadata + junctions updated inside transaction');
+    it.todo('passes tx to syncNarrators and syncAuthors, not this.db');
+  });
+
+  describe('syncAuthors/syncNarrators tx parameter', () => {
+    it.todo('syncAuthors uses tx for delete and insert operations, not this.db');
+    it.todo('syncNarrators uses tx for delete and insert operations, not this.db');
+    it.todo('findOrCreateAuthor uses tx for select and insert, not this.db');
+    it.todo('findOrCreateNarrator uses tx for select and insert, not this.db');
+  });
+});
