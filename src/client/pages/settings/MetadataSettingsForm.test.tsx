@@ -43,6 +43,16 @@ describe('MetadataSettingsForm', () => {
     });
   });
 
+  it('audible region select uses shared SelectWithChevron contract', async () => {
+    renderWithProviders(<MetadataSettingsForm />);
+    await waitFor(() => {
+      expect(screen.getByLabelText('Audible Region')).toBeInTheDocument();
+    });
+    const select = screen.getByLabelText('Audible Region');
+    expect(select).toHaveClass('appearance-none');
+    expect(select.parentElement!.querySelector('svg')).toBeInTheDocument();
+  });
+
   it('hides save button when form is clean', async () => {
     renderWithProviders(<MetadataSettingsForm />);
 

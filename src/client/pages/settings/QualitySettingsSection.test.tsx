@@ -59,6 +59,16 @@ describe('QualitySettingsSection', () => {
     expect(screen.getByLabelText('Monitor for Upgrades')).toBeInTheDocument();
   });
 
+  it('protocol preference select uses shared SelectWithChevron contract', async () => {
+    renderWithProviders(<QualitySettingsSection />);
+    await waitFor(() => {
+      expect(screen.getByLabelText('Protocol Preference')).toBeInTheDocument();
+    });
+    const select = screen.getByLabelText('Protocol Preference');
+    expect(select).toHaveClass('appearance-none');
+    expect(select.parentElement!.querySelector('svg')).toBeInTheDocument();
+  });
+
   it('protocol preference select has all three options', async () => {
     renderWithProviders(<QualitySettingsSection />);
 
