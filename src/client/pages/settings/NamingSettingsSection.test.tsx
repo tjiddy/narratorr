@@ -284,6 +284,72 @@ describe('NamingSettingsSection', () => {
     });
   });
 
+  describe('preview layout', () => {
+    it('renders preview labels and values on the same flex row (not stacked)', async () => {
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
+      });
+      // Each "With series" label should share a flex row with its preview value
+      const withSeriesLabels = screen.getAllByText('With series');
+      for (const label of withSeriesLabels) {
+        const row = label.closest('div');
+        expect(row).toHaveClass('flex', 'items-baseline');
+      }
+    });
+
+    it('file format preview shows .m4b suffix', async () => {
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author} - {title}')).toHaveValue('{author} - {title}');
+      });
+      // File format previews should contain .m4b suffix
+      const previews = screen.getAllByTestId('preview-with-series');
+      // The second preview-with-series belongs to the file format field
+      expect(previews.length).toBe(2);
+      expect(previews[1].textContent).toContain('.m4b');
+    });
+
+    it('folder format preview does not show .m4b suffix', async () => {
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('{author}/{title}');
+      });
+      // The first preview-with-series belongs to the folder format field
+      const previews = screen.getAllByTestId('preview-with-series');
+      expect(previews[0].textContent).not.toContain('.m4b');
+    });
+
+    it('preview container not rendered when format field is empty', async () => {
+      const emptySettings = createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '', fileFormat: '', namingSeparator: 'space', namingCase: 'default' },
+      });
+      mockApi.getSettings.mockResolvedValue(emptySettings);
+      renderWithProviders(<NamingSettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('{author}/{title}')).toHaveValue('');
+      });
+      expect(screen.queryByText('With series')).not.toBeInTheDocument();
+      expect(screen.queryByText('Without series')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('inline token panel', () => {
+    it.todo('renders caret toggle button for folder format field');
+    it.todo('renders caret toggle button for file format field');
+    it.todo('caret button has aria-expanded="false" when panel is closed');
+    it.todo('clicking caret opens inline token panel and sets aria-expanded="true"');
+    it.todo('clicking caret again closes inline token panel');
+    it.todo('caret button has aria-controls pointing to inline panel id');
+    it.todo('folder inline panel shows only folder-scoped token groups');
+    it.todo('file inline panel shows all token groups including File-specific');
+    it.todo('clicking token button in inline panel updates input value and marks field dirty');
+    it.todo('inline panel remains open after inserting a token');
+    it.todo('inline panel and ? modal can be open simultaneously');
+    it.todo('both folder and file inline panels can be open simultaneously');
+    it.todo('closing one panel does not affect the other panel state');
+  });
+
   describe('validation', () => {
     it('shows error for folder format without {title} token', async () => {
       const settingsNoTitle = createMockSettings({

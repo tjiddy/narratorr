@@ -76,18 +76,18 @@ function FormatField({ id, label, ariaLabel, placeholder, error, preview, previe
       {error && <p className="text-sm text-destructive mt-1">{error.message}</p>}
       {warnings}
       {hasValue && (
-        <div className="mt-2 p-3 bg-muted/50 rounded-lg border border-border space-y-2">
-          <div>
-            <p className="text-xs text-muted-foreground mb-1">With series</p>
-            <p className="text-sm font-mono break-all">
-              {preview ? <span className="text-muted-foreground">{preview}{previewSuffix}</span> : <span className="text-muted-foreground italic">Empty</span>}
-            </p>
+        <div className="mt-2 p-3 bg-muted/50 rounded-lg border border-border space-y-1">
+          <div className="flex items-baseline gap-3">
+            <span className="w-24 text-right shrink-0 text-xs text-muted-foreground">With series</span>
+            <span data-testid="preview-with-series" className="text-sm font-mono break-all">
+              {preview ? <>{preview}{previewSuffix}</> : <span className="text-muted-foreground italic">Empty</span>}
+            </span>
           </div>
-          <div>
-            <p className="text-xs text-muted-foreground mb-1">Without series</p>
-            <p className="text-sm font-mono break-all">
-              {previewNoSeries ? <span className="text-muted-foreground">{previewNoSeries}{previewSuffix}</span> : <span className="text-muted-foreground italic">Empty</span>}
-            </p>
+          <div className="flex items-baseline gap-3">
+            <span className="w-24 text-right shrink-0 text-xs text-muted-foreground">Without series</span>
+            <span data-testid="preview-without-series" className="text-sm font-mono break-all">
+              {previewNoSeries ? <>{previewNoSeries}{previewSuffix}</> : <span className="text-muted-foreground italic">Empty</span>}
+            </span>
           </div>
         </div>
       )}
