@@ -586,6 +586,10 @@ describe('NamingSettingsSection', () => {
       await waitFor(() => {
         expect(input.value).toBe('{author}/');
       });
+      // Cursor should be at position 9 (where { was) via requestAnimationFrame
+      await waitFor(() => {
+        expect(input.selectionStart).toBe(9);
+      });
     });
 
     it('deletes entire {seriesPosition:00} token (format specifier) on Backspace', async () => {
@@ -659,6 +663,10 @@ describe('NamingSettingsSection', () => {
       fireEvent.keyDown(input, { key: 'Delete' });
       await waitFor(() => {
         expect(input.value).toBe('{author}/');
+      });
+      // Cursor should stay at position 9 via requestAnimationFrame
+      await waitFor(() => {
+        expect(input.selectionStart).toBe(9);
       });
     });
 
