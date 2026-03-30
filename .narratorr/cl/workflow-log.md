@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #229 Observability improvements — logging gaps across all services — 2026-03-30
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #233
+
+### Metrics
+- Files changed: 31 | Tests added/modified: 33 new tests across 15 test files
+- Quality gate runs: 2 (pass on attempt 2 — typecheck caught non-existent `download.savePath` field)
+- Fix iterations: 1 (savePath field reference fix)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec review cycle caught 8 real issues (wrong service ownership, missing caller surfaces, ambiguous contracts) that would have caused implementation rework. The Explore subagent efficiently mapped all callers and signatures.
+- Friction / issues encountered: The issue touched 16 source files — batching production code changes then writing tests was more efficient than strict per-module red/green TDD for purely additive logging changes. The spec review cycle (3 rounds) was necessary but consumed significant context.
+
+### Token efficiency
+- Highest-token actions: Spec review response cycles (3 rounds reading/writing issue bodies), Explore subagent for plan phase reading all 16 target files
+- Avoidable waste: Could have combined the spec review response and elaboration into a single pass if the original spec had been more precise
+- Suggestions: For large logging/observability issues, a pre-implementation codebase scan that validates ALL field names against the actual schema would catch `download.savePath`-style errors before implementation
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. The downloads table schema has no `savePath` column — it's computed at runtime by `resolveSavePath()`. Always verify schema fields before referencing them in log statements. (See `download-schema-no-savepath.md`)
+2. Changing `MetadataSearchProvider.searchBooks()` return type has a wider blast radius than expected — Audible's `searchAuthors`/`searchSeries` internally call `this.searchBooks()` and must also unwrap. (See `searchbooks-result-caller-surface.md`)
+3. Utility functions in `src/server/utils/` are pure/throwable by design — they don't accept loggers. Caller-side logging after the call is the pattern; changing return types (like `checkDiskSpace` → `DiskSpaceResult`) is the way to expose telemetry. (See `helper-logging-ownership.md`)
+
 ## #228 Prefix conditional syntax and multi-file preview for naming templates — 2026-03-30
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #232
