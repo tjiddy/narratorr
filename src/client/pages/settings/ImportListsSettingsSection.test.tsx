@@ -603,10 +603,14 @@ describe('ImportListsSettings', () => {
         expect(librarySelect.tagName).toBe('SELECT');
       });
 
-      const librarySelect = screen.getByLabelText('Library');
+      const librarySelect = screen.getByLabelText('Library') as HTMLSelectElement;
       expect(librarySelect).toHaveClass('appearance-none');
       expect(librarySelect.parentElement!.querySelector('svg')).toBeInTheDocument();
       expect(librarySelect.querySelectorAll('option')).toHaveLength(3); // placeholder + 2 libs
+
+      // Verify selecting an option updates the value through the onChange handler
+      await user.selectOptions(librarySelect, 'lib1');
+      expect(librarySelect.value).toBe('lib1');
     });
 
     it('existing labels (il-name, il-type, il-syncInterval) remain accessible via getByLabelText', async () => {
