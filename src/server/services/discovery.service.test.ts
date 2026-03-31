@@ -712,6 +712,26 @@ describe('DiscoveryService', () => {
       expect(mockBookService.create).not.toHaveBeenCalled();
     });
 
+    it('adds authorless suggestion when only authored matches exist (#253)', async () => {
+      // findDuplicate returns null — authored "Shogun" excluded by notExists
+      const existing = { id: 1, asin: null, title: 'Shogun', authorName: null, status: 'pending' };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      db.update.mockReturnValue(mockDbChain());
+      mockBookService.findDuplicate.mockResolvedValueOnce(null);
+      mockBookService.create.mockResolvedValueOnce({ id: 42, title: 'Shogun', status: 'wanted' });
+      const { service } = createService(db);
+
+      const result = await service.addSuggestion(1);
+      expect(result!.duplicate).toBeFalsy();
+      expect(mockBookService.findDuplicate).toHaveBeenCalledWith('Shogun', undefined, null);
+      expect(mockBookService.create).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Shogun',
+        authors: [],
+        asin: null,
+      }));
+    });
+
     it('returns null for unknown suggestion ID', async () => {
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([]));
