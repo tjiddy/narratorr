@@ -78,6 +78,41 @@ describe('fetchWithProxyAgent', () => {
     expect(mockFetch).toHaveBeenCalledOnce();
   });
 
+  describe('no-proxy network error mapping (#227)', () => {
+    it('maps ECONNREFUSED to actionable message when no proxy configured', async () => {
+      const cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:9090'), { code: 'ECONNREFUSED' });
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        Object.assign(new TypeError('fetch failed'), { cause }),
+      );
+      await expect(fetchWithProxyAgent('https://example.com')).rejects.toThrow(/connection refused/i);
+      await expect(fetchWithProxyAgent('https://example.com')).rejects.toThrow(/9090/);
+    });
+
+    it('maps ENOTFOUND to actionable message when no proxy configured', async () => {
+      const cause = Object.assign(new Error('getaddrinfo ENOTFOUND badhost.local'), { code: 'ENOTFOUND' });
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        Object.assign(new TypeError('fetch failed'), { cause }),
+      );
+      await expect(fetchWithProxyAgent('https://example.com')).rejects.toThrow(/dns/i);
+      await expect(fetchWithProxyAgent('https://example.com')).rejects.toThrow(/badhost\.local/);
+    });
+
+    it('maps TimeoutError to actionable message when no proxy configured', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+      );
+      await expect(fetchWithProxyAgent('https://example.com')).rejects.toThrow(/timed out/i);
+    });
+
+    it('no-proxy mapped errors are NOT ProxyError instances', async () => {
+      const cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:9090'), { code: 'ECONNREFUSED' });
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        Object.assign(new TypeError('fetch failed'), { cause }),
+      );
+      await expect(fetchWithProxyAgent('https://example.com')).rejects.not.toBeInstanceOf(ProxyError);
+    });
+  });
+
   it('throws ProxyError when proxy connection fails', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
     await expect(
