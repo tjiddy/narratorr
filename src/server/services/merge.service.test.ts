@@ -137,11 +137,12 @@ describe('MergeService', () => {
       expect(cp).toHaveBeenCalledWith(join(BOOK_PATH, '02.mp3'), join(STAGING_DIR, '02.mp3'));
       expect(cp).not.toHaveBeenCalledWith(expect.stringContaining('cover.jpg'), expect.anything());
 
-      // processAudioFiles called on staging dir with mergeBehavior: always
+      // processAudioFiles called on staging dir with mergeBehavior: always and callbacks
       expect(processAudioFiles).toHaveBeenCalledWith(
         STAGING_DIR,
         expect.objectContaining({ ffmpegPath: '/usr/bin/ffmpeg', mergeBehavior: 'always', outputFormat: 'm4b' }),
         expect.objectContaining({ title: 'The Way of Kings' }),
+        expect.objectContaining({ onProgress: expect.any(Function), onStderr: expect.any(Function) }),
       );
 
       // scanAudioDirectory called on staging for verification
@@ -184,6 +185,7 @@ describe('MergeService', () => {
         STAGING_DIR,
         expect.objectContaining({ sourceBitrateKbps: 64 }),
         expect.any(Object),
+        expect.any(Object),
       );
     });
 
@@ -197,6 +199,7 @@ describe('MergeService', () => {
       expect(processAudioFiles).toHaveBeenCalledWith(
         STAGING_DIR,
         expect.objectContaining({ sourceBitrateKbps: undefined }),
+        expect.any(Object),
         expect.any(Object),
       );
     });
@@ -321,7 +324,7 @@ describe('MergeService', () => {
       }));
     });
 
-    it('emits merge_complete SSE event on success', async () => {
+    it('emits merge_complete SSE event with message field on success', async () => {
       setupHappyPath();
       const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
       const { service } = createService({ eventBroadcaster });
@@ -332,6 +335,7 @@ describe('MergeService', () => {
         book_id: 42,
         book_title: 'The Way of Kings',
         success: true,
+        message: 'Merged 2 files into The Way of Kings.m4b',
       });
     });
 
@@ -646,40 +650,279 @@ describe('MergeService', () => {
 
 describe('#257 merge observability — merge service', () => {
   describe('merge_started event', () => {
-    it.todo('recorded immediately after pre-flight checks pass (before ffmpeg runs)');
-    it.todo('SSE event emitted with { book_id, book_title } payload');
-    it.todo('NOT recorded when pre-flight checks fail (NOT_FOUND, NO_PATH, etc.)');
+    it('recorded immediately after pre-flight checks pass (before ffmpeg runs)', async () => {
+      let startedRecorded = false;
+      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (processAudioFiles as Mock).mockImplementation(async () => {
+        // At this point merge_started should already have been recorded
+        startedRecorded = true;
+        return { success: false, error: 'test abort' };
+      });
+      (rm as Mock).mockResolvedValue(undefined);
+
+      const eventHistory = { create: vi.fn().mockResolvedValue(undefined) } as unknown as EventHistoryService;
+      const { service } = createService({ eventHistory });
+      await service.mergeBook(42).catch(() => undefined);
+
+      expect(startedRecorded).toBe(true);
+      // merge_started should have been called before processAudioFiles
+      expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        bookId: 42,
+        eventType: 'merge_started',
+        source: 'manual',
+      }));
+    });
+
+    it('SSE event emitted with { book_id, book_title } payload', async () => {
+      setupHappyPath();
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+      const { service } = createService({ eventBroadcaster });
+
+      await service.mergeBook(42);
+
+      expect(eventBroadcaster.emit).toHaveBeenCalledWith('merge_started', {
+        book_id: 42,
+        book_title: 'The Way of Kings',
+      });
+    });
+
+    it('NOT recorded when pre-flight checks fail (NOT_FOUND)', async () => {
+      const eventHistory = { create: vi.fn().mockResolvedValue(undefined) } as unknown as EventHistoryService;
+      const { service, bookService } = createService({ eventHistory });
+      (bookService.getById as Mock).mockResolvedValue(null);
+
+      await service.mergeBook(99).catch(() => undefined);
+
+      expect(eventHistory.create).not.toHaveBeenCalledWith(expect.objectContaining({
+        eventType: 'merge_started',
+      }));
+    });
   });
 
   describe('merge_failed event', () => {
-    it.todo('recorded when ffmpeg/processAudioFiles fails, with error in reason JSON');
-    it.todo('recorded when post-ffmpeg verification fails');
-    it.todo('SSE event emitted with { book_id, book_title, error } payload');
-    it.todo('NOT recorded when failure occurs before merge_started (pre-flight rejection)');
+    it('recorded when processAudioFiles fails, with error in reason JSON', async () => {
+      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'ffmpeg error' });
+      (rm as Mock).mockResolvedValue(undefined);
+
+      const eventHistory = { create: vi.fn().mockResolvedValue(undefined) } as unknown as EventHistoryService;
+      const { service } = createService({ eventHistory });
+      await service.mergeBook(42).catch(() => undefined);
+
+      expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
+        bookId: 42,
+        eventType: 'merge_failed',
+        reason: { error: 'Audio processing failed: ffmpeg error' },
+      }));
+    });
+
+    it('SSE event emitted with { book_id, book_title, error } payload', async () => {
+      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (processAudioFiles as Mock).mockResolvedValue({ success: false, error: 'ffmpeg error' });
+      (rm as Mock).mockResolvedValue(undefined);
+
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+      const { service } = createService({ eventBroadcaster });
+      await service.mergeBook(42).catch(() => undefined);
+
+      expect(eventBroadcaster.emit).toHaveBeenCalledWith('merge_failed', {
+        book_id: 42,
+        book_title: 'The Way of Kings',
+        error: 'Audio processing failed: ffmpeg error',
+      });
+    });
+
+    it('NOT recorded when failure occurs before merge_started (pre-flight rejection)', async () => {
+      const eventHistory = { create: vi.fn().mockResolvedValue(undefined) } as unknown as EventHistoryService;
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+      const { service, bookService } = createService({ eventHistory, eventBroadcaster });
+      (bookService.getById as Mock).mockResolvedValue(null);
+
+      await service.mergeBook(99).catch(() => undefined);
+
+      expect(eventHistory.create).not.toHaveBeenCalledWith(expect.objectContaining({
+        eventType: 'merge_failed',
+      }));
+      expect(eventBroadcaster.emit).not.toHaveBeenCalledWith('merge_failed', expect.anything());
+    });
   });
 
   describe('merge_progress SSE', () => {
-    it.todo('emitted during processing phase with percentage from onProgress callback');
-    it.todo('emitted on phase transitions (staging → processing → verifying → finalizing)');
-  });
+    it('emitted on phase transitions (staging → processing → verifying → finalizing)', async () => {
+      setupHappyPath();
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+      const { service } = createService({ eventBroadcaster });
 
-  describe('merge_complete SSE extension', () => {
-    it.todo('emitted with message field containing result message (includes filename)');
+      await service.mergeBook(42);
+
+      const progressCalls = (eventBroadcaster.emit as Mock).mock.calls.filter(
+        (c: unknown[]) => c[0] === 'merge_progress',
+      );
+      const phases = progressCalls.map((c: unknown[]) => (c[1] as { phase: string }).phase);
+      expect(phases).toContain('staging');
+      expect(phases).toContain('processing');
+      expect(phases).toContain('verifying');
+      expect(phases).toContain('finalizing');
+    });
   });
 
   describe('event emission resilience', () => {
-    it.todo('event emission failure (broadcaster throws) does not fail the merge operation');
-    it.todo('event history creation failure does not fail the merge operation');
+    it('event emission failure (broadcaster throws) does not fail the merge operation', async () => {
+      setupHappyPath();
+      const eventBroadcaster = {
+        emit: vi.fn().mockImplementation(() => { throw new Error('SSE broken'); }),
+      } as unknown as EventBroadcasterService;
+      const { service } = createService({ eventBroadcaster });
+
+      const result = await service.mergeBook(42);
+      expect(result.bookId).toBe(42);
+    });
+
+    it('event history creation failure does not fail the merge operation', async () => {
+      setupHappyPath();
+      const eventHistory = {
+        create: vi.fn().mockRejectedValue(new Error('DB write failed')),
+      } as unknown as EventHistoryService;
+      const { service } = createService({ eventHistory });
+
+      const result = await service.mergeBook(42);
+      expect(result.bookId).toBe(42);
+    });
   });
 
   describe('concurrent merge guard with events', () => {
-    it.todo('first accepted merge records/emits merge_started');
-    it.todo('second ALREADY_IN_PROGRESS request records/emits nothing');
+    it('first accepted merge records merge_started; second ALREADY_IN_PROGRESS records nothing', async () => {
+      let resolveProcessing!: () => void;
+      (readdir as Mock).mockResolvedValue(['01.mp3', '02.mp3']);
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (processAudioFiles as Mock).mockReturnValue(new Promise((resolve) => {
+        resolveProcessing = () => resolve({ success: false, error: 'cancelled' });
+      }));
+      (rm as Mock).mockResolvedValue(undefined);
+
+      const eventBroadcaster = { emit: vi.fn() } as unknown as EventBroadcasterService;
+      const { service } = createService({ eventBroadcaster });
+
+      const firstCall = service.mergeBook(42);
+
+      // Wait a tick so the first call's sync emit fires
+      await new Promise((r) => process.nextTick(r));
+
+      const emitsBefore = (eventBroadcaster.emit as Mock).mock.calls.length;
+
+      // Second call — should throw without emitting any events
+      await expect(service.mergeBook(42)).rejects.toMatchObject({ code: 'ALREADY_IN_PROGRESS' });
+
+      // No additional SSE events from the rejected second request
+      expect((eventBroadcaster.emit as Mock).mock.calls.length).toBe(emitsBefore);
+
+      // Only 1 merge_started SSE from the first (accepted) call
+      const startedEmits = (eventBroadcaster.emit as Mock).mock.calls.filter(
+        (c: unknown[]) => c[0] === 'merge_started',
+      );
+      expect(startedEmits).toHaveLength(1);
+
+      resolveProcessing();
+      await firstCall.catch(() => undefined);
+    });
   });
 
   describe('stderr deduplication', () => {
-    it.todo('3 identical lines logged once with × 3 suffix');
-    it.todo('interleaved different lines each logged separately');
-    it.todo('single occurrence logged without count suffix');
+    it('3 identical lines logged once with × 3 suffix', async () => {
+      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (processAudioFiles as Mock).mockImplementation(async (_dir: string, _config: unknown, _ctx: unknown, callbacks: { onStderr?: (line: string) => void }) => {
+        callbacks?.onStderr?.('Too many packets buffered');
+        callbacks?.onStderr?.('Too many packets buffered');
+        callbacks?.onStderr?.('Too many packets buffered');
+        return { success: true, outputFiles: ['/staging/out.m4b'] };
+      });
+      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
+      (readdir as Mock).mockResolvedValueOnce(['out.m4b']);
+      (rename as Mock).mockResolvedValue(undefined);
+      (stat as Mock).mockResolvedValue({ size: 100 });
+      (unlink as Mock).mockResolvedValue(undefined);
+      (rm as Mock).mockResolvedValue(undefined);
+      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+
+      const { service, log } = createService();
+      await service.mergeBook(42);
+
+      // Should be logged once with count
+      const debugCalls = (log.debug as Mock).mock.calls;
+      const stderrCalls = debugCalls.filter(
+        (c: unknown[]) => typeof c[0] === 'object' && c[0] !== null && 'stderr' in (c[0] as Record<string, unknown>),
+      );
+      expect(stderrCalls).toHaveLength(1);
+      expect(stderrCalls[0][0]).toEqual({ stderr: 'Too many packets buffered', count: 3 });
+      expect(stderrCalls[0][1]).toContain('× 3');
+    });
+
+    it('interleaved different lines each logged separately', async () => {
+      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (processAudioFiles as Mock).mockImplementation(async (_dir: string, _config: unknown, _ctx: unknown, callbacks: { onStderr?: (line: string) => void }) => {
+        callbacks?.onStderr?.('line A');
+        callbacks?.onStderr?.('line B');
+        callbacks?.onStderr?.('line A');
+        return { success: true, outputFiles: ['/staging/out.m4b'] };
+      });
+      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
+      (readdir as Mock).mockResolvedValueOnce(['out.m4b']);
+      (rename as Mock).mockResolvedValue(undefined);
+      (stat as Mock).mockResolvedValue({ size: 100 });
+      (unlink as Mock).mockResolvedValue(undefined);
+      (rm as Mock).mockResolvedValue(undefined);
+      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+
+      const { service, log } = createService();
+      await service.mergeBook(42);
+
+      const debugCalls = (log.debug as Mock).mock.calls;
+      const stderrCalls = debugCalls.filter(
+        (c: unknown[]) => typeof c[0] === 'object' && c[0] !== null && 'stderr' in (c[0] as Record<string, unknown>),
+      );
+      expect(stderrCalls).toHaveLength(3);
+      expect(stderrCalls[0][0]).toEqual({ stderr: 'line A' });
+      expect(stderrCalls[1][0]).toEqual({ stderr: 'line B' });
+      expect(stderrCalls[2][0]).toEqual({ stderr: 'line A' });
+    });
+
+    it('single occurrence logged without count suffix', async () => {
+      (readdir as Mock).mockResolvedValueOnce(['01.mp3', '02.mp3']);
+      (mkdir as Mock).mockResolvedValue(undefined);
+      (cp as Mock).mockResolvedValue(undefined);
+      (processAudioFiles as Mock).mockImplementation(async (_dir: string, _config: unknown, _ctx: unknown, callbacks: { onStderr?: (line: string) => void }) => {
+        callbacks?.onStderr?.('single line');
+        return { success: true, outputFiles: ['/staging/out.m4b'] };
+      });
+      (scanAudioDirectory as Mock).mockResolvedValue(SCAN_RESULT);
+      (readdir as Mock).mockResolvedValueOnce(['out.m4b']);
+      (rename as Mock).mockResolvedValue(undefined);
+      (stat as Mock).mockResolvedValue({ size: 100 });
+      (unlink as Mock).mockResolvedValue(undefined);
+      (rm as Mock).mockResolvedValue(undefined);
+      (enrichBookFromAudio as Mock).mockResolvedValue({ enriched: true });
+
+      const { service, log } = createService();
+      await service.mergeBook(42);
+
+      const debugCalls = (log.debug as Mock).mock.calls;
+      const stderrCalls = debugCalls.filter(
+        (c: unknown[]) => typeof c[0] === 'object' && c[0] !== null && 'stderr' in (c[0] as Record<string, unknown>),
+      );
+      expect(stderrCalls).toHaveLength(1);
+      expect(stderrCalls[0][0]).toEqual({ stderr: 'single line' });
+      expect(stderrCalls[0][1]).toBe('ffmpeg stderr');
+    });
   });
 });
