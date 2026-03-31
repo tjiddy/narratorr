@@ -388,7 +388,7 @@ describe('DownloadClientFields', () => {
   });
 
   describe('z-index scale (CSS-1)', () => {
-    it('autocomplete dropdown container has z-30 class (dropdown scale)', async () => {
+    it('autocomplete dropdown renders via portal with z-30 class (dropdown scale)', async () => {
       const user = userEvent.setup();
       (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
         categories: ['cat1'],
@@ -398,8 +398,48 @@ describe('DownloadClientFields', () => {
       await waitFor(() => {
         expect(screen.getByText('cat1')).toBeInTheDocument();
       });
-      const dropdownContainer = screen.getByText('cat1').closest('div.absolute');
-      expect(dropdownContainer).toHaveClass('z-30');
+      // ToolbarDropdown renders a fixed z-30 portal container to document.body
+      const portalContainer = screen.getByText('cat1').closest('div.fixed');
+      expect(portalContainer).toHaveClass('z-30');
+    });
+  });
+
+  describe('portal dropdown close behavior', () => {
+    it('closes category dropdown on outside click', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        categories: ['cat1'],
+      });
+      render(<FieldWrapper type="qbittorrent" />);
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+      await waitFor(() => {
+        expect(screen.getByText('cat1')).toBeInTheDocument();
+      });
+
+      // Click outside the dropdown (on the document body)
+      await user.click(document.body);
+
+      await waitFor(() => {
+        expect(screen.queryByText('cat1')).not.toBeInTheDocument();
+      });
+    });
+
+    it('closes category dropdown on Escape key', async () => {
+      const user = userEvent.setup();
+      (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
+        categories: ['cat1'],
+      });
+      render(<FieldWrapper type="qbittorrent" />);
+      await user.click(screen.getByRole('button', { name: /fetch/i }));
+      await waitFor(() => {
+        expect(screen.getByText('cat1')).toBeInTheDocument();
+      });
+
+      await user.keyboard('{Escape}');
+
+      await waitFor(() => {
+        expect(screen.queryByText('cat1')).not.toBeInTheDocument();
+      });
     });
   });
 });

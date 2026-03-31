@@ -809,3 +809,51 @@ describe('renderFilename with separator/case options', () => {
       .toBe('Brandon Sanderson - The Way of Kings');
   });
 });
+
+describe('renderTemplate — empty wrapper stripping', () => {
+  it('strips empty () when token inside resolves to empty — ({year}) with year=undefined', () => {
+    expect(renderTemplate('{title} ({year})', { title: 'Book' })).toBe('Book');
+  });
+
+  it('preserves filled () — ({year}) with year=2020 produces (2020)', () => {
+    expect(renderTemplate('{title} ({year})', { title: 'Book', year: 2020 })).toBe('Book (2020)');
+  });
+
+  it('strips empty [] when token inside resolves to empty — [{series}] with series=undefined', () => {
+    expect(renderTemplate('{title} [{series}]', { title: 'Book' })).toBe('Book');
+  });
+
+  it('preserves filled [] — [{series}] with series="Bobiverse" produces [Bobiverse]', () => {
+    expect(renderTemplate('{title} [{series}]', { title: 'Book', series: 'Bobiverse' })).toBe('Book [Bobiverse]');
+  });
+
+  it('strips multiple empty wrapper pairs in same template', () => {
+    expect(renderTemplate('{title} ({year}) [{series}]', { title: 'Book' })).toBe('Book');
+  });
+
+  it('preserves non-adjacent parens — ({title}) ({year}) with only year empty keeps (Title)', () => {
+    expect(renderTemplate('({title}) ({year})', { title: 'Book' })).toBe('(Book)');
+  });
+
+  it('does not strip unmatched wrapper characters', () => {
+    expect(renderTemplate('{title} (intro', { title: 'Book' })).toBe('Book (intro');
+  });
+
+  it('preserves literal empty () not created by an empty token', () => {
+    expect(renderTemplate('{title} ()', { title: 'Book' })).toBe('Book ()');
+  });
+
+  it('preserves literal empty [] not created by an empty token', () => {
+    expect(renderTemplate('{title} []', { title: 'Book' })).toBe('Book []');
+  });
+});
+
+describe('renderFilename — empty wrapper stripping', () => {
+  it('strips empty () around undefined token in renderFilename', () => {
+    expect(renderFilename('{title} ({year})', { title: 'Book' })).toBe('Book');
+  });
+
+  it('preserves filled () in renderFilename', () => {
+    expect(renderFilename('{title} ({year})', { title: 'Book', year: 2020 })).toBe('Book (2020)');
+  });
+});

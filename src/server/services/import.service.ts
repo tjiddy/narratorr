@@ -125,7 +125,7 @@ export class ImportService {
       const diskSpace = await checkDiskSpace({ sourcePath, sourceStats, libraryPath: librarySettings.path, minFreeSpaceGB: importSettings.minFreeSpaceGB, processingEnabled });
       this.log.debug({ downloadId, bookTitle: book.title, freeGB: diskSpace.freeGB, requiredGB: diskSpace.requiredGB }, 'Disk space check passed');
       await copyToLibrary({ sourcePath, targetPath, sourceStats, log: this.log });
-      await runAudioProcessing({ processingSettings, librarySettings, targetPath, book: book, authorName: authorName || 'Unknown Author', namingOptions, db: this.db, log: this.log });
+      await runAudioProcessing({ processingSettings, librarySettings, targetPath, book: book, authorName: authorName || 'Unknown Author', sourceBitrateBps: book.audioBitrate, namingOptions, db: this.db, log: this.log });
 
       if (librarySettings.fileFormat) {
         await renameFilesWithTemplate(targetPath, librarySettings.fileFormat, book, authorName, this.log, namingOptions);

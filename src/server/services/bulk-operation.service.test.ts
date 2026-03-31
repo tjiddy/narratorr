@@ -531,6 +531,53 @@ describe('BulkOperationService — convert batch', () => {
     expect(enrichBookFromAudio).toHaveBeenCalledWith(1, BOOK_PATH, expect.anything(), expect.anything(), expect.anything(), expect.anything());
   });
 
+  it('forwards sourceBitrateKbps from book.audioBitrate to processAudioFiles', async () => {
+    setupConvertMocks();
+    const bookService = makeBookService({ audioBitrate: 64000 });
+    const { service, db } = createService({ bookService });
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, path: BOOK_PATH, title: 'Title' },
+    ]));
+    const id = await service.startConvertJob();
+    await waitForJob(service, id);
+    expect(processAudioFiles).toHaveBeenCalledWith(
+      BOOK_PATH + '.convert-tmp',
+      expect.objectContaining({ sourceBitrateKbps: 64 }),
+      expect.any(Object),
+    );
+  });
+
+  it('passes sourceBitrateKbps as undefined when book.audioBitrate is null', async () => {
+    setupConvertMocks();
+    // default makeBookService has audioBitrate: null
+    const { service, db } = createService();
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, path: BOOK_PATH, title: 'Title' },
+    ]));
+    const id = await service.startConvertJob();
+    await waitForJob(service, id);
+    expect(processAudioFiles).toHaveBeenCalledWith(
+      BOOK_PATH + '.convert-tmp',
+      expect.objectContaining({ sourceBitrateKbps: undefined }),
+      expect.any(Object),
+    );
+  });
+
+  it('emits debug log when source bitrate is lower than target', async () => {
+    setupConvertMocks();
+    const bookService = makeBookService({ audioBitrate: 64000 });
+    const { service, db, log } = createService({ bookService });
+    db.select.mockReturnValueOnce(mockDbChain([
+      { id: 1, path: BOOK_PATH, title: 'Title' },
+    ]));
+    const id = await service.startConvertJob();
+    await waitForJob(service, id);
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceBitrateKbps: 64, targetBitrateKbps: 128, effectiveBitrateKbps: 64 }),
+      expect.stringContaining('Capping target bitrate'),
+    );
+  });
+
   it('counts processAudioFiles failure as failure, continues batch', async () => {
     setupConvertMocks();
     (processAudioFiles as Mock)

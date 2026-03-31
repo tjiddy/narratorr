@@ -89,7 +89,7 @@ describe('EventHistoryCard', () => {
 
     expect(screen.queryByText(/"score": 95/)).not.toBeInTheDocument();
 
-    await user.click(screen.getByText('View reason'));
+    await user.click(screen.getByText('View details'));
     expect(screen.getByText(/"score": 95/)).toBeInTheDocument();
 
     await user.click(screen.getByText('Hide details'));

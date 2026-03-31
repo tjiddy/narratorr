@@ -477,3 +477,95 @@ describe('buildChapterMetadata', () => {
     expect(metadata).toContain('title=The Journey Begins');
   });
 });
+
+describe('bitrate capping — sourceBitrateKbps', () => {
+  beforeEach(() => {
+    // Single file setup for convert path tests
+    mockReaddir.mockResolvedValue([
+      { name: 'book.mp3', isFile: () => true, isDirectory: () => false },
+    ] as never);
+    mockExecFileSuccess('');
+  });
+
+  it('uses source bitrate when lower than target (convert path)', async () => {
+    const config: ProcessingConfig = { ...defaultConfig, bitrate: 128, sourceBitrateKbps: 64 };
+    await processAudioFiles('/lib/book', config, defaultContext);
+
+    const ffmpegArgs = mockExecFile.mock.calls[0][1] as string[];
+    const bitrateIdx = ffmpegArgs.indexOf('-b:a');
+    expect(bitrateIdx).toBeGreaterThan(-1);
+    expect(ffmpegArgs[bitrateIdx + 1]).toBe('64k');
+  });
+
+  it('uses source bitrate when lower than target (merge path)', async () => {
+    mockReaddir.mockResolvedValue([
+      { name: '01.mp3', isFile: () => true, isDirectory: () => false },
+      { name: '02.mp3', isFile: () => true, isDirectory: () => false },
+    ] as never);
+    mockReadChapterSources.mockResolvedValue([
+      { filePath: '/lib/book/01.mp3', trackNumber: 1 },
+      { filePath: '/lib/book/02.mp3', trackNumber: 2 },
+    ]);
+    mockResolveChapterTitle.mockImplementation((_s, i) => `Ch ${i + 1}`);
+    let callCount = 0;
+    mockExecFile.mockImplementation((...args: unknown[]) => {
+      const cb = args[args.length - 1] as (err: Error | null, result: { stdout: string; stderr: string }) => void;
+      if (typeof cb === 'function') {
+        callCount++;
+        cb(null, { stdout: callCount <= 2 ? '120.0\n' : '', stderr: '' });
+      }
+      return {} as never;
+    });
+
+    const config: ProcessingConfig = { ...defaultConfig, bitrate: 128, sourceBitrateKbps: 64, mergeBehavior: 'always' };
+    await processAudioFiles('/lib/book', config, defaultContext);
+
+    // Find the merge ffmpeg call (the one with -f concat)
+    const mergeCalls = mockExecFile.mock.calls.filter(
+      c => (c[1] as string[]).includes('concat'),
+    );
+    expect(mergeCalls.length).toBeGreaterThan(0);
+    const mergeArgs = mergeCalls[0][1] as string[];
+    const bitrateIdx = mergeArgs.indexOf('-b:a');
+    expect(bitrateIdx).toBeGreaterThan(-1);
+    expect(mergeArgs[bitrateIdx + 1]).toBe('64k');
+  });
+
+  it('uses target bitrate when lower than source', async () => {
+    const config: ProcessingConfig = { ...defaultConfig, bitrate: 64, sourceBitrateKbps: 128 };
+    await processAudioFiles('/lib/book', config, defaultContext);
+
+    const ffmpegArgs = mockExecFile.mock.calls[0][1] as string[];
+    const bitrateIdx = ffmpegArgs.indexOf('-b:a');
+    expect(bitrateIdx).toBeGreaterThan(-1);
+    expect(ffmpegArgs[bitrateIdx + 1]).toBe('64k');
+  });
+
+  it('uses either value when source equals target exactly (boundary)', async () => {
+    const config: ProcessingConfig = { ...defaultConfig, bitrate: 128, sourceBitrateKbps: 128 };
+    await processAudioFiles('/lib/book', config, defaultContext);
+
+    const ffmpegArgs = mockExecFile.mock.calls[0][1] as string[];
+    const bitrateIdx = ffmpegArgs.indexOf('-b:a');
+    expect(bitrateIdx).toBeGreaterThan(-1);
+    expect(ffmpegArgs[bitrateIdx + 1]).toBe('128k');
+  });
+
+  it('uses target bitrate as-is when sourceBitrateKbps is undefined', async () => {
+    const config: ProcessingConfig = { ...defaultConfig, bitrate: 128 };
+    await processAudioFiles('/lib/book', config, defaultContext);
+
+    const ffmpegArgs = mockExecFile.mock.calls[0][1] as string[];
+    const bitrateIdx = ffmpegArgs.indexOf('-b:a');
+    expect(bitrateIdx).toBeGreaterThan(-1);
+    expect(ffmpegArgs[bitrateIdx + 1]).toBe('128k');
+  });
+
+  it('omits -b:a flag when config.bitrate is undefined regardless of sourceBitrateKbps', async () => {
+    const config: ProcessingConfig = { ...defaultConfig, bitrate: undefined, sourceBitrateKbps: 64 };
+    await processAudioFiles('/lib/book', config, defaultContext);
+
+    const ffmpegArgs = mockExecFile.mock.calls[0][1] as string[];
+    expect(ffmpegArgs).not.toContain('-b:a');
+  });
+});

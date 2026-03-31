@@ -296,6 +296,29 @@ export class BulkOperationService {
     this.activeJobId = null;
   }
 
+  /** Move converted output files to the book directory and remove originals that weren't outputs. */
+  private async swapConvertedFiles(outputFiles: string[], originalFiles: string[], bookPath: string): Promise<void> {
+    if (outputFiles.length === 0) return;
+    const outputFileNames = new Set(outputFiles.map(f => basename(f)));
+    for (const outputFile of outputFiles) {
+      await fsRename(outputFile, join(bookPath, basename(outputFile)));
+    }
+    for (const file of originalFiles) {
+      if (!outputFileNames.has(file)) {
+        await unlink(join(bookPath, file)).catch(() => {});
+      }
+    }
+  }
+
+  private logBitrateCapping(sourceBitrateKbps: number | undefined, targetBitrateKbps: number | undefined): void {
+    if (targetBitrateKbps != null && sourceBitrateKbps != null && sourceBitrateKbps < targetBitrateKbps) {
+      this.log.debug(
+        { sourceBitrateKbps, targetBitrateKbps, effectiveBitrateKbps: sourceBitrateKbps },
+        'Capping target bitrate to source bitrate to prevent upsampling',
+      );
+    }
+  }
+
   private async convertBook(
     bookId: number,
     bookPath: string,
@@ -305,6 +328,9 @@ export class BulkOperationService {
     const stagingDir = bookPath + '.convert-tmp';
     const book = await this.bookService.getById(bookId);
     const authorName = book?.authors?.[0]?.name ?? 'Unknown Author';
+    const sourceBitrateKbps = book?.audioBitrate ? Math.floor(book.audioBitrate / 1000) : undefined;
+    const targetBitrateKbps = processingSettings.bitrate ?? undefined;
+    this.logBitrateCapping(sourceBitrateKbps, targetBitrateKbps);
 
     await mkdir(stagingDir, { recursive: true });
     try {
@@ -321,7 +347,8 @@ export class BulkOperationService {
           ffmpegPath: processingSettings.ffmpegPath,
           outputFormat: 'm4b',
           mergeBehavior: 'always',
-          bitrate: processingSettings.bitrate ?? undefined,
+          bitrate: targetBitrateKbps,
+          sourceBitrateKbps,
         },
         { author: authorName, title: bookTitle },
       );
@@ -330,19 +357,7 @@ export class BulkOperationService {
         throw new Error(result.error);
       }
 
-      if (result.outputFiles.length > 0) {
-        // Move output files back to book path
-        const outputFileNames = new Set(result.outputFiles.map(f => basename(f)));
-        for (const outputFile of result.outputFiles) {
-          await fsRename(outputFile, join(bookPath, basename(outputFile)));
-        }
-        // Delete original audio files that are not outputs
-        for (const file of audioFiles) {
-          if (!outputFileNames.has(file)) {
-            await unlink(join(bookPath, file)).catch(() => {});
-          }
-        }
-      }
+      await this.swapConvertedFiles(result.outputFiles, audioFiles, bookPath);
 
       // Refresh DB audio fields
       const enrichResult = await enrichBookFromAudio(

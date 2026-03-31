@@ -141,7 +141,7 @@ export class MergeService {
   /** Steps 1-5: copy to staging, process, verify. Returns the staged M4B filename. */
   private async runStaging(
     stagingDir: string,
-    book: { path: string; title: string; authors?: Array<{ name: string }> | null },
+    book: { path: string; title: string; authors?: Array<{ name: string }> | null; audioBitrate?: number | null },
     audioFiles: string[],
     processingSettings: { ffmpegPath: string; keepOriginalBitrate?: boolean; bitrate?: number },
   ): Promise<string> {
@@ -152,10 +152,21 @@ export class MergeService {
     }
 
     const authorName = book.authors?.[0]?.name ?? '';
+    const sourceBitrateKbps = book.audioBitrate ? Math.floor(book.audioBitrate / 1000) : undefined;
+    const targetBitrateKbps = processingSettings.keepOriginalBitrate ? undefined : processingSettings.bitrate;
+
+    if (targetBitrateKbps != null && sourceBitrateKbps != null && sourceBitrateKbps < targetBitrateKbps) {
+      this.log.debug(
+        { sourceBitrateKbps, targetBitrateKbps, effectiveBitrateKbps: sourceBitrateKbps },
+        'Capping target bitrate to source bitrate to prevent upsampling',
+      );
+    }
+
     const processingResult = await processAudioFiles(stagingDir, {
       ffmpegPath: processingSettings.ffmpegPath,
       outputFormat: 'm4b',
-      bitrate: processingSettings.keepOriginalBitrate ? undefined : processingSettings.bitrate,
+      bitrate: targetBitrateKbps,
+      sourceBitrateKbps,
       mergeBehavior: 'always',
     }, {
       author: authorName,

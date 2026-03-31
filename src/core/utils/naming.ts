@@ -224,7 +224,7 @@ function resolveTokens(
       const hasValue = raw !== undefined && raw !== null && raw !== '';
 
       if (!hasValue) {
-        return '';
+        return EMPTY_TOKEN_SENTINEL;
       }
 
       let value = String(raw);
@@ -256,6 +256,28 @@ function resolveTokens(
   );
 }
 
+/** Zero-width sentinel emitted by resolveTokens for empty/undefined token values. */
+const EMPTY_TOKEN_SENTINEL = '\u200B';
+const SENTINEL_REGEX = new RegExp(EMPTY_TOKEN_SENTINEL, 'g');
+
+/**
+ * Strip matched wrapper pairs (parentheses, brackets) that contain only empty-token
+ * sentinels and whitespace. Literal empty wrappers (not from tokens) are preserved.
+ */
+function stripEmptyWrappers(text: string): string {
+  // Only strip wrappers that contain at least one sentinel (i.e., came from an empty token)
+  const wrapperPattern = /\(\s*\u200B[\s\u200B]*\)|\[\s*\u200B[\s\u200B]*\]/g;
+  let result = text;
+  let prev: string;
+  do {
+    prev = result;
+    result = result.replace(wrapperPattern, '');
+  } while (result !== prev);
+  // Remove remaining sentinels and clean up whitespace
+  result = result.replace(SENTINEL_REGEX, '');
+  return result.replace(/ {2,}/g, ' ').trim();
+}
+
 /**
  * Render a naming template with token values.
  *
@@ -269,7 +291,7 @@ export function renderTemplate(
   tokens: Record<string, string | number | undefined | null>,
   options?: NamingOptions,
 ): string {
-  const rendered = resolveTokens(template, tokens, options);
+  const rendered = stripEmptyWrappers(resolveTokens(template, tokens, options));
 
   // Split by /, sanitize non-empty segments, filter empties
   return rendered
@@ -292,7 +314,7 @@ export function renderFilename(
   tokens: Record<string, string | number | undefined | null>,
   options?: NamingOptions,
 ): string {
-  const rendered = resolveTokens(template, tokens, options);
+  const rendered = stripEmptyWrappers(resolveTokens(template, tokens, options));
   return sanitizePath(rendered);
 }
 

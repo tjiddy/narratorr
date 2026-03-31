@@ -1080,4 +1080,144 @@ describe('IndexerService', () => {
       );
     });
   });
+
+  describe('searchAll — concurrent execution', () => {
+    it('invokes second adapter before first resolves (proves concurrent fan-out)', async () => {
+      const indexer2 = { ...mockIndexer, id: 2, name: 'Indexer2' };
+      db.select.mockReturnValue(mockDbChain([mockIndexer, indexer2]));
+
+      // Adapter1 blocks on a deferred promise — if execution is sequential,
+      // adapter2.search will never be called until adapter1 resolves.
+      let resolveAdapter1!: (value: unknown[]) => void;
+      const adapter1Promise = new Promise<unknown[]>((resolve) => { resolveAdapter1 = resolve; });
+
+      const adapter1 = {
+        search: vi.fn().mockReturnValue(adapter1Promise),
+        test: vi.fn(),
+      };
+      const adapter2 = {
+        search: vi.fn().mockImplementation(async () => {
+          // Assert adapter1.search was already called but NOT yet resolved
+          expect(adapter1.search).toHaveBeenCalledTimes(1);
+          return [{ title: 'Book2', indexer: 'Indexer2' }];
+        }),
+        test: vi.fn(),
+      };
+
+      vi.spyOn(service, 'getAdapter')
+        .mockResolvedValueOnce(adapter1 as never)
+        .mockResolvedValueOnce(adapter2 as never);
+
+      const searchPromise = service.searchAll('test');
+
+      // Wait a tick to let both adapter.search calls be initiated
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      // At this point, adapter2 should already have been called (concurrent)
+      expect(adapter2.search).toHaveBeenCalledTimes(1);
+
+      // Now resolve adapter1 so searchAll can complete
+      resolveAdapter1([{ title: 'Book1', indexer: 'ABB' }]);
+      const results = await searchPromise;
+      expect(results).toHaveLength(2);
+    });
+
+    it('collects results from fulfilled indexers when one rejects', async () => {
+      const indexer2 = { ...mockIndexer, id: 2, name: 'Indexer2' };
+      db.select.mockReturnValue(mockDbChain([mockIndexer, indexer2]));
+
+      const errorAdapter = {
+        search: vi.fn().mockRejectedValue(new Error('Connection failed')),
+        test: vi.fn(),
+      };
+      const goodAdapter = {
+        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'Indexer2' }]),
+        test: vi.fn(),
+      };
+
+      vi.spyOn(service, 'getAdapter')
+        .mockResolvedValueOnce(errorAdapter as never)
+        .mockResolvedValueOnce(goodAdapter as never);
+
+      const results = await service.searchAll('test');
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('Book');
+    });
+
+    it('returns empty array when all indexers reject', async () => {
+      const indexer2 = { ...mockIndexer, id: 2, name: 'Indexer2' };
+      db.select.mockReturnValue(mockDbChain([mockIndexer, indexer2]));
+
+      const err1 = { search: vi.fn().mockRejectedValue(new Error('Timeout')), test: vi.fn() };
+      const err2 = { search: vi.fn().mockRejectedValue(new Error('DNS')), test: vi.fn() };
+
+      vi.spyOn(service, 'getAdapter')
+        .mockResolvedValueOnce(err1 as never)
+        .mockResolvedValueOnce(err2 as never);
+
+      const results = await service.searchAll('test');
+      expect(results).toEqual([]);
+    });
+
+    it('logs warning with err key for rejected indexers (Pino serialization)', async () => {
+      const indexer2 = { ...mockIndexer, id: 2, name: 'Indexer2' };
+      db.select.mockReturnValue(mockDbChain([mockIndexer, indexer2]));
+
+      const failError = new Error('Connection refused');
+      const errorAdapter = { search: vi.fn().mockRejectedValue(failError), test: vi.fn() };
+      const goodAdapter = { search: vi.fn().mockResolvedValue([]), test: vi.fn() };
+
+      vi.spyOn(service, 'getAdapter')
+        .mockResolvedValueOnce(errorAdapter as never)
+        .mockResolvedValueOnce(goodAdapter as never);
+
+      const log = inject<FastifyBaseLogger>(createMockLogger());
+      const svc = new IndexerService(inject<Db>(db), log);
+      vi.spyOn(svc, 'getAdapter')
+        .mockResolvedValueOnce(errorAdapter as never)
+        .mockResolvedValueOnce(goodAdapter as never);
+
+      await svc.searchAll('test');
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ err: failError, indexer: mockIndexer.name }),
+        expect.stringContaining('Error searching indexer'),
+      );
+    });
+
+    it('applies match scoring and sorting after concurrent collection', async () => {
+      const indexer2 = { ...mockIndexer, id: 2, name: 'Indexer2' };
+      db.select.mockReturnValue(mockDbChain([mockIndexer, indexer2]));
+
+      const adapter1 = {
+        search: vi.fn().mockResolvedValue([{ title: 'Wrong Book', indexer: 'ABB' }]),
+        test: vi.fn(),
+      };
+      const adapter2 = {
+        search: vi.fn().mockResolvedValue([{ title: 'The Way of Kings', indexer: 'Indexer2', author: 'Sanderson' }]),
+        test: vi.fn(),
+      };
+
+      vi.spyOn(service, 'getAdapter')
+        .mockResolvedValueOnce(adapter1 as never)
+        .mockResolvedValueOnce(adapter2 as never);
+
+      const results = await service.searchAll('sanderson', { title: 'The Way of Kings', author: 'Sanderson' });
+      // Better match should be sorted first
+      expect(results[0].title).toBe('The Way of Kings');
+    });
+
+    it('works correctly with a single enabled indexer', async () => {
+      db.select.mockReturnValue(mockDbChain([mockIndexer]));
+
+      const adapter = {
+        search: vi.fn().mockResolvedValue([{ title: 'Book', indexer: 'ABB' }]),
+        test: vi.fn(),
+      };
+      vi.spyOn(service, 'getAdapter').mockResolvedValue(adapter as never);
+
+      const results = await service.searchAll('test');
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toBe('Book');
+    });
+  });
 });

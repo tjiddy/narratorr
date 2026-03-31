@@ -168,6 +168,57 @@ describe('MergeService', () => {
       });
     });
 
+    it('forwards sourceBitrateKbps from book.audioBitrate to processAudioFiles', async () => {
+      const bookWithBitrate = {
+        ...createMockDbBook({ id: 42, title: 'The Way of Kings', path: BOOK_PATH, status: 'imported', audioBitrate: 64000 }),
+        authors: [mockAuthor],
+        narrators: [],
+      };
+      const { service, bookService } = createService();
+      bookService.getById.mockResolvedValue(bookWithBitrate);
+      setupHappyPath();
+
+      await service.mergeBook(42);
+
+      expect(processAudioFiles).toHaveBeenCalledWith(
+        STAGING_DIR,
+        expect.objectContaining({ sourceBitrateKbps: 64 }),
+        expect.any(Object),
+      );
+    });
+
+    it('passes sourceBitrateKbps as undefined when book.audioBitrate is null', async () => {
+      // mockBook has audioBitrate: null by default
+      const { service } = createService();
+      setupHappyPath();
+
+      await service.mergeBook(42);
+
+      expect(processAudioFiles).toHaveBeenCalledWith(
+        STAGING_DIR,
+        expect.objectContaining({ sourceBitrateKbps: undefined }),
+        expect.any(Object),
+      );
+    });
+
+    it('emits debug log when source bitrate is lower than target', async () => {
+      const bookWithBitrate = {
+        ...createMockDbBook({ id: 42, title: 'The Way of Kings', path: BOOK_PATH, status: 'imported', audioBitrate: 64000 }),
+        authors: [mockAuthor],
+        narrators: [],
+      };
+      const { service, bookService, log } = createService();
+      bookService.getById.mockResolvedValue(bookWithBitrate);
+      setupHappyPath();
+
+      await service.mergeBook(42);
+
+      expect(log.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceBitrateKbps: 64, targetBitrateKbps: 128, effectiveBitrateKbps: 64 }),
+        expect.stringContaining('Capping target bitrate'),
+      );
+    });
+
     it('does not delete the output file when an original shares the same basename as the staged M4B', async () => {
       // Book already has a top-level .m4b alongside other files
       (readdir as Mock)
