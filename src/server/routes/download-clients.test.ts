@@ -89,6 +89,15 @@ describe('download-clients routes', () => {
     });
   });
 
+  // ===== #263 — create with pathMappings =====
+
+  describe('POST /api/download-clients with pathMappings', () => {
+    it.todo('creates client with path mappings in a transaction');
+    it.todo('creates client only when pathMappings is empty array');
+    it.todo('creates client only when pathMappings is omitted');
+    it.todo('returns 400 for invalid pathMappings entries');
+  });
+
   describe('PUT /api/download-clients/:id', () => {
     it('updates client when found', async () => {
       (services.downloadClient.update as Mock).mockResolvedValue(mockClient);

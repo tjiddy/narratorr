@@ -1322,4 +1322,13 @@ describe('monitor job', () => {
       expect(setCalls).toContainEqual(expect.objectContaining({ outputPath: '/downloads/my-book' }));
     });
   });
+
+  // ===== #263 — resolveOutputPath trust model hardening =====
+
+  describe('resolveOutputPath trust model', () => {
+    it.todo('returns mapped path when getByClientId returns mappings');
+    it.todo('returns undefined when getByClientId throws (lookup failure)');
+    it.todo('returns raw joined path when getByClientId returns empty array');
+    it.todo('returns raw path when remotePathMappingService is undefined');
+  });
 });

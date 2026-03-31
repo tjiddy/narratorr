@@ -201,7 +201,17 @@ describe('createDownloadClientFormSchema', () => {
     });
   });
 
-  // ===== #248 — downloadRoot field =====
+  // ===== #263 — pathMappings in create schema =====
+
+  describe('createDownloadClientSchema pathMappings', () => {
+    it.todo('accepts body with valid pathMappings array');
+    it.todo('accepts body with empty pathMappings array');
+    it.todo('accepts body with pathMappings omitted');
+    it.todo('rejects pathMappings entries with empty remotePath');
+    it.todo('rejects pathMappings entries with whitespace-only localPath');
+  });
+
+  // ===== #248 — downloadRoot field (to be removed by #263) =====
 
   describe('settings.downloadRoot', () => {
     it('accepts valid config with downloadRoot', () => {

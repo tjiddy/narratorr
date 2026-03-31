@@ -248,4 +248,19 @@ describe('DownloadClientForm (#201)', () => {
       });
     });
   });
+
+  // ===== #263 — path mappings in create mode =====
+
+  describe('create mode path mappings', () => {
+    it.todo('renders Remote Path Mappings section in create mode');
+    it.todo('adds mapping row when clicking Add Mapping');
+    it.todo('removes mapping row when clicking remove');
+    it.todo('includes pathMappings in onSubmit payload');
+    it.todo('submits with empty pathMappings when no mappings added');
+  });
+
+  describe('downloadRoot field removal', () => {
+    it.todo('does not render downloadRoot field in create mode');
+    it.todo('does not render downloadRoot field in edit mode');
+  });
 });

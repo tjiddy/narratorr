@@ -83,6 +83,14 @@ describe('DownloadClientService', () => {
     });
   });
 
+  // ===== #263 — createWithMappings =====
+
+  describe('createWithMappings', () => {
+    it.todo('inserts client and all mappings in a transaction');
+    it.todo('creates client only when pathMappings is empty array');
+    it.todo('rolls back client insert when mapping insert fails');
+  });
+
   describe('update', () => {
     it('updates and clears adapter cache', async () => {
       // Populate cache
