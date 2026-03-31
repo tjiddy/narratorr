@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { UseFormGetValues } from 'react-hook-form';
 import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
 import { downloadClientsApi, type CategoriesResult } from '@/lib/api/download-clients';
@@ -15,7 +15,6 @@ export function useFetchCategories({ selectedType, clientId, isDirty, getValues 
   const [categories, setCategories] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showDropdown, setShowDropdown] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Clear state when type changes
   useEffect(() => {
@@ -23,17 +22,6 @@ export function useFetchCategories({ selectedType, clientId, isDirty, getValues 
     setError(null);
     setShowDropdown(false);
   }, [selectedType]);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setShowDropdown(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   const fetchCategories = useCallback(async () => {
     setFetching(true);
@@ -73,5 +61,5 @@ export function useFetchCategories({ selectedType, clientId, isDirty, getValues 
     }
   }, [clientId, isDirty, getValues]);
 
-  return { fetching, categories, error, showDropdown, setShowDropdown, dropdownRef, fetchCategories };
+  return { fetching, categories, error, showDropdown, setShowDropdown, fetchCategories };
 }

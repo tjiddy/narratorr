@@ -1,7 +1,9 @@
+import { useRef } from 'react';
 import type { UseFormRegister, FieldErrors, UseFormSetValue, UseFormGetValues } from 'react-hook-form';
 import type { CreateDownloadClientFormData } from '../../../shared/schemas.js';
 import { DOWNLOAD_CLIENT_REGISTRY } from '../../../shared/download-client-registry.js';
 import { RefreshIcon } from '../icons';
+import { ToolbarDropdown } from '../ToolbarDropdown';
 import { useFetchCategories } from './useFetchCategories';
 
 interface DownloadClientFieldsProps {
@@ -20,7 +22,8 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
   const meta = DOWNLOAD_CLIENT_REGISTRY[selectedType] || DOWNLOAD_CLIENT_REGISTRY.qbittorrent;
   const fields = meta.fieldConfig;
   const supportsCategories = meta.supportsCategories;
-  const { fetching, categories, error: categoryError, showDropdown, setShowDropdown, dropdownRef, fetchCategories } =
+  const categoryInputRef = useRef<HTMLDivElement>(null);
+  const { fetching, categories, error: categoryError, showDropdown, setShowDropdown, fetchCategories } =
     useFetchCategories({ selectedType, clientId, isDirty, getValues });
 
   function handleSelectCategory(category: string) {
@@ -91,7 +94,7 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
             <p className="text-sm text-muted-foreground mt-1">Lower = preferred (1-100)</p>
           </div>
         )}
-        <div ref={dropdownRef}>
+        <div>
           <div className="flex items-center gap-2 mb-2">
             <label htmlFor="clientCategory" className="block text-sm font-medium">Category</label>
             {supportsCategories && (
@@ -107,22 +110,22 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
               </button>
             )}
           </div>
-          <div className="relative z-40">
+          <div ref={categoryInputRef}>
             <input id="clientCategory" type="text" {...register('settings.category')} className={inputClass} placeholder="audiobooks" />
-            {showDropdown && (
-              <div className="absolute z-30 mt-1 w-full bg-background border border-border rounded-xl shadow-lg max-h-48 overflow-y-auto">
-                {categories.length > 0 ? (
-                  categories.map((cat) => (
-                    <button key={cat} type="button" onClick={() => handleSelectCategory(cat)} className="w-full px-4 py-2.5 text-left text-sm hover:bg-accent transition-colors first:rounded-t-xl last:rounded-b-xl">
-                      {cat}
-                    </button>
-                  ))
-                ) : (
-                  <div className="px-4 py-2.5 text-sm text-muted-foreground">No categories found</div>
-                )}
-              </div>
-            )}
           </div>
+          <ToolbarDropdown triggerRef={categoryInputRef} open={showDropdown} onClose={() => setShowDropdown(false)}>
+            <div className="w-64 bg-background border border-border rounded-xl shadow-lg max-h-48 overflow-y-auto">
+              {categories.length > 0 ? (
+                categories.map((cat) => (
+                  <button key={cat} type="button" onClick={() => handleSelectCategory(cat)} className="w-full px-4 py-2.5 text-left text-sm hover:bg-accent transition-colors first:rounded-t-xl last:rounded-b-xl">
+                    {cat}
+                  </button>
+                ))
+              ) : (
+                <div className="px-4 py-2.5 text-sm text-muted-foreground">No categories found</div>
+              )}
+            </div>
+          </ToolbarDropdown>
           {categoryError ? (
             <p className="text-sm text-destructive mt-1">{categoryError}</p>
           ) : (

@@ -388,7 +388,7 @@ describe('DownloadClientFields', () => {
   });
 
   describe('z-index scale (CSS-1)', () => {
-    it('autocomplete dropdown container has z-30 class (dropdown scale)', async () => {
+    it('autocomplete dropdown renders via portal with z-30 class (dropdown scale)', async () => {
       const user = userEvent.setup();
       (downloadClientsApi.getClientCategoriesFromConfig as ReturnType<typeof vi.fn>).mockResolvedValue({
         categories: ['cat1'],
@@ -398,8 +398,9 @@ describe('DownloadClientFields', () => {
       await waitFor(() => {
         expect(screen.getByText('cat1')).toBeInTheDocument();
       });
-      const dropdownContainer = screen.getByText('cat1').closest('div.absolute');
-      expect(dropdownContainer).toHaveClass('z-30');
+      // ToolbarDropdown renders a fixed z-30 portal container to document.body
+      const portalContainer = screen.getByText('cat1').closest('div.fixed');
+      expect(portalContainer).toHaveClass('z-30');
     });
   });
 });
