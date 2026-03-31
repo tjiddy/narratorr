@@ -215,35 +215,24 @@ class MatchJob {
         };
       }
 
-      // Multiple results — attempt runtime disambiguation via duration
-      const durationResult = disambiguateByDuration(scored, duration);
-      if (durationResult) {
-        this.log.debug(
-          {
-            path: book.path,
-            confidence: durationResult.confidence,
-            bestTitle: durationResult.bestMatch.title,
-            bookDuration: duration,
-            matchDuration: durationResult.bestMatch.duration,
-          },
-          'Duration disambiguation result',
-        );
-        return {
-          path: book.path,
-          confidence: durationResult.confidence,
-          bestMatch: durationResult.bestMatch,
-          alternatives: durationResult.alternatives,
-        };
-      }
-
-      // No duration data — medium confidence with best-scored result
+      // Multiple results — use duration to determine confidence (not to override winner)
+      const durationConfidence = resolveConfidenceFromDuration(scored, duration);
+      const confidence: Confidence = durationConfidence ?? 'medium';
       this.log.debug(
-        { path: book.path, resultCount: scored.length, topScore: topScored.score.toFixed(2), hasDuration: !!duration },
-        'Multiple results, no duration disambiguation — medium confidence',
+        {
+          path: book.path,
+          confidence,
+          resultCount: scored.length,
+          topScore: topScored.score.toFixed(2),
+          bestTitle: topScored.meta.title,
+          hasDuration: !!duration,
+          matchDuration: topScored.meta.duration,
+        },
+        durationConfidence ? 'Duration-informed confidence' : 'Multiple results, no duration disambiguation — medium confidence',
       );
       return {
         path: book.path,
-        confidence: 'medium',
+        confidence,
         bestMatch: topScored.meta,
         alternatives: scored.slice(1).map(s => s.meta),
       };
@@ -282,35 +271,26 @@ class MatchJob {
   }
 }
 
-/** Disambiguates multiple results by duration distance, if audio duration available. */
-function disambiguateByDuration(
+/**
+ * Determines confidence from duration data without overriding the similarity-ranked winner.
+ * The bestMatch stays as the top similarity-ranked result; duration only affects confidence level.
+ */
+function resolveConfidenceFromDuration(
   scored: { meta: BookMetadata; score: number }[],
   duration: number | undefined,
-): { confidence: Confidence; bestMatch: BookMetadata; alternatives: BookMetadata[] } | null {
+): Confidence | null {
   if (!duration || duration <= 0) return null;
 
-  const withDistance = scored
-    .filter(s => s.meta.duration && s.meta.duration > 0)
-    .map(s => ({
-      ...s,
-      distance: Math.abs(s.meta.duration! - duration) / duration,
-    }))
-    .sort((a, b) => a.distance - b.distance);
+  const topResult = scored[0];
+  // If the top-ranked result has duration data, use it for confidence
+  if (topResult.meta.duration && topResult.meta.duration > 0) {
+    const distance = Math.abs(topResult.meta.duration - duration) / duration;
+    return distance <= DURATION_THRESHOLD ? 'high' : 'medium';
+  }
 
-  if (withDistance.length === 0) return null;
-
-  const best = withDistance[0];
-  const rest = withDistance.slice(1).map(w => w.meta);
-  const othersWithoutDuration = scored
-    .filter(s => !s.meta.duration || s.meta.duration <= 0)
-    .map(s => s.meta);
-
-  const confidence: Confidence = best.distance <= DURATION_THRESHOLD ? 'high' : 'medium';
-  return {
-    confidence,
-    bestMatch: best.meta,
-    alternatives: [...rest, ...othersWithoutDuration],
-  };
+  // Top result has no duration — check if any candidate has close duration
+  // (still medium confidence since the winner lacks duration verification)
+  return null;
 }
 
 /** Scores and ranks results by title+author similarity with year tiebreaker. */

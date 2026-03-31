@@ -375,41 +375,39 @@ describe('MatchJobService', () => {
       expect(result.bestMatch!.title).toBe('The Way of Kings');
     });
 
-    it('sorts alternatives by duration distance', async () => {
+    it('preserves similarity-ranked order — duration does not override winner', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
         totalDuration: 36000, // 600 min
         files: [],
       });
 
+      // "The Way of Kings" is best similarity match, even though "Completely Different" has closer duration
       const results = [
-        makeBookMetadata({ title: 'The Way of Kings (Far)', providerId: 'p1' }),
-        makeBookMetadata({ title: 'The Way of Kings (Close)', providerId: 'p2' }),
-        makeBookMetadata({ title: 'The Way of Kings (Mid)', providerId: 'p3' }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        makeBookMetadata({ title: 'Completely Different Book', providerId: 'p2' }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce({ asin: 'A1', duration: 900 }) // Far: 50% off
-        .mockResolvedValueOnce({ asin: 'A2', duration: 590 }) // Close: 1.7% off
-        .mockResolvedValueOnce({ asin: 'A3', duration: 700 }); // Mid: 16.7% off
+        .mockResolvedValueOnce({ asin: 'A1', duration: 900 }) // 50% off — but better similarity
+        .mockResolvedValueOnce({ asin: 'A2', duration: 600 }); // exact match — but worse similarity
 
       const id = service.createJob([sampleCandidate]);
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.bestMatch!.title).toBe('The Way of Kings (Close)');
-      expect(result.alternatives[0].title).toBe('The Way of Kings (Mid)');
-      expect(result.alternatives[1].title).toBe('The Way of Kings (Far)');
+      // Similarity winner is bestMatch, not duration winner
+      expect(result.bestMatch!.title).toBe('The Way of Kings');
     });
 
-    it('includes candidates without duration in alternatives after sorted ones', async () => {
+    it('includes all results in alternatives after similarity-ranked bestMatch', async () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
         totalDuration: 36000,
         files: [],
       });
 
       const results = [
-        makeBookMetadata({ title: 'The Way of Kings (Audio)', providerId: 'p1' }),
-        makeBookMetadata({ title: 'The Way of Kings (Text)', providerId: undefined }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings Companion', providerId: undefined }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
@@ -421,11 +419,12 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.bestMatch!.title).toBe('The Way of Kings (Audio)');
-      expect(result.alternatives.some(a => a.title === 'The Way of Kings (Text)')).toBe(true);
+      expect(result.bestMatch!.title).toBe('The Way of Kings');
+      expect(result.alternatives).toHaveLength(1);
+      expect(result.alternatives[0].title).toBe('The Way of Kings Companion');
     });
 
-    it('converts audio seconds to minutes correctly', async () => {
+    it('converts audio seconds to minutes for duration confidence', async () => {
       // 90 seconds = 2 minutes (rounded)
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
         totalDuration: 90,
@@ -433,8 +432,8 @@ describe('MatchJobService', () => {
       });
 
       const results = [
-        makeBookMetadata({ title: 'The Way of Kings (Short)', providerId: 'p1' }),
-        makeBookMetadata({ title: 'The Way of Kings (Long)', providerId: 'p2' }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
@@ -445,8 +444,9 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
+      // Duration of top similarity result matches → high confidence
       expect(result.confidence).toBe('high');
-      expect(result.bestMatch!.title).toBe('The Way of Kings (Short)');
+      expect(result.bestMatch!.title).toBe('The Way of Kings');
     });
 
     it('skips duration disambiguation when audio scan returns zero duration', async () => {
@@ -1005,6 +1005,33 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       expect(result.confidence).toBe('none');
+    });
+
+    it('similarity winner stays bestMatch even when worse-scoring result has closer duration', async () => {
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+        totalDuration: 36000, // 600 min
+        files: [],
+      });
+
+      // "The Way of Kings" has higher similarity to candidate than "Ready Player One"
+      // But "Ready Player One" has closer duration
+      const results = [
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        makeBookMetadata({ title: 'Ready Player One', providerId: 'p2' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+      (metadataService.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ asin: 'A1', duration: 900 }) // 50% off — worse duration
+        .mockResolvedValueOnce({ asin: 'A2', duration: 601 }); // ~0.2% off — better duration
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      // Similarity winner remains bestMatch — duration does NOT override selection
+      expect(result.bestMatch!.title).toBe('The Way of Kings');
+      // Duration of bestMatch (900 vs 600) is 50% off → medium confidence
+      expect(result.confidence).toBe('medium');
     });
   });
 
