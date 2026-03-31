@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #246 Manual book add — add books without metadata provider match — 2026-03-31
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #251
+
+### Metrics
+- Files changed: 16 | Tests added/modified: 30+
+- Quality gate runs: 2 (pass on attempt 2 — first had unused `isLoading` prop lint error)
+- Fix iterations: 1 (ManualAddForm seriesPosition type needed `z.string()` instead of `z.preprocess()` for zodResolver compatibility)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Module-by-module TDD worked well — each module was self-contained with clear red/green cycles. Existing patterns (AddBookPopover, FormField, glass-card) made the ManualAddForm straightforward.
+- Friction / issues encountered: 3-round spec review cycle before implementation (F1-F7 across 2 rounds). The shared `findDuplicate()` caller surface was the main blocker — should have been identified during elaboration, not spec review.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan phase (codebase exploration + existing test pattern reading)
+- Avoidable waste: The elaborate → respond-to-spec-review × 2 cycle before implementation consumed significant context. A single thorough elaboration that grepped all callers of modified methods would have prevented the F6 blocker.
+- Suggestions: When elaborating, always grep callers of any shared method the spec plans to modify — even if the spec says "no changes needed"
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available — visual polish pass skipped
+- Unresolved debt: ManualAddForm seriesPosition "0" falsy edge case (logged in debt.md)
+
+### Wish I'd Known
+1. `z.preprocess()` widens the inferred type to `unknown` which breaks `zodResolver` — use `z.string()` + manual conversion in the mutation callback instead
+2. Shared service methods (`findDuplicate()`) require explicit caller-surface analysis in specs — the spec review caught this as a blocker that could have been avoided with a simple grep during elaboration
+3. Removing a component prop (`isLoading`) requires updating callers AND test helpers — grep both `*.tsx` and `*.test.tsx` files
+
 ## #247 Don't record Held for Review event when quality gate auto-approves — 2026-03-31
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #250
