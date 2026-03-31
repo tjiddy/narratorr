@@ -40,6 +40,16 @@ export async function searchRoutes(
       request.log.debug({ q, author, title, bookDuration }, 'Search request');
       const allResults = await indexerService.searchAll(q, { limit, author, title });
 
+      // DIAG: log raw results per indexer
+      const byIndexer: Record<string, number> = {};
+      for (const r of allResults) {
+        byIndexer[r.indexer ?? 'unknown'] = (byIndexer[r.indexer ?? 'unknown'] || 0) + 1;
+      }
+      request.log.debug({ totalRaw: allResults.length, byIndexer }, 'DIAG: raw results from searchAll');
+      for (const r of allResults) {
+        request.log.debug({ indexer: r.indexer, title: r.title, rawTitle: r.rawTitle, protocol: r.protocol, seeders: r.seeders, size: r.size }, 'DIAG: raw result');
+      }
+
       // Filter multi-part Usenet posts
       const unsupportedTitles: string[] = [];
       const results = allResults.filter((r) => {
@@ -47,12 +57,13 @@ export async function searchRoutes(
         const sourceTitle = r.rawTitle ?? r.title;
         const multiPart = isMultiPartUsenetPost(sourceTitle);
         if (multiPart.match && multiPart.total! > 1) {
-          request.log.debug(`Filtered multi-part Usenet result: ${sourceTitle} (part ${multiPart.part} of ${multiPart.total})`);
+          request.log.debug({ indexer: r.indexer, title: sourceTitle, part: multiPart.part, total: multiPart.total }, 'DIAG: filtered multi-part Usenet');
           unsupportedTitles.push(sourceTitle);
           return false;
         }
         return true;
       });
+      request.log.debug({ afterMultiPart: results.length, filtered: allResults.length - results.length }, 'DIAG: after multi-part filter');
 
       // Blacklist filtering
       const hashes = results
@@ -61,11 +72,14 @@ export async function searchRoutes(
       let filteredResults = results;
       if (hashes.length > 0) {
         const blacklisted = await blacklistService.getBlacklistedHashes(hashes);
+        const beforeBlacklist = filteredResults.length;
         filteredResults = results.filter((r: { infoHash?: string }) => !r.infoHash || !blacklisted.has(r.infoHash));
+        request.log.debug({ beforeBlacklist, afterBlacklist: filteredResults.length, blacklistedCount: blacklisted.size }, 'DIAG: after blacklist filter');
       }
 
       // Quality filtering and ranking
       const qualitySettings = await settingsService.get('quality');
+      request.log.debug({ grabFloor: qualitySettings.grabFloor, minSeeders: qualitySettings.minSeeders, rejectWords: qualitySettings.rejectWords, requiredWords: qualitySettings.requiredWords, protocolPreference: qualitySettings.protocolPreference }, 'DIAG: quality settings');
       const ranked = filterAndRankResults(
         filteredResults,
         bookDuration,
@@ -75,6 +89,15 @@ export async function searchRoutes(
         qualitySettings.rejectWords,
         qualitySettings.requiredWords,
       );
+      request.log.debug({ beforeQuality: filteredResults.length, afterQuality: ranked.results.length, durationUnknown: ranked.durationUnknown }, 'DIAG: after quality filter');
+      if (ranked.results.length < filteredResults.length) {
+        const rankedTitles = new Set(ranked.results.map(r => r.title));
+        for (const r of filteredResults) {
+          if (!rankedTitles.has(r.title)) {
+            request.log.debug({ indexer: r.indexer, title: r.title, seeders: r.seeders, size: r.size, protocol: r.protocol }, 'DIAG: filtered by quality gate');
+          }
+        }
+      }
 
       return {
         results: ranked.results,
