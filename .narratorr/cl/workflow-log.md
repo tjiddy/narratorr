@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #265 Settings UX — rename Grab Floor, relocate new-book defaults — 2026-03-31
+**Skill path:** /elaborate → /respond-to-spec-review → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #269
+
+### Metrics
+- Files changed: 6 | Tests added/modified: 15 (4 new in Quality, 11 new in Library)
+- Quality gate runs: 2 (pass on attempt 2 — first had unused eslint-disable directives)
+- Fix iterations: 1 (removed stale eslint-disable comments after functions shrank)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean frontend-only scope with no backend changes. Zod `.pick()`/`.omit()` made form schema splitting trivial. Partial `quality` updates already supported server-side.
+- Friction / issues encountered: Spec review round-trip caught ambiguity about how the new toggle form coexists with the Library path blur-save — good catch that prevented implementation confusion.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for codebase discovery (read 6+ files); coverage review subagent
+- Avoidable waste: The elaborate and respond-to-spec-review phases could have been consolidated if the spec had been tighter initially
+- Suggestions: For simple relocation chores, skip the deep source analysis in elaborate — the spec review will catch gaps
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available — skipped design pass
+- Unresolved debt: Toggle switch markup duplicated across 6 settings files (logged in debt.md)
+
+### Wish I'd Known
+1. Zod `.pick()`/`.omit()` works perfectly on the cast `qualityFormSchema` — no need to worry about the `stripDefaults()` type limitation for derived schemas
+2. `react-hook-form` `reset()` silently ignores fields not in the schema — safe to pass the full settings object even when the form only uses a subset
+3. The `eslint max-lines-per-function` rule threshold is sensitive to removing subsections — always check if the directive is still needed after shrinking a component
+
 ## #257 M4B merge observability — progress events, ffmpeg fix, event history — 2026-03-31
 **Skill path:** /elaborate → /respond-to-spec-review (×2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #268
