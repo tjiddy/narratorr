@@ -7,6 +7,12 @@ import { DOWNLOAD_CLIENT_REGISTRY, DOWNLOAD_CLIENT_TYPES } from '../download-cli
 
 export const downloadClientTypeSchema = z.enum(DOWNLOAD_CLIENT_TYPES);
 
+// Inline path mapping schema for create payload (no downloadClientId — assigned after insert)
+const pathMappingEntrySchema = z.object({
+  remotePath: z.string().trim().min(1, 'Remote path is required').max(500),
+  localPath: z.string().trim().min(1, 'Local path is required').max(500),
+});
+
 // Server-side: accepts any settings shape (type-specific validation is client-side only)
 export const createDownloadClientSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(100),
@@ -14,6 +20,7 @@ export const createDownloadClientSchema = z.object({
   enabled: z.boolean().default(true),
   priority: z.number().int().min(0).max(100).default(50),
   settings: z.record(z.string(), z.unknown()),
+  pathMappings: z.array(pathMappingEntrySchema).optional(),
 });
 
 export const updateDownloadClientSchema = z.object({
@@ -42,7 +49,6 @@ export const createDownloadClientFormSchema = z.object({
     apiKey: z.string().optional(),
     category: z.string().optional(),
     watchDir: z.string().optional(),
-    downloadRoot: z.string().optional(),
     protocol: z.enum(['torrent', 'usenet']).optional(),
   }),
 }).superRefine((data, ctx) => {

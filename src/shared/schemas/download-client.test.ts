@@ -204,39 +204,66 @@ describe('createDownloadClientFormSchema', () => {
   // ===== #263 — pathMappings in create schema =====
 
   describe('createDownloadClientSchema pathMappings', () => {
-    it.todo('accepts body with valid pathMappings array');
-    it.todo('accepts body with empty pathMappings array');
-    it.todo('accepts body with pathMappings omitted');
-    it.todo('rejects pathMappings entries with empty remotePath');
-    it.todo('rejects pathMappings entries with whitespace-only localPath');
+    it('accepts body with valid pathMappings array', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...validBase,
+        pathMappings: [{ remotePath: '/remote/downloads', localPath: '/local/downloads' }],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.pathMappings).toEqual([{ remotePath: '/remote/downloads', localPath: '/local/downloads' }]);
+      }
+    });
+
+    it('accepts body with empty pathMappings array', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...validBase,
+        pathMappings: [],
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.pathMappings).toEqual([]);
+      }
+    });
+
+    it('accepts body with pathMappings omitted', () => {
+      const result = createDownloadClientSchema.safeParse(validBase);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.pathMappings).toBeUndefined();
+      }
+    });
+
+    it('rejects pathMappings entries with empty remotePath', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...validBase,
+        pathMappings: [{ remotePath: '', localPath: '/local' }],
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects pathMappings entries with whitespace-only localPath', () => {
+      const result = createDownloadClientSchema.safeParse({
+        ...validBase,
+        pathMappings: [{ remotePath: '/remote', localPath: '   ' }],
+      });
+      expect(result.success).toBe(false);
+    });
   });
 
-  // ===== #248 — downloadRoot field (to be removed by #263) =====
+  // ===== #263 — downloadRoot removed from form schema =====
 
-  describe('settings.downloadRoot', () => {
-    it('accepts valid config with downloadRoot', () => {
+  describe('settings.downloadRoot removed', () => {
+    it('form schema no longer includes downloadRoot field', () => {
       const result = createDownloadClientFormSchema.safeParse({
         ...validBase,
         settings: { ...validBase.settings, downloadRoot: '/downloads/complete' },
       });
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.settings.downloadRoot).toBe('/downloads/complete');
+        // downloadRoot is stripped by the schema (not in the shape)
+        expect(result.data.settings).not.toHaveProperty('downloadRoot');
       }
-    });
-
-    it('accepts valid config without downloadRoot (optional field)', () => {
-      const result = createDownloadClientFormSchema.safeParse(validBase);
-      expect(result.success).toBe(true);
-    });
-
-    it('does not interfere with blackhole required-field rules', () => {
-      const result = createDownloadClientFormSchema.safeParse({
-        ...validBase,
-        type: 'blackhole',
-        settings: { watchDir: '/watch', protocol: 'torrent', downloadRoot: '/complete' },
-      });
-      expect(result.success).toBe(true);
     });
   });
 
