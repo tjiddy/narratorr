@@ -102,7 +102,8 @@ export function filterAndRankResults(
   if (minSeeders > 0) {
     filtered = filtered.filter((r) => {
       if (r.protocol !== 'torrent') return true;
-      return (r.seeders ?? 0) >= minSeeders;
+      if (r.seeders === undefined || r.seeders === null) return true; // Unknown ≠ zero
+      return r.seeders >= minSeeders;
     });
   }
 
