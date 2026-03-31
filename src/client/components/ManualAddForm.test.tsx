@@ -87,6 +87,23 @@ describe('ManualAddForm', () => {
       expect(api.addBook).not.toHaveBeenCalled();
     });
 
+    it('treats whitespace-only series position as empty, not as 0', async () => {
+      const user = userEvent.setup();
+      (api.addBook as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, title: 'Test' });
+      renderForm();
+
+      await user.type(screen.getByLabelText(/title/i), 'Test Book');
+      const positionInput = screen.getByLabelText(/position/i);
+      fireEvent.change(positionInput, { target: { value: '   ' } });
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+
+      await waitFor(() => {
+        expect(api.addBook).toHaveBeenCalledWith(expect.objectContaining({
+          seriesPosition: undefined,
+        }));
+      });
+    });
+
     it('submits successfully with title only', async () => {
       const user = userEvent.setup();
       (api.addBook as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, title: 'Shogun' });
