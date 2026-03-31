@@ -15,6 +15,8 @@ export interface ProcessingConfig {
   outputFormat: 'm4b' | 'mp3';
   /** Target bitrate in kbps. When omitted, the original bitrate is preserved (copy codec where possible). */
   bitrate?: number;
+  /** Source bitrate in kbps (converted from bps at the call site). When set, effective bitrate is min(source, target) to prevent upsampling. */
+  sourceBitrateKbps?: number;
   mergeBehavior: 'always' | 'multi-file-only' | 'never';
 }
 
@@ -163,9 +165,12 @@ async function mergeFiles(
     }
 
     if (config.bitrate != null) {
+      const effectiveBitrate = config.sourceBitrateKbps != null
+        ? Math.min(config.sourceBitrateKbps, config.bitrate)
+        : config.bitrate;
       args.push(
         '-c:a', outputExt === 'm4b' ? 'aac' : 'libmp3lame',
-        '-b:a', `${config.bitrate}k`,
+        '-b:a', `${effectiveBitrate}k`,
       );
     } else {
       // Keep original bitrate — re-encode without specifying bitrate (ffmpeg uses default quality)
@@ -242,7 +247,10 @@ async function convertFiles(
     ];
 
     if (config.bitrate != null) {
-      args.push('-b:a', `${config.bitrate}k`);
+      const effectiveBitrate = config.sourceBitrateKbps != null
+        ? Math.min(config.sourceBitrateKbps, config.bitrate)
+        : config.bitrate;
+      args.push('-b:a', `${effectiveBitrate}k`);
     }
 
     if (config.outputFormat === 'm4b') {
