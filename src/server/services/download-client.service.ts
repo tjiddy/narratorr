@@ -74,14 +74,9 @@ export class DownloadClientService {
     return match ? this.decryptRow(match) : null;
   }
 
-  async create(data: Omit<NewDownloadClient, 'id' | 'createdAt'>): Promise<DownloadClientRow> {
-    const toInsert = { ...data };
-    if (toInsert.settings) {
-      toInsert.settings = encryptFields('downloadClient', { ...(toInsert.settings as Record<string, unknown>) }, getKey());
-    }
-    const result = await this.db.insert(downloadClients).values(toInsert).returning();
-    this.log.info({ name: data.name, type: data.type }, 'Download client created');
-    return this.decryptRow(result[0]);
+  async create(data: Omit<NewDownloadClient, 'id' | 'createdAt'> & { pathMappings?: { remotePath: string; localPath: string }[] }): Promise<DownloadClientRow> {
+    const { pathMappings, ...clientData } = data;
+    return this.createWithMappings(clientData, pathMappings ?? []);
   }
 
   async createWithMappings(
