@@ -8,6 +8,8 @@
  *   npx tsx scripts/test-match.ts --query "Ready Player One Ernest Cline"
  */
 
+export {}; // Module marker for top-level await
+
 // Dynamic imports — tsx handles the .js → .ts resolution
 
 const { parseFolderStructure } = await import('../src/server/services/library-scan.service.js');
@@ -108,14 +110,15 @@ const provider = new AudibleProvider({ region });
 console.log(`  Searching Audible (${provider.name})...\n`);
 
 try {
-  const results = await provider.searchBooks(query);
+  const searchResult = await provider.searchBooks(query);
+  const results = searchResult.books;
 
   if (results.length === 0) {
-    console.log('  No results found.\n');
+    console.log(`  No results found.${searchResult.rawCount ? ` (${searchResult.rawCount} raw results dropped by Zod parsing)` : ''}\n`);
     process.exit(0);
   }
 
-  console.log(`  ${results.length} result(s):\n`);
+  console.log(`  ${results.length} result(s)${searchResult.rawCount !== undefined && searchResult.rawCount !== results.length ? ` (${searchResult.rawCount} raw, ${searchResult.rawCount - results.length} dropped by Zod)` : ''}:\n`);
   const pad = (s: string, n: number) => s.length >= n ? s.slice(0, n) : s + ' '.repeat(n - s.length);
   console.log(`  ${pad('#', 4)}${pad('Title', 50)}${pad('Author', 25)}${pad('Duration', 10)}${pad('Title %', 10)}${pad('Author %', 10)}`);
   console.log('  ' + '─'.repeat(115));
