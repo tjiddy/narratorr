@@ -122,9 +122,47 @@ describe('books routes', () => {
   });
 
   describe('POST /api/books', () => {
-    it.todo('creates book with title only (no authors) and returns 201 (#246)');
-    it.todo('creates book with empty authors array and returns 201 (#246)');
-    it.todo('returns 409 when authorless duplicate exists (#246)');
+    it('creates book with title only (no authors field) and returns 201 (#246)', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue({ ...mockBook, authors: [] });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'Shogun' },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Shogun',
+        authors: [],
+      }));
+    });
+
+    it('creates book with empty authors array and returns 201 (#246)', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue({ ...mockBook, authors: [] });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'Shogun', authors: [] },
+      });
+
+      expect(res.statusCode).toBe(201);
+    });
+
+    it('returns 409 when authorless duplicate exists (#246)', async () => {
+      (services.book.findDuplicate as Mock).mockResolvedValue(mockBook);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'Shogun' },
+      });
+
+      expect(res.statusCode).toBe(409);
+    });
 
     it('creates book and returns 201', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue(null);
@@ -1282,7 +1320,10 @@ describe('POST /api/books — array payload schema (#71)', () => {
     }));
   });
 
-  it('rejects authors: [] with 400 (min(1))', async () => {
+  it('accepts authors: [] (empty array) with 201 (#246)', async () => {
+    (services.book.findDuplicate as Mock).mockResolvedValue(null);
+    (services.book.create as Mock).mockResolvedValue(mockBook);
+
     const res = await app.inject({
       method: 'POST',
       url: '/api/books',
@@ -1292,8 +1333,11 @@ describe('POST /api/books — array payload schema (#71)', () => {
       },
     });
 
-    expect(res.statusCode).toBe(400);
-    expect(services.book.create).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(201);
+    expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'The Way of Kings',
+      authors: [],
+    }));
   });
 
   it('rejects narrators: [""] with 400 (element min(1))', async () => {
