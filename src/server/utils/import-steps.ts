@@ -9,6 +9,7 @@ import { toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/ind
 import type { NamingOptions } from '../../core/utils/naming.js';
 import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { getErrorMessage } from './error-message.js';
+import { toSourceBitrateKbps, logBitrateCapping } from './audio-bitrate.js';
 import type { TaggingService } from '../services/tagging.service.js';
 
 // Re-export side-effect functions for backwards compatibility
@@ -171,11 +172,6 @@ export interface RunAudioProcessingArgs {
   log: FastifyBaseLogger;
 }
 
-/** Convert bps to kbps, returning undefined for null/0/undefined values. */
-function toSourceBitrateKbps(bps: number | null | undefined): number | undefined {
-  return bps ? Math.floor(bps / 1000) : undefined;
-}
-
 /** Resolve target and source bitrate, log if capping occurs. */
 function resolveBitrate(
   processingSettings: RunAudioProcessingArgs['processingSettings'],
@@ -184,13 +180,7 @@ function resolveBitrate(
 ): { targetBitrateKbps: number | undefined; sourceBitrateKbps: number | undefined } {
   const targetBitrateKbps = processingSettings.keepOriginalBitrate ? undefined : processingSettings.bitrate;
   const sourceBitrateKbps = toSourceBitrateKbps(sourceBitrateBps);
-  if (targetBitrateKbps != null && sourceBitrateKbps != null && sourceBitrateKbps < targetBitrateKbps) {
-    log.debug(
-      { sourceBitrateKbps, targetBitrateKbps, effectiveBitrateKbps: sourceBitrateKbps },
-      'Capping target bitrate to source bitrate to prevent upsampling',
-    );
-  }
-  return { targetBitrateKbps, sourceBitrateKbps };
+  return logBitrateCapping(sourceBitrateKbps, targetBitrateKbps, log);
 }
 
 /** Run audio processing (merge/convert) on imported files. Throws on failure. */

@@ -18,8 +18,7 @@ import { resolveSavePath } from '../utils/download-path.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import type { SettingsService } from './settings.service.js';
-import { stat } from 'node:fs/promises';
-import { rm } from 'node:fs/promises';
+import { rm, stat } from 'node:fs/promises';
 import { relative } from 'node:path';
 
 type BookRow = typeof books.$inferSelect;
