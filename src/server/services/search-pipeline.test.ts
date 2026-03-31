@@ -287,9 +287,9 @@ describe('filterAndRankResults — minSeeders default', () => {
     expect(results).toHaveLength(1);
   });
 
-  it('filters torrent with undefined seeders when minSeeders is 1', () => {
+  it('passes torrent with undefined seeders when minSeeders is 1 (unknown ≠ zero)', () => {
     const { results } = filterAndRankResults([makeResult({ protocol: 'torrent', seeders: undefined })], undefined, 0, 1, 'none');
-    expect(results).toHaveLength(0);
+    expect(results).toHaveLength(1);
   });
 
   it('passes torrent with 0 seeders when minSeeders is 0 (filter disabled)', () => {
