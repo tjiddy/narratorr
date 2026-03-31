@@ -66,7 +66,6 @@ export function LibraryPage() {
   const { rescanMutation, deleteMutation, deleteMissingMutation, searchAllWantedMutation } = useLibraryMutations();
   const { data: indexers = [] } = useQuery({ queryKey: queryKeys.indexers(), queryFn: api.getIndexers });
   const deleteConfirm = useDeleteConfirmation<BookWithAuthor>();
-  const [deleteFiles, setDeleteFiles] = useState(false);
   const [searchBook, setSearchBook] = useState<BookWithAuthor | null>(null);
   const [openMenuId, setOpenMenuId] = useState<number | null>(null);
   const [showRemoveMissingModal, setShowRemoveMissingModal] = useState(false);
@@ -244,10 +243,8 @@ export function LibraryPage() {
       <LibraryModals
         deleteTarget={deleteConfirm.target}
         isDeleteOpen={deleteConfirm.isOpen}
-        deleteFiles={deleteFiles}
-        onDeleteFilesChange={setDeleteFiles}
-        onDeleteConfirm={() => { const item = deleteConfirm.confirm(); if (item) deleteMutation.mutate({ id: item.id, deleteFiles }); setDeleteFiles(false); }}
-        onDeleteCancel={() => { deleteConfirm.cancel(); setDeleteFiles(false); }}
+        onDeleteConfirm={(df) => { const item = deleteConfirm.confirm(); if (item) deleteMutation.mutate({ id: item.id, deleteFiles: df }); }}
+        onDeleteCancel={() => { deleteConfirm.cancel(); }}
         showRemoveMissingModal={showRemoveMissingModal}
         missingCount={missingCount}
         onRemoveMissingConfirm={() => { setShowRemoveMissingModal(false); deleteMissingMutation.mutate(); }}
