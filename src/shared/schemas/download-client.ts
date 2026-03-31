@@ -42,6 +42,7 @@ export const createDownloadClientFormSchema = z.object({
     apiKey: z.string().optional(),
     category: z.string().optional(),
     watchDir: z.string().optional(),
+    downloadRoot: z.string().optional(),
     protocol: z.enum(['torrent', 'usenet']).optional(),
   }),
 }).superRefine((data, ctx) => {

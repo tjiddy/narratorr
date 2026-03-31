@@ -25,6 +25,7 @@ export const grabSchema = z.object({
   indexerId: z.number().int().positive().optional(),
   size: z.number().int().nonnegative().optional(),
   seeders: z.number().int().nonnegative().optional(),
+  guid: z.string().trim().min(1).optional(),
   replaceExisting: z.boolean().optional(),
 });
 
