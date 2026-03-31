@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { readdir, rename, unlink, writeFile, rm } from 'node:fs/promises';
 import { join, extname, basename } from 'node:path';
 import { promisify } from 'node:util';
@@ -36,6 +36,12 @@ export interface ProcessingContext {
 export type ProcessingResult =
   | { success: true; outputFiles: string[] }
   | { success: false; error: string };
+
+/** Callbacks for streaming progress and stderr from ffmpeg. Keeps src/core/ adapter-agnostic. */
+export interface ProcessingCallbacks {
+  onProgress?: (phase: string, percentage?: number) => void;
+  onStderr?: (line: string) => void;
+}
 
 /**
  * Discover ffmpeg on the system. Returns the absolute path if found, null otherwise.
@@ -77,6 +83,7 @@ export async function processAudioFiles(
   targetDir: string,
   config: ProcessingConfig,
   context: ProcessingContext,
+  callbacks?: ProcessingCallbacks,
 ): Promise<ProcessingResult> {
   const audioFiles = await collectAudioFiles(targetDir);
 
@@ -97,18 +104,76 @@ export async function processAudioFiles(
     const chapterSources = await readChapterSources(audioFiles);
 
     if (shouldMerge && audioFiles.length > 1) {
-      return await mergeFiles(targetDir, chapterSources, config, context);
+      return await mergeFiles(targetDir, chapterSources, config, context, callbacks);
     } else {
-      return await convertFiles(targetDir, audioFiles, config, context, chapterSources);
+      return await convertFiles(targetDir, audioFiles, config, context, chapterSources, callbacks);
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Audio processing failed';
-    const stderr = error !== null && typeof error === 'object' && 'stderr' in error ? (error as { stderr?: string }).stderr : undefined;
     return {
       success: false,
-      error: stderr ? `${message}\nffmpeg stderr: ${stderr}` : message,
+      error: message,
     };
   }
+}
+
+/**
+ * Run ffmpeg via spawn with streaming stdout/stderr.
+ * Parses `-progress pipe:1` output for percentage calculation.
+ */
+function spawnFfmpeg(
+  ffmpegPath: string,
+  args: string[],
+  options?: {
+    totalDuration?: number;
+    onProgress?: (phase: string, percentage?: number) => void;
+    onStderr?: (line: string) => void;
+  },
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(ffmpegPath, args);
+    let lastProgressTime = 0;
+
+    // Parse stdout for -progress pipe:1 key=value lines
+    let stdoutBuffer = '';
+    child.stdout.on('data', (data: Buffer) => {
+      stdoutBuffer += data.toString();
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() || ''; // Keep incomplete line in buffer
+      for (const line of lines) {
+        const match = line.match(/^out_time_us=(-?\d+)/);
+        if (match && options?.totalDuration && options.totalDuration > 0) {
+          const now = Date.now();
+          if (now - lastProgressTime >= 1000) {
+            const outTimeUs = parseInt(match[1], 10);
+            const percentage = Math.max(0, Math.min(1, outTimeUs / (options.totalDuration * 1_000_000)));
+            options.onProgress?.('processing', percentage);
+            lastProgressTime = now;
+          }
+        }
+      }
+    });
+
+    // Stream stderr lines via callback
+    let stderrBuffer = '';
+    child.stderr.on('data', (data: Buffer) => {
+      stderrBuffer += data.toString();
+      const lines = stderrBuffer.split('\n');
+      stderrBuffer = lines.pop() || '';
+      for (const line of lines) {
+        if (line.trim()) options?.onStderr?.(line);
+      }
+    });
+
+    child.on('close', (code) => {
+      // Flush remaining stderr
+      if (stderrBuffer.trim()) options?.onStderr?.(stderrBuffer.trim());
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg exited with code ${code}`));
+    });
+
+    child.on('error', reject);
+  });
 }
 
 /**
@@ -119,6 +184,7 @@ async function mergeFiles(
   chapterSources: ChapterSource[],
   config: ProcessingConfig,
   context: ProcessingContext,
+  callbacks?: ProcessingCallbacks,
 ): Promise<ProcessingResult> {
   const outputExt = config.outputFormat;
   const audioFiles = chapterSources.map(s => s.filePath);
@@ -135,8 +201,9 @@ async function mergeFiles(
   const outputName = `${outputStem}.${outputExt}`;
   const outputPath = join(targetDir, outputName);
 
-  // Get durations for chapter markers
+  // Get durations for chapter markers and progress calculation
   const durations = await getFileDurations(config.ffmpegPath, chapterSources.map(s => s.filePath));
+  const totalDuration = durations.reduce((sum, d) => sum + d, 0);
 
   // Build concat file
   const concatPath = join(targetDir, '_concat.txt');
@@ -177,13 +244,20 @@ async function mergeFiles(
       args.push('-c:a', outputExt === 'm4b' ? 'aac' : 'libmp3lame');
     }
 
+    args.push('-max_muxing_queue_size', '4096');
+
     if (outputExt === 'm4b') {
       args.push('-f', 'mp4');
     }
 
+    args.push('-progress', 'pipe:1');
     args.push(outputPath);
 
-    await execFileAsync(config.ffmpegPath, args, { timeout: 0 });
+    await spawnFfmpeg(config.ffmpegPath, args, {
+      totalDuration,
+      onProgress: callbacks?.onProgress,
+      onStderr: callbacks?.onStderr,
+    });
 
     // Clean up: remove source files and temp files
     await cleanupTempFiles(concatPath, metadataPath);
@@ -206,6 +280,7 @@ async function convertFiles(
   config: ProcessingConfig,
   context: ProcessingContext,
   chapterSources: ChapterSource[],
+  callbacks?: ProcessingCallbacks,
 ): Promise<ProcessingResult> {
   const outputFiles: string[] = [];
   const trackTotal = audioFiles.length;
@@ -253,13 +328,17 @@ async function convertFiles(
       args.push('-b:a', `${effectiveBitrate}k`);
     }
 
+    args.push('-max_muxing_queue_size', '4096');
+
     if (config.outputFormat === 'm4b') {
       args.push('-f', 'mp4');
     }
 
     args.push(writePath);
 
-    await execFileAsync(config.ffmpegPath, args, { timeout: 0 });
+    await spawnFfmpeg(config.ffmpegPath, args, {
+      onStderr: callbacks?.onStderr,
+    });
 
     // Remove original and rename temp if needed
     if (sameFile) {
