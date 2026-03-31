@@ -13,6 +13,7 @@ export default tseslint.config(
       '**/*.config.js',
       '**/*.config.ts',
       '**/drizzle/**',
+      '**/coverage/**',
       'e2e/**',
     ],
   },

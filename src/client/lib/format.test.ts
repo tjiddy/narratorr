@@ -3,7 +3,8 @@ import { formatDate, formatRelativeDate } from './format';
 
 describe('formatDate', () => {
   it('returns locale-formatted absolute date string for valid ISO input', () => {
-    const result = formatDate('2026-01-15T00:00:00Z');
+    // Use midday UTC to avoid timezone-shift flipping the date to the previous day
+    const result = formatDate('2026-01-15T12:00:00Z');
     // toLocaleDateString with year/month/day produces locale-dependent output
     // Verify it contains the key date parts
     expect(result).toContain('2026');

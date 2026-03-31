@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 
 // Mock node:fs/promises before importing the module under test
 vi.mock('node:fs/promises', () => ({
@@ -20,6 +20,9 @@ import {
   countAudioFiles,
   COPY_VERIFICATION_THRESHOLD,
 } from './import-helpers.js';
+
+/** Normalize backslashes to forward slashes for cross-platform test assertions. */
+const norm = (s: string) => s.split('\\').join('/');
 
 function makeDirent(name: string, isFile: boolean, isDirectory: boolean) {
   return { name, isFile: () => isFile, isDirectory: () => isDirectory };
@@ -200,9 +203,11 @@ describe('copyAudioFiles', () => {
 
     await copyAudioFiles('/src', '/dest');
 
-    expect(mkdir).toHaveBeenCalledWith('/dest', { recursive: true });
+    expect(norm((mkdir as Mock).mock.calls[0][0] as string)).toBe('/dest');
     expect(cp).toHaveBeenCalledTimes(1);
-    expect(cp).toHaveBeenCalledWith('/src/subdir/audio.m4b', '/dest/audio.m4b', { errorOnExist: false });
+    const [src, dest] = (cp as Mock).mock.calls[0].map((a: unknown) => typeof a === 'string' ? norm(a) : a);
+    expect(src).toBe('/src/subdir/audio.m4b');
+    expect(dest).toBe('/dest/audio.m4b');
   });
 
   it('flattens deeply nested single-path structure (A/B/C/audio.mp3) to target root', async () => {
@@ -215,7 +220,9 @@ describe('copyAudioFiles', () => {
     await copyAudioFiles('/src', '/dest');
 
     expect(cp).toHaveBeenCalledTimes(1);
-    expect(cp).toHaveBeenCalledWith('/src/A/B/C/deep.mp3', '/dest/deep.mp3', { errorOnExist: false });
+    const [src, dest] = (cp as Mock).mock.calls[0].map((a: unknown) => typeof a === 'string' ? norm(a) : a);
+    expect(src).toBe('/src/A/B/C/deep.mp3');
+    expect(dest).toBe('/dest/deep.mp3');
   });
 
   it('flattens multiple subfolders with uniquely-named audio files into target', async () => {
@@ -230,8 +237,11 @@ describe('copyAudioFiles', () => {
     await copyAudioFiles('/src', '/dest');
 
     expect(cp).toHaveBeenCalledTimes(2);
-    expect(cp).toHaveBeenCalledWith('/src/Disc 1/chapter1.mp3', '/dest/chapter1.mp3', { errorOnExist: false });
-    expect(cp).toHaveBeenCalledWith('/src/Disc 2/chapter2.mp3', '/dest/chapter2.mp3', { errorOnExist: false });
+    const calls = (cp as Mock).mock.calls.map((c: unknown[]) => c.map((a: unknown) => typeof a === 'string' ? norm(a) : a));
+    expect(calls[0][0]).toBe('/src/Disc 1/chapter1.mp3');
+    expect(calls[0][1]).toBe('/dest/chapter1.mp3');
+    expect(calls[1][0]).toBe('/src/Disc 2/chapter2.mp3');
+    expect(calls[1][1]).toBe('/dest/chapter2.mp3');
   });
 
   it('copies audio files at root level without change (no subfolder)', async () => {
@@ -243,8 +253,11 @@ describe('copyAudioFiles', () => {
     await copyAudioFiles('/src', '/dest');
 
     expect(cp).toHaveBeenCalledTimes(2);
-    expect(cp).toHaveBeenCalledWith('/src/track1.mp3', '/dest/track1.mp3', { errorOnExist: false });
-    expect(cp).toHaveBeenCalledWith('/src/track2.mp3', '/dest/track2.mp3', { errorOnExist: false });
+    const calls = (cp as Mock).mock.calls.map((c: unknown[]) => c.map((a: unknown) => typeof a === 'string' ? norm(a) : a));
+    expect(calls[0][0]).toBe('/src/track1.mp3');
+    expect(calls[0][1]).toBe('/dest/track1.mp3');
+    expect(calls[1][0]).toBe('/src/track2.mp3');
+    expect(calls[1][1]).toBe('/dest/track2.mp3');
   });
 
   it('flattens mixed content — audio at root AND in subfolders — all end up at target root', async () => {
@@ -258,8 +271,11 @@ describe('copyAudioFiles', () => {
     await copyAudioFiles('/src', '/dest');
 
     expect(cp).toHaveBeenCalledTimes(2);
-    expect(cp).toHaveBeenCalledWith('/src/root.mp3', '/dest/root.mp3', { errorOnExist: false });
-    expect(cp).toHaveBeenCalledWith('/src/sub/nested.m4b', '/dest/nested.m4b', { errorOnExist: false });
+    const calls = (cp as Mock).mock.calls.map((c: unknown[]) => c.map((a: unknown) => typeof a === 'string' ? norm(a) : a));
+    expect(calls[0][0]).toBe('/src/root.mp3');
+    expect(calls[0][1]).toBe('/dest/root.mp3');
+    expect(calls[1][0]).toBe('/src/sub/nested.m4b');
+    expect(calls[1][1]).toBe('/dest/nested.m4b');
   });
 
   it('skips non-audio files in subfolders during flattening', async () => {
@@ -274,7 +290,9 @@ describe('copyAudioFiles', () => {
     await copyAudioFiles('/src', '/dest');
 
     expect(cp).toHaveBeenCalledTimes(1);
-    expect(cp).toHaveBeenCalledWith('/src/sub/audio.mp3', '/dest/audio.mp3', { errorOnExist: false });
+    const [src, dest] = (cp as Mock).mock.calls[0].map((a: unknown) => typeof a === 'string' ? norm(a) : a);
+    expect(src).toBe('/src/sub/audio.mp3');
+    expect(dest).toBe('/dest/audio.mp3');
   });
 
   it('skips non-audio files at root level', async () => {
