@@ -59,7 +59,7 @@ export async function fetchWithProxyAgent(
     };
 
     if (dispatcher) {
-      fetchOptions.dispatcher = dispatcher;
+      (fetchOptions as Record<string, unknown>).dispatcher = dispatcher;
     }
 
     let response: Response;

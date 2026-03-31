@@ -192,7 +192,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       };
 
       if (dispatcher) {
-        fetchOptions.dispatcher = dispatcher;
+        (fetchOptions as Record<string, unknown>).dispatcher = dispatcher;
       }
 
       let response: Response;
@@ -271,7 +271,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
       };
 
       if (dispatcher) {
-        fetchOptions.dispatcher = dispatcher;
+        (fetchOptions as Record<string, unknown>).dispatcher = dispatcher;
       }
 
       let response: Response;
