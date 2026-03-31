@@ -10,6 +10,7 @@ import {
   CACHE_INVALIDATION_MATRIX,
   TOAST_EVENT_CONFIG,
 } from '../../shared/schemas.js';
+import { setMergeProgress } from './useMergeProgress.js';
 
 // ============================================================================
 // Reactive SSE connection state (F3)
@@ -90,6 +91,9 @@ export function useEventSource(apiKey: string | null) {
       queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
     }
 
+    // Merge progress tracking — update the reactive store
+    updateMergeProgressFromEvent(type, data);
+
     // Toast notifications
     const toastConfig = TOAST_EVENT_CONFIG[type];
     if (toastConfig) {
@@ -101,6 +105,7 @@ export function useEventSource(apiKey: string | null) {
         case 'success': toast.success(message, { duration: 5000 }); break;
         case 'info': toast.info(message, { duration: 5000 }); break;
         case 'warning': toast.warning(message, { duration: 5000 }); break;
+        case 'error': toast.error(message, { duration: 5000 }); break;
       }
     }
   }, [queryClient]);
@@ -125,6 +130,7 @@ export function useEventSource(apiKey: string | null) {
     const eventTypes: SSEEventType[] = [
       'download_progress', 'download_status_change', 'book_status_change',
       'import_complete', 'grab_started', 'review_needed', 'merge_complete',
+      'merge_started', 'merge_progress', 'merge_failed',
     ];
 
     for (const type of eventTypes) {
@@ -164,11 +170,28 @@ export function useEventSource(apiKey: string | null) {
   }, [apiKey, handleEvent, queryClient]);
 }
 
+function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads[typeof type]): void {
+  if (type === 'merge_started' && 'book_id' in data) {
+    setMergeProgress((data as SSEEventPayloads['merge_started']).book_id, { phase: 'starting' });
+  } else if (type === 'merge_progress' && 'book_id' in data) {
+    const progressData = data as SSEEventPayloads['merge_progress'];
+    setMergeProgress(progressData.book_id, {
+      phase: progressData.phase,
+      percentage: progressData.percentage,
+    });
+  } else if ((type === 'merge_complete' || type === 'merge_failed') && 'book_id' in data) {
+    setMergeProgress((data as { book_id: number }).book_id, null);
+  }
+}
+
 function formatToastMessage(type: SSEEventType, title: string): string {
   switch (type) {
     case 'import_complete': return `"${title}" imported successfully`;
     case 'grab_started': return `Downloading "${title}"`;
     case 'review_needed': return `"${title}" needs review`;
+    case 'merge_started': return `Merging "${title}"...`;
+    case 'merge_failed': return `"${title}" merge failed`;
+    case 'merge_complete': return title; // title is the message field (includes filename)
     default: return title;
   }
 }

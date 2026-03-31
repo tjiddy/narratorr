@@ -283,13 +283,14 @@ describe('useBookActions', () => {
       await waitFor(() => expect(api.mergeBookToM4b).toHaveBeenCalledWith(3));
     });
 
-    it('shows success toast with result message on success', async () => {
+    it('does not show success toast on merge success (toasts now driven by SSE)', async () => {
       (api.mergeBookToM4b as Mock).mockResolvedValue({ bookId: 3, filesReplaced: 12, outputFile: '/lib/book.m4b', message: 'Merged 12 files into book.m4b' });
       const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
 
       act(() => { result.current.mergeMutation.mutate(); });
 
-      await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Merged 12 files into book.m4b'));
+      await waitFor(() => expect(api.mergeBookToM4b).toHaveBeenCalled());
+      expect(toast.success).not.toHaveBeenCalled();
     });
 
     it('invalidates book, bookFiles, and books queries on success', async () => {
@@ -307,16 +308,16 @@ describe('useBookActions', () => {
       });
     });
 
-    it('shows error toast with message on failure', async () => {
-      (api.mergeBookToM4b as Mock).mockRejectedValue(new Error('ffmpeg error'));
+    it('shows error toast on API-level merge failure (pre-SSE errors like 409)', async () => {
+      (api.mergeBookToM4b as Mock).mockRejectedValue(new Error('Merge already in progress'));
       const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
 
       act(() => { result.current.mergeMutation.mutate(); });
 
-      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Merge failed: ffmpeg error'));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Merge failed: Merge already in progress'));
     });
 
-    it('shows warning toast when result includes enrichmentWarning', async () => {
+    it('shows warning toast when result includes enrichmentWarning (but no success toast)', async () => {
       (api.mergeBookToM4b as Mock).mockResolvedValue({
         bookId: 3, filesReplaced: 12, outputFile: '/lib/book.m4b', message: 'Merged 12 files into book.m4b',
         enrichmentWarning: 'Merge succeeded but metadata update failed — audio fields may be stale',
@@ -326,9 +327,10 @@ describe('useBookActions', () => {
       act(() => { result.current.mergeMutation.mutate(); });
 
       await waitFor(() => {
-        expect(toast.success).toHaveBeenCalledWith('Merged 12 files into book.m4b');
         expect(toast.warning).toHaveBeenCalledWith('Merge succeeded but metadata update failed — audio fields may be stale');
       });
+      // Success toast moved to SSE path
+      expect(toast.success).not.toHaveBeenCalled();
     });
 
     it('does not invalidate queries when merge fails', async () => {

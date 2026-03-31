@@ -44,7 +44,63 @@ export class MergeService {
     private eventBroadcaster?: EventBroadcasterService,
   ) {}
 
-  private emitEvent(bookId: number, bookTitle: string): void {
+  private emitMergeStarted(bookId: number, bookTitle: string): void {
+    this.eventHistory?.create({
+      bookId,
+      bookTitle,
+      eventType: 'merge_started',
+      source: 'manual',
+    }).catch((err) => this.log.warn(err, 'Failed to record merge_started event'));
+
+    if (this.eventBroadcaster) {
+      try {
+        this.eventBroadcaster.emit('merge_started', {
+          book_id: bookId,
+          book_title: bookTitle,
+        });
+      } catch (error: unknown) {
+        this.log.debug(error, 'SSE emit failed for merge_started');
+      }
+    }
+  }
+
+  private emitMergeFailed(bookId: number, bookTitle: string, error: string): void {
+    this.eventHistory?.create({
+      bookId,
+      bookTitle,
+      eventType: 'merge_failed',
+      source: 'manual',
+      reason: { error },
+    }).catch((err) => this.log.warn(err, 'Failed to record merge_failed event'));
+
+    if (this.eventBroadcaster) {
+      try {
+        this.eventBroadcaster.emit('merge_failed', {
+          book_id: bookId,
+          book_title: bookTitle,
+          error,
+        });
+      } catch (emitError: unknown) {
+        this.log.debug(emitError, 'SSE emit failed for merge_failed');
+      }
+    }
+  }
+
+  private emitMergeProgress(bookId: number, bookTitle: string, phase: 'staging' | 'processing' | 'verifying' | 'finalizing', percentage?: number): void {
+    if (!this.eventBroadcaster) return;
+    try {
+      this.eventBroadcaster.emit('merge_progress', {
+        book_id: bookId,
+        book_title: bookTitle,
+        phase,
+        ...(percentage !== undefined && { percentage }),
+      });
+    } catch (error: unknown) {
+      this.log.debug(error, 'SSE emit failed for merge_progress');
+    }
+  }
+
+  private emitMergeComplete(bookId: number, bookTitle: string, message: string): void {
     this.eventHistory?.create({
       bookId,
       bookTitle,
@@ -58,6 +114,7 @@ export class MergeService {
           book_id: bookId,
           book_title: bookTitle,
           success: true,
+          message,
         });
       } catch (error: unknown) {
         this.log.debug(error, 'SSE emit failed');
@@ -98,11 +155,21 @@ export class MergeService {
 
     this.inProgress.add(bookId);
 
+    // Pre-flight passed — emit merge_started
+    this.emitMergeStarted(bookId, book.title);
+
     const stagingDir = bookPath + '.merge-tmp';
 
     try {
-      const stagedM4b = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings);
+      this.emitMergeProgress(bookId, book.title, 'staging');
+
+      const stagedM4b = await this.runStaging(stagingDir, { ...book, path: bookPath }, topLevelAudioFiles, processingSettings, bookId, book.title);
+
+      this.emitMergeProgress(bookId, book.title, 'verifying');
+
       const outputPath = await this.commitMerge(stagingDir, stagedM4b, bookPath, topLevelAudioFiles, bookId);
+
+      this.emitMergeProgress(bookId, book.title, 'finalizing');
 
       // Step 8: Post-commit enrichment
       const enrichResult = await enrichBookFromAudio(bookId, bookPath, book, this.db, this.log, this.bookService);
@@ -117,16 +184,21 @@ export class MergeService {
 
       this.log.info({ bookId, outputPath, filesReplaced: topLevelAudioFiles.length }, 'Book merged to M4B');
 
-      this.emitEvent(bookId, book.title);
+      const message = `Merged ${topLevelAudioFiles.length} files into ${basename(stagedM4b)}`;
+      this.emitMergeComplete(bookId, book.title, message);
 
       return {
         bookId,
         outputFile: outputPath,
         filesReplaced: topLevelAudioFiles.length,
-        message: `Merged ${topLevelAudioFiles.length} files into ${basename(stagedM4b)}`,
+        message,
         enrichmentWarning,
       };
     } catch (error: unknown) {
+      // Emit merge_failed for any failure after merge_started
+      const errorMessage = error instanceof Error ? error.message : 'Unknown merge error';
+      this.emitMergeFailed(bookId, book.title, errorMessage);
+
       // Clean up staging dir on any failure (before commit the originals are untouched)
       try {
         await rm(stagingDir, { recursive: true, force: true });
@@ -145,6 +217,8 @@ export class MergeService {
     book: { path: string; title: string; authors?: Array<{ name: string }> | null; audioBitrate?: number | null },
     audioFiles: string[],
     processingSettings: { ffmpegPath: string; keepOriginalBitrate?: boolean; bitrate?: number },
+    bookId: number,
+    bookTitle: string,
   ): Promise<string> {
     await mkdir(stagingDir, { recursive: true });
 
@@ -157,6 +231,11 @@ export class MergeService {
     const targetBitrateKbps = processingSettings.keepOriginalBitrate ? undefined : processingSettings.bitrate;
     logBitrateCapping(sourceBitrateKbps, targetBitrateKbps, this.log);
 
+    // Build stderr deduplicator for logging
+    const stderrDedup = createStderrDeduplicator(this.log);
+
+    this.emitMergeProgress(bookId, bookTitle, 'processing');
+
     const processingResult = await processAudioFiles(stagingDir, {
       ffmpegPath: processingSettings.ffmpegPath,
       outputFormat: 'm4b',
@@ -166,7 +245,14 @@ export class MergeService {
     }, {
       author: authorName,
       title: book.title,
+    }, {
+      onProgress: (_phase, percentage) => {
+        this.emitMergeProgress(bookId, bookTitle, 'processing', percentage);
+      },
+      onStderr: (line) => stderrDedup.push(line),
     });
+
+    stderrDedup.flush();
 
     if (!processingResult.success) {
       throw new Error(`Audio processing failed: ${processingResult.error}`);
@@ -215,4 +301,36 @@ export class MergeService {
 
     return outputPath;
   }
+}
+
+/** Deduplicates repeated stderr lines before logging. */
+function createStderrDeduplicator(log: FastifyBaseLogger) {
+  let lastLine = '';
+  let count = 0;
+
+  function flushPrevious() {
+    if (count === 0) return;
+    if (count === 1) {
+      log.debug({ stderr: lastLine }, 'ffmpeg stderr');
+    } else {
+      log.debug({ stderr: lastLine, count }, `ffmpeg stderr (× ${count})`);
+    }
+    count = 0;
+    lastLine = '';
+  }
+
+  return {
+    push(line: string) {
+      if (line === lastLine) {
+        count++;
+      } else {
+        flushPrevious();
+        lastLine = line;
+        count = 1;
+      }
+    },
+    flush() {
+      flushPrevious();
+    },
+  };
 }

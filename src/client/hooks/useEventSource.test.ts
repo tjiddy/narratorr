@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { useEventSource, isSSEConnected, useSSEConnected } from './useEventSource';
+import { useMergeProgress, setMergeProgress } from './useMergeProgress';
 import { queryKeys } from '@/lib/queryKeys';
 
 vi.mock('sonner', () => ({
@@ -410,6 +411,187 @@ describe('useEventSource', () => {
       expect(connectedResult.result.current).toBe(false);
 
       connectedResult.unmount();
+    });
+  });
+});
+
+// ============================================================================
+// #257 — Merge observability: SSE handler cache/toast integration
+// ============================================================================
+
+describe('#257 merge observability — useEventSource', () => {
+  describe('cache invalidation', () => {
+    it('merge_started event triggers eventHistory cache invalidation', () => {
+      const { wrapper, queryClient } = createWrapper();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['eventHistory'] });
+    });
+
+    it('merge_progress event does NOT trigger full cache invalidation', () => {
+      const { wrapper, queryClient } = createWrapper();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_progress', {
+        book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5,
+      }));
+
+      // merge_progress has empty invalidation rule — no invalidation calls
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    });
+
+    it('merge_failed event triggers eventHistory + books cache invalidation', () => {
+      const { wrapper, queryClient } = createWrapper();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_failed', {
+        book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
+      }));
+
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['eventHistory'] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
+    });
+  });
+
+  describe('toast notifications', () => {
+    it('merge_started SSE event shows info toast', () => {
+      const { wrapper } = createWrapper();
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+
+      expect(toast.info).toHaveBeenCalledWith('Merging "My Book"...', { duration: 5000 });
+    });
+
+    it('merge_failed SSE event shows error toast via toast.error', () => {
+      const { wrapper } = createWrapper();
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_failed', {
+        book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
+      }));
+
+      expect(toast.error).toHaveBeenCalledWith('"My Book" merge failed', { duration: 5000 });
+    });
+
+    it('merge_complete SSE event shows success toast using message field', () => {
+      const { wrapper } = createWrapper();
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_complete', {
+        book_id: 42, book_title: 'My Book', success: true,
+        message: 'Merged 5 files to My Book.m4b',
+      }));
+
+      expect(toast.success).toHaveBeenCalledWith('Merged 5 files to My Book.m4b', { duration: 5000 });
+    });
+  });
+
+  describe('event listener registration', () => {
+    it('registers listeners for merge_started, merge_progress, merge_failed', () => {
+      const { wrapper } = createWrapper();
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+
+      // Check that all 3 new event types have listeners registered
+      for (const type of ['merge_started', 'merge_progress', 'merge_failed']) {
+        const handlers = (es as unknown as { listeners: Map<string, unknown[]> }).listeners.get(type);
+        expect(handlers).toBeDefined();
+        expect(handlers!.length).toBeGreaterThan(0);
+      }
+    });
+  });
+
+  describe('merge progress store transitions', () => {
+    afterEach(() => {
+      // Clean up store state between tests
+      setMergeProgress(42, null);
+    });
+
+    it('merge_started sets progress to { phase: starting }', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result: progressResult } = renderHook(() => useMergeProgress(42));
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      expect(progressResult.current).toBeNull();
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+
+      expect(progressResult.current).toEqual({ phase: 'starting' });
+    });
+
+    it('merge_progress updates phase and percentage in store', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result: progressResult } = renderHook(() => useMergeProgress(42));
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_progress', {
+        book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5,
+      }));
+
+      expect(progressResult.current).toEqual({ phase: 'processing', percentage: 0.5 });
+    });
+
+    it('merge_complete clears progress back to null', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result: progressResult } = renderHook(() => useMergeProgress(42));
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      expect(progressResult.current).not.toBeNull();
+
+      act(() => es.simulateEvent('merge_complete', {
+        book_id: 42, book_title: 'My Book', success: true, message: 'done',
+      }));
+
+      expect(progressResult.current).toBeNull();
+    });
+
+    it('merge_failed clears progress back to null', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result: progressResult } = renderHook(() => useMergeProgress(42));
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      expect(progressResult.current).not.toBeNull();
+
+      act(() => es.simulateEvent('merge_failed', {
+        book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
+      }));
+
+      expect(progressResult.current).toBeNull();
     });
   });
 });

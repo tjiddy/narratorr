@@ -26,6 +26,13 @@ vi.mock('@/components/SearchReleasesModal', () => ({
     isOpen ? <div role="dialog">Search Modal</div> : null,
 }));
 
+vi.mock('@/hooks/useMergeProgress.js', () => ({
+  useMergeProgress: vi.fn().mockReturnValue(null),
+}));
+
+import { useMergeProgress } from '@/hooks/useMergeProgress.js';
+const mockUseMergeProgress = vi.mocked(useMergeProgress);
+
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   const actualApi = (actual as { api: Record<string, unknown> }).api;
@@ -1136,6 +1143,57 @@ describe('BookDetails', () => {
       await user.click(screen.getByRole('button', { name: /Remove/ }));
 
       expect(screen.getByLabelText('Delete files from disk')).toBeInTheDocument();
+    });
+  });
+});
+
+// ============================================================================
+// #257 — Merge observability: progress indicator on BookDetails
+// ============================================================================
+
+describe('#257 merge observability — BookDetails progress', () => {
+  it('progress indicator NOT visible when no merge in progress', () => {
+    mockUseMergeProgress.mockReturnValue(null);
+    renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+    expect(screen.queryByRole('status', { name: /merge progress/i })).not.toBeInTheDocument();
+  });
+
+  it('progress indicator appears with phase text when merge is in progress', () => {
+    mockUseMergeProgress.mockReturnValue({ phase: 'staging' });
+    renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+    expect(screen.getByRole('status', { name: /merge progress/i })).toBeInTheDocument();
+    expect(screen.getByText(/Staging files/)).toBeInTheDocument();
+  });
+
+  it('progress indicator updates percentage during processing phase', () => {
+    mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 0.34 });
+    renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+    expect(screen.getByText(/Encoding to M4B — 34%/)).toBeInTheDocument();
+  });
+
+  it('progress indicator shows verifying phase', () => {
+    mockUseMergeProgress.mockReturnValue({ phase: 'verifying' });
+    renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+    expect(screen.getByText(/Verifying output/)).toBeInTheDocument();
+  });
+
+  it('progress indicator shows finalizing phase', () => {
+    mockUseMergeProgress.mockReturnValue({ phase: 'finalizing' });
+    renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+    expect(screen.getByText(/Finalizing/)).toBeInTheDocument();
+  });
+
+  it('merge button disabled while progress indicator is visible', async () => {
+    (api.getSettings as Mock).mockResolvedValue(createMockSettings({
+      processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+    }));
+    mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 0.5 });
+    renderBookDetails({ path: '/library/test', status: 'imported', topLevelAudioFileCount: 3 });
+
+    // The merge button should show "Merging..." and be disabled
+    await waitFor(() => {
+      const mergeButton = screen.getByRole('button', { name: /Merging/i });
+      expect(mergeButton).toBeDisabled();
     });
   });
 });
