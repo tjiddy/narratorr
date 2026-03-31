@@ -212,6 +212,13 @@ describe('SearchResults', () => {
     });
   });
 
+  describe('#246 manual add entry points', () => {
+    it.todo('renders books tab with empty state when search returns zero results');
+    it.todo('shows "Add manually" CTA in zero-result empty state');
+    it.todo('does not render manual add CTA before a search is performed');
+    it.todo('shows "Add manually" link below last result when results exist');
+  });
+
   describe('#99 blank empty states', () => {
     it('renders blank content when no search term (no icon, no text)', () => {
       const { container } = renderResults({ searchTerm: '' });

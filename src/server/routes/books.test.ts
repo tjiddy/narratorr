@@ -122,6 +122,10 @@ describe('books routes', () => {
   });
 
   describe('POST /api/books', () => {
+    it.todo('creates book with title only (no authors) and returns 201 (#246)');
+    it.todo('creates book with empty authors array and returns 201 (#246)');
+    it.todo('returns 409 when authorless duplicate exists (#246)');
+
     it('creates book and returns 201', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue(null);
       (services.book.create as Mock).mockResolvedValue(mockBook);

@@ -159,7 +159,12 @@ describe('BookService', () => {
       expect(result).not.toBeNull();
     });
 
+    it.todo('finds duplicate by title only when no authors and no ASIN (#246)');
+    it.todo('finds duplicate by title only with empty authors array (#246)');
+    it.todo('does not match title-only when search has authors but existing book has none (#246)');
+
     it('returns null when no authors and no ASIN', async () => {
+      // NOTE: This test will be updated in #246 — title-only dedup branch changes this behavior
       const result = await service.findDuplicate('Solo Title');
       expect(result).toBeNull();
     });

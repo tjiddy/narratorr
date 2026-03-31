@@ -19,6 +19,12 @@ const validBook = {
   authors: [{ name: 'Author Name' }],
 };
 
+describe('createBookBodySchema — authors default', () => {
+  it.todo('accepts payload with title only, no authors field — defaults to []');
+  it.todo('accepts payload with title + explicit authors array');
+  it.todo('accepts payload with title + empty authors array');
+});
+
 describe('createBookBodySchema — trim behavior', () => {
   it('rejects whitespace-only title', () => {
     const result = createBookBodySchema.safeParse({ ...validBook, title: '   ' });

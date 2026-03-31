@@ -173,6 +173,13 @@ describe('isBookInLibrary', () => {
   });
 });
 
+describe('isBookInLibrary — authorless matching (#246)', () => {
+  it.todo('matches by title when both search result and BookWithAuthor library book have no authors');
+  it.todo('matches by title when both search result and BookIdentifier library book have authorName: null');
+  it.todo('does not match by title alone when library book has authors');
+  it.todo('does not match when titles differ even if both have no authors');
+});
+
 describe('mapBookMetadataToPayload — array shape (#71)', () => {
   it('BookMetadata with one author → authors: [{ name, asin }] in payload', () => {
     const book: BookMetadata = {
