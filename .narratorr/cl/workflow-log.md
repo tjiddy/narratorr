@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #247 Don't record Held for Review event when quality gate auto-approves — 2026-03-31
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #250
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 4
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Very focused bug — root cause was clear from spec review, fix was pure removal of unnecessary calls
+- Friction / issues encountered: None — spec review had already validated the fix approach
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (read full orchestrator + test file)
+- Avoidable waste: None — small diff, clean execution
+- Suggestions: For trivial bugs with clear root cause, the explore subagent could be skipped
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `recordDecision()` was called from 5 sites total (3 in dispatchSideEffects + approve + reject) — the method name "recordDecision" masked the fact it always emitted `held_for_review`
+2. The two-layer event architecture (quality-gate layer vs. import-success layer) means removing event recording from the QG layer is safe — imported/upgraded events come from elsewhere
+3. Zero new code needed — the fix was purely removing 4 lines across 3 call sites
+
 ## #238 Redesign book deletion — remove recycle bin, add file toggle, detail page action — 2026-03-31
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #249
