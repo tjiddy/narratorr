@@ -14,6 +14,9 @@ export const sseEventTypeSchema = z.enum([
   'grab_started',
   'review_needed',
   'merge_complete',
+  'merge_started',
+  'merge_progress',
+  'merge_failed',
 ]);
 
 export type SSEEventType = z.infer<typeof sseEventTypeSchema>;
@@ -66,6 +69,25 @@ export const mergeCompletePayload = z.object({
   book_id: z.number(),
   book_title: z.string(),
   success: z.boolean(),
+  message: z.string(),
+});
+
+export const mergeStartedPayload = z.object({
+  book_id: z.number(),
+  book_title: z.string(),
+});
+
+export const mergeProgressPayload = z.object({
+  book_id: z.number(),
+  book_title: z.string(),
+  phase: z.enum(['staging', 'processing', 'verifying', 'finalizing']),
+  percentage: z.number().optional(),
+});
+
+export const mergeFailedPayload = z.object({
+  book_id: z.number(),
+  book_title: z.string(),
+  error: z.string(),
 });
 
 // ============================================================================
@@ -80,6 +102,9 @@ export type SSEEventPayloads = {
   grab_started: z.infer<typeof grabStartedPayload>;
   review_needed: z.infer<typeof reviewNeededPayload>;
   merge_complete: z.infer<typeof mergeCompletePayload>;
+  merge_started: z.infer<typeof mergeStartedPayload>;
+  merge_progress: z.infer<typeof mergeProgressPayload>;
+  merge_failed: z.infer<typeof mergeFailedPayload>;
 };
 
 // ============================================================================
@@ -103,11 +128,17 @@ export const CACHE_INVALIDATION_MATRIX: Record<SSEEventType, CacheInvalidationRu
   import_complete: { activity: 'invalidate', activityCounts: 'invalidate', books: 'invalidate', eventHistory: 'invalidate' },
   review_needed: { activity: 'invalidate', activityCounts: 'invalidate' },
   merge_complete: { activity: 'invalidate', activityCounts: 'invalidate', books: 'invalidate', eventHistory: 'invalidate' },
+  merge_started: { eventHistory: 'invalidate' },
+  merge_progress: {},
+  merge_failed: { eventHistory: 'invalidate', books: 'invalidate' },
 };
 
 // Event types that should trigger toast notifications
-export const TOAST_EVENT_CONFIG: Partial<Record<SSEEventType, { level: 'success' | 'info' | 'warning'; titleKey: 'book_title' }>> = {
+export const TOAST_EVENT_CONFIG: Partial<Record<SSEEventType, { level: 'success' | 'info' | 'warning' | 'error'; titleKey: string }>> = {
   import_complete: { level: 'success', titleKey: 'book_title' },
   grab_started: { level: 'info', titleKey: 'book_title' },
   review_needed: { level: 'warning', titleKey: 'book_title' },
+  merge_started: { level: 'info', titleKey: 'book_title' },
+  merge_failed: { level: 'error', titleKey: 'book_title' },
+  merge_complete: { level: 'success', titleKey: 'message' },
 };
