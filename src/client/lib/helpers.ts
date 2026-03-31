@@ -43,8 +43,14 @@ export function isBookInLibrary(book: BookMetadata, libraryBooks?: LibraryEntry[
     if (book.asin && lb.asin && book.asin === lb.asin) return true;
     const titleMatch = lb.title.toLowerCase() === book.title.toLowerCase();
     const authorName = getAuthorName(lb);
-    const authorMatch = book.authors[0]?.name
-      && authorName?.toLowerCase() === book.authors[0].name.toLowerCase();
-    return titleMatch && authorMatch;
+    const bookAuthorName = book.authors[0]?.name;
+
+    // Both sides have no author — match by title only
+    if (!bookAuthorName && !authorName) return titleMatch;
+
+    // One side has author, the other doesn't — not a match
+    if (!bookAuthorName || !authorName) return false;
+
+    return titleMatch && authorName.toLowerCase() === bookAuthorName.toLowerCase();
   });
 }
