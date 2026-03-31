@@ -263,19 +263,25 @@ export class IndexerService {
 
     this.log.debug({ query, indexers: enabledIndexers.map(i => i.name), count: enabledIndexers.length }, 'Searching enabled indexers');
 
-    const results: SearchResult[] = [];
-
-    for (const indexer of enabledIndexers) {
-      try {
+    const settlements = await Promise.allSettled(
+      enabledIndexers.map(async (indexer) => {
         const indexerStartMs = Date.now();
         const adapter = await this.getAdapter(indexer);
         const indexerResults = await adapter.search(query, options);
         this.log.debug({ indexer: indexer.name, resultCount: indexerResults.length, elapsedMs: Date.now() - indexerStartMs }, 'Indexer search completed');
         const mapped = indexerResults.map(r => ({ ...r, indexerId: indexer.id }));
         this.parseReleaseNames(mapped, indexer.name);
-        results.push(...mapped);
-      } catch (error: unknown) {
-        this.log.warn({ indexer: indexer.name, query, error }, 'Error searching indexer');
+        return mapped;
+      }),
+    );
+
+    const results: SearchResult[] = [];
+    for (let i = 0; i < settlements.length; i++) {
+      const settlement = settlements[i];
+      if (settlement.status === 'fulfilled') {
+        results.push(...settlement.value);
+      } else {
+        this.log.warn({ indexer: enabledIndexers[i].name, query, err: settlement.reason }, 'Error searching indexer');
       }
     }
 
