@@ -17,6 +17,7 @@ import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
 import { extname } from 'node:path';
+import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
 
 // ============ Types ============
 
@@ -310,15 +311,6 @@ export class BulkOperationService {
     }
   }
 
-  private logBitrateCapping(sourceBitrateKbps: number | undefined, targetBitrateKbps: number | undefined): void {
-    if (targetBitrateKbps != null && sourceBitrateKbps != null && sourceBitrateKbps < targetBitrateKbps) {
-      this.log.debug(
-        { sourceBitrateKbps, targetBitrateKbps, effectiveBitrateKbps: sourceBitrateKbps },
-        'Capping target bitrate to source bitrate to prevent upsampling',
-      );
-    }
-  }
-
   private async convertBook(
     bookId: number,
     bookPath: string,
@@ -328,9 +320,9 @@ export class BulkOperationService {
     const stagingDir = bookPath + '.convert-tmp';
     const book = await this.bookService.getById(bookId);
     const authorName = book?.authors?.[0]?.name ?? 'Unknown Author';
-    const sourceBitrateKbps = book?.audioBitrate ? Math.floor(book.audioBitrate / 1000) : undefined;
+    const sourceBitrateKbps = toSourceBitrateKbps(book?.audioBitrate);
     const targetBitrateKbps = processingSettings.bitrate ?? undefined;
-    this.logBitrateCapping(sourceBitrateKbps, targetBitrateKbps);
+    logBitrateCapping(sourceBitrateKbps, targetBitrateKbps, this.log);
 
     await mkdir(stagingDir, { recursive: true });
     try {

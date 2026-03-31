@@ -12,6 +12,7 @@ import { processAudioFiles } from '../../core/utils/audio-processor.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { enrichBookFromAudio } from './enrichment-utils.js';
 import { AUDIO_EXTENSIONS } from '../../core/utils/audio-constants.js';
+import { toSourceBitrateKbps, logBitrateCapping } from '../utils/audio-bitrate.js';
 
 export interface MergeResult {
   bookId: number;
@@ -152,15 +153,9 @@ export class MergeService {
     }
 
     const authorName = book.authors?.[0]?.name ?? '';
-    const sourceBitrateKbps = book.audioBitrate ? Math.floor(book.audioBitrate / 1000) : undefined;
+    const sourceBitrateKbps = toSourceBitrateKbps(book.audioBitrate);
     const targetBitrateKbps = processingSettings.keepOriginalBitrate ? undefined : processingSettings.bitrate;
-
-    if (targetBitrateKbps != null && sourceBitrateKbps != null && sourceBitrateKbps < targetBitrateKbps) {
-      this.log.debug(
-        { sourceBitrateKbps, targetBitrateKbps, effectiveBitrateKbps: sourceBitrateKbps },
-        'Capping target bitrate to source bitrate to prevent upsampling',
-      );
-    }
+    logBitrateCapping(sourceBitrateKbps, targetBitrateKbps, this.log);
 
     const processingResult = await processAudioFiles(stagingDir, {
       ffmpegPath: processingSettings.ffmpegPath,
