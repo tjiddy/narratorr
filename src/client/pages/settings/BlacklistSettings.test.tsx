@@ -93,6 +93,30 @@ describe('BlacklistSettings', () => {
     });
   });
 
+  it('does not show infoHash section when entry has no infoHash', async () => {
+    const guidOnlyEntry = [
+      {
+        id: 3,
+        infoHash: null as unknown as string,
+        guid: 'usenet-guid-999',
+        title: 'Usenet Release',
+        reason: 'wrong_content' as const,
+        blacklistType: 'permanent' as const,
+        expiresAt: null,
+        blacklistedAt: '2024-06-17T12:00:00Z',
+      },
+    ];
+    vi.mocked(api.getBlacklist).mockResolvedValue({ data: guidOnlyEntry, total: 1 });
+
+    renderWithProviders(<BlacklistSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Usenet Release')).toBeInTheDocument();
+    });
+    // No truncated hash should be visible since infoHash is null
+    expect(screen.queryByText(/\.\.\./)).not.toBeInTheDocument();
+  });
+
   it('opens confirm modal and deletes entry', async () => {
     vi.mocked(api.getBlacklist).mockResolvedValue({ data: mockEntries, total: mockEntries.length });
     vi.mocked(api.removeFromBlacklist).mockResolvedValue({ success: true });

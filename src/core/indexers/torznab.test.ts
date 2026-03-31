@@ -164,6 +164,44 @@ describe('TorznabIndexer', () => {
       expect(results[0].detailsUrl).toBe('https://tracker.test/details/abc123');
     });
 
+    it('extracts guid from <guid> element', async () => {
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(searchXml, {
+            headers: { 'Content-Type': 'application/rss+xml' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('Brandon Sanderson');
+
+      expect(results[0].guid).toBe('https://tracker.test/details/abc123');
+      expect(results[1].guid).toBe('https://tracker.test/details/def456');
+      expect(results[2].guid).toBe('https://tracker.test/details/ghi789');
+    });
+
+    it('returns undefined guid when <guid> element is missing', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0"><channel>
+          <item>
+            <title>No Guid Torrent</title>
+            <enclosure url="https://tracker.test/dl/1.torrent" length="1000"/>
+          </item>
+        </channel></rss>`;
+
+      server.use(
+        http.get(`${API_BASE}/api`, () => {
+          return new HttpResponse(xml, {
+            headers: { 'Content-Type': 'application/rss+xml' },
+          });
+        }),
+      );
+
+      const results = await indexer.search('test');
+      expect(results).toHaveLength(1);
+      expect(results[0].guid).toBeUndefined();
+    });
+
     it('respects limit option', async () => {
       server.use(
         http.get(`${API_BASE}/api`, () => {
