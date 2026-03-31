@@ -112,7 +112,6 @@ export class QualityGateOrchestrator {
         old_status: 'pending_review', new_status: 'importing',
       });
     }
-    this.recordDecision(result.download, result.book, { ...NULL_REASON, action: 'imported' });
 
     return { id: result.id, status: result.status };
   }
@@ -125,7 +124,6 @@ export class QualityGateOrchestrator {
     const result = await this.qualityGateService.reject(downloadId);
 
     // Side effects
-    this.recordDecision(result.download, result.book, { ...NULL_REASON, action: 'rejected' });
     await this.performRejectionCleanup(result.download, result.book, 'pending_review');
 
     return { id: result.id, status: result.status };
@@ -171,9 +169,7 @@ export class QualityGateOrchestrator {
       if (book) {
         this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: statusTransition.from as DownloadStatus, new_status: statusTransition.to as DownloadStatus });
       }
-      this.recordDecision(download, book, reason);
     } else if (action === 'rejected') {
-      this.recordDecision(download, book, reason);
       await this.performRejectionCleanup(download, book, statusTransition.from as DownloadStatus);
     }
   }
