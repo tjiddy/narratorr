@@ -17,6 +17,9 @@ const EVENT_TYPE_FILTERS = [
   { value: 'upgraded', label: 'Upgraded' },
   { value: 'deleted', label: 'Deleted' },
   { value: 'renamed', label: 'Renamed' },
+  { value: 'merged', label: 'Merged' },
+  { value: 'merge_started', label: 'Merge Started' },
+  { value: 'merge_failed', label: 'Merge Failed' },
 ];
 
 export function EventHistorySection() {

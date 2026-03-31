@@ -82,6 +82,49 @@ describe('EventHistorySection', () => {
     expect(screen.getByText('Grabbed')).toBeInTheDocument();
     expect(screen.getByText('Completed')).toBeInTheDocument();
     expect(screen.getByText('Failed')).toBeInTheDocument();
+    expect(screen.getByText('Merged')).toBeInTheDocument();
+    expect(screen.getByText('Merge Started')).toBeInTheDocument();
+    expect(screen.getByText('Merge Failed')).toBeInTheDocument();
+  });
+
+  it('merge_started filter calls useEventHistory with correct eventType', async () => {
+    const user = userEvent.setup();
+    mockUseEventHistory.mockReturnValue({
+      events: [],
+      total: 0,
+      isLoading: false,
+      isError: false,
+      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
+      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
+      bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
+    });
+
+    renderWithProviders(<EventHistorySection />);
+    await user.click(screen.getByText('Merge Started'));
+
+    expect(mockUseEventHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'merge_started' }),
+    );
+  });
+
+  it('merge_failed filter calls useEventHistory with correct eventType', async () => {
+    const user = userEvent.setup();
+    mockUseEventHistory.mockReturnValue({
+      events: [],
+      total: 0,
+      isLoading: false,
+      isError: false,
+      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
+      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
+      bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
+    });
+
+    renderWithProviders(<EventHistorySection />);
+    await user.click(screen.getByText('Merge Failed'));
+
+    expect(mockUseEventHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'merge_failed' }),
+    );
   });
 
   it('type filter changes displayed events', async () => {
