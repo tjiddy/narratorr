@@ -32,6 +32,9 @@ const EVENT_CONFIG: Record<string, EventTypeConfig> = {
   renamed: { icon: RefreshIcon, label: 'Renamed', color: 'text-amber-400', bgColor: 'bg-amber-500/10' },
   file_tagged: { icon: CheckCircleIcon, label: 'File Tagged', color: 'text-teal-400', bgColor: 'bg-teal-500/10' },
   held_for_review: { icon: AlertTriangleIcon, label: 'Held for Review', color: 'text-yellow-400', bgColor: 'bg-yellow-500/10' },
+  merged: { icon: CheckCircleIcon, label: 'Merged', color: 'text-success', bgColor: 'bg-success/10' },
+  merge_started: { icon: RefreshIcon, label: 'Merge Started', color: 'text-blue-400', bgColor: 'bg-blue-500/10' },
+  merge_failed: { icon: XCircleIcon, label: 'Merge Failed', color: 'text-destructive', bgColor: 'bg-destructive/10' },
 };
 
 const DEFAULT_CONFIG: EventTypeConfig = { icon: ClockIcon, label: 'Unknown', color: 'text-muted-foreground', bgColor: 'bg-muted' };

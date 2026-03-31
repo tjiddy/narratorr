@@ -10,6 +10,7 @@ import {
   CACHE_INVALIDATION_MATRIX,
   TOAST_EVENT_CONFIG,
 } from '../../shared/schemas.js';
+import { setMergeProgress } from './useMergeProgress.js';
 
 // ============================================================================
 // Reactive SSE connection state (F3)
@@ -88,6 +89,19 @@ export function useEventSource(apiKey: string | null) {
     }
     if (rule.eventHistory) {
       queryClient.invalidateQueries({ queryKey: queryKeys.eventHistory.root() });
+    }
+
+    // Merge progress tracking — update the reactive store
+    if (type === 'merge_started' && 'book_id' in data) {
+      setMergeProgress((data as SSEEventPayloads['merge_started']).book_id, { phase: 'starting' });
+    } else if (type === 'merge_progress' && 'book_id' in data) {
+      const progressData = data as SSEEventPayloads['merge_progress'];
+      setMergeProgress(progressData.book_id, {
+        phase: progressData.phase,
+        percentage: progressData.percentage,
+      });
+    } else if ((type === 'merge_complete' || type === 'merge_failed') && 'book_id' in data) {
+      setMergeProgress((data as { book_id: number }).book_id, null);
     }
 
     // Toast notifications

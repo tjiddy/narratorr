@@ -138,8 +138,33 @@ describe('EventHistoryCard', () => {
 // ============================================================================
 
 describe('#257 merge observability — EventHistoryCard', () => {
-  it.todo('merge_started renders with label "Merge Started" and configured icon/color (not fallback)');
-  it.todo('merge_failed renders with label "Merge Failed" and destructive color');
-  it.todo('merge_failed renders error reason from reason JSON field');
-  it.todo('merged renders with label "Merged" and success color (not fallback)');
+  it('merge_started renders with label "Merge Started" (not fallback)', () => {
+    render(<EventHistoryCard event={createMockEvent({ eventType: 'merge_started' })} />);
+    expect(screen.getByText('Merge Started')).toBeInTheDocument();
+    expect(screen.queryByText('merge_started')).not.toBeInTheDocument();
+  });
+
+  it('merge_failed renders with label "Merge Failed"', () => {
+    render(<EventHistoryCard event={createMockEvent({ eventType: 'merge_failed' })} />);
+    expect(screen.getByText('Merge Failed')).toBeInTheDocument();
+    expect(screen.queryByText('merge_failed')).not.toBeInTheDocument();
+  });
+
+  it('merge_failed renders error reason from reason JSON field', async () => {
+    const user = userEvent.setup();
+    render(<EventHistoryCard event={createMockEvent({
+      eventType: 'merge_failed',
+      reason: { error: 'ffmpeg exited with code 1' },
+    })} />);
+
+    // Click "View details" to show reason
+    await user.click(screen.getByText('View details'));
+    expect(screen.getByText(/ffmpeg exited with code 1/)).toBeInTheDocument();
+  });
+
+  it('merged renders with label "Merged" (not fallback)', () => {
+    render(<EventHistoryCard event={createMockEvent({ eventType: 'merged' })} />);
+    expect(screen.getByText('Merged')).toBeInTheDocument();
+    expect(screen.queryByText('merged')).not.toBeInTheDocument();
+  });
 });

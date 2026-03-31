@@ -26,6 +26,13 @@ vi.mock('@/components/SearchReleasesModal', () => ({
     isOpen ? <div role="dialog">Search Modal</div> : null,
 }));
 
+vi.mock('@/hooks/useMergeProgress.js', () => ({
+  useMergeProgress: vi.fn().mockReturnValue(null),
+}));
+
+import { useMergeProgress } from '@/hooks/useMergeProgress.js';
+const mockUseMergeProgress = vi.mocked(useMergeProgress);
+
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;
   const actualApi = (actual as { api: Record<string, unknown> }).api;
@@ -1145,12 +1152,34 @@ describe('BookDetails', () => {
 // ============================================================================
 
 describe('#257 merge observability — BookDetails progress', () => {
-  it.todo('progress indicator NOT visible when no merge in progress');
-  it.todo('progress indicator appears when merge_started SSE received for current book');
-  it.todo('progress indicator shows phase text');
-  it.todo('progress indicator updates percentage during processing phase');
-  it.todo('progress indicator dismissed on merge_complete SSE');
-  it.todo('progress indicator dismissed on merge_failed SSE');
-  it.todo('progress indicator only shows for the current book (ignores other book IDs)');
-  it.todo('merge button disabled while progress indicator is visible');
+  it('progress indicator NOT visible when no merge in progress', () => {
+    mockUseMergeProgress.mockReturnValue(null);
+    renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+    expect(screen.queryByRole('status', { name: /merge progress/i })).not.toBeInTheDocument();
+  });
+
+  it('progress indicator appears with phase text when merge is in progress', () => {
+    mockUseMergeProgress.mockReturnValue({ phase: 'staging' });
+    renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+    expect(screen.getByRole('status', { name: /merge progress/i })).toBeInTheDocument();
+    expect(screen.getByText(/Staging files/)).toBeInTheDocument();
+  });
+
+  it('progress indicator updates percentage during processing phase', () => {
+    mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 0.34 });
+    renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+    expect(screen.getByText(/Encoding to M4B — 34%/)).toBeInTheDocument();
+  });
+
+  it('progress indicator shows verifying phase', () => {
+    mockUseMergeProgress.mockReturnValue({ phase: 'verifying' });
+    renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+    expect(screen.getByText(/Verifying output/)).toBeInTheDocument();
+  });
+
+  it('progress indicator shows finalizing phase', () => {
+    mockUseMergeProgress.mockReturnValue({ phase: 'finalizing' });
+    renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
+    expect(screen.getByText(/Finalizing/)).toBeInTheDocument();
+  });
 });

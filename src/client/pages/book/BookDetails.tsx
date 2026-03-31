@@ -4,13 +4,14 @@ import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
 import { ConfirmModal } from '@/components/ConfirmModal.js';
 import { DeleteBookModal } from '@/components/DeleteBookModal.js';
-import { HistoryIcon, BookOpenIcon } from '@/components/icons';
+import { HistoryIcon, BookOpenIcon, RefreshIcon } from '@/components/icons';
 import type { BookWithAuthor } from '@/lib/api';
 import { BookHero } from './BookHero.js';
 import { BookDetailsContent } from './BookDetailsContent.js';
 import { BookEventHistory } from './BookEventHistory.js';
 import { mergeBookData, type MetadataBook } from './helpers.js';
 import { useBookActions } from './useBookActions.js';
+import { useMergeProgress } from '@/hooks/useMergeProgress.js';
 
 function getArrowTabIndex(key: string, currentIndex: number, length: number): number | null {
   if (key === 'ArrowRight') return (currentIndex + 1) % length;
@@ -39,6 +40,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const { renameMutation, mergeMutation, retagMutation, deleteMutation, monitorMutation, ffmpegConfigured, isSaving, handleSave } =
     useBookActions(libraryBook.id, libraryBook.monitorForUpgrades);
 
+  const mergeProgress = useMergeProgress(libraryBook.id);
   const canMerge = libraryBook.status === 'imported' &&
     (libraryBook.topLevelAudioFileCount ?? 0) >= 2;
 
@@ -74,9 +76,9 @@ export function BookDetails({ libraryBook, metadataBook }: {
         retagDisabled={!ffmpegConfigured}
         retagTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
         onMergeClick={() => setConfirmMergeOpen(true)}
-        isMerging={mergeMutation.isPending}
+        isMerging={mergeMutation.isPending || !!mergeProgress}
         canMerge={canMerge}
-        mergeDisabled={!ffmpegConfigured}
+        mergeDisabled={!ffmpegConfigured || !!mergeProgress}
         mergeTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
         onRemoveClick={() => setConfirmDeleteOpen(true)}
         isRemoving={deleteMutation.isPending}
@@ -85,6 +87,30 @@ export function BookDetails({ libraryBook, metadataBook }: {
         onMonitorToggle={() => monitorMutation.mutate()}
         isMonitorToggling={monitorMutation.isPending}
       />
+
+      {/* Merge progress indicator */}
+      {mergeProgress && (
+        <div className="glass-card rounded-2xl p-4 animate-fade-in-up" role="status" aria-label="Merge progress">
+          <div className="flex items-center gap-3">
+            <div className="shrink-0 p-2 rounded-xl bg-primary/10">
+              <RefreshIcon className="w-4 h-4 text-primary animate-spin" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium">
+                {formatMergePhase(mergeProgress.phase, mergeProgress.percentage)}
+              </p>
+              {mergeProgress.phase === 'processing' && mergeProgress.percentage !== undefined && (
+                <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all duration-500"
+                    style={{ width: `${Math.round(mergeProgress.percentage * 100)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tab buttons */}
       <div className="flex justify-center animate-fade-in-up stagger-4">
@@ -199,4 +225,18 @@ export function BookDetails({ libraryBook, metadataBook }: {
       />
     </div>
   );
+}
+
+function formatMergePhase(phase: string, percentage?: number): string {
+  switch (phase) {
+    case 'starting': return 'Merge started...';
+    case 'staging': return 'Staging files...';
+    case 'processing':
+      return percentage !== undefined
+        ? `Encoding to M4B — ${Math.round(percentage * 100)}%...`
+        : 'Encoding to M4B...';
+    case 'verifying': return 'Verifying output...';
+    case 'finalizing': return 'Finalizing...';
+    default: return 'Merging...';
+  }
 }
