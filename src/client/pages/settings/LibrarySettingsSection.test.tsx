@@ -242,17 +242,195 @@ describe('LibrarySettingsSection', () => {
   });
 
   describe('When a New Book Is Added subsection (#265)', () => {
-    it.todo('renders subsection heading "When a New Book Is Added" with divider');
-    it.todo('renders Search Immediately and Monitor for Upgrades toggles');
-    it.todo('loads quality settings values into toggles');
-    it.todo('toggling Search Immediately enables save button and submits quality category');
-    it.todo('toggling Monitor for Upgrades enables save button and submits quality category');
-    it.todo('submitting both toggles on sends both true in quality payload');
-    it.todo('save payload excludes grabFloor, protocolPreference, minSeeders, rejectWords, requiredWords');
-    it.todo('shows success toast on toggle save');
-    it.todo('shows error toast on toggle save failure');
-    it.todo('path blur-save still works independently after subsection added');
-    it.todo('default values: both toggles unchecked with fresh settings');
+    it('renders subsection heading "When a New Book Is Added" with divider', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByText('When a New Book Is Added')).toBeInTheDocument();
+      });
+    });
+
+    it('renders Search Immediately and Monitor for Upgrades toggles', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      });
+      expect(screen.getByLabelText('Monitor for Upgrades')).toBeInTheDocument();
+    });
+
+    it('loads quality settings values into toggles', async () => {
+      const settingsWithToggles = createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
+        quality: { searchImmediately: true, monitorForUpgrades: true },
+      });
+      mockApi.getSettings.mockResolvedValue(settingsWithToggles);
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(true);
+      });
+      expect((screen.getByLabelText('Monitor for Upgrades') as HTMLInputElement).checked).toBe(true);
+    });
+
+    it('toggling Search Immediately enables save button and submits quality category', async () => {
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText('Search Immediately'));
+
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      expect(saveButton).toBeInTheDocument();
+      fireEvent.submit(saveButton.closest('form')!);
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith({
+          quality: { searchImmediately: true, monitorForUpgrades: false },
+        });
+      });
+    });
+
+    it('toggling Monitor for Upgrades enables save button and submits quality category', async () => {
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Monitor for Upgrades')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText('Monitor for Upgrades'));
+
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      fireEvent.submit(saveButton.closest('form')!);
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith({
+          quality: { searchImmediately: false, monitorForUpgrades: true },
+        });
+      });
+    });
+
+    it('submitting both toggles on sends both true in quality payload', async () => {
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText('Search Immediately'));
+      await user.click(screen.getByLabelText('Monitor for Upgrades'));
+
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      fireEvent.submit(saveButton.closest('form')!);
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith({
+          quality: { searchImmediately: true, monitorForUpgrades: true },
+        });
+      });
+    });
+
+    it('save payload excludes grabFloor, protocolPreference, minSeeders, rejectWords, requiredWords', async () => {
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText('Search Immediately'));
+
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      fireEvent.submit(saveButton.closest('form')!);
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalled();
+      });
+
+      const callArg = mockApi.updateSettings.mock.calls[0][0];
+      expect(callArg.quality).not.toHaveProperty('grabFloor');
+      expect(callArg.quality).not.toHaveProperty('protocolPreference');
+      expect(callArg.quality).not.toHaveProperty('minSeeders');
+      expect(callArg.quality).not.toHaveProperty('rejectWords');
+      expect(callArg.quality).not.toHaveProperty('requiredWords');
+    });
+
+    it('shows success toast on toggle save', async () => {
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText('Search Immediately'));
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        expect(mockToast.success).toHaveBeenCalledWith('New book defaults saved');
+      });
+    });
+
+    it('shows error toast on toggle save failure', async () => {
+      mockApi.updateSettings.mockRejectedValue(new Error('Network error'));
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText('Search Immediately'));
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        expect(mockToast.error).toHaveBeenCalledWith('Network error');
+      });
+    });
+
+    it('path blur-save still works independently after subsection added', async () => {
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText('/audiobooks')).toHaveValue('/audiobooks');
+      });
+
+      const pathInput = screen.getByPlaceholderText('/audiobooks');
+      await user.clear(pathInput);
+      await user.type(pathInput, '/new-path');
+      fireEvent.blur(pathInput);
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({ library: expect.objectContaining({ path: '/new-path' }) }),
+        );
+      });
+    });
+
+    it('default values: both toggles unchecked with fresh settings', async () => {
+      const freshSettings = createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
+      });
+      mockApi.getSettings.mockResolvedValue(freshSettings);
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      });
+
+      expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(false);
+      expect((screen.getByLabelText('Monitor for Upgrades') as HTMLInputElement).checked).toBe(false);
+    });
   });
 
   describe('library path browse integration', () => {
