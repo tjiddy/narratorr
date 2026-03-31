@@ -188,6 +188,11 @@
   input::placeholder {
     @apply text-muted-foreground/40;
   }
+
+  input,
+  textarea {
+    caret-color: currentColor;
+  }
 }
 
 @layer components {
