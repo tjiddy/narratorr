@@ -184,36 +184,13 @@ class MatchJob {
       // Fetch full detail for top results to get ASIN/duration
       const detailed = await this.fetchDetails(searchResults.slice(0, 5));
 
-      // Score and re-rank results by title+author similarity
-      const context = { title: book.title, author: book.author };
-      const scored = detailed.map(meta => ({
-        meta,
-        score: scoreResult(
-          { title: meta.title, author: meta.authors?.[0]?.name },
-          context,
-        ),
-      }));
-
-      // Recover year from folder path for tiebreaker
-      const folderYear = extractYear(basename(book.path));
-
-      // Apply year tiebreaker for equal scores, then sort descending by score
-      scored.sort((a, b) => {
-        if (Math.abs(a.score - b.score) < 0.001 && folderYear) {
-          const aYear = parsePublishedYear(a.meta.publishedDate);
-          const bYear = parsePublishedYear(b.meta.publishedDate);
-          const aMatch = aYear === folderYear ? 1 : 0;
-          const bMatch = bYear === folderYear ? 1 : 0;
-          if (aMatch !== bMatch) return bMatch - aMatch;
-        }
-        return b.score - a.score;
-      });
-
+      // Score, re-rank, and apply year tiebreaker
+      const scored = rankResults(detailed, book);
       const topScored = scored[0];
 
       // Title similarity floor: below 50% → confidence 'none'
-      const titleSimilarity = context.title && topScored.meta.title
-        ? diceCoefficient(topScored.meta.title, context.title)
+      const titleSimilarity = book.title && topScored.meta.title
+        ? diceCoefficient(topScored.meta.title, book.title)
         : 0;
       if (titleSimilarity < TITLE_SIMILARITY_FLOOR) {
         this.log.debug(
@@ -239,45 +216,24 @@ class MatchJob {
       }
 
       // Multiple results — attempt runtime disambiguation via duration
-      if (duration && duration > 0) {
-        const withDistance = scored
-          .filter(s => s.meta.duration && s.meta.duration > 0)
-          .map(s => ({
-            ...s,
-            distance: Math.abs(s.meta.duration! - duration!) / duration!,
-          }))
-          .sort((a, b) => a.distance - b.distance);
-
-        if (withDistance.length > 0) {
-          const best = withDistance[0];
-          const rest = withDistance.slice(1).map(w => w.meta);
-          const othersWithoutDuration = scored.filter(
-            s => !s.meta.duration || s.meta.duration <= 0,
-          ).map(s => s.meta);
-
-          const confidence: Confidence = best.distance <= DURATION_THRESHOLD ? 'high' : 'medium';
-          this.log.debug(
-            {
-              path: book.path,
-              confidence,
-              bestTitle: best.meta.title,
-              score: best.score.toFixed(2),
-              bookDuration: duration,
-              matchDuration: best.meta.duration,
-              distancePct: `${(best.distance * 100).toFixed(1)}%`,
-              candidatesWithDuration: withDistance.length,
-              candidatesWithoutDuration: othersWithoutDuration.length,
-            },
-            'Duration disambiguation result',
-          );
-
-          return {
+      const durationResult = disambiguateByDuration(scored, duration);
+      if (durationResult) {
+        this.log.debug(
+          {
             path: book.path,
-            confidence,
-            bestMatch: best.meta,
-            alternatives: [...rest, ...othersWithoutDuration],
-          };
-        }
+            confidence: durationResult.confidence,
+            bestTitle: durationResult.bestMatch.title,
+            bookDuration: duration,
+            matchDuration: durationResult.bestMatch.duration,
+          },
+          'Duration disambiguation result',
+        );
+        return {
+          path: book.path,
+          confidence: durationResult.confidence,
+          bestMatch: durationResult.bestMatch,
+          alternatives: durationResult.alternatives,
+        };
       }
 
       // No duration data — medium confidence with best-scored result
@@ -324,6 +280,67 @@ class MatchJob {
     }
     return detailed;
   }
+}
+
+/** Disambiguates multiple results by duration distance, if audio duration available. */
+function disambiguateByDuration(
+  scored: { meta: BookMetadata; score: number }[],
+  duration: number | undefined,
+): { confidence: Confidence; bestMatch: BookMetadata; alternatives: BookMetadata[] } | null {
+  if (!duration || duration <= 0) return null;
+
+  const withDistance = scored
+    .filter(s => s.meta.duration && s.meta.duration > 0)
+    .map(s => ({
+      ...s,
+      distance: Math.abs(s.meta.duration! - duration) / duration,
+    }))
+    .sort((a, b) => a.distance - b.distance);
+
+  if (withDistance.length === 0) return null;
+
+  const best = withDistance[0];
+  const rest = withDistance.slice(1).map(w => w.meta);
+  const othersWithoutDuration = scored
+    .filter(s => !s.meta.duration || s.meta.duration <= 0)
+    .map(s => s.meta);
+
+  const confidence: Confidence = best.distance <= DURATION_THRESHOLD ? 'high' : 'medium';
+  return {
+    confidence,
+    bestMatch: best.meta,
+    alternatives: [...rest, ...othersWithoutDuration],
+  };
+}
+
+/** Scores and ranks results by title+author similarity with year tiebreaker. */
+function rankResults(
+  detailed: BookMetadata[],
+  book: MatchCandidate,
+): { meta: BookMetadata; score: number }[] {
+  const context = { title: book.title, author: book.author };
+  const scored = detailed.map(meta => ({
+    meta,
+    score: scoreResult(
+      { title: meta.title, author: meta.authors?.[0]?.name },
+      context,
+    ),
+  }));
+
+  const folderYear = extractYear(basename(book.path));
+
+  scored.sort((a, b) => {
+    if (Math.abs(a.score - b.score) < 0.001 && folderYear) {
+      const aYear = parsePublishedYear(a.meta.publishedDate);
+      const bYear = parsePublishedYear(b.meta.publishedDate);
+      const aMatch = aYear === folderYear ? 1 : 0;
+      const bMatch = bYear === folderYear ? 1 : 0;
+      if (aMatch !== bMatch) return bMatch - aMatch;
+    }
+    return b.score - a.score;
+  });
+
+  return scored;
 }
 
 /** Extracts a 4-digit year from a publishedDate string (e.g., "2011-06-14" → 2011). */
