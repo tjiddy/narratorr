@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #237 Import nests files in extra subfolder from download folder name — 2026-03-31
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #243
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 10 (9 new, 1 updated)
+- Quality gate runs: 2 (pass on attempt 2 — unused `basename` import)
+- Fix iterations: 1 (lint failure from unused import)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Small, focused change — only 1 production file modified. Spec review was thorough and resolved all ambiguity upfront (flatten-everything contract, collision detection, fail-fast semantics).
+- Friction / issues encountered: First verify run caught an unused `basename` import — was added proactively but `entry.name` was sufficient. Self-review flagged false positives about AC4 mismatch that required manual reasoning to dismiss.
+
+### Token efficiency
+- Highest-token actions: Spec review (3 rounds) consumed significant context before implementation began
+- Avoidable waste: None — the spec review rounds were necessary to resolve real ambiguities
+- Suggestions: For small focused bug fixes, the elaborate→review-spec cycle could be streamlined
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None new (existing extractYear duplication already logged)
+
+### Wish I'd Known
+1. All import read-side consumers are top-level-only — this was the key architectural insight that made "flatten everything" the obvious choice. See `import-read-side-top-level-only.md`.
+2. The collect-then-act pattern (enumerate all files, validate, then copy) cleanly separates concerns and makes collision detection trivially pre-copy. See `collect-then-copy-pattern.md`.
+3. `entry.name` already provides the basename — no need to import `basename` from `node:path` when working with `readdir({ withFileTypes: true })` results.
+
 ## #227 UAT findings — Library Actions section and Manual Import path default — 2026-03-31
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #241
