@@ -1,5 +1,5 @@
 import { stat, readdir, mkdir, cp } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { join, extname, basename } from 'node:path';
 import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 
@@ -93,18 +93,43 @@ export async function containsAudioFiles(dirPath: string): Promise<boolean> {
   return false;
 }
 
-/** Recursively copy only audio files from source to target, preserving directory structure. */
-export async function copyAudioFiles(source: string, target: string): Promise<void> {
-  const entries = await readdir(source, { withFileTypes: true });
+/** Recursively collect all audio file paths from a source directory. */
+async function collectAudioFiles(
+  dir: string,
+): Promise<Array<{ srcPath: string; name: string }>> {
+  const results: Array<{ srcPath: string; name: string }> = [];
+  const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
-    const srcPath = join(source, entry.name);
-    const destPath = join(target, entry.name);
+    const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
-      await copyAudioFiles(srcPath, destPath);
+      results.push(...await collectAudioFiles(fullPath));
     } else if (entry.isFile() && AUDIO_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-      await mkdir(target, { recursive: true });
-      await cp(srcPath, destPath, { errorOnExist: false });
+      results.push({ srcPath: fullPath, name: entry.name });
     }
+  }
+  return results;
+}
+
+/** Copy audio files from source to target, flattening all subdirectories. */
+export async function copyAudioFiles(source: string, target: string): Promise<void> {
+  const files = await collectAudioFiles(source);
+
+  // Check for basename collisions before copying anything
+  const seen = new Map<string, string>();
+  for (const file of files) {
+    const existing = seen.get(file.name);
+    if (existing) {
+      throw new Error(
+        `Duplicate filename "${file.name}" found during import flattening: "${existing}" and "${file.srcPath}"`,
+      );
+    }
+    seen.set(file.name, file.srcPath);
+  }
+
+  // Copy all files flat into target
+  await mkdir(target, { recursive: true });
+  for (const file of files) {
+    await cp(file.srcPath, join(target, file.name), { errorOnExist: false });
   }
 }
 
