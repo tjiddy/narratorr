@@ -126,7 +126,14 @@ export class QBittorrentClient implements DownloadClientAdapter {
     try {
       return JSON.parse(text) as T;
     } catch {
-      throw new Error('Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.');
+      // Non-JSON 2xx response (e.g. qB returns "Ok." for /torrents/add).
+      // Check Content-Type to distinguish: HTML/text from a proxy is an error,
+      // plain text from qB (no content-type or text/plain) is a valid non-JSON response.
+      const contentType = response.headers.get('content-type') ?? '';
+      if (contentType.includes('text/html')) {
+        throw new Error('Connection failed: server didn\'t respond as expected. Check host, port, SSL settings, and any reverse proxy (e.g. Authelia) that may be intercepting requests.');
+      }
+      return undefined as T;
     }
   }
 

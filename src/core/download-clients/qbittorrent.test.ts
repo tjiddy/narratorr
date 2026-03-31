@@ -112,6 +112,30 @@ describe('QBittorrentClient', () => {
       expect(callCount).toBe(2);
     });
 
+    it('returns undefined for non-JSON success response (e.g. Ok.)', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return new HttpResponse('Ok.');
+        }),
+      );
+
+      // getDownload calls request() which returns undefined, then checks if (!raw) return null
+      const result = await client.getDownload('abc123');
+      expect(result).toBeNull();
+    });
+
+    it('throws for HTML response from proxy interception', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return new HttpResponse('<html><body>Authelia Login</body></html>', {
+            headers: { 'Content-Type': 'text/html; charset=utf-8' },
+          });
+        }),
+      );
+
+      await expect(client.getDownload('abc123')).rejects.toThrow('didn\'t respond as expected');
+    });
+
     it('does not retry infinitely (throws after second 403)', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
@@ -160,6 +184,18 @@ describe('QBittorrentClient', () => {
       await expect(client.addDownload('magnet:?dn=Test')).rejects.toThrow(
         'Could not extract info hash from magnet URI',
       );
+    });
+
+    it('succeeds when qBittorrent returns plain text Ok. response', async () => {
+      server.use(
+        http.post(`${BASE_URL}/api/v2/torrents/add`, () => {
+          return new HttpResponse('Ok.');
+        }),
+      );
+
+      const magnetUri = 'magnet:?xt=urn:btih:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0&dn=Test';
+      const hash = await client.addDownload(magnetUri);
+      expect(hash).toBe('a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0');
     });
 
     it('throws for .torrent URLs before sending request', async () => {
@@ -615,7 +651,19 @@ describe('QBittorrentClient', () => {
       expect(result!.eta).toBeUndefined();
     });
 
-    it('handles whitespace-only response body as empty', async () => {
+    it('handles whitespace-only response body with HTML content-type as error', async () => {
+      server.use(
+        http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
+          return new HttpResponse('   ', {
+            headers: { 'Content-Type': 'text/html' },
+          });
+        }),
+      );
+
+      await expect(client.getDownload('abc123')).rejects.toThrow('didn\'t respond as expected');
+    });
+
+    it('handles whitespace-only response body without HTML content-type as undefined', async () => {
       server.use(
         http.get(`${BASE_URL}/api/v2/torrents/info`, () => {
           return new HttpResponse('   ', {
@@ -624,8 +672,8 @@ describe('QBittorrentClient', () => {
         }),
       );
 
-      // Whitespace is truthy but JSON.parse('   ') throws — this tests error path
-      await expect(client.getDownload('abc123')).rejects.toThrow();
+      const result = await client.getDownload('abc123');
+      expect(result).toBeNull();
     });
 
     it('handles null response from getAllDownloads', async () => {
