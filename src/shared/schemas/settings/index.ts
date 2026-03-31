@@ -6,7 +6,7 @@ export { logLevelSchema, type LogLevel, generalSettingsSchema, generalFormSchema
 export { audibleRegionSchema, type AudibleRegion, metadataSettingsSchema } from './metadata.js';
 export { outputFormatSchema, type OutputFormat, mergeBehaviorSchema, type MergeBehavior, processingSettingsSchema } from './processing.js';
 export { tagModeSchema, type TagMode, taggingSettingsSchema } from './tagging.js';
-export { protocolPreferenceSchema, type ProtocolPreference, qualitySettingsSchema, qualityFormSchema } from './quality.js';
+export { protocolPreferenceSchema, type ProtocolPreference, qualitySettingsSchema, qualityFormSchema, qualityFilteringFormSchema, newBookDefaultsFormSchema } from './quality.js';
 export { networkSettingsSchema } from './network.js';
 export { discoverySettingsSchema, discoveryFormSchema } from './discovery.js';
 export {
