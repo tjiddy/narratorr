@@ -719,10 +719,47 @@ describe('settingsRegistry', () => {
 
   // Finding 4: Partial update must not inject defaults (#227)
   describe('updateSettingsSchema partial update default preservation (#227)', () => {
-    it.todo('parsing { general: { logLevel: "error" } } does NOT produce a welcomeSeen key in the output');
-    it.todo('parsing { general: {} } produces an empty general object (no default injection)');
-    it.todo('parsing { search: { enabled: false } } does NOT produce intervalMinutes or blacklistTtlDays');
-    it.todo('parsing { import: { deleteAfterImport: true } } does NOT produce minSeedTime or minFreeSpaceGB');
-    it.todo('full update with all fields still applies correctly');
+    it('parsing { general: { logLevel: "error" } } does NOT produce a welcomeSeen key in the output', () => {
+      const result = updateSettingsSchema.safeParse({ general: { logLevel: 'error' } });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const general = (result.data as Record<string, Record<string, unknown>>).general;
+        expect(general).not.toHaveProperty('welcomeSeen');
+      }
+    });
+
+    it('parsing { general: {} } produces an empty general object (no default injection)', () => {
+      const result = updateSettingsSchema.safeParse({ general: {} });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const general = (result.data as Record<string, Record<string, unknown>>).general;
+        expect(Object.keys(general)).toHaveLength(0);
+      }
+    });
+
+    it('parsing { search: { enabled: false } } does NOT produce intervalMinutes or blacklistTtlDays', () => {
+      const result = updateSettingsSchema.safeParse({ search: { enabled: false } });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const search = (result.data as Record<string, Record<string, unknown>>).search;
+        expect(search).not.toHaveProperty('intervalMinutes');
+        expect(search).not.toHaveProperty('blacklistTtlDays');
+      }
+    });
+
+    it('parsing { import: { deleteAfterImport: true } } does NOT produce minSeedTime or minFreeSpaceGB', () => {
+      const result = updateSettingsSchema.safeParse({ import: { deleteAfterImport: true } });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const imp = (result.data as Record<string, Record<string, unknown>>).import;
+        expect(imp).not.toHaveProperty('minSeedTime');
+        expect(imp).not.toHaveProperty('minFreeSpaceGB');
+      }
+    });
+
+    it('full update with all fields still applies correctly', () => {
+      const result = updateSettingsSchema.safeParse(DEFAULT_SETTINGS);
+      expect(result.success).toBe(true);
+    });
   });
 });
