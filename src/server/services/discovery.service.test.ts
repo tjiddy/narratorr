@@ -698,6 +698,20 @@ describe('DiscoveryService', () => {
       expect(mockBookService.create).not.toHaveBeenCalled();
     });
 
+    it('detects authorless duplicate by title and sets status without creating book (#246)', async () => {
+      const existing = { id: 1, asin: null, title: 'Shogun', authorName: null, status: 'pending' };
+      const db = createMockDb();
+      db.select.mockReturnValue(mockDbChain([existing]));
+      db.update.mockReturnValue(mockDbChain());
+      mockBookService.findDuplicate.mockResolvedValueOnce({ id: 99, title: 'Shogun' });
+      const { service } = createService(db);
+
+      const result = await service.addSuggestion(1);
+      expect(result!.duplicate).toBe(true);
+      expect(mockBookService.findDuplicate).toHaveBeenCalledWith('Shogun', undefined, null);
+      expect(mockBookService.create).not.toHaveBeenCalled();
+    });
+
     it('returns null for unknown suggestion ID', async () => {
       const db = createMockDb();
       db.select.mockReturnValue(mockDbChain([]));
