@@ -193,19 +193,91 @@ describe('copyAudioFiles', () => {
     );
   });
 
-  it('preserves directory structure during copy', async () => {
+  it('flattens single subfolder — audio files copied directly to target, not nested', async () => {
     vi.mocked(readdir)
       .mockResolvedValueOnce([makeDirent('subdir', false, true)] as never)
       .mockResolvedValueOnce([makeDirent('audio.m4b', true, false)] as never);
 
     await copyAudioFiles('/src', '/dest');
 
-    // Should have created the nested target dir and copied the file
-    expect(mkdir).toHaveBeenCalled();
+    expect(mkdir).toHaveBeenCalledWith('/dest', { recursive: true });
     expect(cp).toHaveBeenCalledTimes(1);
+    expect(cp).toHaveBeenCalledWith('/src/subdir/audio.m4b', '/dest/audio.m4b', { errorOnExist: false });
   });
 
-  it('skips non-audio files', async () => {
+  it('flattens deeply nested single-path structure (A/B/C/audio.mp3) to target root', async () => {
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([makeDirent('A', false, true)] as never)
+      .mockResolvedValueOnce([makeDirent('B', false, true)] as never)
+      .mockResolvedValueOnce([makeDirent('C', false, true)] as never)
+      .mockResolvedValueOnce([makeDirent('deep.mp3', true, false)] as never);
+
+    await copyAudioFiles('/src', '/dest');
+
+    expect(cp).toHaveBeenCalledTimes(1);
+    expect(cp).toHaveBeenCalledWith('/src/A/B/C/deep.mp3', '/dest/deep.mp3', { errorOnExist: false });
+  });
+
+  it('flattens multiple subfolders with uniquely-named audio files into target', async () => {
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([
+        makeDirent('Disc 1', false, true),
+        makeDirent('Disc 2', false, true),
+      ] as never)
+      .mockResolvedValueOnce([makeDirent('chapter1.mp3', true, false)] as never)
+      .mockResolvedValueOnce([makeDirent('chapter2.mp3', true, false)] as never);
+
+    await copyAudioFiles('/src', '/dest');
+
+    expect(cp).toHaveBeenCalledTimes(2);
+    expect(cp).toHaveBeenCalledWith('/src/Disc 1/chapter1.mp3', '/dest/chapter1.mp3', { errorOnExist: false });
+    expect(cp).toHaveBeenCalledWith('/src/Disc 2/chapter2.mp3', '/dest/chapter2.mp3', { errorOnExist: false });
+  });
+
+  it('copies audio files at root level without change (no subfolder)', async () => {
+    vi.mocked(readdir).mockResolvedValue([
+      makeDirent('track1.mp3', true, false),
+      makeDirent('track2.mp3', true, false),
+    ] as never);
+
+    await copyAudioFiles('/src', '/dest');
+
+    expect(cp).toHaveBeenCalledTimes(2);
+    expect(cp).toHaveBeenCalledWith('/src/track1.mp3', '/dest/track1.mp3', { errorOnExist: false });
+    expect(cp).toHaveBeenCalledWith('/src/track2.mp3', '/dest/track2.mp3', { errorOnExist: false });
+  });
+
+  it('flattens mixed content — audio at root AND in subfolders — all end up at target root', async () => {
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([
+        makeDirent('root.mp3', true, false),
+        makeDirent('sub', false, true),
+      ] as never)
+      .mockResolvedValueOnce([makeDirent('nested.m4b', true, false)] as never);
+
+    await copyAudioFiles('/src', '/dest');
+
+    expect(cp).toHaveBeenCalledTimes(2);
+    expect(cp).toHaveBeenCalledWith('/src/root.mp3', '/dest/root.mp3', { errorOnExist: false });
+    expect(cp).toHaveBeenCalledWith('/src/sub/nested.m4b', '/dest/nested.m4b', { errorOnExist: false });
+  });
+
+  it('skips non-audio files in subfolders during flattening', async () => {
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([makeDirent('sub', false, true)] as never)
+      .mockResolvedValueOnce([
+        makeDirent('audio.mp3', true, false),
+        makeDirent('notes.txt', true, false),
+        makeDirent('cover.jpg', true, false),
+      ] as never);
+
+    await copyAudioFiles('/src', '/dest');
+
+    expect(cp).toHaveBeenCalledTimes(1);
+    expect(cp).toHaveBeenCalledWith('/src/sub/audio.mp3', '/dest/audio.mp3', { errorOnExist: false });
+  });
+
+  it('skips non-audio files at root level', async () => {
     vi.mocked(readdir).mockResolvedValue([
       makeDirent('notes.txt', true, false),
       makeDirent('image.png', true, false),
@@ -214,6 +286,46 @@ describe('copyAudioFiles', () => {
     await copyAudioFiles('/src', '/dest');
 
     expect(cp).not.toHaveBeenCalled();
+  });
+
+  it('fails with error identifying conflicting filenames when flattening produces duplicate basenames', async () => {
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([
+        makeDirent('Disc 1', false, true),
+        makeDirent('Disc 2', false, true),
+      ] as never)
+      .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never)
+      .mockResolvedValueOnce([makeDirent('01.mp3', true, false)] as never);
+
+    await expect(copyAudioFiles('/src', '/dest')).rejects.toThrow('01.mp3');
+  });
+
+  it('collision detection runs before any files are copied — no partial state on cp mock', async () => {
+    vi.mocked(readdir)
+      .mockResolvedValueOnce([
+        makeDirent('Disc 1', false, true),
+        makeDirent('Disc 2', false, true),
+      ] as never)
+      .mockResolvedValueOnce([makeDirent('track.mp3', true, false)] as never)
+      .mockResolvedValueOnce([makeDirent('track.mp3', true, false)] as never);
+
+    await expect(copyAudioFiles('/src', '/dest')).rejects.toThrow();
+
+    expect(cp).not.toHaveBeenCalled();
+  });
+
+  it('propagates cp error (fail-fast) — does not continue copying remaining files', async () => {
+    vi.mocked(readdir).mockResolvedValue([
+      makeDirent('a.mp3', true, false),
+      makeDirent('b.mp3', true, false),
+    ] as never);
+    vi.mocked(cp)
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(copyAudioFiles('/src', '/dest')).rejects.toThrow('disk full');
+
+    expect(cp).toHaveBeenCalledTimes(1);
   });
 });
 
