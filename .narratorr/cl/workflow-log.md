@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #255 Chore: Backend DRY cleanup — imports, bitrate capping, year extraction — 2026-03-31
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #258
+
+### Metrics
+- Files changed: 7 | Tests added/modified: 1 (11 new tests in audio-bitrate.test.ts)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (cleanName trailing whitespace after extracting normalizeFolderName)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean 3-module plan mapped directly to 3 commits. Existing test coverage in merge/bulk-operation/import-steps caught the refactor's correctness immediately.
+- Friction / issues encountered: cleanName's year-stripping regexes leave trailing whitespace that was previously handled by the monolithic trim chain. Required adding `.trim()` after year-stripping in the refactored version.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for codebase exploration (reading 10+ files for bitrate contract analysis)
+- Avoidable waste: None — the three-module structure was efficient
+- Suggestions: For pure-refactor chores, the self-review and coverage review steps could be lighter since behavior is unchanged
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: paths.ts/import-helpers.ts still duplicate extractYear (date-string variant) — updated in debt.md
+
+### Wish I'd Known
+1. `cleanName`'s regex chain has an implicit ordering dependency with whitespace — extracting the middle steps requires re-trimming after the year-stripping tail (see `cleanname-extractyear-shared-normalization.md`)
+2. The three `extractYear` variants have fundamentally different signatures (string→string vs string→number) — they cannot be naively unified without breaking callers
+3. The bitrate "capping" at call sites is purely informational logging — the actual Math.min happens in audio-processor.ts, which is easy to miss when reading the spec
+
 ## #253 Bug: Title-only dedup in findDuplicate matches authored books — 2026-03-31
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #256
