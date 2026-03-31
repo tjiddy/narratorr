@@ -27,6 +27,8 @@ const defaultProps = {
   isMerging: false,
   canMerge: false,
   mergeDisabled: false,
+  onRemoveClick: vi.fn(),
+  isRemoving: false,
 };
 
 function renderHero(overrides = {}) {
@@ -274,6 +276,37 @@ describe('BookHero', () => {
       renderHero({ monitorForUpgrades: true });
       const button = screen.getByText('Monitoring').closest('button');
       expect(button).toHaveAttribute('title', 'Monitoring for quality upgrades');
+    });
+  });
+
+  describe('remove button', () => {
+    it('renders the Remove button', () => {
+      renderHero();
+      expect(screen.getByRole('button', { name: /Remove/ })).toBeInTheDocument();
+    });
+
+    it('calls onRemoveClick when clicked', async () => {
+      const onRemoveClick = vi.fn();
+      const user = userEvent.setup();
+      renderHero({ onRemoveClick });
+
+      await user.click(screen.getByRole('button', { name: /Remove/ }));
+
+      expect(onRemoveClick).toHaveBeenCalledTimes(1);
+    });
+
+    it('disables button and shows pending label when isRemoving is true', () => {
+      renderHero({ isRemoving: true });
+      const button = screen.getByRole('button', { name: /Removing/ });
+      expect(button).toBeDisabled();
+      expect(button).toHaveTextContent('Removing...');
+    });
+
+    it('shows normal label when isRemoving is false', () => {
+      renderHero({ isRemoving: false });
+      const button = screen.getByRole('button', { name: /Remove/ });
+      expect(button).not.toBeDisabled();
+      expect(button).toHaveTextContent('Remove');
     });
   });
 });

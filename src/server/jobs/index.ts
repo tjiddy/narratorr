@@ -50,7 +50,6 @@ export function startJobs(db: Db, services: Services, log: FastifyBaseLogger) {
     { name: 'rss', type: 'timeout', getIntervalMinutes: () => services.settings.get('rss').then((s) => s.intervalMinutes), callback: () => runRssJob(services.settings, services.bookList, services.book, services.indexer, services.downloadOrchestrator, services.blacklist, log) },
     { name: 'backup', type: 'timeout', getIntervalMinutes: () => services.settings.get('system').then((s) => s.backupIntervalMinutes), callback: () => runBackupJob(services.backup, log) },
     { name: 'housekeeping', type: 'cron', schedule: '0 0 * * 0', callback: async () => { await db.run(sql`VACUUM`); const generalSettings = await services.settings.get('general'); const retentionDays = generalSettings.housekeepingRetentionDays ?? 90; await services.eventHistory.pruneOlderThan(retentionDays); await services.blacklist.deleteExpired(); } },
-    { name: 'recycle-cleanup', type: 'cron', schedule: '0 2 * * *', callback: () => services.recyclingBin.purgeExpired() },
     { name: 'health-check', type: 'cron', schedule: '*/5 * * * *', callback: () => services.healthCheck.runAllChecks() },
     { name: 'version-check', type: 'cron', schedule: '0 2 * * *', callback: () => checkForUpdate(log) },
     { name: 'import-list-sync', type: 'cron', schedule: '* * * * *', callback: () => services.importList.syncDueLists() },

@@ -170,7 +170,7 @@ describe('settings routes', () => {
     it('round-trips housekeepingRetentionDays through PUT and returns updated value', async () => {
       const updated = {
         ...mockSettings,
-        general: { logLevel: 'info', housekeepingRetentionDays: 30, recycleRetentionDays: 30 },
+        general: { logLevel: 'info', housekeepingRetentionDays: 30 },
       };
       (services.settings.update as Mock).mockResolvedValue(updated);
 
@@ -262,7 +262,7 @@ describe('settings routes', () => {
     it('preserves welcomeSeen when PUT only updates logLevel', async () => {
       const updated = {
         ...mockSettings,
-        general: { logLevel: 'debug', housekeepingRetentionDays: 90, recycleRetentionDays: 30, welcomeSeen: true },
+        general: { logLevel: 'debug', housekeepingRetentionDays: 90, welcomeSeen: true },
       };
       (services.settings.update as Mock).mockResolvedValue(updated);
 

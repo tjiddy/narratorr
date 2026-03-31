@@ -1732,10 +1732,9 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
     const checkbox = screen.getByLabelText(/delete files from disk/i);
     await user.click(checkbox);
 
-    // Confirm deletion
-    const confirmButtons = screen.getAllByRole('button', { name: /delete/i });
-    const confirmButton = confirmButtons.find(b => b.closest('[role="dialog"]'));
-    await user.click(confirmButton!);
+    // Confirm deletion via the Remove button in the dialog
+    const confirmButton = within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' });
+    await user.click(confirmButton);
 
     await waitFor(() => {
       expect(vi.mocked(api.deleteBook)).toHaveBeenCalledWith(
@@ -1763,10 +1762,9 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
       expect(screen.getByText('Delete Selected Books')).toBeInTheDocument();
     });
 
-    // Confirm without checking deleteFiles
-    const confirmButtons = screen.getAllByRole('button', { name: /delete/i });
-    const confirmButton = confirmButtons.find(b => b.closest('[role="dialog"]'));
-    await user.click(confirmButton!);
+    // Confirm without checking deleteFiles via the Remove button in the dialog
+    const confirmButton = within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' });
+    await user.click(confirmButton);
 
     await waitFor(() => {
       // deleteFiles=false → deleteBook(id, undefined)

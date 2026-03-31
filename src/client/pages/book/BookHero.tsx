@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { resolveUrl } from '@/lib/url-utils';
-import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon, PackageIcon } from '@/components/icons';
+import { ArrowLeftIcon, SearchIcon, BookOpenIcon, PencilIcon, RefreshIcon, TagIcon, PackageIcon, TrashIcon } from '@/components/icons';
 
 interface BookHeroProps {
   title: string;
@@ -27,6 +27,8 @@ interface BookHeroProps {
   canMerge: boolean;
   mergeDisabled: boolean;
   mergeTooltip?: string;
+  onRemoveClick: () => void;
+  isRemoving: boolean;
   importListName?: string | null;
   monitorForUpgrades: boolean;
   onMonitorToggle: () => void;
@@ -40,6 +42,7 @@ export function BookHero({
   hasPath, onBackClick, onSearchClick, onEditClick, onRenameClick, isRenaming,
   onRetagClick, isRetagging, retagDisabled, retagTooltip,
   onMergeClick, isMerging, canMerge, mergeDisabled, mergeTooltip,
+  onRemoveClick, isRemoving,
   importListName, monitorForUpgrades, onMonitorToggle, isMonitorToggling,
 }: BookHeroProps) {
   return (
@@ -171,6 +174,15 @@ export function BookHero({
                 {isMerging ? 'Merging...' : 'Merge to M4B'}
               </button>
             )}
+            <button
+              type="button"
+              onClick={onRemoveClick}
+              disabled={isRemoving}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-medium text-destructive hover:text-destructive glass-card hover:border-destructive/30 transition-all duration-200 focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <TrashIcon className="w-3.5 h-3.5" />
+              {isRemoving ? 'Removing...' : 'Remove'}
+            </button>
           </div>
         </div>
       </div>

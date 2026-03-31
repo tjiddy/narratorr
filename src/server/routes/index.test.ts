@@ -43,7 +43,6 @@ vi.mock('../services/backup.service.js', () => ({ BackupService: vi.fn() }));
 vi.mock('../services/health-check.service.js', () => ({ HealthCheckService: vi.fn() }));
 vi.mock('../services/task-registry.js', () => ({ TaskRegistry: vi.fn() }));
 vi.mock('../services/event-broadcaster.service.js', () => ({ EventBroadcasterService: vi.fn() }));
-vi.mock('../services/recycling-bin.service.js', () => ({ RecyclingBinService: vi.fn() }));
 vi.mock('../services/retry-search.js', () => ({ createRetrySearchDeps: vi.fn().mockReturnValue({}) }));
 vi.mock('../config.js', () => ({ config: { configPath: '/tmp/config', dbPath: '/tmp/db.sqlite' } }));
 vi.mock('../../core/utils/audio-processor.js', () => ({ detectFfmpegPath: vi.fn(), probeFfmpeg: vi.fn() }));
@@ -54,8 +53,8 @@ describe('routeRegistry', () => {
     // books, bookFiles, search, activity, indexers, downloadClients,
     // settings, metadata, libraryScan, system, update, notifiers, blacklist,
     // auth, remotePathMapping, filesystem, eventHistory, events,
-    // recyclingBin, prowlarrCompat, importLists, discover, bulkOperations
-    expect(routeRegistry).toHaveLength(23);
+    // prowlarrCompat, importLists, discover, bulkOperations
+    expect(routeRegistry).toHaveLength(22);
   });
 
   it('every entry is a function', () => {

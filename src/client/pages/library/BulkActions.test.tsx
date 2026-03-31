@@ -53,6 +53,7 @@ function renderToolbar(overrides: Partial<Parameters<typeof BulkActionToolbar>[0
     onSetStatus: vi.fn(),
     isSettingStatus: false,
     hasPath: true,
+    fileCount: 0,
     ...overrides,
   };
   const result = render(

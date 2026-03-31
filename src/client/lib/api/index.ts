@@ -15,7 +15,6 @@ export type { RemotePathMapping } from './remote-path-mappings.js';
 export type { BookEvent, EventHistoryParams } from './event-history.js';
 export type { BackupMetadata, RestoreValidation, BackupJobResult } from './backups.js';
 export type { HealthState, HealthCheckResult, HealthSummary, TaskMetadata, SystemInfo, SystemStatus } from './system.js';
-export type { RecyclingBinEntry } from './recycling-bin.js';
 export type { ImportList, ImportListItem, ImportListPreview } from './import-lists.js';
 export type { SuggestionRow, DiscoverStats, AddSuggestionResult, RefreshResult } from './discover.js';
 export type { BulkOpType, BulkJobStatus, RenameCount } from './bulk-operations.js';
@@ -38,7 +37,6 @@ import { filesystemApi } from './filesystem.js';
 import { remotePathMappingsApi } from './remote-path-mappings.js';
 import { eventHistoryApi } from './event-history.js';
 import { backupsApi } from './backups.js';
-import { recyclingBinApi } from './recycling-bin.js';
 import { importListsApi } from './import-lists.js';
 import { discoverApi } from './discover.js';
 import { bulkOperationsApi } from './bulk-operations.js';
@@ -59,7 +57,6 @@ export const api = {
   ...remotePathMappingsApi,
   ...eventHistoryApi,
   ...backupsApi,
-  ...recyclingBinApi,
   ...importListsApi,
   ...discoverApi,
   ...bulkOperationsApi,

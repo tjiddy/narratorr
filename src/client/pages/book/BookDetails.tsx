@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import { BookMetadataModal } from '@/components/book/BookMetadataModal.js';
 import { ConfirmModal } from '@/components/ConfirmModal.js';
+import { DeleteBookModal } from '@/components/DeleteBookModal.js';
 import { HistoryIcon, BookOpenIcon } from '@/components/icons';
 import type { BookWithAuthor } from '@/lib/api';
 import { BookHero } from './BookHero.js';
@@ -17,6 +18,7 @@ function getArrowTabIndex(key: string, currentIndex: number, length: number): nu
   return null;
 }
 
+// eslint-disable-next-line max-lines-per-function -- page orchestrator with multiple confirm modals
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
   metadataBook?: MetadataBook | null;
@@ -27,13 +29,14 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const [confirmRenameOpen, setConfirmRenameOpen] = useState(false);
   const [confirmRetagOpen, setConfirmRetagOpen] = useState(false);
   const [confirmMergeOpen, setConfirmMergeOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [tab, setTab] = useState<'details' | 'history'>('details');
 
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const tabs = ['details', 'history'] as const;
 
   const merged = mergeBookData(libraryBook, metadataBook);
-  const { renameMutation, mergeMutation, retagMutation, monitorMutation, ffmpegConfigured, isSaving, handleSave } =
+  const { renameMutation, mergeMutation, retagMutation, deleteMutation, monitorMutation, ffmpegConfigured, isSaving, handleSave } =
     useBookActions(libraryBook.id, libraryBook.monitorForUpgrades);
 
   const canMerge = libraryBook.status === 'imported' &&
@@ -75,6 +78,8 @@ export function BookDetails({ libraryBook, metadataBook }: {
         canMerge={canMerge}
         mergeDisabled={!ffmpegConfigured}
         mergeTooltip={!ffmpegConfigured ? 'Requires ffmpeg — configure in Settings > Post Processing' : undefined}
+        onRemoveClick={() => setConfirmDeleteOpen(true)}
+        isRemoving={deleteMutation.isPending}
         importListName={libraryBook.importListName}
         monitorForUpgrades={libraryBook.monitorForUpgrades}
         onMonitorToggle={() => monitorMutation.mutate()}
@@ -176,6 +181,21 @@ export function BookDetails({ libraryBook, metadataBook }: {
         confirmLabel="Merge"
         onConfirm={() => { setConfirmMergeOpen(false); mergeMutation.mutate(); }}
         onCancel={() => setConfirmMergeOpen(false)}
+      />
+
+      <DeleteBookModal
+        isOpen={confirmDeleteOpen}
+        title="Remove from Library"
+        message={`Are you sure you want to remove "${libraryBook.title}" from your library? This will cancel any active downloads.`}
+        fileCount={libraryBook.audioFileCount}
+        hasPath={!!libraryBook.path}
+        onConfirm={(deleteFiles) => {
+          setConfirmDeleteOpen(false);
+          deleteMutation.mutate({ deleteFiles }, {
+            onSuccess: () => navigate('/library'),
+          });
+        }}
+        onCancel={() => setConfirmDeleteOpen(false)}
       />
     </div>
   );

@@ -8,6 +8,13 @@ import { BookDetails } from './BookDetails';
 import type { BookWithAuthor } from '@/lib/api';
 import type { MetadataBook } from './helpers';
 
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- vi.mock requires dynamic import
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return { ...actual, useNavigate: () => mockNavigate };
+});
+
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
@@ -31,6 +38,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       renameBook: vi.fn(),
       retagBook: vi.fn(),
       mergeBookToM4b: vi.fn(),
+      deleteBook: vi.fn(),
       getSettings: vi.fn(),
     },
   };
@@ -74,6 +82,7 @@ function renderBookDetails(
 describe('BookDetails', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockNavigate.mockClear();
   });
 
   describe('full data layout', () => {
@@ -1035,6 +1044,98 @@ describe('BookDetails', () => {
       await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Merge' }));
 
       await waitFor(() => expect(api.mergeBookToM4b).toHaveBeenCalledWith(1));
+    });
+  });
+
+  describe('delete action', () => {
+    it('renders Remove button in action row', () => {
+      renderBookDetails({ path: '/lib/test' });
+      expect(screen.getByRole('button', { name: /Remove/ })).toBeInTheDocument();
+    });
+
+    it('opens delete confirmation modal when Remove is clicked', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ path: '/lib/test' });
+
+      await user.click(screen.getByRole('button', { name: /Remove/ }));
+
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(screen.getByText(/Are you sure you want to remove/)).toBeInTheDocument();
+    });
+
+    it('calls deleteBook API with deleteFiles=false when confirmed without toggle', async () => {
+      const user = userEvent.setup();
+      (api.deleteBook as Mock).mockResolvedValue({ success: true });
+      renderBookDetails({ id: 1, path: '/lib/test' });
+
+      await user.click(screen.getByRole('button', { name: /Remove/ }));
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
+
+      await waitFor(() => expect(api.deleteBook).toHaveBeenCalledWith(1, undefined));
+    });
+
+    it('calls deleteBook API with deleteFiles=true when confirmed with toggle checked', async () => {
+      const user = userEvent.setup();
+      (api.deleteBook as Mock).mockResolvedValue({ success: true });
+      renderBookDetails({ id: 1, path: '/lib/test', audioFileCount: 5 });
+
+      await user.click(screen.getByRole('button', { name: /Remove/ }));
+      await user.click(screen.getByLabelText('Also delete 5 files from disk'));
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
+
+      await waitFor(() => expect(api.deleteBook).toHaveBeenCalledWith(1, { deleteFiles: true }));
+    });
+
+    it('shows error toast on delete failure', async () => {
+      const user = userEvent.setup();
+      (api.deleteBook as Mock).mockRejectedValue(new Error('Permission denied'));
+      renderBookDetails({ id: 1, path: '/lib/test' });
+
+      await user.click(screen.getByRole('button', { name: /Remove/ }));
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to remove book: Permission denied'));
+    });
+
+    it('navigates to library page after successful delete', async () => {
+      const user = userEvent.setup();
+      (api.deleteBook as Mock).mockResolvedValue({ success: true });
+      renderBookDetails({ id: 1, path: '/lib/test' });
+
+      await user.click(screen.getByRole('button', { name: /Remove/ }));
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
+
+      await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/library'));
+    });
+
+    it('does not navigate on delete failure', async () => {
+      const user = userEvent.setup();
+      (api.deleteBook as Mock).mockRejectedValue(new Error('Permission denied'));
+      renderBookDetails({ id: 1, path: '/lib/test' });
+
+      await user.click(screen.getByRole('button', { name: /Remove/ }));
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalled());
+      expect(mockNavigate).not.toHaveBeenCalledWith('/library');
+    });
+
+    it('shows file count in delete toggle label when audioFileCount is positive', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ path: '/lib/test', audioFileCount: 12 });
+
+      await user.click(screen.getByRole('button', { name: /Remove/ }));
+
+      expect(screen.getByLabelText('Also delete 12 files from disk')).toBeInTheDocument();
+    });
+
+    it('shows generic label when audioFileCount is null', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ path: '/lib/test', audioFileCount: null });
+
+      await user.click(screen.getByRole('button', { name: /Remove/ }));
+
+      expect(screen.getByLabelText('Delete files from disk')).toBeInTheDocument();
     });
   });
 });

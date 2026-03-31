@@ -1,12 +1,11 @@
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { DeleteBookModal } from '@/components/DeleteBookModal';
 import { SearchReleasesModal } from '@/components/SearchReleasesModal';
 import type { BookWithAuthor } from '@/lib/api';
 
 export function LibraryModals({
   deleteTarget,
   isDeleteOpen,
-  deleteFiles,
-  onDeleteFilesChange,
   onDeleteConfirm,
   onDeleteCancel,
   showRemoveMissingModal,
@@ -22,9 +21,7 @@ export function LibraryModals({
 }: {
   deleteTarget: BookWithAuthor | null;
   isDeleteOpen: boolean;
-  deleteFiles: boolean;
-  onDeleteFilesChange: (checked: boolean) => void;
-  onDeleteConfirm: () => void;
+  onDeleteConfirm: (deleteFiles: boolean) => void;
   onDeleteCancel: () => void;
   showRemoveMissingModal: boolean;
   missingCount: number;
@@ -39,27 +36,15 @@ export function LibraryModals({
 }) {
   return (
     <>
-      <ConfirmModal
+      <DeleteBookModal
         isOpen={isDeleteOpen}
         title="Remove from Library"
         message={`Are you sure you want to remove "${deleteTarget?.title}" from your library? This will cancel any active downloads.`}
-        confirmLabel="Remove"
-        cancelLabel="Cancel"
+        fileCount={deleteTarget?.audioFileCount}
+        hasPath={!!deleteTarget?.path}
         onConfirm={onDeleteConfirm}
         onCancel={onDeleteCancel}
-      >
-        {deleteTarget?.path && (
-          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={deleteFiles}
-              onChange={(e) => onDeleteFilesChange(e.target.checked)}
-              className="rounded border-border text-destructive focus:ring-destructive"
-            />
-            Delete files from disk
-          </label>
-        )}
-      </ConfirmModal>
+      />
 
       <ConfirmModal
         isOpen={showRemoveMissingModal}

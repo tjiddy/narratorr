@@ -25,7 +25,6 @@ export function GeneralSettingsForm() {
     defaultValues: {
       logLevel: DEFAULT_SETTINGS.general.logLevel,
       housekeepingRetentionDays: DEFAULT_SETTINGS.general.housekeepingRetentionDays,
-      recycleRetentionDays: DEFAULT_SETTINGS.general.recycleRetentionDays,
     },
     resolver: zodResolver(generalFormSchema),
   });
@@ -35,7 +34,6 @@ export function GeneralSettingsForm() {
       reset({
         logLevel: settings.general.logLevel,
         housekeepingRetentionDays: settings.general.housekeepingRetentionDays,
-        recycleRetentionDays: settings.general.recycleRetentionDays,
       });
     }
   }, [settings, reset, isDirty]);
@@ -77,25 +75,6 @@ export function GeneralSettingsForm() {
           )}
           <p className="text-sm text-muted-foreground mt-2">
             Events older than this many days are automatically pruned during the weekly housekeeping job. Valid range: 1–365 days.
-          </p>
-        </div>
-        <div>
-          <label htmlFor="recycleRetentionDays" className="block text-sm font-medium mb-2">Recycling Bin Retention (days)</label>
-          <input
-            id="recycleRetentionDays"
-            type="number"
-            min={0}
-            max={365}
-            {...register('recycleRetentionDays', { valueAsNumber: true })}
-            className={`w-full px-4 py-3 bg-background border rounded-xl focus-ring focus:border-transparent transition-all ${
-              errors.recycleRetentionDays ? 'border-destructive' : 'border-border'
-            }`}
-          />
-          {errors.recycleRetentionDays && (
-            <p className="text-sm text-destructive mt-1">{errors.recycleRetentionDays.message}</p>
-          )}
-          <p className="text-sm text-muted-foreground mt-2">
-            Deleted books are permanently removed after this many days. Set to 0 to disable automatic cleanup. Valid range: 0–365 days.
           </p>
         </div>
       </SettingsSection>
