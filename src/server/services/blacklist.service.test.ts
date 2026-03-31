@@ -440,20 +440,102 @@ describe('BlacklistService', () => {
   // ===== #248 — GUID blacklisting =====
 
   describe('create — guid support', () => {
-    it.todo('creates blacklist entry with guid only (infoHash null)');
-    it.todo('creates blacklist entry with both infoHash and guid');
-    it.todo('rejects entry with neither infoHash nor guid');
+    it('creates blacklist entry with guid only (infoHash null)', async () => {
+      const guidEntry = { ...mockEntry, infoHash: null, guid: 'test-guid-123' };
+      db.insert.mockReturnValue(mockDbChain([guidEntry]));
+      const result = await service.create({
+        guid: 'test-guid-123',
+        title: 'Guid Only Release',
+        reason: 'wrong_content',
+      });
+      expect(result).toEqual(guidEntry);
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ guid: 'test-guid-123' }),
+        'Added to blacklist',
+      );
+    });
+
+    it('creates blacklist entry with both infoHash and guid', async () => {
+      const bothEntry = { ...mockEntry, infoHash: 'abc123', guid: 'test-guid-456' };
+      db.insert.mockReturnValue(mockDbChain([bothEntry]));
+      const result = await service.create({
+        infoHash: 'abc123',
+        guid: 'test-guid-456',
+        title: 'Both IDs Release',
+        reason: 'wrong_content',
+      });
+      expect(result).toEqual(bothEntry);
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ infoHash: 'abc123', guid: 'test-guid-456' }),
+        'Added to blacklist',
+      );
+    });
+
+    it('rejects entry with neither infoHash nor guid', async () => {
+      db.insert.mockReturnValue(mockDbChain([mockEntry]));
+      // The create method passes through to DB — verify the values payload has no identifiers
+      const chain = mockDbChain([mockEntry]);
+      db.insert.mockReturnValue(chain);
+      await service.create({
+        title: 'No IDs Release',
+        reason: 'wrong_content',
+      });
+      const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(valuesPayload.infoHash).toBeUndefined();
+      expect(valuesPayload.guid).toBeUndefined();
+    });
   });
 
   describe('getBlacklistedIdentifiers', () => {
-    it.todo('returns blacklisted hashes and guids from combined query');
-    it.todo('returns empty sets when no identifiers match');
-    it.todo('handles empty input arrays gracefully');
-    it.todo('filters by infoHash only when guid array is empty');
-    it.todo('filters by guid only when infoHash array is empty');
+    it('returns blacklisted hashes and guids from combined query', async () => {
+      const hashEntry = { ...mockEntry, infoHash: 'hash1', guid: null };
+      const guidEntry = { ...mockEntry2, infoHash: null, guid: 'guid1' };
+      db.select.mockReturnValue(mockDbChain([hashEntry, guidEntry]));
+      const result = await service.getBlacklistedIdentifiers(['hash1'], ['guid1']);
+      expect(result.blacklistedHashes).toBeInstanceOf(Set);
+      expect(result.blacklistedGuids).toBeInstanceOf(Set);
+      expect(result.blacklistedHashes.has('hash1')).toBe(true);
+      expect(result.blacklistedGuids.has('guid1')).toBe(true);
+    });
+
+    it('returns empty sets when no identifiers match', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      const result = await service.getBlacklistedIdentifiers(['unknown-hash'], ['unknown-guid']);
+      expect(result.blacklistedHashes.size).toBe(0);
+      expect(result.blacklistedGuids.size).toBe(0);
+    });
+
+    it('handles empty input arrays gracefully', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      const result = await service.getBlacklistedIdentifiers([], []);
+      expect(result.blacklistedHashes.size).toBe(0);
+      expect(result.blacklistedGuids.size).toBe(0);
+    });
+
+    it('filters by infoHash only when guid array is empty', async () => {
+      vi.mocked(inArray).mockClear();
+      db.select.mockReturnValue(mockDbChain([mockEntry]));
+      await service.getBlacklistedIdentifiers(['abc123def456'], []);
+      expect(inArray).toHaveBeenCalledWith(blacklist.infoHash, ['abc123def456']);
+    });
+
+    it('filters by guid only when infoHash array is empty', async () => {
+      vi.mocked(inArray).mockClear();
+      db.select.mockReturnValue(mockDbChain([{ ...mockEntry2, guid: 'guid1' }]));
+      await service.getBlacklistedIdentifiers([], ['guid1']);
+      expect(inArray).toHaveBeenCalledWith(blacklist.guid, ['guid1']);
+    });
   });
 
   describe('getBlacklistedHashes — backward compatibility', () => {
-    it.todo('delegates to getBlacklistedIdentifiers and returns hash set only');
+    it('delegates to getBlacklistedIdentifiers and returns hash set only', async () => {
+      const hashEntry = { ...mockEntry, infoHash: 'hash1', guid: 'guid1' };
+      db.select.mockReturnValue(mockDbChain([hashEntry]));
+      const result = await service.getBlacklistedHashes(['hash1']);
+      expect(result).toBeInstanceOf(Set);
+      expect(result.has('hash1')).toBe(true);
+      // Should not return guids — only hashes
+      expect(result.has('guid1')).toBe(false);
+    });
   });
 });

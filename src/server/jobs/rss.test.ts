@@ -622,8 +622,53 @@ describe('startRssJob', () => {
   // ===== #248 — GUID blacklist filtering in RSS =====
 
   describe('RSS job — GUID blacklist filtering', () => {
-    it.todo('filters out results with blacklisted guid');
-    it.todo('filters out results with blacklisted infoHash (existing behavior)');
-    it.todo('passes through usenet results with no infoHash and no guid');
+    it('filters out results with blacklisted guid', async () => {
+      const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+      const rssResults = [makeResult('Test Book', 'Author', { guid: 'guid-bad' })];
+      const settings = createMockSettingsService({ rss: { enabled: true } });
+      const { bookList, book } = createMockBookServices(wantedBooks);
+      const indexer = createMockIndexerService(rssResults);
+      const download = createMockDownloadOrchestrator();
+      const blacklist = createMockBlacklistService();
+      (blacklist.getBlacklistedIdentifiers as Mock).mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set(['guid-bad']) });
+
+      const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+      expect(result.grabbed).toBe(0);
+      expect(download.grab).not.toHaveBeenCalled();
+    });
+
+    it('filters out results with blacklisted infoHash (existing behavior)', async () => {
+      const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+      const rssResults = [makeResult('Test Book', 'Author', { infoHash: 'hash-bad', guid: 'guid-ok' })];
+      const settings = createMockSettingsService({ rss: { enabled: true } });
+      const { bookList, book } = createMockBookServices(wantedBooks);
+      const indexer = createMockIndexerService(rssResults);
+      const download = createMockDownloadOrchestrator();
+      const blacklist = createMockBlacklistService();
+      (blacklist.getBlacklistedIdentifiers as Mock).mockResolvedValue({ blacklistedHashes: new Set(['hash-bad']), blacklistedGuids: new Set() });
+
+      const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+      expect(result.grabbed).toBe(0);
+      expect(download.grab).not.toHaveBeenCalled();
+    });
+
+    it('passes through usenet results with no infoHash and no guid', async () => {
+      const wantedBooks = [makeWantedBook(1, 'Test Book', 'Author')];
+      const rssResults = [makeResult('Test Book', 'Author', { protocol: 'usenet', infoHash: undefined, guid: undefined })];
+      const settings = createMockSettingsService({ rss: { enabled: true } });
+      const { bookList, book } = createMockBookServices(wantedBooks);
+      const indexer = createMockIndexerService(rssResults);
+      const download = createMockDownloadOrchestrator();
+      const blacklist = createMockBlacklistService();
+
+      const result = await runRssJob(settings, bookList, book, indexer, download, blacklist, inject<FastifyBaseLogger>(log));
+
+      // Result has no infoHash and no guid, so blacklist check should not be called
+      expect(blacklist.getBlacklistedIdentifiers).not.toHaveBeenCalled();
+      // Usenet with no seeders still passes through if minSeeders is 0
+      expect(result.grabbed).toBe(1);
+    });
   });
 });

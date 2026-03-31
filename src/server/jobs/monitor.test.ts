@@ -1242,10 +1242,84 @@ describe('monitor job', () => {
   // ===== #248 — outputPath persistence =====
 
   describe('processDownloadUpdate — outputPath persistence', () => {
-    it.todo('sets outputPath to join(item.savePath, item.name) on first poll when outputPath is null');
-    it.todo('applies remote path mapping to outputPath when mappings are available');
-    it.todo('stores raw join(item.savePath, item.name) when remote path mapping fails');
-    it.todo('does not overwrite outputPath when it is already set');
-    it.todo('sets outputPath on transition-to-completed poll (adapter returns completed, DB status still pre-completed)');
+    it('sets outputPath to join(item.savePath, item.name) on first poll when outputPath is null', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null, outputPath: null },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading', savePath: '/downloads', name: 'my-book', size: 1000 });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log));
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ outputPath: '/downloads/my-book' }));
+    });
+
+    it('applies remote path mapping to outputPath when mappings are available', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null, outputPath: null },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading', savePath: '/remote/downloads', name: 'my-book', size: 1000 });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      const remotePathMappingService = {
+        getByClientId: vi.fn().mockResolvedValue([{ remotePath: '/remote/downloads', localPath: '/local/downloads' }]),
+      };
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, undefined, remotePathMappingService as never);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ outputPath: '/local/downloads/my-book' }));
+    });
+
+    it('stores raw join(item.savePath, item.name) when remote path mapping fails', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null, outputPath: null },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading', savePath: '/downloads', name: 'my-book', size: 1000 });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      const remotePathMappingService = {
+        getByClientId: vi.fn().mockRejectedValue(new Error('DB unavailable')),
+      };
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, undefined, remotePathMappingService as never);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ outputPath: '/downloads/my-book' }));
+    });
+
+    it('does not overwrite outputPath when it is already set', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null, outputPath: '/already/set' },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 50, status: 'downloading', savePath: '/downloads', name: 'my-book', size: 1000 });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log));
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      const progressUpdate = setCalls.find((c) => 'progress' in c);
+      expect(progressUpdate).toBeDefined();
+      expect(progressUpdate).not.toHaveProperty('outputPath');
+    });
+
+    it('sets outputPath on transition-to-completed poll (adapter returns completed, DB status still pre-completed)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([
+        { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null, outputPath: null },
+      ]));
+      adapter.getDownload.mockResolvedValueOnce({ progress: 100, status: 'completed', savePath: '/downloads', name: 'my-book', size: 1000 });
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log));
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ outputPath: '/downloads/my-book' }));
+    });
   });
 });

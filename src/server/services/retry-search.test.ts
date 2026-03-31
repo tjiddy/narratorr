@@ -263,10 +263,136 @@ describe('createRetrySearchDeps', () => {
 // ===== #248 — GUID blacklist filtering in retrySearch =====
 
 describe('retrySearch — GUID blacklist filtering', () => {
-  it.todo('filters out results with blacklisted guid (usenet)');
-  it.todo('filters out results with blacklisted infoHash (torrent — existing behavior)');
-  it.todo('passes through results with no infoHash and no guid');
-  it.todo('treats empty string guid as absent (not matched against blacklist)');
-  it.todo('passes best.guid to grab() when available');
-  it.todo('passes undefined guid to grab() when not available');
+  const usenetResult = {
+    title: 'The Way of Kings [MP3 128kbps]',
+    protocol: 'usenet' as const,
+    downloadUrl: 'https://nzb.example.com/download/abc',
+    size: 500000000,
+    seeders: undefined,
+    indexer: 'TestUsenetIndexer',
+    guid: 'usenet-guid-123',
+  };
+
+  it('filters out results with blacklisted guid (usenet)', async () => {
+    const deps = createDeps({
+      indexerService: inject<IndexerService>({
+        searchAll: vi.fn().mockResolvedValue([usenetResult]),
+      }),
+      blacklistService: inject<BlacklistService>({
+        getBlacklistedHashes: vi.fn().mockResolvedValue(new Set<string>()),
+        getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+          blacklistedHashes: new Set<string>(),
+          blacklistedGuids: new Set(['usenet-guid-123']),
+        }),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('no_candidates');
+  });
+
+  it('filters out results with blacklisted infoHash (torrent — existing behavior)', async () => {
+    const deps = createDeps({
+      blacklistService: inject<BlacklistService>({
+        getBlacklistedHashes: vi.fn().mockResolvedValue(new Set(['def456'])),
+        getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+          blacklistedHashes: new Set(['def456']),
+          blacklistedGuids: new Set<string>(),
+        }),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('no_candidates');
+  });
+
+  it('passes through results with no infoHash and no guid', async () => {
+    const noIdentifierResult = {
+      title: 'The Way of Kings [MP3 128kbps]',
+      protocol: 'usenet' as const,
+      downloadUrl: 'https://nzb.example.com/download/xyz',
+      size: 500000000,
+      seeders: undefined,
+      indexer: 'TestUsenetIndexer',
+    };
+
+    const deps = createDeps({
+      indexerService: inject<IndexerService>({
+        searchAll: vi.fn().mockResolvedValue([noIdentifierResult]),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('retried');
+    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+      expect.objectContaining({
+        downloadUrl: 'https://nzb.example.com/download/xyz',
+      }),
+    );
+  });
+
+  it('treats empty string guid as absent (not matched against blacklist)', async () => {
+    const emptyGuidResult = {
+      title: 'The Way of Kings [MP3 128kbps]',
+      protocol: 'usenet' as const,
+      downloadUrl: 'https://nzb.example.com/download/xyz',
+      size: 500000000,
+      seeders: undefined,
+      indexer: 'TestUsenetIndexer',
+      guid: '',
+    };
+
+    const deps = createDeps({
+      indexerService: inject<IndexerService>({
+        searchAll: vi.fn().mockResolvedValue([emptyGuidResult]),
+      }),
+      blacklistService: inject<BlacklistService>({
+        getBlacklistedHashes: vi.fn().mockResolvedValue(new Set<string>()),
+        getBlacklistedIdentifiers: vi.fn().mockResolvedValue({
+          blacklistedHashes: new Set<string>(),
+          blacklistedGuids: new Set(['']),
+        }),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    // Empty guid is treated as absent, so the result should pass through
+    expect(result.outcome).toBe('retried');
+  });
+
+  it('passes best.guid to grab() when available', async () => {
+    const deps = createDeps({
+      indexerService: inject<IndexerService>({
+        searchAll: vi.fn().mockResolvedValue([usenetResult]),
+      }),
+    });
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('retried');
+    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+      expect.objectContaining({
+        guid: 'usenet-guid-123',
+        downloadUrl: 'https://nzb.example.com/download/abc',
+      }),
+    );
+  });
+
+  it('passes undefined guid to grab() when not available', async () => {
+    const deps = createDeps();
+
+    const result = await retrySearch(1, deps);
+
+    expect(result.outcome).toBe('retried');
+    expect(deps.downloadOrchestrator.grab).toHaveBeenCalledWith(
+      expect.objectContaining({
+        guid: undefined,
+        downloadUrl: 'magnet:?xt=urn:btih:def456',
+      }),
+    );
+  });
 });
