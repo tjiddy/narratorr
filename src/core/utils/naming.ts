@@ -224,7 +224,7 @@ function resolveTokens(
       const hasValue = raw !== undefined && raw !== null && raw !== '';
 
       if (!hasValue) {
-        return '';
+        return EMPTY_TOKEN_SENTINEL;
       }
 
       let value = String(raw);
@@ -256,19 +256,25 @@ function resolveTokens(
   );
 }
 
+/** Zero-width sentinel emitted by resolveTokens for empty/undefined token values. */
+const EMPTY_TOKEN_SENTINEL = '\u200B';
+const SENTINEL_REGEX = new RegExp(EMPTY_TOKEN_SENTINEL, 'g');
+
 /**
- * Strip matched wrapper pairs (parentheses, brackets) that surround only whitespace
- * after token resolution. E.g., `({year})` where year is undefined → `()` → stripped.
+ * Strip matched wrapper pairs (parentheses, brackets) that contain only empty-token
+ * sentinels and whitespace. Literal empty wrappers (not from tokens) are preserved.
  */
 function stripEmptyWrappers(text: string): string {
-  // Repeatedly strip until stable — handles nested or adjacent empty pairs
+  // Only strip wrappers that contain at least one sentinel (i.e., came from an empty token)
+  const wrapperPattern = /\(\s*\u200B[\s\u200B]*\)|\[\s*\u200B[\s\u200B]*\]/g;
   let result = text;
   let prev: string;
   do {
     prev = result;
-    result = result.replace(/\(\s*\)|\[\s*\]/g, '');
+    result = result.replace(wrapperPattern, '');
   } while (result !== prev);
-  // Clean up leftover whitespace from stripped wrappers (collapse multiple spaces)
+  // Remove remaining sentinels and clean up whitespace
+  result = result.replace(SENTINEL_REGEX, '');
   return result.replace(/ {2,}/g, ' ').trim();
 }
 

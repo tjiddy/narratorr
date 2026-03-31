@@ -838,6 +838,14 @@ describe('renderTemplate — empty wrapper stripping', () => {
   it('does not strip unmatched wrapper characters', () => {
     expect(renderTemplate('{title} (intro', { title: 'Book' })).toBe('Book (intro');
   });
+
+  it('preserves literal empty () not created by an empty token', () => {
+    expect(renderTemplate('{title} ()', { title: 'Book' })).toBe('Book ()');
+  });
+
+  it('preserves literal empty [] not created by an empty token', () => {
+    expect(renderTemplate('{title} []', { title: 'Book' })).toBe('Book []');
+  });
 });
 
 describe('renderFilename — empty wrapper stripping', () => {
