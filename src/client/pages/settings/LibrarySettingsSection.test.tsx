@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { LibrarySettingsSection } from './LibrarySettingsSection';
@@ -441,8 +442,9 @@ describe('LibrarySettingsSection', () => {
     });
 
     it('dirty defaults edits survive unrelated settings refetch', async () => {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
       const user = userEvent.setup();
-      renderWithProviders(<LibrarySettingsSection />);
+      renderWithProviders(<LibrarySettingsSection />, { queryClient });
 
       await waitFor(() => {
         expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
@@ -452,11 +454,19 @@ describe('LibrarySettingsSection', () => {
       await user.click(screen.getByLabelText('Search Immediately'));
       expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(true);
 
-      // Simulate a settings refetch (e.g., from another section saving)
+      // Simulate a settings refetch (e.g., from another section saving) by returning
+      // fresh server data with searchImmediately=false and invalidating the query
       const refetchedSettings = createMockSettings({
         library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
       });
       mockApi.getSettings.mockResolvedValue(refetchedSettings);
+      const callsBefore = mockApi.getSettings.mock.calls.length;
+      queryClient.invalidateQueries({ queryKey: ['settings'] });
+
+      // Wait for getSettings to be called again (proving the refetch happened)
+      await waitFor(() => {
+        expect(mockApi.getSettings.mock.calls.length).toBeGreaterThan(callsBefore);
+      });
 
       // The dirty toggle should NOT be overwritten by the refetch
       expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(true);
