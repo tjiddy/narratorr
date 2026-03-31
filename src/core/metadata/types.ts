@@ -17,6 +17,10 @@ export type MetadataSearchResults = z.infer<typeof MetadataSearchResultsSchema>;
 
 export interface SearchBooksOptions {
   maxResults?: number;
+  /** When provided, search by structured title instead of raw keywords. */
+  title?: string;
+  /** When provided alongside title, search by structured author. */
+  author?: string;
 }
 
 export interface SearchBooksResult {

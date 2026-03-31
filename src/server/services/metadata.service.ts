@@ -122,8 +122,8 @@ export class MetadataService {
     return this.withThrottle('searchAuthors', (provider) => provider.searchAuthors(query), []);
   }
 
-  async searchBooks(query: string): Promise<BookMetadata[]> {
-    const result = await this.withThrottle<SearchBooksResult>('searchBooks', (provider) => provider.searchBooks(query), { books: [] }, { query });
+  async searchBooks(query: string, options?: SearchBooksOptions): Promise<BookMetadata[]> {
+    const result = await this.withThrottle<SearchBooksResult>('searchBooks', (provider) => provider.searchBooks(query, options), { books: [] }, { query });
     const books = result.books;
     this.logParseDrop(result, this.providers[0]?.name);
     this.log.debug({ query, provider: this.providers[0]?.name, resultCount: books.length }, 'searchBooks completed');
