@@ -12,10 +12,7 @@ const manualAddSchema = z.object({
   title: z.string().trim().min(1, 'Title is required'),
   author: z.string().trim().optional(),
   seriesName: z.string().trim().optional(),
-  seriesPosition: z.preprocess(
-    (v) => (v === '' || v === undefined ? undefined : Number(v)),
-    z.number().optional(),
-  ),
+  seriesPosition: z.string().optional(),
 });
 
 type ManualAddFormData = z.infer<typeof manualAddSchema>;
@@ -41,7 +38,7 @@ export function ManualAddForm({ defaultTitle, onSuccess }: {
         title: data.title,
         authors: data.author ? [{ name: data.author }] : [],
         seriesName: data.seriesName || undefined,
-        seriesPosition: data.seriesPosition,
+        seriesPosition: data.seriesPosition ? Number(data.seriesPosition) : undefined,
         searchImmediately: true,
       }),
     onSuccess: (_result, data) => {

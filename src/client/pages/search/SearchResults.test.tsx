@@ -31,7 +31,6 @@ function renderResults(props: Partial<Parameters<typeof SearchResults>[0]> = {})
   const defaultProps = {
     results: undefined as { books: ReturnType<typeof createMockBookMetadata>[]; authors: ReturnType<typeof createMockAuthorMetadata>[] } | undefined,
     searchTerm: '',
-    isLoading: false,
     queryClient,
     ...props,
   };
@@ -53,7 +52,6 @@ describe('SearchResults', () => {
     renderResults({
       searchTerm: 'searching',
       results: undefined,
-      isLoading: true,
     });
     // Should not show empty state while loading
     expect(screen.queryByText('Start your search')).not.toBeInTheDocument();

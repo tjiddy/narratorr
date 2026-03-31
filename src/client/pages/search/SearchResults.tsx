@@ -86,12 +86,10 @@ function SearchTabBar({ tab, onTabChange, bookCount, authorCount }: {
 export function SearchResults({
   results,
   searchTerm,
-  isLoading,
   queryClient,
 }: {
   results: { books: BookMetadata[]; authors: AuthorMetadata[] } | undefined;
   searchTerm: string;
-  isLoading: boolean;
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const [tab, setTab] = useState<DiscoverTab>('books');
