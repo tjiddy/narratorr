@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #234 UAT findings — Settings pages — 2026-03-31
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #239
+
+### Metrics
+- Files changed: 17 | Tests added/modified: 13 (6 new tests, 7 updated assertions)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean modular implementation — each AC mapped to a discrete commit. Red/green TDD cycle was fast since changes were small and isolated.
+- Friction / issues encountered: Spec required 3 rounds of review before approval (stale ACs for already-fixed bugs, wrong UI surfaces, missing Notifications caller surface). This was all resolved before implementation started, so the implementation itself was smooth.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (read all modal consumers + test files), self-review subagent
+- Avoidable waste: The elaborate/respond-to-spec-review rounds consumed significant context before implementation even began. The initial spec had 4 stale ACs that should have been validated against main before filing.
+- Suggestions: For UAT-sourced issues, verify reported bugs still reproduce on main before writing the spec.
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available — skipped design pass
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. `setResult(null)` before async causes visible UI flicker — removing it is the fix, not adding debounce or transition. The pattern of "let new result overwrite old" is simpler and better than "clear then populate."
+2. `backdrop-filter` on `glass-card` creates stacking contexts that trap child z-index. Adding z-index to the parent `relative` container (not the dropdown itself) is the correct fix.
+3. The spec's 4 "Critical" and "High" ACs (welcomeSeen, error messages, API key validation) were already working on main. Always verify UAT findings against current main before speccing the fix.
+
 ## #231 Omit track tokens from renameFilesWithTemplate for single-file books — 2026-03-30
 **Skill path:** /elaborate → /respond-to-spec-review (x3) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #236
