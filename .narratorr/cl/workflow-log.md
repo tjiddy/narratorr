@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #227 UAT findings — Library Actions section and Manual Import path default — 2026-03-31
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #241
+
+### Metrics
+- Files changed: 12 | Tests added/modified: 6
+- Quality gate runs: 2 (pass on attempt 2 — first failed on complexity lint)
+- Fix iterations: 1 (mapNetworkError complexity ≤ 15 — refactored switch to lookup map)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Red/green TDD cycle was clean; Finding 4 was a one-line fix with clear test coverage
+- Friction / issues encountered: Spec review went through 4 circular rounds because `git show main:` results became stale mid-conversation. 3 of 7 findings were already implemented on main by the time implementation started — discovered only by re-verifying with fresh `git show main:` calls
+
+### Token efficiency
+- Highest-token actions: Explore subagent for codebase exploration; self-review and coverage analysis subagents
+- Avoidable waste: The spec review response rounds consumed significant context disputing findings that turned out to be correct (main had been updated)
+- Suggestions: For omnibus issues, verify each finding's status on main before planning; for spec reviews, always use fresh `git show main:` reads
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: frontend-design skill not available — skipped design pass
+- Unresolved debt: stripDefaults typing limitation (already logged)
+
+### Wish I'd Known
+1. Main had been updated between spec review rounds — Findings 3, 5, 6 were already implemented, saving ~60% of the planned work
+2. `stripDefaults()` utility already existed and was used for form schemas — applying it to `updateSettingsSchema` was a one-line fix
+3. ESLint complexity limit of 15 catches switch statements with many cases — use lookup maps from the start for error code mapping
+
 ## #234 UAT findings — Settings pages — 2026-03-31
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #239
