@@ -257,6 +257,22 @@ function resolveTokens(
 }
 
 /**
+ * Strip matched wrapper pairs (parentheses, brackets) that surround only whitespace
+ * after token resolution. E.g., `({year})` where year is undefined → `()` → stripped.
+ */
+function stripEmptyWrappers(text: string): string {
+  // Repeatedly strip until stable — handles nested or adjacent empty pairs
+  let result = text;
+  let prev: string;
+  do {
+    prev = result;
+    result = result.replace(/\(\s*\)|\[\s*\]/g, '');
+  } while (result !== prev);
+  // Clean up leftover whitespace from stripped wrappers (collapse multiple spaces)
+  return result.replace(/ {2,}/g, ' ').trim();
+}
+
+/**
  * Render a naming template with token values.
  *
  * Supports:
@@ -269,7 +285,7 @@ export function renderTemplate(
   tokens: Record<string, string | number | undefined | null>,
   options?: NamingOptions,
 ): string {
-  const rendered = resolveTokens(template, tokens, options);
+  const rendered = stripEmptyWrappers(resolveTokens(template, tokens, options));
 
   // Split by /, sanitize non-empty segments, filter empties
   return rendered
@@ -292,7 +308,7 @@ export function renderFilename(
   tokens: Record<string, string | number | undefined | null>,
   options?: NamingOptions,
 ): string {
-  const rendered = resolveTokens(template, tokens, options);
+  const rendered = stripEmptyWrappers(resolveTokens(template, tokens, options));
   return sanitizePath(rendered);
 }
 
