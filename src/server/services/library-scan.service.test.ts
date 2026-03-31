@@ -277,7 +277,7 @@ describe('LibraryScanService', () => {
       const result = await service.importSingleBook({
         path: '/audiobooks/Shogun',
         title: 'Shogun',
-        authorName: null,
+        authorName: undefined,
       });
 
       expect(result.imported).toBe(false);
