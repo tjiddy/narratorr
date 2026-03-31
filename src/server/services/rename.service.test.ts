@@ -418,6 +418,210 @@ describe('RenameService', () => {
       const newPath = (rename as Mock).mock.calls[0][1] as string;
       expect(newPath).toContain('BRANDON.SANDERSON');
     });
+
+    describe('single-file track token omission', () => {
+      it('omits trackNumber, trackTotal, and partName from token map when audioFiles.length === 1', async () => {
+        const { log } = createService();
+        (readdir as Mock).mockResolvedValue([
+          { name: 'audiobook.m4b', isFile: () => true },
+        ]);
+
+        // Template references trackNumber — should produce empty for single file
+        await renameFilesWithTemplate(
+          '/library/test',
+          '{title} {trackNumber}',
+          mockBook,
+          'Brandon Sanderson',
+          inject<FastifyBaseLogger>(log),
+        );
+
+        // With track tokens omitted, {trackNumber} resolves to empty →
+        // result is "The Way of Kings" (trailing space trimmed by sanitizePath)
+        const newPath = (rename as Mock).mock.calls[0][1] as string;
+        expect(newPath).not.toContain('1');
+        expect(newPath).toContain('The Way of Kings.m4b');
+      });
+
+      it('includes trackNumber, trackTotal, and partName in token map when audioFiles.length > 1', async () => {
+        const { log } = createService();
+        (readdir as Mock).mockResolvedValue([
+          { name: 'ch1.m4b', isFile: () => true },
+          { name: 'ch2.m4b', isFile: () => true },
+          { name: 'ch3.m4b', isFile: () => true },
+        ]);
+
+        await renameFilesWithTemplate(
+          '/library/test',
+          '{trackNumber} - {title}',
+          mockBook,
+          'Brandon Sanderson',
+          inject<FastifyBaseLogger>(log),
+        );
+
+        const renameCalls = (rename as Mock).mock.calls;
+        expect(renameCalls).toHaveLength(3);
+        // Each file gets a trackNumber
+        expect((renameCalls[0][1] as string)).toContain('1 - The Way of Kings');
+        expect((renameCalls[1][1] as string)).toContain('2 - The Way of Kings');
+        expect((renameCalls[2][1] as string)).toContain('3 - The Way of Kings');
+      });
+
+      it('renders single-file book with Plex preset without track suffix', async () => {
+        const { log } = createService();
+        (readdir as Mock).mockResolvedValue([
+          { name: 'audiobook.m4b', isFile: () => true },
+        ]);
+
+        await renameFilesWithTemplate(
+          '/library/test',
+          '{title}{ - pt?trackNumber:00}',
+          mockBook,
+          'Brandon Sanderson',
+          inject<FastifyBaseLogger>(log),
+        );
+
+        const newPath = (rename as Mock).mock.calls[0][1] as string;
+        expect(newPath).toBe('/library/test/The Way of Kings.m4b');
+      });
+
+      it('renders multi-file book with Plex preset with track suffixes', async () => {
+        const { log } = createService();
+        (readdir as Mock).mockResolvedValue([
+          { name: 'ch1.m4b', isFile: () => true },
+          { name: 'ch2.m4b', isFile: () => true },
+        ]);
+
+        await renameFilesWithTemplate(
+          '/library/test',
+          '{title}{ - pt?trackNumber:00}',
+          mockBook,
+          'Brandon Sanderson',
+          inject<FastifyBaseLogger>(log),
+        );
+
+        const renameCalls = (rename as Mock).mock.calls;
+        expect(renameCalls).toHaveLength(2);
+        expect((renameCalls[0][1] as string)).toBe('/library/test/The Way of Kings - pt01.m4b');
+        expect((renameCalls[1][1] as string)).toBe('/library/test/The Way of Kings - pt02.m4b');
+      });
+
+      it('includes track tokens for 2-file boundary case', async () => {
+        const { log } = createService();
+        (readdir as Mock).mockResolvedValue([
+          { name: 'part1.m4b', isFile: () => true },
+          { name: 'part2.m4b', isFile: () => true },
+        ]);
+
+        await renameFilesWithTemplate(
+          '/library/test',
+          '{title} {trackNumber} of {trackTotal}',
+          mockBook,
+          'Brandon Sanderson',
+          inject<FastifyBaseLogger>(log),
+        );
+
+        const renameCalls = (rename as Mock).mock.calls;
+        expect(renameCalls).toHaveLength(2);
+        expect((renameCalls[0][1] as string)).toContain('1 of 2');
+        expect((renameCalls[1][1] as string)).toContain('2 of 2');
+      });
+
+      it('produces identical output for single-file and multi-file when template has no track tokens', async () => {
+        const { log } = createService();
+        (readdir as Mock).mockResolvedValue([
+          { name: 'audiobook.m4b', isFile: () => true },
+        ]);
+
+        await renameFilesWithTemplate(
+          '/library/test',
+          '{author} - {title}',
+          mockBook,
+          'Brandon Sanderson',
+          inject<FastifyBaseLogger>(log),
+        );
+
+        const newPath = (rename as Mock).mock.calls[0][1] as string;
+        expect(newPath).toBe('/library/test/Brandon Sanderson - The Way of Kings.m4b');
+      });
+
+      it('omits conditional prefix separator when partName is absent for single-file book', async () => {
+        const { log } = createService();
+        (readdir as Mock).mockResolvedValue([
+          { name: 'audiobook.m4b', isFile: () => true },
+        ]);
+
+        await renameFilesWithTemplate(
+          '/library/test',
+          '{title}{ - ?partName}',
+          mockBook,
+          'Brandon Sanderson',
+          inject<FastifyBaseLogger>(log),
+        );
+
+        const newPath = (rename as Mock).mock.calls[0][1] as string;
+        // partName absent → conditional prefix " - " omitted → just "Title"
+        expect(newPath).toBe('/library/test/The Way of Kings.m4b');
+      });
+
+      it('omits trackTotal from token map for single-file book', async () => {
+        const { log } = createService();
+        (readdir as Mock).mockResolvedValue([
+          { name: 'audiobook.m4b', isFile: () => true },
+        ]);
+
+        await renameFilesWithTemplate(
+          '/library/test',
+          '{title}{ of ?trackTotal}',
+          mockBook,
+          'Brandon Sanderson',
+          inject<FastifyBaseLogger>(log),
+        );
+
+        const newPath = (rename as Mock).mock.calls[0][1] as string;
+        // trackTotal absent → conditional " of " omitted → just "Title"
+        expect(newPath).toBe('/library/test/The Way of Kings.m4b');
+      });
+
+      it('includes partName in token map for multi-file book', async () => {
+        const { log } = createService();
+        (readdir as Mock).mockResolvedValue([
+          { name: 'ch1.m4b', isFile: () => true },
+          { name: 'ch2.m4b', isFile: () => true },
+        ]);
+
+        await renameFilesWithTemplate(
+          '/library/test',
+          '{trackNumber} - {partName}',
+          mockBook,
+          'Brandon Sanderson',
+          inject<FastifyBaseLogger>(log),
+        );
+
+        const renameCalls = (rename as Mock).mock.calls;
+        expect(renameCalls).toHaveLength(2);
+        expect((renameCalls[0][1] as string)).toBe('/library/test/1 - ch1.m4b');
+        expect((renameCalls[1][1] as string)).toBe('/library/test/2 - ch2.m4b');
+      });
+
+      it('omits conditional suffix when trackNumber is absent for single-file book', async () => {
+        const { log } = createService();
+        (readdir as Mock).mockResolvedValue([
+          { name: 'audiobook.m4b', isFile: () => true },
+        ]);
+
+        await renameFilesWithTemplate(
+          '/library/test',
+          '{title}{trackNumber:00?. }',
+          mockBook,
+          'Brandon Sanderson',
+          inject<FastifyBaseLogger>(log),
+        );
+
+        const newPath = (rename as Mock).mock.calls[0][1] as string;
+        // trackNumber absent → suffix ". " omitted → just "Title"
+        expect(newPath).toBe('/library/test/The Way of Kings.m4b');
+      });
+    });
   });
 
   describe('event history producers', () => {
