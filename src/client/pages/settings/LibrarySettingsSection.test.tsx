@@ -417,6 +417,29 @@ describe('LibrarySettingsSection', () => {
       });
     });
 
+    it('save button is disabled and shows Saving... while mutation is pending', async () => {
+      let resolveMutation: (value: unknown) => void;
+      mockApi.updateSettings.mockImplementation(() => new Promise((resolve) => { resolveMutation = resolve; }));
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText('Search Immediately'));
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /saving/i })).toBeDisabled();
+      });
+
+      resolveMutation!(mockSettings);
+      await waitFor(() => {
+        expect(mockToast.success).toHaveBeenCalledWith('New book defaults saved');
+      });
+    });
+
     it('default values: both toggles unchecked with fresh settings', async () => {
       const freshSettings = createMockSettings({
         library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
