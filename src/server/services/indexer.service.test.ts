@@ -1080,4 +1080,13 @@ describe('IndexerService', () => {
       );
     });
   });
+
+  describe('searchAll — concurrent execution', () => {
+    it.todo('queries multiple indexers concurrently via Promise.allSettled');
+    it.todo('collects results from fulfilled indexers when one rejects');
+    it.todo('returns empty array when all indexers reject');
+    it.todo('logs warning with err key for rejected indexers (Pino serialization)');
+    it.todo('applies match scoring and sorting after concurrent collection');
+    it.todo('works correctly with a single enabled indexer');
+  });
 });

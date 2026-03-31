@@ -809,3 +809,18 @@ describe('renderFilename with separator/case options', () => {
       .toBe('Brandon Sanderson - The Way of Kings');
   });
 });
+
+describe('renderTemplate — empty wrapper stripping', () => {
+  it.todo('strips empty () when token inside resolves to empty — ({year}) with year=undefined');
+  it.todo('preserves filled () — ({year}) with year=2020 produces (2020)');
+  it.todo('strips empty [] when token inside resolves to empty — [{series}] with series=undefined');
+  it.todo('preserves filled [] — [{series}] with series="Bobiverse" produces [Bobiverse]');
+  it.todo('strips multiple empty wrapper pairs in same template');
+  it.todo('preserves non-adjacent parens — ({title}) ({year}) with only year empty keeps (Title)');
+  it.todo('does not strip unmatched wrapper characters');
+});
+
+describe('renderFilename — empty wrapper stripping', () => {
+  it.todo('strips empty () around undefined token in renderFilename');
+  it.todo('preserves filled () in renderFilename');
+});

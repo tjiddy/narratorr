@@ -477,3 +477,12 @@ describe('buildChapterMetadata', () => {
     expect(metadata).toContain('title=The Journey Begins');
   });
 });
+
+describe('bitrate capping — sourceBitrateKbps', () => {
+  it.todo('uses source bitrate when lower than target (merge path)');
+  it.todo('uses source bitrate when lower than target (convert path)');
+  it.todo('uses target bitrate when lower than source');
+  it.todo('uses either value when source equals target exactly (boundary)');
+  it.todo('uses target bitrate as-is when sourceBitrateKbps is undefined');
+  it.todo('omits -b:a flag when config.bitrate is undefined regardless of sourceBitrateKbps');
+});
