@@ -153,4 +153,36 @@ describe('fetchWithTimeout', () => {
       );
     });
   });
+
+  describe('network error mapping (#227)', () => {
+    it('maps ECONNREFUSED to actionable message with port', async () => {
+      const cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:9999'), { code: 'ECONNREFUSED' });
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        Object.assign(new TypeError('fetch failed'), { cause }),
+      );
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(/connection refused/i);
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(/9999/);
+    });
+
+    it('maps ENOTFOUND to actionable message with hostname', async () => {
+      const cause = Object.assign(new Error('getaddrinfo ENOTFOUND badhost.example'), { code: 'ENOTFOUND' });
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        Object.assign(new TypeError('fetch failed'), { cause }),
+      );
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(/dns/i);
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(/badhost\.example/);
+    });
+
+    it('maps AbortError (timeout) to actionable message', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        new DOMException('The operation was aborted', 'AbortError'),
+      );
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(/timed out/i);
+    });
+
+    it('passes through non-network errors unchanged', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Some other error'));
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow('Some other error');
+    });
+  });
 });
