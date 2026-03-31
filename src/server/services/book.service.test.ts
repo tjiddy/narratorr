@@ -216,32 +216,48 @@ describe('BookService', () => {
       expect(result).toBeNull();
       expect(db.select).toHaveBeenCalledTimes(2);  // outer query + subquery, no getById
 
-      // Verify the full title-only predicate contract: and(eq(books.title), notExists(bookAuthors correlated)) (#253)
+      // Verify the full title-only predicate contract: and(eq(books.title, title), notExists(bookAuthors correlated)) (#253)
+      // Helper: recursively find a column reference by table name and column name in Drizzle SQL tree
+      const drizzleNameSym = Symbol.for('drizzle:Name');
+      function findColumn(node: unknown, tableName: string, colName: string): boolean {
+        if (!node || typeof node !== 'object') return false;
+        const obj = node as Record<string | symbol, unknown>;
+        // Column reference: has .name and .table[Symbol.for('drizzle:Name')]
+        if (obj.name === colName && typeof obj.table === 'object' && obj.table !== null
+          && (obj.table as Record<symbol, unknown>)[drizzleNameSym] === tableName) return true;
+        if (Array.isArray(obj.queryChunks)) return obj.queryChunks.some((c: unknown) => findColumn(c, tableName, colName));
+        return false;
+      }
+      function findText(node: unknown, needle: string): boolean {
+        if (!node || typeof node !== 'object') return false;
+        const obj = node as Record<string, unknown>;
+        if (Array.isArray(obj.value) && obj.value.some((v: unknown) => typeof v === 'string' && v.includes(needle))) return true;
+        if (Array.isArray(obj.queryChunks)) return obj.queryChunks.some((c: unknown) => findText(c, needle));
+        return false;
+      }
+
       const outerWhere = outerChain.where as Mock;
       expect(outerWhere).toHaveBeenCalledTimes(1);
       const predicate = outerWhere.mock.calls[0][0];
 
-      // Helper: recursively search the Drizzle SQL tree for a string fragment
-      function findInSqlTree(node: unknown, needle: string): boolean {
-        if (!node || typeof node !== 'object') return false;
-        const obj = node as Record<string, unknown>;
-        if (Array.isArray(obj.value) && obj.value.some((v: unknown) => typeof v === 'string' && v.includes(needle))) return true;
-        if (Array.isArray(obj.queryChunks)) return obj.queryChunks.some((c: unknown) => findInSqlTree(c, needle));
-        return false;
-      }
+      // 1. Outer predicate contains eq(books.title, title) — title column reference present
+      expect(findColumn(predicate, 'books', 'title')).toBe(true);
 
-      // 1. Predicate contains "not exists" (notExists subquery is present)
-      expect(findInSqlTree(predicate, 'not exists')).toBe(true);
+      // 2. Outer predicate contains "not exists" operator
+      expect(findText(predicate, 'not exists')).toBe(true);
 
-      // 2. Outer query selects from books table and filters by title
-      const outerFrom = outerChain.from as Mock;
-      expect(outerFrom).toHaveBeenCalledWith(books);
+      // 3. Outer query selects from books table
+      expect(outerChain.from).toHaveBeenCalledWith(books);
 
-      // 3. Subquery selects from bookAuthors table (correlated on bookId)
-      const subqueryFrom = subqueryChain.from as Mock;
-      expect(subqueryFrom).toHaveBeenCalledWith(bookAuthors);
+      // 4. Subquery selects from bookAuthors table
+      expect(subqueryChain.from).toHaveBeenCalledWith(bookAuthors);
+
+      // 5. Subquery where() correlates bookAuthors.bookId = books.id
       const subqueryWhere = subqueryChain.where as Mock;
       expect(subqueryWhere).toHaveBeenCalledTimes(1);
+      const subPredicate = subqueryWhere.mock.calls[0][0];
+      expect(findColumn(subPredicate, 'book_authors', 'book_id')).toBe(true);
+      expect(findColumn(subPredicate, 'books', 'id')).toBe(true);
     });
 
     it('title-only: returns authorless book when both authored and authorless exist (#253)', async () => {
