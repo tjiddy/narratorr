@@ -3,7 +3,8 @@ import { fetchApi } from './client.js';
 export interface BlacklistEntry {
   id: number;
   bookId?: number;
-  infoHash: string;
+  infoHash?: string | null;
+  guid?: string | null;
   title: string;
   reason: 'wrong_content' | 'bad_quality' | 'wrong_narrator' | 'spam' | 'other' | 'download_failed' | 'infrastructure_error';
   note?: string;
@@ -26,7 +27,8 @@ export const blacklistApi = {
     return fetchApi<{ data: BlacklistEntry[]; total: number }>(`/blacklist${qs ? `?${qs}` : ''}`);
   },
   addToBlacklist: (data: {
-    infoHash: string;
+    infoHash?: string;
+    guid?: string;
     title: string;
     bookId?: number;
     reason: BlacklistEntry['reason'];
