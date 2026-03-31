@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #235 Improve auto-match accuracy — folder parsing, structured search, result scoring — 2026-03-31
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #244
+
+### Metrics
+- Files changed: 10 | Tests added/modified: 56
+- Quality gate runs: 2 (pass on attempt 2 — complexity lint fix)
+- Fix iterations: 1 (cyclomatic complexity 16→14 via extracting rankResults/disambiguateByDuration)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-elaborated after spec-review cycle. Modules 1-5 (parsing, types, Audible, metadata relay) were straightforward.
+- Friction / issues encountered: Module 6 (matchSingleBook scoring) caused 13 existing test failures because generic fixture titles ('Book A', 'Book B') had low similarity to the candidate title. The similarity floor gate broke tests that assumed any title passes. Required updating all fixture titles to match.
+
+### Token efficiency
+- Highest-token actions: Module 6 test fixture updates (reading/editing many test sections), explore subagent for plan
+- Avoidable waste: Could have anticipated the test fixture impact of the similarity floor before writing the production code
+- Suggestions: When adding scoring/filtering gates, pre-audit test fixtures for compatibility before implementing
+
+### Infrastructure gaps
+- Repeated workarounds: `extractYear()` now exists in 3 places (paths.ts, import-helpers.ts, library-scan.service.ts) — consolidation needed
+- Missing tooling / config: None
+- Unresolved debt: extractYear triplication (updated in debt.md), lookupMetadata/scanSingleBook still use concatenated keywords (deferred follow-up)
+
+### Wish I'd Known
+1. Adding a title similarity floor breaks ALL existing tests with non-matching fixture titles — audit fixtures BEFORE implementing the gate (see `similarity-floor-test-fixtures.md`)
+2. `cleanName()` normalization order matters — leading-number regex depends on literal dots, so dot→space must happen after (see `cleanname-normalization-order.md`)
+3. `SearchBooksOptions` is the established relay pattern for threading new params through the metadata pipeline — no interface changes needed (see `searchbooks-options-relay.md`)
+
 ## #237 Import nests files in extra subfolder from download folder name — 2026-03-31
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #243
