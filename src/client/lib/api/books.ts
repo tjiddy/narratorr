@@ -54,7 +54,7 @@ export interface BookWithAuthor {
 
 export interface CreateBookPayload {
   title: string;
-  authors: { name: string; asin?: string }[];
+  authors?: { name: string; asin?: string }[];
   narrators?: string[];
   description?: string;
   coverUrl?: string;

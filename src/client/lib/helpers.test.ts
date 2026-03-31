@@ -70,7 +70,7 @@ describe('mapBookMetadataToPayload', () => {
 
   it('includes all authors as array', () => {
     const payload = mapBookMetadataToPayload(fullBook);
-    expect(payload.authors[0].name).toBe('Brandon Sanderson');
+    expect(payload.authors![0].name).toBe('Brandon Sanderson');
     expect(payload.authors).toHaveLength(2);
   });
 
@@ -200,7 +200,7 @@ describe('mapBookMetadataToPayload — array shape (#71)', () => {
     };
     const payload = mapBookMetadataToPayload(book);
     expect(payload.authors).toHaveLength(2);
-    expect(payload.authors[1]).toEqual({ name: 'Author Two', asin: 'BBBB' });
+    expect(payload.authors![1]).toEqual({ name: 'Author Two', asin: 'BBBB' });
   });
 
   it('narrators: ["Kate Reading", "Michael Kramer"] → narrators: ["Kate Reading", "Michael Kramer"] in payload (array not joined)', () => {
