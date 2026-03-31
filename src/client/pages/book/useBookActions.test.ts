@@ -22,6 +22,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       renameBook: vi.fn(),
       retagBook: vi.fn(),
       mergeBookToM4b: vi.fn(),
+      deleteBook: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({
         processing: { ffmpegPath: '/usr/bin/ffmpeg', enabled: false, outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
         library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' },
@@ -354,10 +355,74 @@ describe('useBookActions', () => {
   });
 
   describe('deleteMutation', () => {
-    it.todo('calls deleteBook API with correct book ID and deleteFiles=false');
-    it.todo('calls deleteBook API with correct book ID and deleteFiles=true');
-    it.todo('invalidates book and books queries on success');
-    it.todo('shows success toast on successful delete');
-    it.todo('shows error toast on delete failure');
+    it('calls deleteBook API with correct book ID and deleteFiles=false', async () => {
+      (api.deleteBook as Mock).mockResolvedValue({ success: true });
+      const { queryClient, wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+
+      await act(async () => {
+        result.current.deleteMutation.mutate({ deleteFiles: false });
+      });
+
+      await waitFor(() => {
+        expect(api.deleteBook).toHaveBeenCalledWith(1, undefined);
+      });
+    });
+
+    it('calls deleteBook API with correct book ID and deleteFiles=true', async () => {
+      (api.deleteBook as Mock).mockResolvedValue({ success: true });
+      const { queryClient, wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+
+      await act(async () => {
+        result.current.deleteMutation.mutate({ deleteFiles: true });
+      });
+
+      await waitFor(() => {
+        expect(api.deleteBook).toHaveBeenCalledWith(1, { deleteFiles: true });
+      });
+    });
+
+    it('shows success toast on successful delete without files', async () => {
+      (api.deleteBook as Mock).mockResolvedValue({ success: true });
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+
+      await act(async () => {
+        result.current.deleteMutation.mutate({ deleteFiles: false });
+      });
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Removed book from library');
+      });
+    });
+
+    it('shows success toast mentioning files when deleteFiles=true', async () => {
+      (api.deleteBook as Mock).mockResolvedValue({ success: true });
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+
+      await act(async () => {
+        result.current.deleteMutation.mutate({ deleteFiles: true });
+      });
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith('Removed book and deleted files from disk');
+      });
+    });
+
+    it('shows error toast on delete failure', async () => {
+      (api.deleteBook as Mock).mockRejectedValue(new Error('Permission denied'));
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+
+      await act(async () => {
+        result.current.deleteMutation.mutate({ deleteFiles: false });
+      });
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to remove book: Permission denied');
+      });
+    });
   });
 });

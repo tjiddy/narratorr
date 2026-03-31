@@ -61,6 +61,18 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
 
   const ffmpegConfigured = !!settings?.processing?.ffmpegPath?.trim();
 
+  const deleteMutation = useMutation({
+    mutationFn: ({ deleteFiles }: { deleteFiles: boolean }) =>
+      api.deleteBook(bookId, deleteFiles ? { deleteFiles: true } : undefined),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.books() });
+      toast.success(variables.deleteFiles ? 'Removed book and deleted files from disk' : 'Removed book from library');
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to remove book: ${error.message}`);
+    },
+  });
+
   const monitorMutation = useMutation({
     mutationFn: () => api.updateBook(bookId, { monitorForUpgrades: !monitorForUpgrades }),
     onSuccess: () => {
@@ -100,6 +112,7 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
     renameMutation,
     mergeMutation,
     retagMutation,
+    deleteMutation,
     monitorMutation,
     ffmpegConfigured,
     isSaving,
