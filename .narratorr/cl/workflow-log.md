@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #248 Reject/fail cleanup — delete orphaned files and re-search — 2026-03-31
+**Skill path:** /elaborate → /respond-to-spec-review (x3) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #252
+
+### Metrics
+- Files changed: 37 | Tests added/modified: 56 new tests across 12 test files
+- Quality gate runs: 3 (pass on attempt 1 each time; first two caught fixture/migration issues before final pass)
+- Fix iterations: 3 (SQLite ALTER COLUMN unsupported, migration index ordering, blacklist mock blast radius across 7+ files)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec review cycle (4 rounds) produced a very precise spec that made implementation straightforward. The plan mapped cleanly to modules.
+- Friction / issues encountered: Drizzle migration generated invalid SQLite (ALTER COLUMN, wrong index ordering). Renaming/adding blacklist service method required updating mocks in 7+ test files. Test stub implementation required 4 parallel agents due to volume (56 stubs).
+
+### Token efficiency
+- Highest-token actions: spec review rounds (4 rounds of elaborate + respond-to-spec-review), test stub implementation (56 stubs via 4 agents)
+- Avoidable waste: could have caught migration issues earlier by running e2e test after schema change instead of waiting for full verify
+- Suggestions: run a single e2e test immediately after `pnpm db:generate` to catch migration SQL errors early
+
+### Infrastructure gaps
+- Repeated workarounds: Drizzle migration SQL requires manual editing for SQLite compatibility (ALTER COLUMN removal, index ordering). This is a known Drizzle limitation.
+- Missing tooling / config: no automated validation of migration SQL against SQLite syntax before commit
+- Unresolved debt: `searchAndGrabForBook()` still lacks blacklist filtering (deferred), `isBlacklisted()` only checks infoHash (not guid)
+
+### Wish I'd Known
+1. Drizzle `db:generate` produces SQLite-incompatible `ALTER COLUMN` statements when changing NOT NULL → nullable, AND may order `CREATE INDEX` before `ALTER TABLE ADD` for new columns. Always manually review migration SQL before committing.
+2. Adding a method to BlacklistService has 7+ file mock blast radius — every test that creates a blacklist mock needs the new method. The proxy-based `createMockServices()` only covers route tests.
+3. The monitor's `DownloadItem` type is a local alias that doesn't track `DownloadItemInfo` from the adapter types — adding `name` field required updating the local type manually.
+
 ## #246 Manual book add — add books without metadata provider match — 2026-03-31
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #251
