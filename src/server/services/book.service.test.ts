@@ -206,13 +206,29 @@ describe('BookService', () => {
     // #253 — title-only branch must exclude authored books
     it('title-only: does NOT match an authored book with the same title → returns null (#253)', async () => {
       // JS eval: outer db.select() first, then inner db.select() for notExists
+      const outerChain = mockDbChain([]);
+      const subqueryChain = mockDbChain([]);
       db.select
-        .mockReturnValueOnce(mockDbChain([]))   // outer title-only query: no authorless match
-        .mockReturnValueOnce(mockDbChain([]));  // notExists subquery builder
+        .mockReturnValueOnce(outerChain)    // outer title-only query: no authorless match
+        .mockReturnValueOnce(subqueryChain); // notExists subquery builder
 
       const result = await service.findDuplicate('The Way of Kings');
       expect(result).toBeNull();
       expect(db.select).toHaveBeenCalledTimes(2);  // outer query + subquery, no getById
+
+      // Verify the title-only predicate includes a correlated notExists on bookAuthors (#253)
+      const whereFn = outerChain.where as Mock;
+      expect(whereFn).toHaveBeenCalledTimes(1);
+      const predicate = whereFn.mock.calls[0][0];
+      // and() produces a SQL with nested queryChunks — walk the tree to find "not exists"
+      function findNotExists(node: unknown): boolean {
+        if (!node || typeof node !== 'object') return false;
+        const obj = node as Record<string, unknown>;
+        if (Array.isArray(obj.value) && obj.value.some((v: unknown) => typeof v === 'string' && v.includes('not exists'))) return true;
+        if (Array.isArray(obj.queryChunks)) return obj.queryChunks.some((c: unknown) => findNotExists(c));
+        return false;
+      }
+      expect(findNotExists(predicate)).toBe(true);
     });
 
     it('title-only: returns authorless book when both authored and authorless exist (#253)', async () => {
