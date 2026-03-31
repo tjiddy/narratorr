@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { formatDuration, mapBookMetadataToPayload, isBookInLibrary } from './helpers.js';
 import { createMockBook } from '@/__tests__/factories';
-import type { BookMetadata, BookWithAuthor } from './api/index.js';
+import type { BookMetadata, BookWithAuthor, BookIdentifier } from './api/index.js';
 
 describe('formatDuration', () => {
   it('returns null for undefined', () => {
@@ -70,7 +70,7 @@ describe('mapBookMetadataToPayload', () => {
 
   it('includes all authors as array', () => {
     const payload = mapBookMetadataToPayload(fullBook);
-    expect(payload.authors[0].name).toBe('Brandon Sanderson');
+    expect(payload.authors![0].name).toBe('Brandon Sanderson');
     expect(payload.authors).toHaveLength(2);
   });
 
@@ -173,6 +173,32 @@ describe('isBookInLibrary', () => {
   });
 });
 
+describe('isBookInLibrary — authorless matching (#246)', () => {
+  it('matches by title when both search result and BookWithAuthor library book have no authors', () => {
+    const book: BookMetadata = { title: 'Shogun', authors: [] };
+    const libBook: BookWithAuthor = { ...createMockBook(), asin: null, title: 'Shogun', authors: [] };
+    expect(isBookInLibrary(book, [libBook])).toBe(true);
+  });
+
+  it('matches by title when both search result and BookIdentifier library book have authorName: null', () => {
+    const book: BookMetadata = { title: 'Shogun', authors: [] };
+    const libBook: BookIdentifier = { asin: null, title: 'Shogun', authorName: null, authorSlug: null };
+    expect(isBookInLibrary(book, [libBook])).toBe(true);
+  });
+
+  it('does not match by title alone when library book has authors', () => {
+    const book: BookMetadata = { title: 'Shogun', authors: [] };
+    const libBook: BookWithAuthor = { ...createMockBook(), asin: null, title: 'Shogun' };
+    expect(isBookInLibrary(book, [libBook])).toBe(false);
+  });
+
+  it('does not match when titles differ even if both have no authors', () => {
+    const book: BookMetadata = { title: 'Shogun', authors: [] };
+    const libBook: BookWithAuthor = { ...createMockBook(), asin: null, title: 'Different Book', authors: [] };
+    expect(isBookInLibrary(book, [libBook])).toBe(false);
+  });
+});
+
 describe('mapBookMetadataToPayload — array shape (#71)', () => {
   it('BookMetadata with one author → authors: [{ name, asin }] in payload', () => {
     const book: BookMetadata = {
@@ -193,7 +219,7 @@ describe('mapBookMetadataToPayload — array shape (#71)', () => {
     };
     const payload = mapBookMetadataToPayload(book);
     expect(payload.authors).toHaveLength(2);
-    expect(payload.authors[1]).toEqual({ name: 'Author Two', asin: 'BBBB' });
+    expect(payload.authors![1]).toEqual({ name: 'Author Two', asin: 'BBBB' });
   });
 
   it('narrators: ["Kate Reading", "Michael Kramer"] → narrators: ["Kate Reading", "Michael Kramer"] in payload (array not joined)', () => {

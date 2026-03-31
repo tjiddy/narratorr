@@ -91,6 +91,20 @@ export class BookService {
       }
     }
 
+    // Title-only dedup when no authors and no ASIN — shared across manual add,
+    // library import, and discovery callers (#246)
+    if (!asin && (!authorList || authorList.length === 0)) {
+      const byTitle = await this.db
+        .select({ id: books.id })
+        .from(books)
+        .where(eq(books.title, title))
+        .limit(1);
+
+      if (byTitle.length > 0) {
+        return this.getById(byTitle[0].id);
+      }
+    }
+
     return null;
   }
 

@@ -19,6 +19,32 @@ const validBook = {
   authors: [{ name: 'Author Name' }],
 };
 
+describe('createBookBodySchema — authors default (#246)', () => {
+  it('accepts payload with title only, no authors field — defaults to []', () => {
+    const result = createBookBodySchema.safeParse({ title: 'Shogun' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.authors).toEqual([]);
+    }
+  });
+
+  it('accepts payload with title + explicit authors array', () => {
+    const result = createBookBodySchema.safeParse({ title: 'Shogun', authors: [{ name: 'James Clavell' }] });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.authors).toEqual([{ name: 'James Clavell' }]);
+    }
+  });
+
+  it('accepts payload with title + empty authors array', () => {
+    const result = createBookBodySchema.safeParse({ title: 'Shogun', authors: [] });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.authors).toEqual([]);
+    }
+  });
+});
+
 describe('createBookBodySchema — trim behavior', () => {
   it('rejects whitespace-only title', () => {
     const result = createBookBodySchema.safeParse({ ...validBook, title: '   ' });

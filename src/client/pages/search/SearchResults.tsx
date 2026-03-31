@@ -86,12 +86,10 @@ function SearchTabBar({ tab, onTabChange, bookCount, authorCount }: {
 export function SearchResults({
   results,
   searchTerm,
-  isLoading,
   queryClient,
 }: {
   results: { books: BookMetadata[]; authors: AuthorMetadata[] } | undefined;
   searchTerm: string;
-  isLoading: boolean;
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
   const [tab, setTab] = useState<DiscoverTab>('books');
@@ -103,7 +101,7 @@ export function SearchResults({
     select: (response) => response.data,
   });
 
-  if (!searchTerm || (searchTerm && !isLoading && !hasResults)) {
+  if (!searchTerm) {
     return null;
   }
 
@@ -111,19 +109,21 @@ export function SearchResults({
 
   return (
     <div className="space-y-6">
-      <SearchTabBar
-        tab={tab}
-        onTabChange={setTab}
-        bookCount={results.books.length}
-        authorCount={results.authors.length}
-      />
+      {hasResults && (
+        <SearchTabBar
+          tab={tab}
+          onTabChange={setTab}
+          bookCount={results.books.length}
+          authorCount={results.authors.length}
+        />
+      )}
 
       {tab === 'books' && (
         <div role="tabpanel" id="tabpanel-books" aria-labelledby="tab-books">
-          <BooksTabContent books={results.books} libraryBooks={libraryBooks} queryClient={queryClient} />
+          <BooksTabContent books={results.books} libraryBooks={libraryBooks} queryClient={queryClient} searchTerm={searchTerm} />
         </div>
       )}
-      {tab === 'authors' && (
+      {tab === 'authors' && hasResults && (
         <div role="tabpanel" id="tabpanel-authors" aria-labelledby="tab-authors">
           <AuthorsTabContent authors={results.authors} />
         </div>

@@ -67,7 +67,6 @@ export function SearchPage() {
       <SearchResults
         results={metadataResults}
         searchTerm={searchTerm}
-        isLoading={isLoading}
         queryClient={queryClient}
       />
     </div>

@@ -159,8 +159,34 @@ describe('BookService', () => {
       expect(result).not.toBeNull();
     });
 
-    it('returns null when no authors and no ASIN', async () => {
-      const result = await service.findDuplicate('Solo Title');
+    it('finds duplicate by title only when no authors and no ASIN (#246)', async () => {
+      // title-only lookup → match, then getById
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.findDuplicate('The Way of Kings');
+      expect(result).not.toBeNull();
+      expect(result!.title).toBe('The Way of Kings');
+    });
+
+    it('finds duplicate by title only with empty authors array (#246)', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
+        .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.findDuplicate('The Way of Kings', []);
+      expect(result).not.toBeNull();
+    });
+
+    it('returns null for title-only when no match found (#246)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([]));  // title-only: not found
+
+      const result = await service.findDuplicate('Nonexistent Book');
       expect(result).toBeNull();
     });
 
