@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #254 Chore: Standardize Delete/Remove terminology in bulk action flow — 2026-03-31
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #259
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 2 new + 10 updated queries
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (test ambiguity when both toolbar and modal buttons share "Remove" label)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Very small, well-scoped change. Spec was precise after review cycle fixed file paths.
+- Friction / issues encountered: After renaming the toolbar button to "Remove", existing tests broke because `getByRole('button', { name: 'Remove' })` matched both the toolbar trigger and the modal confirm button. Required `within(dialog)` scoping to disambiguate.
+
+### Token efficiency
+- Highest-token actions: Elaborate and spec review cycles before implementation
+- Avoidable waste: None — appropriately minimal for the scope
+- Suggestions: None
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. Renaming a button to match a sibling creates test ambiguity — `within(dialog)` scoping is needed when toolbar trigger and modal confirm share the same label (see `learnings/rename-button-label-test-ambiguity.md`)
+2. Trivial — no other surprises
+3. N/A
+
 ## #255 Chore: Backend DRY cleanup — imports, bitrate capping, year extraction — 2026-03-31
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #258
