@@ -72,7 +72,7 @@ describe('SearchPage', () => {
       expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
     });
 
-    expect(screen.getByRole('button', { name: /add/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^add$/i })).toBeInTheDocument();
   });
 
   it('shows In Library indicator when book matches by ASIN', async () => {
@@ -116,7 +116,7 @@ describe('SearchPage', () => {
     });
 
     // Open popover
-    await user.click(screen.getByRole('button', { name: /add/i }));
+    await user.click(screen.getByRole('button', { name: /^add$/i }));
     // Click Add to Library in popover
     const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
     await user.click(addToLibrary);
@@ -205,7 +205,7 @@ describe('SearchPage', () => {
     });
 
     // Open popover
-    await user.click(screen.getByRole('button', { name: /add/i }));
+    await user.click(screen.getByRole('button', { name: /^add$/i }));
     // Click Add to Library in popover
     const addToLibrary = await screen.findByRole('button', { name: /add to library/i });
     await user.click(addToLibrary);

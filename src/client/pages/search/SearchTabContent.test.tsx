@@ -38,7 +38,10 @@ describe('BooksTabContent', () => {
     expect(screen.getByText('No books found')).toBeInTheDocument();
   });
 
-  it.todo('renders "Add manually" CTA in empty state (#246)');
+  it('renders "Add manually" CTA in empty state (#246)', () => {
+    renderBooksTab([]);
+    expect(screen.getByText(/add manually/i)).toBeInTheDocument();
+  });
 
   it('renders SearchBookCard for each book', () => {
     const books = [

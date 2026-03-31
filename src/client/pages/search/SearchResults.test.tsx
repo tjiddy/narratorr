@@ -213,10 +213,35 @@ describe('SearchResults', () => {
   });
 
   describe('#246 manual add entry points', () => {
-    it.todo('renders books tab with empty state when search returns zero results');
-    it.todo('shows "Add manually" CTA in zero-result empty state');
-    it.todo('does not render manual add CTA before a search is performed');
-    it.todo('shows "Add manually" link below last result when results exist');
+    it('renders books tab with empty state when search returns zero results', () => {
+      renderResults({
+        searchTerm: 'nonexistent',
+        results: { books: [], authors: [] },
+      });
+      expect(screen.getByText('No books found')).toBeInTheDocument();
+    });
+
+    it('shows "Add manually" CTA in zero-result empty state', () => {
+      renderResults({
+        searchTerm: 'nonexistent',
+        results: { books: [], authors: [] },
+      });
+      expect(screen.getByText(/add manually/i)).toBeInTheDocument();
+    });
+
+    it('does not render manual add CTA before a search is performed', () => {
+      renderResults({ searchTerm: '' });
+      expect(screen.queryByText(/add manually/i)).not.toBeInTheDocument();
+    });
+
+    it('shows "Add manually" link below last result when results exist', () => {
+      const results = {
+        books: [createMockBookMetadata()],
+        authors: [],
+      };
+      renderResults({ searchTerm: 'fantasy', results });
+      expect(screen.getByText(/can.*t find it/i)).toBeInTheDocument();
+    });
   });
 
   describe('#99 blank empty states', () => {
@@ -227,14 +252,13 @@ describe('SearchResults', () => {
       expect(container.querySelector('svg')).toBeNull();
     });
 
-    it('renders blank content when search has no results (no icon, no text)', () => {
-      const { container } = renderResults({
+    it('renders empty state with manual add when search has no results (#246 replaces blank)', () => {
+      renderResults({
         searchTerm: 'nonexistent',
         results: { books: [], authors: [] },
       });
-      expect(screen.queryByText(/no results/i)).not.toBeInTheDocument();
-      expect(screen.queryByText(/try different/i)).not.toBeInTheDocument();
-      expect(container.querySelector('svg')).toBeNull();
+      expect(screen.getByText('No books found')).toBeInTheDocument();
+      expect(screen.getByText(/add manually/i)).toBeInTheDocument();
     });
   });
 });
