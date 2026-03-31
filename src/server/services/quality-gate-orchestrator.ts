@@ -19,7 +19,6 @@ import { revertBookStatus } from '../utils/book-status.js';
 import { retrySearch, type RetrySearchDeps } from './retry-search.js';
 import type { SettingsService } from './settings.service.js';
 import { rm, stat } from 'node:fs/promises';
-import { relative } from 'node:path';
 
 type BookRow = typeof books.$inferSelect;
 
@@ -265,25 +264,6 @@ export class QualityGateOrchestrator {
     } catch {
       this.log.debug({ downloadId: download.id, outputPath: download.outputPath }, 'Quality gate: fallback delete skipped — path does not exist');
       return;
-    }
-
-    // Ancestry check if downloadRoot is configured
-    if (download.downloadClientId) {
-      try {
-        const clientRow = await this.downloadClientService.getById(download.downloadClientId);
-        const settings = clientRow?.settings as Record<string, unknown> | undefined;
-        const downloadRoot = typeof settings?.downloadRoot === 'string' ? settings.downloadRoot.trim() : '';
-        if (downloadRoot) {
-          const rel = relative(downloadRoot, download.outputPath);
-          if (rel.startsWith('..')) {
-            this.log.warn({ downloadId: download.id, outputPath: download.outputPath, downloadRoot }, 'Quality gate: fallback delete skipped — path outside downloadRoot');
-            return;
-          }
-        }
-      } catch (error: unknown) {
-        this.log.warn({ downloadId: download.id, error }, 'Quality gate: fallback delete skipped — could not resolve downloadRoot for ancestry check');
-        return;
-      }
     }
 
     try {

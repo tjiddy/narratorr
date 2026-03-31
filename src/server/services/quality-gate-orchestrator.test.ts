@@ -656,50 +656,7 @@ describe('QualityGateOrchestrator', () => {
       expect(rm).toHaveBeenCalledWith('/downloads/test-book', { recursive: true, force: true });
     });
 
-    it('skips deletion and logs warn when outputPath is outside downloadRoot', async () => {
-      const { orchestrator, qualityGateService, downloadClientService, log } = createOrchestrator();
-      const download = { ...baseDownload, outputPath: '/etc/passwd' };
-      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download, book: baseBook });
-      (stat as ReturnType<typeof vi.fn>).mockResolvedValue({ isDirectory: () => true });
-      downloadClientService.getById.mockResolvedValue({ id: 1, settings: { downloadRoot: '/downloads' } });
-
-      await orchestrator.reject(1);
-
-      expect(rm).not.toHaveBeenCalled();
-      expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ outputPath: '/etc/passwd', downloadRoot: '/downloads' }),
-        expect.stringContaining('outside downloadRoot'),
-      );
-    });
-
-    it('skips deletion when downloadClientService.getById throws (ancestry check cannot be resolved)', async () => {
-      const { orchestrator, qualityGateService, downloadClientService, log } = createOrchestrator();
-      const download = { ...baseDownload, outputPath: '/downloads/test-book' };
-      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download, book: baseBook });
-      (stat as ReturnType<typeof vi.fn>).mockResolvedValue({ isDirectory: () => true });
-      downloadClientService.getById.mockRejectedValue(new Error('DB connection failed'));
-
-      await orchestrator.reject(1);
-
-      expect(rm).not.toHaveBeenCalled();
-      expect(log.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ downloadId: download.id }),
-        expect.stringContaining('could not resolve downloadRoot'),
-      );
-    });
-
-    it('proceeds with deletion without ancestry check when downloadRoot is not configured', async () => {
-      const { orchestrator, qualityGateService, downloadClientService } = createOrchestrator();
-      const download = { ...baseDownload, outputPath: '/downloads/test-book' };
-      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download, book: baseBook });
-      (stat as ReturnType<typeof vi.fn>).mockResolvedValue({ isDirectory: () => true });
-      (rm as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-      downloadClientService.getById.mockResolvedValue({ id: 1, settings: {} });
-
-      await orchestrator.reject(1);
-
-      expect(rm).toHaveBeenCalledWith('/downloads/test-book', { recursive: true, force: true });
-    });
+    // #263: downloadRoot ancestry check removed — outputPath trust is ensured by resolveOutputPath hardening in monitor.ts
 
     it('skips adapter call when downloadClientId is null', async () => {
       const { orchestrator, qualityGateService, downloadClientService } = createOrchestrator();
