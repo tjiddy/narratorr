@@ -1,5 +1,5 @@
 import { stat, readdir, mkdir, cp } from 'node:fs/promises';
-import { join, extname, basename } from 'node:path';
+import { join, extname } from 'node:path';
 import { renderTemplate, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
 
