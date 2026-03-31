@@ -309,9 +309,24 @@ describe('BulkOperationsSection', () => {
 
   // Finding 1: Library Actions section rename (#227)
   describe('Library Actions section (#227)', () => {
-    it.todo('section heading is "Library Actions" (not "Bulk Operations")');
-    it.todo('Scan Library link appears before Rename All Books button');
-    it.todo('Scan Library link has href="/library-import"');
-    it.todo('Scan Library link is styled consistently with bulk operation buttons');
+    it('section heading is "Library Actions" (not "Bulk Operations")', () => {
+      setup();
+      expect(screen.getByText('Library Actions')).toBeInTheDocument();
+      expect(screen.queryByText('Bulk Operations')).not.toBeInTheDocument();
+    });
+
+    it('Scan Library link appears before Rename All Books button', () => {
+      setup();
+      const scanLink = screen.getByRole('link', { name: /scan library/i });
+      const renameBtn = screen.getByRole('button', { name: /rename all books/i });
+      // Scan Library should come before Rename in DOM order
+      expect(scanLink.compareDocumentPosition(renameBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('Scan Library link has href="/library-import"', () => {
+      setup();
+      const scanLink = screen.getByRole('link', { name: /scan library/i });
+      expect(scanLink).toHaveAttribute('href', '/library-import');
+    });
   });
 });
