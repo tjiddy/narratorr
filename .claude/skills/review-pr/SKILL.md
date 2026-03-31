@@ -147,6 +147,7 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    - For each acceptance criterion, determine: `pass` | `partial` | `missing`
    - Note specific files/lines that address each criterion
    - Ensure each reviewed changed code file maps to at least one AC item or an explicit scope-creep/security/test-quality observation.
+   - **"Already done" claim verification (MANDATORY):** When the PR description or summary marks an AC as "already implemented on main," "already fixed," or "not needed," do NOT accept the claim at face value. For EACH such claim: read the relevant source code on the current branch, verify the behavior is actually correct, and cite the file:line evidence. If the code exists but does not actually fix the reported bug (e.g., a z-index bump that cannot escape a stacking context), mark the AC as `missing` and raise a `blocking` finding. An unverified "already done" claim is a review defect — it has caused bugs to ship as closed without being fixed.
 
 7. **Check common issues:**
    - Missing error handling / logging in catch blocks

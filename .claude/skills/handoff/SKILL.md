@@ -179,7 +179,13 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    - <bullet points of what changed>
 
    ## Acceptance Criteria
-   - [ ] <from the issue spec>
+   - [x] <implemented in this PR — cite file:line>
+   - [x] <already on main — cite file:line evidence proving the behavior works>
+
+   NOTE: Every AC must have a disposition. If an AC is "already done on main,"
+   you MUST cite the specific file:line that proves it. Do NOT write "already
+   implemented" without evidence — the reviewer will verify each claim and
+   reject unproven ones as blocking findings.
 
    ## Tests / Verification
    - Commands: <what was run>
