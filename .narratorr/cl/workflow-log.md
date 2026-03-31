@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #240 UAT findings — Audio processing and import — 2026-03-31
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #245
+
+### Metrics
+- Files changed: 16 | Tests added/modified: 24+
+- Quality gate runs: 2 (pass on attempt 2 — complexity violations on first run)
+- Fix iterations: 1 (extracted helpers to reduce cyclomatic complexity)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Multi-finding UAT issue was well-structured after elaboration. Red/green TDD cycle was clean for each module. Finding 4 was correctly identified as already-fixed during elaboration, saving implementation time.
+- Friction / issues encountered: 3 rounds of spec review before approval — bps/kbps unit mismatch and separator-transform ambiguity required codebase evidence to resolve. Complexity lint violations from bitrate capping logic required extracting helpers post-implementation.
+
+### Token efficiency
+- Highest-token actions: `/elaborate` and `/respond-to-spec-review` rounds consumed significant context exploring the same files repeatedly
+- Avoidable waste: The initial spec lacked unit annotations for bitrate values — checking scanner vs config units upfront would have avoided 2 review rounds
+- Suggestions: For issues touching data that flows between components, annotate units in the AC from the start
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: inputClass duplication across settings components (pre-existing, logged in debt.md)
+
+### Wish I'd Known
+1. `music-metadata` returns bitrate in bps while ProcessingConfig uses kbps — annotating units in the AC from the start would have saved 2 spec review rounds
+2. `ToolbarDropdown` already existed as the canonical portal dropdown pattern — checking for prior art before proposing `@floating-ui/react` would have been more efficient
+3. The `cleanEmptyParents()` code path was already implemented and tested — checking the actual codebase before writing new ACs would have scoped Finding 4 out immediately
+
 ## #235 Improve auto-match accuracy — folder parsing, structured search, result scoring — 2026-03-31
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #244
