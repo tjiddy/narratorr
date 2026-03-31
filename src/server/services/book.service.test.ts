@@ -252,12 +252,21 @@ describe('BookService', () => {
       // 4. Subquery selects from bookAuthors table
       expect(subqueryChain.from).toHaveBeenCalledWith(bookAuthors);
 
-      // 5. Subquery where() correlates bookAuthors.bookId = books.id
+      // 5. Subquery where() is eq(bookAuthors.bookId, books.id) — single equality with both operands
       const subqueryWhere = subqueryChain.where as Mock;
       expect(subqueryWhere).toHaveBeenCalledTimes(1);
       const subPredicate = subqueryWhere.mock.calls[0][0];
-      expect(findColumn(subPredicate, 'book_authors', 'book_id')).toBe(true);
-      expect(findColumn(subPredicate, 'books', 'id')).toBe(true);
+      // eq() produces a flat SQL: [StringChunk(''), Column(book_id), StringChunk(' = '), Column(id), StringChunk('')]
+      const chunks = subPredicate.queryChunks;
+      expect(chunks).toHaveLength(5);
+      // chunk[1]: left operand — bookAuthors.bookId
+      expect(chunks[1].name).toBe('book_id');
+      expect(chunks[1].table[drizzleNameSym]).toBe('book_authors');
+      // chunk[2]: equality operator
+      expect(chunks[2].value).toContain(' = ');
+      // chunk[3]: right operand — books.id
+      expect(chunks[3].name).toBe('id');
+      expect(chunks[3].table[drizzleNameSym]).toBe('books');
     });
 
     it('title-only: returns authorless book when both authored and authorless exist (#253)', async () => {
