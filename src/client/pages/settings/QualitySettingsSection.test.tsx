@@ -32,8 +32,6 @@ const mockSettings = createMockSettings({
     grabFloor: 50,
     protocolPreference: 'usenet',
     minSeeders: 3,
-    searchImmediately: true,
-    monitorForUpgrades: false,
     rejectWords: 'German',
     requiredWords: 'M4B',
   },
@@ -49,14 +47,12 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('MB/hr Grab Floor')).toBeInTheDocument();
+      expect(screen.getByLabelText('MB/hr Grab Minimum')).toBeInTheDocument();
     });
     expect(screen.getByLabelText('Protocol Preference')).toBeInTheDocument();
     expect(screen.getByLabelText('Minimum Seeders')).toBeInTheDocument();
     expect(screen.getByLabelText('Reject Words')).toBeInTheDocument();
     expect(screen.getByLabelText('Required Words')).toBeInTheDocument();
-    expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
-    expect(screen.getByLabelText('Monitor for Upgrades')).toBeInTheDocument();
   });
 
   it('protocol preference select uses shared SelectWithChevron contract', async () => {
@@ -85,7 +81,7 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('MB/hr Grab Floor')).toHaveValue(50);
+      expect(screen.getByLabelText('MB/hr Grab Minimum')).toHaveValue(50);
     });
     expect(screen.getByLabelText('Minimum Seeders')).toHaveValue(3);
     expect(screen.getByLabelText('Reject Words')).toHaveValue('German');
@@ -98,10 +94,10 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('MB/hr Grab Floor')).toHaveValue(50);
+      expect(screen.getByLabelText('MB/hr Grab Minimum')).toHaveValue(50);
     });
 
-    const input = screen.getByLabelText('MB/hr Grab Floor');
+    const input = screen.getByLabelText('MB/hr Grab Minimum');
     await user.clear(input);
     await user.type(input, '-1');
 
@@ -118,7 +114,7 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('MB/hr Grab Floor')).toHaveValue(50);
+      expect(screen.getByLabelText('MB/hr Grab Minimum')).toHaveValue(50);
     });
 
     // Make form dirty by changing a value
@@ -135,8 +131,6 @@ describe('QualitySettingsSection', () => {
           grabFloor: 50,
           protocolPreference: 'usenet',
           minSeeders: 3,
-          searchImmediately: true,
-          monitorForUpgrades: false,
           rejectWords: 'Abridged',
           requiredWords: 'M4B',
         },
@@ -149,7 +143,7 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('MB/hr Grab Floor')).toHaveValue(50);
+      expect(screen.getByLabelText('MB/hr Grab Minimum')).toHaveValue(50);
     });
 
     const user = userEvent.setup();
@@ -169,7 +163,7 @@ describe('QualitySettingsSection', () => {
     renderWithProviders(<QualitySettingsSection />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('MB/hr Grab Floor')).toHaveValue(50);
+      expect(screen.getByLabelText('MB/hr Grab Minimum')).toHaveValue(50);
     });
 
     const user = userEvent.setup();
@@ -185,9 +179,53 @@ describe('QualitySettingsSection', () => {
   });
 
   describe('after toggle relocation (#265)', () => {
-    it.todo('does NOT render Search Immediately toggle');
-    it.todo('does NOT render Monitor for Upgrades toggle');
-    it.todo('does NOT render Defaults for New Books subsection heading');
-    it.todo('save payload excludes searchImmediately and monitorForUpgrades');
+    it('does NOT render Search Immediately toggle', async () => {
+      renderWithProviders(<QualitySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('MB/hr Grab Minimum')).toBeInTheDocument();
+      });
+      expect(screen.queryByLabelText('Search Immediately')).not.toBeInTheDocument();
+    });
+
+    it('does NOT render Monitor for Upgrades toggle', async () => {
+      renderWithProviders(<QualitySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('MB/hr Grab Minimum')).toBeInTheDocument();
+      });
+      expect(screen.queryByLabelText('Monitor for Upgrades')).not.toBeInTheDocument();
+    });
+
+    it('does NOT render Defaults for New Books subsection heading', async () => {
+      renderWithProviders(<QualitySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByLabelText('MB/hr Grab Minimum')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Defaults for New Books')).not.toBeInTheDocument();
+      expect(screen.queryByText('When a New Book Is Added')).not.toBeInTheDocument();
+    });
+
+    it('save payload excludes searchImmediately and monitorForUpgrades', async () => {
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      renderWithProviders(<QualitySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('MB/hr Grab Minimum')).toHaveValue(50);
+      });
+
+      const user = userEvent.setup();
+      const rejectInput = screen.getByLabelText('Reject Words');
+      await user.clear(rejectInput);
+      await user.type(rejectInput, 'Abridged');
+
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        expect(mockApi.updateSettings).toHaveBeenCalled();
+      });
+
+      const callArg = mockApi.updateSettings.mock.calls[0][0];
+      expect(callArg.quality).not.toHaveProperty('searchImmediately');
+      expect(callArg.quality).not.toHaveProperty('monitorForUpgrades');
+    });
   });
 });

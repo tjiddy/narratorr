@@ -27,3 +27,9 @@ export const qualityFormSchema = stripDefaults(qualitySettingsSchema) as z.ZodOb
   rejectWords: z.ZodString;
   requiredWords: z.ZodString;
 }>;
+
+/** Quality-filtering fields only (excludes new-book defaults) — used by QualitySettingsSection form */
+export const qualityFilteringFormSchema = qualityFormSchema.omit({ searchImmediately: true, monitorForUpgrades: true });
+
+/** New-book default fields only — used by LibrarySettingsSection "When a New Book Is Added" form */
+export const newBookDefaultsFormSchema = qualityFormSchema.pick({ searchImmediately: true, monitorForUpgrades: true });

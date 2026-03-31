@@ -8,7 +8,7 @@ import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ZapIcon } from '@/components/icons';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
-import { protocolPreferenceSchema, DEFAULT_SETTINGS, qualityFormSchema } from '../../../shared/schemas.js';
+import { protocolPreferenceSchema, DEFAULT_SETTINGS, qualityFilteringFormSchema } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 const PROTOCOL_LABELS: Record<string, string> = {
@@ -17,9 +17,9 @@ const PROTOCOL_LABELS: Record<string, string> = {
   torrent: 'Prefer Torrent',
 };
 
-type QualityFormData = z.infer<typeof qualityFormSchema>;
+type QualityFormData = z.infer<typeof qualityFilteringFormSchema>;
 
-// eslint-disable-next-line max-lines-per-function -- linear form with 7 quality fields
+// eslint-disable-next-line max-lines-per-function -- linear form with 5 quality-filtering fields
 export function QualitySettingsSection() {
   const queryClient = useQueryClient();
 
@@ -30,7 +30,7 @@ export function QualitySettingsSection() {
 
   const { register, handleSubmit, reset, formState: { errors, isDirty } } = useForm<QualityFormData>({
     defaultValues: DEFAULT_SETTINGS.quality,
-    resolver: zodResolver(qualityFormSchema),
+    resolver: zodResolver(qualityFilteringFormSchema),
   });
 
   useEffect(() => {
@@ -55,11 +55,11 @@ export function QualitySettingsSection() {
     <SettingsSection
       icon={<ZapIcon className="w-5 h-5 text-primary" />}
       title="Quality"
-      description="Quality filtering, upgrade monitoring, and protocol preferences"
+      description="Quality filtering and protocol preferences"
     >
       <form onSubmit={handleSubmit((data) => mutation.mutate(data))} className="space-y-5">
         <div>
-          <label htmlFor="grabFloor" className="block text-sm font-medium mb-2">MB/hr Grab Floor</label>
+          <label htmlFor="grabFloor" className="block text-sm font-medium mb-2">MB/hr Grab Minimum</label>
           <input
             id="grabFloor"
             type="number"
@@ -140,36 +140,6 @@ export function QualitySettingsSection() {
           <p className="text-sm text-muted-foreground mt-2">
             Comma-separated words. When set, only releases with titles matching at least one word are shown.
           </p>
-        </div>
-
-        <div className="space-y-4 pt-4 mt-2 border-t border-border/50">
-          <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Defaults for New Books</h4>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <label htmlFor="qualitySearchImmediately" className="block text-sm font-medium">Search Immediately</label>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Trigger a search as soon as a book is added
-              </p>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input id="qualitySearchImmediately" type="checkbox" {...register('searchImmediately')} className="sr-only peer" />
-              <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
-            </label>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <label htmlFor="qualityMonitorForUpgrades" className="block text-sm font-medium">Monitor for Upgrades</label>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Include new books in scheduled upgrade searches
-              </p>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input id="qualityMonitorForUpgrades" type="checkbox" {...register('monitorForUpgrades')} className="sr-only peer" />
-              <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
-            </label>
-          </div>
         </div>
 
         {isDirty && (
