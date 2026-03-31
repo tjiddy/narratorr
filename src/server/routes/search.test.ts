@@ -742,4 +742,19 @@ describe('search routes', () => {
       expect(services.blacklist.getBlacklistedHashes).not.toHaveBeenCalled();
     });
   });
+
+  // ===== #248 — GUID blacklist filtering in search route =====
+
+  describe('GET /api/search — GUID blacklist filtering', () => {
+    it.todo('filters out results with blacklisted guid');
+    it.todo('filters out results with blacklisted infoHash (existing behavior)');
+    it.todo('passes through usenet results with no infoHash and no guid');
+  });
+
+  // ===== #248 — grab route accepts guid =====
+
+  describe('POST /api/search/grab — guid threading', () => {
+    it.todo('passes guid to downloadOrchestrator.grab when provided');
+    it.todo('omits guid when not provided (backward compatible)');
+  });
 });

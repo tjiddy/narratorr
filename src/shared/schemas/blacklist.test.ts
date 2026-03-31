@@ -34,4 +34,14 @@ describe('createBlacklistSchema — trim behavior', () => {
     const result = createBlacklistSchema.safeParse(validBase);
     expect(result.success).toBe(true);
   });
+
+  // ===== #248 — GUID + optional infoHash =====
+
+  it.todo('accepts guid only (no infoHash)');
+  it.todo('accepts infoHash only (no guid) — backward compatible');
+  it.todo('accepts both infoHash and guid');
+  it.todo('rejects when neither infoHash nor guid is provided');
+  it.todo('trims leading/trailing spaces from guid');
+  it.todo('rejects whitespace-only guid');
+  it.todo('rejects empty string guid');
 });

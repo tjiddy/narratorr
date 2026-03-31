@@ -254,3 +254,14 @@ describe('createRetrySearchDeps', () => {
     expect(result.log).toBe(log);
   });
 });
+
+// ===== #248 — GUID blacklist filtering in retrySearch =====
+
+describe('retrySearch — GUID blacklist filtering', () => {
+  it.todo('filters out results with blacklisted guid (usenet)');
+  it.todo('filters out results with blacklisted infoHash (torrent — existing behavior)');
+  it.todo('passes through results with no infoHash and no guid');
+  it.todo('treats empty string guid as absent (not matched against blacklist)');
+  it.todo('passes best.guid to grab() when available');
+  it.todo('passes undefined guid to grab() when not available');
+});

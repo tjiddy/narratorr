@@ -1238,4 +1238,14 @@ describe('monitor job', () => {
       });
     });
   });
+
+  // ===== #248 — outputPath persistence =====
+
+  describe('processDownloadUpdate — outputPath persistence', () => {
+    it.todo('sets outputPath to join(item.savePath, item.name) on first poll when outputPath is null');
+    it.todo('applies remote path mapping to outputPath when mappings are available');
+    it.todo('stores raw join(item.savePath, item.name) when remote path mapping fails');
+    it.todo('does not overwrite outputPath when it is already set');
+    it.todo('sets outputPath on transition-to-completed poll (adapter returns completed, DB status still pre-completed)');
+  });
 });

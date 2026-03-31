@@ -617,4 +617,12 @@ describe('startRssJob', () => {
     // The retry should have read settings again
     expect((settings.get as Mock).mock.calls.length).toBeGreaterThanOrEqual(2);
   });
+
+  // ===== #248 — GUID blacklist filtering in RSS =====
+
+  describe('RSS job — GUID blacklist filtering', () => {
+    it.todo('filters out results with blacklisted guid');
+    it.todo('filters out results with blacklisted infoHash (existing behavior)');
+    it.todo('passes through usenet results with no infoHash and no guid');
+  });
 });

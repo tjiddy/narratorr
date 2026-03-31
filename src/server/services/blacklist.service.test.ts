@@ -436,4 +436,24 @@ describe('BlacklistService', () => {
       expect(log.info).not.toHaveBeenCalled();
     });
   });
+
+  // ===== #248 — GUID blacklisting =====
+
+  describe('create — guid support', () => {
+    it.todo('creates blacklist entry with guid only (infoHash null)');
+    it.todo('creates blacklist entry with both infoHash and guid');
+    it.todo('rejects entry with neither infoHash nor guid');
+  });
+
+  describe('getBlacklistedIdentifiers', () => {
+    it.todo('returns blacklisted hashes and guids from combined query');
+    it.todo('returns empty sets when no identifiers match');
+    it.todo('handles empty input arrays gracefully');
+    it.todo('filters by infoHash only when guid array is empty');
+    it.todo('filters by guid only when infoHash array is empty');
+  });
+
+  describe('getBlacklistedHashes — backward compatibility', () => {
+    it.todo('delegates to getBlacklistedIdentifiers and returns hash set only');
+  });
 });

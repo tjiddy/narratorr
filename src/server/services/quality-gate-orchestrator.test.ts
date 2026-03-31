@@ -553,4 +553,38 @@ describe('QualityGateOrchestrator', () => {
       expect(spread.probeError).toBeNull();
     });
   });
+
+  // ===== #248 — Reject cleanup: fallback file deletion =====
+
+  describe('performRejectionCleanup — fallback file deletion', () => {
+    it.todo('deletes outputPath from disk when adapter removeDownload succeeds but files remain');
+    it.todo('skips file deletion silently when outputPath is null');
+    it.todo('skips file deletion silently when outputPath does not exist on disk');
+    it.todo('logs at info level when fallback file deletion succeeds');
+    it.todo('logs at debug level when outputPath is null or missing from disk');
+    it.todo('still attempts direct file deletion when removeDownload throws');
+    it.todo('skips deletion and logs warn when outputPath is outside downloadRoot');
+    it.todo('proceeds with deletion without ancestry check when downloadRoot is not configured');
+    it.todo('skips adapter call when downloadClientId is null');
+    it.todo('skips adapter call when externalId is null');
+  });
+
+  // ===== #248 — Reject cleanup: blacklist with guid =====
+
+  describe('performRejectionCleanup — GUID blacklisting', () => {
+    it.todo('blacklists by infoHash when present (existing behavior)');
+    it.todo('blacklists by guid when infoHash is absent but guid is present');
+    it.todo('skips blacklist and logs when neither infoHash nor guid is available');
+  });
+
+  // ===== #248 — Reject cleanup: fire-and-forget re-search =====
+
+  describe('performRejectionCleanup — re-search on reject', () => {
+    it.todo('triggers retrySearch fire-and-forget when redownloadFailed is true and book reverts to wanted');
+    it.todo('does not trigger re-search when redownloadFailed is false');
+    it.todo('returns immediately without waiting for retrySearch to complete');
+    it.todo('logs warn and does not propagate when retrySearch throws');
+    it.todo('skips re-search when RetrySearchDeps is not injected');
+    it.todo('does not trigger re-search when book is null');
+  });
 });

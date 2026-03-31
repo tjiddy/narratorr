@@ -369,5 +369,10 @@ describe('DownloadOrchestrator', () => {
       const callArg = (downloadService.grab as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
       expect(callArg.replaceExisting).toBeUndefined();
     });
+
+    // ===== #248 — guid threading =====
+
+    it.todo('passes guid to downloadService.grab when provided');
+    it.todo('omits guid when not provided (backward compatible)');
   });
 });
