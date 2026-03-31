@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { BookService } from './book.service.js';
-import { books } from '../../db/schema.js';
+import { books, bookAuthors } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { MetadataService } from './metadata.service.js';
@@ -161,8 +161,10 @@ describe('BookService', () => {
 
     it('finds duplicate by title only when no authors and no ASIN (#246)', async () => {
       // title-only lookup → match, then getById
+      // JS eval order: outer db.select() first, then inner db.select() for notExists subquery
       db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // outer title-only query match
+        .mockReturnValueOnce(mockDbChain([]))            // notExists subquery builder (consumed but not awaited)
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([]));
@@ -174,7 +176,8 @@ describe('BookService', () => {
 
     it('finds duplicate by title only with empty authors array (#246)', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // outer query
+        .mockReturnValueOnce(mockDbChain([]))            // notExists subquery
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([]));
@@ -184,7 +187,9 @@ describe('BookService', () => {
     });
 
     it('returns null for title-only when no match found (#246)', async () => {
-      db.select.mockReturnValueOnce(mockDbChain([]));  // title-only: not found
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))   // outer title-only query: not found
+        .mockReturnValueOnce(mockDbChain([]));  // notExists subquery builder
 
       const result = await service.findDuplicate('Nonexistent Book');
       expect(result).toBeNull();
@@ -196,6 +201,98 @@ describe('BookService', () => {
       const result = await service.findDuplicate('The Way of Kings', [{ name: 'Brandon Sanderson' }], undefined);
       expect(result).toBeNull();
       expect(db.select).toHaveBeenCalledTimes(1);
+    });
+
+    // #253 — title-only branch must exclude authored books
+    it('title-only: does NOT match an authored book with the same title → returns null (#253)', async () => {
+      // JS eval: outer db.select() first, then inner db.select() for notExists
+      const outerChain = mockDbChain([]);
+      const subqueryChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(outerChain)    // outer title-only query: no authorless match
+        .mockReturnValueOnce(subqueryChain); // notExists subquery builder
+
+      const result = await service.findDuplicate('The Way of Kings');
+      expect(result).toBeNull();
+      expect(db.select).toHaveBeenCalledTimes(2);  // outer query + subquery, no getById
+
+      // Verify the full title-only predicate contract: and(eq(books.title, title), notExists(bookAuthors correlated)) (#253)
+      // Helper: recursively find a column reference by table name and column name in Drizzle SQL tree
+      const drizzleNameSym = Symbol.for('drizzle:Name');
+      function findColumn(node: unknown, tableName: string, colName: string): boolean {
+        if (!node || typeof node !== 'object') return false;
+        const obj = node as Record<string | symbol, unknown>;
+        // Column reference: has .name and .table[Symbol.for('drizzle:Name')]
+        if (obj.name === colName && typeof obj.table === 'object' && obj.table !== null
+          && (obj.table as Record<symbol, unknown>)[drizzleNameSym] === tableName) return true;
+        if (Array.isArray(obj.queryChunks)) return obj.queryChunks.some((c: unknown) => findColumn(c, tableName, colName));
+        return false;
+      }
+      function findText(node: unknown, needle: string): boolean {
+        if (!node || typeof node !== 'object') return false;
+        const obj = node as Record<string, unknown>;
+        if (Array.isArray(obj.value) && obj.value.some((v: unknown) => typeof v === 'string' && v.includes(needle))) return true;
+        if (Array.isArray(obj.queryChunks)) return obj.queryChunks.some((c: unknown) => findText(c, needle));
+        return false;
+      }
+
+      const outerWhere = outerChain.where as Mock;
+      expect(outerWhere).toHaveBeenCalledTimes(1);
+      const predicate = outerWhere.mock.calls[0][0];
+
+      // 1. Outer predicate contains eq(books.title, title) — title column reference present
+      expect(findColumn(predicate, 'books', 'title')).toBe(true);
+
+      // 2. Outer predicate contains "not exists" operator
+      expect(findText(predicate, 'not exists')).toBe(true);
+
+      // 3. Outer query selects from books table
+      expect(outerChain.from).toHaveBeenCalledWith(books);
+
+      // 4. Subquery selects from bookAuthors table
+      expect(subqueryChain.from).toHaveBeenCalledWith(bookAuthors);
+
+      // 5. Subquery where() is eq(bookAuthors.bookId, books.id) — single equality with both operands
+      const subqueryWhere = subqueryChain.where as Mock;
+      expect(subqueryWhere).toHaveBeenCalledTimes(1);
+      const subPredicate = subqueryWhere.mock.calls[0][0];
+      // eq() produces a flat SQL: [StringChunk(''), Column(book_id), StringChunk(' = '), Column(id), StringChunk('')]
+      const chunks = subPredicate.queryChunks;
+      expect(chunks).toHaveLength(5);
+      // chunk[1]: left operand — bookAuthors.bookId
+      expect(chunks[1].name).toBe('book_id');
+      expect(chunks[1].table[drizzleNameSym]).toBe('book_authors');
+      // chunk[2]: equality operator
+      expect(chunks[2].value).toContain(' = ');
+      // chunk[3]: right operand — books.id
+      expect(chunks[3].name).toBe('id');
+      expect(chunks[3].table[drizzleNameSym]).toBe('books');
+    });
+
+    it('title-only: returns authorless book when both authored and authorless exist (#253)', async () => {
+      // Outer query returns authorless book (authored excluded by notExists predicate)
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 42 }]))  // outer query: authorless book found
+        .mockReturnValueOnce(mockDbChain([]))             // notExists subquery builder
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, id: 42 }, importListName: null }]))  // getById book
+        .mockReturnValueOnce(mockDbChain([]))             // getById authors (authorless)
+        .mockReturnValueOnce(mockDbChain([]));            // getById narrators
+
+      const result = await service.findDuplicate('The Way of Kings');
+      expect(result).not.toBeNull();
+      expect(result!.id).toBe(42);
+      expect(result!.authors).toEqual([]);
+    });
+
+    it('title-only: empty array triggers same authorless-only behavior as undefined (#253)', async () => {
+      // [] hits same title-only branch as undefined
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))   // outer query: no authorless match
+        .mockReturnValueOnce(mockDbChain([]));  // notExists subquery builder
+
+      const result = await service.findDuplicate('The Way of Kings', []);
+      expect(result).toBeNull();
+      expect(db.select).toHaveBeenCalledTimes(2);  // outer query + subquery
     });
   });
 

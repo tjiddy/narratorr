@@ -164,6 +164,22 @@ describe('books routes', () => {
       expect(res.statusCode).toBe(409);
     });
 
+    it('returns 201 when authorless add and only authored matches exist (#253)', async () => {
+      // findDuplicate returns null because authored "Shogun" is excluded by notExists
+      (services.book.findDuplicate as Mock).mockResolvedValue(null);
+      (services.book.create as Mock).mockResolvedValue({ ...mockBook, title: 'Shogun', authors: [] });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/books',
+        payload: { title: 'Shogun' },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(services.book.findDuplicate).toHaveBeenCalledWith('Shogun', [], undefined);
+      expect(services.book.create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Shogun', authors: [] }));
+    });
+
     it('creates book and returns 201', async () => {
       (services.book.findDuplicate as Mock).mockResolvedValue(null);
       (services.book.create as Mock).mockResolvedValue(mockBook);

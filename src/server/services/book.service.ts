@@ -1,6 +1,6 @@
 import { rm } from 'node:fs/promises';
 import { cleanEmptyParents } from '../utils/paths.js';
-import { eq, and, sql, inArray } from 'drizzle-orm';
+import { eq, and, sql, inArray, notExists } from 'drizzle-orm';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { books, authors, narrators, bookAuthors, bookNarrators, unmatchedGenres, importLists } from '../../db/schema.js';
@@ -93,11 +93,17 @@ export class BookService {
 
     // Title-only dedup when no authors and no ASIN — shared across manual add,
     // library import, and discovery callers (#246)
+    // Only match books with zero authors so authored "Shogun" doesn't block authorless "Shogun" (#253)
     if (!asin && (!authorList || authorList.length === 0)) {
       const byTitle = await this.db
         .select({ id: books.id })
         .from(books)
-        .where(eq(books.title, title))
+        .where(and(
+          eq(books.title, title),
+          notExists(
+            this.db.select({ id: bookAuthors.bookId }).from(bookAuthors).where(eq(bookAuthors.bookId, books.id)),
+          ),
+        ))
         .limit(1);
 
       if (byTitle.length > 0) {

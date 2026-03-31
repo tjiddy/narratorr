@@ -286,6 +286,21 @@ describe('LibraryScanService', () => {
       expect(mockBookService.create).not.toHaveBeenCalled();
     });
 
+    it('imports authorless book when only authored matches exist (#253)', async () => {
+      // findDuplicate returns null — authored "Shogun" excluded by notExists
+      mockBookService.findDuplicate.mockResolvedValueOnce(null);
+
+      const result = await service.importSingleBook({
+        path: '/audiobooks/Shogun',
+        title: 'Shogun',
+        authorName: undefined,
+      });
+
+      expect(result.imported).toBe(true);
+      expect(mockBookService.findDuplicate).toHaveBeenCalledWith('Shogun', undefined);
+      expect(mockBookService.create).toHaveBeenCalledWith(expect.objectContaining({ title: 'Shogun' }));
+    });
+
     it('uses passed metadata instead of looking up', async () => {
       const metadata = {
         title: 'Provider Title',
