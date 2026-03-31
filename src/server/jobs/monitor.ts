@@ -151,22 +151,7 @@ async function processDownloadUpdate(
     log.debug({ id: download.id, progress }, 'Download progress');
   }
 
-  // Persist outputPath on first resolution (when not already set)
-  let resolvedOutputPath: string | undefined;
-  if (!download.outputPath && item.savePath && item.name) {
-    let fullPath = join(item.savePath, item.name);
-    if (remotePathMappingService && download.downloadClientId) {
-      try {
-        const mappings = await remotePathMappingService.getByClientId(download.downloadClientId);
-        if (mappings.length > 0) {
-          fullPath = applyPathMapping(fullPath, mappings);
-        }
-      } catch {
-        log.debug({ id: download.id }, 'Remote path mapping unavailable, using raw path');
-      }
-    }
-    resolvedOutputPath = fullPath;
-  }
+  const resolvedOutputPath = await resolveOutputPath(download, item, remotePathMappingService, log);
 
   const progressChanged = progress !== download.progress;
   await db
@@ -184,6 +169,29 @@ async function processDownloadUpdate(
   emitProgressEvents(download, progress, newStatus, broadcaster, log);
   await handleFailureTransition(db, download, newStatus, retryDeps, log);
   handleCompletionNotification(download, item, isCompleted, notifierService, log);
+}
+
+/** Resolve outputPath on first poll — join savePath+name and apply remote path mapping. */
+async function resolveOutputPath(
+  download: DownloadRow,
+  item: DownloadItem,
+  remotePathMappingService: RemotePathMappingService | undefined,
+  log: FastifyBaseLogger,
+): Promise<string | undefined> {
+  if (download.outputPath || !item.savePath || !item.name) return undefined;
+
+  let fullPath = join(item.savePath, item.name);
+  if (remotePathMappingService && download.downloadClientId) {
+    try {
+      const mappings = await remotePathMappingService.getByClientId(download.downloadClientId);
+      if (mappings.length > 0) {
+        fullPath = applyPathMapping(fullPath, mappings);
+      }
+    } catch {
+      log.debug({ id: download.id }, 'Remote path mapping unavailable, using raw path');
+    }
+  }
+  return fullPath;
 }
 
 /** Emit SSE progress and status change events. */
