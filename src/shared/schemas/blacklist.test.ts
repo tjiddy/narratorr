@@ -34,4 +34,52 @@ describe('createBlacklistSchema — trim behavior', () => {
     const result = createBlacklistSchema.safeParse(validBase);
     expect(result.success).toBe(true);
   });
+
+  // ===== #248 — GUID + optional infoHash =====
+
+  it('accepts guid only (no infoHash)', () => {
+    const { infoHash: _, ...base } = validBase;
+    const result = createBlacklistSchema.safeParse({ ...base, guid: 'some-guid-value' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.guid).toBe('some-guid-value');
+  });
+
+  it('accepts infoHash only (no guid) — backward compatible', () => {
+    const result = createBlacklistSchema.safeParse(validBase);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.infoHash).toBe('abc123');
+  });
+
+  it('accepts both infoHash and guid', () => {
+    const result = createBlacklistSchema.safeParse({ ...validBase, guid: 'some-guid-value' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.infoHash).toBe('abc123');
+      expect(result.data.guid).toBe('some-guid-value');
+    }
+  });
+
+  it('rejects when neither infoHash nor guid is provided', () => {
+    const { infoHash: _, ...base } = validBase;
+    const result = createBlacklistSchema.safeParse(base);
+    expect(result.success).toBe(false);
+  });
+
+  it('trims leading/trailing spaces from guid', () => {
+    const result = createBlacklistSchema.safeParse({ ...validBase, guid: '  some-guid  ' });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.guid).toBe('some-guid');
+  });
+
+  it('rejects whitespace-only guid', () => {
+    const { infoHash: _, ...base } = validBase;
+    const result = createBlacklistSchema.safeParse({ ...base, guid: '   ' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects empty string guid', () => {
+    const { infoHash: _, ...base } = validBase;
+    const result = createBlacklistSchema.safeParse({ ...base, guid: '' });
+    expect(result.success).toBe(false);
+  });
 });

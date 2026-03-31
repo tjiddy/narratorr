@@ -5,6 +5,7 @@ import type { Services } from './index.js';
 const mockEntry = {
   id: 1,
   bookId: null,
+  guid: null,
   infoHash: 'abc123def456',
   title: 'Bad Release [Unabridged]',
   reason: 'wrong_content' as const,

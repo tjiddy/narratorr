@@ -86,15 +86,16 @@ export async function retrySearch(
       return { outcome: 'no_candidates' };
     }
 
-    // Filter blacklisted releases
-    const hashes = rawResults
-      .map((r: SearchResult) => r.infoHash)
-      .filter((h): h is string => !!h);
+    // Filter blacklisted releases by infoHash and/or guid
+    const hashes = rawResults.map((r: SearchResult) => r.infoHash).filter((h): h is string => !!h);
+    const guids = rawResults.map((r: SearchResult) => r.guid).filter((g): g is string => !!g);
     let filteredResults = rawResults;
-    if (hashes.length > 0) {
-      const blacklisted = await blacklistService.getBlacklistedHashes(hashes);
+    if (hashes.length > 0 || guids.length > 0) {
+      const { blacklistedHashes, blacklistedGuids } = await blacklistService.getBlacklistedIdentifiers(hashes, guids);
       filteredResults = rawResults.filter(
-        (r: SearchResult) => !r.infoHash || !blacklisted.has(r.infoHash),
+        (r: SearchResult) =>
+          (!r.infoHash || !blacklistedHashes.has(r.infoHash)) &&
+          (!r.guid || !blacklistedGuids.has(r.guid)),
       );
     }
 
@@ -125,6 +126,7 @@ export async function retrySearch(
       bookId: book.id,
       size: best.size,
       seeders: best.seeders,
+      guid: best.guid,
       skipDuplicateCheck: true,
     });
 

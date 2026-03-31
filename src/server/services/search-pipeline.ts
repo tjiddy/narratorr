@@ -176,6 +176,7 @@ export async function searchAndGrabForBook(
       bookId: book.id,
       size: best.size,
       seeders: best.seeders,
+      guid: best.guid,
     });
     log.info({ bookId: book.id, title: best.title, seeders: best.seeders }, 'Auto-grabbed best result');
     return { result: 'grabbed', title: best.title };

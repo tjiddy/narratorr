@@ -16,6 +16,11 @@ import type { books } from '../../db/schema.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { resolveSavePath } from '../utils/download-path.js';
 import { revertBookStatus } from '../utils/book-status.js';
+import { retrySearch, type RetrySearchDeps } from './retry-search.js';
+import type { SettingsService } from './settings.service.js';
+import { stat } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
+import { relative } from 'node:path';
 
 type BookRow = typeof books.$inferSelect;
 
@@ -29,6 +34,8 @@ export class QualityGateOrchestrator {
     private broadcaster?: EventBroadcasterService,
     private blacklistService?: BlacklistService,
     private remotePathMappingService?: RemotePathMappingService,
+    private retrySearchDeps?: RetrySearchDeps,
+    private settingsService?: SettingsService,
   ) {}
 
   /**
@@ -174,26 +181,44 @@ export class QualityGateOrchestrator {
     }
   }
 
-  /** Shared cleanup for rejection: blacklist, delete files, revert book status + SSE. */
+  /** Shared cleanup for rejection: blacklist, delete files, revert book status + SSE, fire-and-forget re-search. */
   private async performRejectionCleanup(download: DownloadRow, book: BookRow | null, oldStatus: DownloadStatus = 'pending_review'): Promise<void> {
-    // Blacklist if infoHash present
-    if (download.infoHash && this.blacklistService) {
+    await this.blacklistRejectedRelease(download);
+    await this.removeDownloadFiles(download);
+    await this.fallbackFileDelete(download);
+
+    // Recover book status — errors propagate to caller (manual reject → 500, auto-reject → outer catch → pending_review)
+    if (book) {
+      const revertStatus = await revertBookStatus(this.db, book);
+      this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: oldStatus, new_status: 'failed' });
+      this.emitSSE('book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: revertStatus as BookStatus });
+    }
+
+    this.triggerReSearchAfterReject(download, book);
+  }
+
+  /** Blacklist a rejected release by infoHash and/or guid. */
+  private async blacklistRejectedRelease(download: DownloadRow): Promise<void> {
+    if ((download.infoHash || download.guid) && this.blacklistService) {
       try {
         await this.blacklistService.create({
-          infoHash: download.infoHash,
+          infoHash: download.infoHash ?? undefined,
+          guid: download.guid ?? undefined,
           title: download.title,
           bookId: download.bookId ?? undefined,
           reason: 'bad_quality',
         });
-        this.log.info({ downloadId: download.id, infoHash: download.infoHash }, 'Quality gate: blacklisted rejected release');
+        this.log.info({ downloadId: download.id, infoHash: download.infoHash, guid: download.guid }, 'Quality gate: blacklisted rejected release');
       } catch (error: unknown) {
         this.log.warn({ downloadId: download.id, error }, 'Quality gate: failed to blacklist release');
       }
-    } else if (!download.infoHash) {
-      this.log.info({ downloadId: download.id }, 'Quality gate: blacklist skipped — no infoHash');
+    } else if (!download.infoHash && !download.guid) {
+      this.log.info({ downloadId: download.id }, 'Quality gate: blacklist skipped — no infoHash or guid');
     }
+  }
 
-    // Delete downloaded files via client
+  /** Delete downloaded files via the download client adapter. */
+  private async removeDownloadFiles(download: DownloadRow): Promise<void> {
     try {
       if (download.downloadClientId && download.externalId) {
         const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
@@ -205,12 +230,68 @@ export class QualityGateOrchestrator {
     } catch (error: unknown) {
       this.log.warn({ downloadId: download.id, error }, 'Quality gate: failed to delete download files');
     }
+  }
 
-    // Recover book status — errors propagate to caller (manual reject → 500, auto-reject → outer catch → pending_review)
-    if (book) {
-      const revertStatus = await revertBookStatus(this.db, book);
-      this.emitSSE('download_status_change', { download_id: download.id, book_id: book.id, old_status: oldStatus, new_status: 'failed' });
-      this.emitSSE('book_status_change', { book_id: book.id, old_status: book.status as BookStatus, new_status: revertStatus as BookStatus });
+  /** Fire-and-forget re-search after reject, gated by redownloadFailed setting. */
+  private triggerReSearchAfterReject(download: DownloadRow, book: BookRow | null): void {
+    if (!book || !this.retrySearchDeps || !this.settingsService) {
+      if (!this.retrySearchDeps) {
+        this.log.debug({ downloadId: download.id }, 'Quality gate: re-search skipped — RetrySearchDeps not injected');
+      }
+      return;
+    }
+
+    const deps = this.retrySearchDeps;
+    this.settingsService.get('import').then((importSettings) => {
+      if (importSettings.redownloadFailed) {
+        this.log.info({ downloadId: download.id, bookId: book.id }, 'Quality gate: triggering re-search after reject');
+        retrySearch(book.id, deps).catch((error: unknown) => {
+          this.log.warn({ downloadId: download.id, bookId: book.id, error }, 'Quality gate: re-search after reject failed');
+        });
+      }
+    }).catch((error: unknown) => {
+      this.log.warn({ downloadId: download.id, error }, 'Quality gate: failed to check redownloadFailed setting');
+    });
+  }
+
+  /** Attempt direct file deletion from persisted outputPath when adapter removal may have been incomplete. */
+  private async fallbackFileDelete(download: DownloadRow): Promise<void> {
+    if (!download.outputPath) {
+      this.log.debug({ downloadId: download.id }, 'Quality gate: fallback delete skipped — no outputPath');
+      return;
+    }
+
+    try {
+      await stat(download.outputPath);
+    } catch {
+      this.log.debug({ downloadId: download.id, outputPath: download.outputPath }, 'Quality gate: fallback delete skipped — path does not exist');
+      return;
+    }
+
+    // Ancestry check if downloadRoot is configured
+    if (download.downloadClientId) {
+      try {
+        const clientRow = await this.downloadClientService.getById(download.downloadClientId);
+        const settings = clientRow?.settings as Record<string, unknown> | undefined;
+        const downloadRoot = typeof settings?.downloadRoot === 'string' ? settings.downloadRoot.trim() : '';
+        if (downloadRoot) {
+          const rel = relative(downloadRoot, download.outputPath);
+          if (rel.startsWith('..')) {
+            this.log.warn({ downloadId: download.id, outputPath: download.outputPath, downloadRoot }, 'Quality gate: fallback delete skipped — path outside downloadRoot');
+            return;
+          }
+        }
+      } catch (error: unknown) {
+        this.log.warn({ downloadId: download.id, error }, 'Quality gate: fallback delete skipped — could not resolve downloadRoot for ancestry check');
+        return;
+      }
+    }
+
+    try {
+      await rm(download.outputPath, { recursive: true, force: true });
+      this.log.info({ downloadId: download.id, outputPath: download.outputPath }, 'Quality gate: fallback deleted orphaned files');
+    } catch (error: unknown) {
+      this.log.warn({ downloadId: download.id, outputPath: download.outputPath, error }, 'Quality gate: fallback file deletion failed');
     }
   }
 

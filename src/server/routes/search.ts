@@ -54,14 +54,16 @@ export async function searchRoutes(
         return true;
       });
 
-      // Blacklist filtering
-      const hashes = results
-        .map((r: { infoHash?: string }) => r.infoHash)
-        .filter((h): h is string => !!h);
+      // Blacklist filtering by infoHash and/or guid
+      const hashes = results.map((r: { infoHash?: string }) => r.infoHash).filter((h): h is string => !!h);
+      const guids = results.map((r: { guid?: string }) => r.guid).filter((g): g is string => !!g);
       let filteredResults = results;
-      if (hashes.length > 0) {
-        const blacklisted = await blacklistService.getBlacklistedHashes(hashes);
-        filteredResults = results.filter((r: { infoHash?: string }) => !r.infoHash || !blacklisted.has(r.infoHash));
+      if (hashes.length > 0 || guids.length > 0) {
+        const { blacklistedHashes, blacklistedGuids } = await blacklistService.getBlacklistedIdentifiers(hashes, guids);
+        filteredResults = results.filter((r: { infoHash?: string; guid?: string }) =>
+          (!r.infoHash || !blacklistedHashes.has(r.infoHash)) &&
+          (!r.guid || !blacklistedGuids.has(r.guid)),
+        );
       }
 
       // Quality filtering and ranking

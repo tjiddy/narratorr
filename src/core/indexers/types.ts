@@ -15,6 +15,7 @@ export interface SearchResult {
   indexer: string;
   indexerId?: number;
   detailsUrl?: string;
+  guid?: string;
   coverUrl?: string;
   matchScore?: number;
 }

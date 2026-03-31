@@ -404,6 +404,30 @@ describe('DownloadClientFields', () => {
     });
   });
 
+  // ===== #248 — downloadRoot field =====
+
+  describe('downloadRoot field', () => {
+    it('renders Download Root label, input, and placeholder for non-blackhole types', () => {
+      render(<FieldWrapper type="qbittorrent" />);
+      expect(screen.getByText('Download Root')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('/downloads/complete')).toBeInTheDocument();
+    });
+
+    it('allows typing in downloadRoot field', async () => {
+      const user = userEvent.setup();
+      render(<FieldWrapper type="qbittorrent" />);
+      const input = screen.getByPlaceholderText('/downloads/complete');
+      await user.type(input, '/data/complete');
+      expect(input).toHaveValue('/data/complete');
+    });
+
+    it('registers as settings.downloadRoot', () => {
+      render(<FieldWrapper type="qbittorrent" />);
+      const input = screen.getByPlaceholderText('/downloads/complete');
+      expect(input).toHaveAttribute('name', 'settings.downloadRoot');
+    });
+  });
+
   describe('portal dropdown close behavior', () => {
     it('closes category dropdown on outside click', async () => {
       const user = userEvent.setup();

@@ -39,6 +39,7 @@ export class DownloadOrchestrator {
     indexerId?: number;
     size?: number;
     seeders?: number;
+    guid?: string;
     skipDuplicateCheck?: boolean;
     replaceExisting?: boolean;
     source?: CreateEventInput['source'];

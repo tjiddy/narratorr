@@ -137,8 +137,9 @@ export class TorznabIndexer implements IndexerAdapter {
         downloadUrl = buildMagnetUri(infoHash, title);
       }
 
+      const guidText = $item.find('guid').text().trim() || undefined;
       const detailsUrl =
-        $item.find('guid').text().trim() ||
+        guidText ||
         $item.find('comments').text().trim() ||
         undefined;
 
@@ -152,6 +153,7 @@ export class TorznabIndexer implements IndexerAdapter {
         protocol: 'torrent',
         downloadUrl,
         detailsUrl,
+        guid: guidText,
         infoHash,
         size: size || undefined,
         seeders: attrs.seeders != null ? Number(attrs.seeders) : undefined,

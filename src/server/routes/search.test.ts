@@ -458,7 +458,7 @@ describe('search routes', () => {
         },
       ];
       (services.indexer.searchAll as Mock).mockResolvedValue(results);
-      (services.blacklist.getBlacklistedHashes as Mock).mockResolvedValue(new Set());
+      (services.blacklist.getBlacklistedIdentifiers as Mock).mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() });
       (services.settings.get as Mock).mockImplementation((cat: string) =>
         Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
       );
@@ -710,7 +710,7 @@ describe('search routes', () => {
         { ...mockSearchResult, infoHash: 'abc123', title: 'Has Hash' },
       ];
       (services.indexer.searchAll as Mock).mockResolvedValue(results);
-      (services.blacklist.getBlacklistedHashes as Mock).mockResolvedValue(new Set(['abc123']));
+      (services.blacklist.getBlacklistedIdentifiers as Mock).mockResolvedValue({ blacklistedHashes: new Set(['abc123']), blacklistedGuids: new Set() });
       (services.settings.get as Mock).mockImplementation((cat: string) =>
         Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
       );
@@ -739,7 +739,108 @@ describe('search routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.results).toHaveLength(2);
       // blacklistService should not be called since hashes array is empty
-      expect(services.blacklist.getBlacklistedHashes).not.toHaveBeenCalled();
+      expect(services.blacklist.getBlacklistedIdentifiers).not.toHaveBeenCalled();
+    });
+  });
+
+  // ===== #248 — GUID blacklist filtering in search route =====
+
+  describe('GET /api/search — GUID blacklist filtering', () => {
+    it('filters out results with blacklisted guid', async () => {
+      const results = [
+        { ...mockSearchResult, guid: 'guid-1', title: 'Blacklisted By Guid' },
+        { ...mockSearchResult, guid: 'guid-2', title: 'Clean Result' },
+      ];
+      (services.indexer.searchAll as Mock).mockResolvedValue(results);
+      (services.blacklist.getBlacklistedIdentifiers as Mock).mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set(['guid-1']) });
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
+
+      const res = await app.inject({ method: 'GET', url: '/api/search?q=sanderson' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.results).toHaveLength(1);
+      expect(body.results[0].title).toBe('Clean Result');
+    });
+
+    it('filters out results with blacklisted infoHash (existing behavior)', async () => {
+      const results = [
+        { ...mockSearchResult, infoHash: 'hash-bad', guid: 'guid-ok', title: 'Blacklisted By Hash' },
+        { ...mockSearchResult, infoHash: 'hash-ok', guid: 'guid-ok2', title: 'Clean Result' },
+      ];
+      (services.indexer.searchAll as Mock).mockResolvedValue(results);
+      (services.blacklist.getBlacklistedIdentifiers as Mock).mockResolvedValue({ blacklistedHashes: new Set(['hash-bad']), blacklistedGuids: new Set() });
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
+
+      const res = await app.inject({ method: 'GET', url: '/api/search?q=sanderson' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.results).toHaveLength(1);
+      expect(body.results[0].title).toBe('Clean Result');
+    });
+
+    it('passes through usenet results with no infoHash and no guid', async () => {
+      const results = [
+        { ...mockSearchResult, protocol: 'usenet' as const, infoHash: undefined, guid: undefined, title: 'Usenet No IDs' },
+      ];
+      (services.indexer.searchAll as Mock).mockResolvedValue(results);
+      (services.settings.get as Mock).mockImplementation((cat: string) =>
+        Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
+      );
+
+      const res = await app.inject({ method: 'GET', url: '/api/search?q=sanderson' });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      expect(body.results).toHaveLength(1);
+      expect(body.results[0].title).toBe('Usenet No IDs');
+      // blacklistService should not be called since no hashes or guids
+      expect(services.blacklist.getBlacklistedIdentifiers).not.toHaveBeenCalled();
+    });
+  });
+
+  // ===== #248 — grab route accepts guid =====
+
+  describe('POST /api/search/grab — guid threading', () => {
+    it('passes guid to downloadOrchestrator.grab when provided', async () => {
+      const mockDownload = { id: 1, title: 'Test', status: 'downloading' };
+      (services.downloadOrchestrator.grab as Mock).mockResolvedValue(mockDownload);
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: {
+          downloadUrl: 'magnet:?xt=urn:btih:abc123',
+          title: 'The Way of Kings',
+          guid: 'test-guid',
+        },
+      });
+
+      expect(services.downloadOrchestrator.grab).toHaveBeenCalledWith(
+        expect.objectContaining({ guid: 'test-guid' }),
+      );
+    });
+
+    it('omits guid when not provided (backward compatible)', async () => {
+      const mockDownload = { id: 1, title: 'Test', status: 'downloading' };
+      (services.downloadOrchestrator.grab as Mock).mockResolvedValue(mockDownload);
+
+      await app.inject({
+        method: 'POST',
+        url: '/api/search/grab',
+        payload: {
+          downloadUrl: 'magnet:?xt=urn:btih:abc123',
+          title: 'The Way of Kings',
+        },
+      });
+
+      const callArg = (services.downloadOrchestrator.grab as Mock).mock.calls[0][0] as Record<string, unknown>;
+      expect(callArg.guid).toBeUndefined();
     });
   });
 });

@@ -9,12 +9,21 @@ export const blacklistReasonSchema = z.enum(['wrong_content', 'bad_quality', 'wr
 export const blacklistTypeSchema = z.enum(['temporary', 'permanent']);
 
 export const createBlacklistSchema = z.object({
-  infoHash: z.string().trim().min(1, 'Info hash is required'),
+  infoHash: z.string().trim().min(1).optional(),
+  guid: z.string().trim().min(1).optional(),
   title: z.string().trim().min(1, 'Title is required'),
   bookId: z.number().int().optional(),
   reason: blacklistReasonSchema,
   note: z.string().max(500).optional(),
   blacklistType: blacklistTypeSchema.optional(),
+}).superRefine((data, ctx) => {
+  if (!data.infoHash && !data.guid) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'At least one identifier (infoHash or guid) is required',
+      path: ['infoHash'],
+    });
+  }
 });
 
 export const toggleBlacklistTypeSchema = z.object({

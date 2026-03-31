@@ -179,6 +179,22 @@ describe('searchAndGrabForBook', () => {
     expect(result).toEqual({ result: 'grabbed', title: 'Test Book' });
   });
 
+  it('passes guid from best result to grab()', async () => {
+    vi.mocked(indexerService.searchAll).mockResolvedValue([makeResult({ guid: 'nzb-guid-abc' })]);
+    await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log);
+    expect(downloadService.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ guid: 'nzb-guid-abc', bookId: 1 }),
+    );
+  });
+
+  it('passes undefined guid to grab() when result has no guid', async () => {
+    vi.mocked(indexerService.searchAll).mockResolvedValue([makeResult({ guid: undefined })]);
+    await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log);
+    expect(downloadService.grab).toHaveBeenCalledWith(
+      expect.objectContaining({ guid: undefined, bookId: 1 }),
+    );
+  });
+
   it('calls buildSearchQuery to construct the query', async () => {
     await searchAndGrabForBook(book, indexerService, downloadService, defaultQualitySettings, log);
     expect(indexerService.searchAll).toHaveBeenCalledWith('Test Book Author', expect.any(Object));

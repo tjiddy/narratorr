@@ -436,4 +436,130 @@ describe('BlacklistService', () => {
       expect(log.info).not.toHaveBeenCalled();
     });
   });
+
+  // ===== #248 — GUID blacklisting =====
+
+  describe('create — guid support', () => {
+    it('creates blacklist entry with guid only (infoHash null)', async () => {
+      const guidEntry = { ...mockEntry, infoHash: null, guid: 'test-guid-123' };
+      db.insert.mockReturnValue(mockDbChain([guidEntry]));
+      const result = await service.create({
+        guid: 'test-guid-123',
+        title: 'Guid Only Release',
+        reason: 'wrong_content',
+      });
+      expect(result).toEqual(guidEntry);
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ guid: 'test-guid-123' }),
+        'Added to blacklist',
+      );
+    });
+
+    it('creates blacklist entry with both infoHash and guid', async () => {
+      const bothEntry = { ...mockEntry, infoHash: 'abc123', guid: 'test-guid-456' };
+      db.insert.mockReturnValue(mockDbChain([bothEntry]));
+      const result = await service.create({
+        infoHash: 'abc123',
+        guid: 'test-guid-456',
+        title: 'Both IDs Release',
+        reason: 'wrong_content',
+      });
+      expect(result).toEqual(bothEntry);
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ infoHash: 'abc123', guid: 'test-guid-456' }),
+        'Added to blacklist',
+      );
+    });
+
+    it('rejects entry with neither infoHash nor guid', async () => {
+      await expect(service.create({
+        title: 'No IDs Release',
+        reason: 'wrong_content',
+      })).rejects.toThrow('Blacklist entry requires at least one identifier (infoHash or guid)');
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getBlacklistedIdentifiers', () => {
+    it('returns blacklisted hashes and guids from combined query', async () => {
+      const hashEntry = { ...mockEntry, infoHash: 'hash1', guid: null };
+      const guidEntry = { ...mockEntry2, infoHash: null, guid: 'guid1' };
+      db.select.mockReturnValue(mockDbChain([hashEntry, guidEntry]));
+      const result = await service.getBlacklistedIdentifiers(['hash1'], ['guid1']);
+      expect(result.blacklistedHashes).toBeInstanceOf(Set);
+      expect(result.blacklistedGuids).toBeInstanceOf(Set);
+      expect(result.blacklistedHashes.has('hash1')).toBe(true);
+      expect(result.blacklistedGuids.has('guid1')).toBe(true);
+    });
+
+    it('returns empty sets when no identifiers match', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      const result = await service.getBlacklistedIdentifiers(['unknown-hash'], ['unknown-guid']);
+      expect(result.blacklistedHashes.size).toBe(0);
+      expect(result.blacklistedGuids.size).toBe(0);
+    });
+
+    it('handles empty input arrays gracefully', async () => {
+      db.select.mockReturnValue(mockDbChain([]));
+      const result = await service.getBlacklistedIdentifiers([], []);
+      expect(result.blacklistedHashes.size).toBe(0);
+      expect(result.blacklistedGuids.size).toBe(0);
+    });
+
+    it('filters by infoHash only when guid array is empty', async () => {
+      vi.mocked(inArray).mockClear();
+      db.select.mockReturnValue(mockDbChain([mockEntry]));
+      await service.getBlacklistedIdentifiers(['abc123def456'], []);
+      expect(inArray).toHaveBeenCalledWith(blacklist.infoHash, ['abc123def456']);
+    });
+
+    it('filters by guid only when infoHash array is empty', async () => {
+      vi.mocked(inArray).mockClear();
+      db.select.mockReturnValue(mockDbChain([{ ...mockEntry2, guid: 'guid1' }]));
+      await service.getBlacklistedIdentifiers([], ['guid1']);
+      expect(inArray).toHaveBeenCalledWith(blacklist.guid, ['guid1']);
+    });
+
+    it('queries both identifier columns with expiry filter when both arrays provided', async () => {
+      vi.mocked(inArray).mockClear();
+      vi.mocked(and).mockClear();
+      vi.mocked(or).mockClear();
+      const hashEntry = { ...mockEntry, infoHash: 'hash1', guid: null };
+      const guidEntry = { ...mockEntry2, infoHash: null, guid: 'guid1' };
+      db.select.mockReturnValue(mockDbChain([hashEntry, guidEntry]));
+
+      const result = await service.getBlacklistedIdentifiers(['hash1'], ['guid1']);
+
+      // Both identifier columns included in query
+      expect(inArray).toHaveBeenCalledWith(blacklist.infoHash, ['hash1']);
+      expect(inArray).toHaveBeenCalledWith(blacklist.guid, ['guid1']);
+      // Expiry filter applied (or combines permanent + gt(expiresAt, now))
+      expect(or).toHaveBeenCalled();
+      // Combined with and()
+      expect(and).toHaveBeenCalled();
+      // Returned sets correctly partitioned
+      expect(result.blacklistedHashes).toEqual(new Set(['hash1']));
+      expect(result.blacklistedGuids).toEqual(new Set(['guid1']));
+    });
+
+    it('excludes null identifiers from returned sets', async () => {
+      const mixedEntry = { ...mockEntry, infoHash: 'hash1', guid: null };
+      db.select.mockReturnValue(mockDbChain([mixedEntry]));
+      const result = await service.getBlacklistedIdentifiers(['hash1'], []);
+      expect(result.blacklistedHashes).toEqual(new Set(['hash1']));
+      expect(result.blacklistedGuids.size).toBe(0);
+    });
+  });
+
+  describe('getBlacklistedHashes — backward compatibility', () => {
+    it('delegates to getBlacklistedIdentifiers and returns hash set only', async () => {
+      const hashEntry = { ...mockEntry, infoHash: 'hash1', guid: 'guid1' };
+      db.select.mockReturnValue(mockDbChain([hashEntry]));
+      const result = await service.getBlacklistedHashes(['hash1']);
+      expect(result).toBeInstanceOf(Set);
+      expect(result.has('hash1')).toBe(true);
+      // Should not return guids — only hashes
+      expect(result.has('guid1')).toBe(false);
+    });
+  });
 });

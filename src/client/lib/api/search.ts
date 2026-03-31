@@ -16,6 +16,7 @@ export interface SearchResult {
   indexer: string;
   indexerId?: number;
   detailsUrl?: string;
+  guid?: string;
   coverUrl?: string;
   matchScore?: number;
 }
@@ -52,6 +53,7 @@ export const searchApi = {
     indexerId?: number;
     size?: number;
     seeders?: number;
+    guid?: string;
     replaceExisting?: boolean;
   }) =>
     fetchApi<Download>('/search/grab', {

@@ -13,6 +13,9 @@ import type { EventBroadcasterService } from '../services/event-broadcaster.serv
 import type { DownloadStatus } from '../../shared/schemas/activity.js';
 import { revertBookStatus } from '../utils/book-status.js';
 import { fireAndForget } from '../utils/fire-and-forget.js';
+import type { RemotePathMappingService } from '../services/remote-path-mapping.service.js';
+import { applyPathMapping } from '../../core/utils/path-mapping.js';
+import { join } from 'node:path';
 
 export interface MonitorRetryDeps {
   blacklistService: BlacklistService;
@@ -26,11 +29,12 @@ export function startMonitorJob(
   log: FastifyBaseLogger,
   retryDeps?: MonitorRetryDeps,
   broadcaster?: EventBroadcasterService,
+  remotePathMappingService?: RemotePathMappingService,
 ) {
   // Run every 30 seconds
   cron.schedule(MONITOR_CRON_INTERVAL, async () => {
     try {
-      await monitorDownloads(db, downloadClientService, notifierService, log, retryDeps, broadcaster);
+      await monitorDownloads(db, downloadClientService, notifierService, log, retryDeps, broadcaster, remotePathMappingService);
     } catch (error: unknown) {
       log.error(error, 'Monitor job error');
     }
@@ -46,6 +50,7 @@ export async function monitorDownloads(
   log: FastifyBaseLogger,
   retryDeps?: MonitorRetryDeps,
   broadcaster?: EventBroadcasterService,
+  remotePathMappingService?: RemotePathMappingService,
 ) {
   const activeDownloads = await db
     .select()
@@ -78,7 +83,7 @@ export async function monitorDownloads(
         continue;
       }
 
-      await processDownloadUpdate(db, download, item, notifierService, log, retryDeps, broadcaster);
+      await processDownloadUpdate(db, download, item, notifierService, log, retryDeps, broadcaster, remotePathMappingService);
     } catch (error: unknown) {
       log.error({ error, id: download.id }, 'Error monitoring download');
       await blacklistOnInfraError(download, retryDeps, log);
@@ -88,7 +93,7 @@ export async function monitorDownloads(
 
 import type { DownloadRow } from '../services/types.js';
 
-type DownloadItem = { progress: number; status: 'downloading' | 'seeding' | 'paused' | 'completed' | 'error'; savePath: string; size: number; errorMessage?: string };
+type DownloadItem = { progress: number; status: 'downloading' | 'seeding' | 'paused' | 'completed' | 'error'; savePath: string; name: string; size: number; errorMessage?: string };
 
 /** Handle a download that has been removed from the client externally. */
 async function handleMissingItem(
@@ -133,6 +138,7 @@ async function processDownloadUpdate(
   log: FastifyBaseLogger,
   retryDeps?: MonitorRetryDeps,
   broadcaster?: EventBroadcasterService,
+  remotePathMappingService?: RemotePathMappingService,
 ): Promise<void> {
   const progress = item.progress / 100;
   const isError = item.status === 'error';
@@ -145,6 +151,8 @@ async function processDownloadUpdate(
     log.debug({ id: download.id, progress }, 'Download progress');
   }
 
+  const resolvedOutputPath = await resolveOutputPath(download, item, remotePathMappingService, log);
+
   const progressChanged = progress !== download.progress;
   await db
     .update(downloads)
@@ -154,12 +162,36 @@ async function processDownloadUpdate(
       completedAt: isCompleted && !download.completedAt ? new Date() : download.completedAt,
       ...(progressChanged ? { progressUpdatedAt: new Date() } : {}),
       ...(item.errorMessage ? { errorMessage: item.errorMessage } : {}),
+      ...(resolvedOutputPath ? { outputPath: resolvedOutputPath } : {}),
     })
     .where(eq(downloads.id, download.id));
 
   emitProgressEvents(download, progress, newStatus, broadcaster, log);
   await handleFailureTransition(db, download, newStatus, retryDeps, log);
   handleCompletionNotification(download, item, isCompleted, notifierService, log);
+}
+
+/** Resolve outputPath on first poll — join savePath+name and apply remote path mapping. */
+async function resolveOutputPath(
+  download: DownloadRow,
+  item: DownloadItem,
+  remotePathMappingService: RemotePathMappingService | undefined,
+  log: FastifyBaseLogger,
+): Promise<string | undefined> {
+  if (download.outputPath || !item.savePath || !item.name) return undefined;
+
+  let fullPath = join(item.savePath, item.name);
+  if (remotePathMappingService && download.downloadClientId) {
+    try {
+      const mappings = await remotePathMappingService.getByClientId(download.downloadClientId);
+      if (mappings.length > 0) {
+        fullPath = applyPathMapping(fullPath, mappings);
+      }
+    } catch {
+      log.debug({ id: download.id }, 'Remote path mapping unavailable, using raw path');
+    }
+  }
+  return fullPath;
 }
 
 /** Emit SSE progress and status change events. */

@@ -128,9 +128,10 @@ export class NewznabIndexer implements IndexerAdapter {
         $item.find('link').first().text().trim() ||
         undefined;
 
-      // Details URL from <guid> or <comments>
+      // Details URL from <guid> or <comments>; also store raw guid for blacklisting
+      const guidText = $item.find('guid').text().trim() || undefined;
       const detailsUrl =
-        $item.find('guid').text().trim() ||
+        guidText ||
         $item.find('comments').text().trim() ||
         undefined;
 
@@ -147,6 +148,7 @@ export class NewznabIndexer implements IndexerAdapter {
         protocol: 'usenet',
         downloadUrl,
         detailsUrl,
+        guid: guidText,
         size: size || undefined,
         grabs: attrs.grabs != null ? Number(attrs.grabs) : undefined,
         indexer: this.name,
