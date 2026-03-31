@@ -123,4 +123,38 @@ describe('Modal', () => {
       expect(outerClose).not.toHaveBeenCalled();
     });
   });
+
+  describe('closeOnBackdropClick prop', () => {
+    it('does not call onClose when backdrop is clicked and closeOnBackdropClick={false}', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      render(<Modal onClose={onClose} closeOnBackdropClick={false}><div>content</div></Modal>);
+      await user.click(screen.getByTestId('modal-backdrop'));
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it('calls onClose when backdrop is clicked and closeOnBackdropClick={true}', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      render(<Modal onClose={onClose} closeOnBackdropClick={true}><div>content</div></Modal>);
+      await user.click(screen.getByTestId('modal-backdrop'));
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    it('calls onClose when backdrop is clicked and closeOnBackdropClick is omitted (default true)', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      render(<Modal onClose={onClose}><div>content</div></Modal>);
+      await user.click(screen.getByTestId('modal-backdrop'));
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+
+    it('does not call onClose when panel is clicked regardless of closeOnBackdropClick value', async () => {
+      const onClose = vi.fn();
+      const user = userEvent.setup();
+      render(<Modal onClose={onClose} closeOnBackdropClick={false}><div data-testid="panel-content">inside</div></Modal>);
+      await user.click(screen.getByTestId('panel-content'));
+      expect(onClose).not.toHaveBeenCalled();
+    });
+  });
 });

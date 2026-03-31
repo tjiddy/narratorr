@@ -89,6 +89,39 @@ describe('useConnectionTest', () => {
     });
   });
 
+  describe('handleTest flicker prevention (by ID)', () => {
+    it('preserves previous testResult while re-test is in flight (no null flash)', async () => {
+      testById.mockResolvedValueOnce({ success: false, message: 'Refused' });
+
+      const { result } = renderTestHook();
+
+      await act(async () => {
+        await result.current.handleTest(1);
+      });
+
+      expect(result.current.testResult).toEqual({ id: 1, success: false, message: 'Refused' });
+
+      // Second test starts — previous result should remain visible during flight
+      let resolveSecond: (v: { success: boolean }) => void;
+      testById.mockReturnValue(new Promise((r) => { resolveSecond = r; }));
+
+      let testPromise: Promise<void>;
+      act(() => {
+        testPromise = result.current.handleTest(1);
+      });
+
+      // While in-flight, testResult should still be the PREVIOUS result, not null
+      expect(result.current.testResult).toEqual({ id: 1, success: false, message: 'Refused' });
+
+      await act(async () => {
+        resolveSecond!({ success: true });
+        await testPromise!;
+      });
+
+      expect(result.current.testResult).toEqual({ id: 1, success: true });
+    });
+  });
+
   describe('handleFormTest (by config)', () => {
     it('sets testingForm during test and clears it after', async () => {
       let resolvePromise: (v: { success: boolean }) => void;
@@ -149,6 +182,60 @@ describe('useConnectionTest', () => {
       });
 
       expect(result.current.formTestResult).toEqual({ success: false, message: 'Test failed' });
+    });
+  });
+
+  describe('handleFormTest flicker prevention', () => {
+    it('preserves previous formTestResult while re-test is in flight (no null flash)', async () => {
+      // First test fails
+      testByConfig.mockResolvedValueOnce({ success: false, message: 'Bad config' });
+
+      const { result } = renderTestHook();
+
+      await act(async () => {
+        await result.current.handleFormTest({ name: 'test' });
+      });
+
+      expect(result.current.formTestResult).toEqual({ success: false, message: 'Bad config' });
+
+      // Second test starts — previous result should remain visible during flight
+      let resolveSecond: (v: { success: boolean }) => void;
+      testByConfig.mockReturnValue(new Promise((r) => { resolveSecond = r; }));
+
+      let testPromise: Promise<void>;
+      act(() => {
+        testPromise = result.current.handleFormTest({ name: 'corrected' });
+      });
+
+      // While in-flight, formTestResult should still be the PREVIOUS result, not null
+      expect(result.current.formTestResult).toEqual({ success: false, message: 'Bad config' });
+
+      await act(async () => {
+        resolveSecond!({ success: true });
+        await testPromise!;
+      });
+
+      expect(result.current.formTestResult).toEqual({ success: true });
+    });
+
+    it('replaces previous result with new result when re-test completes', async () => {
+      testByConfig.mockResolvedValueOnce({ success: false, message: 'First error' });
+
+      const { result } = renderTestHook();
+
+      await act(async () => {
+        await result.current.handleFormTest({ name: 'test' });
+      });
+
+      expect(result.current.formTestResult).toEqual({ success: false, message: 'First error' });
+
+      testByConfig.mockResolvedValueOnce({ success: true });
+
+      await act(async () => {
+        await result.current.handleFormTest({ name: 'test' });
+      });
+
+      expect(result.current.formTestResult).toEqual({ success: true });
     });
   });
 

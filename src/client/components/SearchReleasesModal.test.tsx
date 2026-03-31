@@ -197,7 +197,7 @@ describe('SearchReleasesModal', () => {
     });
   });
 
-  it('calls onClose when backdrop is clicked', async () => {
+  it('does not call onClose when backdrop is clicked (closeOnBackdropClick={false})', async () => {
     vi.mocked(api.searchBooks).mockResolvedValue(searchResponse([]));
     const onClose = vi.fn();
     const user = userEvent.setup();
@@ -208,9 +208,7 @@ describe('SearchReleasesModal', () => {
 
     await user.click(screen.getByTestId('modal-backdrop'));
 
-    await waitFor(() => {
-      expect(onClose).toHaveBeenCalled();
-    });
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('calls onClose when Escape is pressed', async () => {

@@ -88,9 +88,11 @@ export function NotifierCardForm(props: NotifierCardFormProps) {
         <NotifierFields selectedType={selectedType} register={register} errors={errors} />
       </div>
 
-      {formTestResult && (
-        <TestResultMessage success={formTestResult.success} message={formTestResult.message} />
-      )}
+      <div className="min-h-5">
+        {formTestResult && (
+          <TestResultMessage success={formTestResult.success} message={formTestResult.message} />
+        )}
+      </div>
 
       <SettingsFormActions
         isEdit={isEdit}

@@ -596,12 +596,12 @@ describe('BookMetadataModal', () => {
     });
   });
 
-  it('calls onClose when the backdrop is clicked', async () => {
+  it('does not call onClose when the backdrop is clicked (closeOnBackdropClick={false})', async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
     renderModal({ onClose });
     await user.click(screen.getByTestId('modal-backdrop'));
-    expect(onClose).toHaveBeenCalledOnce();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('calls onClose when Escape is pressed', async () => {

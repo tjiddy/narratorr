@@ -22,7 +22,6 @@ export function useConnectionTest<TFormData>({
 
   const handleTest = useCallback(async (id: number) => {
     setTestingId(id);
-    setTestResult(null);
     try {
       const result = await testById(id);
       setTestResult({ id, ...result });
@@ -40,7 +39,6 @@ export function useConnectionTest<TFormData>({
 
   const handleFormTest = useCallback(async (data: TFormData) => {
     setTestingForm(true);
-    setFormTestResult(null);
     try {
       const result = await testByConfig(data);
       setFormTestResult(result);

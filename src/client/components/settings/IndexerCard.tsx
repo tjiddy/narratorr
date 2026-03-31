@@ -209,9 +209,11 @@ export function IndexerCard(props: IndexerCardProps) {
         </p>
       )}
 
-      {formTestResult && (
-        <TestResultMessage success={formTestResult.success} message={formTestResult.message} />
-      )}
+      <div className="min-h-5">
+        {formTestResult && (
+          <TestResultMessage success={formTestResult.success} message={formTestResult.message} />
+        )}
+      </div>
 
       <SettingsFormActions
         isEdit={isEdit}
