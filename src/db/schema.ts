@@ -295,34 +295,6 @@ export const unmatchedGenres = sqliteTable('unmatched_genres', {
     .default(sql`(unixepoch())`),
 });
 
-// ============ RECYCLING BIN ============
-
-export const recyclingBin = sqliteTable('recycling_bin', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  bookId: integer('book_id'),
-  title: text('title').notNull(),
-  authorName: text('author_name', { mode: 'json' }).$type<string[]>(),
-  authorAsin: text('author_asin'),
-  narrator: text('narrator', { mode: 'json' }).$type<string[]>(),
-  description: text('description'),
-  coverUrl: text('cover_url'),
-  asin: text('asin'),
-  isbn: text('isbn'),
-  seriesName: text('series_name'),
-  seriesPosition: real('series_position'),
-  duration: integer('duration'),
-  publishedDate: text('published_date'),
-  genres: text('genres', { mode: 'json' }).$type<string[]>(),
-  monitorForUpgrades: integer('monitor_for_upgrades', { mode: 'boolean' }).notNull().default(false),
-  originalPath: text('original_path').notNull(),
-  recyclePath: text('recycle_path').notNull(),
-  deletedAt: integer('deleted_at', { mode: 'timestamp' })
-    .notNull()
-    .default(sql`(unixepoch())`),
-}, (table) => [
-  index('idx_recycling_bin_deleted_at').on(table.deletedAt),
-]);
-
 // ============ AUTH ============
 
 export const users = sqliteTable('users', {

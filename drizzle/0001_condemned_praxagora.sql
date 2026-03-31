@@ -1,0 +1,1 @@
+DROP TABLE `recycling_bin`;
