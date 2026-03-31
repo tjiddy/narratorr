@@ -241,6 +241,20 @@ describe('LibrarySettingsSection', () => {
     });
   });
 
+  describe('When a New Book Is Added subsection (#265)', () => {
+    it.todo('renders subsection heading "When a New Book Is Added" with divider');
+    it.todo('renders Search Immediately and Monitor for Upgrades toggles');
+    it.todo('loads quality settings values into toggles');
+    it.todo('toggling Search Immediately enables save button and submits quality category');
+    it.todo('toggling Monitor for Upgrades enables save button and submits quality category');
+    it.todo('submitting both toggles on sends both true in quality payload');
+    it.todo('save payload excludes grabFloor, protocolPreference, minSeeders, rejectWords, requiredWords');
+    it.todo('shows success toast on toggle save');
+    it.todo('shows error toast on toggle save failure');
+    it.todo('path blur-save still works independently after subsection added');
+    it.todo('default values: both toggles unchecked with fresh settings');
+  });
+
   describe('library path browse integration', () => {
     beforeEach(() => {
       mockApi.updateSettings.mockResolvedValue(mockSettings);

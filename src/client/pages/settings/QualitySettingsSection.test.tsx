@@ -184,17 +184,10 @@ describe('QualitySettingsSection', () => {
     });
   });
 
-  it('toggles search immediately checkbox', async () => {
-    renderWithProviders(<QualitySettingsSection />);
-
-    const checkbox = () => screen.getByLabelText('Search Immediately');
-
-    await waitFor(() => {
-      expect((checkbox() as HTMLInputElement).checked).toBe(true);
-    });
-
-    const user = userEvent.setup();
-    await user.click(checkbox());
-    expect((checkbox() as HTMLInputElement).checked).toBe(false);
+  describe('after toggle relocation (#265)', () => {
+    it.todo('does NOT render Search Immediately toggle');
+    it.todo('does NOT render Monitor for Upgrades toggle');
+    it.todo('does NOT render Defaults for New Books subsection heading');
+    it.todo('save payload excludes searchImmediately and monitorForUpgrades');
   });
 });
