@@ -371,8 +371,8 @@ describe('DownloadClientCard — edit mode', () => {
   });
 });
 
-describe('DownloadClientCard — create mode does not show mappings', () => {
-  it('does not show Remote Path Mappings subsection', () => {
+describe('DownloadClientCard — create mode shows local path mapping editor (#263)', () => {
+  it('shows Remote Path Mappings section with Add Mapping button', () => {
     renderWithProviders(
       <DownloadClientCard
         mode="create"
@@ -381,6 +381,7 @@ describe('DownloadClientCard — create mode does not show mappings', () => {
       />,
     );
 
-    expect(screen.queryByText('Remote Path Mappings')).not.toBeInTheDocument();
+    expect(screen.getByText('Remote Path Mappings')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /add mapping/i })).toBeInTheDocument();
   });
 });
