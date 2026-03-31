@@ -107,7 +107,7 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
               </button>
             )}
           </div>
-          <div className="relative">
+          <div className="relative z-40">
             <input id="clientCategory" type="text" {...register('settings.category')} className={inputClass} placeholder="audiobooks" />
             {showDropdown && (
               <div className="absolute z-30 mt-1 w-full bg-background border border-border rounded-xl shadow-lg max-h-48 overflow-y-auto">
