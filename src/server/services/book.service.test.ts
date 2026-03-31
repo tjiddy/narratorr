@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook, createMockDbAuthor } from '../__tests__/factories.js';
 import { BookService } from './book.service.js';
-import { books } from '../../db/schema.js';
+import { books, bookAuthors } from '../../db/schema.js';
 import type { FastifyBaseLogger } from 'fastify';
 import type { Db, DbOrTx } from '../../db/index.js';
 import type { MetadataService } from './metadata.service.js';
@@ -216,19 +216,32 @@ describe('BookService', () => {
       expect(result).toBeNull();
       expect(db.select).toHaveBeenCalledTimes(2);  // outer query + subquery, no getById
 
-      // Verify the title-only predicate includes a correlated notExists on bookAuthors (#253)
-      const whereFn = outerChain.where as Mock;
-      expect(whereFn).toHaveBeenCalledTimes(1);
-      const predicate = whereFn.mock.calls[0][0];
-      // and() produces a SQL with nested queryChunks — walk the tree to find "not exists"
-      function findNotExists(node: unknown): boolean {
+      // Verify the full title-only predicate contract: and(eq(books.title), notExists(bookAuthors correlated)) (#253)
+      const outerWhere = outerChain.where as Mock;
+      expect(outerWhere).toHaveBeenCalledTimes(1);
+      const predicate = outerWhere.mock.calls[0][0];
+
+      // Helper: recursively search the Drizzle SQL tree for a string fragment
+      function findInSqlTree(node: unknown, needle: string): boolean {
         if (!node || typeof node !== 'object') return false;
         const obj = node as Record<string, unknown>;
-        if (Array.isArray(obj.value) && obj.value.some((v: unknown) => typeof v === 'string' && v.includes('not exists'))) return true;
-        if (Array.isArray(obj.queryChunks)) return obj.queryChunks.some((c: unknown) => findNotExists(c));
+        if (Array.isArray(obj.value) && obj.value.some((v: unknown) => typeof v === 'string' && v.includes(needle))) return true;
+        if (Array.isArray(obj.queryChunks)) return obj.queryChunks.some((c: unknown) => findInSqlTree(c, needle));
         return false;
       }
-      expect(findNotExists(predicate)).toBe(true);
+
+      // 1. Predicate contains "not exists" (notExists subquery is present)
+      expect(findInSqlTree(predicate, 'not exists')).toBe(true);
+
+      // 2. Outer query selects from books table and filters by title
+      const outerFrom = outerChain.from as Mock;
+      expect(outerFrom).toHaveBeenCalledWith(books);
+
+      // 3. Subquery selects from bookAuthors table (correlated on bookId)
+      const subqueryFrom = subqueryChain.from as Mock;
+      expect(subqueryFrom).toHaveBeenCalledWith(bookAuthors);
+      const subqueryWhere = subqueryChain.where as Mock;
+      expect(subqueryWhere).toHaveBeenCalledTimes(1);
     });
 
     it('title-only: returns authorless book when both authored and authorless exist (#253)', async () => {
