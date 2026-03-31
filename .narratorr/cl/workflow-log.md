@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #257 M4B merge observability — progress events, ffmpeg fix, event history — 2026-03-31
+**Skill path:** /elaborate → /respond-to-spec-review (×2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #268
+
+### Metrics
+- Files changed: 19 | Tests added/modified: ~120 tests across 9 test files
+- Quality gate runs: 2 (pass on attempt 2 — lint complexity + typecheck + test fixes)
+- Fix iterations: 2 (lint complexity extraction, TypeScript phase type, useBookActions test updates)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: TDD cycle was clean — each module's tests caught real issues before moving to the next. Spec review process (3 rounds) produced a very precise spec that minimized implementation ambiguity.
+- Friction / issues encountered: Spec review rounds were thorough but F9 was incorrectly identified (TanStack Query prefix matching was misunderstood by reviewer). The spawn migration required significant test refactoring since existing tests mocked execFile callback patterns. Self-review caught the missing onError handler — a subtle bug where API-level failures would silently swallow errors.
+
+### Token efficiency
+- Highest-token actions: Codebase exploration during elaboration and plan phases (reading full source files for 10+ files)
+- Avoidable waste: The elaborate + 2 respond-to-spec-review rounds before /implement consumed significant context; could be streamlined if spec was written with codebase evidence upfront
+- Suggestions: For features touching both SSE and mutation patterns, check toast/error ownership split early in spec phase
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: No new debt introduced. Existing audio-processor convertFiles debt (line 17 in debt.md) is adjacent but unchanged.
+
+### Wish I'd Known
+1. When moving toasts from mutation to SSE, API-level failures (pre-SSE) still need mutation-level error handling — the spec said "move toasts to SSE" but didn't account for this split
+2. The `execFile` → `spawn` migration requires a completely different mock approach in tests (EventEmitter-based MockChildProcess vs callback mocks) — plan extra time for test refactoring
+3. `useSyncExternalStore` with a Map for per-entity SSE progress is the cleanest pattern and follows the existing codebase convention — no need for Context or Redux
+
 ## #254 Chore: Standardize Delete/Remove terminology in bulk action flow — 2026-03-31
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #259
