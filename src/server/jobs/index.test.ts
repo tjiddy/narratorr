@@ -49,7 +49,6 @@ describe('startJobs', () => {
     expect(names).toContain('rss');
     expect(names).toContain('backup');
     expect(names).toContain('housekeeping');
-    expect(names).toContain('recycle-cleanup');
     expect(names).toContain('health-check');
     expect(names).toContain('version-check');
     expect(names).toContain('import-list-sync');
@@ -66,7 +65,7 @@ describe('startJobs', () => {
     expect(expressions).toContain('*/5 * * * *');    // enrichment, health-check
     expect(expressions).toContain('*/60 * * * * *'); // import
     expect(expressions).toContain('0 0 * * 0');      // housekeeping
-    expect(expressions).toContain('0 2 * * *');      // recycle-cleanup, version-check
+    expect(expressions).toContain('0 2 * * *');      // version-check
     expect(expressions).toContain('* * * * *');      // import-list-sync
   });
 

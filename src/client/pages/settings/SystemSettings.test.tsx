@@ -307,7 +307,7 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
   it('renders housekeeping retention and log level fields on System tab', async () => {
     mockApi.getSettings.mockResolvedValue({
       system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
-      general: { logLevel: 'info', housekeepingRetentionDays: 30, recycleRetentionDays: 7 },
+      general: { logLevel: 'info', housekeepingRetentionDays: 30 },
     });
     mockApi.getBackups.mockResolvedValue([]);
 
@@ -315,7 +315,6 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText('Event History Retention (days)')).toBeInTheDocument();
-      expect(screen.getByLabelText('Recycling Bin Retention (days)')).toBeInTheDocument();
       expect(screen.getByLabelText('Log Level')).toBeInTheDocument();
     });
   });
@@ -324,7 +323,7 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
     const user = userEvent.setup();
     mockApi.getSettings.mockResolvedValue({
       system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
-      general: { logLevel: 'warn', housekeepingRetentionDays: 30, recycleRetentionDays: 7 },
+      general: { logLevel: 'warn', housekeepingRetentionDays: 30 },
     });
     mockApi.getBackups.mockResolvedValue([]);
     mockApi.updateSettings.mockResolvedValue({});
@@ -340,7 +339,7 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
 
     await waitFor(() => {
       expect(mockApi.updateSettings).toHaveBeenCalledWith({
-        general: { logLevel: 'debug', housekeepingRetentionDays: 30, recycleRetentionDays: 7 },
+        general: { logLevel: 'debug', housekeepingRetentionDays: 30 },
       });
     });
   });
@@ -349,7 +348,7 @@ describe('GeneralSettingsForm (housekeeping and logging)', () => {
     const user = userEvent.setup();
     mockApi.getSettings.mockResolvedValue({
       system: { backupIntervalMinutes: 10080, backupRetention: 7, dismissedUpdateVersion: '' },
-      general: { logLevel: 'warn', housekeepingRetentionDays: 30, recycleRetentionDays: 7 },
+      general: { logLevel: 'warn', housekeepingRetentionDays: 30 },
     });
     mockApi.getBackups.mockResolvedValue([]);
     mockApi.updateSettings.mockRejectedValue(new Error('Save failed'));

@@ -9,7 +9,6 @@ import {
 import { errorHandlerPlugin } from './error-handler.js';
 import { RenameError } from '../services/rename.service.js';
 import { RetagError } from '../services/tagging.service.js';
-import { RecyclingBinError } from '../services/recycling-bin.service.js';
 import { RestoreUploadError } from '../services/backup.service.js';
 import { QualityGateServiceError } from '../services/quality-gate.service.js';
 import { EventHistoryServiceError } from '../services/event-history.service.js';
@@ -28,9 +27,6 @@ function createTestApp() {
   app.get('/throw-rename-no-path', async () => { throw new RenameError('No path set', 'NO_PATH'); });
   app.get('/throw-retag-not-found', async () => { throw new RetagError('NOT_FOUND', 'Book not found'); });
   app.get('/throw-retag-ffmpeg', async () => { throw new RetagError('FFMPEG_NOT_CONFIGURED', 'ffmpeg not installed'); });
-  app.get('/throw-recycling-not-found', async () => { throw new RecyclingBinError('Entry not found', 'NOT_FOUND'); });
-  app.get('/throw-recycling-conflict', async () => { throw new RecyclingBinError('Path conflict', 'CONFLICT'); });
-  app.get('/throw-recycling-filesystem', async () => { throw new RecyclingBinError('Disk error', 'FILESYSTEM'); });
   app.get('/throw-restore-invalid', async () => { throw new RestoreUploadError('Not a valid zip', 'INVALID_ZIP'); });
   app.get('/throw-qg-not-found', async () => { throw new QualityGateServiceError('Download not found', 'NOT_FOUND'); });
   app.get('/throw-qg-invalid-status', async () => { throw new QualityGateServiceError('Download is not pending review', 'INVALID_STATUS'); });
@@ -99,18 +95,6 @@ describe('error-handler plugin', () => {
       const res = await app.inject({ method: 'GET', url: '/throw-retag-ffmpeg' });
       expect(res.statusCode).toBe(400);
       expect(JSON.parse(res.payload)).toEqual({ error: 'ffmpeg not installed' });
-    });
-
-    it('maps RecyclingBinError NOT_FOUND to 404', async () => {
-      const res = await app.inject({ method: 'GET', url: '/throw-recycling-not-found' });
-      expect(res.statusCode).toBe(404);
-      expect(JSON.parse(res.payload)).toEqual({ error: 'Entry not found' });
-    });
-
-    it('maps RecyclingBinError CONFLICT to 409', async () => {
-      const res = await app.inject({ method: 'GET', url: '/throw-recycling-conflict' });
-      expect(res.statusCode).toBe(409);
-      expect(JSON.parse(res.payload)).toEqual({ error: 'Path conflict' });
     });
 
     it('maps RestoreUploadError to 400', async () => {
@@ -302,7 +286,6 @@ describe('error-handler logging (F4)', () => {
       request.log = logSpy as never;
     });
 
-    app.get('/throw-recycling-fs', async () => { throw new RecyclingBinError('Disk error', 'FILESYSTEM'); });
     app.get('/throw-generic-500', async () => { throw new Error('disk full'); });
     app.get('/throw-rename-no-path', async () => { throw new RenameError('No path set', 'NO_PATH'); });
 
@@ -316,12 +299,6 @@ describe('error-handler logging (F4)', () => {
   beforeEach(() => {
     logSpy.error.mockClear();
     logSpy.warn.mockClear();
-  });
-
-  it('logs request.log.error for RecyclingBinError FILESYSTEM (typed 500)', async () => {
-    await app.inject({ method: 'GET', url: '/throw-recycling-fs' });
-    expect(logSpy.error).toHaveBeenCalled();
-    expect(logSpy.warn).not.toHaveBeenCalled();
   });
 
   it('logs request.log.error for generic untyped Error (500)', async () => {

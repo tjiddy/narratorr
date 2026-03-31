@@ -14,7 +14,6 @@ import { filesystemApi } from './filesystem.js';
 import { remotePathMappingsApi } from './remote-path-mappings.js';
 import { eventHistoryApi } from './event-history.js';
 import { backupsApi } from './backups.js';
-import { recyclingBinApi } from './recycling-bin.js';
 import { importListsApi } from './import-lists.js';
 
 const allModules = [
@@ -33,7 +32,6 @@ const allModules = [
   { name: 'remotePathMappingsApi', api: remotePathMappingsApi },
   { name: 'eventHistoryApi', api: eventHistoryApi },
   { name: 'backupsApi', api: backupsApi },
-  { name: 'recyclingBinApi', api: recyclingBinApi },
   { name: 'importListsApi', api: importListsApi },
 ];
 

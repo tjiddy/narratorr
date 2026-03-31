@@ -28,7 +28,7 @@ const mockToast = toast as unknown as {
 };
 
 const mockSettings = createMockSettings({
-  general: { logLevel: 'warn', housekeepingRetentionDays: 60, recycleRetentionDays: 14 },
+  general: { logLevel: 'warn', housekeepingRetentionDays: 60 },
 });
 
 describe('GeneralSettingsForm', () => {
@@ -37,12 +37,11 @@ describe('GeneralSettingsForm', () => {
     mockApi.getSettings.mockResolvedValue(mockSettings);
   });
 
-  it('renders housekeeping retention, recycle retention, and log level fields from settings', async () => {
+  it('renders housekeeping retention and log level fields from settings', async () => {
     renderWithProviders(<GeneralSettingsForm />);
 
     await waitFor(() => {
       expect(screen.getByLabelText('Event History Retention (days)')).toHaveValue(60);
-      expect(screen.getByLabelText('Recycling Bin Retention (days)')).toHaveValue(14);
       expect(screen.getByLabelText('Log Level')).toHaveValue('warn');
     });
   });
@@ -97,7 +96,6 @@ describe('GeneralSettingsForm', () => {
         general: {
           logLevel: 'debug',
           housekeepingRetentionDays: 60,
-          recycleRetentionDays: 14,
         },
       });
     });
@@ -123,7 +121,6 @@ describe('GeneralSettingsForm', () => {
         general: {
           logLevel: 'warn',
           housekeepingRetentionDays: 30,
-          recycleRetentionDays: 14,
         },
       });
     });

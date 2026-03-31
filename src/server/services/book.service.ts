@@ -97,7 +97,7 @@ export class BookService {
   /**
    * Replace all author junction rows for a book with the given list.
    * Deduplicates by slug within the payload, find-or-creates each author.
-   * Called by create(), update(), and RecyclingBinService.restore().
+   * Called by create() and update().
    */
   async syncAuthors(tx: DbOrTx, bookId: number, authorList: { name: string; asin?: string }[]): Promise<void> {
     await tx.delete(bookAuthors).where(eq(bookAuthors.bookId, bookId));
@@ -123,7 +123,7 @@ export class BookService {
   /**
    * Replace all narrator junction rows for a book with the given list.
    * Deduplicates by slug within the payload, find-or-creates each narrator.
-   * Called by create(), update(), and RecyclingBinService.restore().
+   * Called by create() and update().
    */
   async syncNarrators(tx: DbOrTx, bookId: number, narratorNames: string[]): Promise<void> {
     await tx.delete(bookNarrators).where(eq(bookNarrators.bookId, bookId));
