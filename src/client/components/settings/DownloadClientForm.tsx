@@ -80,7 +80,9 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
         }
       </div>
       {!isImplemented && <p className="text-sm text-amber-500">Adapter not yet implemented. Config will be saved for when the adapter is available.</p>}
-      {formTestResult && <TestResultMessage success={formTestResult.success} message={formTestResult.message} />}
+      <div className="min-h-5">
+        {formTestResult && <TestResultMessage success={formTestResult.success} message={formTestResult.message} />}
+      </div>
       <SettingsFormActions isEdit={isEdit} isPending={isPending} testingForm={testingForm} onFormTest={handleSubmit(onFormTest)} onCancel={onCancel} entityLabel="Client" testDisabled={!isImplemented} testDisabledTitle={!isImplemented ? 'Testing available for implemented adapter types' : undefined} />
       {isEdit && client && <RemotePathMappingsSubsection clientId={client.id} />}
     </form>

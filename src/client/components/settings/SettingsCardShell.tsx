@@ -53,14 +53,16 @@ export function SettingsCardShell({
             <h3 className="font-display font-semibold truncate">{name}</h3>
             <p className="text-sm text-muted-foreground truncate">{subtitle}</p>
             {children}
-            {testResult?.id === itemId && (
-              <TestResultMessage
-                success={testResult.success}
-                message={testResult.message}
-                successText={testResultTexts.success}
-                failureText={testResultTexts.failure}
-              />
-            )}
+            <div className="min-h-5">
+              {testResult?.id === itemId && (
+                <TestResultMessage
+                  success={testResult.success}
+                  message={testResult.message}
+                  successText={testResultTexts.success}
+                  failureText={testResultTexts.failure}
+                />
+              )}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
