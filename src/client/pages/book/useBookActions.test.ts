@@ -308,14 +308,13 @@ describe('useBookActions', () => {
       });
     });
 
-    it('does not show error toast on merge failure (toasts now driven by SSE)', async () => {
-      (api.mergeBookToM4b as Mock).mockRejectedValue(new Error('ffmpeg error'));
+    it('shows error toast on API-level merge failure (pre-SSE errors like 409)', async () => {
+      (api.mergeBookToM4b as Mock).mockRejectedValue(new Error('Merge already in progress'));
       const { result } = renderHook(() => useBookActions(3, false), { wrapper: createTestHarness().wrapper });
 
       act(() => { result.current.mergeMutation.mutate(); });
 
-      await waitFor(() => expect(result.current.mergeMutation.isError).toBe(true));
-      expect(toast.error).not.toHaveBeenCalled();
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Merge failed: Merge already in progress'));
     });
 
     it('shows warning toast when result includes enrichmentWarning (but no success toast)', async () => {
@@ -342,7 +341,7 @@ describe('useBookActions', () => {
 
       act(() => { result.current.mergeMutation.mutate(); });
 
-      await waitFor(() => expect(result.current.mergeMutation.isError).toBe(true));
+      await waitFor(() => expect(toast.error).toHaveBeenCalled());
       expect(invalidateSpy).not.toHaveBeenCalled();
     });
   });

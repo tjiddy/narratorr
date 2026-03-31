@@ -28,12 +28,17 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
   const mergeMutation = useMutation({
     mutationFn: () => api.mergeBookToM4b(bookId),
     onSuccess: (result) => {
-      // Toasts are now driven by SSE events (merge_started, merge_complete, merge_failed)
+      // Success/failure toasts are driven by SSE events (merge_started, merge_complete, merge_failed)
       // to ensure all users see notifications, not just the initiator.
       invalidateBookQueries();
       if (result.enrichmentWarning) {
         toast.warning(result.enrichmentWarning);
       }
+    },
+    onError: (error: Error) => {
+      // API-level failures (e.g., 409 ALREADY_IN_PROGRESS) happen before SSE events fire,
+      // so the mutation must handle these directly.
+      toast.error(`Merge failed: ${error.message}`);
     },
   });
 
