@@ -29,8 +29,9 @@ function mapFetchFailedCause(cause: Error & { code?: string }): Error {
 }
 
 export function mapNetworkError(error: unknown): Error {
-  // AbortError from AbortSignal.timeout()
-  if (error instanceof DOMException && error.name === 'AbortError') {
+  // AbortError from manual AbortController.abort()
+  // TimeoutError from AbortSignal.timeout() (Node 18+)
+  if (error instanceof DOMException && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
     return new Error('Request timed out');
   }
 

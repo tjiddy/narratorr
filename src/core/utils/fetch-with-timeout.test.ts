@@ -173,7 +173,14 @@ describe('fetchWithTimeout', () => {
       await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(/badhost\.example/);
     });
 
-    it('maps AbortError (timeout) to actionable message', async () => {
+    it('maps TimeoutError (AbortSignal.timeout) to actionable message', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+        new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+      );
+      await expect(fetchWithTimeout('https://example.com', {}, 5000)).rejects.toThrow(/timed out/i);
+    });
+
+    it('maps AbortError (manual abort) to actionable message', async () => {
       vi.spyOn(globalThis, 'fetch').mockRejectedValue(
         new DOMException('The operation was aborted', 'AbortError'),
       );

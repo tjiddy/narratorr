@@ -33,8 +33,14 @@ describe('mapNetworkError', () => {
       expect(result.message).toMatch(/timed out/i);
     });
 
-    it('AbortError → message includes "timed out"', () => {
+    it('AbortError (manual abort) → message includes "timed out"', () => {
       const original = new DOMException('The operation was aborted', 'AbortError');
+      const result = mapNetworkError(original);
+      expect(result.message).toMatch(/timed out/i);
+    });
+
+    it('TimeoutError (AbortSignal.timeout) → message includes "timed out"', () => {
+      const original = new DOMException('The operation was aborted due to timeout', 'TimeoutError');
       const result = mapNetworkError(original);
       expect(result.message).toMatch(/timed out/i);
     });
