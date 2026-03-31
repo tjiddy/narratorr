@@ -1182,4 +1182,18 @@ describe('#257 merge observability — BookDetails progress', () => {
     renderBookDetails({ status: 'imported', topLevelAudioFileCount: 3 });
     expect(screen.getByText(/Finalizing/)).toBeInTheDocument();
   });
+
+  it('merge button disabled while progress indicator is visible', async () => {
+    (api.getSettings as Mock).mockResolvedValue(createMockSettings({
+      processing: { enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2, postProcessingScript: '', postProcessingScriptTimeout: 300 },
+    }));
+    mockUseMergeProgress.mockReturnValue({ phase: 'processing', percentage: 0.5 });
+    renderBookDetails({ path: '/library/test', status: 'imported', topLevelAudioFileCount: 3 });
+
+    // The merge button should show "Merging..." and be disabled
+    await waitFor(() => {
+      const mergeButton = screen.getByRole('button', { name: /Merging/i });
+      expect(mergeButton).toBeDisabled();
+    });
+  });
 });
