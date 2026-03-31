@@ -877,15 +877,22 @@ const CODEC_REGEX = new RegExp(`\\b(${CODEC_TAGS.join('|')})\\b`, 'gi');
 /** Matches a bare 4-digit year (1900–2099) at end of string. */
 const BARE_YEAR_REGEX = /\b((?:19|20)\d{2})\s*$/;
 
+/** Shared normalization: underscore/dot→space, codec strip, collapse whitespace, trim. */
+function normalizeFolderName(name: string): string {
+  return name
+    .replace(/[_.]/g, ' ')
+    .replace(CODEC_REGEX, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 function cleanName(name: string): string {
-  const result = name
-    .replace(/^\d+[.\s]*-\s*|^\d+\.\s*/, '') // Remove leading numbers FIRST (before dot→space)
-    .replace(/[_.]/g, ' ') // Convert underscores and dots to spaces
-    .replace(CODEC_REGEX, '') // Strip codec/format tags
+  const result = normalizeFolderName(
+    name.replace(/^\d+[.\s]*-\s*|^\d+\.\s*/, ''), // Remove leading numbers FIRST (before dot→space)
+  )
     .replace(/\s*\(\d{4}\)$/, '') // Remove trailing year like "(2020)"
     .replace(/\s*\[\d{4}\]$/, '') // Remove trailing year like "[2020]"
     .replace(BARE_YEAR_REGEX, '') // Remove bare trailing year like "2017"
-    .replace(/\s{2,}/g, ' ') // Collapse multiple spaces
     .trim();
   // Fall back to original name when normalization strips everything
   return result || name.trim();
@@ -896,11 +903,7 @@ function cleanName(name: string): string {
  * Checks parenthesized, bracketed, and bare trailing years.
  */
 export function extractYear(name: string): number | undefined {
-  const normalized = name
-    .replace(/[_.]/g, ' ')
-    .replace(CODEC_REGEX, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
+  const normalized = normalizeFolderName(name);
   // Check parenthesized year: (2017)
   const parenMatch = normalized.match(/\((\d{4})\)\s*$/);
   if (parenMatch) {
