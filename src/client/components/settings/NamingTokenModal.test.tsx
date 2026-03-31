@@ -162,11 +162,11 @@ describe('NamingTokenModal', () => {
       expect(onClose).toHaveBeenCalled();
     });
 
-    it('closes when backdrop is clicked', () => {
+    it('does not close when backdrop is clicked (closeOnBackdropClick={false})', () => {
       const onClose = vi.fn();
       renderWithProviders(<NamingTokenModal {...defaultProps} onClose={onClose} />);
       fireEvent.click(screen.getByTestId('modal-backdrop'));
-      expect(onClose).toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
     });
 
     it('does not render when isOpen is false', () => {

@@ -77,7 +77,7 @@ export function BookEditModal({ book, initial, confidence, alternatives, onSave,
   };
 
   return (
-    <Modal onClose={onClose} className="w-full max-w-lg flex flex-col max-h-[85vh]">
+    <Modal onClose={onClose} closeOnBackdropClick={false} className="w-full max-w-lg flex flex-col max-h-[85vh]">
       <div
         ref={modalRef}
         role="dialog"

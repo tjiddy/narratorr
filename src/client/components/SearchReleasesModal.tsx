@@ -146,7 +146,7 @@ export function SearchReleasesModal({ isOpen, book, onClose }: SearchReleasesMod
 
   return (
     <>
-    <Modal onClose={onClose} className="w-full max-w-3xl max-h-[85vh] flex flex-col">
+    <Modal onClose={onClose} closeOnBackdropClick={false} className="w-full max-w-3xl max-h-[85vh] flex flex-col">
       <div
         ref={modalRef}
         role="dialog"

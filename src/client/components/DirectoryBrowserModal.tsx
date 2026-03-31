@@ -71,7 +71,7 @@ function DirectoryBrowserContent({ initialPath, onSelect, onClose }: Omit<Direct
   const breadcrumbs = parseBreadcrumbs(currentPath);
 
   return (
-    <Modal onClose={onClose} className="w-full max-w-lg flex flex-col max-h-[80vh]">
+    <Modal onClose={onClose} closeOnBackdropClick={false} className="w-full max-w-lg flex flex-col max-h-[80vh]">
       <div
         ref={modalRef}
         role="dialog"

@@ -131,7 +131,7 @@ describe('DirectoryBrowserModal', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it('closes on backdrop click', async () => {
+  it('does not close on backdrop click (closeOnBackdropClick={false})', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
 
@@ -141,7 +141,7 @@ describe('DirectoryBrowserModal', () => {
     const backdrop = screen.getByTestId('modal-backdrop');
     await user.click(backdrop);
 
-    expect(onClose).toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('shows loading state while fetching', () => {
@@ -189,12 +189,12 @@ describe('DirectoryBrowserModal', () => {
     });
   });
 
-  it('calls onClose when backdrop is clicked', async () => {
+  it('does not call onClose when backdrop is clicked (closeOnBackdropClick={false})', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
     renderModal({ onClose });
     await screen.findByRole('dialog');
     await user.click(screen.getByTestId('modal-backdrop'));
-    expect(onClose).toHaveBeenCalledOnce();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

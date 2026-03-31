@@ -41,7 +41,7 @@ export function NamingTokenModal({
   if (!isOpen) return null;
 
   return (
-    <Modal onClose={onClose} className="w-full max-w-lg" scrollable>
+    <Modal onClose={onClose} closeOnBackdropClick={false} className="w-full max-w-lg" scrollable>
       <div className="flex items-center justify-between p-4 border-b border-border/30">
         <h2 className="text-lg font-semibold">
           {scope === 'folder' ? 'Folder' : 'File'} Token Reference

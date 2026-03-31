@@ -244,15 +244,13 @@ describe('BookEditModal', () => {
       });
     });
 
-    it('calls onClose when backdrop clicked', async () => {
+    it('does not call onClose when backdrop clicked (closeOnBackdropClick={false})', async () => {
       const onClose = vi.fn();
       renderModal({ onClose });
 
       const backdrop = screen.getByTestId('modal-backdrop');
       await userEvent.click(backdrop);
-      await waitFor(() => {
-        expect(onClose).toHaveBeenCalledOnce();
-      });
+      expect(onClose).not.toHaveBeenCalled();
     });
   });
 
@@ -431,11 +429,11 @@ describe('BookEditModal', () => {
     });
   });
 
-  it('calls onClose when backdrop is clicked', async () => {
+  it('does not call onClose when backdrop is clicked (closeOnBackdropClick={false})', async () => {
     const onClose = vi.fn();
     renderModal({ onClose });
     await userEvent.click(screen.getByTestId('modal-backdrop'));
-    expect(onClose).toHaveBeenCalledOnce();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('calls onClose when Escape is pressed', async () => {
