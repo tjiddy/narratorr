@@ -411,6 +411,22 @@ describe('useBookActions', () => {
       });
     });
 
+    it('invalidates books query cache on successful delete', async () => {
+      (api.deleteBook as Mock).mockResolvedValue({ success: true });
+      const { queryClient, wrapper } = createTestHarness();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+
+      await act(async () => {
+        result.current.deleteMutation.mutate({ deleteFiles: false });
+      });
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
+      });
+    });
+
     it('shows error toast on delete failure', async () => {
       (api.deleteBook as Mock).mockRejectedValue(new Error('Permission denied'));
       const { wrapper } = createTestHarness();
