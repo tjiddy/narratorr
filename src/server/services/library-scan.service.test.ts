@@ -6,7 +6,7 @@ import type { BookService } from './book.service.js';
 import type { MetadataService } from './metadata.service.js';
 import type { SettingsService } from './settings.service.js';
 import type { EventHistoryService } from './event-history.service.js';
-import { parseFolderStructure, LibraryScanService } from './library-scan.service.js';
+import { parseFolderStructure, extractYear, LibraryScanService } from './library-scan.service.js';
 
 vi.mock('./enrichment-utils.js', () => ({
   enrichBookFromAudio: vi.fn().mockResolvedValue({ enriched: true }),
@@ -152,9 +152,9 @@ describe('parseFolderStructure', () => {
     expect(result.author).toBeNull();
   });
 
-  it('handles folder with only numbers (gets stripped by cleanName)', () => {
+  it('handles folder with only numbers (falls back to original after cleanName strips)', () => {
     const result = parseFolderStructure(['01. ']);
-    expect(result.title).toBe('');
+    expect(result.title).toBe('01.');
     expect(result.author).toBeNull();
   });
 });
@@ -2413,42 +2413,221 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
   });
 
   describe('cleanName() normalization enhancements', () => {
-    it.todo('converts underscores to spaces');
-    it.todo('converts dots to spaces');
-    it.todo('handles mixed separators (underscores and dashes)');
-    it.todo('strips MP3 codec tag (case-insensitive)');
-    it.todo('strips M4B codec tag (case-insensitive)');
-    it.todo('strips M4A codec tag');
-    it.todo('strips FLAC codec tag');
-    it.todo('strips OGG codec tag');
-    it.todo('strips AAC codec tag');
-    it.todo('strips Unabridged tag');
-    it.todo('strips Abridged tag');
-    it.todo('strips multiple codec tags');
-    it.todo('does not strip codec tag embedded in word (MP3Player)');
-    it.todo('strips bare trailing year');
-    it.todo('does not strip bare mid-string year (2001 A Space Odyssey)');
-    it.todo('still strips parenthesized year (existing behavior)');
-    it.todo('still strips bracketed year (existing behavior)');
-    it.todo('still strips leading numbers (existing behavior)');
-    it.todo('falls back to original when normalization yields empty string');
-    it.todo('falls back to original for purely-numeric folder');
-    it.todo('extracts year alongside cleaned name');
-    it.todo('returns undefined year when no year present');
-    it.todo('handles combined normalization: underscores, year, codec tag');
-    it.todo('year boundary: 1899 is not stripped');
-    it.todo('year boundary: 1900 is stripped');
-    it.todo('year boundary: 2099 is stripped');
-    it.todo('year boundary: 2100 is not stripped');
-    it.todo('multiple bare years: only trailing year stripped');
+    // cleanName is internal — test via parseFolderStructure single-folder path
+    it('converts underscores to spaces', () => {
+      const result = parseFolderStructure(['Ernest_Cline']);
+      expect(result.title).toBe('Ernest Cline');
+    });
+
+    it('converts dots to spaces', () => {
+      const result = parseFolderStructure(['Stephen.King']);
+      expect(result.title).toBe('Stephen King');
+    });
+
+    it('handles mixed separators (underscores and dashes)', () => {
+      const result = parseFolderStructure(['Ernest_Cline_-_Ready_Player_One']);
+      expect(result).toEqual({
+        title: 'Ready Player One',
+        author: 'Ernest Cline',
+        series: null,
+      });
+    });
+
+    it('strips MP3 codec tag (case-insensitive)', () => {
+      expect(parseFolderStructure(['Title MP3']).title).toBe('Title');
+      expect(parseFolderStructure(['Title mp3']).title).toBe('Title');
+    });
+
+    it('strips M4B codec tag (case-insensitive)', () => {
+      expect(parseFolderStructure(['Title M4B']).title).toBe('Title');
+      expect(parseFolderStructure(['Title m4b']).title).toBe('Title');
+    });
+
+    it('strips M4A codec tag', () => {
+      expect(parseFolderStructure(['Title M4A']).title).toBe('Title');
+    });
+
+    it('strips FLAC codec tag', () => {
+      expect(parseFolderStructure(['Title FLAC']).title).toBe('Title');
+    });
+
+    it('strips OGG codec tag', () => {
+      expect(parseFolderStructure(['Title OGG']).title).toBe('Title');
+    });
+
+    it('strips AAC codec tag', () => {
+      expect(parseFolderStructure(['Title AAC']).title).toBe('Title');
+    });
+
+    it('strips Unabridged tag', () => {
+      expect(parseFolderStructure(['Title Unabridged']).title).toBe('Title');
+    });
+
+    it('strips Abridged tag', () => {
+      expect(parseFolderStructure(['Title Abridged']).title).toBe('Title');
+    });
+
+    it('strips multiple codec tags', () => {
+      expect(parseFolderStructure(['Title MP3 Unabridged']).title).toBe('Title');
+    });
+
+    it('does not strip codec tag embedded in word (MP3Player)', () => {
+      // MP3Player has no word boundary before "MP3" — it's part of the word
+      expect(parseFolderStructure(['Title MP3Player']).title).toBe('Title MP3Player');
+    });
+
+    it('strips bare trailing year', () => {
+      expect(parseFolderStructure(['Ready Player One 2011']).title).toBe('Ready Player One');
+    });
+
+    it('does not strip bare mid-string year (2001 A Space Odyssey)', () => {
+      expect(parseFolderStructure(['2001 A Space Odyssey']).title).toBe('2001 A Space Odyssey');
+    });
+
+    it('still strips parenthesized year (existing behavior)', () => {
+      expect(parseFolderStructure(['Title (2020)']).title).toBe('Title');
+    });
+
+    it('still strips bracketed year (existing behavior)', () => {
+      expect(parseFolderStructure(['Title [2020]']).title).toBe('Title');
+    });
+
+    it('still strips leading numbers (existing behavior)', () => {
+      expect(parseFolderStructure(['01. Title']).title).toBe('Title');
+    });
+
+    it('falls back to original when normalization yields empty string', () => {
+      // "MP3 FLAC" → codec stripping removes everything → fall back to "MP3 FLAC"
+      expect(parseFolderStructure(['MP3 FLAC']).title).toBe('MP3 FLAC');
+    });
+
+    it('falls back to original for purely-numeric folder', () => {
+      expect(parseFolderStructure(['01.']).title).toBe('01.');
+    });
+
+    it('handles combined normalization: underscores, year, codec tag', () => {
+      const result = parseFolderStructure(['Ernest_Cline_-_Ready_Player_One__2017__MP3']);
+      expect(result).toEqual({
+        title: 'Ready Player One',
+        author: 'Ernest Cline',
+        series: null,
+      });
+    });
+
+    it('year boundary: 1899 is not stripped', () => {
+      expect(parseFolderStructure(['Title 1899']).title).toBe('Title 1899');
+    });
+
+    it('year boundary: 1900 is stripped', () => {
+      expect(parseFolderStructure(['Title 1900']).title).toBe('Title');
+    });
+
+    it('year boundary: 2099 is stripped', () => {
+      expect(parseFolderStructure(['Title 2099']).title).toBe('Title');
+    });
+
+    it('year boundary: 2100 is not stripped', () => {
+      expect(parseFolderStructure(['Title 2100']).title).toBe('Title 2100');
+    });
+
+    it('multiple bare years: only trailing year stripped', () => {
+      expect(parseFolderStructure(['Title 2011 2017']).title).toBe('Title 2011');
+    });
+  });
+
+  describe('extractYear()', () => {
+    it('extracts bare trailing year', () => {
+      expect(extractYear('Ready Player One 2011')).toBe(2011);
+    });
+
+    it('extracts parenthesized year', () => {
+      expect(extractYear('Title (2017)')).toBe(2017);
+    });
+
+    it('extracts bracketed year', () => {
+      expect(extractYear('Title [2020]')).toBe(2020);
+    });
+
+    it('returns undefined when no year present', () => {
+      expect(extractYear('Ready Player One')).toBeUndefined();
+    });
+
+    it('returns undefined for out-of-range years', () => {
+      expect(extractYear('Title 1899')).toBeUndefined();
+      expect(extractYear('Title 2100')).toBeUndefined();
+    });
+
+    it('extracts year from underscore-separated names', () => {
+      expect(extractYear('Ready_Player_One_2011')).toBe(2011);
+    });
+
+    it('extracts year from dot-separated names', () => {
+      expect(extractYear('Ready.Player.One.2011')).toBe(2011);
+    });
   });
 
   describe('parseSingleFolder() "by" delimiter', () => {
-    it.todo('"by" splits into title and author');
-    it.todo('"by" is case-insensitive');
-    it.todo('"by" inside word does not split (Standby Me)');
-    it.todo('"by" with leading numbers only does not split');
-    it.todo('"by" with empty right side does not split');
-    it.todo('multi-folder with dot/underscore names normalized');
+    it('"by" splits into title and author', () => {
+      const result = parseFolderStructure(['Project Hail Mary by Andy Weir']);
+      expect(result).toEqual({
+        title: 'Project Hail Mary',
+        author: 'Andy Weir',
+        series: null,
+      });
+    });
+
+    it('"by" is case-insensitive', () => {
+      const result = parseFolderStructure(['Title BY Author Name']);
+      expect(result).toEqual({
+        title: 'Title',
+        author: 'Author Name',
+        series: null,
+      });
+    });
+
+    it('"by" inside word does not split (Standby Me)', () => {
+      const result = parseFolderStructure(['Standby Me']);
+      expect(result).toEqual({
+        title: 'Standby Me',
+        author: null,
+        series: null,
+      });
+    });
+
+    it('"by" with leading numbers only does not split', () => {
+      const result = parseFolderStructure(['123 by Author']);
+      expect(result).toEqual({
+        title: '123 by Author',
+        author: null,
+        series: null,
+      });
+    });
+
+    it('"by" with empty right side does not split', () => {
+      const result = parseFolderStructure(['Title by']);
+      expect(result).toEqual({
+        title: 'Title by',
+        author: null,
+        series: null,
+      });
+    });
+
+    it('multi-folder with dot/underscore names normalized', () => {
+      const result = parseFolderStructure(['Stephen.King', 'The_Shining']);
+      expect(result).toEqual({
+        title: 'The Shining',
+        author: 'Stephen King',
+        series: null,
+      });
+    });
+
+    it('"by" works with dot-separated folder names', () => {
+      const result = parseFolderStructure(['Project.Hail.Mary.by.Andy.Weir']);
+      expect(result).toEqual({
+        title: 'Project Hail Mary',
+        author: 'Andy Weir',
+        series: null,
+      });
+    });
   });
 });

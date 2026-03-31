@@ -847,6 +847,21 @@ function parseSingleFolder(folder: string): {
     };
   }
 
+  // Pattern: "Title by Author" (word-boundary, not inside words like "Standby")
+  const byMatch = folder.match(/^(.+?)\bby\b(.+)$/i);
+  if (byMatch) {
+    const left = byMatch[1].trim();
+    const right = byMatch[2].trim();
+    // Guard: left side must not be just numbers, right side must be non-empty
+    if (right && !/^\d+$/.test(left)) {
+      return {
+        title: cleanName(left),
+        author: cleanName(right),
+        series: null,
+      };
+    }
+  }
+
   // Just a title
   return {
     title: cleanName(folder),
@@ -855,12 +870,52 @@ function parseSingleFolder(folder: string): {
   };
 }
 
+/** Codec/format tags to strip from folder names (case-insensitive, word-boundary). */
+const CODEC_TAGS = ['MP3', 'M4B', 'M4A', 'FLAC', 'OGG', 'AAC', 'Unabridged', 'Abridged'];
+const CODEC_REGEX = new RegExp(`\\b(${CODEC_TAGS.join('|')})\\b`, 'gi');
+
+/** Matches a bare 4-digit year (1900–2099) at end of string. */
+const BARE_YEAR_REGEX = /\b((?:19|20)\d{2})\s*$/;
+
 function cleanName(name: string): string {
-  return name
-    .replace(/^\d+[.\s]*-\s*|^\d+\.\s*/, '') // Remove leading numbers like "01. " or "01 - "
+  const result = name
+    .replace(/^\d+[.\s]*-\s*|^\d+\.\s*/, '') // Remove leading numbers FIRST (before dot→space)
+    .replace(/[_.]/g, ' ') // Convert underscores and dots to spaces
+    .replace(CODEC_REGEX, '') // Strip codec/format tags
     .replace(/\s*\(\d{4}\)$/, '') // Remove trailing year like "(2020)"
     .replace(/\s*\[\d{4}\]$/, '') // Remove trailing year like "[2020]"
+    .replace(BARE_YEAR_REGEX, '') // Remove bare trailing year like "2017"
+    .replace(/\s{2,}/g, ' ') // Collapse multiple spaces
     .trim();
+  // Fall back to original name when normalization strips everything
+  return result || name.trim();
+}
+
+/**
+ * Extracts a 4-digit year (1900–2099) from a folder name string.
+ * Checks parenthesized, bracketed, and bare trailing years.
+ */
+export function extractYear(name: string): number | undefined {
+  const normalized = name.replace(/[_.]/g, ' ');
+  // Check parenthesized year: (2017)
+  const parenMatch = normalized.match(/\((\d{4})\)\s*$/);
+  if (parenMatch) {
+    const y = parseInt(parenMatch[1], 10);
+    if (y >= 1900 && y <= 2099) return y;
+  }
+  // Check bracketed year: [2017]
+  const bracketMatch = normalized.match(/\[(\d{4})\]\s*$/);
+  if (bracketMatch) {
+    const y = parseInt(bracketMatch[1], 10);
+    if (y >= 1900 && y <= 2099) return y;
+  }
+  // Check bare trailing year
+  const bareMatch = normalized.match(BARE_YEAR_REGEX);
+  if (bareMatch) {
+    const y = parseInt(bareMatch[1], 10);
+    if (y >= 1900 && y <= 2099) return y;
+  }
+  return undefined;
 }
 
 // ─── Typed Error Classes ──────────────────────────────────────────────
