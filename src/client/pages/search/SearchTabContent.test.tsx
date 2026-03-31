@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BooksTabContent, AuthorsTabContent } from './SearchTabContent';
 import { createMockBookMetadata, createMockAuthorMetadata } from '@/__tests__/factories';
@@ -23,11 +24,11 @@ vi.mock('sonner', () => ({
   },
 }));
 
-function renderBooksTab(books = [createMockBookMetadata()]) {
+function renderBooksTab(books = [createMockBookMetadata()], searchTerm?: string) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <BooksTabContent books={books} libraryBooks={undefined} queryClient={queryClient} />
+      <BooksTabContent books={books} libraryBooks={undefined} queryClient={queryClient} searchTerm={searchTerm} />
     </QueryClientProvider>,
   );
 }
@@ -41,6 +42,22 @@ describe('BooksTabContent', () => {
   it('renders "Add manually" CTA in empty state (#246)', () => {
     renderBooksTab([]);
     expect(screen.getByText(/add manually/i)).toBeInTheDocument();
+  });
+
+  it('pre-fills title from searchTerm in empty state (#246)', () => {
+    renderBooksTab([], 'Obscure Book');
+    expect(screen.getByLabelText(/title/i)).toHaveValue('Obscure Book');
+  });
+
+  it('shows "Can\'t find it?" toggle below results that reveals form (#246)', async () => {
+    const user = userEvent.setup();
+    renderBooksTab([createMockBookMetadata()]);
+
+    const toggle = screen.getByText(/can.*t find it/i);
+    expect(toggle).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(screen.getByLabelText(/title/i)).toBeInTheDocument();
   });
 
   it('renders SearchBookCard for each book', () => {
