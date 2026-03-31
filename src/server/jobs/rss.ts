@@ -95,14 +95,16 @@ export async function runRssJob(
     return !(multiPart.match && multiPart.total! > 1);
   });
 
-  // Blacklist hash filtering
-  const hashes = afterMultipart
-    .map((r) => r.infoHash)
-    .filter((h): h is string => !!h);
+  // Blacklist filtering by infoHash and/or guid
+  const hashes = afterMultipart.map((r) => r.infoHash).filter((h): h is string => !!h);
+  const guids = afterMultipart.map((r) => r.guid).filter((g): g is string => !!g);
   let filtered = afterMultipart;
-  if (hashes.length > 0) {
-    const blacklisted = await blacklistService.getBlacklistedHashes(hashes);
-    filtered = afterMultipart.filter((r) => !r.infoHash || !blacklisted.has(r.infoHash));
+  if (hashes.length > 0 || guids.length > 0) {
+    const { blacklistedHashes, blacklistedGuids } = await blacklistService.getBlacklistedIdentifiers(hashes, guids);
+    filtered = afterMultipart.filter((r) =>
+      (!r.infoHash || !blacklistedHashes.has(r.infoHash)) &&
+      (!r.guid || !blacklistedGuids.has(r.guid)),
+    );
   }
 
   // Match each feed item to the best candidate book
