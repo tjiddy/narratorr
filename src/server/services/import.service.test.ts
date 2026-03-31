@@ -412,6 +412,48 @@ describe('ImportService', () => {
       );
     });
 
+    it('forwards book.audioBitrate as sourceBitrateBps to runAudioProcessing', async () => {
+      const bookWithBitrate = createMockDbBook({ audioBitrate: 128000, status: 'downloading' as const });
+      mockBookService.getById.mockResolvedValue(withAuthor(bookWithBitrate));
+
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({ enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'always' });
+        return Promise.resolve({});
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(runAudioProcessing).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceBitrateBps: 128000 }),
+      );
+    });
+
+    it('passes sourceBitrateBps as null when book.audioBitrate is null', async () => {
+      // mockBook has audioBitrate: null by default
+      const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
+      settingsGet.mockImplementation((key: string) => {
+        if (key === 'library') return Promise.resolve({ path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}' });
+        if (key === 'import') return Promise.resolve({ deleteAfterImport: false, minSeedTime: 0, minFreeSpaceGB: 0 });
+        if (key === 'processing') return Promise.resolve({ enabled: true, ffmpegPath: '/usr/bin/ffmpeg', outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'always' });
+        return Promise.resolve({});
+      });
+
+      db.select.mockReturnValueOnce(mockDbChain([mockDownload]));
+      db.update.mockReturnValue(mockDbChain());
+
+      await service.importDownload(1);
+
+      expect(runAudioProcessing).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceBitrateBps: null }),
+      );
+    });
+
     it('skips torrent removal when minSeedTime not elapsed', async () => {
       const settingsGet = settingsService.get as ReturnType<typeof vi.fn>;
       settingsGet.mockImplementation((key: string) => {
