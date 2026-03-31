@@ -84,13 +84,13 @@ export function LibrarySettingsSection() {
   });
 
   useEffect(() => {
-    if (settings?.quality) {
+    if (settings?.quality && !isDefaultsDirty) {
       resetDefaults({
         searchImmediately: settings.quality.searchImmediately,
         monitorForUpgrades: settings.quality.monitorForUpgrades,
       });
     }
-  }, [settings, resetDefaults]);
+  }, [settings, resetDefaults, isDefaultsDirty]);
 
   const defaultsMutation = useMutation({
     mutationFn: (data: NewBookDefaultsFormData) => api.updateSettings({ quality: data }),

@@ -440,6 +440,106 @@ describe('LibrarySettingsSection', () => {
       });
     });
 
+    it('dirty defaults edits survive unrelated settings refetch', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      });
+
+      // Toggle Search Immediately ON (form becomes dirty)
+      await user.click(screen.getByLabelText('Search Immediately'));
+      expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(true);
+
+      // Simulate a settings refetch (e.g., from another section saving)
+      const refetchedSettings = createMockSettings({
+        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
+      });
+      mockApi.getSettings.mockResolvedValue(refetchedSettings);
+
+      // The dirty toggle should NOT be overwritten by the refetch
+      expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(true);
+      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+    });
+
+    it('successful save resets dirty state and hides Save button', async () => {
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText('Search Immediately'));
+      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        expect(mockToast.success).toHaveBeenCalledWith('New book defaults saved');
+      });
+
+      // Save button should disappear after successful save (dirty state reset)
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+      });
+    });
+
+    it('successful save triggers settings refetch via query invalidation', async () => {
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      });
+
+      const initialGetCallCount = mockApi.getSettings.mock.calls.length;
+
+      await user.click(screen.getByLabelText('Search Immediately'));
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        expect(mockToast.success).toHaveBeenCalledWith('New book defaults saved');
+      });
+
+      // getSettings should have been called again due to query invalidation
+      await waitFor(() => {
+        expect(mockApi.getSettings.mock.calls.length).toBeGreaterThan(initialGetCallCount);
+      });
+    });
+
+    it('failed save leaves form recoverable — toggle state and Save button preserved', async () => {
+      mockApi.updateSettings.mockRejectedValueOnce(new Error('Network error'));
+      mockApi.updateSettings.mockResolvedValue(mockSettings);
+      const user = userEvent.setup();
+      renderWithProviders(<LibrarySettingsSection />);
+
+      await waitFor(() => {
+        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByLabelText('Search Immediately'));
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        expect(mockToast.error).toHaveBeenCalledWith('Network error');
+      });
+
+      // After failure, toggle state should be preserved and Save button still available
+      expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(true);
+      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+
+      // User can retry: submit again successfully
+      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+      await waitFor(() => {
+        expect(mockToast.success).toHaveBeenCalledWith('New book defaults saved');
+      });
+    });
+
     it('default values: both toggles unchecked with fresh settings', async () => {
       const freshSettings = createMockSettings({
         library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
