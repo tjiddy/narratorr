@@ -1037,4 +1037,15 @@ describe('BookDetails', () => {
       await waitFor(() => expect(api.mergeBookToM4b).toHaveBeenCalledWith(1));
     });
   });
+
+  describe('delete action', () => {
+    it.todo('renders Remove button in action row');
+    it.todo('opens delete confirmation modal when Remove is clicked');
+    it.todo('calls deleteBook API with deleteFiles=false when confirmed without toggle');
+    it.todo('calls deleteBook API with deleteFiles=true when confirmed with toggle checked');
+    it.todo('navigates to library page after successful delete');
+    it.todo('shows error toast on delete failure');
+    it.todo('shows file count in delete toggle label when audioFileCount is positive');
+    it.todo('shows generic label when audioFileCount is null');
+  });
 });

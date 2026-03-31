@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { FastifyInstance, FastifyBaseLogger } from 'fastify';
-import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService, RecyclingBinService } from '../services/index.js';
+import type { BookService, BookListService, DownloadService, SettingsService, RenameService, EventHistoryService, TaggingService, IndexerService } from '../services/index.js';
 import type { DownloadOrchestrator } from '../services/download-orchestrator.js';
 import type { MergeService } from '../services/merge.service.js';
 export interface BookRouteDeps {
@@ -15,7 +15,6 @@ export interface BookRouteDeps {
   taggingService: TaggingService;
   eventHistory?: EventHistoryService;
   indexerService?: IndexerService;
-  recyclingBinService?: RecyclingBinService;
 }
 import { searchAndGrabForBook } from '../services/search-pipeline.js';
 import { type z } from 'zod';
@@ -54,11 +53,10 @@ function triggerImmediateSearch(
     });
 }
 
-async function registerDeleteBookRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadService' | 'downloadOrchestrator' | 'settingsService' | 'eventHistory' | 'recyclingBinService'>) {
+async function registerDeleteBookRoute(app: FastifyInstance, deps: Pick<BookRouteDeps, 'bookService' | 'downloadService' | 'downloadOrchestrator' | 'settingsService' | 'eventHistory'>) {
 app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
   '/api/books/:id',
   { schema: { params: idParamSchema, querystring: deleteBookQuerySchema } },
-  // eslint-disable-next-line complexity -- delete pipeline: recycling bin, file deletion, download cancellation, event snapshot
   async (request, reply) => {
     const { id } = request.params;
     const { deleteFiles } = request.query;
@@ -66,20 +64,13 @@ app.delete<{ Params: IdParam; Querystring: DeleteBookQuery }>(
     // Fetch book once for file deletion + event snapshot
     const book = await deps.bookService.getById(id);
 
-    // If deleteFiles requested, move to recycling bin BEFORE cancelling downloads or removing DB record
+    // If deleteFiles requested, delete from disk BEFORE cancelling downloads or removing DB record
     if (deleteFiles === 'true') {
       if (!book) {
         return reply.status(404).send({ error: 'Book not found' });
       }
 
-      if (deps.recyclingBinService) {
-        try {
-          await deps.recyclingBinService.moveToRecycleBin(book, book.path);
-        } catch (error: unknown) {
-          request.log.error({ bookId: id, error }, 'Failed to move book to recycling bin');
-          return reply.status(500).send({ error: 'Failed to move book files to recycling bin' });
-        }
-      } else if (book.path) {
+      if (book.path) {
         try {
           const librarySettings = await deps.settingsService.get('library');
           await deps.bookService.deleteBookFiles(book.path, librarySettings.path);

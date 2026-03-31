@@ -23,7 +23,6 @@ export { HealthCheckService } from './health-check.service.js';
 export { ImportListService } from './import-list.service.js';
 export { LibraryScanService } from './library-scan.service.js';
 export { MatchJobService } from './match-job.service.js';
-export { RecyclingBinService, RecyclingBinError } from './recycling-bin.service.js';
 export { TaskRegistry } from './task-registry.js';
 export { type RetrySearchDeps, retrySearch } from './retry-search.js';
 export { DiscoveryService, type LibrarySignals } from './discovery.service.js';

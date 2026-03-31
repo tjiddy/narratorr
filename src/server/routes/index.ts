@@ -52,13 +52,11 @@ import { remotePathMappingRoutes } from './remote-path-mappings.js';
 import { eventHistoryRoutes } from './event-history.js';
 import { prowlarrCompatRoutes } from './prowlarr-compat.js';
 import { eventsRoutes } from './events.js';
-import { recyclingBinRoutes } from './recycling-bin.js';
 import { importListsRoutes } from './import-lists.js';
 import { updateRoutes } from './update.js';
 import { discoverRoutes } from './discover.js';
 import { bulkOperationsRoutes } from './bulk-operations.js';
 import { EventBroadcasterService } from '../services/event-broadcaster.service.js';
-import { RecyclingBinService } from '../services/recycling-bin.service.js';
 import { createRetrySearchDeps } from '../services/retry-search.js';
 
 export interface Services {
@@ -89,7 +87,6 @@ export interface Services {
   backup: BackupService;
   healthCheck: HealthCheckService;
   taskRegistry: TaskRegistry;
-  recyclingBin: RecyclingBinService;
   importList: ImportListService;
   discovery: DiscoveryService;
   bulkOperation: BulkOperationService;
@@ -128,7 +125,6 @@ export const SERVICE_KEYS = Object.keys({
   backup: true,
   healthCheck: true,
   taskRegistry: true,
-  recyclingBin: true,
   importList: true,
   discovery: true,
   bulkOperation: true,
@@ -170,7 +166,6 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   const mergeService = new MergeService(db, book, settings, log, eventHistory, eventBroadcaster);
   const retryBudget = new RetryBudget();
   const backup = new BackupService(config.configPath, config.dbPath, settings, log);
-  const recyclingBin = new RecyclingBinService(db, log, config.configPath, settings, book);
   const importList = new ImportListService(db, log, metadata);
   const taskRegistry = new TaskRegistry();
   const discovery = new DiscoveryService(db, log, metadata, book, settings);
@@ -195,7 +190,7 @@ export async function createServices(db: Db, log: FastifyBaseLogger): Promise<Se
   download.setRetrySearchDeps(retrySearchDeps);
   eventHistory.setRetrySearchDeps(retrySearchDeps);
 
-  return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, recyclingBin, importList, discovery, bulkOperation };
+  return { settings, auth, indexer, downloadClient, book, bookList, download, downloadOrchestrator, metadata, import: importService, importOrchestrator, libraryScan, matchJob, notifier, blacklist: blacklistService, remotePathMapping, rename: renameService, merge: mergeService, eventHistory, tagging: taggingService, qualityGate: qualityGateService, qualityGateOrchestrator, retryBudget, eventBroadcaster, backup, healthCheck, taskRegistry, importList, discovery, bulkOperation };
 }
 
 type RouteFactory = (app: FastifyInstance, services: Services, db: Db) => Promise<void>;
@@ -213,7 +208,6 @@ const routeRegistry: RouteFactory[] = [
     taggingService: s.tagging,
     eventHistory: s.eventHistory,
     indexerService: s.indexer,
-    recyclingBinService: s.recyclingBin,
   }),
   (app, s) => bookFilesRoute(app, s.book),
   (app, s) => searchRoutes(app, s.indexer, s.downloadOrchestrator, s.blacklist, s.settings),
@@ -232,7 +226,6 @@ const routeRegistry: RouteFactory[] = [
   (app) => filesystemRoutes(app),
   (app, s) => eventHistoryRoutes(app, s.eventHistory),
   (app, s) => eventsRoutes(app, s.eventBroadcaster),
-  (app, s) => recyclingBinRoutes(app, s.recyclingBin),
   (app, s) => prowlarrCompatRoutes(app, s.indexer),
   (app, s) => importListsRoutes(app, s.importList),
   (app, s) => discoverRoutes(app, {

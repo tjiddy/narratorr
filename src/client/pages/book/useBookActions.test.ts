@@ -352,4 +352,12 @@ describe('useBookActions', () => {
       });
     });
   });
+
+  describe('deleteMutation', () => {
+    it.todo('calls deleteBook API with correct book ID and deleteFiles=false');
+    it.todo('calls deleteBook API with correct book ID and deleteFiles=true');
+    it.todo('invalidates book and books queries on success');
+    it.todo('shows success toast on successful delete');
+    it.todo('shows error toast on delete failure');
+  });
 });
