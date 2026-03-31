@@ -56,7 +56,7 @@ export class BlacklistService {
     }
 
     const result = await this.db.insert(blacklist).values(values).returning();
-    this.log.info({ title: data.title, infoHash: data.infoHash, blacklistType: values.blacklistType ?? 'permanent' }, 'Added to blacklist');
+    this.log.info({ title: data.title, infoHash: data.infoHash, guid: data.guid, blacklistType: values.blacklistType ?? 'permanent' }, 'Added to blacklist');
     return result[0];
   }
 
@@ -99,27 +99,50 @@ export class BlacklistService {
     return results.length > 0;
   }
 
-  async getBlacklistedHashes(hashes?: string[]): Promise<Set<string>> {
+  async getBlacklistedIdentifiers(
+    hashes?: string[],
+    guids?: string[],
+  ): Promise<{ blacklistedHashes: Set<string>; blacklistedGuids: Set<string> }> {
     const now = new Date();
-    // Only return hashes that are permanent OR temporary with future expiry
     const expiryFilter = or(
       eq(blacklist.blacklistType, 'permanent'),
       gt(blacklist.expiresAt, now),
     );
 
-    let rows: BlacklistRow[];
+    const identifierFilters = [];
     if (hashes && hashes.length > 0) {
+      identifierFilters.push(inArray(blacklist.infoHash, hashes));
+    }
+    if (guids && guids.length > 0) {
+      identifierFilters.push(inArray(blacklist.guid, guids));
+    }
+
+    let rows: BlacklistRow[];
+    if (identifierFilters.length > 0) {
       rows = await this.db
         .select()
         .from(blacklist)
-        .where(and(inArray(blacklist.infoHash, hashes), expiryFilter));
+        .where(and(or(...identifierFilters), expiryFilter));
     } else {
       rows = await this.db
         .select()
         .from(blacklist)
         .where(expiryFilter);
     }
-    return new Set(rows.map((r) => r.infoHash));
+
+    const blacklistedHashes = new Set<string>();
+    const blacklistedGuids = new Set<string>();
+    for (const row of rows) {
+      if (row.infoHash) blacklistedHashes.add(row.infoHash);
+      if (row.guid) blacklistedGuids.add(row.guid);
+    }
+    return { blacklistedHashes, blacklistedGuids };
+  }
+
+  /** Backward-compatible wrapper — returns only blacklisted infoHashes. */
+  async getBlacklistedHashes(hashes?: string[]): Promise<Set<string>> {
+    const { blacklistedHashes } = await this.getBlacklistedIdentifiers(hashes);
+    return blacklistedHashes;
   }
 
   async deleteExpired(): Promise<number> {
