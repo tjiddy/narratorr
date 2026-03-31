@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #253 Bug: Title-only dedup in findDuplicate matches authored books — 2026-03-31
+**Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #256
+
+### Metrics
+- Files changed: 2 | Tests added/modified: 3 new + 3 updated mocks
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 1 (mock ordering for notExists subquery)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Small, focused bug fix with clear spec. Single method change, no caller modifications needed.
+- Friction / issues encountered: Drizzle's `notExists(this.db.select(...))` consumes an extra mock from the `db.select` queue during argument evaluation. Initial test failures because mock stacks didn't account for the subquery's `db.select()` call. JS evaluation order (outer select first, inner select second) was non-obvious.
+
+### Token efficiency
+- Highest-token actions: Spec review round-trips (2 rounds of /respond-to-spec-review before approval)
+- Avoidable waste: First /respond-to-spec-review used wrong method name (`acceptLibraryImport` instead of `confirmImport`) and inaccurate caller shapes — could have been avoided by grepping callers before writing the spec response
+- Suggestions: Always grep for exact method names and parameter shapes before making codebase claims in spec responses
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: `mockDbChain()` harness cannot verify query predicates — acknowledged by spec review process but means SQL-level bugs can only be caught by code review, not automated tests
+
+### Wish I'd Known
+1. `notExists(this.db.select(...))` consumes a mock from `db.select` queue — every title-only test needs an extra mock entry (see `drizzle-notexists-mock-ordering.md`)
+2. JS evaluation order for `notExists` arg: outer `db.select()` consumed first (mock #1), inner subquery `db.select()` second (mock #2) — counterintuitive
+3. Spec review will reject method name claims that aren't grep-verified — always `grep -n methodName src/` before writing spec responses
+
 ## #248 Reject/fail cleanup — delete orphaned files and re-search — 2026-03-31
 **Skill path:** /elaborate → /respond-to-spec-review (x3) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #252
