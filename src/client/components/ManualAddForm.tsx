@@ -12,7 +12,10 @@ const manualAddSchema = z.object({
   title: z.string().trim().min(1, 'Title is required'),
   author: z.string().trim().optional(),
   seriesName: z.string().trim().optional(),
-  seriesPosition: z.string().optional(),
+  seriesPosition: z.string().optional().refine(
+    (v) => !v || !Number.isNaN(Number(v)),
+    { message: 'Must be a number' },
+  ),
 });
 
 type ManualAddFormData = z.infer<typeof manualAddSchema>;
@@ -95,9 +98,7 @@ export function ManualAddForm({ defaultTitle, onSuccess }: {
           label="Position"
           registration={register('seriesPosition')}
           error={errors.seriesPosition}
-          type="number"
           placeholder="#"
-          min={0}
         />
       </div>
 

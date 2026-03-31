@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ManualAddForm } from './ManualAddForm';
@@ -67,6 +67,22 @@ describe('ManualAddForm', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Title is required')).toBeInTheDocument();
+      });
+      expect(api.addBook).not.toHaveBeenCalled();
+    });
+
+    it('rejects non-numeric series position', async () => {
+      const user = userEvent.setup();
+      renderForm();
+
+      await user.type(screen.getByLabelText(/title/i), 'Test Book');
+      // Bypass type="number" browser guard by setting value directly via fireEvent
+      const positionInput = screen.getByLabelText(/position/i);
+      fireEvent.change(positionInput, { target: { value: 'abc' } });
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Must be a number')).toBeInTheDocument();
       });
       expect(api.addBook).not.toHaveBeenCalled();
     });
