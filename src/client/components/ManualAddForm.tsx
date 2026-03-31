@@ -1,7 +1,7 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -23,6 +23,12 @@ export function ManualAddForm({ defaultTitle, onSuccess }: {
 }) {
   const queryClient = useQueryClient();
 
+  const { data: settings } = useQuery({
+    queryKey: queryKeys.settings(),
+    queryFn: api.getSettings,
+  });
+  const qualityDefaults = settings?.quality;
+
   const { register, handleSubmit, reset, formState: { errors } } = useForm<ManualAddFormData>({
     resolver: zodResolver(manualAddSchema),
     defaultValues: {
@@ -39,7 +45,8 @@ export function ManualAddForm({ defaultTitle, onSuccess }: {
         authors: data.author ? [{ name: data.author }] : [],
         seriesName: data.seriesName || undefined,
         seriesPosition: data.seriesPosition ? Number(data.seriesPosition) : undefined,
-        searchImmediately: true,
+        searchImmediately: qualityDefaults?.searchImmediately ?? false,
+        monitorForUpgrades: qualityDefaults?.monitorForUpgrades ?? false,
       }),
     onSuccess: (_result, data) => {
       toast.success(`Added '${data.title}' to library`);

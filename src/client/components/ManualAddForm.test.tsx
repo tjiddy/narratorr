@@ -14,6 +14,9 @@ vi.mock('@/lib/api', async (importOriginal) => {
     api: {
       ...(actual.api as Record<string, unknown>),
       addBook: vi.fn(),
+      getSettings: vi.fn().mockResolvedValue({
+        quality: { searchImmediately: true, monitorForUpgrades: false },
+      }),
     },
   };
 });
@@ -103,6 +106,27 @@ describe('ManualAddForm', () => {
           seriesName: 'Asian Saga',
           seriesPosition: 1,
           searchImmediately: true,
+        }));
+      });
+    });
+  });
+
+  describe('settings-driven behavior', () => {
+    it('uses searchImmediately from quality settings', async () => {
+      const user = userEvent.setup();
+      (api.addBook as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, title: 'Test' });
+      (api.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        quality: { searchImmediately: false, monitorForUpgrades: true },
+      });
+      renderForm();
+
+      await user.type(screen.getByLabelText(/title/i), 'Test');
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+
+      await waitFor(() => {
+        expect(api.addBook).toHaveBeenCalledWith(expect.objectContaining({
+          searchImmediately: false,
+          monitorForUpgrades: true,
         }));
       });
     });
