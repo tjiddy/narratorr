@@ -24,7 +24,19 @@ export function BooksTabContent({
     return (
       <div className="space-y-6">
         <p className="text-center text-muted-foreground py-8">No books found</p>
-        <ManualAddForm defaultTitle={searchTerm} />
+        {showForm ? (
+          <ManualAddForm defaultTitle={searchTerm} onSuccess={() => setShowForm(false)} />
+        ) : (
+          <p className="text-center">
+            <button
+              type="button"
+              onClick={() => setShowForm(true)}
+              className="px-6 py-3 bg-primary text-primary-foreground rounded-xl font-medium transition-all hover:bg-primary/90"
+            >
+              Add manually
+            </button>
+          </p>
+        )}
       </div>
     );
   }

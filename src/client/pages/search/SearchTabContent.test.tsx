@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BooksTabContent, AuthorsTabContent } from './SearchTabContent';
@@ -39,14 +39,37 @@ describe('BooksTabContent', () => {
     expect(screen.getByText('No books found')).toBeInTheDocument();
   });
 
-  it('renders "Add manually" CTA in empty state (#246)', () => {
+  it('renders "Add manually" CTA button in empty state (#246)', () => {
     renderBooksTab([]);
-    expect(screen.getByText(/add manually/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /add manually/i })).toBeInTheDocument();
+    // Form should NOT be visible until CTA is clicked
+    expect(screen.queryByLabelText(/title/i)).not.toBeInTheDocument();
   });
 
-  it('pre-fills title from searchTerm in empty state (#246)', () => {
+  it('opens form with pre-filled title on CTA click in empty state (#246)', async () => {
+    const user = userEvent.setup();
     renderBooksTab([], 'Obscure Book');
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+
     expect(screen.getByLabelText(/title/i)).toHaveValue('Obscure Book');
+  });
+
+  it('closes form after successful submit in empty state (#246)', async () => {
+    const user = userEvent.setup();
+    const { api: mockedApi } = await import('@/lib/api');
+    (mockedApi.addBook as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, title: 'Test' });
+    renderBooksTab([]);
+
+    await user.click(screen.getByRole('button', { name: /add manually/i }));
+    await user.type(screen.getByLabelText(/title/i), 'Test Book');
+    await user.click(screen.getByRole('button', { name: /add book/i }));
+
+    // After success, form should close and CTA should reappear
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /add manually/i })).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText(/title/i)).not.toBeInTheDocument();
   });
 
   it('shows "Can\'t find it?" toggle below results that reveals form (#246)', async () => {

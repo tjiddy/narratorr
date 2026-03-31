@@ -219,12 +219,12 @@ describe('SearchResults', () => {
       expect(screen.getByText('No books found')).toBeInTheDocument();
     });
 
-    it('shows "Add manually" CTA in zero-result empty state', () => {
+    it('shows "Add manually" CTA button in zero-result empty state', () => {
       renderResults({
         searchTerm: 'nonexistent',
         results: { books: [], authors: [] },
       });
-      expect(screen.getByText(/add manually/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /add manually/i })).toBeInTheDocument();
     });
 
     it('does not render manual add CTA before a search is performed', () => {
