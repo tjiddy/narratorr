@@ -292,9 +292,33 @@ describe('filterAndRankResults — minSeeders default', () => {
     expect(results).toHaveLength(1);
   });
 
+  it('passes torrent with null seeders when minSeeders is 1 (unknown ≠ zero)', () => {
+    const { results } = filterAndRankResults([makeResult({ protocol: 'torrent', seeders: null as unknown as undefined })], undefined, 0, 1, 'none');
+    expect(results).toHaveLength(1);
+  });
+
   it('passes torrent with 0 seeders when minSeeders is 0 (filter disabled)', () => {
     const { results } = filterAndRankResults([makeResult({ protocol: 'torrent', seeders: 0 })], undefined, 0, 0, 'none');
     expect(results).toHaveLength(1);
+  });
+
+  it('passes torrent with seeders above threshold', () => {
+    const { results } = filterAndRankResults([makeResult({ protocol: 'torrent', seeders: 5 })], undefined, 0, 3, 'none');
+    expect(results).toHaveLength(1);
+  });
+
+  it('filters torrent with seeders below threshold', () => {
+    const { results } = filterAndRankResults([makeResult({ protocol: 'torrent', seeders: 2 })], undefined, 0, 3, 'none');
+    expect(results).toHaveLength(0);
+  });
+
+  it('mixed: undefined seeders survives while 0 seeders is filtered', () => {
+    const { results } = filterAndRankResults([
+      makeResult({ title: 'ABB Result', protocol: 'torrent', seeders: undefined }),
+      makeResult({ title: 'Dead Torrent', protocol: 'torrent', seeders: 0 }),
+    ], undefined, 0, 1, 'none');
+    expect(results).toHaveLength(1);
+    expect(results[0].title).toBe('ABB Result');
   });
 
   it('passes usenet result regardless of seeders when minSeeders is 1', () => {
