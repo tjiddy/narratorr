@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #238 Redesign book deletion — remove recycle bin, add file toggle, detail page action — 2026-03-31
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #249
+
+### Metrics
+- Files changed: 50 | Tests added/modified: 30 across 6 test files
+- Quality gate runs: 3 (pass on attempt 3 — lint, then typecheck, then BulkActions.test.tsx prop fix)
+- Fix iterations: 2 (BookDetails max-lines-per-function lint, unused queryClient vars, BookHero.test.tsx missing props, BulkActions.test.tsx missing fileCount prop)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: The recycle bin removal was systematic — grep sweep caught everything. Extracting DeleteBookModal was clean. The spec was well-structured with clear AC lists.
+- Friction / issues encountered: Coverage review subagent checked wrong test files (looked at e2e instead of unit tests for route coverage, missed pre-existing book.service.test.ts). Had to fix 4 test/type issues across 3 verify runs — each was a different file needing the new props/interface.
+
+### Token efficiency
+- Highest-token actions: Reading 13 files with recycling bin references for test cleanup, reading large test files for context
+- Avoidable waste: Could have added all new props (onRemoveClick, isRemoving, fileCount) to all test files in one pass instead of discovering them one-by-one through verify failures
+- Suggestions: When adding props to a component, grep for all test files that render it BEFORE running verify, and update them preemptively
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill was not available for UI polish pass
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. When changing a component's prop interface (BookHero, BulkActionToolbar), ALL test files rendering that component need updates — grep for the component name in test files upfront rather than discovering via typecheck failures
+2. The `replace_all` flag on Edit with `, recycleRetentionDays: 30` can leave trailing commas or double commas — check for syntax issues after bulk replacements
+3. The coverage review subagent checks e2e test files by default — route-level tests in `routes/*.test.ts` are the actual test home for Fastify inject tests, not e2e files
+
 ## #240 UAT findings — Audio processing and import — 2026-03-31
 **Skill path:** /elaborate → /respond-to-spec-review (x2) → /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #245
