@@ -123,4 +123,11 @@ describe('Modal', () => {
       expect(outerClose).not.toHaveBeenCalled();
     });
   });
+
+  describe('closeOnBackdropClick prop', () => {
+    it.todo('does not call onClose when backdrop is clicked and closeOnBackdropClick={false}');
+    it.todo('calls onClose when backdrop is clicked and closeOnBackdropClick={true}');
+    it.todo('calls onClose when backdrop is clicked and closeOnBackdropClick is omitted (default true)');
+    it.todo('does not call onClose when panel is clicked regardless of closeOnBackdropClick value');
+  });
 });

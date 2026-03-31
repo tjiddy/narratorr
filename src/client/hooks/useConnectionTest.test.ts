@@ -152,6 +152,11 @@ describe('useConnectionTest', () => {
     });
   });
 
+  describe('handleFormTest flicker prevention', () => {
+    it.todo('preserves previous formTestResult while re-test is in flight (no null flash)');
+    it.todo('replaces previous result with new result when re-test completes');
+  });
+
   describe('clearFormTestResult', () => {
     it('clears formTestResult', async () => {
       testByConfig.mockResolvedValue({ success: true });
