@@ -269,7 +269,7 @@ describe('QualityGateOrchestrator', () => {
   });
 
   describe('side effect dispatch — auto-import path', () => {
-    it('emits download_status_change SSE and records event', async () => {
+    it('emits download_status_change SSE but does NOT record any quality-gate event', async () => {
       const { orchestrator, qualityGateService, broadcaster, eventHistory } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
@@ -282,14 +282,12 @@ describe('QualityGateOrchestrator', () => {
       expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
         old_status: 'checking', new_status: 'completed',
       }));
-      expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
-        reason: expect.objectContaining({ action: 'imported' }),
-      }));
+      expect(eventHistory.create).not.toHaveBeenCalled();
     });
   });
 
   describe('side effect dispatch — auto-reject path', () => {
-    it('records event, blacklists when infoHash present, deletes files, reverts book', async () => {
+    it('does NOT record any quality-gate event, blacklists when infoHash present, deletes files, reverts book', async () => {
       const { orchestrator, qualityGateService, eventHistory, blacklistService, broadcaster } = createOrchestrator();
       qualityGateService.getCompletedDownloads.mockResolvedValue([{ download: baseDownload, book: baseBook }]);
       qualityGateService.processDownload.mockResolvedValue({
@@ -299,9 +297,7 @@ describe('QualityGateOrchestrator', () => {
 
       await orchestrator.processCompletedDownloads();
 
-      expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
-        reason: expect.objectContaining({ action: 'rejected' }),
-      }));
+      expect(eventHistory.create).not.toHaveBeenCalled();
       expect(blacklistService.create).toHaveBeenCalledWith(expect.objectContaining({
         infoHash: 'abc123', reason: 'bad_quality',
       }));
@@ -360,7 +356,7 @@ describe('QualityGateOrchestrator', () => {
   });
 
   describe('approve', () => {
-    it('calls service.approve() and returns result with SSE + event', async () => {
+    it('calls service.approve() and returns result with SSE but does NOT record quality-gate event', async () => {
       const { orchestrator, qualityGateService, broadcaster, eventHistory } = createOrchestrator();
 
       const result = await orchestrator.approve(1);
@@ -370,9 +366,7 @@ describe('QualityGateOrchestrator', () => {
       expect(broadcaster.emit).toHaveBeenCalledWith('download_status_change', expect.objectContaining({
         download_id: 1, book_id: 1, old_status: 'pending_review', new_status: 'importing',
       }));
-      expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
-        reason: expect.objectContaining({ action: 'imported' }),
-      }));
+      expect(eventHistory.create).not.toHaveBeenCalled();
     });
 
     it('skips SSE when bookId is null', async () => {
@@ -395,16 +389,14 @@ describe('QualityGateOrchestrator', () => {
   });
 
   describe('reject', () => {
-    it('calls service.reject() and returns result with event + cleanup', async () => {
+    it('calls service.reject() and returns result with cleanup but does NOT record quality-gate event', async () => {
       const { orchestrator, qualityGateService, eventHistory, blacklistService } = createOrchestrator();
 
       const result = await orchestrator.reject(1);
 
       expect(qualityGateService.reject).toHaveBeenCalledWith(1);
       expect(result).toEqual({ id: 1, status: 'failed' });
-      expect(eventHistory.create).toHaveBeenCalledWith(expect.objectContaining({
-        reason: expect.objectContaining({ action: 'rejected' }),
-      }));
+      expect(eventHistory.create).not.toHaveBeenCalled();
       expect(blacklistService.create).toHaveBeenCalled();
     });
 
