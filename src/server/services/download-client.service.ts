@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
-import { downloadClients } from '../../db/schema.js';
+import { downloadClients, remotePathMappings } from '../../db/schema.js';
 import {
   DOWNLOAD_CLIENT_ADAPTER_FACTORIES,
   type DownloadClientAdapter,
@@ -82,6 +82,37 @@ export class DownloadClientService {
     const result = await this.db.insert(downloadClients).values(toInsert).returning();
     this.log.info({ name: data.name, type: data.type }, 'Download client created');
     return this.decryptRow(result[0]);
+  }
+
+  async createWithMappings(
+    data: Omit<NewDownloadClient, 'id' | 'createdAt'>,
+    pathMappings: { remotePath: string; localPath: string }[],
+  ): Promise<DownloadClientRow> {
+    const toInsert = { ...data };
+    if (toInsert.settings) {
+      toInsert.settings = encryptFields('downloadClient', { ...(toInsert.settings as Record<string, unknown>) }, getKey());
+    }
+
+    if (pathMappings.length === 0) {
+      const result = await this.db.insert(downloadClients).values(toInsert).returning();
+      this.log.info({ name: data.name, type: data.type }, 'Download client created');
+      return this.decryptRow(result[0]);
+    }
+
+    const result = await this.db.transaction(async (tx) => {
+      const [client] = await tx.insert(downloadClients).values(toInsert).returning();
+      await tx.insert(remotePathMappings).values(
+        pathMappings.map((m) => ({
+          downloadClientId: client.id,
+          remotePath: m.remotePath,
+          localPath: m.localPath,
+        })),
+      );
+      return client;
+    });
+
+    this.log.info({ name: data.name, type: data.type, mappingCount: pathMappings.length }, 'Download client created with path mappings');
+    return this.decryptRow(result);
   }
 
   async update(
