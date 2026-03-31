@@ -129,6 +129,10 @@ export function LibraryPage() {
   }, [deleteConfirm]);
 
   const anySelectedHasPath = bulk.selectedBooks.some((b) => b.path);
+  const bulkFileCount = bulk.selectedBooks.reduce(
+    (sum, b) => sum + (b.path && b.audioFileCount && b.audioFileCount > 0 ? b.audioFileCount : 0),
+    0,
+  );
 
   // Filter dropdowns from stats endpoint
   const uniqueAuthors = stats?.authors ?? [];
@@ -198,6 +202,7 @@ export function LibraryPage() {
           onSetStatus={(status, label) => bulk.bulkSetStatusMutation.mutate({ status, label })}
           isSettingStatus={bulk.bulkSetStatusMutation.isPending}
           hasPath={anySelectedHasPath}
+          fileCount={bulkFileCount}
         />
       )}
 

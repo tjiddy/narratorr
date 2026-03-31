@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { TrashIcon, SearchIcon, ChevronDownIcon } from '@/components/icons';
-import { ConfirmModal } from '@/components/ConfirmModal';
+import { DeleteBookModal } from '@/components/DeleteBookModal';
 
 export function BulkActionToolbar({
   selectedCount,
@@ -11,6 +11,7 @@ export function BulkActionToolbar({
   onSetStatus,
   isSettingStatus,
   hasPath,
+  fileCount,
 }: {
   selectedCount: number;
   onDelete: (deleteFiles: boolean) => void;
@@ -20,9 +21,9 @@ export function BulkActionToolbar({
   onSetStatus: (status: string, label: string) => void;
   isSettingStatus: boolean;
   hasPath: boolean;
+  fileCount: number;
 }) {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deleteFiles, setDeleteFiles] = useState(false);
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const statusMenuRef = useRef<HTMLDivElement>(null);
 
@@ -95,27 +96,15 @@ export function BulkActionToolbar({
         </div>
       </div>
 
-      <ConfirmModal
+      <DeleteBookModal
         isOpen={showDeleteModal}
         title="Delete Selected Books"
         message={`Delete ${selectedCount} selected book${selectedCount !== 1 ? 's' : ''}? This will cancel any active downloads.`}
-        confirmLabel="Delete"
-        cancelLabel="Cancel"
-        onConfirm={() => { setShowDeleteModal(false); onDelete(deleteFiles); setDeleteFiles(false); }}
-        onCancel={() => { setShowDeleteModal(false); setDeleteFiles(false); }}
-      >
-        {hasPath && (
-          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={deleteFiles}
-              onChange={(e) => setDeleteFiles(e.target.checked)}
-              className="rounded border-border text-destructive focus:ring-destructive"
-            />
-            Delete files from disk
-          </label>
-        )}
-      </ConfirmModal>
+        fileCount={fileCount}
+        hasPath={hasPath}
+        onConfirm={(deleteFiles) => { setShowDeleteModal(false); onDelete(deleteFiles); }}
+        onCancel={() => setShowDeleteModal(false)}
+      />
     </>
   );
 }
