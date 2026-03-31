@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { useEventSource, isSSEConnected, useSSEConnected } from './useEventSource';
+import { useMergeProgress, setMergeProgress } from './useMergeProgress';
 import { queryKeys } from '@/lib/queryKeys';
 
 vi.mock('sonner', () => ({
@@ -522,6 +523,75 @@ describe('#257 merge observability — useEventSource', () => {
         expect(handlers).toBeDefined();
         expect(handlers!.length).toBeGreaterThan(0);
       }
+    });
+  });
+
+  describe('merge progress store transitions', () => {
+    afterEach(() => {
+      // Clean up store state between tests
+      setMergeProgress(42, null);
+    });
+
+    it('merge_started sets progress to { phase: starting }', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result: progressResult } = renderHook(() => useMergeProgress(42));
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      expect(progressResult.current).toBeNull();
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+
+      expect(progressResult.current).toEqual({ phase: 'starting' });
+    });
+
+    it('merge_progress updates phase and percentage in store', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result: progressResult } = renderHook(() => useMergeProgress(42));
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_progress', {
+        book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5,
+      }));
+
+      expect(progressResult.current).toEqual({ phase: 'processing', percentage: 0.5 });
+    });
+
+    it('merge_complete clears progress back to null', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result: progressResult } = renderHook(() => useMergeProgress(42));
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      expect(progressResult.current).not.toBeNull();
+
+      act(() => es.simulateEvent('merge_complete', {
+        book_id: 42, book_title: 'My Book', success: true, message: 'done',
+      }));
+
+      expect(progressResult.current).toBeNull();
+    });
+
+    it('merge_failed clears progress back to null', () => {
+      const { wrapper } = createWrapper();
+      renderHook(() => useEventSource('key'), { wrapper });
+      const { result: progressResult } = renderHook(() => useMergeProgress(42));
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+      expect(progressResult.current).not.toBeNull();
+
+      act(() => es.simulateEvent('merge_failed', {
+        book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
+      }));
+
+      expect(progressResult.current).toBeNull();
     });
   });
 });
