@@ -92,17 +92,7 @@ export function useEventSource(apiKey: string | null) {
     }
 
     // Merge progress tracking — update the reactive store
-    if (type === 'merge_started' && 'book_id' in data) {
-      setMergeProgress((data as SSEEventPayloads['merge_started']).book_id, { phase: 'starting' });
-    } else if (type === 'merge_progress' && 'book_id' in data) {
-      const progressData = data as SSEEventPayloads['merge_progress'];
-      setMergeProgress(progressData.book_id, {
-        phase: progressData.phase,
-        percentage: progressData.percentage,
-      });
-    } else if ((type === 'merge_complete' || type === 'merge_failed') && 'book_id' in data) {
-      setMergeProgress((data as { book_id: number }).book_id, null);
-    }
+    updateMergeProgressFromEvent(type, data);
 
     // Toast notifications
     const toastConfig = TOAST_EVENT_CONFIG[type];
@@ -178,6 +168,20 @@ export function useEventSource(apiKey: string | null) {
       esRef.current = null;
     };
   }, [apiKey, handleEvent, queryClient]);
+}
+
+function updateMergeProgressFromEvent(type: SSEEventType, data: SSEEventPayloads[typeof type]): void {
+  if (type === 'merge_started' && 'book_id' in data) {
+    setMergeProgress((data as SSEEventPayloads['merge_started']).book_id, { phase: 'starting' });
+  } else if (type === 'merge_progress' && 'book_id' in data) {
+    const progressData = data as SSEEventPayloads['merge_progress'];
+    setMergeProgress(progressData.book_id, {
+      phase: progressData.phase,
+      percentage: progressData.percentage,
+    });
+  } else if ((type === 'merge_complete' || type === 'merge_failed') && 'book_id' in data) {
+    setMergeProgress((data as { book_id: number }).book_id, null);
+  }
 }
 
 function formatToastMessage(type: SSEEventType, title: string): string {

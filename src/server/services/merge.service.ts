@@ -86,7 +86,7 @@ export class MergeService {
     }
   }
 
-  private emitMergeProgress(bookId: number, bookTitle: string, phase: string, percentage?: number): void {
+  private emitMergeProgress(bookId: number, bookTitle: string, phase: 'staging' | 'processing' | 'verifying' | 'finalizing', percentage?: number): void {
     if (!this.eventBroadcaster) return;
     try {
       this.eventBroadcaster.emit('merge_progress', {

@@ -88,29 +88,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
         isMonitorToggling={monitorMutation.isPending}
       />
 
-      {/* Merge progress indicator */}
-      {mergeProgress && (
-        <div className="glass-card rounded-2xl p-4 animate-fade-in-up" role="status" aria-label="Merge progress">
-          <div className="flex items-center gap-3">
-            <div className="shrink-0 p-2 rounded-xl bg-primary/10">
-              <RefreshIcon className="w-4 h-4 text-primary animate-spin" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium">
-                {formatMergePhase(mergeProgress.phase, mergeProgress.percentage)}
-              </p>
-              {mergeProgress.phase === 'processing' && mergeProgress.percentage !== undefined && (
-                <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-primary transition-all duration-500"
-                    style={{ width: `${Math.round(mergeProgress.percentage * 100)}%` }}
-                  />
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {mergeProgress && <MergeProgressIndicator progress={mergeProgress} />}
 
       {/* Tab buttons */}
       <div className="flex justify-center animate-fade-in-up stagger-4">
@@ -223,6 +201,31 @@ export function BookDetails({ libraryBook, metadataBook }: {
         }}
         onCancel={() => setConfirmDeleteOpen(false)}
       />
+    </div>
+  );
+}
+
+function MergeProgressIndicator({ progress }: { progress: { phase: string; percentage?: number } }) {
+  return (
+    <div className="glass-card rounded-2xl p-4 animate-fade-in-up" role="status" aria-label="Merge progress">
+      <div className="flex items-center gap-3">
+        <div className="shrink-0 p-2 rounded-xl bg-primary/10">
+          <RefreshIcon className="w-4 h-4 text-primary animate-spin" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium">
+            {formatMergePhase(progress.phase, progress.percentage)}
+          </p>
+          {progress.phase === 'processing' && progress.percentage !== undefined && (
+            <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full rounded-full bg-primary transition-all duration-500"
+                style={{ width: `${Math.round(progress.percentage * 100)}%` }}
+              />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

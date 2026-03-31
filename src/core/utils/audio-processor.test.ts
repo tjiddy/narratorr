@@ -8,7 +8,6 @@ import {
   buildChapterMetadata,
   type ProcessingConfig,
   type ProcessingContext,
-  type ProcessingCallbacks,
 } from './audio-processor.js';
 
 vi.mock('node:child_process', () => ({
