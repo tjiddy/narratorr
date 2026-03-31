@@ -1,6 +1,6 @@
 DROP INDEX "authors_slug_unique";--> statement-breakpoint
 DROP INDEX "idx_blacklist_info_hash";--> statement-breakpoint
-DROP INDEX "idx_blacklist_guid";--> statement-breakpoint
+DROP INDEX IF EXISTS "idx_blacklist_guid";--> statement-breakpoint
 DROP INDEX "idx_blacklist_book_id";--> statement-breakpoint
 DROP INDEX "idx_book_authors_book_id";--> statement-breakpoint
 DROP INDEX "idx_book_authors_author_id";--> statement-breakpoint

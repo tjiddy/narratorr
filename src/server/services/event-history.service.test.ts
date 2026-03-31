@@ -276,7 +276,7 @@ describe('EventHistoryService', () => {
       service.setRetrySearchDeps({
         indexerService: { searchAll: mockSearchAll },
         downloadService: { grab: vi.fn() },
-        blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
+        blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
         bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, author: { name: 'Author' } }) },
         settingsService: createMockSettingsService(),
         retryBudget: new RetryBudget(),
@@ -306,7 +306,7 @@ describe('EventHistoryService', () => {
       service.setRetrySearchDeps({
         indexerService: { searchAll: mockSearchAll },
         downloadService: { grab: vi.fn() },
-        blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
+        blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
         bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test', duration: 3600, author: { name: 'Author' } }) },
         settingsService: createMockSettingsService(),
         retryBudget: new RetryBudget(),

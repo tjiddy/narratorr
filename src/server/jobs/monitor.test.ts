@@ -691,7 +691,7 @@ describe('monitor job', () => {
       retrySearchDeps: {
         indexerService: { searchAll: ReturnType<typeof vi.fn> };
         downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
-        blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn> };
+        blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
         retryBudget: RetryBudget;
@@ -706,7 +706,7 @@ describe('monitor job', () => {
         retrySearchDeps: {
           indexerService: { searchAll: vi.fn().mockResolvedValue([]) },
           downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
-          blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
+          blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, author: { name: 'Author' } }) },
           settingsService: createMockSettingsService(),
           retryBudget: new RetryBudget(),
@@ -949,7 +949,7 @@ describe('monitor job', () => {
       retrySearchDeps: {
         indexerService: { searchAll: ReturnType<typeof vi.fn> };
         downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
-        blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn> };
+        blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
         retryBudget: RetryBudget;
@@ -964,7 +964,7 @@ describe('monitor job', () => {
         retrySearchDeps: {
           indexerService: { searchAll: vi.fn().mockResolvedValue([]) },
           downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
-          blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
+          blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, author: { name: 'Author' } }) },
           settingsService: createMockSettingsService(),
           retryBudget: new RetryBudget(),
@@ -1108,7 +1108,7 @@ describe('monitor job', () => {
       retrySearchDeps: {
         indexerService: { searchAll: ReturnType<typeof vi.fn> };
         downloadOrchestrator: { grab: ReturnType<typeof vi.fn> };
-        blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn> };
+        blacklistService: { getBlacklistedHashes: ReturnType<typeof vi.fn>; getBlacklistedIdentifiers: ReturnType<typeof vi.fn> };
         bookService: { getById: ReturnType<typeof vi.fn> };
         settingsService: ReturnType<typeof createMockSettingsService>;
         retryBudget: RetryBudget;
@@ -1123,7 +1123,7 @@ describe('monitor job', () => {
         retrySearchDeps: {
           indexerService: { searchAll: vi.fn().mockResolvedValue([]) },
           downloadOrchestrator: { grab: vi.fn().mockResolvedValue({ id: 99 }) },
-          blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()) },
+          blacklistService: { getBlacklistedHashes: vi.fn().mockResolvedValue(new Set()), getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() }) },
           bookService: { getById: vi.fn().mockResolvedValue({ id: 42, title: 'Test Book', duration: 3600, author: { name: 'Author' } }) },
           settingsService: createMockSettingsService(),
           retryBudget: new RetryBudget(),
