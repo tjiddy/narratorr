@@ -1721,9 +1721,9 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
     await switchToTableView(user);
     await selectAllBooksInTable(user);
 
-    // Click Delete in bulk toolbar
-    const deleteButton = screen.getByRole('button', { name: /delete/i });
-    await user.click(deleteButton);
+    // Click Remove in bulk toolbar
+    const removeButton = screen.getByRole('button', { name: /remove/i });
+    await user.click(removeButton);
 
     // Check the "Delete files from disk" checkbox in the confirm modal
     await waitFor(() => {
@@ -1756,7 +1756,7 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
     await switchToTableView(user);
     await selectAllBooksInTable(user);
 
-    await user.click(screen.getByRole('button', { name: /delete/i }));
+    await user.click(screen.getByRole('button', { name: /remove/i }));
 
     await waitFor(() => {
       expect(screen.getByText('Delete Selected Books')).toBeInTheDocument();
@@ -1791,7 +1791,7 @@ describe('LibraryPage — bulk action toolbar page-level wiring (#183)', () => {
     await switchToTableView(user);
     await selectAllBooksInTable(user);
 
-    await user.click(screen.getByRole('button', { name: /delete/i }));
+    await user.click(screen.getByRole('button', { name: /remove/i }));
 
     await waitFor(() => {
       expect(screen.getByText('Delete Selected Books')).toBeInTheDocument();

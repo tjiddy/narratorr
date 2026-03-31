@@ -54,7 +54,7 @@ export function BulkActionToolbar({
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-destructive bg-destructive/10 rounded-lg hover:bg-destructive/20 disabled:opacity-50 transition-colors focus-ring"
         >
           <TrashIcon className="w-3.5 h-3.5" />
-          Delete
+          Remove
         </button>
         <button
           type="button"

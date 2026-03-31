@@ -71,7 +71,7 @@ beforeEach(() => {
 describe('BulkActionToolbar', () => {
   it('shows delete, search, and set status buttons when books are selected', () => {
     renderToolbar({ selectedCount: 2 });
-    expect(screen.getByText('Delete')).toBeInTheDocument();
+    expect(screen.getByText('Remove')).toBeInTheDocument();
     expect(screen.getByText('Search')).toBeInTheDocument();
     expect(screen.getByText('Set Status')).toBeInTheDocument();
   });
@@ -92,7 +92,7 @@ describe('bulk delete', () => {
     const user = userEvent.setup();
     renderToolbar({ selectedCount: 5 });
 
-    await user.click(screen.getByText('Delete'));
+    await user.click(screen.getByText('Remove'));
     expect(screen.getByText('Delete 5 selected books? This will cancel any active downloads.')).toBeInTheDocument();
   });
 
@@ -100,7 +100,7 @@ describe('bulk delete', () => {
     const user = userEvent.setup();
     renderToolbar({ selectedCount: 2, hasPath: true });
 
-    await user.click(screen.getByText('Delete'));
+    await user.click(screen.getByText('Remove'));
     expect(screen.getByLabelText('Delete files from disk')).toBeInTheDocument();
   });
 
