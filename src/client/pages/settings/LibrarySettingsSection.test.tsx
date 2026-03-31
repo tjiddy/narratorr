@@ -73,14 +73,12 @@ describe('LibrarySettingsSection', () => {
     expect(screen.queryByText('Scan the library folder to register existing audiobooks')).not.toBeInTheDocument();
   });
 
-  it('renders inline Scan Library link next to Library Path label', async () => {
+  it('does not render Scan Library link (moved to Library Actions section)', async () => {
     renderWithProviders(<LibrarySettingsSection />);
     await waitFor(() => {
       expect(screen.getByText('Library Path')).toBeInTheDocument();
     });
-    const scanLink = screen.getByRole('link', { name: /scan library/i });
-    expect(scanLink).toBeInTheDocument();
-    expect(scanLink).toHaveAttribute('href', '/library-import');
+    expect(screen.queryByRole('link', { name: /scan library/i })).not.toBeInTheDocument();
   });
 
   it('does not clobber dirty path edits when settings are refetched', async () => {
@@ -220,6 +218,26 @@ describe('LibrarySettingsSection', () => {
       await waitFor(() => {
         expect(screen.queryByText('Scan Library?')).not.toBeInTheDocument();
       });
+    });
+  });
+
+  // Finding 1: Scan Library removed from Library Path row (#227)
+  describe('Scan Library removal (#227)', () => {
+    it('does NOT render Scan Library link in the Library Path row', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByText('Library Path')).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('link', { name: /scan library/i })).not.toBeInTheDocument();
+    });
+
+    it('Library section contains Library Path label, PathInput, and description text', async () => {
+      renderWithProviders(<LibrarySettingsSection />);
+      await waitFor(() => {
+        expect(screen.getByText('Library Path')).toBeInTheDocument();
+      });
+      expect(screen.getByPlaceholderText('/audiobooks')).toBeInTheDocument();
+      expect(screen.getByText('The root folder where imported audiobooks will be stored')).toBeInTheDocument();
     });
   });
 

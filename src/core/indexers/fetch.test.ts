@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { useMswServer } from '../__tests__/msw/server.js';
 import { fetchWithProxy } from './fetch.js';
@@ -59,6 +59,37 @@ describe('fetchWithProxy', () => {
       );
 
       await expect(fetchWithProxy({ url: TARGET_URL })).rejects.toThrow();
+    });
+
+    describe('network error mapping (#227)', () => {
+      afterEach(() => {
+        vi.restoreAllMocks();
+      });
+
+      it('maps ECONNREFUSED to actionable message with port', async () => {
+        const cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:8080'), { code: 'ECONNREFUSED' });
+        vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+          Object.assign(new TypeError('fetch failed'), { cause }),
+        );
+        await expect(fetchWithProxy({ url: TARGET_URL })).rejects.toThrow(/connection refused/i);
+        await expect(fetchWithProxy({ url: TARGET_URL })).rejects.toThrow(/8080/);
+      });
+
+      it('maps ENOTFOUND to actionable message with hostname', async () => {
+        const cause = Object.assign(new Error('getaddrinfo ENOTFOUND badhost.local'), { code: 'ENOTFOUND' });
+        vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+          Object.assign(new TypeError('fetch failed'), { cause }),
+        );
+        await expect(fetchWithProxy({ url: TARGET_URL })).rejects.toThrow(/dns/i);
+        await expect(fetchWithProxy({ url: TARGET_URL })).rejects.toThrow(/badhost\.local/);
+      });
+
+      it('maps TimeoutError to actionable timeout message', async () => {
+        vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+          new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+        );
+        await expect(fetchWithProxy({ url: TARGET_URL })).rejects.toThrow(/timed out/i);
+      });
     });
 
     it('uses 30s default timeout for direct fetch', async () => {

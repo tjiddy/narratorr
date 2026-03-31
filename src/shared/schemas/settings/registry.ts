@@ -153,7 +153,7 @@ export const appSettingsSchema = z.object(
 
 export const updateSettingsSchema = z.object(
   Object.fromEntries(
-    SETTINGS_CATEGORIES.map((key) => [key, settingsRegistry[key].schema.partial().optional()]),
+    SETTINGS_CATEGORIES.map((key) => [key, stripDefaults(settingsRegistry[key].schema).partial().optional()]),
   ),
 ).superRefine((data: Record<string, unknown>, ctx) => {
   const processing = data.processing as { enabled?: boolean; ffmpegPath?: string } | undefined;

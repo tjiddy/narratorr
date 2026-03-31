@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, type RenameCount } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { FolderIcon } from '@/components/icons';
 import { useBulkOperation } from '../../hooks/useBulkOperation.js';
 import { ConfirmModal } from '@/components/ConfirmModal';
 
@@ -150,8 +152,15 @@ export function BulkOperationsSection() {
 
   return (
     <div className="mt-4 pt-4 border-t border-border/30 space-y-3">
-      <p className="text-sm font-medium text-foreground">Bulk Operations</p>
+      <p className="text-sm font-medium text-foreground">Library Actions</p>
       <div className="flex flex-wrap gap-2">
+        <Link
+          to="/library-import"
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium glass-card rounded-xl hover:border-primary/30 hover:text-primary transition-all focus-ring"
+        >
+          <FolderIcon className="w-3.5 h-3.5" />
+          Scan Library
+        </Link>
         <BulkButton
           label="Rename All Books"
           runningLabel="Renaming..."

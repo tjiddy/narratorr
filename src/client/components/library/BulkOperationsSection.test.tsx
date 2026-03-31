@@ -24,6 +24,11 @@ vi.mock('../../hooks/useBulkOperation.js', () => ({
   }),
 }));
 
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual('react-router-dom');
+  return { ...actual };
+});
+
 vi.mock('@/lib/api', () => ({
   api: {
     getBulkRenameCount: vi.fn(),
@@ -300,5 +305,28 @@ describe('BulkOperationsSection', () => {
     setup({ ffmpegPath: '' });
     const convertBtn = screen.getByRole('button', { name: /convert all to m4b/i });
     expect(convertBtn).toHaveAttribute('title', 'Requires ffmpeg — configure in Settings > Post Processing');
+  });
+
+  // Finding 1: Library Actions section rename (#227)
+  describe('Library Actions section (#227)', () => {
+    it('section heading is "Library Actions" (not "Bulk Operations")', () => {
+      setup();
+      expect(screen.getByText('Library Actions')).toBeInTheDocument();
+      expect(screen.queryByText('Bulk Operations')).not.toBeInTheDocument();
+    });
+
+    it('Scan Library link appears before Rename All Books button', () => {
+      setup();
+      const scanLink = screen.getByRole('link', { name: /scan library/i });
+      const renameBtn = screen.getByRole('button', { name: /rename all books/i });
+      // Scan Library should come before Rename in DOM order
+      expect(scanLink.compareDocumentPosition(renameBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('Scan Library link has href="/library-import"', () => {
+      setup();
+      const scanLink = screen.getByRole('link', { name: /scan library/i });
+      expect(scanLink).toHaveAttribute('href', '/library-import');
+    });
   });
 });

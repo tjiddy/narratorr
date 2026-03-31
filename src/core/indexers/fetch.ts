@@ -5,6 +5,8 @@
  * (POST {proxyUrl}/v1 with cmd: "request.get"). When absent, uses direct fetch.
  */
 
+import { mapNetworkError } from '../utils/map-network-error.js';
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 const PROXY_TIMEOUT_MS = 60_000;
 
@@ -52,10 +54,15 @@ async function fetchDirect(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(url, {
-      headers,
-      signal: controller.signal,
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers,
+        signal: controller.signal,
+      });
+    } catch (error: unknown) {
+      throw mapNetworkError(error);
+    }
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);

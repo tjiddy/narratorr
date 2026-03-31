@@ -8,6 +8,7 @@
 import { ProxyAgent } from 'undici';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { ProxyError } from './errors.js';
+import { mapNetworkError } from '../utils/map-network-error.js';
 
 const PROXY_TIMEOUT_MS = 30_000;
 const IPIFY_URL = 'https://api.ipify.org?format=json';
@@ -66,7 +67,7 @@ export async function fetchWithProxyAgent(
     try {
       response = await fetch(url, fetchOptions);
     } catch (error: unknown) {
-      if (!dispatcher) throw error; // Direct fetch — let caller handle
+      if (!dispatcher) throw mapNetworkError(error); // Direct fetch — map network errors
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw new ProxyError(`Proxy timed out after ${Math.round(timeoutMs / 1000)}s`);
       }
