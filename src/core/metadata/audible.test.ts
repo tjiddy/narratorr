@@ -766,4 +766,11 @@ describe('AudibleProvider', () => {
       expect(Array.isArray(series)).toBe(true);
     });
   });
+
+  describe('structured search params', () => {
+    it.todo('uses title + author URL params when options.title and options.author provided');
+    it.todo('uses title param only when options.title provided without options.author');
+    it.todo('falls back to keywords param when no structured params in options');
+    it.todo('keywords param not sent when structured params provided');
+  });
 });

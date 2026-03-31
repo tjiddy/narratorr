@@ -890,4 +890,26 @@ describe('MatchJobService', () => {
       );
     });
   });
+
+  describe('result scoring integration', () => {
+    it.todo('re-ranks results by scoreResult() before selection');
+    it.todo('title similarity < 50% on top result sets confidence to none');
+    it.todo('title similarity exactly 50% sets confidence to medium (boundary)');
+    it.todo('title similarity > 50% with author match sets confidence to medium or high');
+    it.todo('duration still promotes to high when ≤ 5% threshold');
+    it.todo('low title score with duration match still returns none if title < 50%');
+  });
+
+  describe('year tiebreaker', () => {
+    it.todo('extracts year from basename when folder contains bare year');
+    it.todo('extracts year from basename when folder contains parenthesized year');
+    it.todo('no year in path — tiebreaker skipped, pure score wins');
+    it.todo('equal scores with one matching year — year-matching result selected');
+    it.todo('different scores — higher score wins regardless of year');
+  });
+
+  describe('structured search params', () => {
+    it.todo('sends structured title and author via options when parsed data available');
+    it.todo('sends only title via options when no author parsed');
+  });
 });

@@ -2411,4 +2411,44 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
       );
     });
   });
+
+  describe('cleanName() normalization enhancements', () => {
+    it.todo('converts underscores to spaces');
+    it.todo('converts dots to spaces');
+    it.todo('handles mixed separators (underscores and dashes)');
+    it.todo('strips MP3 codec tag (case-insensitive)');
+    it.todo('strips M4B codec tag (case-insensitive)');
+    it.todo('strips M4A codec tag');
+    it.todo('strips FLAC codec tag');
+    it.todo('strips OGG codec tag');
+    it.todo('strips AAC codec tag');
+    it.todo('strips Unabridged tag');
+    it.todo('strips Abridged tag');
+    it.todo('strips multiple codec tags');
+    it.todo('does not strip codec tag embedded in word (MP3Player)');
+    it.todo('strips bare trailing year');
+    it.todo('does not strip bare mid-string year (2001 A Space Odyssey)');
+    it.todo('still strips parenthesized year (existing behavior)');
+    it.todo('still strips bracketed year (existing behavior)');
+    it.todo('still strips leading numbers (existing behavior)');
+    it.todo('falls back to original when normalization yields empty string');
+    it.todo('falls back to original for purely-numeric folder');
+    it.todo('extracts year alongside cleaned name');
+    it.todo('returns undefined year when no year present');
+    it.todo('handles combined normalization: underscores, year, codec tag');
+    it.todo('year boundary: 1899 is not stripped');
+    it.todo('year boundary: 1900 is stripped');
+    it.todo('year boundary: 2099 is stripped');
+    it.todo('year boundary: 2100 is not stripped');
+    it.todo('multiple bare years: only trailing year stripped');
+  });
+
+  describe('parseSingleFolder() "by" delimiter', () => {
+    it.todo('"by" splits into title and author');
+    it.todo('"by" is case-insensitive');
+    it.todo('"by" inside word does not split (Standby Me)');
+    it.todo('"by" with leading numbers only does not split');
+    it.todo('"by" with empty right side does not split');
+    it.todo('multi-folder with dot/underscore names normalized');
+  });
 });

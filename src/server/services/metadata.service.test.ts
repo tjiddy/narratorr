@@ -580,4 +580,9 @@ describe('MetadataService', () => {
       expect(result).toEqual([{ title: 'W' }]);
     });
   });
+
+  describe('structured search params relay', () => {
+    it.todo('relays structured options (title, author) to provider searchBooks');
+    it.todo('works without structured options (backward compatibility)');
+  });
 });
