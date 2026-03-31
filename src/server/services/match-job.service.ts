@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import { basename } from 'node:path';
 import type { FastifyBaseLogger } from 'fastify';
 import type { MetadataService } from './metadata.service.js';
 import type { BookMetadata } from '../../core/metadata/index.js';
 import { scanAudioDirectory } from '../../core/utils/audio-scanner.js';
 import { Semaphore } from '../utils/semaphore.js';
+import { scoreResult, diceCoefficient } from '../../core/utils/similarity.js';
+import { extractYear } from './library-scan.service.js';
 
 // ============ Types ============
 
@@ -36,6 +39,7 @@ export interface MatchJobStatus {
 const MAX_CONCURRENCY = 5;
 const TTL_MS = 10 * 60 * 1000; // 10 minutes after completion
 const DURATION_THRESHOLD = 0.05; // 5% tolerance for duration matching
+const TITLE_SIMILARITY_FLOOR = 0.5; // Below this, confidence is 'none'
 
 export class MatchJobService {
   private jobs = new Map<string, MatchJob>();
@@ -162,9 +166,13 @@ class MatchJob {
         this.log.debug({ error, path: book.path }, 'Audio scan failed — proceeding without duration');
       }
 
+      // Send structured search params when title/author available
       const query = book.author ? `${book.title} ${book.author}` : book.title;
       this.log.debug({ path: book.path, query, duration }, 'Searching metadata for book');
-      const searchResults = await this.metadataService.searchBooks(query);
+      const searchResults = await this.metadataService.searchBooks(query, {
+        title: book.title,
+        author: book.author,
+      });
 
       if (searchResults.length === 0) {
         this.log.debug({ path: book.path, query }, 'No search results returned');
@@ -176,32 +184,76 @@ class MatchJob {
       // Fetch full detail for top results to get ASIN/duration
       const detailed = await this.fetchDetails(searchResults.slice(0, 5));
 
-      if (detailed.length === 1) {
-        this.log.debug({ path: book.path, title: detailed[0].title }, 'Single result — high confidence');
+      // Score and re-rank results by title+author similarity
+      const context = { title: book.title, author: book.author };
+      const scored = detailed.map(meta => ({
+        meta,
+        score: scoreResult(
+          { title: meta.title, author: meta.authors?.[0]?.name },
+          context,
+        ),
+      }));
+
+      // Recover year from folder path for tiebreaker
+      const folderYear = extractYear(basename(book.path));
+
+      // Apply year tiebreaker for equal scores, then sort descending by score
+      scored.sort((a, b) => {
+        if (Math.abs(a.score - b.score) < 0.001 && folderYear) {
+          const aYear = parsePublishedYear(a.meta.publishedDate);
+          const bYear = parsePublishedYear(b.meta.publishedDate);
+          const aMatch = aYear === folderYear ? 1 : 0;
+          const bMatch = bYear === folderYear ? 1 : 0;
+          if (aMatch !== bMatch) return bMatch - aMatch;
+        }
+        return b.score - a.score;
+      });
+
+      const topScored = scored[0];
+
+      // Title similarity floor: below 50% → confidence 'none'
+      const titleSimilarity = context.title && topScored.meta.title
+        ? diceCoefficient(topScored.meta.title, context.title)
+        : 0;
+      if (titleSimilarity < TITLE_SIMILARITY_FLOOR) {
+        this.log.debug(
+          { path: book.path, titleSimilarity: titleSimilarity.toFixed(2), bestTitle: topScored.meta.title },
+          'Top result below title similarity floor — none confidence',
+        );
+        return {
+          path: book.path,
+          confidence: 'none',
+          bestMatch: topScored.meta,
+          alternatives: scored.slice(1).map(s => s.meta),
+        };
+      }
+
+      if (scored.length === 1) {
+        this.log.debug({ path: book.path, title: topScored.meta.title, score: topScored.score.toFixed(2) }, 'Single result — high confidence');
         return {
           path: book.path,
           confidence: 'high',
-          bestMatch: detailed[0],
+          bestMatch: topScored.meta,
           alternatives: [],
         };
       }
 
       // Multiple results — attempt runtime disambiguation via duration
       if (duration && duration > 0) {
-        const withDistance = detailed
-          .filter(d => d.duration && d.duration > 0)
-          .map(d => ({
-            meta: d,
-            distance: Math.abs(d.duration! - duration!) / duration!,
+        const withDistance = scored
+          .filter(s => s.meta.duration && s.meta.duration > 0)
+          .map(s => ({
+            ...s,
+            distance: Math.abs(s.meta.duration! - duration!) / duration!,
           }))
           .sort((a, b) => a.distance - b.distance);
 
         if (withDistance.length > 0) {
           const best = withDistance[0];
           const rest = withDistance.slice(1).map(w => w.meta);
-          const othersWithoutDuration = detailed.filter(
-            d => !d.duration || d.duration <= 0,
-          );
+          const othersWithoutDuration = scored.filter(
+            s => !s.meta.duration || s.meta.duration <= 0,
+          ).map(s => s.meta);
 
           const confidence: Confidence = best.distance <= DURATION_THRESHOLD ? 'high' : 'medium';
           this.log.debug(
@@ -209,6 +261,7 @@ class MatchJob {
               path: book.path,
               confidence,
               bestTitle: best.meta.title,
+              score: best.score.toFixed(2),
               bookDuration: duration,
               matchDuration: best.meta.duration,
               distancePct: `${(best.distance * 100).toFixed(1)}%`,
@@ -227,16 +280,16 @@ class MatchJob {
         }
       }
 
-      // No duration data — medium confidence with best guess (first result)
+      // No duration data — medium confidence with best-scored result
       this.log.debug(
-        { path: book.path, resultCount: detailed.length, hasDuration: !!duration },
+        { path: book.path, resultCount: scored.length, topScore: topScored.score.toFixed(2), hasDuration: !!duration },
         'Multiple results, no duration disambiguation — medium confidence',
       );
       return {
         path: book.path,
         confidence: 'medium',
-        bestMatch: detailed[0],
-        alternatives: detailed.slice(1),
+        bestMatch: topScored.meta,
+        alternatives: scored.slice(1).map(s => s.meta),
       };
     } catch (error: unknown) {
       this.log.warn({ error, path: book.path, title: book.title }, 'Match failed for book');
@@ -271,4 +324,11 @@ class MatchJob {
     }
     return detailed;
   }
+}
+
+/** Extracts a 4-digit year from a publishedDate string (e.g., "2011-06-14" → 2011). */
+function parsePublishedYear(date: string | undefined): number | undefined {
+  if (!date) return undefined;
+  const match = date.match(/\b(\d{4})\b/);
+  return match ? parseInt(match[1], 10) : undefined;
 }

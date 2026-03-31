@@ -314,8 +314,8 @@ describe('MatchJobService', () => {
       (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
       const results = [
-        makeBookMetadata({ title: 'Book A', providerId: undefined, duration: 300 }),
-        makeBookMetadata({ title: 'Book B', providerId: undefined, duration: 400 }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: undefined, duration: 300 }),
+        makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: undefined, duration: 400 }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
 
@@ -335,8 +335,8 @@ describe('MatchJobService', () => {
       });
 
       const results = [
-        makeBookMetadata({ title: 'Book A', providerId: 'p1' }),
-        makeBookMetadata({ title: 'Book B', providerId: 'p2' }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings (Unabridged)', providerId: 'p2' }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
@@ -348,7 +348,7 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       expect(result.confidence).toBe('high');
-      expect(result.bestMatch!.title).toBe('Book A');
+      expect(result.bestMatch!.title).toBe('The Way of Kings');
       expect(result.alternatives).toHaveLength(1);
     });
 
@@ -359,8 +359,8 @@ describe('MatchJobService', () => {
       });
 
       const results = [
-        makeBookMetadata({ title: 'Book A', providerId: 'p1' }),
-        makeBookMetadata({ title: 'Book B', providerId: 'p2' }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
@@ -372,7 +372,7 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       expect(result.confidence).toBe('medium');
-      expect(result.bestMatch!.title).toBe('Book A');
+      expect(result.bestMatch!.title).toBe('The Way of Kings');
     });
 
     it('sorts alternatives by duration distance', async () => {
@@ -382,9 +382,9 @@ describe('MatchJobService', () => {
       });
 
       const results = [
-        makeBookMetadata({ title: 'Far', providerId: 'p1' }),
-        makeBookMetadata({ title: 'Close', providerId: 'p2' }),
-        makeBookMetadata({ title: 'Mid', providerId: 'p3' }),
+        makeBookMetadata({ title: 'The Way of Kings (Far)', providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings (Close)', providerId: 'p2' }),
+        makeBookMetadata({ title: 'The Way of Kings (Mid)', providerId: 'p3' }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
@@ -396,9 +396,9 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.bestMatch!.title).toBe('Close');
-      expect(result.alternatives[0].title).toBe('Mid');
-      expect(result.alternatives[1].title).toBe('Far');
+      expect(result.bestMatch!.title).toBe('The Way of Kings (Close)');
+      expect(result.alternatives[0].title).toBe('The Way of Kings (Mid)');
+      expect(result.alternatives[1].title).toBe('The Way of Kings (Far)');
     });
 
     it('includes candidates without duration in alternatives after sorted ones', async () => {
@@ -408,8 +408,8 @@ describe('MatchJobService', () => {
       });
 
       const results = [
-        makeBookMetadata({ title: 'With Duration', providerId: 'p1' }),
-        makeBookMetadata({ title: 'No Duration', providerId: undefined }),
+        makeBookMetadata({ title: 'The Way of Kings (Audio)', providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings (Text)', providerId: undefined }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
@@ -421,8 +421,8 @@ describe('MatchJobService', () => {
       await waitForJob(service, id);
 
       const result = service.getJob(id)!.results[0];
-      expect(result.bestMatch!.title).toBe('With Duration');
-      expect(result.alternatives.some(a => a.title === 'No Duration')).toBe(true);
+      expect(result.bestMatch!.title).toBe('The Way of Kings (Audio)');
+      expect(result.alternatives.some(a => a.title === 'The Way of Kings (Text)')).toBe(true);
     });
 
     it('converts audio seconds to minutes correctly', async () => {
@@ -433,8 +433,8 @@ describe('MatchJobService', () => {
       });
 
       const results = [
-        makeBookMetadata({ title: 'Short Book', providerId: 'p1' }),
-        makeBookMetadata({ title: 'Long Book', providerId: 'p2' }),
+        makeBookMetadata({ title: 'The Way of Kings (Short)', providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings (Long)', providerId: 'p2' }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
@@ -446,7 +446,7 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       expect(result.confidence).toBe('high');
-      expect(result.bestMatch!.title).toBe('Short Book');
+      expect(result.bestMatch!.title).toBe('The Way of Kings (Short)');
     });
 
     it('skips duration disambiguation when audio scan returns zero duration', async () => {
@@ -456,8 +456,8 @@ describe('MatchJobService', () => {
       });
 
       const results = [
-        makeBookMetadata({ title: 'Book A', providerId: undefined, duration: 300 }),
-        makeBookMetadata({ title: 'Book B', providerId: undefined, duration: 400 }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: undefined, duration: 300 }),
+        makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: undefined, duration: 400 }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
 
@@ -466,7 +466,7 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       expect(result.confidence).toBe('medium');
-      expect(result.bestMatch!.title).toBe('Book A');
+      expect(result.bestMatch!.title).toBe('The Way of Kings');
     });
 
     it('falls through to medium when all detailed results have no duration', async () => {
@@ -476,8 +476,8 @@ describe('MatchJobService', () => {
       });
 
       const results = [
-        makeBookMetadata({ title: 'Book A', providerId: undefined }),
-        makeBookMetadata({ title: 'Book B', providerId: undefined }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: undefined }),
+        makeBookMetadata({ title: 'The Way of Kings (Unabridged)', providerId: undefined }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
 
@@ -486,27 +486,33 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       expect(result.confidence).toBe('medium');
-      expect(result.bestMatch!.title).toBe('Book A');
+      expect(result.bestMatch!.title).toBe('The Way of Kings');
     });
   });
 
   describe('search query construction', () => {
-    it('uses "title author" when author is provided', async () => {
+    it('uses "title author" query with structured options when author is provided', async () => {
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
       const id = service.createJob([{ path: '/books/x', title: 'Dune', author: 'Frank Herbert' }]);
       await waitForJob(service, id);
 
-      expect(metadataService.searchBooks).toHaveBeenCalledWith('Dune Frank Herbert');
+      expect(metadataService.searchBooks).toHaveBeenCalledWith('Dune Frank Herbert', {
+        title: 'Dune',
+        author: 'Frank Herbert',
+      });
     });
 
-    it('uses title only when author is not provided', async () => {
+    it('uses title only query with structured options when author is not provided', async () => {
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
       const id = service.createJob([{ path: '/books/x', title: 'Dune' }]);
       await waitForJob(service, id);
 
-      expect(metadataService.searchBooks).toHaveBeenCalledWith('Dune');
+      expect(metadataService.searchBooks).toHaveBeenCalledWith('Dune', {
+        title: 'Dune',
+        author: undefined,
+      });
     });
   });
 
@@ -550,7 +556,7 @@ describe('MatchJobService', () => {
     });
 
     it('falls back to search result when detail fetch fails', async () => {
-      const searchResult = makeBookMetadata({ title: 'Fallback Book', providerId: 'prov-1' });
+      const searchResult = makeBookMetadata({ title: 'The Way of Kings', providerId: 'prov-1' });
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([searchResult]);
       (metadataService.getBook as ReturnType<typeof vi.fn>).mockRejectedValue(
         new Error('API down'),
@@ -561,7 +567,7 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       expect(result.confidence).toBe('high');
-      expect(result.bestMatch!.title).toBe('Fallback Book');
+      expect(result.bestMatch!.title).toBe('The Way of Kings');
     });
 
     it('falls back to search result when detail fetch returns null', async () => {
@@ -750,8 +756,8 @@ describe('MatchJobService', () => {
       });
 
       const results = [
-        makeBookMetadata({ title: 'Book A', providerId: 'p1' }),
-        makeBookMetadata({ title: 'Book B', providerId: 'p2' }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings (Unabridged)', providerId: 'p2' }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
@@ -773,8 +779,8 @@ describe('MatchJobService', () => {
       });
 
       const results = [
-        makeBookMetadata({ title: 'Book A', providerId: 'p1' }),
-        makeBookMetadata({ title: 'Book B', providerId: 'p2' }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: 'p2' }),
       ];
       (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
       (metadataService.getBook as ReturnType<typeof vi.fn>)
@@ -796,7 +802,10 @@ describe('MatchJobService', () => {
 
       const result = service.getJob(id)!.results[0];
       expect(result.confidence).toBe('none');
-      expect(metadataService.searchBooks).toHaveBeenCalledWith('');
+      expect(metadataService.searchBooks).toHaveBeenCalledWith('', {
+        title: '',
+        author: undefined,
+      });
     });
 
     it('detail fetch stops on cancellation', async () => {
@@ -892,24 +901,221 @@ describe('MatchJobService', () => {
   });
 
   describe('result scoring integration', () => {
-    it.todo('re-ranks results by scoreResult() before selection');
-    it.todo('title similarity < 50% on top result sets confidence to none');
-    it.todo('title similarity exactly 50% sets confidence to medium (boundary)');
-    it.todo('title similarity > 50% with author match sets confidence to medium or high');
-    it.todo('duration still promotes to high when ≤ 5% threshold');
-    it.todo('low title score with duration match still returns none if title < 50%');
+    it('re-ranks results by scoreResult() before selection', async () => {
+      // Provider returns "Wrong Book" first, but "The Way of Kings" matches better
+      const results = [
+        makeBookMetadata({ title: 'Completely Wrong Book', providerId: undefined }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: undefined }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      // Re-ranking puts "The Way of Kings" first due to higher score
+      expect(result.bestMatch!.title).toBe('The Way of Kings');
+    });
+
+    it('title similarity < 50% on top result sets confidence to none', async () => {
+      const results = [
+        makeBookMetadata({ title: 'Totally Different Book', providerId: undefined }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result.confidence).toBe('none');
+      expect(result.bestMatch!.title).toBe('Totally Different Book');
+    });
+
+    it('title similarity exactly 50% sets confidence to medium (boundary)', async () => {
+      // Use two similar-ish titles that produce ~50% similarity
+      // "Way Kings" vs "The Way of Kings" — enough overlap to reach ~50%
+      const candidate: MatchCandidate = { path: '/books/test', title: 'Way Kings', author: 'Sanderson' };
+      const results = [
+        makeBookMetadata({ title: 'Way Kings Edition', providerId: undefined }),
+        makeBookMetadata({ title: 'Way Kings Reprint', providerId: undefined }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+
+      const id = service.createJob([candidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      // With similar titles, confidence should be medium (not none)
+      expect(result.confidence).toBe('medium');
+    });
+
+    it('title similarity > 50% with author match gives medium or high confidence', async () => {
+      const results = [
+        makeBookMetadata({ title: 'The Way of Kings', providerId: undefined }),
+        makeBookMetadata({ title: 'The Way of Kings (Extended)', providerId: undefined }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(['medium', 'high']).toContain(result.confidence);
+    });
+
+    it('duration still promotes to high when ≤ 5% threshold with scoring', async () => {
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+        totalDuration: 36000,
+        files: [],
+      });
+
+      const results = [
+        makeBookMetadata({ title: 'The Way of Kings', providerId: 'p1' }),
+        makeBookMetadata({ title: 'The Way of Kings (Other)', providerId: 'p2' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+      (metadataService.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ asin: 'A1', duration: 610 })
+        .mockResolvedValueOnce({ asin: 'A2', duration: 800 });
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result.confidence).toBe('high');
+    });
+
+    it('low title score with duration match still returns none if title < 50%', async () => {
+      (scanAudioDirectory as ReturnType<typeof vi.fn>).mockResolvedValue({
+        totalDuration: 36000,
+        files: [],
+      });
+
+      const results = [
+        makeBookMetadata({ title: 'Unrelated Book', providerId: 'p1' }),
+        makeBookMetadata({ title: 'Another Unrelated', providerId: 'p2' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+      (metadataService.getBook as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({ asin: 'A1', duration: 600 }) // exact match
+        .mockResolvedValueOnce({ asin: 'A2', duration: 800 });
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result.confidence).toBe('none');
+    });
   });
 
   describe('year tiebreaker', () => {
-    it.todo('extracts year from basename when folder contains bare year');
-    it.todo('extracts year from basename when folder contains parenthesized year');
-    it.todo('no year in path — tiebreaker skipped, pure score wins');
-    it.todo('equal scores with one matching year — year-matching result selected');
-    it.todo('different scores — higher score wins regardless of year');
+    it('extracts year from basename and uses as tiebreaker for equal scores', async () => {
+      const candidate: MatchCandidate = {
+        path: '/audiobooks/The Way of Kings 2010',
+        title: 'The Way of Kings',
+        author: 'Brandon Sanderson',
+      };
+
+      const results = [
+        makeBookMetadata({ title: 'The Way of Kings', providerId: undefined, publishedDate: '2015-01-01' }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: undefined, publishedDate: '2010-08-31' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+
+      const id = service.createJob([candidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      // Year tiebreaker prefers the 2010 match
+      expect(result.bestMatch!.publishedDate).toBe('2010-08-31');
+    });
+
+    it('extracts year from parenthesized year in path', async () => {
+      const candidate: MatchCandidate = {
+        path: '/audiobooks/The Way of Kings (2010)',
+        title: 'The Way of Kings',
+        author: 'Brandon Sanderson',
+      };
+
+      const results = [
+        makeBookMetadata({ title: 'The Way of Kings', providerId: undefined, publishedDate: '2015-01-01' }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: undefined, publishedDate: '2010-08-31' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+
+      const id = service.createJob([candidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      expect(result.bestMatch!.publishedDate).toBe('2010-08-31');
+    });
+
+    it('no year in path — tiebreaker skipped, uses score ordering', async () => {
+      const candidate: MatchCandidate = {
+        path: '/audiobooks/The Way of Kings',
+        title: 'The Way of Kings',
+        author: 'Brandon Sanderson',
+      };
+
+      const results = [
+        makeBookMetadata({ title: 'The Way of Kings', providerId: undefined, publishedDate: '2010-01-01' }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: undefined, publishedDate: '2015-01-01' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+
+      const id = service.createJob([candidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      // Without year, first result by score (they're equal, so order preserved)
+      expect(result.bestMatch!.publishedDate).toBe('2010-01-01');
+    });
+
+    it('different scores — higher score wins regardless of year', async () => {
+      const candidate: MatchCandidate = {
+        path: '/audiobooks/The Way of Kings 2015',
+        title: 'The Way of Kings',
+        author: 'Brandon Sanderson',
+      };
+
+      const results = [
+        makeBookMetadata({ title: 'Totally Different Book', providerId: undefined, publishedDate: '2015-01-01' }),
+        makeBookMetadata({ title: 'The Way of Kings', providerId: undefined, publishedDate: '2010-01-01' }),
+      ];
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue(results);
+
+      const id = service.createJob([candidate]);
+      await waitForJob(service, id);
+
+      const result = service.getJob(id)!.results[0];
+      // Higher score wins even though year matches the other result
+      expect(result.bestMatch!.title).toBe('The Way of Kings');
+    });
   });
 
   describe('structured search params', () => {
-    it.todo('sends structured title and author via options when parsed data available');
-    it.todo('sends only title via options when no author parsed');
+    it('sends structured title and author via options when parsed data available', async () => {
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      const id = service.createJob([sampleCandidate]);
+      await waitForJob(service, id);
+
+      expect(metadataService.searchBooks).toHaveBeenCalledWith(
+        'The Way of Kings Brandon Sanderson',
+        { title: 'The Way of Kings', author: 'Brandon Sanderson' },
+      );
+    });
+
+    it('sends only title via options when no author parsed', async () => {
+      (metadataService.searchBooks as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      const id = service.createJob([{ path: '/books/x', title: 'Dune' }]);
+      await waitForJob(service, id);
+
+      expect(metadataService.searchBooks).toHaveBeenCalledWith('Dune', {
+        title: 'Dune',
+        author: undefined,
+      });
+    });
   });
 });
