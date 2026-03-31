@@ -1082,21 +1082,23 @@ describe('IndexerService', () => {
   });
 
   describe('searchAll — concurrent execution', () => {
-    it('queries multiple indexers concurrently (both called without waiting)', async () => {
+    it('invokes second adapter before first resolves (proves concurrent fan-out)', async () => {
       const indexer2 = { ...mockIndexer, id: 2, name: 'Indexer2' };
       db.select.mockReturnValue(mockDbChain([mockIndexer, indexer2]));
 
-      const callOrder: string[] = [];
+      // Adapter1 blocks on a deferred promise — if execution is sequential,
+      // adapter2.search will never be called until adapter1 resolves.
+      let resolveAdapter1!: (value: unknown[]) => void;
+      const adapter1Promise = new Promise<unknown[]>((resolve) => { resolveAdapter1 = resolve; });
+
       const adapter1 = {
-        search: vi.fn().mockImplementation(async () => {
-          callOrder.push('adapter1-start');
-          return [{ title: 'Book1', indexer: 'ABB' }];
-        }),
+        search: vi.fn().mockReturnValue(adapter1Promise),
         test: vi.fn(),
       };
       const adapter2 = {
         search: vi.fn().mockImplementation(async () => {
-          callOrder.push('adapter2-start');
+          // Assert adapter1.search was already called but NOT yet resolved
+          expect(adapter1.search).toHaveBeenCalledTimes(1);
           return [{ title: 'Book2', indexer: 'Indexer2' }];
         }),
         test: vi.fn(),
@@ -1106,10 +1108,18 @@ describe('IndexerService', () => {
         .mockResolvedValueOnce(adapter1 as never)
         .mockResolvedValueOnce(adapter2 as never);
 
-      const results = await service.searchAll('test');
-      expect(results).toHaveLength(2);
-      expect(adapter1.search).toHaveBeenCalledTimes(1);
+      const searchPromise = service.searchAll('test');
+
+      // Wait a tick to let both adapter.search calls be initiated
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      // At this point, adapter2 should already have been called (concurrent)
       expect(adapter2.search).toHaveBeenCalledTimes(1);
+
+      // Now resolve adapter1 so searchAll can complete
+      resolveAdapter1([{ title: 'Book1', indexer: 'ABB' }]);
+      const results = await searchPromise;
+      expect(results).toHaveLength(2);
     });
 
     it('collects results from fulfilled indexers when one rejects', async () => {
