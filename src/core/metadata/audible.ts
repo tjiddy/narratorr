@@ -54,12 +54,19 @@ export class AudibleProvider implements MetadataSearchProvider {
 
   async searchBooks(query: string, options?: SearchBooksOptions): Promise<SearchBooksResult> {
     const params = new URLSearchParams({
-      keywords: query,
       num_results: String(options?.maxResults ?? MAX_RESULTS),
       products_sort_by: 'Relevance',
       response_groups: RESPONSE_GROUPS,
       image_sizes: IMAGE_SIZES,
     });
+
+    // Use structured title/author params when available; fall back to keywords blob
+    if (options?.title) {
+      params.set('title', options.title);
+      if (options.author) params.set('author', options.author);
+    } else {
+      params.set('keywords', query);
+    }
 
     const products = await this.fetchProducts(params);
     const rawCount = products.length;

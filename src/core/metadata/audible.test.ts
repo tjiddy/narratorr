@@ -768,9 +768,62 @@ describe('AudibleProvider', () => {
   });
 
   describe('structured search params', () => {
-    it.todo('uses title + author URL params when options.title and options.author provided');
-    it.todo('uses title param only when options.title provided without options.author');
-    it.todo('falls back to keywords param when no structured params in options');
-    it.todo('keywords param not sent when structured params provided');
+    it('uses title + author URL params when options.title and options.author provided', async () => {
+      let capturedUrl: URL | undefined;
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', ({ request }) => {
+          capturedUrl = new URL(request.url);
+          return HttpResponse.json({ products: [] });
+        }),
+      );
+
+      await provider.searchBooks('', { title: 'Project Hail Mary', author: 'Andy Weir' });
+      expect(capturedUrl?.searchParams.get('title')).toBe('Project Hail Mary');
+      expect(capturedUrl?.searchParams.get('author')).toBe('Andy Weir');
+      expect(capturedUrl?.searchParams.has('keywords')).toBe(false);
+    });
+
+    it('uses title param only when options.title provided without options.author', async () => {
+      let capturedUrl: URL | undefined;
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', ({ request }) => {
+          capturedUrl = new URL(request.url);
+          return HttpResponse.json({ products: [] });
+        }),
+      );
+
+      await provider.searchBooks('', { title: 'Dune' });
+      expect(capturedUrl?.searchParams.get('title')).toBe('Dune');
+      expect(capturedUrl?.searchParams.has('author')).toBe(false);
+      expect(capturedUrl?.searchParams.has('keywords')).toBe(false);
+    });
+
+    it('falls back to keywords param when no structured params in options', async () => {
+      let capturedUrl: URL | undefined;
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', ({ request }) => {
+          capturedUrl = new URL(request.url);
+          return HttpResponse.json({ products: [] });
+        }),
+      );
+
+      await provider.searchBooks('Sanderson Way of Kings', { maxResults: 5 });
+      expect(capturedUrl?.searchParams.get('keywords')).toBe('Sanderson Way of Kings');
+      expect(capturedUrl?.searchParams.has('title')).toBe(false);
+    });
+
+    it('keywords param not sent when structured params provided', async () => {
+      let capturedUrl: URL | undefined;
+      server.use(
+        http.get('https://api.audible.com/1.0/catalog/products', ({ request }) => {
+          capturedUrl = new URL(request.url);
+          return HttpResponse.json({ products: [] });
+        }),
+      );
+
+      await provider.searchBooks('fallback query', { title: 'Specific Title', author: 'Author' });
+      expect(capturedUrl?.searchParams.has('keywords')).toBe(false);
+      expect(capturedUrl?.searchParams.get('title')).toBe('Specific Title');
+    });
   });
 });

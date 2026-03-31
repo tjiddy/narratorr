@@ -87,7 +87,7 @@ describe('MetadataService', () => {
 
       const result = await service.searchBooks('query');
       expect(result).toEqual(mockBooks);
-      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('query');
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('query', undefined);
     });
   });
 
@@ -582,7 +582,19 @@ describe('MetadataService', () => {
   });
 
   describe('structured search params relay', () => {
-    it.todo('relays structured options (title, author) to provider searchBooks');
-    it.todo('works without structured options (backward compatibility)');
+    it('relays structured options (title, author) to provider searchBooks', async () => {
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [] });
+
+      await service.searchBooks('fallback', { title: 'Dune', author: 'Frank Herbert' });
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('fallback', { title: 'Dune', author: 'Frank Herbert' });
+    });
+
+    it('works without structured options (backward compatibility)', async () => {
+      mockAudibleProvider.searchBooks.mockResolvedValueOnce({ books: [{ title: 'Result' }] });
+
+      const result = await service.searchBooks('keywords query');
+      expect(result).toEqual([{ title: 'Result' }]);
+      expect(mockAudibleProvider.searchBooks).toHaveBeenCalledWith('keywords query', undefined);
+    });
   });
 });
