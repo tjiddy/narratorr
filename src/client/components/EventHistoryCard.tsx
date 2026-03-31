@@ -81,7 +81,7 @@ export function EventHistoryCard({ event, onMarkFailed, isMarkingFailed, onDelet
               onClick={() => setShowReason(!showReason)}
               className="text-xs text-primary hover:text-primary/80 mt-1.5 font-medium transition-colors"
             >
-              {showReason ? 'Hide details' : 'View reason'}
+              {showReason ? 'Hide details' : 'View details'}
             </button>
           )}
 
