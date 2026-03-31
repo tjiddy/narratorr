@@ -420,18 +420,108 @@ describe('useEventSource', () => {
 
 describe('#257 merge observability — useEventSource', () => {
   describe('cache invalidation', () => {
-    it.todo('merge_started event triggers eventHistory cache invalidation');
-    it.todo('merge_progress event does NOT trigger full cache invalidation');
-    it.todo('merge_failed event triggers eventHistory + books cache invalidation');
+    it('merge_started event triggers eventHistory cache invalidation', () => {
+      const { wrapper, queryClient } = createWrapper();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['eventHistory'] });
+    });
+
+    it('merge_progress event does NOT trigger full cache invalidation', () => {
+      const { wrapper, queryClient } = createWrapper();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_progress', {
+        book_id: 42, book_title: 'My Book', phase: 'processing', percentage: 0.5,
+      }));
+
+      // merge_progress has empty invalidation rule — no invalidation calls
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    });
+
+    it('merge_failed event triggers eventHistory + books cache invalidation', () => {
+      const { wrapper, queryClient } = createWrapper();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_failed', {
+        book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
+      }));
+
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['eventHistory'] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
+    });
   });
 
   describe('toast notifications', () => {
-    it.todo('merge_started SSE event shows info toast');
-    it.todo('merge_failed SSE event shows error toast via toast.error');
-    it.todo('merge_complete SSE event shows success toast using message field');
+    it('merge_started SSE event shows info toast', () => {
+      const { wrapper } = createWrapper();
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_started', { book_id: 42, book_title: 'My Book' }));
+
+      expect(toast.info).toHaveBeenCalledWith('Merging "My Book"...', { duration: 5000 });
+    });
+
+    it('merge_failed SSE event shows error toast via toast.error', () => {
+      const { wrapper } = createWrapper();
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_failed', {
+        book_id: 42, book_title: 'My Book', error: 'ffmpeg crashed',
+      }));
+
+      expect(toast.error).toHaveBeenCalledWith('"My Book" merge failed', { duration: 5000 });
+    });
+
+    it('merge_complete SSE event shows success toast using message field', () => {
+      const { wrapper } = createWrapper();
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+      act(() => es.simulateOpen());
+
+      act(() => es.simulateEvent('merge_complete', {
+        book_id: 42, book_title: 'My Book', success: true,
+        message: 'Merged 5 files to My Book.m4b',
+      }));
+
+      expect(toast.success).toHaveBeenCalledWith('Merged 5 files to My Book.m4b', { duration: 5000 });
+    });
   });
 
   describe('event listener registration', () => {
-    it.todo('registers listeners for merge_started, merge_progress, merge_failed');
+    it('registers listeners for merge_started, merge_progress, merge_failed', () => {
+      const { wrapper } = createWrapper();
+
+      renderHook(() => useEventSource('key'), { wrapper });
+      const es = MockEventSource.instances[0];
+
+      // Check that all 3 new event types have listeners registered
+      for (const type of ['merge_started', 'merge_progress', 'merge_failed']) {
+        const handlers = (es as unknown as { listeners: Map<string, unknown[]> }).listeners.get(type);
+        expect(handlers).toBeDefined();
+        expect(handlers!.length).toBeGreaterThan(0);
+      }
+    });
   });
 });

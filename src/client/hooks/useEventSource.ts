@@ -101,6 +101,7 @@ export function useEventSource(apiKey: string | null) {
         case 'success': toast.success(message, { duration: 5000 }); break;
         case 'info': toast.info(message, { duration: 5000 }); break;
         case 'warning': toast.warning(message, { duration: 5000 }); break;
+        case 'error': toast.error(message, { duration: 5000 }); break;
       }
     }
   }, [queryClient]);
@@ -125,6 +126,7 @@ export function useEventSource(apiKey: string | null) {
     const eventTypes: SSEEventType[] = [
       'download_progress', 'download_status_change', 'book_status_change',
       'import_complete', 'grab_started', 'review_needed', 'merge_complete',
+      'merge_started', 'merge_progress', 'merge_failed',
     ];
 
     for (const type of eventTypes) {
@@ -169,6 +171,9 @@ function formatToastMessage(type: SSEEventType, title: string): string {
     case 'import_complete': return `"${title}" imported successfully`;
     case 'grab_started': return `Downloading "${title}"`;
     case 'review_needed': return `"${title}" needs review`;
+    case 'merge_started': return `Merging "${title}"...`;
+    case 'merge_failed': return `"${title}" merge failed`;
+    case 'merge_complete': return title; // title is the message field (includes filename)
     default: return title;
   }
 }
