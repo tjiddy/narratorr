@@ -20,7 +20,6 @@ const libraryPathSchema = z.object({
 type LibraryPathFormData = z.infer<typeof libraryPathSchema>;
 type NewBookDefaultsFormData = z.infer<typeof newBookDefaultsFormSchema>;
 
-// eslint-disable-next-line max-lines-per-function -- linear section with path + new-book defaults subsection
 export function LibrarySettingsSection() {
   const queryClient = useQueryClient();
   const [showRescanPrompt, setShowRescanPrompt] = useState(false);

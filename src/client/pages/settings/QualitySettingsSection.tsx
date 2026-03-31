@@ -19,7 +19,6 @@ const PROTOCOL_LABELS: Record<string, string> = {
 
 type QualityFormData = z.infer<typeof qualityFilteringFormSchema>;
 
-// eslint-disable-next-line max-lines-per-function -- linear form with 5 quality-filtering fields
 export function QualitySettingsSection() {
   const queryClient = useQueryClient();
 
