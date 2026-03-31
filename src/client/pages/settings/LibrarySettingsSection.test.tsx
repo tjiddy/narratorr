@@ -223,6 +223,12 @@ describe('LibrarySettingsSection', () => {
     });
   });
 
+  // Finding 1: Scan Library removed from Library Path row (#227)
+  describe('Scan Library removal (#227)', () => {
+    it.todo('does NOT render Scan Library link in the Library Path row');
+    it.todo('Library section is just: Library Path label → PathInput → description text');
+  });
+
   describe('library path browse integration', () => {
     beforeEach(() => {
       mockApi.updateSettings.mockResolvedValue(mockSettings);

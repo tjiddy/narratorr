@@ -716,4 +716,13 @@ describe('settingsRegistry', () => {
       expect(result.success).toBe(false);
     });
   });
+
+  // Finding 4: Partial update must not inject defaults (#227)
+  describe('updateSettingsSchema partial update default preservation (#227)', () => {
+    it.todo('parsing { general: { logLevel: "error" } } does NOT produce a welcomeSeen key in the output');
+    it.todo('parsing { general: {} } produces an empty general object (no default injection)');
+    it.todo('parsing { search: { enabled: false } } does NOT produce intervalMinutes or blacklistTtlDays');
+    it.todo('parsing { import: { deleteAfterImport: true } } does NOT produce minSeedTime or minFreeSpaceGB');
+    it.todo('full update with all fields still applies correctly');
+  });
 });

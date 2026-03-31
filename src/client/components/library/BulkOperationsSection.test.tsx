@@ -24,6 +24,11 @@ vi.mock('../../hooks/useBulkOperation.js', () => ({
   }),
 }));
 
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual('react-router-dom');
+  return { ...actual };
+});
+
 vi.mock('@/lib/api', () => ({
   api: {
     getBulkRenameCount: vi.fn(),
@@ -300,5 +305,13 @@ describe('BulkOperationsSection', () => {
     setup({ ffmpegPath: '' });
     const convertBtn = screen.getByRole('button', { name: /convert all to m4b/i });
     expect(convertBtn).toHaveAttribute('title', 'Requires ffmpeg — configure in Settings > Post Processing');
+  });
+
+  // Finding 1: Library Actions section rename (#227)
+  describe('Library Actions section (#227)', () => {
+    it.todo('section heading is "Library Actions" (not "Bulk Operations")');
+    it.todo('Scan Library link appears before Rename All Books button');
+    it.todo('Scan Library link has href="/library-import"');
+    it.todo('Scan Library link is styled consistently with bulk operation buttons');
   });
 });
