@@ -66,7 +66,7 @@ export async function runEnrichment(db: Db, metadataService: MetadataService, lo
     .limit(BATCH_LIMIT);
 
   if (candidates.length === 0) {
-    log.debug('No books pending enrichment');
+    log.trace('No books pending enrichment');
     return;
   }
 

@@ -174,7 +174,7 @@ export class ImportService {
       .orderBy(downloads.completedAt, downloads.id);
 
     if (eligibleDownloads.length === 0) {
-      this.log.debug('No completed downloads to import');
+      this.log.trace('No completed downloads to import');
       return [];
     }
 

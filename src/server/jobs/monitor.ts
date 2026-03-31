@@ -53,7 +53,7 @@ export async function monitorDownloads(
     .where(inArray(downloads.status, getClientPolledStatuses()));
 
   if (activeDownloads.length === 0) {
-    log.debug('No active downloads to monitor');
+    log.trace('No active downloads to monitor');
     return;
   }
 
