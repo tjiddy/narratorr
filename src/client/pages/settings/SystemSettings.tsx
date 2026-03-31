@@ -17,7 +17,6 @@ import { BackupScheduleForm } from './BackupScheduleForm';
 import { HealthDashboard } from './HealthDashboard';
 import { ScheduledTasks } from './ScheduledTasks';
 import { SystemInfo } from './SystemInfo';
-import { RecyclingBinSection } from './RecyclingBinSection';
 import { GeneralSettingsForm } from './GeneralSettingsForm';
 
 export function SystemSettings() {
@@ -131,8 +130,6 @@ export function SystemSettings() {
       <SystemInfo />
 
       <GeneralSettingsForm />
-
-      <RecyclingBinSection />
 
       <ScheduledTasks />
 
