@@ -180,17 +180,22 @@ async function resolveOutputPath(
 ): Promise<string | undefined> {
   if (download.outputPath || !item.savePath || !item.name) return undefined;
 
-  let fullPath = join(item.savePath, item.name);
+  const fullPath = join(item.savePath, item.name);
   if (remotePathMappingService && download.downloadClientId) {
     try {
       const mappings = await remotePathMappingService.getByClientId(download.downloadClientId);
       if (mappings.length > 0) {
-        fullPath = applyPathMapping(fullPath, mappings);
+        return applyPathMapping(fullPath, mappings);
       }
+      // Zero mappings — raw path is correct (no mapping to apply)
+      return fullPath;
     } catch {
-      log.debug({ id: download.id }, 'Remote path mapping unavailable, using raw path');
+      // Lookup failed — do NOT persist raw adapter path (trust model: skip persistence)
+      log.debug({ id: download.id }, 'Remote path mapping lookup failed, skipping outputPath persistence');
+      return undefined;
     }
   }
+  // No mapping service available — raw path is correct
   return fullPath;
 }
 
