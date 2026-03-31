@@ -275,6 +275,18 @@ describe('downloadClientsApi', () => {
     }));
   });
 
+  it('createClient sends pathMappings in POST body when provided', async () => {
+    const data = {
+      name: 'qBit', type: 'qbittorrent' as const, enabled: true, priority: 50, settings: {},
+      pathMappings: [{ remotePath: '/remote', localPath: '/local' }],
+    };
+    await downloadClientsApi.createClient(data);
+    expect(mockFetchApi).toHaveBeenCalledWith('/download-clients', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify(data),
+    }));
+  });
+
   it('updateClient → PUT /download-clients/:id', async () => {
     const data = { name: 'Updated' };
     await downloadClientsApi.updateClient(1, data);

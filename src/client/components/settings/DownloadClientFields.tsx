@@ -134,11 +134,6 @@ export function DownloadClientFields({ selectedType, register, errors, clientId,
         </div>
       </div>
 
-      <div className="sm:col-span-2">
-        <label htmlFor="clientDownloadRoot" className="block text-sm font-medium mb-2">Download Root</label>
-        <input id="clientDownloadRoot" type="text" {...register('settings.downloadRoot')} className={inputClass} placeholder="/downloads/complete" />
-        <p className="text-sm text-muted-foreground mt-1">Optional. Root directory for this client&apos;s downloads. Used to validate cleanup paths.</p>
-      </div>
     </>
   );
 }

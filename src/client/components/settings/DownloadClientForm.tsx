@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { DownloadClient, TestResult } from '@/lib/api';
@@ -9,6 +9,7 @@ import { DownloadClientFields } from './DownloadClientFields';
 import { BlackholeFields } from './BlackholeFields';
 import { SelectWithChevron } from './SelectWithChevron';
 import { RemotePathMappingsSubsection } from './RemotePathMappingsSubsection';
+import { PathMappingEditor, type PathMappingEntry } from './PathMappingEditor';
 import {
   createDownloadClientFormSchema,
   downloadClientTypeSchema,
@@ -30,7 +31,7 @@ interface DownloadClientFormProps {
   client?: DownloadClient;
   mode: 'edit' | 'create';
   onCancel?: () => void;
-  onSubmit: (data: CreateDownloadClientFormData) => void;
+  onSubmit: (data: CreateDownloadClientFormData & { pathMappings?: PathMappingEntry[] }) => void;
   onFormTest: (data: CreateDownloadClientFormData) => void;
   isPending?: boolean;
   testingForm?: boolean;
@@ -39,6 +40,7 @@ interface DownloadClientFormProps {
 
 export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTest, isPending, testingForm, formTestResult }: DownloadClientFormProps) {
   const isEdit = mode === 'edit';
+  const [pathMappings, setPathMappings] = useState<PathMappingEntry[]>([]);
   const {
     register, handleSubmit, reset, watch, setValue, getValues,
     formState: { errors, isDirty },
@@ -66,8 +68,16 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
 
   const isImplemented = IMPLEMENTED_TYPES.includes(selectedType);
 
+  const handleFormSubmit = useCallback((data: CreateDownloadClientFormData) => {
+    if (isEdit) {
+      onSubmit(data);
+    } else {
+      onSubmit({ ...data, pathMappings });
+    }
+  }, [isEdit, onSubmit, pathMappings]);
+
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="glass-card rounded-2xl p-6 animate-fade-in-up space-y-5">
+    <form onSubmit={handleSubmit(handleFormSubmit)} className="glass-card rounded-2xl p-6 animate-fade-in-up space-y-5">
       <h3 className="font-display text-lg font-semibold">{isEdit ? 'Edit Download Client' : 'Add Download Client'}</h3>
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField id="clientName" label="Name" registration={register('name')} error={errors.name} placeholder={DOWNLOAD_CLIENT_REGISTRY[selectedType]?.label} />
@@ -85,6 +95,7 @@ export function DownloadClientForm({ client, mode, onCancel, onSubmit, onFormTes
       </div>
       <SettingsFormActions isEdit={isEdit} isPending={isPending} testingForm={testingForm} onFormTest={handleSubmit(onFormTest)} onCancel={onCancel} entityLabel="Client" testDisabled={!isImplemented} testDisabledTitle={!isImplemented ? 'Testing available for implemented adapter types' : undefined} />
       {isEdit && client && <RemotePathMappingsSubsection clientId={client.id} />}
+      {!isEdit && <PathMappingEditor mappings={pathMappings} onChange={setPathMappings} />}
     </form>
   );
 }
