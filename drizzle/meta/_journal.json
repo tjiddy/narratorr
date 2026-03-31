@@ -15,6 +15,13 @@
       "when": 1774946030603,
       "tag": "0001_condemned_praxagora",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1774961613288,
+      "tag": "0002_fat_stephen_strange",
+      "breakpoints": true
     }
   ]
 }

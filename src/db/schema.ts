@@ -210,6 +210,8 @@ export const downloads = sqliteTable('downloads', {
   progress: real('progress').notNull().default(0),
   externalId: text('external_id'),
   errorMessage: text('error_message'),
+  guid: text('guid'),
+  outputPath: text('output_path'),
   addedAt: integer('added_at', { mode: 'timestamp' })
     .notNull()
     .default(sql`(unixepoch())`),
@@ -268,7 +270,8 @@ export const searchHistory = sqliteTable('search_history', {
 export const blacklist = sqliteTable('blacklist', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   bookId: integer('book_id').references(() => books.id, { onDelete: 'set null' }),
-  infoHash: text('info_hash').notNull(),
+  infoHash: text('info_hash'),
+  guid: text('guid'),
   title: text('title').notNull(),
   reason: text('reason', { enum: ['wrong_content', 'bad_quality', 'wrong_narrator', 'spam', 'other', 'download_failed', 'infrastructure_error'] }).notNull().default('other'),
   note: text('note'),
@@ -279,6 +282,7 @@ export const blacklist = sqliteTable('blacklist', {
     .default(sql`(unixepoch())`),
 }, (table) => [
   index('idx_blacklist_info_hash').on(table.infoHash),
+  index('idx_blacklist_guid').on(table.guid),
   index('idx_blacklist_book_id').on(table.bookId),
 ]);
 
