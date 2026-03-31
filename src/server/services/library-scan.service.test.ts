@@ -2564,6 +2564,14 @@ describe('scanDirectory() — duplicateReason field (#133)', () => {
     it('extracts year from dot-separated names', () => {
       expect(extractYear('Ready.Player.One.2011')).toBe(2011);
     });
+
+    it('extracts year when codec tags trail the year token', () => {
+      expect(extractYear('Ernest_Cline_-_Ready_Player_One__2017__MP3')).toBe(2017);
+    });
+
+    it('extracts year when multiple codec tags follow the year', () => {
+      expect(extractYear('Title_2011_FLAC_Unabridged')).toBe(2011);
+    });
   });
 
   describe('parseSingleFolder() "by" delimiter', () => {

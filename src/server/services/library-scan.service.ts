@@ -896,7 +896,11 @@ function cleanName(name: string): string {
  * Checks parenthesized, bracketed, and bare trailing years.
  */
 export function extractYear(name: string): number | undefined {
-  const normalized = name.replace(/[_.]/g, ' ');
+  const normalized = name
+    .replace(/[_.]/g, ' ')
+    .replace(CODEC_REGEX, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
   // Check parenthesized year: (2017)
   const parenMatch = normalized.match(/\((\d{4})\)\s*$/);
   if (parenMatch) {
