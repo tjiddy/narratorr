@@ -161,8 +161,10 @@ describe('BookService', () => {
 
     it('finds duplicate by title only when no authors and no ASIN (#246)', async () => {
       // title-only lookup → match, then getById
+      // JS eval order: outer db.select() first, then inner db.select() for notExists subquery
       db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // outer title-only query match
+        .mockReturnValueOnce(mockDbChain([]))            // notExists subquery builder (consumed but not awaited)
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([]));
@@ -174,7 +176,8 @@ describe('BookService', () => {
 
     it('finds duplicate by title only with empty authors array (#246)', async () => {
       db.select
-        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))
+        .mockReturnValueOnce(mockDbChain([{ id: 1 }]))  // outer query
+        .mockReturnValueOnce(mockDbChain([]))            // notExists subquery
         .mockReturnValueOnce(mockDbChain([{ book: mockBook, importListName: null }]))
         .mockReturnValueOnce(mockDbChain([{ author: mockAuthor, position: 0 }]))
         .mockReturnValueOnce(mockDbChain([]));
@@ -184,7 +187,9 @@ describe('BookService', () => {
     });
 
     it('returns null for title-only when no match found (#246)', async () => {
-      db.select.mockReturnValueOnce(mockDbChain([]));  // title-only: not found
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))   // outer title-only query: not found
+        .mockReturnValueOnce(mockDbChain([]));  // notExists subquery builder
 
       const result = await service.findDuplicate('Nonexistent Book');
       expect(result).toBeNull();
@@ -196,6 +201,44 @@ describe('BookService', () => {
       const result = await service.findDuplicate('The Way of Kings', [{ name: 'Brandon Sanderson' }], undefined);
       expect(result).toBeNull();
       expect(db.select).toHaveBeenCalledTimes(1);
+    });
+
+    // #253 — title-only branch must exclude authored books
+    it('title-only: does NOT match an authored book with the same title → returns null (#253)', async () => {
+      // JS eval: outer db.select() first, then inner db.select() for notExists
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))   // outer title-only query: no authorless match
+        .mockReturnValueOnce(mockDbChain([]));  // notExists subquery builder
+
+      const result = await service.findDuplicate('The Way of Kings');
+      expect(result).toBeNull();
+      expect(db.select).toHaveBeenCalledTimes(2);  // outer query + subquery, no getById
+    });
+
+    it('title-only: returns authorless book when both authored and authorless exist (#253)', async () => {
+      // Outer query returns authorless book (authored excluded by notExists predicate)
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ id: 42 }]))  // outer query: authorless book found
+        .mockReturnValueOnce(mockDbChain([]))             // notExists subquery builder
+        .mockReturnValueOnce(mockDbChain([{ book: { ...mockBook, id: 42 }, importListName: null }]))  // getById book
+        .mockReturnValueOnce(mockDbChain([]))             // getById authors (authorless)
+        .mockReturnValueOnce(mockDbChain([]));            // getById narrators
+
+      const result = await service.findDuplicate('The Way of Kings');
+      expect(result).not.toBeNull();
+      expect(result!.id).toBe(42);
+      expect(result!.authors).toEqual([]);
+    });
+
+    it('title-only: empty array triggers same authorless-only behavior as undefined (#253)', async () => {
+      // [] hits same title-only branch as undefined
+      db.select
+        .mockReturnValueOnce(mockDbChain([]))   // outer query: no authorless match
+        .mockReturnValueOnce(mockDbChain([]));  // notExists subquery builder
+
+      const result = await service.findDuplicate('The Way of Kings', []);
+      expect(result).toBeNull();
+      expect(db.select).toHaveBeenCalledTimes(2);  // outer query + subquery
     });
   });
 
