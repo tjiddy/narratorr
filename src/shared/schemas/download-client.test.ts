@@ -201,6 +201,35 @@ describe('createDownloadClientFormSchema', () => {
     });
   });
 
+  // ===== #248 — downloadRoot field =====
+
+  describe('settings.downloadRoot', () => {
+    it('accepts valid config with downloadRoot', () => {
+      const result = createDownloadClientFormSchema.safeParse({
+        ...validBase,
+        settings: { ...validBase.settings, downloadRoot: '/downloads/complete' },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.settings.downloadRoot).toBe('/downloads/complete');
+      }
+    });
+
+    it('accepts valid config without downloadRoot (optional field)', () => {
+      const result = createDownloadClientFormSchema.safeParse(validBase);
+      expect(result.success).toBe(true);
+    });
+
+    it('does not interfere with blackhole required-field rules', () => {
+      const result = createDownloadClientFormSchema.safeParse({
+        ...validBase,
+        type: 'blackhole',
+        settings: { watchDir: '/watch', protocol: 'torrent', downloadRoot: '/complete' },
+      });
+      expect(result.success).toBe(true);
+    });
+  });
+
   describe('base field validation', () => {
     it('rejects empty name', () => {
       const result = createDownloadClientFormSchema.safeParse({

@@ -41,6 +41,10 @@ export class BlacklistService {
   }
 
   async create(data: Omit<NewBlacklist, 'id' | 'blacklistedAt'>): Promise<BlacklistRow> {
+    if (!data.infoHash && !data.guid) {
+      throw new Error('Blacklist entry requires at least one identifier (infoHash or guid)');
+    }
+
     const values = { ...data };
 
     // Auto-fill expiresAt for temporary entries from TTL setting

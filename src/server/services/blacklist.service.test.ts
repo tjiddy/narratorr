@@ -472,17 +472,11 @@ describe('BlacklistService', () => {
     });
 
     it('rejects entry with neither infoHash nor guid', async () => {
-      db.insert.mockReturnValue(mockDbChain([mockEntry]));
-      // The create method passes through to DB — verify the values payload has no identifiers
-      const chain = mockDbChain([mockEntry]);
-      db.insert.mockReturnValue(chain);
-      await service.create({
+      await expect(service.create({
         title: 'No IDs Release',
         reason: 'wrong_content',
-      });
-      const valuesPayload = (chain.values as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(valuesPayload.infoHash).toBeUndefined();
-      expect(valuesPayload.guid).toBeUndefined();
+      })).rejects.toThrow('Blacklist entry requires at least one identifier (infoHash or guid)');
+      expect(db.insert).not.toHaveBeenCalled();
     });
   });
 
@@ -524,6 +518,36 @@ describe('BlacklistService', () => {
       db.select.mockReturnValue(mockDbChain([{ ...mockEntry2, guid: 'guid1' }]));
       await service.getBlacklistedIdentifiers([], ['guid1']);
       expect(inArray).toHaveBeenCalledWith(blacklist.guid, ['guid1']);
+    });
+
+    it('queries both identifier columns with expiry filter when both arrays provided', async () => {
+      vi.mocked(inArray).mockClear();
+      vi.mocked(and).mockClear();
+      vi.mocked(or).mockClear();
+      const hashEntry = { ...mockEntry, infoHash: 'hash1', guid: null };
+      const guidEntry = { ...mockEntry2, infoHash: null, guid: 'guid1' };
+      db.select.mockReturnValue(mockDbChain([hashEntry, guidEntry]));
+
+      const result = await service.getBlacklistedIdentifiers(['hash1'], ['guid1']);
+
+      // Both identifier columns included in query
+      expect(inArray).toHaveBeenCalledWith(blacklist.infoHash, ['hash1']);
+      expect(inArray).toHaveBeenCalledWith(blacklist.guid, ['guid1']);
+      // Expiry filter applied (or combines permanent + gt(expiresAt, now))
+      expect(or).toHaveBeenCalled();
+      // Combined with and()
+      expect(and).toHaveBeenCalled();
+      // Returned sets correctly partitioned
+      expect(result.blacklistedHashes).toEqual(new Set(['hash1']));
+      expect(result.blacklistedGuids).toEqual(new Set(['guid1']));
+    });
+
+    it('excludes null identifiers from returned sets', async () => {
+      const mixedEntry = { ...mockEntry, infoHash: 'hash1', guid: null };
+      db.select.mockReturnValue(mockDbChain([mixedEntry]));
+      const result = await service.getBlacklistedIdentifiers(['hash1'], []);
+      expect(result.blacklistedHashes).toEqual(new Set(['hash1']));
+      expect(result.blacklistedGuids.size).toBe(0);
     });
   });
 

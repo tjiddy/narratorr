@@ -282,7 +282,8 @@ export class QualityGateOrchestrator {
           }
         }
       } catch (error: unknown) {
-        this.log.debug({ downloadId: download.id, error }, 'Quality gate: could not resolve downloadRoot for ancestry check');
+        this.log.warn({ downloadId: download.id, error }, 'Quality gate: fallback delete skipped — could not resolve downloadRoot for ancestry check');
+        return;
       }
     }
 

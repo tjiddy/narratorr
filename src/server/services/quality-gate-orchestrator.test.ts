@@ -672,6 +672,22 @@ describe('QualityGateOrchestrator', () => {
       );
     });
 
+    it('skips deletion when downloadClientService.getById throws (ancestry check cannot be resolved)', async () => {
+      const { orchestrator, qualityGateService, downloadClientService, log } = createOrchestrator();
+      const download = { ...baseDownload, outputPath: '/downloads/test-book' };
+      qualityGateService.reject.mockResolvedValue({ id: 1, status: 'failed', download, book: baseBook });
+      (stat as ReturnType<typeof vi.fn>).mockResolvedValue({ isDirectory: () => true });
+      downloadClientService.getById.mockRejectedValue(new Error('DB connection failed'));
+
+      await orchestrator.reject(1);
+
+      expect(rm).not.toHaveBeenCalled();
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ downloadId: download.id }),
+        expect.stringContaining('could not resolve downloadRoot'),
+      );
+    });
+
     it('proceeds with deletion without ancestry check when downloadRoot is not configured', async () => {
       const { orchestrator, qualityGateService, downloadClientService } = createOrchestrator();
       const download = { ...baseDownload, outputPath: '/downloads/test-book' };
