@@ -569,3 +569,41 @@ describe('bitrate capping — sourceBitrateKbps', () => {
     expect(ffmpegArgs).not.toContain('-b:a');
   });
 });
+
+// ============================================================================
+// #257 — Merge observability: spawn migration, progress callbacks, ffmpeg args
+// ============================================================================
+
+describe('#257 merge observability — audio-processor', () => {
+  describe('mergeFiles() ffmpeg args', () => {
+    it.todo('passes -max_muxing_queue_size 4096 in ffmpeg args');
+    it.todo('passes -progress pipe:1 in ffmpeg args');
+    it.todo('uses spawn instead of execFile for ffmpeg invocation');
+  });
+
+  describe('convertFiles() ffmpeg args', () => {
+    it.todo('passes -max_muxing_queue_size 4096 in ffmpeg args');
+    it.todo('uses spawn instead of execFile for ffmpeg invocation');
+  });
+
+  describe('onProgress callback', () => {
+    it.todo('invoked with phase processing and percentage (0..1 ratio) when stdout emits out_time_us');
+    it.todo('not invoked more than once per second (throttle behavior)');
+    it.todo('percentage clamped to 0..1 when out_time_us exceeds total duration');
+    it.todo('percentage is 0 when totalDuration is 0 (no division by zero)');
+    it.todo('negative out_time_us treated as 0 percentage');
+  });
+
+  describe('onStderr callback', () => {
+    it.todo('invoked for each stderr line from ffmpeg');
+  });
+
+  describe('failure handling', () => {
+    it.todo('onProgress not called after spawn exits with error');
+    it.todo('temp files cleaned up on merge failure, source files preserved');
+  });
+
+  describe('backward compatibility', () => {
+    it.todo('processAudioFiles works without onProgress/onStderr callbacks (optional params)');
+  });
+});

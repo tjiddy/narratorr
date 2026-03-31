@@ -1139,3 +1139,18 @@ describe('BookDetails', () => {
     });
   });
 });
+
+// ============================================================================
+// #257 — Merge observability: progress indicator on BookDetails
+// ============================================================================
+
+describe('#257 merge observability — BookDetails progress', () => {
+  it.todo('progress indicator NOT visible when no merge in progress');
+  it.todo('progress indicator appears when merge_started SSE received for current book');
+  it.todo('progress indicator shows phase text');
+  it.todo('progress indicator updates percentage during processing phase');
+  it.todo('progress indicator dismissed on merge_complete SSE');
+  it.todo('progress indicator dismissed on merge_failed SSE');
+  it.todo('progress indicator only shows for the current book (ignores other book IDs)');
+  it.todo('merge button disabled while progress indicator is visible');
+});

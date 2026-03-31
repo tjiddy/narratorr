@@ -639,3 +639,47 @@ describe('MergeService', () => {
     });
   });
 });
+
+// ============================================================================
+// #257 — Merge observability: events, progress wiring, stderr dedup
+// ============================================================================
+
+describe('#257 merge observability — merge service', () => {
+  describe('merge_started event', () => {
+    it.todo('recorded immediately after pre-flight checks pass (before ffmpeg runs)');
+    it.todo('SSE event emitted with { book_id, book_title } payload');
+    it.todo('NOT recorded when pre-flight checks fail (NOT_FOUND, NO_PATH, etc.)');
+  });
+
+  describe('merge_failed event', () => {
+    it.todo('recorded when ffmpeg/processAudioFiles fails, with error in reason JSON');
+    it.todo('recorded when post-ffmpeg verification fails');
+    it.todo('SSE event emitted with { book_id, book_title, error } payload');
+    it.todo('NOT recorded when failure occurs before merge_started (pre-flight rejection)');
+  });
+
+  describe('merge_progress SSE', () => {
+    it.todo('emitted during processing phase with percentage from onProgress callback');
+    it.todo('emitted on phase transitions (staging → processing → verifying → finalizing)');
+  });
+
+  describe('merge_complete SSE extension', () => {
+    it.todo('emitted with message field containing result message (includes filename)');
+  });
+
+  describe('event emission resilience', () => {
+    it.todo('event emission failure (broadcaster throws) does not fail the merge operation');
+    it.todo('event history creation failure does not fail the merge operation');
+  });
+
+  describe('concurrent merge guard with events', () => {
+    it.todo('first accepted merge records/emits merge_started');
+    it.todo('second ALREADY_IN_PROGRESS request records/emits nothing');
+  });
+
+  describe('stderr deduplication', () => {
+    it.todo('3 identical lines logged once with × 3 suffix');
+    it.todo('interleaved different lines each logged separately');
+    it.todo('single occurrence logged without count suffix');
+  });
+});

@@ -413,3 +413,25 @@ describe('useEventSource', () => {
     });
   });
 });
+
+// ============================================================================
+// #257 — Merge observability: SSE handler cache/toast integration
+// ============================================================================
+
+describe('#257 merge observability — useEventSource', () => {
+  describe('cache invalidation', () => {
+    it.todo('merge_started event triggers eventHistory cache invalidation');
+    it.todo('merge_progress event does NOT trigger full cache invalidation');
+    it.todo('merge_failed event triggers eventHistory + books cache invalidation');
+  });
+
+  describe('toast notifications', () => {
+    it.todo('merge_started SSE event shows info toast');
+    it.todo('merge_failed SSE event shows error toast via toast.error');
+    it.todo('merge_complete SSE event shows success toast using message field');
+  });
+
+  describe('event listener registration', () => {
+    it.todo('registers listeners for merge_started, merge_progress, merge_failed');
+  });
+});

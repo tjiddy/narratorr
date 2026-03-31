@@ -125,3 +125,50 @@ describe('TOAST_EVENT_CONFIG', () => {
     expect(TOAST_EVENT_CONFIG.book_status_change).toBeUndefined();
   });
 });
+
+// ============================================================================
+// #257 — Merge observability: new SSE event types & contracts
+// ============================================================================
+
+describe('#257 merge observability — SSE schema', () => {
+  describe('merge_started payload', () => {
+    it.todo('accepts valid { book_id, book_title } payload');
+    it.todo('rejects payload with missing book_id');
+    it.todo('rejects payload with missing book_title');
+  });
+
+  describe('merge_progress payload', () => {
+    it.todo('accepts valid payload with all phases: staging, processing, verifying, finalizing');
+    it.todo('rejects invalid phase string');
+    it.todo('percentage is optional (absent during non-processing phases)');
+    it.todo('accepts percentage as 0..1 ratio');
+  });
+
+  describe('merge_failed payload', () => {
+    it.todo('accepts valid { book_id, book_title, error } payload');
+    it.todo('rejects payload with missing error field');
+  });
+
+  describe('merge_complete payload extension', () => {
+    it.todo('accepts payload with required message field');
+    it.todo('rejects payload missing message field');
+  });
+
+  describe('sseEventTypeSchema includes merge lifecycle events', () => {
+    it.todo('includes merge_started, merge_progress, merge_failed alongside existing types');
+  });
+
+  describe('CACHE_INVALIDATION_MATRIX — merge events', () => {
+    it.todo('merge_started invalidates eventHistory only');
+    it.todo('merge_failed invalidates eventHistory and books');
+    it.todo('merge_progress has empty invalidation (no cache impact)');
+  });
+
+  describe('TOAST_EVENT_CONFIG — merge events', () => {
+    it.todo('merge_started is info level with book_title key');
+    it.todo('merge_failed is error level with book_title key');
+    it.todo('merge_complete is success level with message key');
+    it.todo('merge_progress is not in toast config');
+    it.todo('error level is valid in the config type');
+  });
+});

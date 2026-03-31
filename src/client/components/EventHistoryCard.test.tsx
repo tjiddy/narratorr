@@ -132,3 +132,14 @@ describe('EventHistoryCard', () => {
     expect(screen.getByText('unknown_type')).toBeInTheDocument();
   });
 });
+
+// ============================================================================
+// #257 — Merge observability: EventHistoryCard rendering for merge events
+// ============================================================================
+
+describe('#257 merge observability — EventHistoryCard', () => {
+  it.todo('merge_started renders with label "Merge Started" and configured icon/color (not fallback)');
+  it.todo('merge_failed renders with label "Merge Failed" and destructive color');
+  it.todo('merge_failed renders error reason from reason JSON field');
+  it.todo('merged renders with label "Merged" and success color (not fallback)');
+});
