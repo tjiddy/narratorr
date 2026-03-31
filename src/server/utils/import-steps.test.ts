@@ -653,6 +653,92 @@ describe('runAudioProcessing', () => {
     );
   });
 
+  it('forwards sourceBitrateKbps to processAudioFiles when sourceBitrateBps is provided', async () => {
+    const log = createMockLog();
+    const mockDb = {} as never;
+
+    await runAudioProcessing({
+      processingSettings: {
+        enabled: true,
+        ffmpegPath: '/usr/bin/ffmpeg',
+        outputFormat: 'm4b',
+        bitrate: 128,
+        keepOriginalBitrate: false,
+        mergeBehavior: 'always',
+      },
+      librarySettings: { fileFormat: '{author} - {title}' },
+      targetPath: '/library/Author/Book',
+      book: { id: 1, title: 'Book', seriesName: null, seriesPosition: null, narrators: null, publishedDate: null },
+      authorName: 'Author',
+      sourceBitrateBps: 64000,
+      db: mockDb,
+      log,
+    });
+
+    expect(processAudioFiles).toHaveBeenCalledWith(
+      '/library/Author/Book',
+      expect.objectContaining({ sourceBitrateKbps: 64, bitrate: 128 }),
+      expect.any(Object),
+    );
+  });
+
+  it('passes sourceBitrateKbps as undefined when sourceBitrateBps is null', async () => {
+    const log = createMockLog();
+    const mockDb = {} as never;
+
+    await runAudioProcessing({
+      processingSettings: {
+        enabled: true,
+        ffmpegPath: '/usr/bin/ffmpeg',
+        outputFormat: 'm4b',
+        bitrate: 128,
+        keepOriginalBitrate: false,
+        mergeBehavior: 'always',
+      },
+      librarySettings: { fileFormat: '{author} - {title}' },
+      targetPath: '/library/Author/Book',
+      book: { id: 1, title: 'Book', seriesName: null, seriesPosition: null, narrators: null, publishedDate: null },
+      authorName: 'Author',
+      sourceBitrateBps: null,
+      db: mockDb,
+      log,
+    });
+
+    expect(processAudioFiles).toHaveBeenCalledWith(
+      '/library/Author/Book',
+      expect.objectContaining({ sourceBitrateKbps: undefined }),
+      expect.any(Object),
+    );
+  });
+
+  it('logs debug when source bitrate is lower than target', async () => {
+    const log = createMockLog();
+    const mockDb = {} as never;
+
+    await runAudioProcessing({
+      processingSettings: {
+        enabled: true,
+        ffmpegPath: '/usr/bin/ffmpeg',
+        outputFormat: 'm4b',
+        bitrate: 128,
+        keepOriginalBitrate: false,
+        mergeBehavior: 'always',
+      },
+      librarySettings: { fileFormat: '{author} - {title}' },
+      targetPath: '/library/Author/Book',
+      book: { id: 1, title: 'Book', seriesName: null, seriesPosition: null, narrators: null, publishedDate: null },
+      authorName: 'Author',
+      sourceBitrateBps: 64000,
+      db: mockDb,
+      log,
+    });
+
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceBitrateKbps: 64, targetBitrateKbps: 128, effectiveBitrateKbps: 64 }),
+      expect.stringContaining('Capping target bitrate'),
+    );
+  });
+
   // ── #229 Observability — checkDiskSpace return type ─────────────────────
   describe('checkDiskSpace return type (#229)', () => {
     it('returns { freeGB, requiredGB } on success', async () => {
