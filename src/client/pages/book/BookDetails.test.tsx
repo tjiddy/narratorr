@@ -8,6 +8,13 @@ import { BookDetails } from './BookDetails';
 import type { BookWithAuthor } from '@/lib/api';
 import type { MetadataBook } from './helpers';
 
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- vi.mock requires dynamic import
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return { ...actual, useNavigate: () => mockNavigate };
+});
+
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
@@ -75,6 +82,7 @@ function renderBookDetails(
 describe('BookDetails', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockNavigate.mockClear();
   });
 
   describe('full data layout', () => {
@@ -1087,6 +1095,29 @@ describe('BookDetails', () => {
       await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
 
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to remove book: Permission denied'));
+    });
+
+    it('navigates to library page after successful delete', async () => {
+      const user = userEvent.setup();
+      (api.deleteBook as Mock).mockResolvedValue({ success: true });
+      renderBookDetails({ id: 1, path: '/lib/test' });
+
+      await user.click(screen.getByRole('button', { name: /Remove/ }));
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
+
+      await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/library'));
+    });
+
+    it('does not navigate on delete failure', async () => {
+      const user = userEvent.setup();
+      (api.deleteBook as Mock).mockRejectedValue(new Error('Permission denied'));
+      renderBookDetails({ id: 1, path: '/lib/test' });
+
+      await user.click(screen.getByRole('button', { name: /Remove/ }));
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalled());
+      expect(mockNavigate).not.toHaveBeenCalledWith('/library');
     });
 
     it('shows file count in delete toggle label when audioFileCount is positive', async () => {
