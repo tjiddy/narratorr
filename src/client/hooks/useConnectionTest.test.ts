@@ -153,8 +153,57 @@ describe('useConnectionTest', () => {
   });
 
   describe('handleFormTest flicker prevention', () => {
-    it.todo('preserves previous formTestResult while re-test is in flight (no null flash)');
-    it.todo('replaces previous result with new result when re-test completes');
+    it('preserves previous formTestResult while re-test is in flight (no null flash)', async () => {
+      // First test fails
+      testByConfig.mockResolvedValueOnce({ success: false, message: 'Bad config' });
+
+      const { result } = renderTestHook();
+
+      await act(async () => {
+        await result.current.handleFormTest({ name: 'test' });
+      });
+
+      expect(result.current.formTestResult).toEqual({ success: false, message: 'Bad config' });
+
+      // Second test starts — previous result should remain visible during flight
+      let resolveSecond: (v: { success: boolean }) => void;
+      testByConfig.mockReturnValue(new Promise((r) => { resolveSecond = r; }));
+
+      let testPromise: Promise<void>;
+      act(() => {
+        testPromise = result.current.handleFormTest({ name: 'corrected' });
+      });
+
+      // While in-flight, formTestResult should still be the PREVIOUS result, not null
+      expect(result.current.formTestResult).toEqual({ success: false, message: 'Bad config' });
+
+      await act(async () => {
+        resolveSecond!({ success: true });
+        await testPromise!;
+      });
+
+      expect(result.current.formTestResult).toEqual({ success: true });
+    });
+
+    it('replaces previous result with new result when re-test completes', async () => {
+      testByConfig.mockResolvedValueOnce({ success: false, message: 'First error' });
+
+      const { result } = renderTestHook();
+
+      await act(async () => {
+        await result.current.handleFormTest({ name: 'test' });
+      });
+
+      expect(result.current.formTestResult).toEqual({ success: false, message: 'First error' });
+
+      testByConfig.mockResolvedValueOnce({ success: true });
+
+      await act(async () => {
+        await result.current.handleFormTest({ name: 'test' });
+      });
+
+      expect(result.current.formTestResult).toEqual({ success: true });
+    });
   });
 
   describe('clearFormTestResult', () => {
