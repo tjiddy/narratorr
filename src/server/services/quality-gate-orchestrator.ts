@@ -202,13 +202,11 @@ export class QualityGateOrchestrator {
     }
 
     // Delete downloaded files via client
-    let adapterRemoveSucceeded = false;
     try {
       if (download.downloadClientId && download.externalId) {
         const adapter = await this.downloadClientService.getAdapter(download.downloadClientId);
         if (adapter) {
           await adapter.removeDownload(download.externalId, true);
-          adapterRemoveSucceeded = true;
           this.log.info({ downloadId: download.id }, 'Quality gate: deleted rejected download files');
         }
       }
@@ -217,7 +215,7 @@ export class QualityGateOrchestrator {
     }
 
     // Fallback file deletion: if outputPath is persisted, try direct deletion
-    await this.fallbackFileDelete(download, adapterRemoveSucceeded);
+    await this.fallbackFileDelete(download);
 
     // Recover book status — errors propagate to caller (manual reject → 500, auto-reject → outer catch → pending_review)
     if (book) {
@@ -245,7 +243,7 @@ export class QualityGateOrchestrator {
   }
 
   /** Attempt direct file deletion from persisted outputPath when adapter removal may have been incomplete. */
-  private async fallbackFileDelete(download: DownloadRow, adapterRemoveSucceeded: boolean): Promise<void> {
+  private async fallbackFileDelete(download: DownloadRow): Promise<void> {
     if (!download.outputPath) {
       this.log.debug({ downloadId: download.id }, 'Quality gate: fallback delete skipped — no outputPath');
       return;

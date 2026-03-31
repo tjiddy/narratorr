@@ -458,7 +458,7 @@ describe('search routes', () => {
         },
       ];
       (services.indexer.searchAll as Mock).mockResolvedValue(results);
-      (services.blacklist.getBlacklistedHashes as Mock).mockResolvedValue(new Set());
+      (services.blacklist.getBlacklistedIdentifiers as Mock).mockResolvedValue({ blacklistedHashes: new Set(), blacklistedGuids: new Set() });
       (services.settings.get as Mock).mockImplementation((cat: string) =>
         Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
       );
@@ -710,7 +710,7 @@ describe('search routes', () => {
         { ...mockSearchResult, infoHash: 'abc123', title: 'Has Hash' },
       ];
       (services.indexer.searchAll as Mock).mockResolvedValue(results);
-      (services.blacklist.getBlacklistedHashes as Mock).mockResolvedValue(new Set(['abc123']));
+      (services.blacklist.getBlacklistedIdentifiers as Mock).mockResolvedValue({ blacklistedHashes: new Set(['abc123']), blacklistedGuids: new Set() });
       (services.settings.get as Mock).mockImplementation((cat: string) =>
         Promise.resolve(DEFAULT_SETTINGS[cat as keyof typeof DEFAULT_SETTINGS]),
       );
@@ -739,7 +739,7 @@ describe('search routes', () => {
       const body = JSON.parse(res.payload);
       expect(body.results).toHaveLength(2);
       // blacklistService should not be called since hashes array is empty
-      expect(services.blacklist.getBlacklistedHashes).not.toHaveBeenCalled();
+      expect(services.blacklist.getBlacklistedIdentifiers).not.toHaveBeenCalled();
     });
   });
 

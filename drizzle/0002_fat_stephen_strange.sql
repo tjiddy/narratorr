@@ -26,7 +26,6 @@ DROP INDEX "idx_search_history_searched_at";--> statement-breakpoint
 DROP INDEX "idx_suggestions_status_score";--> statement-breakpoint
 DROP INDEX "idx_suggestions_asin_unique";--> statement-breakpoint
 DROP INDEX "users_username_unique";--> statement-breakpoint
-ALTER TABLE `blacklist` ALTER COLUMN "info_hash" TO "info_hash" text;--> statement-breakpoint
 CREATE UNIQUE INDEX `authors_slug_unique` ON `authors` (`slug`);--> statement-breakpoint
 CREATE INDEX `idx_blacklist_info_hash` ON `blacklist` (`info_hash`);--> statement-breakpoint
 CREATE INDEX `idx_blacklist_guid` ON `blacklist` (`guid`);--> statement-breakpoint

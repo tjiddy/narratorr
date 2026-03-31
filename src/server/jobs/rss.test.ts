@@ -74,6 +74,7 @@ function createMockDownloadOrchestrator(): DownloadOrchestrator {
 function createMockBlacklistService(blacklisted: Set<string> = new Set()): BlacklistService {
   return inject<BlacklistService>({
     getBlacklistedHashes: vi.fn().mockResolvedValue(blacklisted),
+    getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: blacklisted, blacklistedGuids: new Set() }),
     isBlacklisted: vi.fn(),
     add: vi.fn(),
     remove: vi.fn(),

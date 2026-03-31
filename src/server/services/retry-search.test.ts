@@ -45,6 +45,8 @@ const mockDownload: DownloadWithBook = {
   addedAt: new Date(),
   completedAt: null,
   progressUpdatedAt: null,
+  guid: null,
+  outputPath: null,
   indexerName: null,
 };
 
@@ -58,6 +60,7 @@ function createDeps(overrides?: Partial<RetrySearchDeps>): RetrySearchDeps {
     }),
     blacklistService: inject<BlacklistService>({
       getBlacklistedHashes: vi.fn().mockResolvedValue(new Set<string>()),
+      getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set<string>(), blacklistedGuids: new Set<string>() }),
     }),
     bookService: inject<BookService>({
       getById: vi.fn().mockResolvedValue(mockBook),
@@ -116,6 +119,7 @@ describe('retrySearch', () => {
     const deps = createDeps({
       blacklistService: inject<BlacklistService>({
         getBlacklistedHashes: vi.fn().mockResolvedValue(new Set(['def456'])),
+        getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set(['def456']), blacklistedGuids: new Set() }),
       }),
     });
 
@@ -135,6 +139,7 @@ describe('retrySearch', () => {
       }),
       blacklistService: inject<BlacklistService>({
         getBlacklistedHashes: vi.fn().mockResolvedValue(new Set([blacklistedHash])),
+        getBlacklistedIdentifiers: vi.fn().mockResolvedValue({ blacklistedHashes: new Set([blacklistedHash]), blacklistedGuids: new Set() }),
       }),
     });
 

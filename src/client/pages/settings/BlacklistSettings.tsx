@@ -126,9 +126,11 @@ export function BlacklistSettings() {
                     }`}>
                       {formatExpiry(entry)}
                     </span>
+                    {entry.infoHash && (
                     <span className="text-xs text-muted-foreground font-mono">
                       {entry.infoHash.slice(0, 12)}...
                     </span>
+                    )}
                     <span className="text-xs text-muted-foreground">
                       {new Date(entry.blacklistedAt).toLocaleDateString()}
                     </span>
