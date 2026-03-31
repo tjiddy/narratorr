@@ -164,6 +164,8 @@ export interface RunAudioProcessingArgs {
     publishedDate: string | null;
   };
   authorName: string;
+  /** Source audio bitrate in bps from scan result. Converted to kbps for the processor. */
+  sourceBitrateBps?: number | null;
   namingOptions?: NamingOptions;
   db: Db;
   log: FastifyBaseLogger;
@@ -171,7 +173,7 @@ export interface RunAudioProcessingArgs {
 
 /** Run audio processing (merge/convert) on imported files. Throws on failure. */
 export async function runAudioProcessing(args: RunAudioProcessingArgs): Promise<void> {
-  const { processingSettings, librarySettings, targetPath, book, authorName, namingOptions, db, log } = args;
+  const { processingSettings, librarySettings, targetPath, book, authorName, sourceBitrateBps, namingOptions, db, log } = args;
   if (!processingSettings?.enabled) return;
 
   log.info({ targetPath, config: processingSettings }, 'Running audio processing');
@@ -179,10 +181,21 @@ export async function runAudioProcessing(args: RunAudioProcessingArgs): Promise<
     log.warn('MP3 output does not support embedded chapters');
   }
 
+  const targetBitrateKbps = processingSettings.keepOriginalBitrate ? undefined : processingSettings.bitrate;
+  const sourceBitrateKbps = sourceBitrateBps ? Math.floor(sourceBitrateBps / 1000) : undefined;
+
+  if (targetBitrateKbps != null && sourceBitrateKbps != null && sourceBitrateKbps < targetBitrateKbps) {
+    log.debug(
+      { sourceBitrateKbps, targetBitrateKbps, effectiveBitrateKbps: sourceBitrateKbps },
+      'Capping target bitrate to source bitrate to prevent upsampling',
+    );
+  }
+
   const processingResult = await processAudioFiles(targetPath, {
     ffmpegPath: processingSettings.ffmpegPath,
     outputFormat: processingSettings.outputFormat,
-    bitrate: processingSettings.keepOriginalBitrate ? undefined : processingSettings.bitrate,
+    bitrate: targetBitrateKbps,
+    sourceBitrateKbps,
     mergeBehavior: processingSettings.mergeBehavior,
   }, {
     author: authorName, title: book.title, fileFormat: librarySettings.fileFormat,

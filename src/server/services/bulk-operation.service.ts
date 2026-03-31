@@ -305,6 +305,15 @@ export class BulkOperationService {
     const stagingDir = bookPath + '.convert-tmp';
     const book = await this.bookService.getById(bookId);
     const authorName = book?.authors?.[0]?.name ?? 'Unknown Author';
+    const sourceBitrateKbps = book?.audioBitrate ? Math.floor(book.audioBitrate / 1000) : undefined;
+    const targetBitrateKbps = processingSettings.bitrate ?? undefined;
+
+    if (targetBitrateKbps != null && sourceBitrateKbps != null && sourceBitrateKbps < targetBitrateKbps) {
+      this.log.debug(
+        { sourceBitrateKbps, targetBitrateKbps, effectiveBitrateKbps: sourceBitrateKbps },
+        'Capping target bitrate to source bitrate to prevent upsampling',
+      );
+    }
 
     await mkdir(stagingDir, { recursive: true });
     try {
@@ -321,7 +330,8 @@ export class BulkOperationService {
           ffmpegPath: processingSettings.ffmpegPath,
           outputFormat: 'm4b',
           mergeBehavior: 'always',
-          bitrate: processingSettings.bitrate ?? undefined,
+          bitrate: targetBitrateKbps,
+          sourceBitrateKbps,
         },
         { author: authorName, title: bookTitle },
       );
