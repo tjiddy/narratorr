@@ -125,6 +125,7 @@ export async function retrySearch(
       bookId: book.id,
       size: best.size,
       seeders: best.seeders,
+      guid: best.guid,
       skipDuplicateCheck: true,
     });
 

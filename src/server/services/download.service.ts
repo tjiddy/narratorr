@@ -233,6 +233,7 @@ export class DownloadService {
     indexerId?: number;
     size?: number;
     seeders?: number;
+    guid?: string;
     skipDuplicateCheck?: boolean;
     replaceExisting?: boolean;
     source?: CreateEventInput['source'];
@@ -295,6 +296,7 @@ export class DownloadService {
         title: params.title,
         protocol,
         infoHash,
+        guid: params.guid,
         downloadUrl: params.downloadUrl,
         size: params.size,
         seeders: params.seeders,
