@@ -18,6 +18,7 @@ function getArrowTabIndex(key: string, currentIndex: number, length: number): nu
   return null;
 }
 
+// eslint-disable-next-line max-lines-per-function -- page orchestrator with multiple confirm modals
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
   metadataBook?: MetadataBook | null;

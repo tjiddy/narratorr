@@ -357,7 +357,7 @@ describe('useBookActions', () => {
   describe('deleteMutation', () => {
     it('calls deleteBook API with correct book ID and deleteFiles=false', async () => {
       (api.deleteBook as Mock).mockResolvedValue({ success: true });
-      const { queryClient, wrapper } = createTestHarness();
+      const { wrapper } = createTestHarness();
       const { result } = renderHook(() => useBookActions(1, false), { wrapper });
 
       await act(async () => {
@@ -371,7 +371,7 @@ describe('useBookActions', () => {
 
     it('calls deleteBook API with correct book ID and deleteFiles=true', async () => {
       (api.deleteBook as Mock).mockResolvedValue({ success: true });
-      const { queryClient, wrapper } = createTestHarness();
+      const { wrapper } = createTestHarness();
       const { result } = renderHook(() => useBookActions(1, false), { wrapper });
 
       await act(async () => {

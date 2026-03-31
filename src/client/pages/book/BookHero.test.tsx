@@ -27,6 +27,8 @@ const defaultProps = {
   isMerging: false,
   canMerge: false,
   mergeDisabled: false,
+  onRemoveClick: vi.fn(),
+  isRemoving: false,
 };
 
 function renderHero(overrides = {}) {
