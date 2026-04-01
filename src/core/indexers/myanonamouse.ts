@@ -1,6 +1,7 @@
 import type { IndexerAdapter, SearchResult } from './types.js';
 import { IndexerAuthError, ProxyError } from './errors.js';
 import { createProxyAgent, resolveProxyIp } from './proxy.js';
+import { normalizeLanguage } from '../utils/language-codes.js';
 
 export interface MAMConfig {
   mamId: string;
@@ -22,6 +23,7 @@ interface MAMSearchResult {
   author_info?: string;
   narrator_info?: string;
   series_info?: string;
+  lang_code?: string;
   size?: string | number;
   seeders?: number;
   leechers?: number;
@@ -127,6 +129,7 @@ export class MyAnonamouseIndexer implements IndexerAdapter {
         size: this.parseSize(item.size),
         seeders: item.seeders ?? undefined,
         leechers: item.leechers ?? undefined,
+        language: normalizeLanguage(item.lang_code),
         indexer: this.name,
       });
     }

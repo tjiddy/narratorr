@@ -740,9 +740,41 @@ describe('MyAnonamouseIndexer', () => {
   });
 
   describe('search — language parsing (#272)', () => {
-    it.todo('parses lang_code into SearchResult.language normalized to full name (ENG → english)');
-    it.todo('returns undefined language when lang_code is missing from response');
-    it.todo('handles unknown lang_code by storing as-is lowercase');
+    it('parses lang_code into SearchResult.language normalized to full name (ENG → english)', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ lang_code: 'ENG' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results[0].language).toBe('english');
+    });
+
+    it('returns undefined language when lang_code is missing from response', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult()] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results[0].language).toBeUndefined();
+    });
+
+    it('handles unknown lang_code by storing as-is lowercase', async () => {
+      server.use(
+        http.get(`${MAM_BASE}/tor/js/loadSearchJSONbasic.php`, () => {
+          return HttpResponse.json({ data: [makeResult({ lang_code: 'XYZ' })] });
+        }),
+      );
+      stubTorrentDownload(server);
+
+      const results = await indexer.search('test');
+      expect(results[0].language).toBe('xyz');
+    });
   });
 
 });
