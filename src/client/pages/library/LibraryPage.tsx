@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useLibrary, useBookStats } from '@/hooks/useLibrary';
@@ -46,12 +46,13 @@ export function LibraryPage() {
   // Settled-gated grid key: holds old sort params during placeholderData phase,
   // updates only when the sorted response settles. This ensures the grid remounts
   // (replaying entrance animations) only after the new sort order arrives.
-  const { sortField, sortDirection } = filters.state;
-  const currentSortKey = `${sortField}-${sortDirection}`;
-  const settledGridKeyRef = useRef(currentSortKey);
-  if (!isPlaceholderData) {
-    settledGridKeyRef.current = currentSortKey;
-  }
+  const currentSortKey = `${filters.state.sortField}-${filters.state.sortDirection}`;
+  const [settledGridKey, setSettledGridKey] = useState(currentSortKey);
+  useEffect(() => {
+    if (!isPlaceholderData) {
+      setSettledGridKey(currentSortKey);
+    }
+  }, [isPlaceholderData, currentSortKey]);
 
   // Clamp page when total shrinks (e.g., after deleting last item on a page)
   useEffect(() => {
@@ -229,7 +230,7 @@ export function LibraryPage() {
           onSortDirectionChange={filters.actions.setSortDirection}
         />
       ) : (
-        <div key={settledGridKeyRef.current} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
+        <div key={settledGridKey} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
           {displayBooks.map((book: DisplayBook, index) => (
             <LibraryBookCard
               key={book.id}
