@@ -114,7 +114,7 @@ describe('EventHistoryService', () => {
         .mockReturnValueOnce(mockDbChain([{ value: 25 }]))
         .mockReturnValueOnce(mockDbChain([createMockDbBookEvent()]));
 
-      const result = await service.getAll({ eventType: 'grabbed' }, { limit: 10, offset: 0 });
+      const result = await service.getAll({ eventType: ['grabbed'] }, { limit: 10, offset: 0 });
       expect(result.total).toBe(25);
     });
 

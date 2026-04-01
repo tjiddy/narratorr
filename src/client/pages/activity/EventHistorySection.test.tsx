@@ -220,8 +220,8 @@ describe('EventHistorySection', () => {
       await user.click(screen.getByText('Errors'));
       await user.click(screen.getByText('All'));
 
-      const lastCall = mockUseEventHistory.mock.calls[mockUseEventHistory.mock.calls.length - 1][0];
-      expect(lastCall.eventType).toBeUndefined();
+      const lastCall = mockUseEventHistory.mock.calls[mockUseEventHistory.mock.calls.length - 1]?.[0];
+      expect(lastCall?.eventType).toBeUndefined();
     });
   });
 
