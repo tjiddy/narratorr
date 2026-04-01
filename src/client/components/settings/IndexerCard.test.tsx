@@ -284,6 +284,34 @@ describe('IndexerCard — create mode', () => {
     expect(screen.getByPlaceholderText('Torznab')).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('AudioBookBay')).not.toBeInTheDocument();
   });
+
+  it('shows performance hint when ABB type is selected', () => {
+    renderWithProviders(
+      <IndexerCard
+        mode="create"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/Large library, but slower and less reliable/)).toBeInTheDocument();
+  });
+
+  it('hides performance hint when non-ABB type is selected', async () => {
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <IndexerCard
+        mode="create"
+        onSubmit={vi.fn()}
+        onFormTest={vi.fn()}
+      />,
+    );
+
+    await user.selectOptions(screen.getByRole('combobox'), 'torznab');
+
+    expect(screen.queryByText(/Large library, but slower and less reliable/)).not.toBeInTheDocument();
+  });
 });
 
 describe('IndexerCard — edit mode', () => {

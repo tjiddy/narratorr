@@ -174,6 +174,9 @@ export function IndexerCard(props: IndexerCardProps) {
             </option>
           ))}
         </SelectWithChevron>
+        {selectedType === 'abb' && (
+          <p className="text-sm text-muted-foreground sm:col-span-2 -mt-2">Large library, but slower and less reliable than other indexers</p>
+        )}
 
         {isEdit && (
           <>

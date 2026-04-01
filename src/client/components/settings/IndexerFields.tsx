@@ -33,7 +33,7 @@ function FlareSolverrField({ register, errors }: Pick<IndexerFieldsProps, 'regis
       {errors.settings?.flareSolverrUrl ? (
         <p className="text-sm text-destructive mt-1">{errors.settings.flareSolverrUrl.message}</p>
       ) : (
-        <p className="text-sm text-muted-foreground mt-1">Route requests through FlareSolverr/Byparr to bypass Cloudflare</p>
+        <p className="text-sm text-muted-foreground mt-1">Improves reliability at the cost of performance. Routes requests through FlareSolverr/Byparr to bypass Cloudflare.</p>
       )}
     </div>
   );
