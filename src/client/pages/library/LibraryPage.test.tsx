@@ -2173,6 +2173,56 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
       });
     });
 
+    it('preserves card DOM nodes while sorted response is still loading (placeholder phase)', async () => {
+      // First call resolves immediately (initial load); second call stays pending (sort change)
+      let resolveSortedResponse!: (v: { data: BookWithAuthor[]; total: number }) => void;
+      const pendingSortResponse = new Promise<{ data: BookWithAuthor[]; total: number }>((r) => {
+        resolveSortedResponse = r;
+      });
+
+      vi.mocked(api.getBooks)
+        .mockResolvedValueOnce({ data: mockBooks, total: mockBooks.length })
+        .mockReturnValueOnce(pendingSortResponse as never);
+      vi.mocked(api.getBookStats).mockResolvedValue({
+        counts: { wanted: 0, downloading: 0, imported: mockBooks.length, failed: 0, missing: 0 },
+        authors: [], series: [], narrators: [],
+      });
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      // Capture card DOM references before sort change
+      const cardsBefore = getCardElements();
+      expect(cardsBefore.length).toBeGreaterThan(0);
+
+      // Change sort field — this triggers a new query but response is pending
+      await user.click(screen.getByRole('button', { name: /date added.*newest/i }));
+      await user.click(screen.getByRole('option', { name: /title.*a.*z/i }));
+
+      // During placeholder phase: cards should be the SAME DOM nodes (grid not remounted)
+      const cardsDuringPlaceholder = getCardElements();
+      for (const card of cardsDuringPlaceholder) {
+        expect(cardsBefore).toContain(card);
+      }
+
+      // Now resolve the sorted response
+      const sortedBooks = [...mockBooks].sort((a, b) => a.title.localeCompare(b.title));
+      resolveSortedResponse({ data: sortedBooks, total: sortedBooks.length });
+
+      // After settle: cards should be NEW DOM nodes (grid remounted)
+      await waitFor(() => {
+        const cardsAfter = getCardElements();
+        expect(cardsAfter.length).toBeGreaterThan(0);
+        for (const cardAfter of cardsAfter) {
+          expect(cardsBefore).not.toContain(cardAfter);
+        }
+      });
+    });
+
     it('replaces card DOM nodes when sort direction changes and settled response arrives', async () => {
       mockLibraryData(mockBooks);
       const user = userEvent.setup();
