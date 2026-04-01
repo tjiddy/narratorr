@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #270 Verify download client adapters against official API docs — 2026-04-01
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #286
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 4 new tests + 2 updated tests
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Small, focused scope. Elaboration and spec review caught all ambiguities upfront. Existing test suites for Deluge and Transmission already covered the verification ACs — no new prod code needed for those adapters.
+- Friction / issues encountered: Had to update 2 existing NZBGet tests that used old string error format — blast radius from schema change was small but needed attention.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (read all 3 adapters + tests + types)
+- Avoidable waste: Elaboration round already explored the same files — plan subagent duplicated some reads
+- Suggestions: For verification-heavy issues where elaboration already explored deeply, plan exploration could be more targeted
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: LSP type mismatch in DownloadClientAdapter.addDownload() return type (logged to debt.md)
+
+### Wish I'd Known
+1. Deluge and Transmission were already fully correct — reading the test suites first would have confirmed this without needing deep source analysis
+2. NZBGet error schema change required updating 2 existing tests that used old string error format — always grep for all usages of a schema before changing it
+3. The qBittorrent fix commit hash in the original spec was stale — spec review caught this, reinforcing that mechanical verification of commit references is essential
+
 ## #284 UAT findings — settings card split, whitespace trim, import path display — 2026-04-01
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #285
