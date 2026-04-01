@@ -118,6 +118,7 @@ export function WelcomeModal({ isOpen, isPending = false, onDismiss }: WelcomeMo
         aria-modal="true"
         aria-labelledby="welcome-modal-title"
         tabIndex={-1}
+        className="flex flex-col min-h-0 flex-1 overflow-hidden outline-none"
       >
         {/* Scrollable content */}
         <div ref={scrollableRef} data-testid="modal-content" className="flex-1 overflow-y-auto p-6 sm:p-8 [@media(max-height:60rem)]:p-5">

@@ -12,12 +12,7 @@ export function useFocusTrap(
     const container = containerRef.current;
     if (!container) return;
 
-    const tabbable = Array.from(container.querySelectorAll<HTMLElement>(TABBABLE));
-    if (tabbable.length > 0) {
-      tabbable[0].focus();
-    } else {
-      container.focus();
-    }
+    container.focus();
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Tab') return;

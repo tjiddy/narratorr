@@ -29,12 +29,12 @@ function TrapEmpty({ isOpen }: { isOpen: boolean }) {
 }
 
 describe('useFocusTrap', () => {
-  it('focuses the first tabbable element inside the container on mount', () => {
+  it('focuses the container on mount (not the first tabbable element)', () => {
     render(<Trap isOpen />);
-    expect(document.activeElement).toBe(screen.getByText('Button 1'));
+    expect(document.activeElement).toBe(screen.getByTestId('trap'));
   });
 
-  it('focuses the container itself when no tabbable elements are present', () => {
+  it('focuses the container when no tabbable elements are present', () => {
     render(<TrapEmpty isOpen />);
     expect(document.activeElement).toBe(screen.getByTestId('trap'));
   });

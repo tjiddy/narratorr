@@ -89,10 +89,9 @@ describe('WelcomeModal', () => {
   });
 
   // Focus trap (AC2) — updated for 11 tabbable elements (10 card links + Get Started button)
-  it('places focus on the first tabbable element (first card link) when modal opens', () => {
+  it('places focus on the dialog container (not first card) when modal opens', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
-    const links = screen.getAllByRole('link');
-    expect(document.activeElement).toBe(links[0]);
+    expect(document.activeElement).toBe(screen.getByRole('dialog'));
   });
 
   it('places focus on dialog container when isPending=true (card links remain active but keyboard focus is locked to container)', () => {
@@ -127,6 +126,21 @@ describe('WelcomeModal', () => {
     await user.keyboard('{Tab}');
     const dialog = screen.getByRole('dialog');
     expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  // Mobile scroll — dialog div must participate in flex layout so inner content can scroll
+  it('dialog container has flex layout and overflow-hidden for mobile scroll support', () => {
+    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.className).toContain('flex');
+    expect(dialog.className).toContain('overflow-hidden');
+    expect(dialog.className).toContain('min-h-0');
+  });
+
+  it('dialog container has outline-none to suppress focus ring', () => {
+    render(<WelcomeModal isOpen onDismiss={onDismiss} />);
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.className).toContain('outline-none');
   });
 
   // Backdrop non-dismiss (AC — clicking outside does not close the modal)
@@ -338,10 +352,9 @@ describe('WelcomeModal', () => {
   });
 
   // Keyboard navigation with 10 tabbable links + Get Started button
-  it('initial focus lands on the first card link when modal opens', () => {
+  it('initial focus lands on dialog container, not any card link', () => {
     render(<WelcomeModal isOpen onDismiss={onDismiss} />);
-    const links = screen.getAllByRole('link');
-    expect(document.activeElement).toBe(links[0]);
+    expect(document.activeElement).toBe(screen.getByRole('dialog'));
   });
 
   it('Tab from the last card link moves focus to the Get Started button', async () => {
