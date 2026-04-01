@@ -383,3 +383,57 @@ describe('updateRemotePathMappingSchema — trim behavior', () => {
     if (result.success) expect(result.data.localPath).toBe('/local/books');
   });
 });
+
+describe('createDownloadClientFormSchema — settings trim (#284)', () => {
+  it('trims whitespace from host', () => {
+    const result = createDownloadClientFormSchema.safeParse({
+      ...validBase,
+      settings: { host: '  localhost  ', port: 8080 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.host).toBe('localhost');
+  });
+
+  it('trims whitespace from apiKey', () => {
+    const result = createDownloadClientFormSchema.safeParse({
+      ...validBase,
+      settings: { host: 'localhost', port: 8080, apiKey: '  abc123  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.apiKey).toBe('abc123');
+  });
+
+  it('trims whitespace from username, password, category, watchDir', () => {
+    const result = createDownloadClientFormSchema.safeParse({
+      ...validBase,
+      settings: {
+        host: 'localhost',
+        port: 8080,
+        username: '  admin  ',
+        password: '  secret  ',
+        category: '  audiobooks  ',
+        watchDir: '  /downloads  ',
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.username).toBe('admin');
+      expect(result.data.settings.password).toBe('secret');
+      expect(result.data.settings.category).toBe('audiobooks');
+      expect(result.data.settings.watchDir).toBe('/downloads');
+    }
+  });
+
+  it('whitespace-only optional settings fields produce empty string, not undefined', () => {
+    const result = createDownloadClientFormSchema.safeParse({
+      ...validBase,
+      settings: { host: 'localhost', port: 8080, category: '   ', watchDir: '   ', username: '   ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.category).toBe('');
+      expect(result.data.settings.watchDir).toBe('');
+      expect(result.data.settings.username).toBe('');
+    }
+  });
+});

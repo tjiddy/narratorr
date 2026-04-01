@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { QueryClient } from '@tanstack/react-query';
 import { renderWithProviders } from '@/__tests__/helpers';
 import { createMockSettings } from '@/__tests__/factories';
 import { LibrarySettingsSection } from './LibrarySettingsSection';
@@ -242,162 +241,25 @@ describe('LibrarySettingsSection', () => {
     });
   });
 
-  describe('When a New Book Is Added subsection (#265)', () => {
-    it('renders subsection heading "When a New Book Is Added" with divider', async () => {
+  describe('card split — library card does NOT contain new-book defaults (#284)', () => {
+    it('does not render Search Immediately or Monitor for Upgrades toggles', async () => {
       renderWithProviders(<LibrarySettingsSection />);
       await waitFor(() => {
-        expect(screen.getByText('When a New Book Is Added')).toBeInTheDocument();
+        expect(screen.getByText('Library Path')).toBeInTheDocument();
       });
+      expect(screen.queryByLabelText('Search Immediately')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Monitor for Upgrades')).not.toBeInTheDocument();
     });
 
-    it('renders Search Immediately and Monitor for Upgrades toggles', async () => {
+    it('does not render "When a New Book Is Added" heading', async () => {
       renderWithProviders(<LibrarySettingsSection />);
       await waitFor(() => {
-        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+        expect(screen.getByText('Library Path')).toBeInTheDocument();
       });
-      expect(screen.getByLabelText('Monitor for Upgrades')).toBeInTheDocument();
+      expect(screen.queryByText('When a New Book Is Added')).not.toBeInTheDocument();
     });
 
-    it('loads quality settings values into toggles', async () => {
-      const settingsWithToggles = createMockSettings({
-        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
-        quality: { searchImmediately: true, monitorForUpgrades: true },
-      });
-      mockApi.getSettings.mockResolvedValue(settingsWithToggles);
-      renderWithProviders(<LibrarySettingsSection />);
-
-      await waitFor(() => {
-        expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(true);
-      });
-      expect((screen.getByLabelText('Monitor for Upgrades') as HTMLInputElement).checked).toBe(true);
-    });
-
-    it('toggling Search Immediately enables save button and submits quality category', async () => {
-      mockApi.updateSettings.mockResolvedValue(mockSettings);
-      const user = userEvent.setup();
-      renderWithProviders(<LibrarySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByLabelText('Search Immediately'));
-
-      const saveButton = screen.getByRole('button', { name: /save/i });
-      expect(saveButton).toBeInTheDocument();
-      fireEvent.submit(saveButton.closest('form')!);
-
-      await waitFor(() => {
-        expect(mockApi.updateSettings).toHaveBeenCalledWith({
-          quality: { searchImmediately: true, monitorForUpgrades: false },
-        });
-      });
-    });
-
-    it('toggling Monitor for Upgrades enables save button and submits quality category', async () => {
-      mockApi.updateSettings.mockResolvedValue(mockSettings);
-      const user = userEvent.setup();
-      renderWithProviders(<LibrarySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Monitor for Upgrades')).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByLabelText('Monitor for Upgrades'));
-
-      const saveButton = screen.getByRole('button', { name: /save/i });
-      fireEvent.submit(saveButton.closest('form')!);
-
-      await waitFor(() => {
-        expect(mockApi.updateSettings).toHaveBeenCalledWith({
-          quality: { searchImmediately: false, monitorForUpgrades: true },
-        });
-      });
-    });
-
-    it('submitting both toggles on sends both true in quality payload', async () => {
-      mockApi.updateSettings.mockResolvedValue(mockSettings);
-      const user = userEvent.setup();
-      renderWithProviders(<LibrarySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByLabelText('Search Immediately'));
-      await user.click(screen.getByLabelText('Monitor for Upgrades'));
-
-      const saveButton = screen.getByRole('button', { name: /save/i });
-      fireEvent.submit(saveButton.closest('form')!);
-
-      await waitFor(() => {
-        expect(mockApi.updateSettings).toHaveBeenCalledWith({
-          quality: { searchImmediately: true, monitorForUpgrades: true },
-        });
-      });
-    });
-
-    it('save payload excludes grabFloor, protocolPreference, minSeeders, rejectWords, requiredWords', async () => {
-      mockApi.updateSettings.mockResolvedValue(mockSettings);
-      const user = userEvent.setup();
-      renderWithProviders(<LibrarySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByLabelText('Search Immediately'));
-
-      const saveButton = screen.getByRole('button', { name: /save/i });
-      fireEvent.submit(saveButton.closest('form')!);
-
-      await waitFor(() => {
-        expect(mockApi.updateSettings).toHaveBeenCalled();
-      });
-
-      const callArg = mockApi.updateSettings.mock.calls[0][0];
-      expect(callArg.quality).not.toHaveProperty('grabFloor');
-      expect(callArg.quality).not.toHaveProperty('protocolPreference');
-      expect(callArg.quality).not.toHaveProperty('minSeeders');
-      expect(callArg.quality).not.toHaveProperty('rejectWords');
-      expect(callArg.quality).not.toHaveProperty('requiredWords');
-    });
-
-    it('shows success toast on toggle save', async () => {
-      mockApi.updateSettings.mockResolvedValue(mockSettings);
-      const user = userEvent.setup();
-      renderWithProviders(<LibrarySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByLabelText('Search Immediately'));
-      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
-
-      await waitFor(() => {
-        expect(mockToast.success).toHaveBeenCalledWith('New book defaults saved');
-      });
-    });
-
-    it('shows error toast on toggle save failure', async () => {
-      mockApi.updateSettings.mockRejectedValue(new Error('Network error'));
-      const user = userEvent.setup();
-      renderWithProviders(<LibrarySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByLabelText('Search Immediately'));
-      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
-
-      await waitFor(() => {
-        expect(mockToast.error).toHaveBeenCalledWith('Network error');
-      });
-    });
-
-    it('path blur-save still works independently after subsection added', async () => {
+    it('library path blur-save still works after card split', async () => {
       mockApi.updateSettings.mockResolvedValue(mockSettings);
       const user = userEvent.setup();
       renderWithProviders(<LibrarySettingsSection />);
@@ -416,153 +278,6 @@ describe('LibrarySettingsSection', () => {
           expect.objectContaining({ library: expect.objectContaining({ path: '/new-path' }) }),
         );
       });
-    });
-
-    it('save button is disabled and shows Saving... while mutation is pending', async () => {
-      let resolveMutation: (value: unknown) => void;
-      mockApi.updateSettings.mockImplementation(() => new Promise((resolve) => { resolveMutation = resolve; }));
-      const user = userEvent.setup();
-      renderWithProviders(<LibrarySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByLabelText('Search Immediately'));
-      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
-
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /saving/i })).toBeDisabled();
-      });
-
-      resolveMutation!(mockSettings);
-      await waitFor(() => {
-        expect(mockToast.success).toHaveBeenCalledWith('New book defaults saved');
-      });
-    });
-
-    it('dirty defaults edits survive unrelated settings refetch', async () => {
-      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-      const user = userEvent.setup();
-      renderWithProviders(<LibrarySettingsSection />, { queryClient });
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
-      });
-
-      // Toggle Search Immediately ON (form becomes dirty)
-      await user.click(screen.getByLabelText('Search Immediately'));
-      expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(true);
-
-      // Simulate a settings refetch (e.g., from another section saving) by returning
-      // fresh server data with searchImmediately=false and invalidating the query
-      const refetchedSettings = createMockSettings({
-        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
-      });
-      mockApi.getSettings.mockResolvedValue(refetchedSettings);
-      const callsBefore = mockApi.getSettings.mock.calls.length;
-      queryClient.invalidateQueries({ queryKey: ['settings'] });
-
-      // Wait for getSettings to be called again (proving the refetch happened)
-      await waitFor(() => {
-        expect(mockApi.getSettings.mock.calls.length).toBeGreaterThan(callsBefore);
-      });
-
-      // The dirty toggle should NOT be overwritten by the refetch
-      expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(true);
-      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
-    });
-
-    it('successful save resets dirty state and hides Save button', async () => {
-      mockApi.updateSettings.mockResolvedValue(mockSettings);
-      const user = userEvent.setup();
-      renderWithProviders(<LibrarySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByLabelText('Search Immediately'));
-      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
-
-      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
-
-      await waitFor(() => {
-        expect(mockToast.success).toHaveBeenCalledWith('New book defaults saved');
-      });
-
-      // Save button should disappear after successful save (dirty state reset)
-      await waitFor(() => {
-        expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
-      });
-    });
-
-    it('successful save triggers settings refetch via query invalidation', async () => {
-      mockApi.updateSettings.mockResolvedValue(mockSettings);
-      const user = userEvent.setup();
-      renderWithProviders(<LibrarySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
-      });
-
-      const initialGetCallCount = mockApi.getSettings.mock.calls.length;
-
-      await user.click(screen.getByLabelText('Search Immediately'));
-      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
-
-      await waitFor(() => {
-        expect(mockToast.success).toHaveBeenCalledWith('New book defaults saved');
-      });
-
-      // getSettings should have been called again due to query invalidation
-      await waitFor(() => {
-        expect(mockApi.getSettings.mock.calls.length).toBeGreaterThan(initialGetCallCount);
-      });
-    });
-
-    it('failed save leaves form recoverable — toggle state and Save button preserved', async () => {
-      mockApi.updateSettings.mockRejectedValueOnce(new Error('Network error'));
-      mockApi.updateSettings.mockResolvedValue(mockSettings);
-      const user = userEvent.setup();
-      renderWithProviders(<LibrarySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
-      });
-
-      await user.click(screen.getByLabelText('Search Immediately'));
-      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
-
-      await waitFor(() => {
-        expect(mockToast.error).toHaveBeenCalledWith('Network error');
-      });
-
-      // After failure, toggle state should be preserved and Save button still available
-      expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(true);
-      expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
-
-      // User can retry: submit again successfully
-      fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
-
-      await waitFor(() => {
-        expect(mockToast.success).toHaveBeenCalledWith('New book defaults saved');
-      });
-    });
-
-    it('default values: both toggles unchecked with fresh settings', async () => {
-      const freshSettings = createMockSettings({
-        library: { path: '/audiobooks', folderFormat: '{author}/{title}', fileFormat: '{author} - {title}', namingSeparator: 'space', namingCase: 'default' },
-      });
-      mockApi.getSettings.mockResolvedValue(freshSettings);
-      renderWithProviders(<LibrarySettingsSection />);
-
-      await waitFor(() => {
-        expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
-      });
-
-      expect((screen.getByLabelText('Search Immediately') as HTMLInputElement).checked).toBe(false);
-      expect((screen.getByLabelText('Monitor for Upgrades') as HTMLInputElement).checked).toBe(false);
     });
   });
 
@@ -599,3 +314,4 @@ describe('LibrarySettingsSection', () => {
     });
   });
 });
+

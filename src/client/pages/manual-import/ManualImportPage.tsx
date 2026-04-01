@@ -58,6 +58,9 @@ export function ManualImportPage() {
               ? `Matching ${progress.matched}/${progress.total}...`
               : `${rows.length} book${rows.length !== 1 ? 's' : ''} discovered`}
         </p>
+        {step !== 'path' && scanPath && (
+          <p className="text-sm text-muted-foreground mt-1 ml-10">{scanPath}</p>
+        )}
       </div>
 
       {/* Step 1: Path Input */}

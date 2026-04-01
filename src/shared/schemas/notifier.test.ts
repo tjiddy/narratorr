@@ -253,3 +253,122 @@ describe('createNotifierFormSchema — trim behavior', () => {
     if (result.success) expect(result.data.name).toBe('My Notifier');
   });
 });
+
+describe('createNotifierFormSchema — settings trim (#284)', () => {
+  it('trims whitespace from webhook url, headers, bodyTemplate', () => {
+    const result = createNotifierFormSchema.safeParse({
+      ...validBase,
+      settings: { url: '  https://hooks.example.com  ', method: 'POST' as const, headers: '  X-Custom: val  ', bodyTemplate: '  {{title}}  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.url).toBe('https://hooks.example.com');
+      expect(result.data.settings.headers).toBe('X-Custom: val');
+      expect(result.data.settings.bodyTemplate).toBe('{{title}}');
+    }
+  });
+
+  it('trims whitespace from discord/slack webhookUrl', () => {
+    const result = createNotifierFormSchema.safeParse({
+      ...validBase,
+      type: 'discord' as const,
+      settings: { webhookUrl: '  https://discord.com/api/webhooks/123  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.webhookUrl).toBe('https://discord.com/api/webhooks/123');
+  });
+
+  it('trims whitespace from script path', () => {
+    const result = createNotifierFormSchema.safeParse({
+      ...validBase,
+      type: 'script' as const,
+      settings: { path: '  /usr/local/bin/notify.sh  ', timeout: 30 },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.path).toBe('/usr/local/bin/notify.sh');
+  });
+
+  it('trims whitespace from email smtpHost, smtpUser, smtpPass, fromAddress, toAddress', () => {
+    const result = createNotifierFormSchema.safeParse({
+      ...validBase,
+      type: 'email' as const,
+      settings: {
+        smtpHost: '  smtp.example.com  ',
+        smtpUser: '  user@example.com  ',
+        smtpPass: '  secret  ',
+        fromAddress: '  noreply@example.com  ',
+        toAddress: '  admin@example.com  ',
+        smtpPort: 587,
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.smtpHost).toBe('smtp.example.com');
+      expect(result.data.settings.smtpUser).toBe('user@example.com');
+      expect(result.data.settings.smtpPass).toBe('secret');
+      expect(result.data.settings.fromAddress).toBe('noreply@example.com');
+      expect(result.data.settings.toAddress).toBe('admin@example.com');
+    }
+  });
+
+  it('trims whitespace from telegram botToken, chatId', () => {
+    const result = createNotifierFormSchema.safeParse({
+      ...validBase,
+      type: 'telegram' as const,
+      settings: { botToken: '  123456:ABC  ', chatId: '  -100123  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.botToken).toBe('123456:ABC');
+      expect(result.data.settings.chatId).toBe('-100123');
+    }
+  });
+
+  it('trims whitespace from pushover pushoverToken, pushoverUser', () => {
+    const result = createNotifierFormSchema.safeParse({
+      ...validBase,
+      type: 'pushover' as const,
+      settings: { pushoverToken: '  token123  ', pushoverUser: '  user456  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.pushoverToken).toBe('token123');
+      expect(result.data.settings.pushoverUser).toBe('user456');
+    }
+  });
+
+  it('trims whitespace from ntfy ntfyTopic, ntfyServer', () => {
+    const result = createNotifierFormSchema.safeParse({
+      ...validBase,
+      type: 'ntfy' as const,
+      settings: { ntfyTopic: '  audiobooks  ', ntfyServer: '  https://ntfy.sh  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.ntfyTopic).toBe('audiobooks');
+      expect(result.data.settings.ntfyServer).toBe('https://ntfy.sh');
+    }
+  });
+
+  it('trims whitespace from gotify gotifyUrl, gotifyToken', () => {
+    const result = createNotifierFormSchema.safeParse({
+      ...validBase,
+      type: 'gotify' as const,
+      settings: { gotifyUrl: '  https://gotify.local  ', gotifyToken: '  token789  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.gotifyUrl).toBe('https://gotify.local');
+      expect(result.data.settings.gotifyToken).toBe('token789');
+    }
+  });
+
+  it('whitespace-only optional settings fields produce empty string', () => {
+    const result = createNotifierFormSchema.safeParse({
+      ...validBase,
+      settings: { url: 'https://hooks.example.com', method: 'POST' as const, headers: '   ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.headers).toBe('');
+  });
+});

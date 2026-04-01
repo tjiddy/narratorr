@@ -1114,3 +1114,52 @@ describe('ManualImportPage', () => {
     });
   });
 });
+
+describe('ManualImportPage — scanned path display (#284)', () => {
+  beforeEach(() => {
+    matchState = makeMatchState();
+    mockScanDirectory.mockReset();
+    mockGetSettings.mockResolvedValue({ library: { path: '/audiobooks' } });
+    mockBrowseDirectory.mockResolvedValue({ dirs: [], parent: '/' });
+  });
+
+  it('displays scanned directory path after successful scan', async () => {
+    await scanAndReview();
+    expect(screen.getByText('/media/audiobooks')).toBeInTheDocument();
+  });
+
+  it('path text uses muted/secondary styling', async () => {
+    await scanAndReview();
+    const pathEl = screen.getByText('/media/audiobooks');
+    expect(pathEl.className).toMatch(/text-muted-foreground/);
+  });
+
+  it('does not display scanned path on path step', () => {
+    renderPage();
+    expect(screen.queryByText('/media/audiobooks')).not.toBeInTheDocument();
+  });
+
+  it('updates displayed path after going back and scanning a different directory', async () => {
+    await scanAndReview();
+    expect(screen.getByText('/media/audiobooks')).toBeInTheDocument();
+
+    // Go back to path step
+    await userEvent.click(screen.getByLabelText('Back'));
+    await screen.findByPlaceholderText('/path/to/audiobooks');
+
+    // Scan a different directory
+    mockScanDirectory.mockResolvedValueOnce({
+      discoveries: [makeDiscoveredBook({ path: '/other/dir/Book', parsedTitle: 'Other Book' })],
+      totalFolders: 1,
+    });
+    const input = screen.getByPlaceholderText('/path/to/audiobooks');
+    await userEvent.clear(input);
+    await userEvent.type(input, '/other/dir');
+    await userEvent.click(screen.getByText('Scan'));
+    await screen.findByText(/selected/);
+
+    // Path display should show the new directory
+    expect(screen.getByText('/other/dir')).toBeInTheDocument();
+    expect(screen.queryByText('/media/audiobooks')).not.toBeInTheDocument();
+  });
+});

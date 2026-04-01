@@ -289,3 +289,31 @@ describe('createIndexerFormSchema — apiUrl/apiKey trim (#272)', () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe('createIndexerFormSchema — baseUrl trim (#284)', () => {
+  const baseData = {
+    name: 'Test Indexer',
+    type: 'abb' as const,
+    enabled: true,
+    priority: 50,
+    settings: { hostname: 'audiobookbay.lu', pageLimit: 2 },
+  };
+
+  it('trims leading/trailing whitespace from settings.baseUrl', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...baseData,
+      settings: { ...baseData.settings, baseUrl: '  https://custom.base  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.baseUrl).toBe('https://custom.base');
+  });
+
+  it('whitespace-only baseUrl produces empty string', () => {
+    const result = createIndexerFormSchema.safeParse({
+      ...baseData,
+      settings: { ...baseData.settings, baseUrl: '   ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.baseUrl).toBe('');
+  });
+});

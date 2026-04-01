@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { LibrarySettingsSection } from './LibrarySettingsSection';
+import { NewBookDefaultsSection } from './NewBookDefaultsSection';
 import { NamingSettingsSection } from './NamingSettingsSection';
 import { SearchSettingsSection } from './SearchSettingsSection';
 import { ImportSettingsSection } from './ImportSettingsSection';
@@ -35,6 +36,7 @@ export function GeneralSettings() {
   return (
     <div className="space-y-8">
       <LibrarySettingsSection />
+      <NewBookDefaultsSection />
       <NamingSettingsSection />
       <SearchSettingsSection />
       <ImportSettingsSection />

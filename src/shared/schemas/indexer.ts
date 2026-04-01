@@ -51,7 +51,7 @@ export const createIndexerFormSchema = z.object({
     apiKey: z.string().trim().optional(),
     flareSolverrUrl: z.string().optional(),
     mamId: z.string().optional(),
-    baseUrl: z.string().optional(),
+    baseUrl: z.string().trim().optional(),
     useProxy: z.boolean().optional(),
   }),
 }).superRefine((data, ctx) => {
