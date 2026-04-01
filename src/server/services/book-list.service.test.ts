@@ -275,6 +275,65 @@ describe('BookListService', () => {
     });
   });
 
+  describe('series sort position tiebreaker (#266)', () => {
+    /** Extract the trailing direction string from a Drizzle SQL clause's queryChunks. */
+    function getClauseDirection(clause: { queryChunks?: unknown[] }): string | null {
+      const chunks = clause.queryChunks;
+      if (!Array.isArray(chunks)) return null;
+      const last = chunks[chunks.length - 1] as { value?: string[] } | string;
+      if (typeof last === 'string') return last.trim();
+      if (last && typeof last === 'object' && Array.isArray(last.value)) return last.value[0]?.trim() ?? null;
+      return null;
+    }
+
+    /** Check if a Drizzle SQL clause's queryChunks contain a given substring (handles circular refs). */
+    function clauseContains(clause: { queryChunks?: unknown[] }, substring: string): boolean {
+      function walk(val: unknown): boolean {
+        if (typeof val === 'string') return val.includes(substring);
+        if (Array.isArray(val)) return val.some(walk);
+        if (val && typeof val === 'object' && 'value' in val) return walk((val as { value: unknown }).value);
+        if (val && typeof val === 'object' && 'queryChunks' in val) return walk((val as { queryChunks: unknown[] }).queryChunks);
+        if (val && typeof val === 'object' && 'name' in val) return walk((val as { name: unknown }).name);
+        return false;
+      }
+      return walk(clause.queryChunks);
+    }
+
+    it('series sort asc produces 5 clauses with position always ascending and id direction-matched', async () => {
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAll(undefined, undefined, { sortField: 'series', sortDirection: 'asc' });
+      const args = (dataChain.orderBy as Mock).mock.calls[0];
+      expect(args).toHaveLength(5);
+      // Clause 3 (index 2): position null-flag is conditional on seriesName
+      expect(clauseContains(args[2], 'series_name')).toBe(true);
+      // Clause 4 (index 3): seriesPosition is always ascending
+      expect(getClauseDirection(args[3])).toBe('asc');
+      // Clause 5 (index 4): id tiebreaker matches sort direction (asc)
+      expect(getClauseDirection(args[4])).toBe('asc');
+    });
+
+    it('series sort desc produces 5 clauses with position always ascending and id direction-matched', async () => {
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAll(undefined, undefined, { sortField: 'series', sortDirection: 'desc' });
+      const args = (dataChain.orderBy as Mock).mock.calls[0];
+      expect(args).toHaveLength(5);
+      // Clause 3 (index 2): position null-flag is conditional on seriesName
+      expect(clauseContains(args[2], 'series_name')).toBe(true);
+      // Clause 4 (index 3): seriesPosition is always ascending even for desc sort
+      expect(getClauseDirection(args[3])).toBe('asc');
+      // Clause 5 (index 4): id tiebreaker matches sort direction (desc)
+      expect(getClauseDirection(args[4])).toBe('desc');
+    });
+  });
+
   describe('getIdentifiers', () => {
     it('returns asin, title, and author name for all books', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
