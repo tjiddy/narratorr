@@ -97,7 +97,7 @@ export function sortBooks<T extends BookWithAuthor>(books: T[], field: SortField
     const directedCmp = direction === 'asc' ? cmp : -cmp;
     if (directedCmp !== 0 || field !== 'series') return directedCmp;
     // Series tiebreaker: position ascending (null-last) within same series name
-    return compareNullable(a.seriesPosition, b.seriesPosition);
+    return compareNullable(a.seriesPosition ?? null, b.seriesPosition ?? null);
   });
 }
 
