@@ -960,8 +960,9 @@ describe('ActivityPage', () => {
         expect(screen.queryByText('No active downloads')).not.toBeInTheDocument();
       });
 
-      // Switch back to Downloads
-      await user.click(screen.getByRole('button', { name: /downloads/i }));
+      // Switch back to Downloads (first "Downloads" button is the tab, second is the filter chip)
+      const downloadButtons = screen.getAllByRole('button', { name: /downloads/i });
+      await user.click(downloadButtons[0]);
 
       await waitFor(() => {
         expect(screen.getByText('Active')).toBeInTheDocument();
