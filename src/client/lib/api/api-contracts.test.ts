@@ -565,6 +565,18 @@ describe('eventHistoryApi', () => {
   });
 });
 
+describe('eventHistoryApi — comma-separated eventType', () => {
+  it('getEventHistory with comma-separated eventType passes correct query string', async () => {
+    await eventHistoryApi.getEventHistory({ eventType: 'download_failed,import_failed,merge_failed' });
+    expect(mockFetchApi).toHaveBeenCalledWith('/event-history?eventType=download_failed%2Cimport_failed%2Cmerge_failed');
+  });
+
+  it('deleteEvents with comma-separated eventType passes correct query string', async () => {
+    await eventHistoryApi.deleteEvents({ eventType: 'download_failed,import_failed,merge_failed' });
+    expect(mockFetchApi).toHaveBeenCalledWith('/event-history?eventType=download_failed%2Cimport_failed%2Cmerge_failed', { method: 'DELETE' });
+  });
+});
+
 describe('systemApi', () => {
   it('getStatus → GET /system/status', async () => {
     await systemApi.getSystemStatus();

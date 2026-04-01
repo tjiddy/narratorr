@@ -8,6 +8,9 @@ type IdParam = z.infer<typeof idParamSchema>;
 const eventHistoryListQuerySchema = eventHistoryQuerySchema.merge(paginationParamsSchema);
 type EventHistoryListQuery = z.infer<typeof eventHistoryListQuerySchema>;
 
+const bulkDeleteQuerySchema = z.object({ eventType: eventHistoryQuerySchema.shape.eventType });
+type BulkDeleteQuery = z.infer<typeof bulkDeleteQuerySchema>;
+
 const bookIdParamSchema = z.object({
   bookId: z.string().transform((val, ctx) => {
     const parsed = parseInt(val, 10);
@@ -57,9 +60,9 @@ export async function eventHistoryRoutes(app: FastifyInstance, eventHistoryServi
   );
 
   // DELETE /api/event-history — bulk delete events (optional eventType filter)
-  app.delete<{ Querystring: { eventType?: string } }>(
+  app.delete<{ Querystring: BulkDeleteQuery }>(
     '/api/event-history',
-    { schema: { querystring: z.object({ eventType: eventHistoryQuerySchema.shape.eventType }) } },
+    { schema: { querystring: bulkDeleteQuerySchema } },
     async (request) => {
       const { eventType } = request.query;
       const filters = eventType ? { eventType } : undefined;
