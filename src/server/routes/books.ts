@@ -288,21 +288,11 @@ export async function booksRoutes(app: FastifyInstance, deps: BookRouteDeps) {
     app.post<{ Params: IdParam }>(
       '/api/books/:id/wrong-release',
       { schema: { params: idParamSchema } },
-      async (request, reply) => {
+      async (request) => {
         const { id } = request.params;
-        try {
-          await bookRejectionService.rejectAsWrongRelease(id);
-          return { success: true };
-        } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : 'Unknown error';
-          if (message.includes('not found')) {
-            return reply.status(404).send({ error: message });
-          }
-          if (message.includes('not imported') || message.includes('no release identifiers')) {
-            return reply.status(400).send({ error: message });
-          }
-          throw error;
-        }
+        await bookRejectionService.rejectAsWrongRelease(id);
+        request.log.info({ id }, 'Book marked as wrong release');
+        return { success: true };
       },
     );
   }

@@ -25,16 +25,16 @@ export class BookRejectionService {
   /**
    * Reject an imported book as wrong release:
    * 1. Blacklist the release (shared helper)
-   * 2. Delete book files from disk (best-effort)
-   * 3. Reset book fields (status, path, size, audio metadata, grab identifiers)
+   * 2. Reset book fields immediately after blacklist (DB-1: before irreversible FS ops)
+   * 3. Delete book files from disk (best-effort)
    * 4. Record wrong_release event
    * 5. Fire-and-forget re-search (shared helper)
    */
   async rejectAsWrongRelease(bookId: number): Promise<void> {
     const book = await this.bookService.getById(bookId);
-    if (!book) throw new Error(`Book ${bookId} not found`);
-    if (book.status !== 'imported') throw new Error(`Book ${bookId} is not imported (status: ${book.status})`);
-    if (!book.lastGrabGuid && !book.lastGrabInfoHash) throw new Error(`Book ${bookId} has no release identifiers`);
+    if (!book) throw new BookRejectionError('Book not found', 'NOT_FOUND');
+    if (book.status !== 'imported') throw new BookRejectionError('Book is not imported', 'NOT_IMPORTED');
+    if (!book.lastGrabGuid && !book.lastGrabInfoHash) throw new BookRejectionError('Book has no release identifiers', 'NO_IDENTIFIERS');
 
     // 1. Blacklist + 5. Re-search (fire-and-forget)
     await blacklistAndRetrySearch({
@@ -52,17 +52,7 @@ export class BookRejectionService {
       log: this.log,
     });
 
-    // 2. Delete book files (best-effort)
-    if (book.path) {
-      try {
-        const librarySettings = await this.settingsService.get('library');
-        await this.bookService.deleteBookFiles(book.path, librarySettings.path);
-      } catch (error: unknown) {
-        this.log.warn({ bookId, path: book.path, error }, 'Wrong release: failed to delete book files (continuing)');
-      }
-    }
-
-    // 3. Reset book fields
+    // 2. Reset book fields — immediately after blacklist, before irreversible FS deletion (DB-1)
     await this.db.update(books).set({
       status: 'wanted',
       path: null,
@@ -81,6 +71,16 @@ export class BookRejectionService {
       lastGrabInfoHash: null,
       updatedAt: new Date(),
     }).where(eq(books.id, bookId));
+
+    // 3. Delete book files (best-effort — after DB reset so crash won't leave stale state)
+    if (book.path) {
+      try {
+        const librarySettings = await this.settingsService.get('library');
+        await this.bookService.deleteBookFiles(book.path, librarySettings.path);
+      } catch (error: unknown) {
+        this.log.warn({ bookId, path: book.path, error }, 'Wrong release: failed to delete book files (continuing)');
+      }
+    }
 
     // 4. Record event (fire-and-forget)
     this.recordWrongReleaseEvent(book);
@@ -103,5 +103,15 @@ export class BookRejectionService {
     }).catch((error: unknown) => {
       this.log.warn({ bookId: book.id, error }, 'Wrong release: failed to record event');
     });
+  }
+}
+
+export class BookRejectionError extends Error {
+  constructor(
+    message: string,
+    public code: 'NOT_FOUND' | 'NOT_IMPORTED' | 'NO_IDENTIFIERS',
+  ) {
+    super(message);
+    this.name = 'BookRejectionError';
   }
 }

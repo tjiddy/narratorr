@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { createMockDb, createMockLogger, inject, mockDbChain } from '../__tests__/helpers.js';
 import { createMockDbBook } from '../__tests__/factories.js';
-import { BookRejectionService } from './book-rejection.service.js';
+import { BookRejectionService, BookRejectionError } from './book-rejection.service.js';
 import type { BookService } from './book.service.js';
 import type { BlacklistService } from './blacklist.service.js';
 import type { SettingsService } from './settings.service.js';
@@ -127,6 +127,26 @@ describe('BookRejectionService', () => {
       }));
     });
 
+    it('resets DB before deleting files (DB-1: DB update before irreversible FS op)', async () => {
+      const callOrder: string[] = [];
+      const { service, bookService, db } = createService();
+      (bookService.getById as Mock).mockResolvedValue(importedBook);
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+      (chain as Record<string, Mock>).where.mockImplementation(() => {
+        callOrder.push('db.update');
+        return Promise.resolve();
+      });
+      (bookService.deleteBookFiles as Mock).mockImplementation(() => {
+        callOrder.push('deleteBookFiles');
+        return Promise.resolve();
+      });
+
+      await service.rejectAsWrongRelease(42);
+
+      expect(callOrder).toEqual(['db.update', 'deleteBookFiles']);
+    });
+
     it('deletes book files best-effort via BookService.deleteBookFiles', async () => {
       const { service, bookService } = createService();
       (bookService.getById as Mock).mockResolvedValue(importedBook);
@@ -216,27 +236,30 @@ describe('BookRejectionService', () => {
       await service.rejectAsWrongRelease(42);
     });
 
-    it('throws when book is not imported', async () => {
+    it('throws BookRejectionError with NOT_IMPORTED when book is not imported', async () => {
       const wantedBook = { ...importedBook, status: 'wanted' };
       const { service, bookService } = createService();
       (bookService.getById as Mock).mockResolvedValue(wantedBook);
 
-      await expect(service.rejectAsWrongRelease(42)).rejects.toThrow('not imported');
+      await expect(service.rejectAsWrongRelease(42)).rejects.toThrow(BookRejectionError);
+      await expect(service.rejectAsWrongRelease(42)).rejects.toMatchObject({ code: 'NOT_IMPORTED' });
     });
 
-    it('throws when book has no release identifiers', async () => {
+    it('throws BookRejectionError with NO_IDENTIFIERS when both identifiers are null', async () => {
       const noIdBook = { ...importedBook, lastGrabGuid: null, lastGrabInfoHash: null };
       const { service, bookService } = createService();
       (bookService.getById as Mock).mockResolvedValue(noIdBook);
 
-      await expect(service.rejectAsWrongRelease(42)).rejects.toThrow('no release identifiers');
+      await expect(service.rejectAsWrongRelease(42)).rejects.toThrow(BookRejectionError);
+      await expect(service.rejectAsWrongRelease(42)).rejects.toMatchObject({ code: 'NO_IDENTIFIERS' });
     });
 
-    it('throws when book not found', async () => {
+    it('throws BookRejectionError with NOT_FOUND when book does not exist', async () => {
       const { service, bookService } = createService();
       (bookService.getById as Mock).mockResolvedValue(null);
 
-      await expect(service.rejectAsWrongRelease(42)).rejects.toThrow('not found');
+      await expect(service.rejectAsWrongRelease(42)).rejects.toThrow(BookRejectionError);
+      await expect(service.rejectAsWrongRelease(42)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
 
     it('continues when blacklist creation fails', async () => {

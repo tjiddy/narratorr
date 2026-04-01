@@ -487,5 +487,20 @@ describe('useBookActions', () => {
         expect(toast.error).toHaveBeenCalledWith('Wrong release failed: not imported');
       });
     });
+
+    it('invalidates book, bookFiles, and books queries on success', async () => {
+      (api.markBookAsWrongRelease as Mock).mockResolvedValue({ success: true });
+      const { queryClient, wrapper } = createTestHarness();
+      const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+      const { result } = renderHook(() => useBookActions(5, false), { wrapper });
+
+      act(() => { result.current.wrongReleaseMutation.mutate(); });
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 5] });
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books', 5, 'files'] });
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['books'] });
+      });
+    });
   });
 });
