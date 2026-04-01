@@ -80,6 +80,7 @@ export const settingsRegistry = {
       monitorForUpgrades: false,
       rejectWords: '',
       requiredWords: '',
+      preferredLanguage: '',
     },
   }),
   network: defineCategory({

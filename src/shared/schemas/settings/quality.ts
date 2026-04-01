@@ -12,6 +12,7 @@ export const qualitySettingsSchema = z.object({
   monitorForUpgrades: z.boolean().default(false),
   rejectWords: z.string().default(''),
   requiredWords: z.string().default(''),
+  preferredLanguage: z.string().default(''),
 });
 
 // Form schema derived from qualitySettingsSchema via stripDefaults() — strips
@@ -26,6 +27,7 @@ export const qualityFormSchema = stripDefaults(qualitySettingsSchema) as z.ZodOb
   monitorForUpgrades: z.ZodBoolean;
   rejectWords: z.ZodString;
   requiredWords: z.ZodString;
+  preferredLanguage: z.ZodString;
 }>;
 
 /** Quality-filtering fields only (excludes new-book defaults) — used by QualitySettingsSection form */
