@@ -316,6 +316,76 @@ describe('sortBooks — extended sort fields (#282)', () => {
   });
 });
 
+// #266 — Series sort position tiebreaker
+describe('sortBooks — series position tiebreaker (#266)', () => {
+  it('sorts books by seriesPosition when seriesName is equal (asc)', () => {
+    const books = [
+      makeBook({ id: 10, seriesName: 'Stormlight', seriesPosition: 3 }),
+      makeBook({ id: 20, seriesName: 'Stormlight', seriesPosition: 1 }),
+      makeBook({ id: 30, seriesName: 'Stormlight', seriesPosition: 2 }),
+    ];
+
+    const sorted = sortBooks(books, 'series', 'asc');
+    expect(sorted.map((b) => b.seriesPosition)).toEqual([1, 2, 3]);
+  });
+
+  it('desc reverses series name order but keeps position ascending within group', () => {
+    const books = [
+      makeBook({ id: 1, seriesName: 'Alpha', seriesPosition: 2 }),
+      makeBook({ id: 2, seriesName: 'Alpha', seriesPosition: 1 }),
+      makeBook({ id: 3, seriesName: 'Zulu', seriesPosition: 2 }),
+      makeBook({ id: 4, seriesName: 'Zulu', seriesPosition: 1 }),
+    ];
+
+    const sorted = sortBooks(books, 'series', 'desc');
+    // Zulu first (desc), then Alpha — but positions ascending within each group
+    expect(sorted.map((b) => b.id)).toEqual([4, 3, 2, 1]);
+  });
+
+  it('books across different series sorted by name first, then position', () => {
+    const books = [
+      makeBook({ id: 1, seriesName: 'Zulu', seriesPosition: 1 }),
+      makeBook({ id: 2, seriesName: 'Alpha', seriesPosition: 2 }),
+      makeBook({ id: 3, seriesName: 'Alpha', seriesPosition: 1 }),
+    ];
+
+    const sorted = sortBooks(books, 'series', 'asc');
+    expect(sorted.map((b) => b.id)).toEqual([3, 2, 1]);
+  });
+
+  it('null seriesPosition within a named series sorts after positioned books', () => {
+    const books = [
+      makeBook({ id: 1, seriesName: 'WoT', seriesPosition: null }),
+      makeBook({ id: 2, seriesName: 'WoT', seriesPosition: 1 }),
+      makeBook({ id: 3, seriesName: 'WoT', seriesPosition: 2 }),
+    ];
+
+    const sorted = sortBooks(books, 'series', 'asc');
+    expect(sorted.map((b) => b.id)).toEqual([2, 3, 1]);
+  });
+
+  it('null seriesName books sort to end in ascending mode (regression guard)', () => {
+    const books = [
+      makeBook({ id: 1, seriesName: null }),
+      makeBook({ id: 2, seriesName: 'Alpha', seriesPosition: 1 }),
+    ];
+
+    const sorted = sortBooks(books, 'series', 'asc');
+    expect(sorted.map((b) => b.id)).toEqual([2, 1]);
+  });
+
+  it('non-series sort fields unaffected by changes (regression guard)', () => {
+    const books = [
+      makeBook({ id: 1, title: 'Zulu', seriesName: 'Same', seriesPosition: 1 }),
+      makeBook({ id: 2, title: 'Alpha', seriesName: 'Same', seriesPosition: 2 }),
+    ];
+
+    // Title sort should not use seriesPosition tiebreaker
+    const sorted = sortBooks(books, 'title', 'asc');
+    expect(sorted.map((b) => b.id)).toEqual([2, 1]);
+  });
+});
+
 // #282 — Narrator split helper
 describe('extractNarrators (#282)', () => {
   it('splits narrator string on comma delimiter', () => {

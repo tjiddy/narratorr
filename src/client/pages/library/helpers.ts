@@ -94,7 +94,10 @@ function compareByField(a: BookWithAuthor, b: BookWithAuthor, field: SortField):
 export function sortBooks<T extends BookWithAuthor>(books: T[], field: SortField, direction: SortDirection): T[] {
   return [...books].sort((a, b) => {
     const cmp = compareByField(a, b, field);
-    return direction === 'asc' ? cmp : -cmp;
+    const directedCmp = direction === 'asc' ? cmp : -cmp;
+    if (directedCmp !== 0 || field !== 'series') return directedCmp;
+    // Series tiebreaker: position ascending (null-last) within same series name
+    return compareNullable(a.seriesPosition, b.seriesPosition);
   });
 }
 
