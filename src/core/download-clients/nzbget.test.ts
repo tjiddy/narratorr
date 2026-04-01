@@ -356,7 +356,11 @@ describe('NZBGetClient', () => {
     it('returns failure on RPC error', async () => {
       server.use(
         http.post(RPC_URL, () => {
-          return HttpResponse.json({ error: 'Invalid API key' });
+          return HttpResponse.json({
+            version: '1.1',
+            id: 1,
+            error: { name: 'JSONRPCError', code: -32001, message: 'Invalid API key' },
+          });
         }),
       );
 
@@ -706,10 +710,14 @@ describe('NZBGetClient', () => {
       expect(result.success).toBe(true);
     });
 
-    it('rpc() with { error: "some error" } throws with descriptive message', async () => {
+    it('rpc() with error object throws with descriptive message', async () => {
       server.use(
         http.post(RPC_URL, async () => {
-          return HttpResponse.json({ result: null, error: 'Authentication failed' });
+          return HttpResponse.json({
+            version: '1.1',
+            id: 1,
+            error: { name: 'JSONRPCError', code: -32001, message: 'Authentication failed' },
+          });
         }),
       );
 
@@ -720,6 +728,44 @@ describe('NZBGetClient', () => {
       server.use(
         http.post(RPC_URL, async () => {
           return HttpResponse.json({ unexpected: 'shape' });
+        }),
+      );
+
+      await expect(client.getAllDownloads()).rejects.toThrow('NZBGet returned unexpected response');
+    });
+
+    it('rpc() with error object { name, code, message } parses successfully and throws with message field', async () => {
+      server.use(
+        http.post(RPC_URL, async () => {
+          return HttpResponse.json({
+            version: '1.1',
+            id: 1,
+            error: { name: 'JSONRPCError', code: -32602, message: 'Invalid params' },
+          });
+        }),
+      );
+
+      await expect(client.getAllDownloads()).rejects.toThrow('NZBGet RPC error: Invalid params');
+    });
+
+    it('rpc() with error object with empty message throws with code/name info', async () => {
+      server.use(
+        http.post(RPC_URL, async () => {
+          return HttpResponse.json({
+            version: '1.1',
+            id: 1,
+            error: { name: 'JSONRPCError', code: 0, message: '' },
+          });
+        }),
+      );
+
+      await expect(client.getAllDownloads()).rejects.toThrow('NZBGet RPC error: JSONRPCError (code 0)');
+    });
+
+    it('Zod schema rejects legacy string error format', async () => {
+      server.use(
+        http.post(RPC_URL, async () => {
+          return HttpResponse.json({ result: null, error: 'Authentication failed' });
         }),
       );
 

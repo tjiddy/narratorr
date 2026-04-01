@@ -83,6 +83,21 @@ describe('TransmissionClient', () => {
       expect(result.message).toBe('Transmission 4.0.0');
     });
 
+    it('retries once when 409 lacks X-Transmission-Session-Id header, second 409 throws', async () => {
+      let callCount = 0;
+      server.use(
+        http.post(RPC_URL, () => {
+          callCount++;
+          return new HttpResponse(null, { status: 409 });
+        }),
+      );
+
+      const result = await client.test();
+      expect(callCount).toBe(2);
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('Session ID rotation failed: repeated 409');
+    });
+
     it('does not retry infinitely (fails after second 409)', async () => {
       server.use(
         http.post(RPC_URL, () => {

@@ -31,7 +31,7 @@ export const transmissionRpcResponseSchema = z.object({
 // At least one of result or error must be present
 export const nzbgetRpcResponseSchema = z.object({
   result: z.unknown().optional(),
-  error: z.string().optional(),
+  error: z.object({ name: z.string(), code: z.number(), message: z.string() }).optional(),
 }).passthrough().refine(
   (data) => data.result !== undefined || data.error !== undefined,
   { message: 'NZBGet RPC response missing both "result" and "error" fields' },
