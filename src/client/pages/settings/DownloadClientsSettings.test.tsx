@@ -97,6 +97,44 @@ describe('DownloadClientsSettings', () => {
     await assertSuccessToast('Download client added successfully');
   });
 
+  it('creates a download client with path mappings through the full page stack', async () => {
+    const user = userEvent.setup();
+    (api.createClient as Mock).mockResolvedValue({ id: 4, name: 'Remote Client', type: 'qbittorrent', enabled: true, priority: 50, settings: {}, createdAt: '2024-01-01T00:00:00Z' });
+    renderWithProviders(<DownloadClientsSettings />);
+    await waitForListLoad('My qBittorrent');
+
+    // Open create form
+    await user.click(screen.getByText('Add Client').closest('button')!);
+
+    // Fill required fields
+    await user.type(screen.getByPlaceholderText('qBittorrent'), 'Remote Client');
+    await user.type(screen.getByPlaceholderText('localhost'), '192.168.1.100');
+
+    // Add a path mapping via PathMappingEditor
+    await user.click(screen.getByRole('button', { name: /add mapping/i }));
+    await user.type(screen.getByLabelText(/remote path/i), '/mnt/downloads');
+    await user.type(screen.getByLabelText(/local path/i), '/local/downloads');
+    await user.click(screen.getByRole('button', { name: /^add$/i }));
+
+    // Verify mapping row appears
+    expect(screen.getByText('/mnt/downloads')).toBeInTheDocument();
+    expect(screen.getByText('/local/downloads')).toBeInTheDocument();
+
+    // Submit form
+    await user.click(screen.getByRole('button', { name: /Add Client/i }));
+
+    await waitFor(() => {
+      expect(api.createClient).toHaveBeenCalled();
+    });
+    // Verify pathMappings survived the full DownloadClientsSettings → CrudSettingsPage → useCrudSettings → api.createClient chain
+    expect((api.createClient as Mock).mock.calls[0][0]).toMatchObject({
+      name: 'Remote Client',
+      pathMappings: [{ remotePath: '/mnt/downloads', localPath: '/local/downloads' }],
+    });
+
+    await assertSuccessToast('Download client added successfully');
+  });
+
   it('shows error toast when create fails', async () => {
     const user = userEvent.setup();
     (api.createClient as Mock).mockRejectedValue(new Error('fail'));
