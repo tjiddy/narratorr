@@ -184,4 +184,16 @@ describe('SelectWithChevron', () => {
       expect(screen.getByLabelText('Second')).toHaveAttribute('id', 'second');
     });
   });
+
+  describe('variant prop (#288)', () => {
+    it.todo('default variant renders with settings-form classes (w-full, px-4 py-3 pr-10, bg-background, border, rounded-xl, text-sm)');
+    it.todo('default variant chevron uses w-4 h-4');
+    it.todo('compact variant renders with compact base classes (glass-card, rounded-lg, pl-3 pr-7, font-medium, text-foreground) and no w-full');
+    it.todo('compact variant chevron uses w-3 h-3');
+    it.todo('variant defaults to default when omitted — no class change for existing callers');
+    it.todo('className prop appends correctly in compact variant (e.g. py-1.5 text-xs)');
+    it.todo('error prop applies border-destructive in default variant');
+    it.todo('label prop renders label element in compact variant');
+    it.todo('forwardRef works in compact variant');
+  });
 });
