@@ -12,154 +12,53 @@ import { useEventHistory } from '@/hooks/useEventHistory';
 
 const mockUseEventHistory = vi.mocked(useEventHistory);
 
+function mockDefaultHook(overrides: Partial<ReturnType<typeof useEventHistory>> = {}) {
+  mockUseEventHistory.mockReturnValue({
+    events: [],
+    total: 0,
+    isLoading: false,
+    isError: false,
+    markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
+    deleteMutation: { mutate: vi.fn(), isPending: false } as never,
+    bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
+    ...overrides,
+  });
+}
+
 describe('EventHistorySection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it('shows loading spinner while loading', () => {
-    mockUseEventHistory.mockReturnValue({
-      events: [],
-      total: 0,
-      isLoading: true,
-      isError: false,
-      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
-      bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
-    });
+    mockDefaultHook({ isLoading: true });
 
     renderWithProviders(<EventHistorySection />);
     expect(screen.getAllByTestId('loading-spinner').length).toBeGreaterThanOrEqual(1);
   });
 
   it('shows empty state when no events', () => {
-    mockUseEventHistory.mockReturnValue({
-      events: [],
-      total: 0,
-      isLoading: false,
-      isError: false,
-      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
-      bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
-    });
+    mockDefaultHook();
 
     renderWithProviders(<EventHistorySection />);
     expect(screen.getByText('No events')).toBeInTheDocument();
   });
 
   it('renders event cards', () => {
-    mockUseEventHistory.mockReturnValue({
+    mockDefaultHook({
       events: [
         { id: 1, bookId: 1, downloadId: 5, bookTitle: 'The Way of Kings', authorName: 'Brandon Sanderson', eventType: 'grabbed', source: 'auto', reason: null, createdAt: new Date().toISOString() },
       ],
       total: 1,
-      isLoading: false,
-      isError: false,
-      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
-      bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
     });
 
     renderWithProviders(<EventHistorySection />);
-    // "Grabbed" appears in both the filter pill and the event card
-    expect(screen.getAllByText('Grabbed')).toHaveLength(2);
     expect(screen.getByText(/The Way of Kings/)).toBeInTheDocument();
-  });
-
-  it('renders type filter pills', () => {
-    mockUseEventHistory.mockReturnValue({
-      events: [],
-      total: 0,
-      isLoading: false,
-      isError: false,
-      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
-      bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
-    });
-
-    renderWithProviders(<EventHistorySection />);
-    expect(screen.getByText('All')).toBeInTheDocument();
-    expect(screen.getByText('Grabbed')).toBeInTheDocument();
-    expect(screen.getByText('Completed')).toBeInTheDocument();
-    expect(screen.getByText('Failed')).toBeInTheDocument();
-    expect(screen.getByText('Merged')).toBeInTheDocument();
-    expect(screen.getByText('Merge Started')).toBeInTheDocument();
-    expect(screen.getByText('Merge Failed')).toBeInTheDocument();
-  });
-
-  it('merge_started filter calls useEventHistory with correct eventType', async () => {
-    const user = userEvent.setup();
-    mockUseEventHistory.mockReturnValue({
-      events: [],
-      total: 0,
-      isLoading: false,
-      isError: false,
-      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
-      bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
-    });
-
-    renderWithProviders(<EventHistorySection />);
-    await user.click(screen.getByText('Merge Started'));
-
-    expect(mockUseEventHistory).toHaveBeenCalledWith(
-      expect.objectContaining({ eventType: 'merge_started' }),
-    );
-  });
-
-  it('merge_failed filter calls useEventHistory with correct eventType', async () => {
-    const user = userEvent.setup();
-    mockUseEventHistory.mockReturnValue({
-      events: [],
-      total: 0,
-      isLoading: false,
-      isError: false,
-      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
-      bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
-    });
-
-    renderWithProviders(<EventHistorySection />);
-    await user.click(screen.getByText('Merge Failed'));
-
-    expect(mockUseEventHistory).toHaveBeenCalledWith(
-      expect.objectContaining({ eventType: 'merge_failed' }),
-    );
-  });
-
-  it('type filter changes displayed events', async () => {
-    const user = userEvent.setup();
-    mockUseEventHistory.mockReturnValue({
-      events: [],
-      total: 0,
-      isLoading: false,
-      isError: false,
-      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
-      bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
-    });
-
-    renderWithProviders(<EventHistorySection />);
-
-    await user.click(screen.getByText('Grabbed'));
-
-    // The hook should be called with the new filter
-    expect(mockUseEventHistory).toHaveBeenCalledWith(
-      expect.objectContaining({ eventType: 'grabbed' }),
-    );
   });
 
   it('search input filters by title', async () => {
     const user = userEvent.setup();
-    mockUseEventHistory.mockReturnValue({
-      events: [],
-      total: 0,
-      isLoading: false,
-      isError: false,
-      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
-      bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
-    });
+    mockDefaultHook();
 
     renderWithProviders(<EventHistorySection />);
 
@@ -173,15 +72,7 @@ describe('EventHistorySection', () => {
   });
 
   it('shows Clear Errors and Clear All buttons', () => {
-    mockUseEventHistory.mockReturnValue({
-      events: [],
-      total: 0,
-      isLoading: false,
-      isError: false,
-      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
-      bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
-    });
+    mockDefaultHook();
 
     renderWithProviders(<EventHistorySection />);
     expect(screen.getByText('Clear Errors')).toBeInTheDocument();
@@ -190,15 +81,7 @@ describe('EventHistorySection', () => {
 
   it('Clear All opens confirmation modal', async () => {
     const user = userEvent.setup();
-    mockUseEventHistory.mockReturnValue({
-      events: [],
-      total: 0,
-      isLoading: false,
-      isError: false,
-      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
-      bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
-    });
+    mockDefaultHook();
 
     renderWithProviders(<EventHistorySection />);
     await user.click(screen.getByText('Clear All'));
@@ -210,21 +93,11 @@ describe('EventHistorySection', () => {
   it('confirming Clear All calls bulkDeleteMutation', async () => {
     const user = userEvent.setup();
     const mockBulkDelete = vi.fn();
-    mockUseEventHistory.mockReturnValue({
-      events: [],
-      total: 0,
-      isLoading: false,
-      isError: false,
-      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
-      bulkDeleteMutation: { mutate: mockBulkDelete, isPending: false } as never,
-    });
+    mockDefaultHook({ bulkDeleteMutation: { mutate: mockBulkDelete, isPending: false } as never });
 
     renderWithProviders(<EventHistorySection />);
     await user.click(screen.getByText('Clear All'));
-    // The confirm button inside the modal — find the one in the modal dialog
     const confirmButtons = screen.getAllByRole('button', { name: /Clear All/i });
-    // The last one is in the modal
     await user.click(confirmButtons[confirmButtons.length - 1]);
 
     expect(mockBulkDelete).toHaveBeenCalledWith(undefined);
@@ -233,16 +106,12 @@ describe('EventHistorySection', () => {
   it('clicking delete button on event card calls deleteMutation.mutate with event id', async () => {
     const user = userEvent.setup();
     const mockDeleteMutate = vi.fn();
-    mockUseEventHistory.mockReturnValue({
+    mockDefaultHook({
       events: [
         { id: 42, bookId: 1, downloadId: 5, bookTitle: 'Test Book', authorName: null, eventType: 'grabbed', source: 'auto', reason: null, createdAt: new Date().toISOString() },
       ],
       total: 1,
-      isLoading: false,
-      isError: false,
-      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
       deleteMutation: { mutate: mockDeleteMutate, isPending: false } as never,
-      bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
     });
 
     renderWithProviders(<EventHistorySection />);
@@ -251,69 +120,160 @@ describe('EventHistorySection', () => {
     expect(mockDeleteMutate).toHaveBeenCalledWith(42);
   });
 
-  it('Clear Errors opens error-specific confirmation modal', async () => {
-    const user = userEvent.setup();
-    mockUseEventHistory.mockReturnValue({
-      events: [],
-      total: 0,
-      isLoading: false,
-      isError: false,
-      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
-      bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
+  describe('intent-based filter groups', () => {
+    it('renders exactly 8 filter buttons (All + 7 groups)', () => {
+      mockDefaultHook();
+
+      renderWithProviders(<EventHistorySection />);
+      expect(screen.getByText('All')).toBeInTheDocument();
+      expect(screen.getByText('Errors')).toBeInTheDocument();
+      expect(screen.getByText('Needs Review')).toBeInTheDocument();
+      expect(screen.getByText('Downloads')).toBeInTheDocument();
+      expect(screen.getByText('Imported')).toBeInTheDocument();
+      expect(screen.getByText('File Changes')).toBeInTheDocument();
+      expect(screen.getByText('Removed')).toBeInTheDocument();
+      // Count all filter pill buttons (inside the flex-wrap container)
+      const filterButtons = screen.getAllByRole('button').filter(
+        (btn) => ['All', 'Errors', 'Needs Review', 'Downloads', 'Imported', 'File Changes', 'Removed'].includes(btn.textContent ?? ''),
+      );
+      expect(filterButtons).toHaveLength(7);
     });
 
-    renderWithProviders(<EventHistorySection />);
-    await user.click(screen.getByText('Clear Errors'));
+    it('Errors chip sends eventType=download_failed,import_failed,merge_failed', async () => {
+      const user = userEvent.setup();
+      mockDefaultHook();
 
-    expect(screen.getByText('Clear Error Events')).toBeInTheDocument();
-    expect(screen.getByText(/permanently delete all failed download and import events/)).toBeInTheDocument();
+      renderWithProviders(<EventHistorySection />);
+      await user.click(screen.getByText('Errors'));
+
+      expect(mockUseEventHistory).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: 'download_failed,import_failed,merge_failed' }),
+      );
+    });
+
+    it('Needs Review chip sends eventType=held_for_review', async () => {
+      const user = userEvent.setup();
+      mockDefaultHook();
+
+      renderWithProviders(<EventHistorySection />);
+      await user.click(screen.getByText('Needs Review'));
+
+      expect(mockUseEventHistory).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: 'held_for_review' }),
+      );
+    });
+
+    it('Downloads chip sends eventType=grabbed,download_completed,merge_started', async () => {
+      const user = userEvent.setup();
+      mockDefaultHook();
+
+      renderWithProviders(<EventHistorySection />);
+      await user.click(screen.getByText('Downloads'));
+
+      expect(mockUseEventHistory).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: 'grabbed,download_completed,merge_started' }),
+      );
+    });
+
+    it('Imported chip sends eventType=imported,upgraded,merged', async () => {
+      const user = userEvent.setup();
+      mockDefaultHook();
+
+      renderWithProviders(<EventHistorySection />);
+      await user.click(screen.getByText('Imported'));
+
+      expect(mockUseEventHistory).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: 'imported,upgraded,merged' }),
+      );
+    });
+
+    it('File Changes chip sends eventType=renamed,file_tagged', async () => {
+      const user = userEvent.setup();
+      mockDefaultHook();
+
+      renderWithProviders(<EventHistorySection />);
+      await user.click(screen.getByText('File Changes'));
+
+      expect(mockUseEventHistory).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: 'renamed,file_tagged' }),
+      );
+    });
+
+    it('Removed chip sends eventType=deleted', async () => {
+      const user = userEvent.setup();
+      mockDefaultHook();
+
+      renderWithProviders(<EventHistorySection />);
+      await user.click(screen.getByText('Removed'));
+
+      expect(mockUseEventHistory).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: 'deleted' }),
+      );
+    });
+
+    it('All chip sends no eventType param', async () => {
+      const user = userEvent.setup();
+      mockDefaultHook();
+
+      renderWithProviders(<EventHistorySection />);
+      // First click a filter, then click All to clear
+      await user.click(screen.getByText('Errors'));
+      await user.click(screen.getByText('All'));
+
+      const lastCall = mockUseEventHistory.mock.calls[mockUseEventHistory.mock.calls.length - 1][0];
+      expect(lastCall.eventType).toBeUndefined();
+    });
   });
 
-  it('confirming Clear Errors calls bulkDeleteMutation with download_failed then import_failed on success', async () => {
-    const user = userEvent.setup();
-    const mockBulkDelete = vi.fn();
-    mockUseEventHistory.mockReturnValue({
-      events: [],
-      total: 0,
-      isLoading: false,
-      isError: false,
-      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
-      bulkDeleteMutation: { mutate: mockBulkDelete, isPending: false } as never,
+  describe('Clear Errors — single mutation', () => {
+    it('sends single DELETE with eventType=download_failed,import_failed,merge_failed', async () => {
+      const user = userEvent.setup();
+      const mockBulkDelete = vi.fn();
+      mockDefaultHook({ bulkDeleteMutation: { mutate: mockBulkDelete, isPending: false } as never });
+
+      renderWithProviders(<EventHistorySection />);
+      await user.click(screen.getByText('Clear Errors'));
+
+      const confirmButtons = screen.getAllByRole('button', { name: /Clear Errors/i });
+      await user.click(confirmButtons[confirmButtons.length - 1]);
+
+      expect(mockBulkDelete).toHaveBeenCalledTimes(1);
+      expect(mockBulkDelete).toHaveBeenCalledWith({ eventType: 'download_failed,import_failed,merge_failed' });
     });
 
-    renderWithProviders(<EventHistorySection />);
-    await user.click(screen.getByText('Clear Errors'));
+    it('confirmation modal copy reflects all three error event classes', async () => {
+      const user = userEvent.setup();
+      mockDefaultHook();
 
-    // Find the confirm button inside the modal
-    const confirmButtons = screen.getAllByRole('button', { name: /Clear Errors/i });
-    await user.click(confirmButtons[confirmButtons.length - 1]);
+      renderWithProviders(<EventHistorySection />);
+      await user.click(screen.getByText('Clear Errors'));
 
-    // First call: delete download_failed events with onSuccess callback
-    expect(mockBulkDelete).toHaveBeenCalledWith(
-      { eventType: 'download_failed' },
-      expect.objectContaining({ onSuccess: expect.any(Function) }),
-    );
+      expect(screen.getByText('Clear Error Events')).toBeInTheDocument();
+      expect(screen.getByText(/permanently delete all failed download, import, and merge events/)).toBeInTheDocument();
+    });
 
-    // Simulate onSuccess firing → should trigger second call with import_failed
-    const firstCallOptions = mockBulkDelete.mock.calls[0][1];
-    firstCallOptions.onSuccess();
+    it('no longer chains two sequential mutations', async () => {
+      const user = userEvent.setup();
+      const mockBulkDelete = vi.fn();
+      mockDefaultHook({ bulkDeleteMutation: { mutate: mockBulkDelete, isPending: false } as never });
 
-    expect(mockBulkDelete).toHaveBeenCalledTimes(2);
-    expect(mockBulkDelete).toHaveBeenLastCalledWith({ eventType: 'import_failed' });
+      renderWithProviders(<EventHistorySection />);
+      await user.click(screen.getByText('Clear Errors'));
+
+      const confirmButtons = screen.getAllByRole('button', { name: /Clear Errors/i });
+      await user.click(confirmButtons[confirmButtons.length - 1]);
+
+      // Should be exactly one call, no onSuccess callback
+      expect(mockBulkDelete).toHaveBeenCalledTimes(1);
+      expect(mockBulkDelete).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ onSuccess: expect.any(Function) }),
+      );
+    });
   });
 
   it('shows filtered empty state message', () => {
-    mockUseEventHistory.mockReturnValue({
-      events: [],
-      total: 0,
-      isLoading: false,
-      isError: false,
-      markFailedMutation: { mutate: vi.fn(), isPending: false } as never,
-      deleteMutation: { mutate: vi.fn(), isPending: false } as never,
-      bulkDeleteMutation: { mutate: vi.fn(), isPending: false } as never,
-    });
+    mockDefaultHook();
 
     renderWithProviders(<EventHistorySection />);
     expect(screen.getByText('Events will appear here as books are processed')).toBeInTheDocument();

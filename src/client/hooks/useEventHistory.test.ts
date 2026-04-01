@@ -185,6 +185,31 @@ describe('useEventHistory', () => {
     expect(api.deleteEvents).toHaveBeenCalledWith({ eventType: 'download_failed' }, expect.anything());
   });
 
+  it('bulkDeleteMutation with comma-separated eventTypes passes them to API', async () => {
+    vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
+    vi.mocked(api.deleteEvents).mockResolvedValue(undefined as never);
+
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const { result } = renderHook(() => useEventHistory(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      result.current.bulkDeleteMutation.mutate({ eventType: 'download_failed,import_failed,merge_failed' });
+    });
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Cleared matching events');
+    });
+
+    expect(api.deleteEvents).toHaveBeenCalledWith({ eventType: 'download_failed,import_failed,merge_failed' }, expect.anything());
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.eventHistory.root() });
+  });
+
   it('bulkDeleteMutation shows error toast on failure', async () => {
     vi.mocked(api.getEventHistory).mockResolvedValue({ data: [], total: 0 });
     vi.mocked(api.deleteEvents).mockRejectedValue(new Error('Bulk fail'));
