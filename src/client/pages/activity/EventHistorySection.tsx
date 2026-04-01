@@ -9,18 +9,15 @@ import { DEFAULT_LIMITS } from '../../../shared/schemas/common.js';
 
 const EVENT_TYPE_FILTERS = [
   { value: '', label: 'All' },
-  { value: 'grabbed', label: 'Grabbed' },
-  { value: 'download_completed', label: 'Completed' },
-  { value: 'download_failed', label: 'Failed' },
-  { value: 'imported', label: 'Imported' },
-  { value: 'import_failed', label: 'Import Failed' },
-  { value: 'upgraded', label: 'Upgraded' },
-  { value: 'deleted', label: 'Deleted' },
-  { value: 'renamed', label: 'Renamed' },
-  { value: 'merged', label: 'Merged' },
-  { value: 'merge_started', label: 'Merge Started' },
-  { value: 'merge_failed', label: 'Merge Failed' },
+  { value: 'download_failed,import_failed,merge_failed', label: 'Errors' },
+  { value: 'held_for_review', label: 'Needs Review' },
+  { value: 'grabbed,download_completed,merge_started', label: 'Downloads' },
+  { value: 'imported,upgraded,merged', label: 'Imported' },
+  { value: 'renamed,file_tagged', label: 'File Changes' },
+  { value: 'deleted', label: 'Removed' },
 ];
+
+const CLEAR_ERRORS_EVENT_TYPES = 'download_failed,import_failed,merge_failed';
 
 export function EventHistorySection() {
   const [eventType, setEventTypeState] = useState('');
@@ -153,16 +150,12 @@ export function EventHistorySection() {
         isOpen={confirmAction !== null}
         title={confirmAction === 'errors' ? 'Clear Error Events' : 'Clear All Events'}
         message={confirmAction === 'errors'
-          ? 'This will permanently delete all failed download and import events. This cannot be undone.'
+          ? 'This will permanently delete all failed download, import, and merge events. This cannot be undone.'
           : 'This will permanently delete all event history. This cannot be undone.'}
         confirmLabel={confirmAction === 'errors' ? 'Clear Errors' : 'Clear All'}
         onConfirm={() => {
           if (confirmAction === 'errors') {
-            bulkDeleteMutation.mutate({ eventType: 'download_failed' }, {
-              onSuccess: () => {
-                bulkDeleteMutation.mutate({ eventType: 'import_failed' });
-              },
-            });
+            bulkDeleteMutation.mutate({ eventType: CLEAR_ERRORS_EVENT_TYPES });
           } else {
             bulkDeleteMutation.mutate(undefined);
           }

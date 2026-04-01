@@ -39,7 +39,7 @@ describe('event-history routes', () => {
 
       await app.inject({ method: 'GET', url: '/api/event-history?eventType=grabbed' });
 
-      expect(services.eventHistory.getAll).toHaveBeenCalledWith({ eventType: 'grabbed', search: undefined }, { limit: 50, offset: undefined });
+      expect(services.eventHistory.getAll).toHaveBeenCalledWith({ eventType: ['grabbed'], search: undefined }, { limit: 50, offset: undefined });
     });
 
     it('passes search filter to service', async () => {
@@ -144,7 +144,7 @@ describe('event-history routes', () => {
 
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.payload)).toEqual({ deleted: 2 });
-      expect(services.eventHistory.deleteAll).toHaveBeenCalledWith({ eventType: 'download_failed' });
+      expect(services.eventHistory.deleteAll).toHaveBeenCalledWith({ eventType: ['download_failed'] });
     });
 
     it('rejects unsupported eventType with 400 without calling service', async () => {
@@ -160,6 +160,55 @@ describe('event-history routes', () => {
       const res = await app.inject({ method: 'DELETE', url: '/api/event-history' });
 
       expect(res.statusCode).toBe(500);
+    });
+  });
+
+  describe('GET /api/event-history — comma-separated eventType', () => {
+    it('passes comma-separated eventType as parsed array to service', async () => {
+      (services.eventHistory.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/event-history?eventType=download_failed,import_failed' });
+
+      expect(services.eventHistory.getAll).toHaveBeenCalledWith(
+        { eventType: ['download_failed', 'import_failed'], search: undefined },
+        { limit: 50, offset: undefined },
+      );
+    });
+
+    it('rejects invalid type in comma list with 400', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/event-history?eventType=grabbed,invalid_type' });
+
+      expect(res.statusCode).toBe(400);
+      expect(services.eventHistory.getAll).not.toHaveBeenCalled();
+    });
+
+    it('passes single eventType as single-element array to service', async () => {
+      (services.eventHistory.getAll as Mock).mockResolvedValue({ data: [], total: 0 });
+
+      await app.inject({ method: 'GET', url: '/api/event-history?eventType=grabbed' });
+
+      expect(services.eventHistory.getAll).toHaveBeenCalledWith(
+        { eventType: ['grabbed'], search: undefined },
+        { limit: 50, offset: undefined },
+      );
+    });
+  });
+
+  describe('DELETE /api/event-history (bulk) — comma-separated eventType', () => {
+    it('passes comma-separated eventType as parsed array to service', async () => {
+      (services.eventHistory.deleteAll as Mock).mockResolvedValue(3);
+
+      const res = await app.inject({ method: 'DELETE', url: '/api/event-history?eventType=download_failed,import_failed,merge_failed' });
+
+      expect(res.statusCode).toBe(200);
+      expect(services.eventHistory.deleteAll).toHaveBeenCalledWith({ eventType: ['download_failed', 'import_failed', 'merge_failed'] });
+    });
+
+    it('rejects invalid type in comma list with 400', async () => {
+      const res = await app.inject({ method: 'DELETE', url: '/api/event-history?eventType=download_failed,invalid' });
+
+      expect(res.statusCode).toBe(400);
+      expect(services.eventHistory.deleteAll).not.toHaveBeenCalled();
     });
   });
 
