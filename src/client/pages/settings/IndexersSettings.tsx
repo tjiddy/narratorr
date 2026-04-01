@@ -50,6 +50,7 @@ export function IndexersSettings() {
           mode="create"
           onSubmit={handlers.onSubmit}
           onFormTest={handlers.onFormTest}
+          onCancel={handlers.onCancel}
           isPending={handlers.isPending}
           testingForm={handlers.testingForm}
           formTestResult={handlers.formTestResult}

@@ -93,7 +93,7 @@ describe('NotificationsSettings', () => {
     await user.selectOptions(typeSelect, 'discord');
     await user.type(screen.getByPlaceholderText('https://discord.com/api/webhooks/...'), 'https://discord.com/api/webhooks/999');
 
-    await user.click(screen.getByRole('button', { name: /Add Notifier/i }));
+    await user.click(screen.getByText('Add Notifier', { selector: 'button[type="submit"]' }));
 
     await waitFor(() => {
       expect(api.createNotifier).toHaveBeenCalled();
@@ -115,7 +115,7 @@ describe('NotificationsSettings', () => {
     await user.click(screen.getByText('Add Notifier').closest('button')!);
     await user.type(screen.getByPlaceholderText('My Webhook'), 'Fail');
     await user.type(screen.getByPlaceholderText('https://example.com/webhook'), 'https://example.com');
-    await user.click(screen.getByRole('button', { name: /Add Notifier/i }));
+    await user.click(screen.getByText('Add Notifier', { selector: 'button[type="submit"]' }));
 
     await assertErrorToast('Failed to add notifier');
   });
@@ -189,7 +189,7 @@ describe('NotificationsSettings', () => {
 
     await user.click(screen.getByText('Add Notifier').closest('button')!);
     await user.type(screen.getByPlaceholderText('https://example.com/webhook'), 'https://example.com');
-    await user.click(screen.getByRole('button', { name: /Add Notifier/i }));
+    await user.click(screen.getByText('Add Notifier', { selector: 'button[type="submit"]' }));
 
     await waitFor(() => {
       expect(screen.getByText('Name is required')).toBeInTheDocument();
@@ -204,7 +204,7 @@ describe('NotificationsSettings', () => {
 
     await user.click(screen.getByText('Add Notifier').closest('button')!);
     await user.type(screen.getByPlaceholderText('My Webhook'), 'Test');
-    await user.click(screen.getByRole('button', { name: /Add Notifier/i }));
+    await user.click(screen.getByText('Add Notifier', { selector: 'button[type="submit"]' }));
 
     await waitFor(() => {
       expect(screen.getByText('URL is required')).toBeInTheDocument();

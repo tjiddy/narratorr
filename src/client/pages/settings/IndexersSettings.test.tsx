@@ -96,7 +96,7 @@ describe('IndexersSettings', () => {
     await user.click(screen.getByText('Add Indexer').closest('button')!);
     await user.type(screen.getByPlaceholderText('AudioBookBay'), 'New Indexer');
     await user.type(screen.getByPlaceholderText('audiobookbay.lu'), 'example.com');
-    await user.click(screen.getByRole('button', { name: /Add Indexer/i }));
+    await user.click(screen.getByText('Add Indexer', { selector: 'button[type="submit"]' }));
 
     await waitFor(() => {
       expect(api.createIndexer).toHaveBeenCalled();
@@ -121,7 +121,7 @@ describe('IndexersSettings', () => {
     await user.click(screen.getByText('Add Indexer').closest('button')!);
     await user.type(screen.getByPlaceholderText('AudioBookBay'), 'Fail');
     await user.type(screen.getByPlaceholderText('audiobookbay.lu'), 'example.com');
-    await user.click(screen.getByRole('button', { name: /Add Indexer/i }));
+    await user.click(screen.getByText('Add Indexer', { selector: 'button[type="submit"]' }));
 
     await assertErrorToast('Failed to add indexer');
   });
@@ -207,7 +207,7 @@ describe('IndexersSettings', () => {
 
     await user.click(screen.getByText('Add Indexer').closest('button')!);
     await user.type(screen.getByPlaceholderText('audiobookbay.lu'), 'example.com');
-    await user.click(screen.getByRole('button', { name: /Add Indexer/i }));
+    await user.click(screen.getByText('Add Indexer', { selector: 'button[type="submit"]' }));
 
     await waitFor(() => {
       expect(screen.getByText('Name is required')).toBeInTheDocument();
@@ -222,7 +222,7 @@ describe('IndexersSettings', () => {
 
     await user.click(screen.getByText('Add Indexer').closest('button')!);
     await user.type(screen.getByPlaceholderText('AudioBookBay'), 'Test');
-    await user.click(screen.getByRole('button', { name: /Add Indexer/i }));
+    await user.click(screen.getByText('Add Indexer', { selector: 'button[type="submit"]' }));
 
     await waitFor(() => {
       expect(screen.getByText('Hostname is required')).toBeInTheDocument();
