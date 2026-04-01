@@ -104,6 +104,24 @@ describe('ManualAddForm', () => {
       });
     });
 
+    // #287 — seriesPosition "0" regression coverage
+    it('converts series position "0" to number 0, not undefined', async () => {
+      const user = userEvent.setup();
+      (api.addBook as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, title: 'Test' });
+      renderForm();
+
+      await user.type(screen.getByLabelText(/title/i), 'Test Book');
+      const positionInput = screen.getByLabelText(/position/i);
+      fireEvent.change(positionInput, { target: { value: '0' } });
+      await user.click(screen.getByRole('button', { name: /add book/i }));
+
+      await waitFor(() => {
+        expect(api.addBook).toHaveBeenCalledWith(expect.objectContaining({
+          seriesPosition: 0,
+        }));
+      });
+    });
+
     it('submits successfully with title only', async () => {
       const user = userEvent.setup();
       (api.addBook as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 1, title: 'Shogun' });
