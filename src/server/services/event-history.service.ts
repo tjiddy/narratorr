@@ -1,4 +1,4 @@
-import { eq, desc, like, and, lt, count as countFn } from 'drizzle-orm';
+import { eq, desc, like, and, lt, count as countFn, inArray } from 'drizzle-orm';
 import type { Db } from '../../db/index.js';
 import type { FastifyBaseLogger } from 'fastify';
 import { bookEvents, downloads } from '../../db/schema.js';
@@ -62,13 +62,17 @@ export class EventHistoryService {
   }
 
   async getAll(
-    filters?: { eventType?: string; search?: string },
+    filters?: { eventType?: EventType[]; search?: string },
     pagination?: { limit?: number; offset?: number },
   ): Promise<{ data: BookEventRow[]; total: number }> {
     const conditions = [];
 
-    if (filters?.eventType) {
-      conditions.push(eq(bookEvents.eventType, filters.eventType as EventType));
+    if (filters?.eventType && filters.eventType.length > 0) {
+      conditions.push(
+        filters.eventType.length === 1
+          ? eq(bookEvents.eventType, filters.eventType[0])
+          : inArray(bookEvents.eventType, filters.eventType),
+      );
     }
 
     if (filters?.search) {
@@ -137,10 +141,13 @@ export class EventHistoryService {
     return true;
   }
 
-  async deleteAll(filters?: { eventType?: string }): Promise<number> {
-    const where = filters?.eventType
-      ? eq(bookEvents.eventType, filters.eventType as EventType)
-      : undefined;
+  async deleteAll(filters?: { eventType?: EventType[] }): Promise<number> {
+    let where;
+    if (filters?.eventType && filters.eventType.length > 0) {
+      where = filters.eventType.length === 1
+        ? eq(bookEvents.eventType, filters.eventType[0])
+        : inArray(bookEvents.eventType, filters.eventType);
+    }
     const deleted = await this.db.delete(bookEvents).where(where).returning();
     this.log.info({ count: deleted.length, eventType: filters?.eventType ?? 'all' }, 'Events bulk deleted');
     return deleted.length;

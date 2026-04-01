@@ -67,7 +67,7 @@ describe('EventHistoryService', () => {
         .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
         .mockReturnValueOnce(mockDbChain([createMockDbBookEvent()]));
 
-      const result = await service.getAll({ eventType: 'grabbed' });
+      const result = await service.getAll({ eventType: ['grabbed'] });
       expect(result.data).toHaveLength(1);
       expect(result.total).toBe(1);
     });
@@ -86,7 +86,7 @@ describe('EventHistoryService', () => {
         .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
         .mockReturnValueOnce(mockDbChain([createMockDbBookEvent()]));
 
-      const result = await service.getAll({ eventType: 'grabbed', search: 'Kings' });
+      const result = await service.getAll({ eventType: ['grabbed'], search: 'Kings' });
       expect(result.data).toHaveLength(1);
     });
 
@@ -452,7 +452,7 @@ describe('EventHistoryService', () => {
       ]);
       db.delete.mockReturnValue(chain);
 
-      const result = await service.deleteAll({ eventType: 'download_failed' });
+      const result = await service.deleteAll({ eventType: ['download_failed'] });
 
       expect(result).toBe(1);
       expect(db.delete).toHaveBeenCalled();
@@ -472,9 +472,107 @@ describe('EventHistoryService', () => {
     it('returns 0 when no matching events', async () => {
       db.delete.mockReturnValue(mockDbChain([]));
 
-      const result = await service.deleteAll({ eventType: 'download_failed' });
+      const result = await service.deleteAll({ eventType: ['download_failed'] });
 
       expect(result).toBe(0);
+    });
+  });
+
+  describe('getAll — multi-type eventTypes filter', () => {
+    it('filters by single-element eventTypes array using eq()', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBookEvent({ eventType: 'grabbed' })]));
+
+      const result = await service.getAll({ eventType: ['grabbed'] });
+      expect(result.data).toHaveLength(1);
+
+      // Verify eq() was used (= operator)
+      const whereFn = db.select.mock.results[1].value.from.mock.results[0].value.where as ReturnType<typeof vi.fn>;
+      const predicate = whereFn.mock.calls[0][0];
+      const operatorChunk = predicate.queryChunks[2];
+      expect(operatorChunk.value[0]).toBe(' = ');
+    });
+
+    it('filters by multi-element eventTypes array using inArray()', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 2 }]))
+        .mockReturnValueOnce(mockDbChain([
+          createMockDbBookEvent({ eventType: 'download_failed' }),
+          createMockDbBookEvent({ id: 2, eventType: 'import_failed' }),
+        ]));
+
+      const result = await service.getAll({ eventType: ['download_failed', 'import_failed'] });
+      expect(result.data).toHaveLength(2);
+
+      // Verify inArray() was used (IN operator)
+      const whereFn = db.select.mock.results[1].value.from.mock.results[0].value.where as ReturnType<typeof vi.fn>;
+      const predicate = whereFn.mock.calls[0][0];
+      const operatorChunk = predicate.queryChunks[2];
+      expect(operatorChunk.value[0]).toBe(' in ');
+    });
+
+    it('combines multi-type eventTypes filter with search filter', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 1 }]))
+        .mockReturnValueOnce(mockDbChain([createMockDbBookEvent()]));
+
+      const result = await service.getAll({ eventType: ['download_failed', 'import_failed'], search: 'Kings' });
+      expect(result.data).toHaveLength(1);
+    });
+
+    it('returns correct total count with multi-type filter', async () => {
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 5 }]))
+        .mockReturnValueOnce(mockDbChain([]));
+
+      const result = await service.getAll({ eventType: ['download_failed', 'import_failed'] });
+      expect(result.total).toBe(5);
+    });
+  });
+
+  describe('deleteAll — multi-type eventTypes filter', () => {
+    it('deletes matching events with single-element eventTypes array using eq()', async () => {
+      const chain = mockDbChain([createMockDbBookEvent({ eventType: 'download_failed' })]);
+      db.delete.mockReturnValue(chain);
+
+      const result = await service.deleteAll({ eventType: ['download_failed'] });
+      expect(result).toBe(1);
+
+      // Verify eq() was used (= operator)
+      const whereFn = chain.where as ReturnType<typeof vi.fn>;
+      const predicate = whereFn.mock.calls[0][0];
+      const operatorChunk = predicate.queryChunks[2];
+      expect(operatorChunk.value[0]).toBe(' = ');
+    });
+
+    it('deletes matching events with multi-element eventTypes array using inArray()', async () => {
+      const chain = mockDbChain([
+        createMockDbBookEvent({ eventType: 'download_failed' }),
+        createMockDbBookEvent({ id: 2, eventType: 'import_failed' }),
+      ]);
+      db.delete.mockReturnValue(chain);
+
+      const result = await service.deleteAll({ eventType: ['download_failed', 'import_failed'] });
+      expect(result).toBe(2);
+
+      // Verify inArray() was used (IN operator)
+      const whereFn = chain.where as ReturnType<typeof vi.fn>;
+      const predicate = whereFn.mock.calls[0][0];
+      const operatorChunk = predicate.queryChunks[2];
+      expect(operatorChunk.value[0]).toBe(' in ');
+    });
+
+    it('returns correct count when deleting multiple types', async () => {
+      const chain = mockDbChain([
+        createMockDbBookEvent({ id: 1 }),
+        createMockDbBookEvent({ id: 2 }),
+        createMockDbBookEvent({ id: 3 }),
+      ]);
+      db.delete.mockReturnValue(chain);
+
+      const result = await service.deleteAll({ eventType: ['download_failed', 'import_failed', 'merge_failed'] });
+      expect(result).toBe(3);
     });
   });
 
