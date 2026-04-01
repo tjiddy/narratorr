@@ -5,12 +5,22 @@ interface SelectWithChevronProps extends React.SelectHTMLAttributes<HTMLSelectEl
   id: string;
   label?: string;
   error?: boolean;
+  variant?: 'default' | 'compact';
   children?: ReactNode;
 }
 
 export const SelectWithChevron = forwardRef<HTMLSelectElement, SelectWithChevronProps>(
-  function SelectWithChevron({ id, label, error, children, className, ...selectProps }, ref) {
+  function SelectWithChevron({ id, label, error, variant = 'default', children, className, ...selectProps }, ref) {
+    const isCompact = variant === 'compact';
     const borderClass = error ? 'border-destructive' : 'border-border';
+
+    const selectClass = isCompact
+      ? `appearance-none glass-card rounded-lg pl-3 pr-7 font-medium text-foreground focus-ring cursor-pointer${className ? ` ${className}` : ''}`
+      : `w-full appearance-none px-4 py-3 pr-10 bg-background border ${borderClass} rounded-xl text-sm focus-ring cursor-pointer${className ? ` ${className}` : ''}`;
+
+    const chevronClass = isCompact
+      ? 'absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none'
+      : 'absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none';
 
     return (
       <div>
@@ -21,12 +31,12 @@ export const SelectWithChevron = forwardRef<HTMLSelectElement, SelectWithChevron
           <select
             id={id}
             ref={ref}
-            className={`w-full appearance-none px-4 py-3 pr-10 bg-background border ${borderClass} rounded-xl text-sm focus-ring cursor-pointer${className ? ` ${className}` : ''}`}
+            className={selectClass}
             {...selectProps}
           >
             {children}
           </select>
-          <ChevronDownIcon className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+          <ChevronDownIcon className={chevronClass} />
         </div>
       </div>
     );
