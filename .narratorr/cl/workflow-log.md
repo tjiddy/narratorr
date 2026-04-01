@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #264 Move add-form Cancel button from page header to action row — 2026-04-01
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #273
+
+### Metrics
+- Files changed: 12 | Tests added/modified: 6 test files (8 new tests, updated selectors in 4 files)
+- Quality gate runs: 2 (pass on attempt 1 both times)
+- Fix iterations: 0
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean TDD cycle — each module had clear boundaries. SettingsFormActions was a one-line change, CrudSettingsPage was straightforward, settings pages were mechanical wiring.
+- Friction / issues encountered: Test selector disambiguation was the main surprise. Changing the header from toggle text ("Cancel"/"Add X") to always-visible disabled "Add X" caused `getByRole('button', { name: /Add X/i })` to match two buttons (header + submit). Required systematic replacement across 4 test files with `getByText('X', { selector: 'button[type="submit"]' })`.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for planning (read many files), coverage review subagent
+- Avoidable waste: None significant — the spec had 3 rounds of review before implementation which front-loaded all the complexity
+- Suggestions: For future "disabled header" patterns, pre-check test files for button name selectors that will collide
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available — skipped design pass
+- Unresolved debt: None new
+
+### Wish I'd Known
+1. Changing a header button from text-toggling to always-visible-disabled creates a blast radius in test selectors — every `getByRole('button', { name: /X/ })` that matched only one button now matches two. See `disabled-always-visible-header-button-blast-radius.md`.
+2. `getByText('X', { selector: 'button[type="submit"]' })` is the established pattern in this codebase for disambiguating submit buttons from same-text header buttons (existed in ImportListsSettingsSection.test.tsx:507). See `header-button-disambiguation-in-tests.md`.
+3. The `assertToggleAddForm` helper in crud-settings-helpers.ts didn't need updating — `screen.getByText('Cancel').closest('button')!` still works because there's only one Cancel button on screen at a time (moved from header to form action row).
+
 ## #263 Download client setup — path mappings on create, remove redundant downloadRoot — 2026-04-01
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #271
