@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import type { IndexerAdapter, SearchResult, SearchOptions } from './types.js';
 import { fetchWithProxy } from './fetch.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
+import { normalizeLanguage } from '../utils/language-codes.js';
 
 export interface NewznabConfig {
   apiUrl: string; // e.g., 'https://nzbgeek.info'
@@ -38,6 +39,7 @@ export class NewznabIndexer implements IndexerAdapter {
       apikey: this.apiKey,
       cat: AUDIOBOOK_CATEGORY,
       limit: String(limit),
+      attrs: 'grabs,language,group,files',
     });
 
     if (options?.author) {
@@ -143,6 +145,8 @@ export class NewznabIndexer implements IndexerAdapter {
           ? Number(attrs.size)
           : Number($item.find('enclosure').attr('length')) || undefined;
 
+      const grabsNum = attrs.grabs != null ? Number(attrs.grabs) : undefined;
+
       results.push({
         title,
         protocol: 'usenet',
@@ -150,7 +154,9 @@ export class NewznabIndexer implements IndexerAdapter {
         detailsUrl,
         guid: guidText,
         size: size || undefined,
-        grabs: attrs.grabs != null ? Number(attrs.grabs) : undefined,
+        grabs: grabsNum != null && !Number.isNaN(grabsNum) ? grabsNum : undefined,
+        language: normalizeLanguage(attrs.language),
+        newsgroup: attrs.group || undefined,
         indexer: this.name,
       });
     });
