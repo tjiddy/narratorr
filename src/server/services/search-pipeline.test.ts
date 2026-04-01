@@ -344,26 +344,115 @@ describe('filterAndRankResults — minSeeders default', () => {
 });
 
 describe('canonicalCompare — grabs tiebreaker (#272)', () => {
-  it.todo('higher grabs wins when matchScore, MB/hr, protocol, and language are equal');
-  it.todo('title similarity (matchScore > 0.1 diff) beats grabs');
-  it.todo('MB/hr quality beats grabs');
-  it.todo('grabs=undefined on one result, grabs=1000 on other → result with grabs wins');
-  it.todo('both grabs=undefined → falls through to seeders tiebreaker');
-  it.todo('Math.log10(grabs+1) normalization: 10 vs 100 grabs produces meaningful difference');
-  it.todo('Math.log10(grabs+1) normalization: 5000 vs 10000 grabs produces small difference');
-  it.todo('grabs=0 → Math.log10(1)=0, lowest-popularity, not treated as missing');
+  it('higher grabs wins when matchScore, MB/hr, protocol, and language are equal', () => {
+    const a = makeResult({ matchScore: 0.9, grabs: 1000, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, grabs: 100, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, '');
+    expect(results[0].grabs).toBe(1000);
+    expect(results[1].grabs).toBe(100);
+  });
+
+  it('title similarity (matchScore > 0.1 diff) beats grabs', () => {
+    const a = makeResult({ matchScore: 0.9, grabs: 10 });
+    const b = makeResult({ matchScore: 0.5, grabs: 10000 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, '');
+    expect(results[0].matchScore).toBe(0.9);
+  });
+
+  it('MB/hr quality beats grabs', () => {
+    // a has better MB/hr, b has better grabs
+    const a = makeResult({ matchScore: 0.9, size: 1000 * 1024 * 1024, grabs: 10, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, size: 100 * 1024 * 1024, grabs: 10000, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], 3600, 0, 0, 'none', undefined, undefined, '');
+    expect(results[0].grabs).toBe(10); // higher MB/hr wins
+  });
+
+  it('grabs=undefined on one result, grabs=1000 on other → result with grabs wins', () => {
+    const a = makeResult({ matchScore: 0.9, grabs: 1000, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, grabs: undefined, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, '');
+    expect(results[0].grabs).toBe(1000);
+  });
+
+  it('both grabs=undefined → falls through to seeders tiebreaker', () => {
+    const a = makeResult({ matchScore: 0.9, grabs: undefined, seeders: 20 });
+    const b = makeResult({ matchScore: 0.9, grabs: undefined, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, '');
+    expect(results[0].seeders).toBe(20);
+  });
+
+  it('Math.log10(grabs+1) normalization: 10 vs 100 grabs produces meaningful difference', () => {
+    // log10(11) ≈ 1.04, log10(101) ≈ 2.00 → clear separation
+    const a = makeResult({ matchScore: 0.9, grabs: 100, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, grabs: 10, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, '');
+    expect(results[0].grabs).toBe(100);
+    expect(results[1].grabs).toBe(10);
+  });
+
+  it('grabs=0 → Math.log10(1)=0, lowest-popularity, not treated as missing', () => {
+    const a = makeResult({ matchScore: 0.9, grabs: 100, seeders: 5 });
+    const b = makeResult({ matchScore: 0.9, grabs: 0, seeders: 5 });
+    const { results } = filterAndRankResults([b, a], undefined, 0, 0, 'none', undefined, undefined, '');
+    expect(results[0].grabs).toBe(100);
+    expect(results[1].grabs).toBe(0);
+  });
 });
 
 describe('canonicalCompare — language tier (#272)', () => {
-  it.todo('language mismatch ranks below matching-language result within same tier');
-  it.todo('language mismatch ranks below unknown-language result (absence ≠ mismatch)');
-  it.todo('result with no language field → no penalty applied');
-  it.todo('language tier does not cross 0.1 matchScore gate (title similarity wins)');
-  it.todo('preferredLanguage="" (default) → no language penalty applied to any result');
-  it.todo('language match ranks equal to unknown-language result');
+  it('language mismatch ranks below matching-language result within same tier', () => {
+    const match = makeResult({ matchScore: 0.9, language: 'english', seeders: 5 });
+    const mismatch = makeResult({ matchScore: 0.9, language: 'german', seeders: 5 });
+    const { results } = filterAndRankResults([mismatch, match], undefined, 0, 0, 'none', undefined, undefined, 'english');
+    expect(results[0].language).toBe('english');
+    expect(results[1].language).toBe('german');
+  });
+
+  it('language mismatch ranks below unknown-language result (absence ≠ mismatch)', () => {
+    const unknown = makeResult({ matchScore: 0.9, language: undefined, seeders: 5, title: 'Unknown' });
+    const mismatch = makeResult({ matchScore: 0.9, language: 'german', seeders: 5, title: 'German' });
+    const { results } = filterAndRankResults([mismatch, unknown], undefined, 0, 0, 'none', undefined, undefined, 'english');
+    expect(results[0].language).toBeUndefined();
+    expect(results[1].language).toBe('german');
+  });
+
+  it('result with no language field → no penalty applied', () => {
+    const noLang = makeResult({ matchScore: 0.9, seeders: 10, title: 'No Lang' });
+    const withLang = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, title: 'With Lang' });
+    const { results } = filterAndRankResults([withLang, noLang], undefined, 0, 0, 'none', undefined, undefined, 'english');
+    // Both are "non-mismatch" so go to next tiebreaker (grabs then seeders)
+    expect(results[0].seeders).toBe(10); // higher seeders wins as tiebreaker
+  });
+
+  it('language tier does not cross 0.1 matchScore gate (title similarity wins)', () => {
+    const highScore = makeResult({ matchScore: 0.9, language: 'german', seeders: 5 });
+    const lowScore = makeResult({ matchScore: 0.5, language: 'english', seeders: 5 });
+    const { results } = filterAndRankResults([lowScore, highScore], undefined, 0, 0, 'none', undefined, undefined, 'english');
+    expect(results[0].matchScore).toBe(0.9); // higher title match wins despite language mismatch
+  });
+
+  it('preferredLanguage="" (default) → no language penalty applied to any result', () => {
+    const german = makeResult({ matchScore: 0.9, language: 'german', seeders: 10, title: 'German' });
+    const english = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, title: 'English' });
+    const { results } = filterAndRankResults([english, german], undefined, 0, 0, 'none', undefined, undefined, '');
+    // No language preference → falls through to grabs/seeders
+    expect(results[0].seeders).toBe(10);
+  });
+
+  it('language match ranks equal to unknown-language result', () => {
+    const match = makeResult({ matchScore: 0.9, language: 'english', seeders: 5, title: 'Match' });
+    const unknown = makeResult({ matchScore: 0.9, language: undefined, seeders: 10, title: 'Unknown' });
+    const { results } = filterAndRankResults([match, unknown], undefined, 0, 0, 'none', undefined, undefined, 'english');
+    // Both are non-mismatch → tiebreaker is grabs/seeders (unknown has more seeders)
+    expect(results[0].seeders).toBe(10);
+  });
 });
 
 describe('filterAndRankResults — preferredLanguage param (#272)', () => {
-  it.todo('passes preferredLanguage through to canonicalCompare');
-  it.todo('auto-search selects higher-grabs result when title scores are equal');
+  it('auto-search selects higher-grabs result when title scores are equal', () => {
+    const popular = makeResult({ matchScore: 0.9, grabs: 5000, seeders: 5, title: 'Popular' });
+    const niche = makeResult({ matchScore: 0.9, grabs: 50, seeders: 5, title: 'Niche' });
+    const { results } = filterAndRankResults([niche, popular], undefined, 0, 0, 'none', undefined, undefined, '');
+    expect(results[0].title).toBe('Popular');
+  });
 });

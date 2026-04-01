@@ -11,15 +11,17 @@ export function buildSearchQuery(book: { title: string; authors?: Array<{ name: 
 }
 
 /**
- * Canonical ranking comparator: matchScore gate → MB/hr → protocol preference → seeders.
+ * Canonical ranking comparator:
+ * matchScore gate → MB/hr → protocol preference → language → grabs → seeders.
  */
-// eslint-disable-next-line complexity -- 4-tier sort with null coalescing inflates counted branches
+// eslint-disable-next-line complexity -- 6-tier sort with null coalescing inflates counted branches
 function canonicalCompare(
   a: SearchResult,
   b: SearchResult,
   bookDuration: number | undefined,
   durationUnknown: boolean,
   protocolPreference: string,
+  preferredLanguage: string,
 ): number {
   const scoreA = a.matchScore ?? 0;
   const scoreB = b.matchScore ?? 0;
@@ -40,6 +42,18 @@ function canonicalCompare(
     const prefB = b.protocol === protocolPreference ? 1 : 0;
     if (prefA !== prefB) return prefB - prefA;
   }
+
+  // Language tier: mismatch ranks below match/unknown (absence ≠ mismatch)
+  if (preferredLanguage) {
+    const aMatch = !a.language || a.language === preferredLanguage ? 1 : 0;
+    const bMatch = !b.language || b.language === preferredLanguage ? 1 : 0;
+    if (aMatch !== bMatch) return bMatch - aMatch;
+  }
+
+  // Grabs tier: log-scale normalization
+  const grabsA = Math.log10((a.grabs ?? 0) + 1);
+  const grabsB = Math.log10((b.grabs ?? 0) + 1);
+  if (grabsA !== grabsB) return grabsB - grabsA;
 
   return (b.seeders ?? 0) - (a.seeders ?? 0);
 }
@@ -63,6 +77,7 @@ export function filterAndRankResults(
   protocolPreference: string,
   rejectWords?: string,
   requiredWords?: string,
+  preferredLanguage?: string,
 ): { results: SearchResult[]; durationUnknown: boolean } {
   const durationUnknown = !bookDuration || bookDuration <= 0;
 
@@ -118,7 +133,7 @@ export function filterAndRankResults(
   }
 
   // Canonical ranking
-  filtered.sort((a, b) => canonicalCompare(a, b, bookDuration, durationUnknown, protocolPreference));
+  filtered.sort((a, b) => canonicalCompare(a, b, bookDuration, durationUnknown, protocolPreference, preferredLanguage ?? ''));
 
   return { results: filtered, durationUnknown };
 }
@@ -137,7 +152,7 @@ export async function searchAndGrabForBook(
   book: { id: number; title: string; duration?: number | null; authors?: Array<{ name: string }> | null },
   indexerService: IndexerService,
   downloadOrchestrator: DownloadOrchestrator,
-  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string },
+  qualitySettings: { grabFloor: number; minSeeders: number; protocolPreference: string; rejectWords?: string; requiredWords?: string; preferredLanguage?: string },
   log: FastifyBaseLogger,
 ): Promise<SingleBookSearchResult> {
   const query = buildSearchQuery(book);
@@ -161,6 +176,7 @@ export async function searchAndGrabForBook(
     qualitySettings.protocolPreference,
     qualitySettings.rejectWords,
     qualitySettings.requiredWords,
+    qualitySettings.preferredLanguage,
   );
 
   const best = results.find((r) => r.downloadUrl);
