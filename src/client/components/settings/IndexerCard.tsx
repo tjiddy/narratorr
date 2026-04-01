@@ -167,16 +167,18 @@ export function IndexerCard(props: IndexerCardProps) {
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField id="indexerName" label="Name" registration={register('name')} error={errors.name} placeholder={INDEXER_REGISTRY[selectedType]?.label} readOnly={isProwlarrManaged} />
 
-        <SelectWithChevron id="indexerType" label="Type" {...register('type')} error={!!errors.type}>
-          {indexerTypeSchema.options.map((t) => (
-            <option key={t} value={t}>
-              {INDEXER_REGISTRY[t]?.label || t}
-            </option>
-          ))}
-        </SelectWithChevron>
-        {selectedType === 'abb' && (
-          <p className="text-sm text-muted-foreground sm:col-span-2 -mt-2">Large library, but slower and less reliable than other indexers</p>
-        )}
+        <div>
+          <SelectWithChevron id="indexerType" label="Type" {...register('type')} error={!!errors.type}>
+            {indexerTypeSchema.options.map((t) => (
+              <option key={t} value={t}>
+                {INDEXER_REGISTRY[t]?.label || t}
+              </option>
+            ))}
+          </SelectWithChevron>
+          {selectedType === 'abb' && (
+            <p className="text-sm text-muted-foreground mt-1">Large library, but slower and less reliable than other indexers</p>
+          )}
+        </div>
 
         {isEdit && (
           <>
