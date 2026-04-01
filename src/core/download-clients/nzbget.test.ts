@@ -759,7 +759,7 @@ describe('NZBGetClient', () => {
         }),
       );
 
-      await expect(client.getAllDownloads()).rejects.toThrow('NZBGet RPC error');
+      await expect(client.getAllDownloads()).rejects.toThrow('NZBGet RPC error: JSONRPCError (code 0)');
     });
 
     it('Zod schema rejects legacy string error format', async () => {
