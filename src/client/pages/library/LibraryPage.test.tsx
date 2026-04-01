@@ -2166,6 +2166,10 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
         for (const cardAfter of cardsAfter) {
           expect(cardsBefore).not.toContain(cardAfter);
         }
+        // Remounted cards have correct stagger animation delays
+        cardsAfter.forEach((card, index) => {
+          expect(card).toHaveStyle({ animationDelay: `${Math.min(index, 9) * 50}ms` });
+        });
       });
     });
 
