@@ -89,6 +89,91 @@ describe('download-clients routes', () => {
     });
   });
 
+  // ===== #263 — create with pathMappings =====
+
+  describe('POST /api/download-clients with pathMappings', () => {
+    it('creates client with path mappings and returns 201', async () => {
+      (services.downloadClient.create as Mock).mockResolvedValue(mockClient);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients',
+        payload: {
+          name: 'qBittorrent',
+          type: 'qbittorrent',
+          enabled: true,
+          priority: 50,
+          settings: { host: 'localhost', port: 8080 },
+          pathMappings: [{ remotePath: '/remote/downloads', localPath: '/local/downloads' }],
+        },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(services.downloadClient.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pathMappings: [{ remotePath: '/remote/downloads', localPath: '/local/downloads' }],
+        }),
+      );
+    });
+
+    it('creates client only when pathMappings is empty array', async () => {
+      (services.downloadClient.create as Mock).mockResolvedValue(mockClient);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients',
+        payload: {
+          name: 'qBittorrent',
+          type: 'qbittorrent',
+          enabled: true,
+          priority: 50,
+          settings: { host: 'localhost', port: 8080 },
+          pathMappings: [],
+        },
+      });
+
+      expect(res.statusCode).toBe(201);
+      expect(services.downloadClient.create).toHaveBeenCalledWith(
+        expect.objectContaining({ pathMappings: [] }),
+      );
+    });
+
+    it('creates client only when pathMappings is omitted', async () => {
+      (services.downloadClient.create as Mock).mockResolvedValue(mockClient);
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients',
+        payload: {
+          name: 'qBittorrent',
+          type: 'qbittorrent',
+          enabled: true,
+          priority: 50,
+          settings: { host: 'localhost', port: 8080 },
+        },
+      });
+
+      expect(res.statusCode).toBe(201);
+    });
+
+    it('returns 400 for invalid pathMappings entries', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/download-clients',
+        payload: {
+          name: 'qBittorrent',
+          type: 'qbittorrent',
+          enabled: true,
+          priority: 50,
+          settings: { host: 'localhost', port: 8080 },
+          pathMappings: [{ remotePath: '', localPath: '/local' }],
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+  });
+
   describe('PUT /api/download-clients/:id', () => {
     it('updates client when found', async () => {
       (services.downloadClient.update as Mock).mockResolvedValue(mockClient);

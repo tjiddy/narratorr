@@ -1274,7 +1274,7 @@ describe('monitor job', () => {
       expect(setCalls).toContainEqual(expect.objectContaining({ outputPath: '/local/downloads/my-book' }));
     });
 
-    it('stores raw join(item.savePath, item.name) when remote path mapping fails', async () => {
+    it('skips outputPath persistence when remote path mapping lookup fails (#263 trust model)', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null, outputPath: null },
       ]));
@@ -1289,7 +1289,9 @@ describe('monitor job', () => {
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, undefined, remotePathMappingService as never);
 
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      expect(setCalls).toContainEqual(expect.objectContaining({ outputPath: '/downloads/my-book' }));
+      const progressUpdate = setCalls.find((c) => 'progress' in c);
+      expect(progressUpdate).toBeDefined();
+      expect(progressUpdate).not.toHaveProperty('outputPath');
     });
 
     it('does not overwrite outputPath when it is already set', async () => {
@@ -1320,6 +1322,76 @@ describe('monitor job', () => {
 
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
       expect(setCalls).toContainEqual(expect.objectContaining({ outputPath: '/downloads/my-book' }));
+    });
+  });
+
+  // ===== #263 — resolveOutputPath trust model hardening =====
+
+  describe('resolveOutputPath trust model', () => {
+    const baseDownload = { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null, outputPath: null };
+    const baseItem = { progress: 50, status: 'downloading', savePath: '/remote/downloads', name: 'my-book', size: 1000 };
+
+    it('returns mapped path when getByClientId returns mappings', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([baseDownload]));
+      adapter.getDownload.mockResolvedValueOnce(baseItem);
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      const remotePathMappingService = {
+        getByClientId: vi.fn().mockResolvedValue([{ remotePath: '/remote/downloads', localPath: '/local/downloads' }]),
+      };
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, undefined, remotePathMappingService as never);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ outputPath: '/local/downloads/my-book' }));
+    });
+
+    it('returns undefined when getByClientId throws (lookup failure)', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([baseDownload]));
+      adapter.getDownload.mockResolvedValueOnce(baseItem);
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      const remotePathMappingService = {
+        getByClientId: vi.fn().mockRejectedValue(new Error('DB unavailable')),
+      };
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, undefined, remotePathMappingService as never);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      // outputPath should NOT be set (undefined returned from resolveOutputPath)
+      const progressUpdate = setCalls.find((c) => 'progress' in c);
+      expect(progressUpdate).toBeDefined();
+      expect(progressUpdate).not.toHaveProperty('outputPath');
+    });
+
+    it('returns raw joined path when getByClientId returns empty array', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([baseDownload]));
+      adapter.getDownload.mockResolvedValueOnce(baseItem);
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      const remotePathMappingService = {
+        getByClientId: vi.fn().mockResolvedValue([]),
+      };
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, undefined, remotePathMappingService as never);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ outputPath: '/remote/downloads/my-book' }));
+    });
+
+    it('returns raw path when remotePathMappingService is undefined', async () => {
+      db.select.mockReturnValueOnce(mockDbChain([baseDownload]));
+      adapter.getDownload.mockResolvedValueOnce(baseItem);
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, undefined, undefined);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      expect(setCalls).toContainEqual(expect.objectContaining({ outputPath: '/remote/downloads/my-book' }));
     });
   });
 });

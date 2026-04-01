@@ -83,6 +83,85 @@ describe('DownloadClientService', () => {
     });
   });
 
+  // ===== #263 — createWithMappings =====
+
+  describe('createWithMappings', () => {
+    it('inserts client and all mappings in a transaction with correct row payload', async () => {
+      const mappingValuesArg = vi.fn();
+      const clientChain = mockDbChain([mockClient]);
+      const mappingChain = mockDbChain([]);
+      // Override values() on the mapping chain to capture the payload
+      mappingChain.values = vi.fn().mockImplementation((rows: unknown) => {
+        mappingValuesArg(rows);
+        return mappingChain;
+      });
+
+      const txInsert = vi.fn()
+        .mockReturnValueOnce(clientChain)   // first insert: client
+        .mockReturnValueOnce(mappingChain); // second insert: mappings
+      db.transaction.mockImplementation(async (fn: (tx: Record<string, unknown>) => Promise<unknown>) => {
+        return fn({ insert: txInsert });
+      });
+
+      const mappings = [
+        { remotePath: '/remote/a', localPath: '/local/a' },
+        { remotePath: '/remote/b', localPath: '/local/b' },
+      ];
+
+      const result = await service.createWithMappings({
+        name: 'qBittorrent',
+        type: 'qbittorrent',
+        enabled: true,
+        priority: 50,
+        settings: { host: 'localhost', port: 8080 },
+      }, mappings);
+
+      expect(result.name).toBe('qBittorrent');
+      expect(db.transaction).toHaveBeenCalled();
+      expect(txInsert).toHaveBeenCalledTimes(2);
+
+      // Verify mapping rows contain the created client's ID and exact path pairs
+      expect(mappingValuesArg).toHaveBeenCalledWith([
+        { downloadClientId: mockClient.id, remotePath: '/remote/a', localPath: '/local/a' },
+        { downloadClientId: mockClient.id, remotePath: '/remote/b', localPath: '/local/b' },
+      ]);
+    });
+
+    it('creates client only when pathMappings is empty array', async () => {
+      db.insert.mockReturnValue(mockDbChain([mockClient]));
+
+      const result = await service.createWithMappings({
+        name: 'qBittorrent',
+        type: 'qbittorrent',
+        enabled: true,
+        priority: 50,
+        settings: { host: 'localhost', port: 8080 },
+      }, []);
+
+      expect(result.name).toBe('qBittorrent');
+      // No transaction needed for empty mappings
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(db.insert).toHaveBeenCalled();
+    });
+
+    it('rolls back client insert when mapping insert fails', async () => {
+      const txInsert = vi.fn()
+        .mockReturnValueOnce(mockDbChain([mockClient])) // client insert succeeds
+        .mockReturnValueOnce({ values: vi.fn().mockImplementation(() => { throw new Error('mapping insert failed'); }) }); // mapping insert fails
+      db.transaction.mockImplementation(async (fn: (tx: Record<string, unknown>) => Promise<unknown>) => {
+        return fn({ insert: txInsert });
+      });
+
+      await expect(service.createWithMappings({
+        name: 'qBittorrent',
+        type: 'qbittorrent',
+        enabled: true,
+        priority: 50,
+        settings: { host: 'localhost', port: 8080 },
+      }, [{ remotePath: '/remote', localPath: '/local' }])).rejects.toThrow('mapping insert failed');
+    });
+  });
+
   describe('update', () => {
     it('updates and clears adapter cache', async () => {
       // Populate cache

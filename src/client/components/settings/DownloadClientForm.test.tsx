@@ -248,4 +248,105 @@ describe('DownloadClientForm (#201)', () => {
       });
     });
   });
+
+  // ===== #263 — path mappings in create mode =====
+
+  const mockOnSubmit = vi.fn();
+  const mockOnFormTest = vi.fn();
+  const mockClient = createMockDownloadClient();
+
+  describe('create mode path mappings', () => {
+    it('renders Remote Path Mappings section in create mode', () => {
+      renderWithProviders(
+        <DownloadClientForm mode="create" onSubmit={mockOnSubmit} onFormTest={mockOnFormTest} />,
+      );
+      expect(screen.getByText('Remote Path Mappings')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /add mapping/i })).toBeInTheDocument();
+    });
+
+    it('includes pathMappings in onSubmit payload', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <DownloadClientForm mode="create" onSubmit={mockOnSubmit} onFormTest={mockOnFormTest} />,
+      );
+
+      // Fill required fields (qbittorrent default requires name, host, port, username, password)
+      await user.type(screen.getByLabelText('Name'), 'Test Client');
+      await user.type(screen.getByLabelText('Host'), 'localhost');
+      await user.clear(screen.getByLabelText('Port'));
+      await user.type(screen.getByLabelText('Port'), '8080');
+      await user.type(screen.getByLabelText('Username'), 'admin');
+      await user.type(screen.getByLabelText('Password'), 'pass');
+
+      // Add a mapping
+      await user.click(screen.getByRole('button', { name: /add mapping/i }));
+      await user.type(screen.getByLabelText(/remote path/i), '/remote');
+      await user.type(screen.getByLabelText(/local path/i), '/local');
+      await user.click(screen.getByRole('button', { name: /^add$/i }));
+
+      // Submit form
+      await user.click(screen.getByRole('button', { name: /add client/i }));
+      await waitFor(() => {
+        expect(mockOnSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            pathMappings: [{ remotePath: '/remote', localPath: '/local' }],
+          }),
+        );
+      });
+    });
+
+    it('submits with empty pathMappings when no mappings added', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <DownloadClientForm mode="create" onSubmit={mockOnSubmit} onFormTest={mockOnFormTest} />,
+      );
+
+      // Fill required fields
+      await user.type(screen.getByLabelText('Name'), 'Test Client');
+      await user.type(screen.getByLabelText('Host'), 'localhost');
+      await user.clear(screen.getByLabelText('Port'));
+      await user.type(screen.getByLabelText('Port'), '8080');
+      await user.type(screen.getByLabelText('Username'), 'admin');
+      await user.type(screen.getByLabelText('Password'), 'pass');
+
+      await user.click(screen.getByRole('button', { name: /add client/i }));
+      await waitFor(() => {
+        expect(mockOnSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({ pathMappings: [] }),
+        );
+      });
+    });
+  });
+
+  describe('edit mode does not include pathMappings', () => {
+    it('onSubmit receives form data without pathMappings in edit mode', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <DownloadClientForm mode="edit" client={mockClient} onSubmit={mockOnSubmit} onFormTest={mockOnFormTest} onCancel={vi.fn()} />,
+      );
+
+      await user.click(screen.getByRole('button', { name: /save/i }));
+      await waitFor(() => {
+        expect(mockOnSubmit).toHaveBeenCalledWith(
+          expect.not.objectContaining({ pathMappings: expect.anything() }),
+        );
+      });
+    });
+  });
+
+  describe('downloadRoot field removal', () => {
+    it('does not render downloadRoot field in create mode', () => {
+      renderWithProviders(
+        <DownloadClientForm mode="create" onSubmit={mockOnSubmit} onFormTest={mockOnFormTest} />,
+      );
+      expect(screen.queryByText('Download Root')).not.toBeInTheDocument();
+    });
+
+    it('does not render downloadRoot field in edit mode', () => {
+      renderWithProviders(
+        <DownloadClientForm mode="edit" client={mockClient} onSubmit={mockOnSubmit} onFormTest={mockOnFormTest} onCancel={vi.fn()} />,
+      );
+      expect(screen.queryByText('Download Root')).not.toBeInTheDocument();
+    });
+  });
 });

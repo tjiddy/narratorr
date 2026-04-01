@@ -18,7 +18,7 @@ export interface CategoriesResult {
 
 export const downloadClientsApi = {
   getClients: () => fetchApi<DownloadClient[]>('/download-clients'),
-  createClient: (data: Omit<DownloadClient, 'id' | 'createdAt'>) =>
+  createClient: (data: Omit<DownloadClient, 'id' | 'createdAt'> & { pathMappings?: { remotePath: string; localPath: string }[] }) =>
     fetchApi<DownloadClient>('/download-clients', {
       method: 'POST',
       body: JSON.stringify(data),
