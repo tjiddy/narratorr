@@ -26,4 +26,5 @@ export { MatchJobService } from './match-job.service.js';
 export { TaskRegistry } from './task-registry.js';
 export { type RetrySearchDeps, retrySearch } from './retry-search.js';
 export { DiscoveryService, type LibrarySignals } from './discovery.service.js';
+export { BookRejectionService } from './book-rejection.service.js';
 export type { SuggestionReason } from '../../shared/schemas/discovery.js';

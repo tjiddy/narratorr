@@ -1559,11 +1559,41 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
   });
 
   describe('POST /api/books/:id/wrong-release', () => {
-    it.todo('returns 200 and calls bookRejectionService for imported book with identifiers');
-    it.todo('returns 400 when book status is not imported');
-    it.todo('returns 400 when book has no lastGrabGuid or lastGrabInfoHash');
-    it.todo('returns 404 when book does not exist');
-    it.todo('returns 200 when only lastGrabGuid is present (no lastGrabInfoHash)');
-    it.todo('returns 200 when only lastGrabInfoHash is present (no lastGrabGuid)');
+    it('returns 200 and calls bookRejectionService for imported book with identifiers', async () => {
+      (services.bookRejection.rejectAsWrongRelease as Mock).mockResolvedValue(undefined);
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/wrong-release' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload)).toEqual({ success: true });
+      expect(services.bookRejection.rejectAsWrongRelease).toHaveBeenCalledWith(1);
+    });
+
+    it('returns 400 when book status is not imported', async () => {
+      (services.bookRejection.rejectAsWrongRelease as Mock).mockRejectedValue(new Error('Book 1 is not imported (status: wanted)'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/wrong-release' });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toEqual({ error: expect.stringContaining('not imported') });
+    });
+
+    it('returns 400 when book has no lastGrabGuid or lastGrabInfoHash', async () => {
+      (services.bookRejection.rejectAsWrongRelease as Mock).mockRejectedValue(new Error('Book 1 has no release identifiers'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/wrong-release' });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload)).toEqual({ error: expect.stringContaining('no release identifiers') });
+    });
+
+    it('returns 404 when book does not exist', async () => {
+      (services.bookRejection.rejectAsWrongRelease as Mock).mockRejectedValue(new Error('Book 1 not found'));
+
+      const res = await app.inject({ method: 'POST', url: '/api/books/1/wrong-release' });
+
+      expect(res.statusCode).toBe(404);
+      expect(JSON.parse(res.payload)).toEqual({ error: expect.stringContaining('not found') });
+    });
   });
 });
