@@ -424,13 +424,16 @@ describe('createDownloadClientFormSchema — settings trim (#284)', () => {
     }
   });
 
-  it('whitespace-only optional settings fields produce empty string', () => {
+  it('whitespace-only optional settings fields produce empty string, not undefined', () => {
     const result = createDownloadClientFormSchema.safeParse({
       ...validBase,
-      settings: { host: '   ', port: 8080 },
+      settings: { host: 'localhost', port: 8080, category: '   ', watchDir: '   ', username: '   ' },
     });
-    // host is optional at schema level; superRefine requires it for qbittorrent
-    // but the trim itself should produce '' not undefined
-    expect(result.success).toBe(false); // superRefine rejects empty host
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.settings.category).toBe('');
+      expect(result.data.settings.watchDir).toBe('');
+      expect(result.data.settings.username).toBe('');
+    }
   });
 });
