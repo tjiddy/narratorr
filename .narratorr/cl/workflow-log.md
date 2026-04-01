@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #260 Redesign event history filters — intent-based groups, full event coverage — 2026-04-01
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #276
+
+### Metrics
+- Files changed: 11 | Tests added/modified: 33
+- Quality gate runs: 2 (pass on attempt 2 — first failed on ActivityPage test collision)
+- Fix iterations: 2 (ActivityPage button name collision, typecheck string→array remnant)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Clean 4-module TDD cycle (schema → service → routes → frontend). Schema transform at Zod level meant routes needed minimal changes — just type annotations.
+- Friction / issues encountered: First verify failed because renaming filter chips to "Downloads" collided with the tab button name in ActivityPage.test.tsx. Second verify caught a remaining string→array param in a service test that typecheck flagged.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan (full source reads of 12 files)
+- Avoidable waste: None significant — the plan subagent read was necessary for accurate test patterns
+- Suggestions: Schema-level transforms are highly efficient for query param changes — routes barely change
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: frontend-design skill not available as plugin
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. Zod `.transform()` integrates seamlessly with Fastify schema validation — the transform runs before the route handler, so comma parsing at the schema level eliminates all route-level parsing code
+2. Renaming filter chip labels can collide with tab/nav button names in parent integration tests — always check `getByRole` queries in parent test files
+3. When changing a service method signature from `string` to `array`, grep ALL test files for the old call pattern — easy to miss one in a less-obvious test block
+
 ## #267 Bug: Library cards skip entrance animation when sort order changes — 2026-04-01
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #275
