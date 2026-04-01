@@ -96,8 +96,14 @@ export function sortBooks<T extends BookWithAuthor>(books: T[], field: SortField
     const cmp = compareByField(a, b, field);
     const directedCmp = direction === 'asc' ? cmp : -cmp;
     if (directedCmp !== 0 || field !== 'series') return directedCmp;
-    // Series tiebreaker: position ascending (null-last) within same series name
-    return compareNullable(a.seriesPosition ?? null, b.seriesPosition ?? null);
+    // Position tiebreaker only within a named series — no-series books skip to id fallback
+    if (a.seriesName != null && b.seriesName != null) {
+      const posCmp = compareNullable(a.seriesPosition ?? null, b.seriesPosition ?? null);
+      if (posCmp !== 0) return posCmp;
+    }
+    // Direction-matched id fallback for equal/null positions
+    const idCmp = a.id - b.id;
+    return direction === 'asc' ? idCmp : -idCmp;
   });
 }
 

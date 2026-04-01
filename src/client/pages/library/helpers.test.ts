@@ -384,6 +384,50 @@ describe('sortBooks — series position tiebreaker (#266)', () => {
     const sorted = sortBooks(books, 'title', 'asc');
     expect(sorted.map((b) => b.id)).toEqual([2, 1]);
   });
+
+  it('no-series books with stray seriesPosition skip position tiebreaker (F2)', () => {
+    // seriesName=null but seriesPosition retained from metadata edits
+    const books = [
+      makeBook({ id: 1, seriesName: null, seriesPosition: 5 }),
+      makeBook({ id: 2, seriesName: null, seriesPosition: 1 }),
+      makeBook({ id: 3, seriesName: null, seriesPosition: null }),
+    ];
+
+    // Should fall back to direction-matched id, NOT reorder by position
+    const sorted = sortBooks(books, 'series', 'asc');
+    expect(sorted.map((b) => b.id)).toEqual([1, 2, 3]);
+  });
+
+  it('equal positions within same series fall back to direction-matched id asc (F4)', () => {
+    const books = [
+      makeBook({ id: 2, seriesName: 'Stormlight', seriesPosition: 1 }),
+      makeBook({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
+    ];
+
+    const sorted = sortBooks(books, 'series', 'asc');
+    expect(sorted.map((b) => b.id)).toEqual([1, 2]);
+  });
+
+  it('equal positions within same series fall back to direction-matched id desc (F4)', () => {
+    const books = [
+      makeBook({ id: 1, seriesName: 'Stormlight', seriesPosition: 1 }),
+      makeBook({ id: 2, seriesName: 'Stormlight', seriesPosition: 1 }),
+    ];
+
+    const sorted = sortBooks(books, 'series', 'desc');
+    expect(sorted.map((b) => b.id)).toEqual([2, 1]);
+  });
+
+  it('all-null positions within same series fall back to direction-matched id (F4)', () => {
+    const books = [
+      makeBook({ id: 3, seriesName: 'WoT', seriesPosition: null }),
+      makeBook({ id: 1, seriesName: 'WoT', seriesPosition: null }),
+      makeBook({ id: 2, seriesName: 'WoT', seriesPosition: null }),
+    ];
+
+    const sorted = sortBooks(books, 'series', 'asc');
+    expect(sorted.map((b) => b.id)).toEqual([1, 2, 3]);
+  });
 });
 
 // #282 — Narrator split helper
