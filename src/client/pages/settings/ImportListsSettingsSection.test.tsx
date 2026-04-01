@@ -524,6 +524,42 @@ describe('ImportListsSettings', () => {
       const headerBtn = headerButtons.find(el => el.closest('button')?.getAttribute('type') !== 'submit')?.closest('button');
       expect(headerBtn).toBeDisabled();
     });
+
+    it('Cancel button closes form while create submission is pending', async () => {
+      (api.getImportLists as Mock).mockResolvedValue([mockList]);
+      // Never-resolving promise keeps mutation in pending state
+      (api.createImportList as Mock).mockImplementation(() => new Promise(() => {}));
+      const user = userEvent.setup();
+      renderWithProviders(<ImportListsSettings />);
+
+      await waitFor(() => {
+        expect(screen.getByText('My ABS List')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByText('Add Import List').closest('button')!);
+
+      // Fill name (clear default, type new) and submit to enter pending state
+      const nameInput = screen.getByLabelText('Name');
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Pending List');
+      await user.click(screen.getByText('Add Import List', { selector: 'button[type="submit"]' }));
+
+      // Verify mutation was called and submit button shows pending state
+      await waitFor(() => {
+        expect(api.createImportList).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(screen.getByText('Saving...')).toBeInTheDocument();
+      });
+
+      // Cancel button should still be clickable during pending submit
+      const cancelButton = screen.getByRole('button', { name: 'Cancel' });
+      expect(cancelButton).not.toBeDisabled();
+      await user.click(cancelButton);
+
+      // Form should be closed
+      expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
+    });
   });
 
   describe('useCrudSettings alignment', () => {
