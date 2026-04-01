@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { ZapIcon } from '@/components/icons';
+import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { DEFAULT_SETTINGS, discoveryFormSchema } from '../../../shared/schemas.js';
 import { SettingsSection } from '../settings/SettingsSection';
 
@@ -67,13 +68,7 @@ export function DiscoverySettingsSection() {
             </p>
           </label>
           <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              id="discovery-enabled"
-              type="checkbox"
-              {...register('enabled')}
-              className="sr-only peer"
-            />
-            <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+            <ToggleSwitch id="discovery-enabled" {...register('enabled')} />
           </label>
         </div>
 

@@ -7,6 +7,7 @@ import type { z } from 'zod';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { SparklesIcon } from '@/components/icons';
+import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { DEFAULT_SETTINGS, newBookDefaultsFormSchema } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
@@ -61,8 +62,7 @@ export function NewBookDefaultsSection() {
             </p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
-            <input id="newBookSearchImmediately" type="checkbox" {...register('searchImmediately')} className="sr-only peer" />
-            <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+            <ToggleSwitch id="newBookSearchImmediately" {...register('searchImmediately')} />
           </label>
         </div>
 
@@ -74,8 +74,7 @@ export function NewBookDefaultsSection() {
             </p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
-            <input id="newBookMonitorForUpgrades" type="checkbox" {...register('monitorForUpgrades')} className="sr-only peer" />
-            <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+            <ToggleSwitch id="newBookMonitorForUpgrades" {...register('monitorForUpgrades')} />
           </label>
         </div>
 

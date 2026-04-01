@@ -6,6 +6,7 @@ import { importListItemKey, deduplicateKeys } from '@/lib/stableKeys.js';
 import { queryKeys } from '@/lib/queryKeys';
 import { useCrudSettings } from '@/hooks/useCrudSettings';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
+import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import {
   LoadingSpinner,
@@ -185,8 +186,7 @@ function ImportListForm({
 
       <div className="flex items-center justify-between pt-2">
         <label htmlFor="il-enabled" className="flex items-center gap-2 cursor-pointer">
-          <input id="il-enabled" type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="sr-only peer" />
-          <div className="w-9 h-5 bg-muted rounded-full peer peer-checked:bg-primary transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4 relative" />
+          <ToggleSwitch id="il-enabled" size="compact" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
           <span className="text-sm">Enabled</span>
         </label>
         <div className="flex items-center gap-3">

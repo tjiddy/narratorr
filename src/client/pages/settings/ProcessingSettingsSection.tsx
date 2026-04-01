@@ -10,6 +10,7 @@ import { FORMAT_LABELS, MERGE_LABELS, TAG_MODE_LABELS } from '@/lib/constants';
 import { ZapIcon, CheckCircleIcon, AlertCircleIcon, LoadingSpinner } from '@/components/icons';
 import { FormField } from '@/components/settings/FormField';
 import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
+import { ToggleSwitch } from '@/components/settings/ToggleSwitch';
 import { outputFormatSchema, mergeBehaviorSchema, tagModeSchema, DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
@@ -210,8 +211,7 @@ export function ProcessingSettingsSection() {
             </p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
-            <input id="processingEnabled" type="checkbox" {...register('processingEnabled')} className="sr-only peer" />
-            <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+            <ToggleSwitch id="processingEnabled" {...register('processingEnabled')} />
           </label>
         </div>
 
@@ -267,13 +267,7 @@ export function ProcessingSettingsSection() {
             <div className="flex items-center justify-between mb-2">
               <label htmlFor="bitrate" className="block text-sm font-medium">Target Bitrate (kbps)</label>
               <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  id="keepOriginalBitrate"
-                  type="checkbox"
-                  {...register('keepOriginalBitrate')}
-                  className="sr-only peer"
-                />
-                <div className="w-9 h-5 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4 relative" />
+                <ToggleSwitch id="keepOriginalBitrate" size="compact" {...register('keepOriginalBitrate')} />
                 Keep original
               </label>
             </div>
@@ -334,8 +328,7 @@ export function ProcessingSettingsSection() {
               </p>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
-              <input id="taggingEnabled" type="checkbox" {...register('taggingEnabled')} className="sr-only peer" />
-              <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
+              <ToggleSwitch id="taggingEnabled" {...register('taggingEnabled')} />
             </label>
           </div>
 
@@ -362,8 +355,7 @@ export function ProcessingSettingsSection() {
                 </p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
-                <input id="embedCover" type="checkbox" {...register('embedCover')} className="sr-only peer" />
-                <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full disabled:cursor-not-allowed" />
+                <ToggleSwitch id="embedCover" {...register('embedCover')} />
               </label>
             </div>
           </div>}
