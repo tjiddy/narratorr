@@ -36,6 +36,11 @@ export interface DownloadClientAdapter {
   readonly protocol: DownloadProtocol;
   readonly supportsCategories: boolean;
 
+  /**
+   * Send a download to the client. Returns the external ID for tracking.
+   * Only the Blackhole adapter returns `null` (no external tracking system);
+   * all other adapters return a string ID or throw on failure.
+   */
   addDownload(url: string, options?: AddDownloadOptions): Promise<string | null>;
   getDownload(id: string): Promise<DownloadItemInfo | null>;
   getAllDownloads(category?: string): Promise<DownloadItemInfo[]>;

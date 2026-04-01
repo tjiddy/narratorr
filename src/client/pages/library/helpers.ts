@@ -66,13 +66,17 @@ function getEffectiveSize(book: BookWithAuthor): number | null {
   return book.audioTotalSize ?? book.size ?? null;
 }
 
-/** Null-safe comparison: nulls sort last regardless of direction. */
-function compareNullable(a: string | number | null, b: string | number | null): number {
-  if (a === null && b === null) return 0;
-  if (a === null) return 1;
-  if (b === null) return -1;
-  if (typeof a === 'string' && typeof b === 'string') return a.localeCompare(b);
-  return (a as number) - (b as number);
+/**
+ * Compare two nullable values. Returns:
+ * - `{ nullResult: number }` when at least one value is null (nulls sort last, direction-independent)
+ * - `{ valueResult: number }` when both values are non-null (caller applies direction)
+ */
+function compareNullable(a: string | number | null, b: string | number | null): { nullResult: number } | { valueResult: number } {
+  if (a === null && b === null) return { nullResult: 0 };
+  if (a === null) return { nullResult: 1 };
+  if (b === null) return { nullResult: -1 };
+  if (typeof a === 'string' && typeof b === 'string') return { valueResult: a.localeCompare(b) };
+  return { valueResult: (a as number) - (b as number) };
 }
 
 const fieldExtractors: Record<string, (book: BookWithAuthor) => string | number | null> = {
@@ -86,20 +90,22 @@ const fieldExtractors: Record<string, (book: BookWithAuthor) => string | number 
   createdAt: (b) => new Date(b.createdAt).getTime(),
 };
 
-function compareByField(a: BookWithAuthor, b: BookWithAuthor, field: SortField): number {
+function compareByField(a: BookWithAuthor, b: BookWithAuthor, field: SortField, direction: SortDirection): number {
   const extract = fieldExtractors[field] ?? fieldExtractors.createdAt;
-  return compareNullable(extract(a), extract(b));
+  const result = compareNullable(extract(a), extract(b));
+  if ('nullResult' in result) return result.nullResult;
+  return direction === 'asc' ? result.valueResult : -result.valueResult;
 }
 
 export function sortBooks<T extends BookWithAuthor>(books: T[], field: SortField, direction: SortDirection): T[] {
   return [...books].sort((a, b) => {
-    const cmp = compareByField(a, b, field);
-    const directedCmp = direction === 'asc' ? cmp : -cmp;
-    if (directedCmp !== 0 || field !== 'series') return directedCmp;
+    const cmp = compareByField(a, b, field, direction);
+    if (cmp !== 0 || field !== 'series') return cmp;
     // Position tiebreaker only within a named series — no-series books skip to id fallback
     if (a.seriesName != null && b.seriesName != null) {
-      const posCmp = compareNullable(a.seriesPosition ?? null, b.seriesPosition ?? null);
-      if (posCmp !== 0) return posCmp;
+      const posResult = compareNullable(a.seriesPosition ?? null, b.seriesPosition ?? null);
+      if ('nullResult' in posResult) { if (posResult.nullResult !== 0) return posResult.nullResult; }
+      else if (posResult.valueResult !== 0) return posResult.valueResult;
     }
     // Direction-matched id fallback for equal/null positions
     const idCmp = a.id - b.id;

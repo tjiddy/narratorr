@@ -491,3 +491,96 @@ describe('computeMbPerHour (#282)', () => {
     expect(computeMbPerHour(book)).toBeNull();
   });
 });
+
+// #287 — compareNullable descending null-last fix
+describe('sortBooks — descending nulls-last (#287)', () => {
+  it('sorts nullable field (narrator) descending with nulls last', () => {
+    const books = [
+      makeBook({ id: 1, narrators: [{ id: 1, name: 'Zelda', slug: 'zelda' }] }),
+      makeBook({ id: 2, narrators: [] }),
+      makeBook({ id: 3, narrators: [{ id: 2, name: 'Alice', slug: 'alice' }] }),
+    ];
+
+    const sorted = sortBooks(books, 'narrator', 'desc');
+    // Descending: Zelda, Alice, then null last
+    expect(sorted.map((b) => b.id)).toEqual([1, 3, 2]);
+  });
+
+  it('sorts nullable field (series) descending with nulls last', () => {
+    const books = [
+      makeBook({ id: 1, seriesName: 'Stormlight' }),
+      makeBook({ id: 2, seriesName: null }),
+      makeBook({ id: 3, seriesName: 'Cosmere' }),
+    ];
+
+    const sorted = sortBooks(books, 'series', 'desc');
+    // Descending: Stormlight, Cosmere, then null last
+    expect(sorted.map((b) => b.id)).toEqual([1, 3, 2]);
+  });
+
+  it('handles all-null values in descending sort without crash', () => {
+    const books = [
+      makeBook({ id: 1, narrators: [] }),
+      makeBook({ id: 2, narrators: [] }),
+      makeBook({ id: 3, narrators: [] }),
+    ];
+
+    const sorted = sortBooks(books, 'narrator', 'desc');
+    // All null — all compare equal, stable sort preserves input order
+    expect(sorted).toHaveLength(3);
+    expect(sorted.map((b) => b.id)).toEqual([1, 2, 3]);
+  });
+
+  it('mixed null/non-null descending: non-null values in descending order, nulls at end', () => {
+    const books = [
+      makeBook({ id: 1, narrators: [] }),
+      makeBook({ id: 2, narrators: [{ id: 1, name: 'Charlie', slug: 'charlie' }] }),
+      makeBook({ id: 3, narrators: [] }),
+      makeBook({ id: 4, narrators: [{ id: 2, name: 'Alice', slug: 'alice' }] }),
+    ];
+
+    const sorted = sortBooks(books, 'narrator', 'desc');
+    // Descending values first (Charlie, Alice), then nulls at end
+    expect(sorted.map((b) => b.id)).toEqual([2, 4, 1, 3]);
+  });
+
+  it('sorts nullable numeric field (size) descending with nulls last', () => {
+    const books = [
+      makeBook({ id: 1, audioTotalSize: 500, size: null }),
+      makeBook({ id: 2, audioTotalSize: null, size: null }),
+      makeBook({ id: 3, audioTotalSize: 100, size: null }),
+    ];
+
+    const sorted = sortBooks(books, 'size', 'desc');
+    // Descending numeric: 500, 100, then null last
+    expect(sorted.map((b) => b.id)).toEqual([1, 3, 2]);
+  });
+
+  it('series position tiebreaker keeps null positions last regardless of direction', () => {
+    const books = [
+      makeBook({ id: 1, seriesName: 'WoT', seriesPosition: null }),
+      makeBook({ id: 2, seriesName: 'WoT', seriesPosition: 1 }),
+      makeBook({ id: 3, seriesName: 'WoT', seriesPosition: 2 }),
+    ];
+
+    const sorted = sortBooks(books, 'series', 'desc');
+    // Same series descending — positions ascending within, null last
+    expect(sorted.map((b) => b.id)).toEqual([2, 3, 1]);
+  });
+});
+
+// #287 — collapseSeries fallback with descending nullable sort
+describe('collapseSeries — descending nullable fallback (#287)', () => {
+  it('fallback representative with descending nullable sort does not pick null-field book', () => {
+    const books = [
+      makeBook({ id: 1, seriesName: 'WoT', seriesPosition: null, narrators: [] }),
+      makeBook({ id: 2, seriesName: 'WoT', seriesPosition: null, narrators: [{ id: 1, name: 'Alice', slug: 'alice' }] }),
+    ];
+
+    // No positions → fallback to sortBooks(group, 'narrator', 'desc')
+    // Should pick id=2 (Alice) as representative, not id=1 (null narrator)
+    const collapsed = collapseSeries(books, 'narrator', 'desc');
+    expect(collapsed).toHaveLength(1);
+    expect(collapsed[0].id).toBe(2);
+  });
+});
