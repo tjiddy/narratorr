@@ -45,6 +45,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       renameBook: vi.fn(),
       retagBook: vi.fn(),
       mergeBookToM4b: vi.fn(),
+      markBookAsWrongRelease: vi.fn(),
       deleteBook: vi.fn(),
       getSettings: vi.fn(),
     },
@@ -1243,6 +1244,52 @@ describe('#257 merge observability — BookDetails progress', () => {
       await waitFor(() => {
         expect(screen.getByText(/blacklist this release/)).toBeInTheDocument();
       });
+    });
+
+    it('calls wrong release mutation when modal is confirmed', async () => {
+      (api.markBookAsWrongRelease as Mock).mockResolvedValue({ success: true });
+      const user = userEvent.setup();
+      renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabGuid: 'guid-abc' });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /Wrong Release/ }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/blacklist this release/)).toBeInTheDocument();
+      });
+
+      // Click the confirm button inside the modal dialog
+      const dialog = screen.getByRole('dialog');
+      const confirmButton = within(dialog).getByRole('button', { name: /Wrong Release/i });
+      await user.click(confirmButton);
+
+      await waitFor(() => {
+        expect(api.markBookAsWrongRelease).toHaveBeenCalledWith(expect.any(Number));
+      });
+    });
+
+    it('does not call mutation when modal is cancelled', async () => {
+      vi.mocked(api.markBookAsWrongRelease).mockClear();
+      const user = userEvent.setup();
+      renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabGuid: 'guid-abc' });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /Wrong Release/ }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/blacklist this release/)).toBeInTheDocument();
+      });
+
+      // Click cancel
+      await user.click(screen.getByRole('button', { name: /Cancel/i }));
+
+      expect(api.markBookAsWrongRelease).not.toHaveBeenCalled();
     });
   });
 });
