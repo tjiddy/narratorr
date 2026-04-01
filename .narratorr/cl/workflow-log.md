@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #267 Bug: Library cards skip entrance animation when sort order changes — 2026-04-01
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #275
+
+### Metrics
+- Files changed: 3 | Tests added/modified: 8 new tests
+- Quality gate runs: 3 (pass on attempt 3 — first two caught lint violations)
+- Fix iterations: 3 (useRef → useState+useEffect → render-time setState, each caught by lint)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Spec was well-reviewed (3 rounds) before implementation — all the hard design questions (placeholderData timing, settled-gated key) were resolved in the spec phase, making implementation straightforward
+- Friction / issues encountered: Two lint rules (`react-hooks/refs`, `react-hooks/set-state-in-effect`) blocked the natural implementation approaches (useRef in render, setState in useEffect). Required finding the React render-time setState pattern which is less well-known.
+
+### Token efficiency
+- Highest-token actions: Spec review response rounds (3 rounds of elaborate/respond before implementation)
+- Avoidable waste: None — spec rounds prevented implementation rework
+- Suggestions: For future animation/key bugs, check lint rules for `react-hooks/refs` and `react-hooks/set-state-in-effect` before choosing the state management approach
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: `frontend-design` skill not available (noted in handoff, not needed for behavior-only fix)
+- Unresolved debt: None discovered
+
+### Wish I'd Known
+1. `react-hooks/refs` disallows both reading AND writing `ref.current` during render — this blocked two implementation attempts before finding the render-time setState pattern
+2. `react-hooks/set-state-in-effect` disallows `setState` inside `useEffect` — the React-recommended "adjusting state when a prop changes" pattern uses conditional setState during render instead
+3. `isPlaceholderData` from `useQuery` is the key signal for gating container key updates — the spec review rounds correctly identified this as the critical timing mechanism
+
 ## #264 Move add-form Cancel button from page header to action row — 2026-04-01
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #273
