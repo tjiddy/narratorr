@@ -83,6 +83,18 @@ describe('TransmissionClient', () => {
       expect(result.message).toBe('Transmission 4.0.0');
     });
 
+    it('retries once when 409 lacks X-Transmission-Session-Id header, second 409 throws', async () => {
+      server.use(
+        http.post(RPC_URL, () => {
+          return new HttpResponse(null, { status: 409 });
+        }),
+      );
+
+      const result = await client.test();
+      expect(result.success).toBe(false);
+      expect(result.message).toContain('409');
+    });
+
     it('does not retry infinitely (fails after second 409)', async () => {
       server.use(
         http.post(RPC_URL, () => {
