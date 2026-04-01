@@ -9,7 +9,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { FolderIcon } from '@/components/icons';
 import { PathInput } from '@/components/PathInput';
 import { ConfirmModal } from '@/components/ConfirmModal';
-import { DEFAULT_SETTINGS, newBookDefaultsFormSchema, type AppSettings } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, type AppSettings } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 import { BulkOperationsSection } from '@/components/library/BulkOperationsSection';
 
@@ -18,7 +18,6 @@ const libraryPathSchema = z.object({
 });
 
 type LibraryPathFormData = z.infer<typeof libraryPathSchema>;
-type NewBookDefaultsFormData = z.infer<typeof newBookDefaultsFormSchema>;
 
 export function LibrarySettingsSection() {
   const queryClient = useQueryClient();
@@ -77,33 +76,6 @@ export function LibrarySettingsSection() {
   // eslint-disable-next-line react-hooks/incompatible-library -- watch() is the standard RHF API; Compiler skip is expected
   const pathValue = watch('path');
 
-  // New-book defaults form — independent from path blur-save
-  const { register: registerDefaults, handleSubmit: handleDefaultsSubmit, reset: resetDefaults, formState: { isDirty: isDefaultsDirty } } = useForm<NewBookDefaultsFormData>({
-    defaultValues: { searchImmediately: DEFAULT_SETTINGS.quality.searchImmediately, monitorForUpgrades: DEFAULT_SETTINGS.quality.monitorForUpgrades },
-    resolver: zodResolver(newBookDefaultsFormSchema),
-  });
-
-  useEffect(() => {
-    if (settings?.quality && !isDefaultsDirty) {
-      resetDefaults({
-        searchImmediately: settings.quality.searchImmediately,
-        monitorForUpgrades: settings.quality.monitorForUpgrades,
-      });
-    }
-  }, [settings, resetDefaults, isDefaultsDirty]);
-
-  const defaultsMutation = useMutation({
-    mutationFn: (data: NewBookDefaultsFormData) => api.updateSettings({ quality: data }),
-    onSuccess: (_result, submittedData) => {
-      resetDefaults(submittedData);
-      queryClient.invalidateQueries({ queryKey: queryKeys.settings() });
-      toast.success('New book defaults saved');
-    },
-    onError: (err) => {
-      toast.error(err instanceof Error ? err.message : 'Failed to save settings');
-    },
-  });
-
   return (
     <SettingsSection
       icon={<FolderIcon className="w-5 h-5 text-primary" />}
@@ -125,46 +97,6 @@ export function LibrarySettingsSection() {
         </p>
       </div>
       <BulkOperationsSection />
-      <div className="border-t border-border pt-6 mt-6">
-        <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">When a New Book Is Added</h4>
-        <form onSubmit={handleDefaultsSubmit((data) => defaultsMutation.mutate(data))} className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <label htmlFor="librarySearchImmediately" className="block text-sm font-medium">Search Immediately</label>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Trigger a search as soon as a book is added
-              </p>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input id="librarySearchImmediately" type="checkbox" {...registerDefaults('searchImmediately')} className="sr-only peer" />
-              <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
-            </label>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <label htmlFor="libraryMonitorForUpgrades" className="block text-sm font-medium">Monitor for Upgrades</label>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Include new books in scheduled upgrade searches
-              </p>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input id="libraryMonitorForUpgrades" type="checkbox" {...registerDefaults('monitorForUpgrades')} className="sr-only peer" />
-              <div className="w-11 h-6 bg-muted rounded-full peer peer-checked:bg-primary transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full" />
-            </label>
-          </div>
-
-          {isDefaultsDirty && (
-            <button
-              type="submit"
-              disabled={defaultsMutation.isPending}
-              className="px-4 py-2.5 bg-primary text-primary-foreground font-medium rounded-xl hover:opacity-90 disabled:opacity-50 transition-all text-sm focus-ring animate-fade-in"
-            >
-              {defaultsMutation.isPending ? 'Saving...' : 'Save'}
-            </button>
-          )}
-        </form>
-      </div>
       <ConfirmModal
         isOpen={showRescanPrompt}
         title="Scan Library?"
