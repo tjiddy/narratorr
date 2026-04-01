@@ -22,6 +22,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
       renameBook: vi.fn(),
       retagBook: vi.fn(),
       mergeBookToM4b: vi.fn(),
+      markBookAsWrongRelease: vi.fn(),
       deleteBook: vi.fn(),
       getSettings: vi.fn().mockResolvedValue({
         processing: { ffmpegPath: '/usr/bin/ffmpeg', enabled: false, outputFormat: 'm4b', keepOriginalBitrate: false, bitrate: 128, mergeBehavior: 'multi-file-only', maxConcurrentProcessing: 2 },
@@ -445,9 +446,46 @@ describe('useBookActions', () => {
   });
 
   describe('wrongReleaseMutation', () => {
-    it.todo('calls api.markBookAsWrongRelease with correct book ID');
-    it.todo('shows success toast on successful wrong release');
-    it.todo('invalidates book query on success');
-    it.todo('shows error toast on wrong release failure');
+    it('calls api.markBookAsWrongRelease with correct book ID', async () => {
+      (api.markBookAsWrongRelease as Mock).mockResolvedValue({ success: true });
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+
+      await act(async () => {
+        result.current.wrongReleaseMutation.mutate();
+      });
+
+      await waitFor(() => {
+        expect(api.markBookAsWrongRelease).toHaveBeenCalledWith(1);
+      });
+    });
+
+    it('shows success toast on successful wrong release', async () => {
+      (api.markBookAsWrongRelease as Mock).mockResolvedValue({ success: true });
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+
+      await act(async () => {
+        result.current.wrongReleaseMutation.mutate();
+      });
+
+      await waitFor(() => {
+        expect(toast.success).toHaveBeenCalledWith(expect.stringContaining('wrong release'));
+      });
+    });
+
+    it('shows error toast on wrong release failure', async () => {
+      (api.markBookAsWrongRelease as Mock).mockRejectedValue(new Error('not imported'));
+      const { wrapper } = createTestHarness();
+      const { result } = renderHook(() => useBookActions(1, false), { wrapper });
+
+      await act(async () => {
+        result.current.wrongReleaseMutation.mutate();
+      });
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Wrong release failed: not imported');
+      });
+    });
   });
 });

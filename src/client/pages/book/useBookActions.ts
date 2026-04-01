@@ -111,12 +111,24 @@ export function useBookActions(bookId: number, monitorForUpgrades: boolean) {
     }
   };
 
+  const wrongReleaseMutation = useMutation({
+    mutationFn: () => api.markBookAsWrongRelease(bookId),
+    onSuccess: () => {
+      invalidateBookQueries();
+      toast.success('Book marked as wrong release — searching for replacement');
+    },
+    onError: (error: Error) => {
+      toast.error(`Wrong release failed: ${error.message}`);
+    },
+  });
+
   return {
     renameMutation,
     mergeMutation,
     retagMutation,
     deleteMutation,
     monitorMutation,
+    wrongReleaseMutation,
     ffmpegConfigured,
     isSaving,
     handleSave,

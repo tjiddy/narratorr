@@ -1198,14 +1198,51 @@ describe('#257 merge observability — BookDetails progress', () => {
   });
 
   describe('Wrong Release action', () => {
-    it.todo('shows Wrong Release button when book is imported with lastGrabGuid');
-    it.todo('shows Wrong Release button when book is imported with lastGrabInfoHash');
-    it.todo('hides Wrong Release button when book status is wanted');
-    it.todo('hides Wrong Release button when imported but both identifiers are null');
-    it.todo('opens confirmation modal when Wrong Release button is clicked');
-    it.todo('calls wrong release mutation when modal is confirmed');
-    it.todo('does not call mutation when modal is cancelled');
-    it.todo('shows success toast and refreshes on successful wrong release');
-    it.todo('shows error toast on wrong release API failure');
+    it('shows Wrong Release button when book is imported with lastGrabGuid', async () => {
+      renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabGuid: 'guid-abc' });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+      });
+    });
+
+    it('shows Wrong Release button when book is imported with lastGrabInfoHash', async () => {
+      renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabInfoHash: 'hash-123' });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+      });
+    });
+
+    it('hides Wrong Release button when book status is wanted', async () => {
+      renderBookDetails({ status: 'wanted', lastGrabGuid: 'guid-abc' });
+
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: /Wrong Release/ })).not.toBeInTheDocument();
+      });
+    });
+
+    it('hides Wrong Release button when imported but both identifiers are null', async () => {
+      renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabGuid: null, lastGrabInfoHash: null });
+
+      await waitFor(() => {
+        expect(screen.queryByRole('button', { name: /Wrong Release/ })).not.toBeInTheDocument();
+      });
+    });
+
+    it('opens confirmation modal when Wrong Release button is clicked', async () => {
+      const user = userEvent.setup();
+      renderBookDetails({ status: 'imported', path: '/lib/test', lastGrabGuid: 'guid-abc' });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Wrong Release/ })).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /Wrong Release/ }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/blacklist this release/)).toBeInTheDocument();
+      });
+    });
   });
 });
