@@ -124,6 +124,52 @@ describe('NewBookDefaultsSection (#284)', () => {
     });
   });
 
+  it('successful save resets dirty state and hides Save button', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<NewBookDefaultsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByLabelText('Search Immediately'));
+    expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
+
+    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(mockToast.success).toHaveBeenCalledWith('New book defaults saved');
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
+    });
+  });
+
+  it('successful save triggers settings refetch via query invalidation', async () => {
+    mockApi.updateSettings.mockResolvedValue(mockSettings);
+    const user = userEvent.setup();
+    renderWithProviders(<NewBookDefaultsSection />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Search Immediately')).toBeInTheDocument();
+    });
+
+    const initialGetCallCount = mockApi.getSettings.mock.calls.length;
+
+    await user.click(screen.getByLabelText('Search Immediately'));
+    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(mockToast.success).toHaveBeenCalledWith('New book defaults saved');
+    });
+
+    await waitFor(() => {
+      expect(mockApi.getSettings.mock.calls.length).toBeGreaterThan(initialGetCallCount);
+    });
+  });
+
   it('dirty defaults form survives unrelated settings refetch', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const user = userEvent.setup();
