@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useLibrary, useBookStats } from '@/hooks/useLibrary';
@@ -36,12 +36,22 @@ function getInitialViewMode(): ViewMode {
 export function LibraryPage() {
   const navigate = useNavigate();
   const filters = useLibraryFilters();
-  const { data: libraryResponse, isLoading } = useLibrary(filters.params.apiParams);
+  const { data: libraryResponse, isLoading, isPlaceholderData } = useLibrary(filters.params.apiParams);
   const { data: stats } = useBookStats();
   const { data: settings } = useQuery({ queryKey: queryKeys.settings(), queryFn: api.getSettings });
 
   const books = useMemo(() => libraryResponse?.data ?? [], [libraryResponse]);
   const totalBooks = libraryResponse?.total ?? 0;
+
+  // Settled-gated grid key: holds old sort params during placeholderData phase,
+  // updates only when the sorted response settles. This ensures the grid remounts
+  // (replaying entrance animations) only after the new sort order arrives.
+  const { sortField, sortDirection } = filters.state;
+  const currentSortKey = `${sortField}-${sortDirection}`;
+  const settledGridKeyRef = useRef(currentSortKey);
+  if (!isPlaceholderData) {
+    settledGridKeyRef.current = currentSortKey;
+  }
 
   // Clamp page when total shrinks (e.g., after deleting last item on a page)
   useEffect(() => {
@@ -219,7 +229,7 @@ export function LibraryPage() {
           onSortDirectionChange={filters.actions.setSortDirection}
         />
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
+        <div key={settledGridKeyRef.current} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
           {displayBooks.map((book: DisplayBook, index) => (
             <LibraryBookCard
               key={book.id}

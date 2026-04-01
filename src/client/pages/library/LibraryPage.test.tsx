@@ -2133,4 +2133,152 @@ describe('LibraryPage — status counts and subtitle (#183)', () => {
       expect(screen.getByText('1 book in your collection')).toBeInTheDocument();
     });
   });
+
+  describe('sort-change animation replay', () => {
+    /** Helper: get all book-card DOM elements (role="link" with tabIndex="0"). */
+    function getCardElements() {
+      return screen.getAllByRole('link').filter(el => el.getAttribute('tabIndex') === '0');
+    }
+
+    it('replaces card DOM nodes when sort field changes and settled response arrives', async () => {
+      mockLibraryData(mockBooks);
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      // Capture DOM element references before sort change
+      const cardsBefore = getCardElements();
+      expect(cardsBefore.length).toBeGreaterThan(0);
+
+      // Change sort field: createdAt → title
+      await user.click(screen.getByRole('button', { name: /date added.*newest/i }));
+      await user.click(screen.getByRole('option', { name: /title.*a.*z/i }));
+
+      // Wait for settled response
+      await waitFor(() => {
+        const cardsAfter = getCardElements();
+        expect(cardsAfter.length).toBeGreaterThan(0);
+        // Every card DOM node should be a NEW element (grid remounted)
+        for (const cardAfter of cardsAfter) {
+          expect(cardsBefore).not.toContain(cardAfter);
+        }
+      });
+    });
+
+    it('replaces card DOM nodes when sort direction changes and settled response arrives', async () => {
+      mockLibraryData(mockBooks);
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      // First change to title sort (A→Z)
+      await user.click(screen.getByRole('button', { name: /date added.*newest/i }));
+      await user.click(screen.getByRole('option', { name: /title.*a.*z/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      // Capture DOM element references after first sort settles
+      const cardsBefore = getCardElements();
+      expect(cardsBefore.length).toBeGreaterThan(0);
+
+      // Toggle direction: A→Z to Z→A
+      await user.click(screen.getByRole('button', { name: /title.*a.*z/i }));
+      await user.click(screen.getByRole('option', { name: /title.*z.*a/i }));
+
+      // Wait for settled response
+      await waitFor(() => {
+        const cardsAfter = getCardElements();
+        expect(cardsAfter.length).toBeGreaterThan(0);
+        // Every card DOM node should be a NEW element (grid remounted)
+        for (const cardAfter of cardsAfter) {
+          expect(cardsBefore).not.toContain(cardAfter);
+        }
+      });
+    });
+
+    it('preserves card DOM nodes when search filter changes within the same sort order', async () => {
+      mockLibraryData(mockBooks);
+      const user = userEvent.setup();
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      // Capture a specific card DOM element reference before search change
+      const wayOfKingsCard = getCardElements().find(
+        el => el.querySelector('h3')?.textContent === 'The Way of Kings',
+      )!;
+      expect(wayOfKingsCard).toBeDefined();
+
+      // Type a search query that matches "The Way of Kings"
+      const searchInput = screen.getByPlaceholderText(/search/i);
+      await user.type(searchInput, 'Way');
+
+      // Wait for filtered results to settle — same card should be the SAME DOM node
+      await waitFor(() => {
+        const cardsAfter = getCardElements();
+        const sameCard = cardsAfter.find(
+          el => el.querySelector('h3')?.textContent === 'The Way of Kings',
+        );
+        // Grid container key unchanged (sort params stable) → card persists as same node
+        expect(sameCard).toBe(wayOfKingsCard);
+      });
+    });
+
+    it('applies stagger animation delays on initial load (index * 50ms, capped at 450ms)', async () => {
+      mockLibraryData(mockBooks);
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('The Way of Kings')).toBeInTheDocument();
+      });
+
+      const cards = getCardElements();
+      expect(cards.length).toBe(mockBooks.length);
+
+      cards.forEach((card, index) => {
+        const expectedDelay = `${Math.min(index, 9) * 50}ms`;
+        expect(card).toHaveStyle({ animationDelay: expectedDelay });
+      });
+    });
+
+    it('caps animation delay at 450ms for cards at index >= 10', async () => {
+      const manyBooks = Array.from({ length: 15 }, (_, i) =>
+        createMockBook({
+          id: i + 1,
+          title: `Book ${String.fromCharCode(65 + i)}`,
+          createdAt: `2024-01-${String(i + 1).padStart(2, '0')}T00:00:00Z`,
+          updatedAt: `2024-01-${String(i + 1).padStart(2, '0')}T00:00:00Z`,
+        }),
+      );
+      mockLibraryData(manyBooks);
+
+      renderWithProviders(<LibraryPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Book A')).toBeInTheDocument();
+      });
+
+      const cards = getCardElements();
+      expect(cards.length).toBe(15);
+
+      // Cards at index 10-14 should all have 450ms delay (capped at Math.min(index, 9) * 50)
+      for (let i = 10; i < 15; i++) {
+        expect(cards[i]).toHaveStyle({ animationDelay: '450ms' });
+      }
+    });
+  });
 });

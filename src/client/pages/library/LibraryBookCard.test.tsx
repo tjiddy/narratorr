@@ -435,4 +435,27 @@ describe('React.memo (REACT-2 refactor)', () => {
 
     expect(hookSpy.mock.calls.length).toBe(mountCallCount);
   });
+
+  describe('animation', () => {
+    it('applies animate-fade-in-up class to the root element', () => {
+      render(<LibraryBookCard {...defaultProps()} />);
+      const card = screen.getByRole('link');
+      expect(card.className).toContain('animate-fade-in-up');
+    });
+
+    it('sets animationDelay matching Math.min(index, 9) * 50ms', () => {
+      const { rerender } = render(<LibraryBookCard {...defaultProps({ index: 0 })} />);
+      expect(screen.getByRole('link')).toHaveStyle({ animationDelay: '0ms' });
+
+      rerender(<LibraryBookCard {...defaultProps({ index: 5 })} />);
+      expect(screen.getByRole('link')).toHaveStyle({ animationDelay: '250ms' });
+
+      rerender(<LibraryBookCard {...defaultProps({ index: 9 })} />);
+      expect(screen.getByRole('link')).toHaveStyle({ animationDelay: '450ms' });
+
+      // Capped at index 9
+      rerender(<LibraryBookCard {...defaultProps({ index: 15 })} />);
+      expect(screen.getByRole('link')).toHaveStyle({ animationDelay: '450ms' });
+    });
+  });
 });
