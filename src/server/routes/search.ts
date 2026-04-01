@@ -76,6 +76,7 @@ export async function searchRoutes(
         qualitySettings.protocolPreference,
         qualitySettings.rejectWords,
         qualitySettings.requiredWords,
+        qualitySettings.preferredLanguage,
       );
 
       return {
