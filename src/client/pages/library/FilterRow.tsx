@@ -1,4 +1,4 @@
-import { ChevronDownIcon } from '@/components/icons';
+import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 
 export interface FilterProps {
   authorFilter: string;
@@ -20,54 +20,33 @@ export function FilterRow({
   return (
     <div className="flex flex-wrap items-center gap-3 animate-fade-in">
       {uniqueAuthors.length > 1 && (
-        <div className="relative">
-          <select
-            value={authorFilter}
-            onChange={(e) => onAuthorFilterChange(e.target.value)}
-            aria-label="Filter by author"
-            className="appearance-none glass-card rounded-lg pl-3 pr-7 py-1.5 text-xs font-medium text-foreground focus-ring cursor-pointer"
-          >
-            <option value="">All Authors</option>
-            {uniqueAuthors.map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-          <ChevronDownIcon className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" />
-        </div>
+        <SelectWithChevron id="author-filter" variant="compact" className="py-1.5 text-xs"
+          value={authorFilter} onChange={(e) => onAuthorFilterChange(e.target.value)} aria-label="Filter by author">
+          <option value="">All Authors</option>
+          {uniqueAuthors.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </SelectWithChevron>
       )}
 
       {uniqueSeries.length > 0 && (
-        <div className="relative">
-          <select
-            value={seriesFilter}
-            onChange={(e) => onSeriesFilterChange(e.target.value)}
-            aria-label="Filter by series"
-            className="appearance-none glass-card rounded-lg pl-3 pr-7 py-1.5 text-xs font-medium text-foreground focus-ring cursor-pointer"
-          >
-            <option value="">All Series</option>
-            {uniqueSeries.map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-          <ChevronDownIcon className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" />
-        </div>
+        <SelectWithChevron id="series-filter" variant="compact" className="py-1.5 text-xs"
+          value={seriesFilter} onChange={(e) => onSeriesFilterChange(e.target.value)} aria-label="Filter by series">
+          <option value="">All Series</option>
+          {uniqueSeries.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </SelectWithChevron>
       )}
 
       {uniqueNarrators.length > 1 && (
-        <div className="relative">
-          <select
-            value={narratorFilter}
-            onChange={(e) => onNarratorFilterChange(e.target.value)}
-            aria-label="Filter by narrator"
-            className="appearance-none glass-card rounded-lg pl-3 pr-7 py-1.5 text-xs font-medium text-foreground focus-ring cursor-pointer"
-          >
-            <option value="">All Narrators</option>
-            {uniqueNarrators.map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-          <ChevronDownIcon className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" />
-        </div>
+        <SelectWithChevron id="narrator-filter" variant="compact" className="py-1.5 text-xs"
+          value={narratorFilter} onChange={(e) => onNarratorFilterChange(e.target.value)} aria-label="Filter by narrator">
+          <option value="">All Narrators</option>
+          {uniqueNarrators.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </SelectWithChevron>
       )}
     </div>
   );
