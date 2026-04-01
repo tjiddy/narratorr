@@ -459,7 +459,7 @@ describe('NewznabIndexer', () => {
 
       const results = await indexer.search('test');
       expect(results).toHaveLength(1);
-      expect(results[0].grabs).toBeNaN();
+      expect(results[0].grabs).toBeUndefined();
     });
 
     it('skips items with empty title', async () => {
@@ -619,6 +619,127 @@ describe('NewznabIndexer', () => {
       expect(result.message).toContain('Test Newznab Indexer');
 
       fetchSpy.mockRestore();
+    });
+  });
+
+  describe('search — extended attrs (#272)', () => {
+    it('includes attrs=grabs,language,group,files in search URL', async () => {
+      let capturedUrl = '';
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          capturedUrl = request.url;
+          return new HttpResponse(searchXml, {
+            headers: { 'Content-Type': 'application/rss+xml' },
+          });
+        }),
+      );
+
+      await indexer.search('test');
+      const params = new URL(capturedUrl).searchParams;
+      expect(params.get('attrs')).toBe('grabs,language,group,files');
+    });
+
+    it('extracts language from newznab:attr into SearchResult.language', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+        <channel><item>
+          <title>Test Book</title>
+          <enclosure url="https://indexer.test/dl/1.nzb" length="1000" type="application/x-nzb"/>
+          <newznab:attr name="language" value="eng"/>
+        </item></channel></rss>`;
+
+      server.use(http.get(`${API_BASE}/api`, () =>
+        new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } }),
+      ));
+
+      const results = await indexer.search('test');
+      expect(results[0].language).toBe('english');
+    });
+
+    it('extracts newsgroup from newznab:attr into SearchResult.newsgroup', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+        <channel><item>
+          <title>Test Book</title>
+          <enclosure url="https://indexer.test/dl/1.nzb" length="1000" type="application/x-nzb"/>
+          <newznab:attr name="group" value="alt.binaries.audiobooks"/>
+        </item></channel></rss>`;
+
+      server.use(http.get(`${API_BASE}/api`, () =>
+        new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } }),
+      ));
+
+      const results = await indexer.search('test');
+      expect(results[0].newsgroup).toBe('alt.binaries.audiobooks');
+    });
+
+    it('normalizes language code to lowercase full name (e.g. ENG → english)', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+        <channel><item>
+          <title>Test Book</title>
+          <enclosure url="https://indexer.test/dl/1.nzb" length="1000" type="application/x-nzb"/>
+          <newznab:attr name="language" value="GER"/>
+        </item></channel></rss>`;
+
+      server.use(http.get(`${API_BASE}/api`, () =>
+        new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } }),
+      ));
+
+      const results = await indexer.search('test');
+      expect(results[0].language).toBe('german');
+    });
+
+    it('returns undefined language when language attr is missing', async () => {
+      server.use(http.get(`${API_BASE}/api`, () =>
+        new HttpResponse(searchXml, { headers: { 'Content-Type': 'application/rss+xml' } }),
+      ));
+
+      const results = await indexer.search('test');
+      expect(results[0].language).toBeUndefined();
+    });
+
+    it('returns undefined newsgroup when group attr is missing', async () => {
+      server.use(http.get(`${API_BASE}/api`, () =>
+        new HttpResponse(searchXml, { headers: { 'Content-Type': 'application/rss+xml' } }),
+      ));
+
+      const results = await indexer.search('test');
+      expect(results[0].newsgroup).toBeUndefined();
+    });
+
+    it('handles non-numeric grabs value gracefully', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+        <channel><item>
+          <title>Test Book</title>
+          <enclosure url="https://indexer.test/dl/1.nzb" length="1000" type="application/x-nzb"/>
+          <newznab:attr name="grabs" value="invalid"/>
+        </item></channel></rss>`;
+
+      server.use(http.get(`${API_BASE}/api`, () =>
+        new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } }),
+      ));
+
+      const results = await indexer.search('test');
+      expect(results[0].grabs).toBeUndefined();
+    });
+
+    it('handles grabs value of "0" as 0 not undefined', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+        <channel><item>
+          <title>Test Book</title>
+          <enclosure url="https://indexer.test/dl/1.nzb" length="1000" type="application/x-nzb"/>
+          <newznab:attr name="grabs" value="0"/>
+        </item></channel></rss>`;
+
+      server.use(http.get(`${API_BASE}/api`, () =>
+        new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } }),
+      ));
+
+      const results = await indexer.search('test');
+      expect(results[0].grabs).toBe(0);
     });
   });
 });

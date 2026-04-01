@@ -152,6 +152,7 @@ describe('settingsRegistry', () => {
         monitorForUpgrades: false,
         rejectWords: '',
         requiredWords: '',
+        preferredLanguage: '',
       });
     });
   });
@@ -696,6 +697,7 @@ describe('settingsRegistry', () => {
         monitorForUpgrades: false,
         rejectWords: '',
         requiredWords: '',
+        preferredLanguage: '',
       });
       expect(result.success).toBe(true);
     });

@@ -53,6 +53,7 @@ describe('QualitySettingsSection', () => {
     expect(screen.getByLabelText('Minimum Seeders')).toBeInTheDocument();
     expect(screen.getByLabelText('Reject Words')).toBeInTheDocument();
     expect(screen.getByLabelText('Required Words')).toBeInTheDocument();
+    expect(screen.getByLabelText('Preferred Language')).toBeInTheDocument();
   });
 
   it('protocol preference select uses shared SelectWithChevron contract', async () => {
@@ -87,6 +88,7 @@ describe('QualitySettingsSection', () => {
     expect(screen.getByLabelText('Reject Words')).toHaveValue('German');
     expect(screen.getByLabelText('Required Words')).toHaveValue('M4B');
     expect(screen.getByLabelText('Protocol Preference')).toHaveValue('usenet');
+    expect(screen.getByLabelText('Preferred Language')).toHaveValue('');
   });
 
   it('blocks submit when grabFloor is negative', async () => {
@@ -133,6 +135,7 @@ describe('QualitySettingsSection', () => {
           minSeeders: 3,
           rejectWords: 'Abridged',
           requiredWords: 'M4B',
+          preferredLanguage: '',
         },
       });
     });

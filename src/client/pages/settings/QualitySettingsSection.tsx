@@ -141,6 +141,20 @@ export function QualitySettingsSection() {
           </p>
         </div>
 
+        <div>
+          <label htmlFor="preferredLanguage" className="block text-sm font-medium mb-2">Preferred Language</label>
+          <input
+            id="preferredLanguage"
+            type="text"
+            {...register('preferredLanguage')}
+            className="w-full px-4 py-3 bg-background border border-border rounded-xl focus-ring focus:border-transparent transition-all"
+            placeholder="english"
+          />
+          <p className="text-sm text-muted-foreground mt-2">
+            Preferred language for search results (e.g. english, german, french). Results in other languages are ranked lower but not excluded. Leave empty to disable.
+          </p>
+        </div>
+
         {isDirty && (
           <button
             type="submit"

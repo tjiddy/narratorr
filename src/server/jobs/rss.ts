@@ -163,6 +163,7 @@ export async function runRssJob(
       qualitySettings.protocolPreference,
       qualitySettings.rejectWords,
       qualitySettings.requiredWords,
+      qualitySettings.preferredLanguage,
     );
 
     if (ranked.length === 0) {

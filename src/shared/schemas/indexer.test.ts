@@ -187,6 +187,53 @@ describe('updateIndexerSchema — trim behavior', () => {
   });
 });
 
+describe('createIndexerSchema — settings credential trim (#272)', () => {
+  it('trims apiUrl in settings record', () => {
+    const result = createIndexerSchema.safeParse({
+      ...validCreateIndexer,
+      settings: { apiUrl: '  https://indexer.test  ', apiKey: 'key' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.apiUrl).toBe('https://indexer.test');
+  });
+
+  it('trims apiKey in settings record', () => {
+    const result = createIndexerSchema.safeParse({
+      ...validCreateIndexer,
+      settings: { apiUrl: 'https://indexer.test', apiKey: '  key123  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.apiKey).toBe('key123');
+  });
+
+  it('leaves non-credential settings fields untouched', () => {
+    const result = createIndexerSchema.safeParse({
+      ...validCreateIndexer,
+      settings: { apiUrl: 'https://test', hostname: '  host  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.hostname).toBe('  host  ');
+  });
+});
+
+describe('updateIndexerSchema — settings credential trim (#272)', () => {
+  it('trims apiUrl in settings record', () => {
+    const result = updateIndexerSchema.safeParse({
+      settings: { apiUrl: '  https://indexer.test  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings!.apiUrl).toBe('https://indexer.test');
+  });
+
+  it('trims apiKey in settings record', () => {
+    const result = updateIndexerSchema.safeParse({
+      settings: { apiKey: '  key456  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings!.apiKey).toBe('key456');
+  });
+});
+
 const validCreateIndexerForm = {
   name: 'My Indexer',
   type: 'abb' as const,
@@ -205,5 +252,40 @@ describe('createIndexerFormSchema — trim behavior', () => {
     const result = createIndexerFormSchema.safeParse({ ...validCreateIndexerForm, name: '  My Indexer  ' });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.name).toBe('My Indexer');
+  });
+});
+
+describe('createIndexerFormSchema — apiUrl/apiKey trim (#272)', () => {
+  it('trims leading/trailing whitespace from settings.apiUrl', () => {
+    const input = {
+      ...validCreateIndexerForm,
+      type: 'newznab' as const,
+      settings: { apiUrl: '  https://indexer.test  ', apiKey: 'key123' },
+    };
+    const result = createIndexerFormSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.apiUrl).toBe('https://indexer.test');
+  });
+
+  it('trims leading/trailing whitespace from settings.apiKey', () => {
+    const input = {
+      ...validCreateIndexerForm,
+      type: 'newznab' as const,
+      settings: { apiUrl: 'https://indexer.test', apiKey: '  key123  ' },
+    };
+    const result = createIndexerFormSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.apiKey).toBe('key123');
+  });
+
+  it('normalizes whitespace-only apiUrl to empty string (rejected by superRefine for newznab)', () => {
+    const input = {
+      ...validCreateIndexerForm,
+      type: 'newznab' as const,
+      settings: { apiUrl: '   ', apiKey: 'key123' },
+    };
+    const result = createIndexerFormSchema.safeParse(input);
+    // superRefine requires apiUrl for newznab, so trimmed whitespace-only is rejected
+    expect(result.success).toBe(false);
   });
 });

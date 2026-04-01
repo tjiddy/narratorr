@@ -12,6 +12,8 @@ export interface SearchResult {
   seeders?: number;
   leechers?: number;
   grabs?: number;
+  language?: string;
+  newsgroup?: string;
   indexer: string;
   indexerId?: number;
   detailsUrl?: string;

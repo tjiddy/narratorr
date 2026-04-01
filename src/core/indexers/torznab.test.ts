@@ -511,10 +511,10 @@ describe('TorznabIndexer', () => {
 
       const results = await indexer.search('test');
       expect(results).toHaveLength(1);
-      // Number('abc') = NaN — these get passed through as NaN
+      // Number('abc') = NaN — seeders/leechers pass through as NaN, grabs returns undefined
       expect(results[0].seeders).toBeNaN();
       expect(results[0].leechers).toBeNaN();
-      expect(results[0].grabs).toBeNaN();
+      expect(results[0].grabs).toBeUndefined();
     });
 
     it('handles empty string infohash → undefined', async () => {
@@ -677,6 +677,69 @@ describe('TorznabIndexer', () => {
       expect(result.message).toContain('Test Torznab Indexer');
 
       fetchSpy.mockRestore();
+    });
+  });
+
+  describe('search — extended attrs (#272)', () => {
+    it('includes attrs=grabs,language in search URL', async () => {
+      let capturedUrl = '';
+      server.use(
+        http.get(`${API_BASE}/api`, ({ request }) => {
+          capturedUrl = request.url;
+          return new HttpResponse(searchXml, {
+            headers: { 'Content-Type': 'application/rss+xml' },
+          });
+        }),
+      );
+
+      await indexer.search('test');
+      const params = new URL(capturedUrl).searchParams;
+      expect(params.get('attrs')).toBe('grabs,language');
+    });
+
+    it('extracts language from torznab:attr into SearchResult.language', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+        <channel><item>
+          <title>Test Book</title>
+          <enclosure url="https://indexer.test/dl/1.torrent" length="1000" type="application/x-bittorrent"/>
+          <torznab:attr name="language" value="fre"/>
+          <torznab:attr name="seeders" value="5"/>
+        </item></channel></rss>`;
+
+      server.use(http.get(`${API_BASE}/api`, () =>
+        new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } }),
+      ));
+
+      const results = await indexer.search('test');
+      expect(results[0].language).toBe('french');
+    });
+
+    it('normalizes language code to lowercase full name', async () => {
+      const xml = `<?xml version="1.0"?>
+        <rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+        <channel><item>
+          <title>Test Book</title>
+          <enclosure url="https://indexer.test/dl/1.torrent" length="1000" type="application/x-bittorrent"/>
+          <torznab:attr name="language" value="GER"/>
+          <torznab:attr name="seeders" value="5"/>
+        </item></channel></rss>`;
+
+      server.use(http.get(`${API_BASE}/api`, () =>
+        new HttpResponse(xml, { headers: { 'Content-Type': 'application/rss+xml' } }),
+      ));
+
+      const results = await indexer.search('test');
+      expect(results[0].language).toBe('german');
+    });
+
+    it('returns undefined language when language attr is missing', async () => {
+      server.use(http.get(`${API_BASE}/api`, () =>
+        new HttpResponse(searchXml, { headers: { 'Content-Type': 'application/rss+xml' } }),
+      ));
+
+      const results = await indexer.search('test');
+      expect(results[0].language).toBeUndefined();
     });
   });
 });

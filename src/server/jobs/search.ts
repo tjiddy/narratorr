@@ -173,6 +173,7 @@ export async function runUpgradeSearchJob(
         qualitySettings.protocolPreference,
         qualitySettings.rejectWords,
         qualitySettings.requiredWords,
+        qualitySettings.preferredLanguage,
       );
 
       if (results.length === 0) continue;

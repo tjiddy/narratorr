@@ -109,6 +109,7 @@ export async function retrySearch(
       qualitySettings.protocolPreference,
       qualitySettings.rejectWords,
       qualitySettings.requiredWords,
+      qualitySettings.preferredLanguage,
     );
 
     // Take best downloadable result
