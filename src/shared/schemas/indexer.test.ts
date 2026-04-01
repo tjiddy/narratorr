@@ -187,6 +187,53 @@ describe('updateIndexerSchema — trim behavior', () => {
   });
 });
 
+describe('createIndexerSchema — settings credential trim (#272)', () => {
+  it('trims apiUrl in settings record', () => {
+    const result = createIndexerSchema.safeParse({
+      ...validCreateIndexer,
+      settings: { apiUrl: '  https://indexer.test  ', apiKey: 'key' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.apiUrl).toBe('https://indexer.test');
+  });
+
+  it('trims apiKey in settings record', () => {
+    const result = createIndexerSchema.safeParse({
+      ...validCreateIndexer,
+      settings: { apiUrl: 'https://indexer.test', apiKey: '  key123  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.apiKey).toBe('key123');
+  });
+
+  it('leaves non-credential settings fields untouched', () => {
+    const result = createIndexerSchema.safeParse({
+      ...validCreateIndexer,
+      settings: { apiUrl: 'https://test', hostname: '  host  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.hostname).toBe('  host  ');
+  });
+});
+
+describe('updateIndexerSchema — settings credential trim (#272)', () => {
+  it('trims apiUrl in settings record', () => {
+    const result = updateIndexerSchema.safeParse({
+      settings: { apiUrl: '  https://indexer.test  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings!.apiUrl).toBe('https://indexer.test');
+  });
+
+  it('trims apiKey in settings record', () => {
+    const result = updateIndexerSchema.safeParse({
+      settings: { apiKey: '  key456  ' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings!.apiKey).toBe('key456');
+  });
+});
+
 const validCreateIndexerForm = {
   name: 'My Indexer',
   type: 'abb' as const,

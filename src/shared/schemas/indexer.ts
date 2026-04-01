@@ -7,20 +7,31 @@ import { INDEXER_REGISTRY, INDEXER_TYPES } from '../indexer-registry';
 
 export const indexerTypeSchema = z.enum(INDEXER_TYPES);
 
+/** Trim string values for known credential fields in the settings record. */
+function trimSettingsCredentials(settings: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...settings };
+  for (const key of ['apiUrl', 'apiKey']) {
+    if (typeof result[key] === 'string') {
+      result[key] = (result[key] as string).trim();
+    }
+  }
+  return result;
+}
+
 // Server-side: accepts any settings shape (type-specific validation is client-side only)
 export const createIndexerSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(100),
   type: indexerTypeSchema,
   enabled: z.boolean().default(true),
   priority: z.number().int().min(0).max(100).default(50),
-  settings: z.record(z.string(), z.unknown()),
+  settings: z.record(z.string(), z.unknown()).transform(trimSettingsCredentials),
 });
 
 export const updateIndexerSchema = z.object({
   name: z.string().trim().min(1).max(100).optional(),
   enabled: z.boolean().optional(),
   priority: z.number().int().min(0).max(100).optional(),
-  settings: z.record(z.string(), z.unknown()).optional(),
+  settings: z.record(z.string(), z.unknown()).transform(trimSettingsCredentials).optional(),
 });
 
 // Output types (after Zod applies defaults)
