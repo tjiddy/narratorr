@@ -34,37 +34,37 @@ export const createNotifierFormSchema = z.object({
   events: z.array(notificationEventSchema).min(1, 'Select at least one event'),
   settings: z.object({
     // Webhook
-    url: z.string().optional(),
+    url: z.string().trim().optional(),
     method: z.enum(['POST', 'PUT']).optional(),
-    headers: z.string().optional(),
-    bodyTemplate: z.string().optional(),
+    headers: z.string().trim().optional(),
+    bodyTemplate: z.string().trim().optional(),
     // Discord
-    webhookUrl: z.string().optional(),
+    webhookUrl: z.string().trim().optional(),
     includeCover: z.boolean().optional(),
     // Script
-    path: z.string().optional(),
+    path: z.string().trim().optional(),
     timeout: z.number().int().min(1).max(300).optional(),
     // Email
-    smtpHost: z.string().optional(),
+    smtpHost: z.string().trim().optional(),
     smtpPort: z.number().int().min(1).max(65535).optional(),
-    smtpUser: z.string().optional(),
-    smtpPass: z.string().optional(),
+    smtpUser: z.string().trim().optional(),
+    smtpPass: z.string().trim().optional(),
     smtpTls: z.boolean().optional(),
-    fromAddress: z.string().optional(),
-    toAddress: z.string().optional(),
+    fromAddress: z.string().trim().optional(),
+    toAddress: z.string().trim().optional(),
     // Telegram
-    botToken: z.string().optional(),
-    chatId: z.string().optional(),
+    botToken: z.string().trim().optional(),
+    chatId: z.string().trim().optional(),
     // Slack (uses webhookUrl)
     // Pushover
-    pushoverToken: z.string().optional(),
-    pushoverUser: z.string().optional(),
+    pushoverToken: z.string().trim().optional(),
+    pushoverUser: z.string().trim().optional(),
     // ntfy
-    ntfyTopic: z.string().optional(),
-    ntfyServer: z.string().optional(),
+    ntfyTopic: z.string().trim().optional(),
+    ntfyServer: z.string().trim().optional(),
     // Gotify
-    gotifyUrl: z.string().optional(),
-    gotifyToken: z.string().optional(),
+    gotifyUrl: z.string().trim().optional(),
+    gotifyToken: z.string().trim().optional(),
   }),
 }).superRefine((data, ctx) => {
   const meta = NOTIFIER_REGISTRY[data.type];
