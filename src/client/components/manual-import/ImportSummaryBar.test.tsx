@@ -144,6 +144,11 @@ describe('ImportSummaryBar', () => {
         expect(onModeChange).toHaveBeenCalledWith('move');
       });
     });
+
+    it('mode select has aria-label "Import mode" (#288)', () => {
+      renderBar();
+      expect(screen.getByLabelText('Import mode')).toBeInTheDocument();
+    });
   });
 
   describe('import action', () => {
