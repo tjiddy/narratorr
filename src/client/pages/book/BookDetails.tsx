@@ -19,6 +19,10 @@ function getArrowTabIndex(key: string, currentIndex: number, length: number): nu
   return null;
 }
 
+function canShowWrongRelease(book: BookWithAuthor): boolean {
+  return book.status === 'imported' && !!(book.lastGrabGuid || book.lastGrabInfoHash);
+}
+
 // eslint-disable-next-line max-lines-per-function -- page orchestrator with multiple confirm modals
 export function BookDetails({ libraryBook, metadataBook }: {
   libraryBook: BookWithAuthor;
@@ -41,8 +45,7 @@ export function BookDetails({ libraryBook, metadataBook }: {
   const { renameMutation, mergeMutation, retagMutation, deleteMutation, monitorMutation, wrongReleaseMutation, ffmpegConfigured, isSaving, handleSave } =
     useBookActions(libraryBook.id, libraryBook.monitorForUpgrades);
 
-  const showWrongRelease = libraryBook.status === 'imported' &&
-    !!(libraryBook.lastGrabGuid || libraryBook.lastGrabInfoHash);
+  const showWrongRelease = canShowWrongRelease(libraryBook);
 
   const mergeProgress = useMergeProgress(libraryBook.id);
   const canMerge = libraryBook.status === 'imported' &&

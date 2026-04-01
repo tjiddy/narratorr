@@ -2,6 +2,9 @@ import type { FastifyBaseLogger } from 'fastify';
 import type { BlacklistService } from '../services/blacklist.service.js';
 import type { SettingsService } from '../services/settings.service.js';
 import { retrySearch, type RetrySearchDeps } from '../services/retry-search.js';
+import type { blacklist } from '../../db/schema.js';
+
+type BlacklistReason = NonNullable<typeof blacklist.$inferInsert['reason']>;
 
 export interface BlacklistIdentifiers {
   infoHash?: string;
@@ -12,7 +15,7 @@ export interface BlacklistIdentifiers {
 
 export interface BlacklistAndRetryRequest {
   identifiers: BlacklistIdentifiers;
-  reason: string;
+  reason: BlacklistReason;
   book: { id: number } | null;
   blacklistService?: BlacklistService;
   retrySearchDeps?: RetrySearchDeps;

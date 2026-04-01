@@ -204,7 +204,7 @@ describe('BookRejectionService', () => {
     });
 
     it('continues when event recording fails (fire-and-forget)', async () => {
-      const { service, bookService } = createService({
+      const { service } = createService({
         bookService: {
           getById: vi.fn().mockResolvedValue(importedBook),
           deleteBookFiles: vi.fn().mockResolvedValue(undefined),

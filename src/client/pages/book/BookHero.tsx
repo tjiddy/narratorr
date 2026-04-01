@@ -38,7 +38,7 @@ interface BookHeroProps {
   isMonitorToggling: boolean;
 }
 
-// eslint-disable-next-line complexity -- flat JSX conditionals for optional props, no branching logic
+// eslint-disable-next-line complexity, max-lines-per-function -- flat JSX conditionals for optional props, no branching logic
 export function BookHero({
   title, subtitle, authorName, authorAsin, narratorNames,
   coverUrl, metaDots, statusLabel, statusDotClass,
