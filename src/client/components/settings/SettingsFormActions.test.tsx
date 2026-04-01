@@ -104,6 +104,44 @@ describe('SettingsFormActions', () => {
     expect(submitButton).toBeDisabled();
   });
 
+  it('shows Cancel button in create mode when onCancel is provided', () => {
+    render(
+      <SettingsFormActions
+        isEdit={false}
+        onFormTest={vi.fn()}
+        onCancel={vi.fn()}
+        entityLabel="Indexer"
+      />,
+    );
+
+    expect(screen.getByText('Cancel')).toBeInTheDocument();
+    expect(screen.getByText('Add Indexer')).toBeInTheDocument();
+  });
+
+  it('does not show Cancel button in create mode when onCancel is not provided', () => {
+    render(
+      <SettingsFormActions
+        isEdit={false}
+        onFormTest={vi.fn()}
+        entityLabel="Indexer"
+      />,
+    );
+
+    expect(screen.queryByText('Cancel')).not.toBeInTheDocument();
+  });
+
+  it('does not show Cancel button in edit mode when onCancel is not provided', () => {
+    render(
+      <SettingsFormActions
+        isEdit={true}
+        onFormTest={vi.fn()}
+        entityLabel="Indexer"
+      />,
+    );
+
+    expect(screen.queryByText('Cancel')).not.toBeInTheDocument();
+  });
+
   it('submit button has type="submit" so form submission fires on click', () => {
     render(
       <SettingsFormActions

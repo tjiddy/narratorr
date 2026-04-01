@@ -32,7 +32,7 @@ export function SettingsFormActions({
         disabled={testDisabled}
         title={testDisabledTitle}
       />
-      {isEdit && (
+      {onCancel && (
         <Button
           variant="secondary"
           size="md"
