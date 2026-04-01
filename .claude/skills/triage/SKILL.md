@@ -51,58 +51,109 @@ All GitHub commands use: `node scripts/gh.ts` (referred to as `gh` below).
    Next issue to pick up: #<id> — <why>
    ```
 
-3. **Continuous Learning graduation** — after the issue triage, process accumulated learnings and debt:
+6. **Continuous Learning graduation** — after the issue triage, process accumulated learnings, debt, and retrospectives. This is the most important step. Every classification must be backed by research — no gut calls.
 
-   a. **Read learnings:** Scan all files in `.narratorr/cl/learnings/`. Group by theme (same scope, same files, same type of problem).
+   ### Data sources
 
-   b. **Read debt:** Read `.narratorr/cl/debt.md` if it exists.
+   a. **Learnings:** Read all files in `.narratorr/cl/learnings/`.
+   b. **Debt:** Read `.narratorr/cl/debt.md` if it exists.
+   c. **Workflow log:** Read `.narratorr/cl/workflow-log.md`. Extract `### Wish I'd Known` entries.
+   d. **Review retrospectives:** Read all files in `.narratorr/cl/reviews/`. These contain "Prompt fix" suggestions from implementers and reviewers.
 
-   c. **Read "Wish I'd Known" entries:** Scan `.narratorr/cl/workflow-log.md` for `### Wish I'd Known` sections. Note any items that recur across multiple issues.
+   ### Classification — three categories
 
-   c2. **Read review retrospectives:** Scan all files in `.narratorr/cl/reviews/`. These contain specific "Prompt fix" suggestions from implementers (respond-to-*) and reviewers (review-*) identifying what prompt changes would have caught issues earlier. Group by target skill — multiple retrospectives suggesting changes to the same skill prompt are high-signal candidates for graduation.
+   Every learning, debt item, wish-I'd-known entry, and retrospective must be classified into exactly one of:
 
-   d. **Classify each cluster/item** into one of:
-      - **Code fix** — a concrete change to the repo would eliminate this class of problem (e.g., "mock factories would prevent stale mock breakage"). → Suggest creating a GitHub issue. Include the proposed scope and rationale.
-      - **Workflow change** — a change to a skill prompt would catch or prevent this (e.g., "review-spec should check for catch-all blocks"). Review retrospectives (`.narratorr/cl/reviews/`) are the primary source here — they contain pre-written "Prompt fix" suggestions. When multiple retrospectives across different issues suggest the same prompt change, that's a strong signal to graduate. → Suggest which skill to change and what to add, quoting the retrospective's proposed text where available.
-      - **CLAUDE.md rule** — a convention or pattern that should be documented for all contributors (e.g., "always use FastifyBaseLogger, not BaseLogger from pino"). → Suggest the specific addition.
-      - **Inherent** — no action possible; this is a runtime/tooling reality that can't be fixed, only known (e.g., "jsdom doesn't support responsive breakpoints"). → No action. Learning stays in `.narratorr/cl/learnings/` for `/claim` to surface.
+   **Category 1: Framework / third-party gotcha (keep)**
+   A real constraint imposed by a tool, library, or runtime that we can't fix — only know. Worth keeping if the gotcha applies broadly (multiple files, multiple use cases). Delete if it's so narrow it'll never come up again.
+   > Example keep: "jsdom doesn't support `backdrop-filter` stacking contexts"
+   > Example delete: "vitest v4.0.17 had a bug with X" (already upgraded past it)
 
-   e. **Report graduation recommendations** in a structured section:
-      ```
-      ## CL Graduation Recommendations
+   **Category 2: Dogshit (delete)**
+   Nuke it. Criteria:
+   - *Vague self-improvement:* "I should have been more thorough" — not actionable
+   - *Issue-specific:* Fix for one test/file in one closed PR, no broader pattern
+   - *Already fixed:* References code that's been refactored, deleted, or patched since
+   - *Already captured:* Same insight exists in CLAUDE.md, a skill prompt, testing.md, or another learning
+   - *Stale reference:* Mentions issues, branches, or patterns that no longer exist
 
-      ### Code Fixes (create issues)
-      - <description> — based on: <learning files / debt items / wish-I'd-known entries>
+   **Category 3: Actionable (graduate)**
+   Something concrete can be done. Two sub-types:
 
-      ### Workflow Changes (skill edits)
-      - <skill>: <what to change> — based on: <learning files>
+   **3a. Code issue** — a bug, missing validation, architectural problem, or debt item that needs a code change. Target the root cause, not a band-aid. If the learning describes a symptom, investigate what caused the agent to hit the problem in the first place — that's the real issue.
+   > Output: issue title, scope, rationale, affected files
 
-      ### CLAUDE.md Additions
-      - <rule to add> — based on: <learning files>
+   **3b. Workflow / prompt update** — a change to a skill prompt, CLAUDE.md, or testing.md that would prevent the class of mistake. Must be surgical — bloating prompts dilutes their effectiveness. Only graduate if the pattern recurred across 2+ issues or the single instance was severe enough to warrant it. When multiple retrospectives suggest the same prompt change, that's strong signal.
+   > Output: target file, exact text to add/change, rationale
 
-      ### Inherent (no action)
-      - <description> — stays in learnings for /claim to surface
-      ```
+   ### Research requirements — mandatory per item
 
-   f. **Do NOT auto-create issues or edit skills** — just recommend. The user decides what to act on. This step is advisory.
+   **You must investigate before classifying.** For each learning/item:
 
-   g. **Prune learnings (mandatory).** For each file in `.narratorr/cl/learnings/`, sort into one of three buckets:
-      - **Graduate** — the insight is valuable and recurring. Capture it in a durable location (skill prompt change, CLAUDE.md rule, debt issue, or memory), then delete the file.
-      - **Keep** — genuinely useful gotcha not yet captured elsewhere. Leave it.
-      - **Delete (dogshit)** — nuke the file. Criteria for deletion:
-        - *Too specific* — fix for one test/file in one PR, not a reusable pattern
-        - *Already obvious* — restates something already in testing standards, CLAUDE.md, or skill prompts
-        - *Stale* — references code/patterns that have been refactored away
-        - *Duplicate* — same insight exists in another learning or has already been graduated
+   1. **Read the learning file** in full — understand what happened and why.
+   2. **Check the referenced issue/PR** — is it closed? Was the underlying problem fixed?
+   3. **Grep/glob the codebase** — do the files/functions/patterns mentioned still exist? Has the code been refactored since?
+   4. **Check for duplicates** — grep CLAUDE.md, skill prompts, and testing.md for the same concept. Is this already captured?
+   5. **For actionable items:** verify the problem still exists in the current code before recommending a fix.
 
-      Present the three-way sort to the user for approval before deleting. Also remove resolved debt items from `.narratorr/cl/debt.md`.
+   **Show your work.** For every item, report:
+   ```
+   ### <filename>
+   **Verdict:** Framework | Dogshit | Actionable (code/workflow)
+   **Rationale:** <1-2 sentences — why this classification>
+   **Investigation:**
+   - <what you checked and what you found>
+   - <e.g., "grepped for extractYear — still duplicated in paths.ts:42 and import-helpers.ts:87">
+   - <e.g., "issue #210 is closed, PR #211 merged, code refactored — learning is stale">
+   **Action:** <for actionable only — specific next step>
+   ```
 
-   h. **Truncate workflow-log.md** — replace contents with just `# Workflow Log\n`. All useful items have been graduated to their destinations (debt.md, GitHub issues, skill prompt changes). Non-graduated entries are discarded. This keeps the file bounded since it's tracked in git.
+   Omitting the investigation section is a hard failure. If you can't investigate an item (e.g., references external systems you can't access), say so explicitly and classify as "keep — unable to verify."
+
+   ### Batch processing
+
+   Process learnings in batches using Explore subagents (up to 3 in parallel) to keep the main context clean. Each subagent receives a batch of learning files and the research requirements above, returns the structured verdicts.
+
+   ### Report to user
+
+   Present results grouped by verdict:
+
+   ```
+   ## CL Graduation Results
+
+   ### Actionable — Code Issues (<count>)
+   | File | Issue | Affected files | Action |
+   |------|-------|---------------|--------|
+   | <learning.md> | <description> | <files> | Create issue: <title> |
+
+   ### Actionable — Workflow Updates (<count>)
+   | File | Target | Change | Signal |
+   |------|--------|--------|--------|
+   | <learning.md> | <skill/doc> | <what to add> | <N retrospectives / N issues> |
+
+   ### Framework Gotchas — Keep (<count>)
+   | File | Gotcha | Why keep |
+   |------|--------|----------|
+
+   ### Dogshit — Delete (<count>)
+   | File | Reason |
+   |------|--------|
+
+   **Summary:** <total> items processed. <N> actionable, <N> keep, <N> delete.
+   ```
+
+   ### Execution
+
+   After user reviews and approves:
+   - **Delete** all dogshit files and graduated files from `.narratorr/cl/learnings/` and `.narratorr/cl/reviews/`.
+   - **Remove** resolved debt items from `.narratorr/cl/debt.md`.
+   - **Truncate** `.narratorr/cl/workflow-log.md` to `# Workflow Log\n`.
+   - **Do NOT auto-create issues or edit skills** — the report is the deliverable. User acts on actionable items manually or queues them.
 
 ## Important
 
-- This skill is **read-only** — no label changes, no comments, no branches
-- Do NOT explore the codebase — spec analysis only (from issue body text) for issue triage
+- Issue triage (steps 1-5) is **read-only** — no label changes, no comments, no branches
+- Do NOT explore the codebase for issue triage — spec analysis only (from issue body text)
 - Do NOT run `/elaborate` on each issue — that's too expensive. Just parse the body
-- Subagent keeps verbose per-issue reads out of main context
-- CL graduation (step 3) runs in main context since it needs user interaction for approvals
+- CL graduation (step 6) **requires codebase exploration** — grep, glob, read files, check git history. This is the opposite of issue triage. Do the research.
+- CL graduation runs in main context for user approval, but offload investigation to Explore subagents
