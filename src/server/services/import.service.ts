@@ -134,7 +134,7 @@ export class ImportService {
       this.log.debug({ downloadId, bookTitle: book.title, sourceSize: sourceStats.size, targetSize }, 'Copy verified');
       await cleanupOldBookPath({ bookPath: book.path, targetPath, log: this.log });
 
-      await this.db.update(books).set({ status: 'imported', path: targetPath, size: targetSize, updatedAt: new Date() }).where(eq(books.id, book.id));
+      await this.db.update(books).set({ status: 'imported', path: targetPath, size: targetSize, lastGrabGuid: download.guid ?? null, lastGrabInfoHash: download.infoHash ?? null, updatedAt: new Date() }).where(eq(books.id, book.id));
       await enrichBookFromAudio(book.id, targetPath, book, this.db, this.log);
 
       await this.db.update(downloads).set({ status: 'imported' }).where(eq(downloads.id, downloadId));

@@ -1730,6 +1730,58 @@ describe('ImportService', () => {
       expect(updateSetCalls).toContainEqual({ status: 'processing_queued' });
     });
   });
+
+  describe('lastGrab identifier tracking', () => {
+    beforeEach(() => {
+      setupDefaults();
+      vi.mocked(statfs).mockResolvedValue({ bavail: BigInt(100_000_000_000), bsize: BigInt(1) } as never);
+    });
+
+    it('populates lastGrabGuid and lastGrabInfoHash from download on import', async () => {
+      const downloadWithGuid = { ...mockDownload, guid: 'guid-abc', infoHash: 'hash-123' };
+      db.select.mockReturnValueOnce(mockDbChain([downloadWithGuid]));
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await service.importDownload(1);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      const bookUpdate = setCalls.find((c) => c.status === 'imported' && 'lastGrabGuid' in c);
+      expect(bookUpdate).toBeDefined();
+      expect(bookUpdate!.lastGrabGuid).toBe('guid-abc');
+      expect(bookUpdate!.lastGrabInfoHash).toBe('hash-123');
+    });
+
+    it('sets lastGrabGuid to null when download.guid is null', async () => {
+      const downloadNoGuid = { ...mockDownload, guid: null, infoHash: 'hash-123' };
+      db.select.mockReturnValueOnce(mockDbChain([downloadNoGuid]));
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await service.importDownload(1);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      const bookUpdate = setCalls.find((c) => c.status === 'imported' && 'lastGrabGuid' in c);
+      expect(bookUpdate).toBeDefined();
+      expect(bookUpdate!.lastGrabGuid).toBeNull();
+      expect(bookUpdate!.lastGrabInfoHash).toBe('hash-123');
+    });
+
+    it('sets lastGrabInfoHash to null when download.infoHash is null', async () => {
+      const downloadNoHash = { ...mockDownload, guid: 'guid-abc', infoHash: null };
+      db.select.mockReturnValueOnce(mockDbChain([downloadNoHash]));
+      const chain = mockDbChain();
+      db.update.mockReturnValue(chain);
+
+      await service.importDownload(1);
+
+      const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
+      const bookUpdate = setCalls.find((c) => c.status === 'imported' && 'lastGrabGuid' in c);
+      expect(bookUpdate).toBeDefined();
+      expect(bookUpdate!.lastGrabGuid).toBe('guid-abc');
+      expect(bookUpdate!.lastGrabInfoHash).toBeNull();
+    });
+  });
 });
 
 describe('ImportService consolidation (issue #79)', () => {
@@ -1920,13 +1972,5 @@ describe('ImportService consolidation (issue #79)', () => {
         'Torrent removed from client after import',
       );
     });
-  });
-
-  describe('lastGrab identifier tracking', () => {
-    it.todo('populates lastGrabGuid from download.guid on import');
-    it.todo('populates lastGrabInfoHash from download.infoHash on import');
-    it.todo('sets lastGrabGuid to null when download.guid is null');
-    it.todo('sets lastGrabInfoHash to null when download.infoHash is null');
-    it.todo('overwrites previous lastGrabGuid/lastGrabInfoHash on upgrade import');
   });
 });
