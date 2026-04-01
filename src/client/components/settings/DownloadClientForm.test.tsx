@@ -318,6 +318,22 @@ describe('DownloadClientForm (#201)', () => {
     });
   });
 
+  describe('edit mode does not include pathMappings', () => {
+    it('onSubmit receives form data without pathMappings in edit mode', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <DownloadClientForm mode="edit" client={mockClient} onSubmit={mockOnSubmit} onFormTest={mockOnFormTest} onCancel={vi.fn()} />,
+      );
+
+      await user.click(screen.getByRole('button', { name: /save/i }));
+      await waitFor(() => {
+        expect(mockOnSubmit).toHaveBeenCalledWith(
+          expect.not.objectContaining({ pathMappings: expect.anything() }),
+        );
+      });
+    });
+  });
+
   describe('downloadRoot field removal', () => {
     it('does not render downloadRoot field in create mode', () => {
       renderWithProviders(
