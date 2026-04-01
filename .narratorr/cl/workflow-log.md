@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #284 UAT findings — settings card split, whitespace trim, import path display — 2026-04-01
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #285
+
+### Metrics
+- Files changed: 13 | Tests added/modified: 28 new tests across 5 test files
+- Quality gate runs: 2 (pass on attempt 2 — lint fix for unused import)
+- Fix iterations: 1 (consistent-type-imports + unused AppSettings import)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: 3-part issue (schema trim, card split, path display) mapped cleanly to 3 TDD modules. Each module was self-contained with no cross-dependencies. Blast radius audit confirmed no pre-existing test breakage from `.trim()` additions.
+- Friction / issues encountered: Coverage review subagent reported 22 false "UNTESTED" behaviors because it only read source diffs, not co-located test files that were also in the branch diff. Had to manually verify all behaviors were tested and override the subagent verdict.
+
+### Token efficiency
+- Highest-token actions: Spec review response cycle (3 rounds before approval) consumed significant context before implementation started
+- Avoidable waste: Coverage subagent false-fail required manual verification — subagent prompt should require reading test file diffs
+- Suggestions: Include `git diff main --name-only -- '*.test.*'` in coverage subagent prompt to force it to read test files
+
+### Infrastructure gaps
+- Repeated workarounds: Coverage subagent false negatives (also seen in prior issues — learning already captured)
+- Missing tooling / config: frontend-design skill not available — design pass skipped
+- Unresolved debt: Toggle switch markup still duplicated in NewBookDefaultsSection (existing debt item from #265)
+
+### Wish I'd Known
+1. Coverage review subagent reliably misses co-located test files unless explicitly prompted to read them — override with manual verification
+2. Card split test migration is cleaner as move+negate rather than duplicate — replace parent tests with negative assertions, create new file for positive tests
+3. Spec review took 3 rounds due to incrementally discovered notifier fields and optional-field trim semantics — reading the full schema before the first elaboration would have saved 2 rounds
+
 ## #272 Search scoring — grabs ranking, language awareness, extended Newznab attrs — 2026-04-01
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #280
