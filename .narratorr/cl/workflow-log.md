@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #272 Search scoring — grabs ranking, language awareness, extended Newznab attrs — 2026-04-01
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #280
+
+### Metrics
+- Files changed: 23 | Tests added/modified: 56+
+- Quality gate runs: 2 (pass on attempt 1 for final, 1 blast-radius fix mid-implementation)
+- Fix iterations: 1 (3 blast-radius test fixtures needed updating after adding preferredLanguage to quality settings)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: TDD module-by-module approach worked well — each module was self-contained with clear test boundaries. The spec was thorough after 3 rounds of review, making implementation straightforward.
+- Friction / issues encountered: Pre-existing NaN assertion tests in newznab/torznab broke when improving grabs validation to return undefined instead of NaN. Settings blast radius (registry.test.ts, QualitySettingsSection.test.tsx) was expected but required manual fixture updates.
+
+### Token efficiency
+- Highest-token actions: Explore subagent for plan phase (comprehensive codebase exploration) and self-review
+- Avoidable waste: None significant — spec was well-elaborated before implementation
+- Suggestions: The Explore subagent coverage review was overly strict on pass-through parameter wiring — could be tuned to distinguish behavioral tests from wiring tests
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: None introduced
+
+### Wish I'd Known
+1. **canonicalCompare vs rankResults** — Two ranking functions exist with similar names but different purposes. canonicalCompare (search-pipeline.ts) handles search result ranking; rankResults (match-job.service.ts) handles metadata matching. The spec initially pointed at the wrong one.
+2. **Settings dual-default path** — New settings fields need both Zod `.default()` AND registry defaults. The runtime and mock factory use DEFAULT_SETTINGS, not Zod parsing.
+3. **NaN grabs blast radius** — Improving numeric parsing (NaN → undefined) breaks pre-existing `toBeNaN()` assertions in both newznab and torznab test files. Always check parallel test files when changing shared parsing patterns.
+
 ## #274 Wrong Release — reject imported books, blacklist, and re-search — 2026-04-01
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #279
