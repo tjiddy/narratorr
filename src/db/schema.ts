@@ -98,7 +98,6 @@ export const bookAuthors = sqliteTable('book_authors', {
   position: integer('position').notNull().default(0),
 }, (table) => [
   primaryKey({ columns: [table.bookId, table.authorId] }),
-  index('idx_book_authors_book_id').on(table.bookId),
   index('idx_book_authors_author_id').on(table.authorId),
 ]);
 
@@ -108,7 +107,6 @@ export const bookNarrators = sqliteTable('book_narrators', {
   position: integer('position').notNull().default(0),
 }, (table) => [
   primaryKey({ columns: [table.bookId, table.narratorId] }),
-  index('idx_book_narrators_book_id').on(table.bookId),
   index('idx_book_narrators_narrator_id').on(table.narratorId),
 ]);
 
@@ -222,6 +220,7 @@ export const downloads = sqliteTable('downloads', {
   progressUpdatedAt: integer('progress_updated_at', { mode: 'timestamp' }),
 }, (table) => [
   index('idx_downloads_status').on(table.status),
+  index('idx_downloads_status_completed').on(table.status, table.completedAt),
   index('idx_downloads_book_id').on(table.bookId),
 ]);
 
@@ -253,6 +252,7 @@ export const bookEvents = sqliteTable('book_events', {
     .default(sql`(unixepoch())`),
 }, (table) => [
   index('idx_book_events_book_id').on(table.bookId),
+  index('idx_book_events_book_id_created_at').on(table.bookId, table.createdAt),
   index('idx_book_events_event_type').on(table.eventType),
   index('idx_book_events_created_at').on(table.createdAt),
   index('idx_book_events_download_id_event_type').on(table.downloadId, table.eventType),

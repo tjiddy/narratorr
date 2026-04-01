@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8a7671e1-7aed-4e6b-a6c6-c1ec3ee60651",
+  "id": "a1106543-4ce2-4863-885c-453ad79076d7",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "authors": {
@@ -116,7 +116,14 @@
           "name": "info_hash",
           "type": "text",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "guid": {
+          "name": "guid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "title": {
@@ -170,6 +177,13 @@
           "name": "idx_blacklist_info_hash",
           "columns": [
             "info_hash"
+          ],
+          "isUnique": false
+        },
+        "idx_blacklist_guid": {
+          "name": "idx_blacklist_guid",
+          "columns": [
+            "guid"
           ],
           "isUnique": false
         },
@@ -227,13 +241,6 @@
         }
       },
       "indexes": {
-        "idx_book_authors_book_id": {
-          "name": "idx_book_authors_book_id",
-          "columns": [
-            "book_id"
-          ],
-          "isUnique": false
-        },
         "idx_book_authors_author_id": {
           "name": "idx_book_authors_author_id",
           "columns": [
@@ -366,6 +373,14 @@
           ],
           "isUnique": false
         },
+        "idx_book_events_book_id_created_at": {
+          "name": "idx_book_events_book_id_created_at",
+          "columns": [
+            "book_id",
+            "created_at"
+          ],
+          "isUnique": false
+        },
         "idx_book_events_event_type": {
           "name": "idx_book_events_event_type",
           "columns": [
@@ -448,13 +463,6 @@
         }
       },
       "indexes": {
-        "idx_book_narrators_book_id": {
-          "name": "idx_book_narrators_book_id",
-          "columns": [
-            "book_id"
-          ],
-          "isUnique": false
-        },
         "idx_book_narrators_narrator_id": {
           "name": "idx_book_narrators_narrator_id",
           "columns": [
@@ -693,6 +701,20 @@
         "audio_duration": {
           "name": "audio_duration",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_grab_guid": {
+          "name": "last_grab_guid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_grab_info_hash": {
+          "name": "last_grab_info_hash",
+          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -953,6 +975,20 @@
           "notNull": false,
           "autoincrement": false
         },
+        "guid": {
+          "name": "guid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "output_path": {
+          "name": "output_path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "added_at": {
           "name": "added_at",
           "type": "integer",
@@ -981,6 +1017,14 @@
           "name": "idx_downloads_status",
           "columns": [
             "status"
+          ],
+          "isUnique": false
+        },
+        "idx_downloads_status_completed": {
+          "name": "idx_downloads_status_completed",
+          "columns": [
+            "status",
+            "completed_at"
           ],
           "isUnique": false
         },
@@ -1319,159 +1363,6 @@
           "name": "idx_notifiers_enabled",
           "columns": [
             "enabled"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "recycling_bin": {
-      "name": "recycling_bin",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "integer",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": true
-        },
-        "book_id": {
-          "name": "book_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "title": {
-          "name": "title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "author_name": {
-          "name": "author_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "author_asin": {
-          "name": "author_asin",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "narrator": {
-          "name": "narrator",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "cover_url": {
-          "name": "cover_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "asin": {
-          "name": "asin",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "isbn": {
-          "name": "isbn",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "series_name": {
-          "name": "series_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "series_position": {
-          "name": "series_position",
-          "type": "real",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "duration": {
-          "name": "duration",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "published_date": {
-          "name": "published_date",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "genres": {
-          "name": "genres",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "monitor_for_upgrades": {
-          "name": "monitor_for_upgrades",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "original_path": {
-          "name": "original_path",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "recycle_path": {
-          "name": "recycle_path",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "deleted_at": {
-          "name": "deleted_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(unixepoch())"
-        }
-      },
-      "indexes": {
-        "idx_recycling_bin_deleted_at": {
-          "name": "idx_recycling_bin_deleted_at",
-          "columns": [
-            "deleted_at"
           ],
           "isUnique": false
         }

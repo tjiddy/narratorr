@@ -15,7 +15,8 @@ CREATE UNIQUE INDEX `authors_slug_unique` ON `authors` (`slug`);--> statement-br
 CREATE TABLE `blacklist` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`book_id` integer,
-	`info_hash` text NOT NULL,
+	`info_hash` text,
+	`guid` text,
 	`title` text NOT NULL,
 	`reason` text DEFAULT 'other' NOT NULL,
 	`note` text,
@@ -26,6 +27,7 @@ CREATE TABLE `blacklist` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_blacklist_info_hash` ON `blacklist` (`info_hash`);--> statement-breakpoint
+CREATE INDEX `idx_blacklist_guid` ON `blacklist` (`guid`);--> statement-breakpoint
 CREATE INDEX `idx_blacklist_book_id` ON `blacklist` (`book_id`);--> statement-breakpoint
 CREATE TABLE `book_authors` (
 	`book_id` integer NOT NULL,
@@ -36,7 +38,6 @@ CREATE TABLE `book_authors` (
 	FOREIGN KEY (`author_id`) REFERENCES `authors`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE INDEX `idx_book_authors_book_id` ON `book_authors` (`book_id`);--> statement-breakpoint
 CREATE INDEX `idx_book_authors_author_id` ON `book_authors` (`author_id`);--> statement-breakpoint
 CREATE TABLE `book_events` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -54,6 +55,7 @@ CREATE TABLE `book_events` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_book_events_book_id` ON `book_events` (`book_id`);--> statement-breakpoint
+CREATE INDEX `idx_book_events_book_id_created_at` ON `book_events` (`book_id`,`created_at`);--> statement-breakpoint
 CREATE INDEX `idx_book_events_event_type` ON `book_events` (`event_type`);--> statement-breakpoint
 CREATE INDEX `idx_book_events_created_at` ON `book_events` (`created_at`);--> statement-breakpoint
 CREATE INDEX `idx_book_events_download_id_event_type` ON `book_events` (`download_id`,`event_type`);--> statement-breakpoint
@@ -66,7 +68,6 @@ CREATE TABLE `book_narrators` (
 	FOREIGN KEY (`narrator_id`) REFERENCES `narrators`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE INDEX `idx_book_narrators_book_id` ON `book_narrators` (`book_id`);--> statement-breakpoint
 CREATE INDEX `idx_book_narrators_narrator_id` ON `book_narrators` (`narrator_id`);--> statement-breakpoint
 CREATE TABLE `books` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -96,6 +97,8 @@ CREATE TABLE `books` (
 	`top_level_audio_file_count` integer,
 	`audio_total_size` integer,
 	`audio_duration` integer,
+	`last_grab_guid` text,
+	`last_grab_info_hash` text,
 	`monitor_for_upgrades` integer DEFAULT false NOT NULL,
 	`import_list_id` integer,
 	`created_at` integer DEFAULT (unixepoch()) NOT NULL,
@@ -133,6 +136,8 @@ CREATE TABLE `downloads` (
 	`progress` real DEFAULT 0 NOT NULL,
 	`external_id` text,
 	`error_message` text,
+	`guid` text,
+	`output_path` text,
 	`added_at` integer DEFAULT (unixepoch()) NOT NULL,
 	`completed_at` integer,
 	`progress_updated_at` integer,
@@ -142,6 +147,7 @@ CREATE TABLE `downloads` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_downloads_status` ON `downloads` (`status`);--> statement-breakpoint
+CREATE INDEX `idx_downloads_status_completed` ON `downloads` (`status`,`completed_at`);--> statement-breakpoint
 CREATE INDEX `idx_downloads_book_id` ON `downloads` (`book_id`);--> statement-breakpoint
 CREATE TABLE `import_lists` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -189,29 +195,6 @@ CREATE TABLE `notifiers` (
 );
 --> statement-breakpoint
 CREATE INDEX `idx_notifiers_enabled` ON `notifiers` (`enabled`);--> statement-breakpoint
-CREATE TABLE `recycling_bin` (
-	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-	`book_id` integer,
-	`title` text NOT NULL,
-	`author_name` text,
-	`author_asin` text,
-	`narrator` text,
-	`description` text,
-	`cover_url` text,
-	`asin` text,
-	`isbn` text,
-	`series_name` text,
-	`series_position` real,
-	`duration` integer,
-	`published_date` text,
-	`genres` text,
-	`monitor_for_upgrades` integer DEFAULT false NOT NULL,
-	`original_path` text NOT NULL,
-	`recycle_path` text NOT NULL,
-	`deleted_at` integer DEFAULT (unixepoch()) NOT NULL
-);
---> statement-breakpoint
-CREATE INDEX `idx_recycling_bin_deleted_at` ON `recycling_bin` (`deleted_at`);--> statement-breakpoint
 CREATE TABLE `remote_path_mappings` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`download_client_id` integer NOT NULL,

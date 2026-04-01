@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1774507513420,
-      "tag": "0000_square_hobgoblin",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "6",
-      "when": 1774946030603,
-      "tag": "0001_condemned_praxagora",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1774961613288,
-      "tag": "0002_fat_stephen_strange",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1775027507765,
-      "tag": "0003_woozy_miracleman",
+      "when": 1775039756226,
+      "tag": "0000_romantic_barracuda",
       "breakpoints": true
     }
   ]
