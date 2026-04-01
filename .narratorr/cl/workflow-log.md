@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #274 Wrong Release — reject imported books, blacklist, and re-search — 2026-04-01
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #279
+
+### Metrics
+- Files changed: 27 | Tests added/modified: 42
+- Quality gate runs: 2 (pass on attempt 2 — lint + typecheck fixes)
+- Fix iterations: 1 (lint complexity, BlacklistReason type, fixture blast radius)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Schema + migration + 3-point event type registration was clean. Shared helper extraction from QGO was straightforward — the blacklist + retry-search logic separated cleanly from download-artifact deletion.
+- Friction / issues encountered: Import service test suite has `setupDefaults` scoped inside a describe block, causing `setupDefaults is not defined` when stubs were placed at the wrong nesting level. Also `vi.clearAllMocks()` resets module-level `statfs` mock, requiring re-mocking in new describe blocks.
+
+### Token efficiency
+- Highest-token actions: Explore subagents for plan and self-review/coverage review
+- Avoidable waste: Multiple verify.ts attempts due to fixture blast radius (inline book fixtures missing new columns) — could be caught earlier by running typecheck before full verify
+- Suggestions: Run `pnpm typecheck` immediately after adding DB columns to catch fixture issues early
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: frontend-design skill not available for UI polish pass
+- Unresolved debt: Existing debt items from #248 (blacklist filtering in searchAndGrabForBook, isBlacklisted only checks infoHash) remain relevant
+
+### Wish I'd Known
+1. `vi.clearAllMocks()` resets module-level mocks set in `vi.mock()` factories — new describe blocks must re-mock `statfs` (see `import-test-statfs-mock-reset.md`)
+2. Adding Drizzle schema columns breaks ALL inline book fixtures that don't use the factory spread pattern — grep for hardcoded fixtures early (see `drizzle-inferselect-fixture-blast-radius.md`)
+3. Drizzle enum columns produce narrow literal union types in `$inferInsert` — derive shared helper types from the schema, not from bare `string` (see `blacklist-reason-type-from-schema.md`)
+
 ## #266 Bug: Series sort missing position tiebreaker — 2026-04-01
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #277
