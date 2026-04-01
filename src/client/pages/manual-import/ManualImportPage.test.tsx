@@ -1114,3 +1114,28 @@ describe('ManualImportPage', () => {
     });
   });
 });
+
+describe('ManualImportPage — scanned path display (#284)', () => {
+  beforeEach(() => {
+    matchState = makeMatchState();
+    mockScanDirectory.mockReset();
+    mockGetSettings.mockResolvedValue({ library: { path: '/audiobooks' } });
+    mockBrowseDirectory.mockResolvedValue({ dirs: [], parent: '/' });
+  });
+
+  it('displays scanned directory path after successful scan', async () => {
+    await scanAndReview();
+    expect(screen.getByText('/media/audiobooks')).toBeInTheDocument();
+  });
+
+  it('path text uses muted/secondary styling', async () => {
+    await scanAndReview();
+    const pathEl = screen.getByText('/media/audiobooks');
+    expect(pathEl.className).toMatch(/text-muted-foreground/);
+  });
+
+  it('does not display scanned path on path step', () => {
+    renderPage();
+    expect(screen.queryByText('/media/audiobooks')).not.toBeInTheDocument();
+  });
+});
