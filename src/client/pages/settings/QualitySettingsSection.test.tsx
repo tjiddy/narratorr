@@ -133,6 +133,7 @@ describe('QualitySettingsSection', () => {
           minSeeders: 3,
           rejectWords: 'Abridged',
           requiredWords: 'M4B',
+          preferredLanguage: '',
         },
       });
     });
