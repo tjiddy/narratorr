@@ -107,7 +107,7 @@ async function collectAudioFiles(
       results.push({ srcPath: fullPath, name: entry.name });
     }
   }
-  return results;
+  return results.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Copy audio files from source to target, flattening all subdirectories. */

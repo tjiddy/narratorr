@@ -272,10 +272,10 @@ describe('copyAudioFiles', () => {
 
     expect(cp).toHaveBeenCalledTimes(2);
     const calls = (cp as Mock).mock.calls.map((c: unknown[]) => c.map((a: unknown) => typeof a === 'string' ? norm(a) : a));
-    expect(calls[0][0]).toBe('/src/root.mp3');
-    expect(calls[0][1]).toBe('/dest/root.mp3');
-    expect(calls[1][0]).toBe('/src/sub/nested.m4b');
-    expect(calls[1][1]).toBe('/dest/nested.m4b');
+    expect(calls[0][0]).toBe('/src/sub/nested.m4b');
+    expect(calls[0][1]).toBe('/dest/nested.m4b');
+    expect(calls[1][0]).toBe('/src/root.mp3');
+    expect(calls[1][1]).toBe('/dest/root.mp3');
   });
 
   it('skips non-audio files in subfolders during flattening', async () => {
@@ -330,6 +330,22 @@ describe('copyAudioFiles', () => {
     await expect(copyAudioFiles('/src', '/dest')).rejects.toThrow();
 
     expect(cp).not.toHaveBeenCalled();
+  });
+
+  it('copies files in alphabetical order regardless of readdir order', async () => {
+    vi.mocked(readdir).mockResolvedValue([
+      makeDirent('Part 2.mp3', true, false),
+      makeDirent('Part 3.mp3', true, false),
+      makeDirent('Part 1.mp3', true, false),
+    ] as never);
+
+    await copyAudioFiles('/src', '/dest');
+
+    expect(cp).toHaveBeenCalledTimes(3);
+    const copiedNames = (cp as Mock).mock.calls.map(
+      (c: unknown[]) => norm(c[1] as string).split('/').pop(),
+    );
+    expect(copiedNames).toEqual(['Part 1.mp3', 'Part 2.mp3', 'Part 3.mp3']);
   });
 
   it('propagates cp error (fail-fast) — does not continue copying remaining files', async () => {

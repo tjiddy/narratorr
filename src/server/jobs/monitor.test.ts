@@ -1242,6 +1242,9 @@ describe('monitor job', () => {
   // ===== #248 — outputPath persistence =====
 
   describe('processDownloadUpdate — outputPath persistence', () => {
+    /** Normalize path separators for cross-platform assertions (path.join uses backslash on Windows). */
+    const normPath = (s: string) => s.split('\\').join('/');
+
     it('sets outputPath to join(item.savePath, item.name) on first poll when outputPath is null', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
         { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null, outputPath: null },
@@ -1253,7 +1256,8 @@ describe('monitor job', () => {
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log));
 
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      expect(setCalls).toContainEqual(expect.objectContaining({ outputPath: '/downloads/my-book' }));
+      const outputPaths = setCalls.filter((c) => 'outputPath' in c).map((c) => normPath(c.outputPath as string));
+      expect(outputPaths).toContain('/downloads/my-book');
     });
 
     it('applies remote path mapping to outputPath when mappings are available', async () => {
@@ -1321,13 +1325,16 @@ describe('monitor job', () => {
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log));
 
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      expect(setCalls).toContainEqual(expect.objectContaining({ outputPath: '/downloads/my-book' }));
+      const outputPaths = setCalls.filter((c) => 'outputPath' in c).map((c) => normPath(c.outputPath as string));
+      expect(outputPaths).toContain('/downloads/my-book');
     });
   });
 
   // ===== #263 — resolveOutputPath trust model hardening =====
 
   describe('resolveOutputPath trust model', () => {
+    /** Normalize path separators for cross-platform assertions (path.join uses backslash on Windows). */
+    const normPath = (s: string) => s.split('\\').join('/');
     const baseDownload = { id: 1, externalId: 'ext-1', downloadClientId: 10, status: 'downloading', completedAt: null, bookId: null, outputPath: null };
     const baseItem = { progress: 50, status: 'downloading', savePath: '/remote/downloads', name: 'my-book', size: 1000 };
 
@@ -1379,7 +1386,8 @@ describe('monitor job', () => {
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, undefined, remotePathMappingService as never);
 
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      expect(setCalls).toContainEqual(expect.objectContaining({ outputPath: '/remote/downloads/my-book' }));
+      const outputPaths = setCalls.filter((c) => 'outputPath' in c).map((c) => normPath(c.outputPath as string));
+      expect(outputPaths).toContain('/remote/downloads/my-book');
     });
 
     it('returns raw path when remotePathMappingService is undefined', async () => {
@@ -1391,7 +1399,8 @@ describe('monitor job', () => {
       await monitorDownloads(inject<Db>(db), inject<DownloadClientService>(downloadClientService), inject<NotifierService>(notifierService), inject<FastifyBaseLogger>(log), undefined, undefined, undefined);
 
       const setCalls = (chain.set as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as Record<string, unknown>);
-      expect(setCalls).toContainEqual(expect.objectContaining({ outputPath: '/remote/downloads/my-book' }));
+      const outputPaths = setCalls.filter((c) => 'outputPath' in c).map((c) => normPath(c.outputPath as string));
+      expect(outputPaths).toContain('/remote/downloads/my-book');
     });
   });
 });
