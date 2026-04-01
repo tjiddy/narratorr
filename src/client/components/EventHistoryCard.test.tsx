@@ -167,4 +167,6 @@ describe('#257 merge observability — EventHistoryCard', () => {
     expect(screen.getByText('Merged')).toBeInTheDocument();
     expect(screen.queryByText('merged')).not.toBeInTheDocument();
   });
+
+  it.todo('wrong_release renders with label "Wrong Release" and destructive color');
 });

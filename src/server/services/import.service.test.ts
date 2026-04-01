@@ -1921,4 +1921,12 @@ describe('ImportService consolidation (issue #79)', () => {
       );
     });
   });
+
+  describe('lastGrab identifier tracking', () => {
+    it.todo('populates lastGrabGuid from download.guid on import');
+    it.todo('populates lastGrabInfoHash from download.infoHash on import');
+    it.todo('sets lastGrabGuid to null when download.guid is null');
+    it.todo('sets lastGrabInfoHash to null when download.infoHash is null');
+    it.todo('overwrites previous lastGrabGuid/lastGrabInfoHash on upgrade import');
+  });
 });

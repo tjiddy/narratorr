@@ -1557,4 +1557,13 @@ describe('PUT /api/books/:id — array update contract (#71)', () => {
       expect(res.statusCode).toBe(503);
     });
   });
+
+  describe('POST /api/books/:id/wrong-release', () => {
+    it.todo('returns 200 and calls bookRejectionService for imported book with identifiers');
+    it.todo('returns 400 when book status is not imported');
+    it.todo('returns 400 when book has no lastGrabGuid or lastGrabInfoHash');
+    it.todo('returns 404 when book does not exist');
+    it.todo('returns 200 when only lastGrabGuid is present (no lastGrabInfoHash)');
+    it.todo('returns 200 when only lastGrabInfoHash is present (no lastGrabGuid)');
+  });
 });

@@ -443,4 +443,11 @@ describe('useBookActions', () => {
       });
     });
   });
+
+  describe('wrongReleaseMutation', () => {
+    it.todo('calls api.markBookAsWrongRelease with correct book ID');
+    it.todo('shows success toast on successful wrong release');
+    it.todo('invalidates book query on success');
+    it.todo('shows error toast on wrong release failure');
+  });
 });

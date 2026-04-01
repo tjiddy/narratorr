@@ -842,4 +842,11 @@ describe('QualityGateOrchestrator', () => {
       expect(retrySearch).not.toHaveBeenCalled();
     });
   });
+
+  describe('shared rejection helper extraction — regression', () => {
+    it.todo('manual reject still blacklists with bad_quality reason after extraction');
+    it.todo('manual reject still deletes download files via adapter after extraction');
+    it.todo('manual reject still triggers re-search after extraction');
+    it.todo('auto-reject (dispatchSideEffects) still works identically after extraction');
+  });
 });

@@ -1196,4 +1196,16 @@ describe('#257 merge observability — BookDetails progress', () => {
       expect(mergeButton).toBeDisabled();
     });
   });
+
+  describe('Wrong Release action', () => {
+    it.todo('shows Wrong Release button when book is imported with lastGrabGuid');
+    it.todo('shows Wrong Release button when book is imported with lastGrabInfoHash');
+    it.todo('hides Wrong Release button when book status is wanted');
+    it.todo('hides Wrong Release button when imported but both identifiers are null');
+    it.todo('opens confirmation modal when Wrong Release button is clicked');
+    it.todo('calls wrong release mutation when modal is confirmed');
+    it.todo('does not call mutation when modal is cancelled');
+    it.todo('shows success toast and refreshes on successful wrong release');
+    it.todo('shows error toast on wrong release API failure');
+  });
 });

@@ -309,4 +309,11 @@ describe('BookHero', () => {
       expect(button).toHaveTextContent('Remove');
     });
   });
+
+  describe('Wrong Release button', () => {
+    it.todo('renders Wrong Release button when showWrongRelease is true');
+    it.todo('does not render Wrong Release button when showWrongRelease is false');
+    it.todo('calls onWrongReleaseClick when Wrong Release button is clicked');
+    it.todo('disables button and shows pending label when isWrongReleasing is true');
+  });
 });
