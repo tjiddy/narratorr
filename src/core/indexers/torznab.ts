@@ -3,6 +3,7 @@ import type { IndexerAdapter, SearchResult, SearchOptions } from './types.js';
 import { buildMagnetUri } from '../utils/magnet.js';
 import { fetchWithProxy } from './fetch.js';
 import { fetchWithProxyAgent, resolveProxyIp } from './proxy.js';
+import { normalizeLanguage } from '../utils/language-codes.js';
 
 export interface TorznabConfig {
   apiUrl: string; // e.g., 'https://jackett.example.com/api/v2.0/indexers/mytracker/results/torznab'
@@ -38,6 +39,7 @@ export class TorznabIndexer implements IndexerAdapter {
       apikey: this.apiKey,
       cat: AUDIOBOOK_CATEGORY,
       limit: String(limit),
+      attrs: 'grabs,language',
     });
 
     if (options?.author) {
@@ -148,6 +150,8 @@ export class TorznabIndexer implements IndexerAdapter {
           ? Number(attrs.size)
           : Number($item.find('enclosure').attr('length')) || undefined;
 
+      const grabsNum = attrs.grabs != null ? Number(attrs.grabs) : undefined;
+
       results.push({
         title,
         protocol: 'torrent',
@@ -158,7 +162,8 @@ export class TorznabIndexer implements IndexerAdapter {
         size: size || undefined,
         seeders: attrs.seeders != null ? Number(attrs.seeders) : undefined,
         leechers: attrs.leechers != null ? Number(attrs.leechers) : undefined,
-        grabs: attrs.grabs != null ? Number(attrs.grabs) : undefined,
+        grabs: grabsNum != null && !Number.isNaN(grabsNum) ? grabsNum : undefined,
+        language: normalizeLanguage(attrs.language),
         indexer: this.name,
       });
     });
