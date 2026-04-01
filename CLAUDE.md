@@ -86,6 +86,9 @@ Graduated learnings from the CL system — non-obvious patterns that have caused
 - **Aborted tool calls are errors:** Tool calls that return `aborted` are errors. Never continue a workflow step that depends on an aborted call. Retry the call once if it is safe to retry. If the retry fails or is aborted, stop and report the workflow as blocked. After any parallel tool call, verify that every required sub-call succeeded before proceeding.
 - **`vi.useFakeTimers()` breaks TanStack Query:** Full `useFakeTimers()` deadlocks Query's internal `setTimeout`. Use `vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })` and explicit `vi.advanceTimersByTime()` in tests that mix polling hooks with Query.
 - **TanStack Query optimistic updates:** Call `cancelQueries` before `setQueryData` — without cancel, a pending refetch can overwrite the optimistic data. For paginated queries, use `placeholderData: (prev) => prev` to prevent flicker during page transitions.
+- **Fire-and-forget pre-flight:** When a service method creates a background job (`.start()`), pre-flight checks MUST happen before job creation — not inside the async work function. Throws inside async work are unreachable by the caller (route already returned 202). Make the method `async` and validate synchronously before creating the job.
+- **Bitrate unit boundary (bps vs kbps):** `music-metadata` returns bitrate in bps (128000), settings/schemas use kbps (128), DB stores bps. Always convert at the call site with `Math.floor(bps / 1000)` — never compare raw values across boundaries.
+- **Drizzle enum type derivation:** Drizzle inline `text('col', { enum: [...] })` produces narrow literal unions in `$inferInsert`. Derive shared types from the schema (`NonNullable<typeof table.$inferInsert['col']>`) instead of using bare `string`.
 
 ## Frontend Design Quality
 
