@@ -36,8 +36,8 @@ export const createIndexerFormSchema = z.object({
   settings: z.object({
     hostname: z.string().optional(),
     pageLimit: z.number().int().min(1).max(10).optional(),
-    apiUrl: z.string().optional(),
-    apiKey: z.string().optional(),
+    apiUrl: z.string().trim().optional(),
+    apiKey: z.string().trim().optional(),
     flareSolverrUrl: z.string().optional(),
     mamId: z.string().optional(),
     baseUrl: z.string().optional(),

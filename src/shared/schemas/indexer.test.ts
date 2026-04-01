@@ -209,7 +209,36 @@ describe('createIndexerFormSchema — trim behavior', () => {
 });
 
 describe('createIndexerFormSchema — apiUrl/apiKey trim (#272)', () => {
-  it.todo('trims leading/trailing whitespace from settings.apiUrl');
-  it.todo('trims leading/trailing whitespace from settings.apiKey');
-  it.todo('rejects whitespace-only apiUrl (normalized to empty string)');
+  it('trims leading/trailing whitespace from settings.apiUrl', () => {
+    const input = {
+      ...validCreateIndexerForm,
+      type: 'newznab' as const,
+      settings: { apiUrl: '  https://indexer.test  ', apiKey: 'key123' },
+    };
+    const result = createIndexerFormSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.apiUrl).toBe('https://indexer.test');
+  });
+
+  it('trims leading/trailing whitespace from settings.apiKey', () => {
+    const input = {
+      ...validCreateIndexerForm,
+      type: 'newznab' as const,
+      settings: { apiUrl: 'https://indexer.test', apiKey: '  key123  ' },
+    };
+    const result = createIndexerFormSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.settings.apiKey).toBe('key123');
+  });
+
+  it('normalizes whitespace-only apiUrl to empty string (rejected by superRefine for newznab)', () => {
+    const input = {
+      ...validCreateIndexerForm,
+      type: 'newznab' as const,
+      settings: { apiUrl: '   ', apiKey: 'key123' },
+    };
+    const result = createIndexerFormSchema.safeParse(input);
+    // superRefine requires apiUrl for newznab, so trimmed whitespace-only is rejected
+    expect(result.success).toBe(false);
+  });
 });
