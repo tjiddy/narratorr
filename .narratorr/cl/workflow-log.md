@@ -1,5 +1,34 @@
 # Workflow Log
 
+## #266 Bug: Series sort missing position tiebreaker — 2026-04-01
+**Skill path:** /implement → /claim → /plan → /handoff
+**Outcome:** success — PR #277
+
+### Metrics
+- Files changed: 4 | Tests added/modified: 8 (2 backend, 6 frontend)
+- Quality gate runs: 2 (pass on attempt 2 — first failed on typecheck)
+- Fix iterations: 1 (undefined vs null type mismatch in seriesPosition)
+- Context compactions: 0
+
+### Workflow experience
+- What went smoothly: Small, focused bugfix with clear spec. Red/green TDD worked cleanly — all 8 tests failed before implementation, all passed after.
+- Friction / issues encountered: TypeScript caught `undefined` vs `null` mismatch — `BookWithAuthor.seriesPosition` can be `undefined` (optional API field) but `compareNullable` only accepts `null`. Required `?? null` coalescing. Not caught by tests since JS treats both the same at runtime.
+
+### Token efficiency
+- Highest-token actions: Spec review response and elaborate phases consumed significant context before implementation started
+- Avoidable waste: None — straightforward issue
+- Suggestions: For trivial bugfixes (2-file, <10 LOC changes), the elaborate→spec-review→respond cycle is heavyweight
+
+### Infrastructure gaps
+- Repeated workarounds: None
+- Missing tooling / config: None
+- Unresolved debt: `compareNullable` descending null-last bug affects all nullable sort fields (logged to debt.md)
+
+### Wish I'd Known
+1. `BookWithAuthor.seriesPosition` type is `number | null | undefined` (not just `number | null`) — always coalesce with `?? null` when passing to comparison helpers
+2. Backend mock chain tests can only verify ORDER BY clause count, not actual row ordering — structural tests are the best we can do without integration DB
+3. The `sortBooks` function is only used in `collapseSeries` fallback, not the primary library view — narrowing scope earlier would have simplified spec review
+
 ## #260 Redesign event history filters — intent-based groups, full event coverage — 2026-04-01
 **Skill path:** /implement → /claim → /plan → /handoff
 **Outcome:** success — PR #276
