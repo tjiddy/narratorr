@@ -2,7 +2,7 @@ import { forwardRef } from 'react';
 
 type ToggleSwitchSize = 'full' | 'compact';
 
-interface ToggleSwitchProps extends React.InputHTMLAttributes<HTMLInputElement> {
+interface ToggleSwitchProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'size'> {
   size?: ToggleSwitchSize;
 }
 
