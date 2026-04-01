@@ -86,8 +86,19 @@ describe('DownloadClientService', () => {
   // ===== #263 — createWithMappings =====
 
   describe('createWithMappings', () => {
-    it('inserts client and all mappings in a transaction', async () => {
-      const txInsert = vi.fn().mockReturnValue(mockDbChain([mockClient]));
+    it('inserts client and all mappings in a transaction with correct row payload', async () => {
+      const mappingValuesArg = vi.fn();
+      const clientChain = mockDbChain([mockClient]);
+      const mappingChain = mockDbChain([]);
+      // Override values() on the mapping chain to capture the payload
+      mappingChain.values = vi.fn().mockImplementation((rows: unknown) => {
+        mappingValuesArg(rows);
+        return mappingChain;
+      });
+
+      const txInsert = vi.fn()
+        .mockReturnValueOnce(clientChain)   // first insert: client
+        .mockReturnValueOnce(mappingChain); // second insert: mappings
       db.transaction.mockImplementation(async (fn: (tx: Record<string, unknown>) => Promise<unknown>) => {
         return fn({ insert: txInsert });
       });
@@ -107,8 +118,13 @@ describe('DownloadClientService', () => {
 
       expect(result.name).toBe('qBittorrent');
       expect(db.transaction).toHaveBeenCalled();
-      // Two insert calls: client + mappings
       expect(txInsert).toHaveBeenCalledTimes(2);
+
+      // Verify mapping rows contain the created client's ID and exact path pairs
+      expect(mappingValuesArg).toHaveBeenCalledWith([
+        { downloadClientId: mockClient.id, remotePath: '/remote/a', localPath: '/local/a' },
+        { downloadClientId: mockClient.id, remotePath: '/remote/b', localPath: '/local/b' },
+      ]);
     });
 
     it('creates client only when pathMappings is empty array', async () => {
