@@ -2,7 +2,6 @@
 
 ## Actionable
 
-- **`src/client/pages/library/FilterRow.tsx` + `src/client/components/manual-import/ImportSummaryBar.tsx`**: 4 raw `<select>` elements still use manual `appearance-none` + `ChevronDownIcon` instead of shared `SelectWithChevron` (discovered in #224 → tracked in #288)
 - **`src/client/pages/settings/CredentialsSection.tsx` + `ImportListProviderSettings.tsx`**: Still define local `inputClass` constants identical to shared `formStyles.ts`. Could import from shared location for full dedup (discovered in #289)
 - **`src/server/services/blacklist.service.ts`**: `isBlacklisted(infoHash)` method still only checks `infoHash`, not `guid`. If usenet-only blacklisted entries exist (guid-only, no infoHash), `isBlacklisted()` won't find them. Low priority — only called from quality gate pre-check, not from reject flow (discovered in #248)
 - **`src/server/services/search-pipeline.ts`**: `searchAndGrabForBook()` still has no blacklist filtering — only `retrySearch()` filters. Scheduled search and manual search can re-grab blacklisted releases. Spec explicitly deferred this as out-of-scope (discovered in #248)

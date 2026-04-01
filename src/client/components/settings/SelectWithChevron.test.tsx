@@ -184,4 +184,128 @@ describe('SelectWithChevron', () => {
       expect(screen.getByLabelText('Second')).toHaveAttribute('id', 'second');
     });
   });
+
+  describe('variant prop (#288)', () => {
+    it('default variant renders with settings-form classes', () => {
+      render(
+        <SelectWithChevron id="test" variant="default" label="Test">
+          <option value="a">A</option>
+        </SelectWithChevron>
+      );
+      const select = screen.getByLabelText('Test');
+      expect(select).toHaveClass('w-full');
+      expect(select).toHaveClass('px-4');
+      expect(select).toHaveClass('py-3');
+      expect(select).toHaveClass('pr-10');
+      expect(select).toHaveClass('bg-background');
+      expect(select).toHaveClass('border');
+      expect(select).toHaveClass('rounded-xl');
+      expect(select).toHaveClass('text-sm');
+    });
+
+    it('default variant chevron uses w-4 h-4', () => {
+      render(
+        <SelectWithChevron id="test" variant="default" label="Test">
+          <option value="a">A</option>
+        </SelectWithChevron>
+      );
+      const svg = screen.getByLabelText('Test').parentElement!.querySelector('svg');
+      expect(svg).toHaveClass('w-4');
+      expect(svg).toHaveClass('h-4');
+    });
+
+    it('compact variant renders with compact base classes and no w-full', () => {
+      render(
+        <SelectWithChevron id="test" variant="compact" label="Test">
+          <option value="a">A</option>
+        </SelectWithChevron>
+      );
+      const select = screen.getByLabelText('Test');
+      expect(select).toHaveClass('glass-card');
+      expect(select).toHaveClass('rounded-lg');
+      expect(select).toHaveClass('pl-3');
+      expect(select).toHaveClass('pr-7');
+      expect(select).toHaveClass('font-medium');
+      expect(select).toHaveClass('text-foreground');
+      expect(select).not.toHaveClass('w-full');
+      expect(select).not.toHaveClass('bg-background');
+      expect(select).not.toHaveClass('border');
+      expect(select).not.toHaveClass('rounded-xl');
+    });
+
+    it('compact variant chevron uses w-3 h-3 and right-2 positioning', () => {
+      render(
+        <SelectWithChevron id="test" variant="compact" label="Test">
+          <option value="a">A</option>
+        </SelectWithChevron>
+      );
+      const svg = screen.getByLabelText('Test').parentElement!.querySelector('svg');
+      expect(svg).toHaveClass('w-3');
+      expect(svg).toHaveClass('h-3');
+      expect(svg).toHaveClass('right-2');
+    });
+
+    it('default variant chevron uses right-3 positioning', () => {
+      render(
+        <SelectWithChevron id="test" variant="default" label="Test">
+          <option value="a">A</option>
+        </SelectWithChevron>
+      );
+      const svg = screen.getByLabelText('Test').parentElement!.querySelector('svg');
+      expect(svg).toHaveClass('right-3');
+    });
+
+    it('variant defaults to default when omitted — no class change for existing callers', () => {
+      render(
+        <SelectWithChevron id="test" label="Test">
+          <option value="a">A</option>
+        </SelectWithChevron>
+      );
+      const select = screen.getByLabelText('Test');
+      expect(select).toHaveClass('w-full');
+      expect(select).toHaveClass('rounded-xl');
+      expect(select).toHaveClass('bg-background');
+    });
+
+    it('className prop appends correctly in compact variant', () => {
+      render(
+        <SelectWithChevron id="test" variant="compact" label="Test" className="py-1.5 text-xs">
+          <option value="a">A</option>
+        </SelectWithChevron>
+      );
+      const select = screen.getByLabelText('Test');
+      expect(select).toHaveClass('glass-card');
+      expect(select).toHaveClass('py-1.5');
+      expect(select).toHaveClass('text-xs');
+    });
+
+    it('error prop applies border-destructive in default variant', () => {
+      render(
+        <SelectWithChevron id="test" variant="default" label="Test" error>
+          <option value="a">A</option>
+        </SelectWithChevron>
+      );
+      const select = screen.getByLabelText('Test');
+      expect(select).toHaveClass('border-destructive');
+    });
+
+    it('label prop renders label element in compact variant', () => {
+      render(
+        <SelectWithChevron id="test" variant="compact" label="Compact Label">
+          <option value="a">A</option>
+        </SelectWithChevron>
+      );
+      expect(screen.getByText('Compact Label').tagName).toBe('LABEL');
+    });
+
+    it('forwardRef works in compact variant', () => {
+      const ref = { current: null as HTMLSelectElement | null };
+      render(
+        <SelectWithChevron id="test" variant="compact" label="Test" ref={ref}>
+          <option value="a">A</option>
+        </SelectWithChevron>
+      );
+      expect(ref.current).toBeInstanceOf(HTMLSelectElement);
+    });
+  });
 });

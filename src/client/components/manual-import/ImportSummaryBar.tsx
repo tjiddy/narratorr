@@ -1,5 +1,6 @@
 import { type ImportMode } from '@/lib/api';
-import { ChevronDownIcon, LoadingSpinner } from '@/components/icons';
+import { LoadingSpinner } from '@/components/icons';
+import { SelectWithChevron } from '@/components/settings/SelectWithChevron';
 
 interface ImportSummaryBarBaseProps {
   readyCount: number;
@@ -85,17 +86,11 @@ export function ImportSummaryBar({
       <div className="flex items-center gap-3">
         {/* Mode dropdown — hidden for in-place registration flows */}
         {!hideMode && (
-          <div className="relative">
-            <select
-              value={mode}
-              onChange={(e) => onModeChange?.(e.target.value as ImportMode)}
-              className="appearance-none glass-card rounded-lg pl-3 pr-7 py-2 text-sm font-medium text-foreground focus-ring cursor-pointer"
-            >
-              <option value="copy">Copy</option>
-              <option value="move">Move</option>
-            </select>
-            <ChevronDownIcon className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" />
-          </div>
+          <SelectWithChevron id="import-mode" variant="compact" className="py-2 text-sm"
+            value={mode} onChange={(e) => onModeChange?.(e.target.value as ImportMode)} aria-label="Import mode">
+            <option value="copy">Copy</option>
+            <option value="move">Move</option>
+          </SelectWithChevron>
         )}
 
         <button
