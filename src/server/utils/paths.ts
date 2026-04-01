@@ -3,6 +3,7 @@ import { join, extname, basename, dirname, normalize, resolve, relative } from '
 import type { FastifyBaseLogger } from 'fastify';
 import { renderFilename, toLastFirst, toSortTitle, AUDIO_EXTENSIONS } from '../../core/utils/index.js';
 import type { NamingOptions } from '../../core/utils/naming.js';
+import { extractYear } from './import-helpers.js';
 
 /** Minimal book shape required by renameFilesWithTemplate. */
 export interface RenameableBook {
@@ -11,13 +12,6 @@ export interface RenameableBook {
   seriesPosition?: number | null;
   narrators?: Array<{ name: string }> | null;
   publishedDate?: string | null;
-}
-
-/** Extract a 4-digit year from a date string like "2010-11-02" or "2010". */
-function extractYear(publishedDate: string | null | undefined): string | undefined {
-  if (!publishedDate) return undefined;
-  const match = publishedDate.match(/(\d{4})/);
-  return match ? match[1] : undefined;
 }
 
 /**
