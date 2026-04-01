@@ -195,6 +195,8 @@ export class BookListService {
         return [
           sql`CASE WHEN ${books.seriesName} IS NULL THEN 1 ELSE 0 END`,
           dir(books.seriesName),
+          sql`CASE WHEN ${books.seriesPosition} IS NULL THEN 1 ELSE 0 END`,
+          asc(books.seriesPosition),
           secondaryDir(books.id),
         ];
       case 'quality':

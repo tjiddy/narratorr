@@ -275,6 +275,32 @@ describe('BookListService', () => {
     });
   });
 
+  describe('series sort position tiebreaker (#266)', () => {
+    it('series sort clause includes 5 ORDER BY elements (NULL-seriesName, seriesName, NULL-position, seriesPosition, id)', async () => {
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAll(undefined, undefined, { sortField: 'series', sortDirection: 'asc' });
+      expect(dataChain.orderBy).toHaveBeenCalledTimes(1);
+      const args = (dataChain.orderBy as Mock).mock.calls[0];
+      expect(args).toHaveLength(5);
+    });
+
+    it('series sort with desc also includes 5 ORDER BY elements', async () => {
+      const dataChain = mockDbChain([]);
+      db.select
+        .mockReturnValueOnce(mockDbChain([{ value: 0 }]))
+        .mockReturnValueOnce(dataChain);
+
+      await service.getAll(undefined, undefined, { sortField: 'series', sortDirection: 'desc' });
+      expect(dataChain.orderBy).toHaveBeenCalledTimes(1);
+      const args = (dataChain.orderBy as Mock).mock.calls[0];
+      expect(args).toHaveLength(5);
+    });
+  });
+
   describe('getIdentifiers', () => {
     it('returns asin, title, and author name for all books', async () => {
       db.select.mockReturnValueOnce(mockDbChain([
