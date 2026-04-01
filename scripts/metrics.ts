@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Workflow metrics — parses GitHub comments and git history to produce
 // trend data on review quality, round counts, and finding patterns.
-// Usage: node scripts/metrics.ts [--since <pr-number>] [--json] [--reviews-dirs <dir1> <dir2> ...]
-// Output: markdown to .claude/workflow-stats.md + stdout (or JSON with --json).
-// Reads yolo dispatch DB for timing/cost data if available.
+// Usage: node scripts/metrics.ts [--since <pr-number>] [--json]
+// Output: markdown to .narratorr/workflow-stats.md + stdout (or JSON with --json).
+// Pulls dispatch data from the narrator-automate API (http://192.168.0.22:3031).
 
 import { ghSafe, parseLinkedIssue, parseComments, JQ, GH_FIELDS } from "./lib.ts";
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from "node:fs";
@@ -20,16 +20,7 @@ const jsonOutput = args.includes("--json");
 const sinceIdx = args.indexOf("--since");
 const sincePr = sinceIdx !== -1 ? parseInt(args[sinceIdx + 1], 10) : 0;
 
-// --reviews-dirs <dir1> <dir2> ... — optional extra directories containing review retrospective files.
-// Consumes all remaining args after --reviews-dirs until the next flag (--*) or end of args.
-const reviewsDirsIdx = args.indexOf("--reviews-dirs");
-const extraReviewsDirs: string[] = [];
-if (reviewsDirsIdx !== -1) {
-  for (let i = reviewsDirsIdx + 1; i < args.length; i++) {
-    if (args[i].startsWith("--")) break;
-    extraReviewsDirs.push(resolve(args[i]));
-  }
-}
+const AUTOMATION_API = "http://192.168.0.22:3031";
 
 // --- Types ---
 interface PRMetrics {
@@ -75,130 +66,30 @@ interface RetroSummary {
   topPromptFixes: string[];
 }
 
-// --- Yolo dispatch types ---
-interface DispatchRow {
-  command: string;
-  agent: string;
-  issue_number: number;
-  duration_ms: number | null;
-  cost: number | null;
-  input_tokens: number | null;
-  output_tokens: number | null;
-  success: number;
-  started_at: string;
-}
-
-interface SkillStats {
-  skill: string;
-  invocations: number;
-  avgDurationMin: number;
-  totalCost: number;
-  avgTokensK: number;
-  successRate: number;
-}
-
-interface IssueCostSummary {
-  issue: number;
-  totalCost: number;
-  totalDurationMin: number;
-  totalTokensK: number;
+// --- Automation dispatch types ---
+interface DispatchSummary {
+  issueNumber: number;
   dispatches: number;
+  totalCost: number;
+  totalDurationMs: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
   reviewRounds: number;
+  lastDispatch: string;
 }
 
-const YOLO_DB_PATH = join(ROOT, "..", "narrator-yolo", "data", "narrator-yolo.db");
-
-// --- Read yolo dispatches (uses node subprocess to access better-sqlite3 from yolo's node_modules) ---
-function readYoloDispatches(): DispatchRow[] | null {
-  if (!existsSync(YOLO_DB_PATH)) return null;
-
-  const yoloRoot = resolve(ROOT, "..", "narrator-yolo");
-  const query = `
-    const Database = require('better-sqlite3');
-    const db = new Database(process.argv[1], { readonly: true });
-    const rows = db.prepare('SELECT command, agent, issue_number, duration_ms, cost, input_tokens, output_tokens, success, started_at FROM dispatches ORDER BY started_at').all();
-    console.log(JSON.stringify(rows));
-  `;
-
+// --- Fetch dispatch summaries from narrator-automate API ---
+function fetchDispatchSummaries(): DispatchSummary[] | null {
   try {
-    const result = execFileSync("node", ["-e", query, YOLO_DB_PATH], {
+    const tmpFile = join(process.env.TEMP ?? "/tmp", "narratorr-dispatches.json");
+    execFileSync("curl", ["-sf", "--max-time", "5", "-o", tmpFile, `${AUTOMATION_API}/api/dispatches/summary`], {
       encoding: "utf-8",
-      cwd: yoloRoot,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    return JSON.parse(result.trim());
+    return JSON.parse(readFileSync(tmpFile, "utf-8"));
   } catch {
     return null;
   }
-}
-
-function parseSkillName(command: string): string {
-  // "/implement 329" → "implement", "$review-pr 338" → "review-pr"
-  return command.replace(/^[/$]/, "").replace(/\s+\d+$/, "");
-}
-
-function computeSkillStats(dispatches: DispatchRow[]): SkillStats[] {
-  const bySkill = new Map<string, DispatchRow[]>();
-  for (const d of dispatches) {
-    const skill = parseSkillName(d.command);
-    if (!bySkill.has(skill)) bySkill.set(skill, []);
-    bySkill.get(skill)!.push(d);
-  }
-
-  const stats: SkillStats[] = [];
-  for (const [skill, rows] of bySkill) {
-    const withDuration = rows.filter(r => r.duration_ms && r.duration_ms > 100);
-    const withTokens = rows.filter(r => r.input_tokens);
-    const avgDur = withDuration.length > 0
-      ? withDuration.reduce((a, r) => a + r.duration_ms!, 0) / withDuration.length / 60000
-      : 0;
-    const totalCost = rows.reduce((a, r) => a + (r.cost ?? 0), 0);
-    const avgTokens = withTokens.length > 0
-      ? withTokens.reduce((a, r) => a + (r.input_tokens ?? 0) + (r.output_tokens ?? 0), 0) / withTokens.length / 1000
-      : 0;
-    const successRate = rows.length > 0
-      ? rows.filter(r => r.success).length / rows.length * 100
-      : 0;
-
-    stats.push({
-      skill,
-      invocations: rows.length,
-      avgDurationMin: Math.round(avgDur * 10) / 10,
-      totalCost: Math.round(totalCost * 100) / 100,
-      avgTokensK: Math.round(avgTokens),
-      successRate: Math.round(successRate),
-    });
-  }
-
-  return stats.sort((a, b) => b.invocations - a.invocations);
-}
-
-function computeIssueCosts(dispatches: DispatchRow[]): IssueCostSummary[] {
-  const byIssue = new Map<number, DispatchRow[]>();
-  for (const d of dispatches) {
-    if (!d.issue_number) continue;
-    if (!byIssue.has(d.issue_number)) byIssue.set(d.issue_number, []);
-    byIssue.get(d.issue_number)!.push(d);
-  }
-
-  const summaries: IssueCostSummary[] = [];
-  for (const [issue, rows] of byIssue) {
-    const totalCost = rows.reduce((a, r) => a + (r.cost ?? 0), 0);
-    const totalDur = rows.filter(r => r.duration_ms).reduce((a, r) => a + (r.duration_ms ?? 0), 0) / 60000;
-    const totalTokens = rows.reduce((a, r) => a + (r.input_tokens ?? 0) + (r.output_tokens ?? 0), 0) / 1000;
-    const reviewRounds = rows.filter(r => parseSkillName(r.command).includes("review-pr")).length;
-
-    summaries.push({
-      issue,
-      totalCost: Math.round(totalCost * 100) / 100,
-      totalDurationMin: Math.round(totalDur * 10) / 10,
-      totalTokensK: Math.round(totalTokens),
-      dispatches: rows.length,
-      reviewRounds,
-    });
-  }
-
-  return summaries.sort((a, b) => b.totalCost - a.totalCost);
 }
 
 // --- Parse findings JSON from a review comment body ---
@@ -305,9 +196,9 @@ function collectPRMetrics(prOutput: string, prNumber: number): PRMetrics | null 
 }
 
 // --- Read retrospective files ---
-function readRetrospectives(additionalDirs: string[] = []): RetroSummary {
-  const localDir = join(ROOT, ".claude", "cl", "reviews");
-  const allDirs = [localDir, ...additionalDirs].filter(d => existsSync(d));
+function readRetrospectives(): RetroSummary {
+  const localDir = join(ROOT, ".narratorr", "cl", "reviews");
+  const allDirs = [localDir].filter(d => existsSync(d));
 
   if (allDirs.length === 0) return { totalFiles: 0, bySkill: {}, topPromptFixes: [] };
 
@@ -357,7 +248,7 @@ function computeAggregates(prs: PRMetrics[]): AggregateMetrics {
       findingCategoryTotals: {},
       disputeRate: 0,
       trendByWindow: [],
-      retrospectiveSummary: readRetrospectives(extraReviewsDirs),
+      retrospectiveSummary: readRetrospectives(),
     };
   }
 
@@ -419,12 +310,12 @@ function computeAggregates(prs: PRMetrics[]): AggregateMetrics {
     findingCategoryTotals: categoryTotals,
     disputeRate: totalFindings > 0 ? Math.round((totalDisputed / totalFindings) * 100) : 0,
     trendByWindow: trendWindows,
-    retrospectiveSummary: readRetrospectives(extraReviewsDirs),
+    retrospectiveSummary: readRetrospectives(),
   };
 }
 
 // --- Format output ---
-function formatMarkdown(agg: AggregateMetrics, prs: PRMetrics[], dispatches: DispatchRow[] | null): string {
+function formatMarkdown(agg: AggregateMetrics, prs: PRMetrics[], dispatches: DispatchSummary[] | null): string {
   const lines: string[] = ["# Workflow Metrics\n"];
   lines.push(`*Generated: ${new Date().toISOString().slice(0, 16)}*\n`);
 
@@ -501,43 +392,52 @@ function formatMarkdown(agg: AggregateMetrics, prs: PRMetrics[], dispatches: Dis
     }
   }
 
-  // --- Yolo dispatch data ---
+  // --- Automation dispatch data ---
   if (dispatches && dispatches.length > 0) {
-    const skillStats = computeSkillStats(dispatches);
-    const issueCosts = computeIssueCosts(dispatches);
+    const totalIssues = dispatches.length;
+    const totalDispatches = dispatches.reduce((a, d) => a + d.dispatches, 0);
+    const totalCost = dispatches.reduce((a, d) => a + d.totalCost, 0);
+    const totalDurationHrs = dispatches.reduce((a, d) => a + d.totalDurationMs, 0) / 1000 / 60 / 60;
+    const totalInputM = dispatches.reduce((a, d) => a + d.totalInputTokens, 0) / 1e6;
+    const totalOutputM = dispatches.reduce((a, d) => a + d.totalOutputTokens, 0) / 1e6;
+    const avgCost = totalCost / totalIssues;
+    const avgDurationMin = dispatches.reduce((a, d) => a + d.totalDurationMs, 0) / totalIssues / 1000 / 60;
+    const avgRounds = dispatches.reduce((a, d) => a + d.reviewRounds, 0) / totalIssues;
 
-    lines.push("## Skill Performance (from yolo dispatches)\n");
-    lines.push("| Skill | Invocations | Avg Duration | Avg Tokens | Total Cost | Success |");
-    lines.push("|-------|-------------|-------------|------------|------------|---------|");
-    for (const s of skillStats) {
-      lines.push(`| ${s.skill} | ${s.invocations} | ${s.avgDurationMin}m | ${s.avgTokensK}k | $${s.totalCost.toFixed(2)} | ${s.successRate}% |`);
+    lines.push("## Automation Overview\n");
+    lines.push("| Metric | Value |");
+    lines.push("|--------|-------|");
+    lines.push(`| Issues automated | ${totalIssues} |`);
+    lines.push(`| Total dispatches | ${totalDispatches} |`);
+    lines.push(`| Total cost | $${totalCost.toFixed(2)} |`);
+    lines.push(`| Avg cost/issue | $${avgCost.toFixed(2)} |`);
+    lines.push(`| Total agent time | ${totalDurationHrs.toFixed(1)} hours |`);
+    lines.push(`| Avg time/issue | ${avgDurationMin.toFixed(0)} min |`);
+    lines.push(`| Avg review rounds | ${avgRounds.toFixed(1)} |`);
+    lines.push(`| Input tokens | ${totalInputM.toFixed(1)}M |`);
+    lines.push(`| Output tokens | ${totalOutputM.toFixed(1)}M |`);
+    lines.push("");
+
+    // Most expensive issues
+    const byCost = [...dispatches].sort((a, b) => b.totalCost - a.totalCost).slice(0, 10);
+    lines.push("## Most Expensive Issues\n");
+    lines.push("| Issue | Dispatches | Rounds | Duration | Cost |");
+    lines.push("|-------|------------|--------|----------|------|");
+    for (const d of byCost) {
+      const durMin = Math.round(d.totalDurationMs / 1000 / 60);
+      lines.push(`| #${d.issueNumber} | ${d.dispatches} | ${d.reviewRounds} | ${durMin}m | $${d.totalCost.toFixed(2)} |`);
     }
     lines.push("");
 
-    // Cost per issue (top 10)
-    const topIssues = issueCosts.slice(0, 10);
-    if (topIssues.length > 0) {
-      lines.push("## Cost Per Issue (top 10)\n");
-      lines.push("| Issue | Dispatches | Review Rounds | Duration | Tokens | Cost |");
-      lines.push("|-------|------------|---------------|----------|--------|------|");
-      for (const ic of topIssues) {
-        lines.push(`| #${ic.issue} | ${ic.dispatches} | ${ic.reviewRounds} | ${ic.totalDurationMin}m | ${ic.totalTokensK}k | $${ic.totalCost.toFixed(2)} |`);
-      }
-      lines.push("");
-
-      // Aggregate cost stats
-      const totalCost = issueCosts.reduce((a, ic) => a + ic.totalCost, 0);
-      const avgCost = totalCost / issueCosts.length;
-      const totalDur = issueCosts.reduce((a, ic) => a + ic.totalDurationMin, 0);
-      lines.push("## Cost Summary\n");
-      lines.push(`| Metric | Value |`);
-      lines.push(`|--------|-------|`);
-      lines.push(`| Total issues tracked | ${issueCosts.length} |`);
-      lines.push(`| Total cost (Claude) | $${totalCost.toFixed(2)} |`);
-      lines.push(`| Avg cost per issue | $${avgCost.toFixed(2)} |`);
-      lines.push(`| Total agent time | ${Math.round(totalDur)}m (${(totalDur / 60).toFixed(1)}h) |`);
-      lines.push("");
+    // Most review rounds
+    const byRounds = [...dispatches].sort((a, b) => b.reviewRounds - a.reviewRounds).slice(0, 10);
+    lines.push("## Most Review Rounds\n");
+    lines.push("| Issue | Rounds | Dispatches | Cost |");
+    lines.push("|-------|--------|------------|------|");
+    for (const d of byRounds) {
+      lines.push(`| #${d.issueNumber} | ${d.reviewRounds} | ${d.dispatches} | $${d.totalCost.toFixed(2)} |`);
     }
+    lines.push("");
   }
 
   return lines.join("\n");
@@ -565,9 +465,9 @@ async function main() {
   console.error(`Analyzing ${prNumbers.length} PRs...`);
 
   // Log review dirs being scanned
-  const localReviewsDir = join(ROOT, ".claude", "cl", "reviews");
-  const reviewDirsToScan = [localReviewsDir, ...extraReviewsDirs].filter(d => existsSync(d));
-  console.error(`Analyzing learning files from ${reviewDirsToScan.length} director${reviewDirsToScan.length === 1 ? "y" : "ies"}...`);
+  const localReviewsDir = join(ROOT, ".narratorr", "cl", "reviews");
+  const hasReviews = existsSync(localReviewsDir);
+  console.error(`Retrospectives: ${hasReviews ? localReviewsDir : "none found"}`);
 
   // Collect metrics for each PR
   const allMetrics: PRMetrics[] = [];
@@ -584,18 +484,19 @@ async function main() {
   // Compute aggregates
   const aggregates = computeAggregates(allMetrics);
 
-  // Read yolo dispatch data
-  const dispatches = readYoloDispatches();
+  // Fetch dispatch data from automation API
+  console.error("Fetching dispatch data from automation API...");
+  const dispatches = fetchDispatchSummaries();
   if (dispatches) {
-    console.error(`Loaded ${dispatches.length} yolo dispatches`);
+    console.error(`Loaded ${dispatches.length} issue summaries from automation API`);
   } else {
-    console.error("No yolo dispatch DB found (optional)");
+    console.error("Automation API unreachable (optional — run without dispatch data)");
   }
 
   const markdown = formatMarkdown(aggregates, allMetrics, dispatches);
 
-  // Always write to .claude/workflow-stats.md
-  const outDir = join(ROOT, ".claude");
+  // Always write to .narratorr/workflow-stats.md
+  const outDir = join(ROOT, ".narratorr");
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
   const outPath = join(outDir, "workflow-stats.md");
   writeFileSync(outPath, markdown);

@@ -63,5 +63,8 @@ temp/
 # CL scratch is ephemeral — deleted by /handoff
 .narratorr/cl/scratch.md
 
+# Generated metrics output
+.narratorr/workflow-stats.md
+
 # Stop hook runtime state (marker files)
 .narratorr/state/
