@@ -3,11 +3,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
-import { z } from 'zod';
+import type { z } from 'zod';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { SparklesIcon } from '@/components/icons';
-import { DEFAULT_SETTINGS, newBookDefaultsFormSchema, type AppSettings } from '../../../shared/schemas.js';
+import { DEFAULT_SETTINGS, newBookDefaultsFormSchema } from '../../../shared/schemas.js';
 import { SettingsSection } from './SettingsSection';
 
 type NewBookDefaultsFormData = z.infer<typeof newBookDefaultsFormSchema>;
